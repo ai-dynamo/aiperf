@@ -1845,7 +1845,7 @@ impl SimEventSource for EngineHost {
 }
 
 fn ms_to_ns(ms: f64) -> std::result::Result<i64, SimDriveError> {
-    if !ms.is_finite() || ms < 0.0 || ms > i64::MAX as f64 / NS_PER_MS {
+    if !ms.is_finite() || ms < 0.0 || ms >= i64::MAX as f64 / NS_PER_MS {
         return Err(SimDriveError::EventSource(format!(
             "Dynamo returned invalid simulation time {ms}ms"
         )));
@@ -2201,7 +2201,7 @@ impl DynosimSink {
                     && !first_token
                     && let Some((ttft_ms, _)) = routed.latencies_ms
                 {
-                    let ttft_ns = (ttft_ms * NS_PER_MS).round() as i64;
+                    let ttft_ns = ms_to_ns(ttft_ms).map_err(anyhow::Error::msg)?;
                     observer.on_classified_token(
                         uuid,
                         ns_to_ms(start_ns) + ttft_ms - observer_origin_ms,

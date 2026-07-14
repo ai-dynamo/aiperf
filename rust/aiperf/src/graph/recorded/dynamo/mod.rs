@@ -624,7 +624,7 @@ fn request_duration_ms(
     request: Option<&RequestMetrics>,
 ) -> Result<i64, RecordedTraceError> {
     if let Some(total) = request.and_then(|request| request.total_time_ms) {
-        if !total.is_finite() || total < i64::MIN as f64 || total > i64::MAX as f64 {
+        if !total.is_finite() || total < i64::MIN as f64 || total >= i64::MAX as f64 {
             return Err(RecordedTraceError(
                 "Dynamo total_time_ms is outside the finite i64 range".into(),
             ));

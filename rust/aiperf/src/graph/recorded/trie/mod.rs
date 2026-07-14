@@ -188,7 +188,7 @@ pub(crate) fn lower_recorded_graph(
             })
         });
         let arrival_offset_us = (node.warped_start * 1_000_000.0).round_ties_even();
-        if !(0.0..=u64::MAX as f64).contains(&arrival_offset_us) {
+        if !(0.0..u64::MAX as f64).contains(&arrival_offset_us) {
             return Err(RecordedTraceError(format!(
                 "node {:?}: warped arrival offset is outside u64 microseconds",
                 node.request.node_id

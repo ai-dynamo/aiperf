@@ -141,7 +141,7 @@ pub fn milliseconds_to_ns(milliseconds: f64) -> Result<i64> {
         bail!("timestamp interval must be finite");
     }
     let nanoseconds = milliseconds * 1_000_000.0;
-    if nanoseconds < i64::MIN as f64 || nanoseconds > i64::MAX as f64 {
+    if nanoseconds < i64::MIN as f64 || nanoseconds >= i64::MAX as f64 {
         bail!("timestamp interval is outside the i64 nanosecond range");
     }
     Ok(nanoseconds.round_ties_even() as i64)

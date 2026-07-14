@@ -206,7 +206,7 @@ fn validate_duration(field: &'static str, value: u64) -> Result<(), RampConfigEr
 }
 
 fn seconds_to_ns(field: &'static str, value: f64) -> Result<u64, RampConfigError> {
-    if !value.is_finite() || value <= 0.0 || value * NANOS_PER_SECOND > i64::MAX as f64 {
+    if !value.is_finite() || value <= 0.0 || value * NANOS_PER_SECOND >= i64::MAX as f64 {
         return Err(RampConfigError::InvalidFloat {
             field,
             value,

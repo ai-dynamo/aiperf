@@ -563,7 +563,7 @@ fn seconds_to_ns(seconds: f64, field: &str) -> Result<i64, HttpEndpointBindingEr
         )));
     }
     let nanos = seconds * 1_000_000_000.0;
-    if nanos > i64::MAX as f64 {
+    if nanos >= i64::MAX as f64 {
         return Err(HttpEndpointBindingError::new(format!(
             "{field} is too large to represent in nanoseconds"
         )));

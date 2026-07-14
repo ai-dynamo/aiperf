@@ -119,7 +119,7 @@ pub fn positive_seconds_to_ns(value: f64, flag: &str) -> Result<i64> {
         bail!("{flag} must be positive and finite, got {value}");
     }
     let nanoseconds = value * 1_000_000_000.0;
-    if nanoseconds > i64::MAX as f64 {
+    if nanoseconds >= i64::MAX as f64 {
         bail!("{flag} is outside the i64 nanosecond range");
     }
     let nanoseconds = nanoseconds.round_ties_even() as i64;
@@ -293,7 +293,7 @@ fn integer_bound(value: f64, label: &str) -> Result<usize> {
     if !value.is_finite() || value < 1.0 || value.fract() != 0.0 {
         bail!("{label} must be an integer >= 1, got {value}");
     }
-    if value > usize::MAX as f64 {
+    if value >= usize::MAX as f64 {
         bail!("{label} is outside the usize range");
     }
     Ok(value as usize)

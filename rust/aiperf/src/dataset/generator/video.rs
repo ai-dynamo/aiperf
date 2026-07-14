@@ -51,7 +51,7 @@ impl NativeVideoGenerator {
 
     fn frame_count(&self) -> Result<usize> {
         let frames = self.config.duration_seconds * f64::from(self.config.frames_per_second);
-        if !frames.is_finite() || frames < 1.0 || frames > usize::MAX as f64 {
+        if !frames.is_finite() || frames < 1.0 || frames >= usize::MAX as f64 {
             return Err(DatasetError::Validation(format!(
                 "video duration/fps produces invalid frame count {frames}"
             )));

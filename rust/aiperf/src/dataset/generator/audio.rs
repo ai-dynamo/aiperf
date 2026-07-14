@@ -169,7 +169,7 @@ pub(crate) fn generate_noise_wav(
     }
     validate_pcm(sample_rate_hz, bit_depth, channels)?;
     let frames = (duration_seconds * f64::from(sample_rate_hz)).floor();
-    if frames > usize::MAX as f64 {
+    if frames >= usize::MAX as f64 {
         return Err(DatasetError::Validation(
             "audio sample count exceeds addressable memory".into(),
         ));

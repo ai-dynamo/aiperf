@@ -99,7 +99,7 @@ impl BernoulliFixedDelay {
     ) -> Result<Self, CancellationPolicyError> {
         if !delay_seconds.is_finite()
             || delay_seconds < 0.0
-            || delay_seconds * NANOS_PER_SECOND > i64::MAX as f64
+            || delay_seconds * NANOS_PER_SECOND >= i64::MAX as f64
         {
             return Err(CancellationPolicyError::InvalidDelaySeconds(delay_seconds));
         }

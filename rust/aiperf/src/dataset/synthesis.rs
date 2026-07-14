@@ -307,28 +307,28 @@ fn checked_i64_mul(left: i64, right: i64, field: &str) -> Result<i64> {
 }
 
 fn trunc_f64_to_i64(value: f64, field: &str) -> Result<i64> {
-    if !value.is_finite() || value < i64::MIN as f64 || value > i64::MAX as f64 {
+    if !value.is_finite() || value < i64::MIN as f64 || value >= i64::MAX as f64 {
         return Err(invalid(format!("{field} is outside i64 range")));
     }
     Ok(value.trunc() as i64)
 }
 
 fn trunc_f64_to_u64(value: f64, field: &str) -> Result<u64> {
-    if !value.is_finite() || value < 0.0 || value > u64::MAX as f64 {
+    if !value.is_finite() || value < 0.0 || value >= u64::MAX as f64 {
         return Err(invalid(format!("{field} is outside u64 range")));
     }
     Ok(value.trunc() as u64)
 }
 
 fn trunc_f64_to_usize(value: f64, field: &str) -> Result<usize> {
-    if !value.is_finite() || value < 0.0 || value > usize::MAX as f64 {
+    if !value.is_finite() || value < 0.0 || value >= usize::MAX as f64 {
         return Err(invalid(format!("{field} is outside usize range")));
     }
     Ok(value.trunc() as usize)
 }
 
 fn ceil_f64_to_usize(value: f64, field: &str) -> Result<usize> {
-    if !value.is_finite() || value < 0.0 || value > usize::MAX as f64 {
+    if !value.is_finite() || value < 0.0 || value >= usize::MAX as f64 {
         return Err(invalid(format!("{field} is outside usize range")));
     }
     Ok(value.ceil() as usize)

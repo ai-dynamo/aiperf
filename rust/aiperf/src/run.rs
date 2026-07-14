@@ -277,7 +277,7 @@ pub(crate) async fn run_paced_with_backend(
                 config.minimum.is_finite()
                     && config.minimum >= 1.0
                     && config.minimum.fract() == 0.0
-                    && config.minimum <= usize::MAX as f64,
+                    && config.minimum < usize::MAX as f64,
                 "adaptive integer control minimum must be an integer >= 1"
             );
             Some(config.minimum as usize)

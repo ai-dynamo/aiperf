@@ -664,7 +664,7 @@ fn seconds_to_ns(seconds: f64) -> Result<i64> {
         bail!("time interval must be finite and non-negative");
     }
     let nanoseconds = seconds * 1_000_000_000.0;
-    if nanoseconds > i64::MAX as f64 {
+    if nanoseconds >= i64::MAX as f64 {
         bail!("time interval is outside the i64 nanosecond range");
     }
     Ok(nanoseconds.round_ties_even() as i64)
