@@ -70,8 +70,7 @@ impl MockServer {
 
         // Bind synchronously so the port is known and already listening before
         // we hand the socket to axum's accept loop.
-        let std_listener =
-            StdTcpListener::bind("127.0.0.1:0").expect("bind mock server listener");
+        let std_listener = StdTcpListener::bind("127.0.0.1:0").expect("bind mock server listener");
         let port = std_listener.local_addr().expect("listener addr").port();
         std_listener
             .set_nonblocking(true)
@@ -273,10 +272,8 @@ impl AIPerfHarness {
                         // Escalate: SIGINT, wait 10s, then SIGKILL.
                         cancel_child(&child);
                         let hard = Instant::now() + Duration::from_secs(10);
-                        loop {
-                            if let Some(s) =
-                                child.try_wait().expect("try_wait after SIGINT")
-                            {
+                        break loop {
+                            if let Some(s) = child.try_wait().expect("try_wait after SIGINT") {
                                 break s;
                             }
                             if Instant::now() >= hard {
@@ -285,7 +282,6 @@ impl AIPerfHarness {
                             }
                             std::thread::sleep(Duration::from_millis(100));
                         };
-                        break child.wait().expect("final wait");
                     }
                     std::thread::sleep(Duration::from_millis(50));
                 }
@@ -498,12 +494,7 @@ pub fn write_jsonl(dir: &Path, filename: &str, records: &[serde_json::Value]) ->
 }
 
 /// Write a simple CSV (comma-joined, no quoting) to `dir/filename`.
-pub fn write_csv(
-    dir: &Path,
-    filename: &str,
-    headers: &[&str],
-    rows: &[Vec<String>],
-) -> PathBuf {
+pub fn write_csv(dir: &Path, filename: &str, headers: &[&str], rows: &[Vec<String>]) -> PathBuf {
     let path = dir.join(filename);
     let mut body = String::new();
     body.push_str(&headers.join(","));
