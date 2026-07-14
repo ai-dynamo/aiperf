@@ -7,10 +7,14 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
+use aiperf::dataset::body_plan::{BodyPlan, JsonBodyMaterializer};
+use aiperf::dataset::materialize::Overrides;
+use aiperf::dataset::segment::SegmentPool;
 use aiperf::fixed_schedule::FixedScheduleConfig;
 use aiperf::multiturn::ConversationSource;
 use aiperf::timing::StopConfig;
 use aiperf::user_centric::UserCentricConfig;
+use bytes::Bytes;
 
 mod common;
 
@@ -109,6 +113,83 @@ fn run_local<F: std::future::Future>(future: F) -> F::Output {
         .unwrap();
     let local = tokio::task::LocalSet::new();
     local.block_on(&runtime, future)
+}
+
+/// End-to-end proof that the raw-payload dispatch path — now routed through
+/// `BodyPlan::raw` + `JsonBodyMaterializer` (segment-unification §4 /
+/// endpoint-body-construction §4) — produces bytes the real `aiperf-mock-server`
+/// accepts, and that the dispatch-time model/stream override is tail-spliced
+/// without rewriting the authored body (the "concat, never re-serialize" rule).
+#[test]
+fn raw_payload_body_plan_dispatches_byte_exactly_to_the_real_mock() {
+    let Some(mock) = RealMock::spawn() else {
+        return;
+    };
+
+    // An authored chat request body with deliberate whitespace and key order the
+    // splicer must preserve verbatim. The model is already the mock's served
+    // model so the body is valid wire on its own.
+    let authored = Bytes::from_static(
+        b"{ \"model\":\"openai/gpt-oss-120b\", \"messages\":[{\"role\":\"user\",\"content\":\"ping\"}] }",
+    );
+    let mut pool = SegmentPool::new();
+    let raw = pool.intern_raw(None, authored.clone()).unwrap();
+    let store = pool.freeze();
+
+    // No overrides: byte-identical to the authored body.
+    let plan = BodyPlan::raw(raw);
+    let verbatim = JsonBodyMaterializer::materialize(&plan, &store, &Overrides::new()).unwrap();
+    assert_eq!(verbatim, authored, "raw body must be byte-identical without overrides");
+
+    // Dispatch overrides for fields absent from the authored body: the tail is
+    // spliced immediately before the closing brace, and the authored bytes and
+    // trailing whitespace are preserved verbatim (concat, never re-serialize).
+    let mut overrides = Overrides::new();
+    overrides.set_stream(false);
+    overrides.set_max_tokens("max_tokens", 4);
+    let dispatched = JsonBodyMaterializer::materialize(&plan, &store, &overrides).unwrap();
+    assert_eq!(
+        dispatched,
+        Bytes::from_static(
+            b"{ \"model\":\"openai/gpt-oss-120b\", \"messages\":[{\"role\":\"user\",\"content\":\"ping\"}] ,\"stream\":false,\"max_tokens\":4}"
+        ),
+    );
+
+    // The real rust mock server must accept and answer the materialized bytes.
+    // A dependency-free HTTP/1.1 POST over a raw socket keeps this test in the
+    // `aiperf` crate without pulling an HTTP client dev-dependency.
+    let (status_line, response_body) = post_raw(&mock.base_url, "/v1/chat/completions", &dispatched);
+    assert!(
+        status_line.contains("200"),
+        "mock rejected materialized raw body: {status_line}"
+    );
+    assert!(
+        response_body.contains("choices"),
+        "mock response missing choices: {response_body}"
+    );
+}
+
+/// Minimal blocking HTTP/1.1 POST returning `(status_line, body)`; reads the
+/// full response and splits headers from body on the blank line.
+fn post_raw(base_url: &str, path: &str, body: &[u8]) -> (String, String) {
+    use std::io::{Read, Write};
+
+    let hostport = base_url.strip_prefix("http://").expect("http base url");
+    let mut stream = std::net::TcpStream::connect(hostport).expect("connect to mock");
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: {hostport}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream.write_all(request.as_bytes()).expect("write headers");
+    stream.write_all(body).expect("write body");
+    stream.flush().expect("flush");
+
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).expect("read response");
+    let text = String::from_utf8_lossy(&raw).into_owned();
+    let (head, body) = text.split_once("\r\n\r\n").unwrap_or((text.as_str(), ""));
+    let status_line = head.lines().next().unwrap_or_default().to_string();
+    (status_line, body.to_string())
 }
 
 fn assert_real_ttft_and_lateness(report: &aiperf::scheduled::ScheduledRunReport) {
