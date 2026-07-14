@@ -570,11 +570,18 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   wrappers over the same primitives. Only failure behavior genuinely differs
   (graph fail-fast/abort-run vs. scheduled resilient). Corrects the
   graph-is-metrics-lite impression; flags incidental cleanups; no refactor.
+- `specs/2026-07-14-python-rust-timing-parity-proof.md` — **built + proven**:
+  A/B every legacy timing mode under `AIPERF_RUNTIME_ENGINE=python` vs `rust`
+  against a deterministic mock — worst response-timing divergence 1.06% (all
+  within 5%), send-schedule adherence tighter than Python. Fixes: token-counting
+  alignment (`--use-server-token-count`), fixed-schedule anchor→issuance-start,
+  warm-start prewarm+lead barrier. Non-bugs: RNG-stream variance, Python
+  saturation jitter.
 - `specs/2026-07-13-p1-generic-execution-substrate-names.md` — **P1 naming pass**
-  (built: renames; fold + `inference_dimensions` signature deferred — see the
-  2026-07-14 addendum): give the already-shared execution substrate one generic
-  vocabulary. The DTO/placement/method renames landed; collapsing `TransportSink`'s
-  dispatch methods to two primitives is a deferred structural refactor.
+  (built: renames + fold; `inference_dimensions` signature kept by design — see
+  the 2026-07-14 addenda): give the already-shared execution substrate one generic
+  vocabulary. The DTO/placement/method renames and the dispatch-method fold landed
+  (collect surface → two primitives).
   `PreparedHttpTurn`/`MeasuredTurn*`/`HttpTurnDispatchResult` →
   `PreparedTurn`/`Measured*`/`DispatchResult`; placement seams →
   `RequestExecutor` (per-request) / `TracePlacement` (per-trace). Pure rename +
