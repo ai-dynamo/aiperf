@@ -54,15 +54,28 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use crate::export::{ExportConfig, Exporter};
-use crate::metrics_core::catalog::{CATALOG, MetricSpec};
-use crate::metrics_core::{
-    MetricEntry, MetricFlags, MetricSeries, MetricType, NativeReport, ReportStats, ReportValue,
-};
+use crate::metrics_core::{MetricEntry, MetricSeries, NativeReport, ReportStats, ReportValue};
 use serde_json::{Map, Value};
 
 /// AIPerf v1 summary-export policy. Disabled unless the frontend requests the
-/// `json` summary; `stem` is the profile-export filename stem
+/// `genai_perf` summary; `stem` is the profile-export filename stem
 /// (`profile_export` → `profile_export_aiperf.{json,csv}`).
+///
+/// The sink owns all assembly and serialization; the remaining fields are
+/// frontend-owned data values the native report alone cannot reconstruct, so
+/// the artifacts reproduce the Python exporters byte-for-byte:
+/// - `header_map` — the display header for every registered metric tag, derived
+///   exactly as `native_report._metric_result`
+///   (`MetricRegistry.get_class_or_none(tag).header`); an absent key falls back
+///   to the tag string, matching Python's `else tag` branch.
+/// - `filtered_tags` — the registered tags the Python file exporters drop
+///   (`metrics_base_exporter._prepare_metrics`: INTERNAL / EXPERIMENTAL classes,
+///   honoring the dev show-flags). A tag outside this set is always kept,
+///   including native-runtime tags Python never registered.
+/// - `scalar_tags` — registered tags whose Python `MetricType` is `AGGREGATE` /
+///   `DERIVED`, for which `record_models.to_json_result` drops `count`.
+/// - `envelope` — `benchmark_id`, `aiperf_version`, `input_config`, and
+///   `run_info` serialized exactly as `MetricsJsonExporter` emits them.
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct GenaiPerfExportConfig {
@@ -70,17 +83,14 @@ pub struct GenaiPerfExportConfig {
     pub enabled: bool,
     /// Filename stem for the compat artifacts (before the `_aiperf` suffix).
     pub stem: String,
-    /// Whether goodput was requested. Retained for wire compatibility with the
-    /// frontend projection and surfaced into the projected `input_config`; the
-    /// v1 summary emits whatever goodput metrics the native report carries.
-    pub goodput: bool,
-    /// Whether the run streamed. Retained for wire compatibility and surfaced
-    /// into the projected `input_config`; the v1 summary emits whatever
-    /// streaming metrics the native report carries.
-    pub streaming: bool,
-    /// Endpoint type string (e.g. `chat`, `embeddings`). Retained for wire
-    /// compatibility and surfaced into the projected `input_config`.
-    pub endpoint_type: String,
+    /// Frontend-projected `{tag: header}` for every registered metric class.
+    pub header_map: HashMap<String, String>,
+    /// Registered tags the Python file exporters drop from both artifacts.
+    pub filtered_tags: HashSet<String>,
+    /// Registered scalar-tier tags whose `count` field is dropped.
+    pub scalar_tags: HashSet<String>,
+    /// Frontend-owned top-level JSON envelope values.
+    pub envelope: GenaiPerfEnvelope,
 }
 
 impl Default for GenaiPerfExportConfig {
@@ -88,11 +98,32 @@ impl Default for GenaiPerfExportConfig {
         Self {
             enabled: false,
             stem: "profile_export".to_owned(),
-            goodput: false,
-            streaming: false,
-            endpoint_type: String::new(),
+            header_map: HashMap::new(),
+            filtered_tags: HashSet::new(),
+            scalar_tags: HashSet::new(),
+            envelope: GenaiPerfEnvelope::default(),
         }
     }
+}
+
+/// Frontend-owned top-level fields of Python's `JsonExportData` the native
+/// report cannot reconstruct. Each is projected as the exact JSON value the
+/// Python `MetricsJsonExporter` emits (`model_dump(mode="json",
+/// exclude_unset=True, exclude_none=True)` then `scrub_non_finite`), so the sink
+/// splices them verbatim in `JsonExportData` declaration order. Absent fields
+/// (`benchmark_id` / `run_info` when the run omits them) stay `None` and are not
+/// serialized, matching `exclude_none`.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct GenaiPerfEnvelope {
+    /// AIPerf package version (`aiperf.__version__`) that generated the export.
+    pub aiperf_version: Option<String>,
+    /// Unique benchmark-run identifier (`BenchmarkRun.benchmark_id`).
+    pub benchmark_id: Option<Value>,
+    /// The authored `BenchmarkConfig` dump (`input_config`).
+    pub input_config: Option<Value>,
+    /// The per-run reproducibility block (`RunInfo`).
+    pub run_info: Option<Value>,
 }
 
 /// JSON export schema version. Pinned to the Python `JsonExportData.SCHEMA_VERSION`
@@ -170,21 +201,13 @@ impl Exporter for GenaiPerfV1Exporter {
             anyhow::bail!("invalid genai-perf export stem {stem:?}: must be a bare filename stem");
         }
 
-        let json = render_json(report, cfg);
-        let csv = render_csv(report)?;
+        let json = render_json(report, &cfg.genai_perf);
+        let csv = render_csv(report, &cfg.genai_perf)?;
 
         std::fs::write(artifact_dir.join(format!("{stem}_aiperf.json")), json)?;
         std::fs::write(artifact_dir.join(format!("{stem}_aiperf.csv")), csv)?;
         Ok(())
     }
-}
-
-/// Look up a metric's catalog spec by its report name (`tag`). The native report
-/// keys are the catalog tag strings; tags outside the catalog (dynamically
-/// injected metrics) return `None` and are kept unfiltered with the tag as
-/// their header, mirroring `native_report.py:_metric_result`.
-fn spec_for_name(name: &str) -> Option<&'static MetricSpec> {
-    CATALOG.iter().find(|spec| spec.tag.as_str() == name)
 }
 
 /// One report metric projected into the flat v1 stat set. Field presence
@@ -242,11 +265,18 @@ fn summary_series(entry: &MetricEntry) -> Option<&MetricSeries> {
 
 /// Project one report metric into the flat stat set, applying the native
 /// metric-type value shape and the `count`-drop rule for scalar-tier metrics.
-/// Returns `None` when the metric has no usable series or a required scalar /
-/// counter value is non-finite (Python would raise; we skip).
-fn project(name: &str, entry: &MetricEntry, spec: Option<&MetricSpec>) -> Option<Projected> {
+/// The display header and the scalar-tier `count`-drop are frontend-owned
+/// (`cfg.header_map` / `cfg.scalar_tags`), reproducing `native_report._metric_result`
+/// and `record_models.to_json_result` exactly. Returns `None` when the metric
+/// has no usable series or a required scalar / counter value is non-finite
+/// (Python would raise; we skip).
+fn project(name: &str, entry: &MetricEntry, cfg: &GenaiPerfExportConfig) -> Option<Projected> {
     let series = summary_series(entry)?;
-    let header = spec.map_or_else(|| name.to_owned(), |spec| spec.header.to_owned());
+    let header = cfg
+        .header_map
+        .get(name)
+        .cloned()
+        .unwrap_or_else(|| name.to_owned());
     let unit = entry.unit.clone();
 
     let mut projected = Projected {
@@ -296,37 +326,31 @@ fn project(name: &str, entry: &MetricEntry, spec: Option<&MetricSpec>) -> Option
     }
 
     // `to_json_result` (record_models.py:99-123) drops `count` for AGGREGATE /
-    // DERIVED (scalar-tier) metrics, where it would trivially be 1.
-    if let Some(spec) = spec
-        && matches!(spec.kind, MetricType::Aggregate | MetricType::Derived)
-    {
+    // DERIVED (scalar-tier) metrics, where it would trivially be 1. The scalar
+    // classification is the Python `MetricType`, projected as `cfg.scalar_tags`.
+    if cfg.scalar_tags.contains(name) {
         projected.count = None;
     }
 
     Some(projected)
 }
 
-/// Whether a metric is excluded from file exports (`_prepare_metrics`): INTERNAL
-/// and EXPERIMENTAL flag classes are dropped (dev show-flags are off on the
-/// native path). Tags outside the catalog are always kept.
-fn is_filtered(spec: Option<&MetricSpec>) -> bool {
-    spec.is_some_and(|spec| {
-        spec.flags
-            .intersects(MetricFlags::INTERNAL | MetricFlags::EXPERIMENTAL)
-    })
-}
-
 /// Collect the exportable metrics in report (alphabetical `BTreeMap`) order,
-/// after filtering and projection.
-fn collect_metrics(metrics: &BTreeMap<String, MetricEntry>) -> Vec<(String, Projected)> {
+/// after filtering and projection. Filtering is frontend-owned
+/// (`cfg.filtered_tags`, the Python `_prepare_metrics` INTERNAL / EXPERIMENTAL
+/// drop set); a tag outside that set is always kept, including native-runtime
+/// tags Python never registered.
+fn collect_metrics(
+    metrics: &BTreeMap<String, MetricEntry>,
+    cfg: &GenaiPerfExportConfig,
+) -> Vec<(String, Projected)> {
     metrics
         .iter()
         .filter_map(|(name, entry)| {
-            let spec = spec_for_name(name);
-            if is_filtered(spec) {
+            if cfg.filtered_tags.contains(name) {
                 return None;
             }
-            project(name, entry, spec).map(|projected| (name.clone(), projected))
+            project(name, entry, cfg).map(|projected| (name.clone(), projected))
         })
         .collect()
 }
@@ -359,14 +383,21 @@ fn insert_number(object: &mut Map<String, Value>, key: &str, value: Option<f64>)
     }
 }
 
-/// Render `<stem>_aiperf.json`. The metric objects are byte-exact against the
-/// Python exporter; `schema_version`, `aiperf_version`, `was_cancelled`, and the
-/// projected `input_config` are reproducible top-level scalars. Fields the sink
-/// cannot reconstruct from the [`NativeReport`] alone (full `BenchmarkConfig`,
-/// `run_info`, timestamps, telemetry) are reconciled by the Python frontend at
-/// integration and are outside the byte-parity contract.
-fn render_json(report: &NativeReport, cfg: &ExportConfig) -> String {
-    let collected = collect_metrics(&report.metrics);
+/// Render `<stem>_aiperf.json` byte-for-byte against the Python
+/// `MetricsJsonExporter`. The top-level map is assembled in `JsonExportData`
+/// declaration order (`export_models.py:293-349`): `schema_version`,
+/// `aiperf_version`, `benchmark_id`, the declared metric slots, `input_config`,
+/// `run_info`, `was_cancelled`, `error_summary`, `warmup_metrics`, then the
+/// undeclared ("extra") metric tags Pydantic appends last in native-report
+/// (alphabetical) order. Frontend-owned scalars (`aiperf_version`,
+/// `benchmark_id`, `input_config`, `run_info`) are spliced from `cfg.envelope`;
+/// the sink pins `schema_version` and derives `was_cancelled` / `error_summary`
+/// from the [`NativeReport`]. `start_time` / `end_time` / `telemetry_data` /
+/// `branch_stats` are `None` on the native compatibility path (the Python
+/// oracle passes `start_ns=end_ns=0`, no telemetry, no DAG stats) and are
+/// therefore omitted by `exclude_none`.
+fn render_json(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> String {
+    let collected = collect_metrics(&report.metrics, cfg);
     let mut by_name: HashMap<&str, &Projected> = HashMap::new();
     for (name, projected) in &collected {
         by_name.insert(name.as_str(), projected);
@@ -377,10 +408,17 @@ fn render_json(report: &NativeReport, cfg: &ExportConfig) -> String {
         "schema_version".to_owned(),
         Value::String(JSON_SCHEMA_VERSION.to_owned()),
     );
-    root.insert(
-        "aiperf_version".to_owned(),
-        Value::String(report.aiperf_version.clone()),
-    );
+    // aiperf_version: the frontend package version; the report's own field is a
+    // fallback only when the frontend projection is absent (e.g. unit tests).
+    let aiperf_version = cfg
+        .envelope
+        .aiperf_version
+        .clone()
+        .unwrap_or_else(|| report.aiperf_version.clone());
+    root.insert("aiperf_version".to_owned(), Value::String(aiperf_version));
+    if let Some(benchmark_id) = &cfg.envelope.benchmark_id {
+        root.insert("benchmark_id".to_owned(), benchmark_id.clone());
+    }
 
     // Declared metric fields in JsonExportData order.
     let declared: HashSet<&str> = JSON_METRIC_ORDER.iter().copied().collect();
@@ -390,17 +428,25 @@ fn render_json(report: &NativeReport, cfg: &ExportConfig) -> String {
         }
     }
 
-    // input_config: a reasonable deterministic projection (not byte-compared).
-    root.insert("input_config".to_owned(), input_config(report, cfg));
+    // Frontend-owned envelope values, spliced verbatim in declaration order.
+    if let Some(input_config) = &cfg.envelope.input_config {
+        root.insert("input_config".to_owned(), input_config.clone());
+    }
+    if let Some(run_info) = &cfg.envelope.run_info {
+        root.insert("run_info".to_owned(), run_info.clone());
+    }
 
     root.insert(
         "was_cancelled".to_owned(),
         Value::Bool(report.summary.was_cancelled),
     );
+    // error_summary is always set (an empty array when the run had no errors),
+    // matching the Python oracle's explicit `error_summary=[]`.
+    root.insert("error_summary".to_owned(), error_summary(report));
 
     // Warmup metrics (declared field), alphabetical by tag.
     if let Some(warmup) = &report.warmup_metrics {
-        let warmup_metrics = collect_metrics(warmup);
+        let warmup_metrics = collect_metrics(warmup, cfg);
         if !warmup_metrics.is_empty() {
             let mut object = Map::new();
             for (name, projected) in &warmup_metrics {
@@ -421,28 +467,26 @@ fn render_json(report: &NativeReport, cfg: &ExportConfig) -> String {
         .expect("v1 summary JSON value is always serializable")
 }
 
-/// Build the projected `input_config`. Deliberately minimal and deterministic;
-/// the byte-parity contract covers metric objects only.
-fn input_config(report: &NativeReport, cfg: &ExportConfig) -> Value {
-    let mut object = Map::new();
-    if !cfg.genai_perf.endpoint_type.is_empty() {
-        object.insert(
-            "endpoint_type".to_owned(),
-            Value::String(cfg.genai_perf.endpoint_type.clone()),
-        );
+/// Build the `error_summary` array from the report's grouped errors, matching
+/// `export_python_compatibility_reports`'s `ErrorDetailsCount` projection under
+/// `exclude_unset` / `exclude_none`: each item is
+/// `{"error_details": {code?, type, message}, "count": N}` with `code` present
+/// only when the report carried one.
+fn error_summary(report: &NativeReport) -> Value {
+    let mut items = Vec::with_capacity(report.errors.len());
+    for error in &report.errors {
+        let mut details = Map::new();
+        if let Some(code) = error.code {
+            details.insert("code".to_owned(), Value::from(code));
+        }
+        details.insert("type".to_owned(), Value::String(error.error_type.clone()));
+        details.insert("message".to_owned(), Value::String(error.message.clone()));
+        let mut item = Map::new();
+        item.insert("error_details".to_owned(), Value::Object(details));
+        item.insert("count".to_owned(), Value::from(error.count as u64));
+        items.push(Value::Object(item));
     }
-    object.insert(
-        "streaming".to_owned(),
-        Value::Bool(cfg.genai_perf.streaming),
-    );
-    object.insert("goodput".to_owned(), Value::Bool(cfg.genai_perf.goodput));
-    if let Some(mode) = &report.run.mode {
-        object.insert("mode".to_owned(), Value::String(mode.clone()));
-    }
-    if let Some(model) = &report.run.model {
-        object.insert("model".to_owned(), Value::String(model.clone()));
-    }
-    Value::Object(object)
+    Value::Array(items)
 }
 
 /// Format a metric's display name (`metrics_csv_exporter.py:115-120`
@@ -488,8 +532,8 @@ fn stat_value(projected: &Projected, stat: &str) -> Option<f64> {
 /// Python `csv.writer` excel dialect (CRLF terminator, minimal quoting) is
 /// reproduced by the `csv` crate; the empty separator row is emitted manually
 /// because the crate would otherwise write a quoted empty field.
-fn render_csv(report: &NativeReport) -> anyhow::Result<String> {
-    let collected = collect_metrics(&report.metrics);
+fn render_csv(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> anyhow::Result<String> {
+    let collected = collect_metrics(&report.metrics, cfg);
 
     let mut request: Vec<&(String, Projected)> = collected
         .iter()

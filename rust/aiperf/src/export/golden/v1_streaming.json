@@ -54,10 +54,6 @@
     "min": 2.0,
     "max": 2.0
   },
-  "input_config": {
-    "endpoint_type": "chat",
-    "streaming": true,
-    "goodput": true
-  },
-  "was_cancelled": false
+  "was_cancelled": false,
+  "error_summary": []
 }

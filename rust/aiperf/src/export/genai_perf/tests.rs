@@ -14,7 +14,7 @@ use crate::metrics_core::{
     AccumulatorSummary, MetricEntry, MetricSeries, NativeReport, ReportCounterStats,
     ReportDistributionStats, ReportScalarStats, ReportStats, ReportValue,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// A finite report value.
 fn fin(value: f64) -> ReportValue {
@@ -101,15 +101,40 @@ fn report_with(metrics: BTreeMap<String, MetricEntry>) -> NativeReport {
     report
 }
 
-/// Export config with the sink enabled and the given policy fields.
-fn cfg(stem: &str, endpoint_type: &str, streaming: bool, goodput: bool) -> ExportConfig {
+/// The frontend header projection for the fixtures: the display header for
+/// every metric tag exactly as the Python `MetricRegistry` would supply it.
+fn header_map() -> HashMap<String, String> {
+    [
+        ("request_latency", "Request Latency"),
+        ("time_to_first_token", "Time to First Token"),
+        ("inter_token_latency", "Inter Token Latency"),
+        ("request_throughput", "Request Throughput"),
+        ("request_count", "Request Count"),
+        ("goodput", "Goodput"),
+        ("min_request_timestamp", "Minimum Request Timestamp"),
+    ]
+    .iter()
+    .map(|(tag, header)| ((*tag).to_owned(), (*header).to_owned()))
+    .collect()
+}
+
+/// Export config with the sink enabled and the frontend projections the Python
+/// registry would supply: Title-Case headers, `min_request_timestamp` filtered
+/// (INTERNAL), and the derived/counter scalars whose `count` is dropped. The
+/// envelope is left empty here (the full input_config/run_info parity is proven
+/// by the end-to-end diff harness, not these synthetic fixtures).
+fn cfg(stem: &str) -> ExportConfig {
     ExportConfig {
         genai_perf: GenaiPerfExportConfig {
             enabled: true,
             stem: stem.to_owned(),
-            goodput,
-            streaming,
-            endpoint_type: endpoint_type.to_owned(),
+            header_map: header_map(),
+            filtered_tags: ["min_request_timestamp".to_owned()].into_iter().collect(),
+            scalar_tags: ["request_throughput", "request_count", "goodput"]
+                .iter()
+                .map(|tag| (*tag).to_owned())
+                .collect(),
+            envelope: GenaiPerfEnvelope::default(),
         },
         ..ExportConfig::default()
     }
@@ -158,7 +183,7 @@ fn streaming_report() -> NativeReport {
 #[test]
 fn json_matches_python_oracle_streaming_goodput() {
     let report = streaming_report();
-    let json = render_json(&report, &cfg("profile_export", "chat", true, true));
+    let json = render_json(&report, &cfg("profile_export").genai_perf);
     assert_eq!(json, include_str!("../golden/v1_streaming.json"));
     // INTERNAL metric was filtered from the JSON entirely.
     assert!(!json.contains("min_request_timestamp"));
@@ -167,7 +192,7 @@ fn json_matches_python_oracle_streaming_goodput() {
 #[test]
 fn csv_matches_python_oracle_streaming_goodput() {
     let report = streaming_report();
-    let csv = render_csv(&report).unwrap();
+    let csv = render_csv(&report, &cfg("profile_export").genai_perf).unwrap();
     let expected = "Metric,avg,min,max,sum,p1,p5,p10,p25,p50,p75,p90,p95,p99,std\r\n\
 Request Latency (ms),200.00,100.00,300.00,,101.00,105.00,110.00,125.00,150.00,175.00,190.00,195.00,199.00,50.25\r\n\
 Time to First Token (ms),10.00,5.00,15.00,,5.50,6.00,6.50,7.50,10.00,12.50,14.00,14.50,14.90,2.50\r\n\
@@ -202,10 +227,10 @@ fn non_finite_tail_is_omitted_from_json_and_blank_in_csv() {
     )]);
     let report = report_with(metrics);
 
-    let json = render_json(&report, &cfg("profile_export", "", false, false));
+    let json = render_json(&report, &cfg("profile_export").genai_perf);
     assert_eq!(json, include_str!("../golden/v1_nonfinite.json"));
 
-    let csv = render_csv(&report).unwrap();
+    let csv = render_csv(&report, &cfg("profile_export").genai_perf).unwrap();
     let expected = "Metric,avg,min,max,sum,p1,p5,p10,p25,p50,p75,p90,p95,p99,std\r\n\
 Request Latency (ms),,100.00,,,,,,,150.00,,,,,\r\n";
     assert_eq!(csv, expected);
@@ -232,28 +257,25 @@ fn non_streaming_report_omits_absent_streaming_metrics() {
     ]);
     let report = report_with(metrics);
 
-    let json = render_json(&report, &cfg("profile_export", "completions", false, false));
+    let json = render_json(&report, &cfg("profile_export").genai_perf);
     assert!(!json.contains("time_to_first_token"));
     assert!(!json.contains("inter_token_latency"));
-    // goodput=false / streaming=false surface into the projected input_config.
-    assert!(json.contains("\"streaming\": false"));
-    assert!(json.contains("\"goodput\": false"));
+    // error_summary is always emitted (empty here); the sink is presence-driven.
+    assert!(json.contains("\"error_summary\": []"));
 
-    let csv = render_csv(&report).unwrap();
+    let csv = render_csv(&report, &cfg("profile_export").genai_perf).unwrap();
     assert!(!csv.contains("Time to First Token"));
 }
 
 #[test]
 fn goodput_metric_present_regardless_of_flag() {
-    // The v1 summary emits the goodput metric whenever the report carries it;
-    // the cfg goodput flag only drives input_config, not metric gating.
+    // The v1 summary emits the goodput metric whenever the report carries it.
     let metrics = BTreeMap::from([("goodput".to_owned(), scalar("requests/sec", 1.5))]);
     let report = report_with(metrics);
 
-    let json = render_json(&report, &cfg("profile_export", "chat", true, false));
+    let json = render_json(&report, &cfg("profile_export").genai_perf);
     assert!(json.contains("\"goodput\": {"));
     assert!(json.contains("\"avg\": 1.5"));
-    assert!(json.contains("\"goodput\": false")); // input_config reflects the flag
 }
 
 #[test]
@@ -261,7 +283,7 @@ fn export_writes_both_aiperf_files_with_stemmed_names() {
     let report = streaming_report();
     let dir = std::env::temp_dir().join(format!("aiperf-genai-perf-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let config = cfg("profile_export", "chat", true, true);
+    let config = cfg("profile_export");
 
     GenaiPerfV1Exporter.export(&report, &dir, &config).unwrap();
 
@@ -282,14 +304,14 @@ fn export_writes_both_aiperf_files_with_stemmed_names() {
 fn export_rejects_path_traversal_stem() {
     let report = report_with(BTreeMap::new());
     let dir = std::env::temp_dir();
-    let config = cfg("../evil", "chat", false, false);
+    let config = cfg("../evil");
     assert!(GenaiPerfV1Exporter.export(&report, &dir, &config).is_err());
 }
 
 #[test]
 fn empty_report_emits_only_scalar_top_level_fields() {
     let report = report_with(BTreeMap::new());
-    let json = render_json(&report, &cfg("profile_export", "chat", false, false));
+    let json = render_json(&report, &cfg("profile_export").genai_perf);
     assert!(json.contains("\"schema_version\": \"1.4\""));
     assert!(json.contains("\"aiperf_version\": \"0.0.0-test\""));
     assert!(json.contains("\"was_cancelled\": false"));
@@ -297,6 +319,6 @@ fn empty_report_emits_only_scalar_top_level_fields() {
     assert!(!json.contains("request_latency"));
 
     // No metrics -> both CSV sections empty -> empty file.
-    let csv = render_csv(&report).unwrap();
+    let csv = render_csv(&report, &cfg("profile_export").genai_perf).unwrap();
     assert_eq!(csv, "");
 }

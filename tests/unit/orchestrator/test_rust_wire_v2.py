@@ -94,6 +94,35 @@ def test_v2_envelope_is_benchmark_run_shaped(tmp_path: Path, operation: str) -> 
     assert "resolved" in authored
 
 
+def test_export_genai_perf_disabled_without_summary(tmp_path: Path) -> None:
+    run = _run(tmp_path / "artifacts")
+    export = dump_benchmark_run(run)["cfg"]["export"]
+    assert export["genai_perf"] == {"enabled": False}
+
+
+def test_export_genai_perf_projects_frontend_metadata(tmp_path: Path) -> None:
+    run = _run(tmp_path / "artifacts")
+    # Enable the native v1 summary sink so the frontend projection is included.
+    run.cfg.artifacts.summary = ["json", "genai_perf"]
+
+    genai_perf = dump_benchmark_run(run)["cfg"]["export"]["genai_perf"]
+
+    assert genai_perf["enabled"] is True
+    # header_map carries the registered display header for known metric tags,
+    # exactly as native_report._metric_result derives it.
+    assert genai_perf["header_map"]["request_latency"] == "Request Latency"
+    # filtered / scalar tag sets are sorted registered subsets.
+    assert genai_perf["filtered_tags"] == sorted(genai_perf["filtered_tags"])
+    assert "request_throughput" in genai_perf["scalar_tags"]
+    # Envelope carries the frontend-owned JSON values verbatim.
+    envelope = genai_perf["envelope"]
+    assert envelope["benchmark_id"] == "authored-v2"
+    assert envelope["aiperf_version"]
+    assert isinstance(envelope["input_config"], dict)
+    assert envelope["run_info"]["benchmark_id"] == "authored-v2"
+    assert "start_time" not in envelope and "end_time" not in envelope
+
+
 def test_dump_strips_python_only_cfg_sections(tmp_path: Path) -> None:
     run = _run(tmp_path / "artifacts")
     dumped = dump_benchmark_run(run)

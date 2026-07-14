@@ -7,9 +7,6 @@
     "min": 100.0,
     "count": 2
   },
-  "input_config": {
-    "streaming": false,
-    "goodput": false
-  },
-  "was_cancelled": false
+  "was_cancelled": false,
+  "error_summary": []
 }

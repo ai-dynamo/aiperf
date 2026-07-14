@@ -650,20 +650,88 @@ def _export(run: BenchmarkRun) -> dict[str, Any]:
     """Project the native-Rust post-report export policy onto ``cfg.export``.
 
     Toggle/config passthrough only — the runner's ``aiperf::export`` plane owns
-    all emission. genai-perf v1 compat is enabled when ``"genai_perf"`` is present
-    in ``artifacts.summary``; OTel/MLflow projection is added when those sinks are
-    migrated to the native path (they currently emit via the supervised Python
-    live-streaming extension, see :func:`_live_streaming`).
+    all emission and serialization. genai-perf v1 compat is enabled when
+    ``"genai_perf"`` is present in ``artifacts.summary``; OTel/MLflow projection is
+    added when those sinks are migrated to the native path (they currently emit
+    via the supervised Python live-streaming extension, see
+    :func:`_live_streaming`).
+
+    When the v1 sink is enabled, we additionally project the frontend-owned data
+    values the native report alone cannot reconstruct, so the native
+    ``profile_export_aiperf.{json,csv}`` reproduce the Python exporters
+    byte-for-byte. The sink still owns all assembly and serialization; Python
+    only supplies the metric-registry-derived headers/filters and the exact
+    envelope JSON values (see :func:`_genai_perf_frontend_projection`).
     """
     config = run.cfg
     summary = config.artifacts.summary
     genai_perf_enabled = isinstance(summary, list) and "genai_perf" in summary
+    genai_perf: dict[str, Any] = {"enabled": genai_perf_enabled}
+    if genai_perf_enabled:
+        genai_perf.update(_genai_perf_frontend_projection(run))
+    return {"genai_perf": genai_perf}
+
+
+def _genai_perf_frontend_projection(run: BenchmarkRun) -> dict[str, Any]:
+    """Project frontend-owned genai-perf v1 data absent from the native report.
+
+    Three families of value are computed here because only the Python frontend
+    can derive them, and the native ``aiperf::export::genai_perf`` sink consumes
+    them verbatim (it performs all assembly/serialization itself):
+
+    * ``header_map`` — the display header for every registered metric tag, exactly
+      as :func:`native_report._metric_result` derives it
+      (``MetricRegistry.get_class_or_none(tag).header``). Unregistered tags are
+      absent here; the sink falls back to the tag string, matching Python's
+      ``else tag`` branch. Native-runtime metrics (``active_*``/``effective_*``/
+      ``credit_*``) are unregistered, so Python emits their snake tag as the name.
+    * ``filtered_tags`` / ``scalar_tags`` — the registered tags the Python file
+      exporters drop (``metrics_base_exporter._prepare_metrics``: INTERNAL /
+      EXPERIMENTAL, honoring the dev show-flags) and the registered scalar-tier
+      tags whose ``count`` is dropped by ``record_models.to_json_result``
+      (``MetricType.AGGREGATE`` / ``DERIVED``).
+    * ``envelope`` — ``benchmark_id``, ``aiperf_version``, ``input_config``, and
+      ``run_info`` serialized exactly as :class:`MetricsJsonExporter` emits them
+      (``JsonExportData.model_dump(mode="json", exclude_unset=True,
+      exclude_none=True)`` then ``scrub_non_finite``).
+    """
+    from aiperf import __version__ as aiperf_version
+    from aiperf.common.enums import MetricFlags, MetricType
+    from aiperf.common.finite import scrub_non_finite
+    from aiperf.common.models.export_models import JsonExportData, RunInfo
+    from aiperf.metrics.metric_registry import MetricRegistry
+
+    show_internal = Environment.DEV.SHOW_INTERNAL_METRICS
+    show_experimental = Environment.DEV.SHOW_EXPERIMENTAL_METRICS
+
+    header_map: dict[str, str] = {}
+    filtered_tags: list[str] = []
+    scalar_tags: list[str] = []
+    for metric_class in MetricRegistry.all_classes():
+        tag = str(metric_class.tag)
+        header_map[tag] = metric_class.header
+        if (metric_class.has_flags(MetricFlags.INTERNAL) and not show_internal) or (
+            metric_class.has_flags(MetricFlags.EXPERIMENTAL) and not show_experimental
+        ):
+            filtered_tags.append(tag)
+        if metric_class.type in {MetricType.AGGREGATE, MetricType.DERIVED}:
+            scalar_tags.append(tag)
+
+    envelope_model = JsonExportData(
+        aiperf_version=aiperf_version,
+        benchmark_id=run.benchmark_id,
+        input_config=run.cfg,
+        run_info=RunInfo.from_run(run),
+    )
+    envelope = scrub_non_finite(
+        envelope_model.model_dump(mode="json", exclude_unset=True, exclude_none=True)
+    )
+
     return {
-        "genai_perf": {
-            "enabled": genai_perf_enabled,
-            "endpoint_type": str(config.endpoint.type),
-            "streaming": bool(config.endpoint.streaming),
-        },
+        "header_map": header_map,
+        "filtered_tags": sorted(filtered_tags),
+        "scalar_tags": sorted(scalar_tags),
+        "envelope": envelope,
     }
 
 
