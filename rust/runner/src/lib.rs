@@ -18,6 +18,7 @@ mod gpu_telemetry;
 mod graph_execution;
 pub mod graph_input;
 mod graph_phase_runtime;
+mod heartbeat_lane;
 pub mod grpc_execution;
 pub mod grpc_turn_execution;
 mod live_streaming;

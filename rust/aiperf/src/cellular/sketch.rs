@@ -23,8 +23,11 @@ use std::f64::consts::PI;
 
 use serde::{Deserialize, Serialize};
 
-/// Default compression (δ). Larger keeps more centroids: finer quantiles, more
-/// bytes on the wire. ~`δ/2` centroids after compression.
+/// Default compression (δ) — the standard t-digest default. Larger keeps more
+/// centroids: finer quantiles, more bytes on the wire (~`δ/2` centroids after
+/// compression). At δ=100 live percentiles track the exact report to well under a
+/// percent on the broad distributions (TTFT, latency) and within a few percent at
+/// the extreme tail of tight ones — expected for an approximate live sketch.
 pub const DEFAULT_COMPRESSION: f64 = 100.0;
 
 /// A cluster of ingested values summarized by their mean and total weight.

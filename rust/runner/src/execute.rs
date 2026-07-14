@@ -100,6 +100,7 @@ use crate::graph_phase_runtime::{
     GraphPhaseBackendConfig, PreparedGraphPhaseBackend, RunnerGraphPhaseBackendFactory,
     run_graph_phases, validate_graph_phases,
 };
+use crate::heartbeat_lane::{CompositePhaseObserver, HeartbeatLane, HeartbeatPhaseObserver};
 use crate::live_streaming::{LiveResultsSink, PythonLiveStreamingRun, live_phase_observer};
 use crate::network_latency::NetworkLatencyRun;
 use crate::protocol::{
@@ -1533,6 +1534,10 @@ async fn execute_native_inner(
         prepared_endpoints,
     })?;
     let start_ns = clock.now_ns();
+    // Env-gated single-process cellular heartbeat lane; the same accumulator/t-digest
+    // the controller aggregates across cells in Phase 2. It consumes the per-record
+    // live clone, so it forces record capture on even without the Python sink.
+    let heartbeat_lane = HeartbeatLane::from_env(clock.clone(), start_ns)?;
     // An adaptive phase needs each completed turn's finished worker record fed
     // into its window sampler; the online dispatcher records per-token facts
     // worker-locally, so the coordinator sampler is otherwise starved.
@@ -1546,7 +1551,7 @@ async fn execute_native_inner(
         metrics_config.clone(),
         request.artifacts.raw_path.is_some(),
         request.artifacts.inputs_path.is_some(),
-        live_sink.is_some(),
+        live_sink.is_some() || heartbeat_lane.is_some(),
         wants_adaptive_record,
     ));
     let execution_result = async {
@@ -1609,6 +1614,7 @@ async fn execute_native_inner(
                 phase: metrics_phase(phase)?,
                 has_credit_timestamp: !matches!(phase, PhaseSpec::FixedSchedule { .. }),
                 live_sink: live_sink.clone(),
+                heartbeat: heartbeat_lane.clone(),
             });
             let mut record_processors = vec![record_processor];
             if phase.common().name == "profiling"
@@ -1641,10 +1647,17 @@ async fn execute_native_inner(
         create_run_artifacts(&request)?;
         sidecars.activate_live_streaming().await;
 
-        let observer: Rc<dyn PhaseObserver> = if let Some(sink) = live_sink {
-            live_phase_observer(sink, clock.clone())
-        } else {
+        let mut observers: Vec<Rc<dyn PhaseObserver>> = Vec::new();
+        if let Some(sink) = live_sink {
+            observers.push(live_phase_observer(sink, clock.clone()));
+        }
+        if let Some(lane) = &heartbeat_lane {
+            observers.push(Rc::new(HeartbeatPhaseObserver::new(lane.clone())));
+        }
+        let observer: Rc<dyn PhaseObserver> = if observers.is_empty() {
             Rc::new(NoopPhaseObserver)
+        } else {
+            CompositePhaseObserver::compose(observers)
         };
         let phased = run_scheduled_phases(plans, clock, dispatcher, observer).await?;
         phased
@@ -3686,6 +3699,7 @@ struct CapturePhaseProcessor {
     phase: MetricsPhase,
     has_credit_timestamp: bool,
     live_sink: Option<Rc<dyn LiveResultsSink>>,
+    heartbeat: Option<Rc<HeartbeatLane>>,
 }
 
 #[async_trait(?Send)]
@@ -3693,10 +3707,17 @@ impl TurnRecordProcessor for CapturePhaseProcessor {
     async fn process(&self, credit: &IssuedCredit, outcome: &TurnDispatchOutcome) -> Result<()> {
         self.capture
             .label(credit, self.phase, self.has_credit_timestamp, outcome);
-        if let Some(sink) = &self.live_sink
+        // The per-record clone is consumed once; feed both the Python live sink and
+        // the cellular heartbeat lane from that single snapshot.
+        if (self.live_sink.is_some() || self.heartbeat.is_some())
             && let Some(record) = self.capture.snapshot_live(credit)
         {
-            sink.emit_record(&record);
+            if let Some(sink) = &self.live_sink {
+                sink.emit_record(&record);
+            }
+            if let Some(heartbeat) = &self.heartbeat {
+                heartbeat.observe_record(&record.ingest);
+            }
         }
         Ok(())
     }
