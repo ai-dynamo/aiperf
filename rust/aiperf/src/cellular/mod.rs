@@ -36,13 +36,19 @@
 //! Everything here is object-safe where it crosses a `dyn` boundary and generic
 //! where it is hot-path monomorphized, per the crate's extensibility discipline.
 
+pub mod heartbeat;
 pub mod issuance;
 pub mod partition;
 pub mod shard;
+pub mod sketch;
 
+pub use heartbeat::{
+    HeartbeatAccumulator, HeartbeatCounters, HeartbeatSaturation, MetricsHeartbeat,
+};
 pub use issuance::{CellularAutonomousIssuer, DirectIssuanceAuthority, IssuanceAuthority};
 pub use partition::{CellPartition, CellPartitionError, ModuloCellPartition};
 pub use shard::{
     ColumnStorePartition, DirectRecordsShard, PartitionCodecError, RecordsMergeError, RecordsShard,
     RecordsShardPartition, merge_records_in_global_order, merge_store_partitions,
 };
+pub use sketch::TDigest;
