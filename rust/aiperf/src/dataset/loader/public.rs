@@ -184,7 +184,7 @@ impl Composer for AccuracyComposer {
                 Some(raw_messages),
                 "user",
                 Bytes::from(prompt_text),
-                prompt_tokens.clone().into_boxed_slice(),
+                prompt_tokens.into_boxed_slice(),
             )?;
             let extra_body = object
                 .get("extra_body")
@@ -294,16 +294,17 @@ impl Composer for ShareGptComposer {
             let mut conversation = Conversation::new(ids.next_id());
             let mut parent = None;
             for (prompt, tokens, output_tokens) in prepared {
+                let input_tokens = tokens.len() as u64;
                 let handle = segments.intern_text(
                     parent,
                     "user",
                     Bytes::from(prompt),
-                    tokens.clone().into_boxed_slice(),
+                    tokens.into_boxed_slice(),
                 )?;
                 parent = Some(handle);
                 let mut turn = Turn {
                     max_tokens: Some(output_tokens.max(1)),
-                    input_tokens: tokens.len() as u64,
+                    input_tokens,
                     content: smallvec![ContentGroup {
                         kind: MediaKind::Text,
                         name: String::new(),
@@ -611,16 +612,17 @@ impl Composer for SpeedBenchComposer {
                 let role = message["role"].as_str().unwrap();
                 let content = message["content"].as_str().unwrap();
                 let tokens = tokenizer.encode(content)?;
+                let input_tokens = tokens.len() as u64;
                 let handle = segments.intern_text(
                     parent,
                     role,
                     Bytes::copy_from_slice(content.as_bytes()),
-                    tokens.clone().into_boxed_slice(),
+                    tokens.into_boxed_slice(),
                 )?;
                 parent = Some(handle);
                 let mut turn = Turn {
                     role: Some(Role::from(role)),
-                    input_tokens: tokens.len() as u64,
+                    input_tokens,
                     content: smallvec![ContentGroup {
                         kind: MediaKind::Text,
                         name: String::new(),
@@ -1043,7 +1045,11 @@ fn rows_from_public_bytes(bytes: &[u8], label: &str) -> Result<Vec<RawRow>> {
         let values = match value {
             Value::Array(values) => values,
             Value::Object(mut object) if object.get("data").is_some_and(Value::is_array) => {
-                object.remove("data").unwrap().as_array().unwrap().clone()
+                match object.remove("data") {
+                    Some(Value::Array(values)) => values,
+                    // Unreachable: the arm guard already proved `data` is an array.
+                    _ => unreachable!("data guaranteed to be an array by arm guard"),
+                }
             }
             value => vec![value],
         };
@@ -1097,15 +1103,16 @@ fn compose_prompt_lists(
                 continue;
             }
             let tokens = tokenizer.encode(&text)?;
+            let input_tokens = tokens.len() as u64;
             let handle = segments.intern_text(
                 parent,
                 "user",
                 Bytes::from(text),
-                tokens.clone().into_boxed_slice(),
+                tokens.into_boxed_slice(),
             )?;
             parent = Some(handle);
             let mut turn = Turn {
-                input_tokens: tokens.len() as u64,
+                input_tokens,
                 content: smallvec![ContentGroup {
                     kind: MediaKind::Text,
                     name: String::new(),
