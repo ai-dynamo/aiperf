@@ -570,6 +570,13 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   non-goal framing with the current `LocalSet` + `drive_sim`/`drive_real` +
   HTTP-dispatch path, runner-only `graph` workload, and canonical `aiperf-rng`
   BLAKE3 recorded-content synthesis.
+- `specs/2026-07-13-scheduled-graph-production-convergence.md` — **code-grounded
+  audit**: the scheduled and graph online paths already share `TransportSink`,
+  `PreparedHttpTurn`, `NativeMetricsObserver`, the `IntervalGenerator`/`SlotPool`
+  primitives, and the phase orchestrator; graph arrival/admission are thin
+  wrappers over the same primitives. Only failure behavior genuinely differs
+  (graph fail-fast/abort-run vs. scheduled resilient). Corrects the
+  graph-is-metrics-lite impression; flags incidental cleanups; no refactor.
 - `specs/2026-07-09-dynamo-aiperf-{shared-core,request-rate-tokenizer}-design.md`
   — historical precursors (built on dynamo's `lib/mocker`; superseded by the
   standalone workspace).
