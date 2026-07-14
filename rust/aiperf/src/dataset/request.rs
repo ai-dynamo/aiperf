@@ -21,7 +21,7 @@ use crate::endpoints::{
 use bytes::Bytes;
 use serde_json::{Map, Value};
 
-use crate::dataset::body_plan::{BodyPlan, JsonBodyMaterializer, materialize_merged_object};
+use crate::dataset::body_plan::{BodyPlan, JsonBodyMaterializer};
 use crate::dataset::dataset::Dataset;
 use crate::dataset::error::{DatasetError, Result};
 use crate::dataset::materialize::Overrides;
@@ -346,28 +346,23 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                 x_correlation_id: None,
                 conversation_id: Some(session.conversation_id().as_str().to_string()),
             };
-            let mut value = endpoint.format_payload(&request_info)?;
-            merge_overrides(&mut value, overrides)?;
-            let effective = effective_from_structured_body(
-                &mut value,
+            // Endpoint-body-construction stage 2: dispatch operates on a
+            // BodyPlan, not a serde_json::Value. The formatter's body object
+            // decomposes to a plan (message array spliced as wires, other fields
+            // literals); dispatch overrides fold into the plan's literal fields
+            // and effective metadata is read from them. Byte-identical to the
+            // legacy merge-then-`to_vec` path (guarded by the endpoints_* suite).
+            let mut plan = structured_plan(endpoint.format_payload(&request_info)?)?;
+            plan.merge_overrides(overrides);
+            let effective = effective_from_plan(
+                &mut plan,
                 current,
                 &model_endpoint.primary_model_name,
                 model_endpoint.endpoint.streaming,
                 endpoint.descriptor().supports_streaming,
                 overrides,
             )?;
-            // Route structured dispatch through the shared JSON materializer
-            // (endpoint-body-construction stage 2). Byte-identical to
-            // `serde_json::to_vec(&value)`: the merged body object decomposes to
-            // a BodyPlan whose `messages` array is spliced as wires and whose
-            // other fields are literals, materialized in the same order.
-            let body = value
-                .as_object()
-                .ok_or_else(|| {
-                    DatasetError::Validation("endpoint formatter returned a non-object body".into())
-                })
-                .and_then(materialize_merged_object)?;
-            (body, effective)
+            (plan.materialize_standalone()?, effective)
         };
 
         let endpoint_path = model_endpoint.endpoint.path.clone().or_else(|| {
@@ -449,28 +444,20 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                 None,
                 Some(&conversation_id),
             );
-            let mut value = endpoint.format_payload(&request)?;
-            merge_overrides(&mut value, overrides)?;
-            let effective = effective_from_structured_body(
-                &mut value,
+            // Endpoint-body-construction stage 2: dispatch operates on a BodyPlan
+            // (see the sibling materialize path). Byte-identical to the legacy
+            // merge-then-`to_vec` path.
+            let mut plan = structured_plan(endpoint.format_payload(&request)?)?;
+            plan.merge_overrides(overrides);
+            let effective = effective_from_plan(
+                &mut plan,
                 current,
                 primary_model_name,
                 configured_streaming,
                 supports_streaming,
                 overrides,
             )?;
-            // Route structured dispatch through the shared JSON materializer
-            // (endpoint-body-construction stage 2). Byte-identical to
-            // `serde_json::to_vec(&value)`: the merged body object decomposes to
-            // a BodyPlan whose `messages` array is spliced as wires and whose
-            // other fields are literals, materialized in the same order.
-            let body = value
-                .as_object()
-                .ok_or_else(|| {
-                    DatasetError::Validation("endpoint formatter returned a non-object body".into())
-                })
-                .and_then(materialize_merged_object)?;
-            (body, effective)
+            (plan.materialize_standalone()?, effective)
         };
 
         let endpoint_path = endpoint.config().as_raw().path.clone().or_else(|| {
@@ -661,18 +648,30 @@ struct EffectiveRequest {
     streaming: bool,
 }
 
-fn effective_from_structured_body(
-    value: &mut Value,
+/// Decompose an endpoint formatter's body object into a [`BodyPlan`], rejecting
+/// a non-object body with the same error the legacy path produced.
+fn structured_plan(value: Value) -> Result<BodyPlan> {
+    value
+        .as_object()
+        .ok_or_else(|| {
+            DatasetError::Validation("endpoint formatter returned a non-object body".into())
+        })
+        .and_then(BodyPlan::from_object)
+}
+
+/// Read effective model/max-tokens/streaming from a merged [`BodyPlan`]'s
+/// literal fields and force `stream` off when the endpoint cannot stream —
+/// the plan-side equivalent of the former `effective_from_structured_body`,
+/// byte-identical because the plan's literal fields mirror the body object.
+fn effective_from_plan(
+    plan: &mut BodyPlan,
     turn: &Turn,
     primary_model_name: &str,
     configured_streaming: bool,
     supports_streaming: bool,
     overrides: &Overrides,
 ) -> Result<EffectiveRequest> {
-    let object = value.as_object_mut().ok_or_else(|| {
-        DatasetError::Validation("endpoint formatter returned a non-object body".into())
-    })?;
-    let model = match object.get("model") {
+    let model = match plan.literal_field("model") {
         Some(Value::String(model)) => model.clone(),
         Some(_) => {
             return Err(DatasetError::Validation(
@@ -682,15 +681,12 @@ fn effective_from_structured_body(
         None => effective_model(turn, primary_model_name, overrides)?,
     };
     let mut max_tokens = effective_max_tokens(turn, overrides)?;
-    for (field, value) in object.iter().filter(|(field, _)| {
-        matches!(
-            field.as_str(),
-            "max_tokens" | "max_completion_tokens" | "max_output_tokens"
-        )
-    }) {
-        max_tokens = Some(positive_u32(value, field)?);
+    for field in ["max_tokens", "max_completion_tokens", "max_output_tokens"] {
+        if let Some(value) = plan.literal_field(field) {
+            max_tokens = Some(positive_u32(value, field)?);
+        }
     }
-    let requested_streaming = match object.get("stream") {
+    let requested_streaming = match plan.literal_field("stream") {
         Some(Value::Bool(streaming)) => *streaming,
         Some(_) => {
             return Err(DatasetError::Validation(
@@ -701,7 +697,7 @@ fn effective_from_structured_body(
     };
     let streaming = requested_streaming && supports_streaming;
     if requested_streaming != streaming {
-        object.insert("stream".into(), Value::Bool(streaming));
+        plan.set_literal("stream", Value::Bool(streaming));
     }
     Ok(EffectiveRequest {
         model,
@@ -1233,16 +1229,6 @@ fn raw_string_map(
             ))),
         })
         .collect()
-}
-
-fn merge_overrides(value: &mut Value, overrides: &Overrides) -> Result<()> {
-    let object = value.as_object_mut().ok_or_else(|| {
-        DatasetError::Validation("endpoint formatter returned a non-object body".into())
-    })?;
-    for (key, value) in overrides.fields() {
-        object.insert(key.clone(), value.clone());
-    }
-    Ok(())
 }
 
 #[cfg(test)]

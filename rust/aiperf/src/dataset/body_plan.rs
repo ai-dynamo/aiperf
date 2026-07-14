@@ -103,13 +103,24 @@ impl BodyPlan {
     }
 
     /// Declare an ordered message array of stored segments (`"name":[seg,…]`).
-    pub fn array(self, name: impl Into<FieldName>, handles: impl IntoIterator<Item = Handle>) -> Self {
-        self.push(name.into(), FieldValue::Segments(handles.into_iter().collect()))
+    pub fn array(
+        self,
+        name: impl Into<FieldName>,
+        handles: impl IntoIterator<Item = Handle>,
+    ) -> Self {
+        self.push(
+            name.into(),
+            FieldValue::Segments(handles.into_iter().collect()),
+        )
     }
 
     /// Declare an ordered message array of already-serialized wires — dynamic or
     /// live-continuation content not interned in the frozen store.
-    pub fn wire_array(self, name: impl Into<FieldName>, wires: impl IntoIterator<Item = Bytes>) -> Self {
+    pub fn wire_array(
+        self,
+        name: impl Into<FieldName>,
+        wires: impl IntoIterator<Item = Bytes>,
+    ) -> Self {
         self.push(name.into(), FieldValue::Wires(wires.into_iter().collect()))
     }
 
@@ -144,6 +155,73 @@ impl BodyPlan {
     /// Declare a literal boolean field.
     pub fn bool(self, name: impl Into<FieldName>, value: bool) -> Self {
         self.literal(name, Value::Bool(value))
+    }
+
+    /// Decompose a fully-built endpoint body object into a plan: every top-level
+    /// array-of-objects field (a message array) becomes spliceable
+    /// [`Wires`](FieldValue::Wires), everything else a [`Literal`]. Materializing
+    /// the result is byte-identical to `serde_json::to_vec(object)`. This is the
+    /// transitional adapter from a `Value`-building formatter to the plan model;
+    /// a formatter that authors the plan directly skips it.
+    ///
+    /// [`Literal`]: FieldValue::Literal
+    pub fn from_object(object: &serde_json::Map<String, Value>) -> Result<Self> {
+        let mut plan = Self::new();
+        for (key, value) in object {
+            let name = Cow::Owned(key.clone());
+            match value.as_array() {
+                Some(elements) if !elements.is_empty() && elements.iter().all(Value::is_object) => {
+                    let wires = elements
+                        .iter()
+                        .map(|element| serde_json::to_vec(element).map(Bytes::from))
+                        .collect::<std::result::Result<SmallVec<[Bytes; 1]>, _>>()?;
+                    plan = plan.push(name, FieldValue::Wires(wires));
+                }
+                _ => plan = plan.push(name, FieldValue::Literal(value.clone())),
+            }
+        }
+        Ok(plan)
+    }
+
+    /// Borrow a top-level literal field's value by name.
+    pub fn literal_field(&self, name: &str) -> Option<&Value> {
+        match self {
+            Self::Fields(fields) => fields.iter().find_map(|(field, value)| match value {
+                FieldValue::Literal(literal) if field == name => Some(literal),
+                _ => None,
+            }),
+            Self::Raw(_) => None,
+        }
+    }
+
+    /// Set a top-level literal field: replace in place if the name already
+    /// exists (position preserved), else append — the insertion-order semantics
+    /// of `serde_json::Map::insert`, so dispatch overrides fold in byte-for-byte.
+    pub fn set_literal(&mut self, name: impl Into<FieldName>, value: Value) {
+        if let Self::Fields(fields) = self {
+            let name = name.into();
+            if let Some(slot) = fields.iter_mut().find(|(field, _)| *field == name) {
+                slot.1 = FieldValue::Literal(value);
+            } else {
+                fields.push((name, FieldValue::Literal(value)));
+            }
+        }
+    }
+
+    /// Fold per-dispatch [`Overrides`] into the plan's literal fields with the
+    /// same in-place/append semantics `merge_overrides` applies to a JSON object,
+    /// so the materialized body matches the legacy merge byte-for-byte.
+    pub fn merge_overrides(&mut self, overrides: &Overrides) {
+        for (name, value) in overrides.fields() {
+            self.set_literal(Cow::Owned(name.clone()), value.clone());
+        }
+    }
+
+    /// Materialize a plan that references no stored segments (only literals and
+    /// inline wires) — used by the transitional object bridge.
+    pub fn materialize_standalone(&self) -> Result<Bytes> {
+        let store = crate::dataset::segment::InMemorySegmentStore::default();
+        JsonBodyMaterializer::materialize(self, &store, &Overrides::new())
     }
 }
 
@@ -236,38 +314,6 @@ fn materialize_fields<S: SegmentStore + ?Sized>(
     Ok(body.freeze())
 }
 
-/// Bridge a fully-merged endpoint body object onto the shared materializer.
-///
-/// Decomposes the final merged request object into a [`BodyPlan`] — any
-/// top-level array-of-objects field (`messages`) becomes spliceable
-/// [`Wires`](FieldValue::Wires), everything else a [`Literal`] — and
-/// materializes it. The result is **byte-identical** to
-/// `serde_json::to_vec(object)` (the materializer preserves field order and
-/// per-value encoding), so structured dispatch routes through the one JSON
-/// materializer while the endpoints are migrated to return a [`BodyPlan`]
-/// directly. Content is serialized exactly once, as before.
-///
-/// [`Literal`]: FieldValue::Literal
-pub fn materialize_merged_object(object: &serde_json::Map<String, Value>) -> Result<Bytes> {
-    let mut plan = BodyPlan::new();
-    for (key, value) in object {
-        let name = Cow::Owned(key.clone());
-        match value.as_array() {
-            Some(elements) if !elements.is_empty() && elements.iter().all(Value::is_object) => {
-                let wires = elements
-                    .iter()
-                    .map(|element| serde_json::to_vec(element).map(Bytes::from))
-                    .collect::<std::result::Result<SmallVec<[Bytes; 1]>, _>>()?;
-                plan = plan.push(name, FieldValue::Wires(wires));
-            }
-            _ => plan = plan.push(name, FieldValue::Literal(value.clone())),
-        }
-    }
-    // No Segment handles are referenced, so the store is never consulted.
-    let store = crate::dataset::segment::InMemorySegmentStore::default();
-    JsonBodyMaterializer::materialize(&plan, &store, &Overrides::new())
-}
-
 /// Append one validated message-object wire as an array element.
 fn push_message(body: &mut BytesMut, wire: &[u8], index: usize) -> Result<()> {
     validate_object_slice(wire)
@@ -304,11 +350,7 @@ mod tests {
     #[test]
     fn messages_plan_is_byte_identical_to_legacy_splice() {
         let mut pool = SegmentPool::new();
-        let system = message(
-            &mut pool,
-            None,
-            br#"{"role":"system","content":"S"}"#,
-        );
+        let system = message(&mut pool, None, br#"{"role":"system","content":"S"}"#);
         let user = message(
             &mut pool,
             Some(system),
@@ -342,7 +384,11 @@ mod tests {
     fn wire_array_splices_identically_to_stored_segments() {
         let mut pool = SegmentPool::new();
         let a = message(&mut pool, None, br#"{"role":"user","content":"one"}"#);
-        let b = message(&mut pool, Some(a), br#"{"role":"assistant","content":"two"}"#);
+        let b = message(
+            &mut pool,
+            Some(a),
+            br#"{"role":"assistant","content":"two"}"#,
+        );
         let store = pool.freeze();
         let mut overrides = Overrides::new();
         overrides.set_model("m");
@@ -379,8 +425,35 @@ mod tests {
             "user_extra_key": {"nested": [1, 2, 3]}
         });
         let map = object.as_object().unwrap();
-        let bridged = materialize_merged_object(map).unwrap();
+        let bridged = BodyPlan::from_object(map).unwrap().materialize_standalone().unwrap();
         assert_eq!(bridged, Bytes::from(serde_json::to_vec(&object).unwrap()));
+    }
+
+    #[test]
+    fn plan_merge_overrides_matches_object_insert_then_to_vec() {
+        // The legacy path merged dispatch overrides into the body object with
+        // serde_json::Map::insert (in-place for existing keys, append for new),
+        // then to_vec'd. The plan-side merge_overrides must match byte-for-byte.
+        let object = serde_json::json!({
+            "messages": [{"role": "user", "content": "q"}],
+            "model": "old",
+            "stream": true
+        });
+        let mut overrides = Overrides::new();
+        overrides.set_model("new"); // existing key -> in-place
+        overrides.set_stream(false); // existing key -> in-place
+        overrides.insert("seed", Value::from(7)); // new key -> append
+
+        // Legacy oracle.
+        let mut legacy = object.as_object().unwrap().clone();
+        for (key, value) in overrides.fields() {
+            legacy.insert(key.clone(), value.clone());
+        }
+        let legacy_bytes = Bytes::from(serde_json::to_vec(&Value::Object(legacy)).unwrap());
+
+        let mut plan = BodyPlan::from_object(object.as_object().unwrap()).unwrap();
+        plan.merge_overrides(&overrides);
+        assert_eq!(plan.materialize_standalone().unwrap(), legacy_bytes);
     }
 
     #[test]
