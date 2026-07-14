@@ -56,15 +56,13 @@ pub fn run_cellular(
 ) -> Result<CellularRunOutcome> {
     ensure!(cell_count >= 1, "cell_count must be at least 1");
     validate_cellular_run_shape(envelope)?;
-    validate_cellular_phase_budgets(envelope)?;
+    validate_cellular_phase_budgets(envelope, cell_count)?;
+    // Ensure a profiling phase exists; every phase's `requests >= cell_count` (so no
+    // cell owns zero) is already checked by validate_cellular_phase_budgets.
+    profiling_request_budget(envelope)?;
     // Derive the metrics policy from the envelope so the merge reproduces the
     // authored SLOs / timeslices, exactly as the single-process path does.
     let metrics_config = cellular_metrics_config(envelope)?;
-    let total_requests = profiling_request_budget(envelope)?;
-    ensure!(
-        total_requests >= cell_count as u64,
-        "cellular runs need at least one request per cell ({total_requests} requests, {cell_count} cells)"
-    );
 
     // The controller is off the per-request hot path; a small multi-thread runtime
     // drives the transport accept/read tasks and the child processes concurrently.
@@ -378,6 +376,27 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
             "cellular runs support only single-turn conversations (turns == 1); a multi-turn dataset diverges the sampler draw index from the issuer's per-turn ordinal and silently breaks byte parity"
         );
     }
+    // Byte-parity requires every cell to compose the SAME dataset space. Each cell is a
+    // separate process; without a concrete run seed it entropy-seeds an independent
+    // random dataset (different prompts / ISL-OSL draws), voiding the partition
+    // invariant. Require a run-level seed (the cell envelopes inherit it verbatim).
+    ensure!(
+        envelope
+            .pointer("/run/random_seed")
+            .and_then(serde_json::Value::as_u64)
+            .is_some(),
+        "cellular runs require a concrete run-level random_seed; without it each cell composes an independent random dataset and the merged report is not reproducible"
+    );
+    // A single request-per-turn URL selection is reproducible; multiple URLs round-robin
+    // in cell-local order, so a heterogeneous-backend run would diverge per cell.
+    let url_count = envelope
+        .pointer("/run/cfg/endpoint/urls")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len);
+    ensure!(
+        url_count <= 1,
+        "cellular runs support a single endpoint URL; {url_count} URLs would round-robin differently per cell and diverge on heterogeneous backends"
+    );
     Ok(())
 }
 
@@ -397,23 +416,27 @@ const CELLULAR_REQUEST_BOUNDED_PHASE_TYPES: [&str; 4] =
 /// - has a `type` outside [`CELLULAR_REQUEST_BOUNDED_PHASE_TYPES`] (a trace-driven
 ///   `fixed_schedule`/`user_centric` phase ignores `requests` and replays the full
 ///   trace per cell);
-/// - lacks a `requests` budget; or
-/// - carries a `duration`/`sessions`/`adaptive_scale` bound that can stop it early.
-///
-/// - carries a `duration`/`sessions`/`adaptive_scale` bound that can stop it early; or
+/// - lacks a `requests` budget, or has one below `cell_count` (a cell would own zero);
+/// - carries a `duration`/`sessions`/`adaptive_scale` bound that can stop it early;
 /// - drives a concurrency/prefill/rate **ramp**, which the controller cannot slice
-///   per cell (each cell would ramp to the full authored target, N×-ing the aggregate
-///   in-flight/rate over the ramp).
+///   per cell (each cell would ramp to the full authored target, N×-ing the aggregate); or
+/// - has a `concurrency`/`prefill_concurrency` cap below `cell_count` — the `.max(1)`
+///   per-cell floor would then over-subscribe the aggregate in-flight to `cell_count`.
 ///
-/// Fail closed rather than silently corrupt. Post-send cancellation stays allowed: it
-/// marks turns cancelled after dispatch, not *how many* are dispatched. The static
-/// `concurrency`/`prefill_concurrency`/`rate` caps ARE sliced per cell (see
-/// [`build_cell_envelope`]).
-fn validate_cellular_phase_budgets(envelope: &serde_json::Value) -> Result<()> {
+/// Fail closed rather than silently corrupt. The static `concurrency`/
+/// `prefill_concurrency`/`rate` caps at or above `cell_count` ARE sliced per cell (see
+/// [`build_cell_envelope`]). Two supported knobs are only *statistically* equivalent to
+/// a 1-cell run, not byte-identical: rate-based phases match the aggregate offered rate
+/// but not the per-turn arrival sample path, and a post-send `cancellation` policy
+/// matches the aggregate cancellation rate but not the exact cancelled subset (its RNG
+/// runs in cell-local dispatch order). Byte-parity is exact for a seeded `concurrency`
+/// phase without cancellation; the other two are intentional approximations.
+fn validate_cellular_phase_budgets(envelope: &serde_json::Value, cell_count: u32) -> Result<()> {
     let phases = envelope
         .pointer("/run/cfg/phases")
         .and_then(serde_json::Value::as_array)
         .context("run cfg has no phases array")?;
+    let cells = cell_count as u64;
     for phase in phases {
         let name = phase
             .get("name")
@@ -425,12 +448,10 @@ fn validate_cellular_phase_budgets(envelope: &serde_json::Value) -> Result<()> {
             "cellular runs support only request-bounded phase types ({}); phase {name:?} has type {phase_type:?}, whose dispatch count is trace-driven and would replay the full trace per cell",
             CELLULAR_REQUEST_BOUNDED_PHASE_TYPES.join("/")
         );
+        let requests = phase.get("requests").and_then(serde_json::Value::as_u64);
         ensure!(
-            phase
-                .get("requests")
-                .and_then(serde_json::Value::as_u64)
-                .is_some(),
-            "cellular runs require every phase to be request-bounded; phase {name:?} has no `requests` budget"
+            requests.is_some_and(|r| r >= cells),
+            "cellular runs require every phase to have a `requests` budget >= cell_count ({cell_count}); phase {name:?} has {requests:?}"
         );
         ensure!(
             phase.get("duration").is_none()
@@ -444,6 +465,18 @@ fn validate_cellular_phase_budgets(envelope: &serde_json::Value) -> Result<()> {
                 && phase.get("rate_ramp").is_none(),
             "cellular runs do not support concurrency/prefill/rate ramps; the controller cannot slice a ramp target per cell, so every cell would ramp to the full value and N× the aggregate load; phase {name:?}"
         );
+        // A post-send `cancellation` policy is allowed: each cell applies the same
+        // per-request probability, so the aggregate cancellation rate matches, though
+        // the exact cancelled subset differs (cell-local RNG order) — an accepted
+        // non-byte-parity approximation, not a rejected shape.
+        for cap in ["concurrency", "prefill_concurrency"] {
+            if let Some(value) = phase.get(cap).and_then(serde_json::Value::as_u64) {
+                ensure!(
+                    value >= cells,
+                    "cellular runs require a `{cap}` cap >= cell_count ({cell_count}) so it splits evenly (a smaller cap floors to 1 per cell and over-subscribes the aggregate to cell_count); phase {name:?} has {value}"
+                );
+            }
+        }
     }
     Ok(())
 }
@@ -600,15 +633,16 @@ mod tests {
 
     #[test]
     fn rejects_non_shipping_run_shapes() {
-        // http transport over a synthetic, single-turn dataset (turns absent, or a
-        // fixed 1) is the supported shape.
+        // Supported: http (or default) transport, synthetic single-turn dataset, a run
+        // seed, and at most one endpoint URL.
         for ok in [
-            serde_json::json!({"run": {"cfg": {
+            serde_json::json!({"run": {"random_seed": 42, "cfg": {
                 "transport": {"type": "http"},
-                "datasets": [{"type": "synthetic"}],
-            }}}),
-            serde_json::json!({"run": {"cfg": {
                 "datasets": [{"type": "synthetic", "turns": {"value": 1}}],
+                "endpoint": {"urls": ["http://x/v1"]},
+            }}}),
+            serde_json::json!({"run": {"random_seed": 1, "cfg": {
+                "datasets": [{"type": "synthetic"}],
             }}}),
         ] {
             assert!(
@@ -616,16 +650,18 @@ mod tests {
                 "should accept {ok}"
             );
         }
-        // Fail closed on: a non-HTTP transport; a non-synthetic (graph/trace/public)
-        // dataset; a missing datasets array; or a multi-turn synthetic dataset.
+        // Fail closed on each unsupported aspect (all else valid + seeded):
         for bad in [
-            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "synthetic"}], "transport": {"type": "dynosim_offline"}}}}),
-            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "synthetic"}], "transport": {"type": "grpc"}}}}),
-            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "file", "format": "dag_jsonl"}]}}}),
-            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "public"}]}}}),
-            serde_json::json!({"run": {"cfg": {}}}),
-            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "synthetic", "turns": {"value": 3}}]}}}),
-            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "synthetic", "turns": {"mean": 2.0, "stddev": 1.0}}]}}}),
+            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "synthetic"}], "transport": {"type": "grpc"}}}}),
+            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "file", "format": "dag_jsonl"}]}}}),
+            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "public"}]}}}),
+            serde_json::json!({"run": {"random_seed": 42, "cfg": {}}}),
+            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "synthetic", "turns": {"value": 3}}]}}}),
+            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "synthetic", "turns": {"mean": 2.0, "stddev": 1.0}}]}}}),
+            // Missing run seed.
+            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "synthetic"}]}}}),
+            // Multiple endpoint URLs.
+            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "synthetic"}], "endpoint": {"urls": ["http://a", "http://b"]}}}}),
         ] {
             assert!(
                 validate_cellular_run_shape(&bad).is_err(),
@@ -664,15 +700,16 @@ mod tests {
 
     #[test]
     fn rejects_non_request_bounded_phases() {
-        // Request-bounded (arrival-pattern) phase types with a `requests` budget pass.
+        // Request-bounded (arrival-pattern) phase types with requests + caps >= cells
+        // pass; a post-send cancellation policy is allowed (approximate).
         let ok = serde_json::json!({"run": {"cfg": {"phases": [
-            {"type": "concurrency", "name": "warmup", "requests": 10},
-            {"type": "constant", "name": "profiling", "requests": 100},
+            {"type": "concurrency", "name": "warmup", "requests": 10, "concurrency": 8},
+            {"type": "concurrency", "name": "profiling", "requests": 100, "concurrency": 8, "cancellation": {"rate": 25.0, "delay": 0.5}},
         ]}}});
-        assert!(validate_cellular_phase_budgets(&ok).is_ok());
-        // Fail closed on: a trace-driven phase type (`fixed_schedule`/`user_centric`)
-        // or a missing type; a phase lacking `requests`; or a
-        // duration/sessions/adaptive_scale bound whose count can diverge.
+        assert!(validate_cellular_phase_budgets(&ok, 4).is_ok());
+        // Fail closed (cell_count 4) on: a trace-driven or missing phase type; requests
+        // absent or below cell_count; a duration/sessions/adaptive_scale bound; a ramp;
+        // a post-send cancellation; or a concurrency/prefill cap below cell_count.
         for bad in [
             serde_json::json!({"run": {"cfg": {"phases": [
                 {"type": "fixed_schedule", "name": "profiling", "requests": 100},
@@ -684,6 +721,9 @@ mod tests {
                 {"name": "profiling", "requests": 100},
             ]}}}),
             serde_json::json!({"run": {"cfg": {"phases": [{"type": "concurrency", "name": "profiling"}]}}}),
+            serde_json::json!({"run": {"cfg": {"phases": [
+                {"type": "concurrency", "name": "profiling", "requests": 2},
+            ]}}}),
             serde_json::json!({"run": {"cfg": {"phases": [
                 {"type": "concurrency", "name": "profiling", "requests": 100, "duration": 5.0},
             ]}}}),
@@ -699,9 +739,12 @@ mod tests {
             serde_json::json!({"run": {"cfg": {"phases": [
                 {"type": "constant", "name": "profiling", "requests": 100, "rate_ramp": {"start": 1.0, "end": 50.0}},
             ]}}}),
+            serde_json::json!({"run": {"cfg": {"phases": [
+                {"type": "concurrency", "name": "profiling", "requests": 100, "concurrency": 2},
+            ]}}}),
         ] {
             assert!(
-                validate_cellular_phase_budgets(&bad).is_err(),
+                validate_cellular_phase_budgets(&bad, 4).is_err(),
                 "should reject {bad}"
             );
         }
