@@ -202,6 +202,11 @@ impl GraphStopPolicy for UnlimitedGraphStop {
 }
 
 /// Clock-native duration bound that stops new roots and drains active traces.
+///
+/// Available [`GraphStopPolicy`] seam implementation, intentionally kept but not
+/// wired by the current product: the runner bounds graph phases through the
+/// shared phase deadline (`UnlimitedGraphStop` + the phase controller), so this
+/// is the second, ready impl for a caller that wants a workload-relative stop.
 #[derive(Debug, Clone, Copy)]
 pub struct DurationGraphStop {
     duration_ns: i64,
@@ -243,6 +248,11 @@ impl GraphArrivalPolicy for ImmediateGraphArrival {
 }
 
 /// Clock-native authored-offset arrivals.
+///
+/// Available [`GraphArrivalPolicy`] seam implementation, intentionally kept but
+/// not wired by the current product: the runner drives arrivals from the shared
+/// `IntervalGenerator` handle (`Immediate`/`IntervalGraphArrival`), so this
+/// authored-offset pacer is the ready alternate for trace-relative schedules.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ScheduledGraphArrival;
 

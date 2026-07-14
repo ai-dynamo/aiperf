@@ -581,9 +581,10 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   scheduled and graph, wired through an optional `cfg.failure_policy` (absent →
   each path's historical default, no regression); graph `Continue` uses the
   dormant `Resilient`/`Continue` library policies, scheduled `Abort` latches a
-  `Failed`-terminal `bail!`. Carries the P1 rename pass and the incidental
-  cleanups (dead coordinator observer; removed `DurationGraphStop`/
-  `ScheduledGraphArrival`); documents why scheduled streaming dispatch stays off.
+  `Failed`-terminal `bail!`. Keeps `DurationGraphStop`/`ScheduledGraphArrival` as
+  documented unwired seams; documents why scheduled streaming dispatch stays off.
+  P1 renames and the discarded-observer cleanup are deferred (both touch
+  `http.rs`/`metrics.rs`, under concurrent edit by the parallel bodyplan work).
 - `specs/2026-07-13-segment-unification-design.md` — **segment unification**
   (design): collapse `Turn`'s five body fields (content/messages/raw_payload/
   raw_messages/raw_token_ids) into segment `Handle`s in the one `SegmentPool`;
