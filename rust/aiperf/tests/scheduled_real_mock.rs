@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Wall-clock timing proof against the workspace `aiperf-mock-rs` process.
+//! Wall-clock timing proof against the workspace `aiperf-mock-server` process.
 
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -64,7 +64,7 @@ impl RealMock {
         }
         let mut child = child;
         let _ = child.kill();
-        eprintln!("SKIP: aiperf-mock-rs did not become ready");
+        eprintln!("SKIP: aiperf-mock-server did not become ready");
         None
     }
 }
@@ -81,7 +81,7 @@ fn mock_binary() -> PathBuf {
         return PathBuf::from(path);
     }
 
-    let binary_name = format!("aiperf-mock-rs{}", std::env::consts::EXE_SUFFIX);
+    let binary_name = format!("aiperf-mock-server{}", std::env::consts::EXE_SUFFIX);
     if let Ok(current_exe) = std::env::current_exe()
         && let Some(profile_dir) = current_exe.parent().and_then(|deps_dir| deps_dir.parent())
     {

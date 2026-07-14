@@ -3,7 +3,7 @@
 
 //! End-to-end proof that the graph executor dispatches real OpenAI chat
 //! completions over HTTP via `TransportChatSink` (backed by `aiperf-transport-http`)
-//! against the workspace `aiperf-mock-rs` binary — not an in-process stub.
+//! against the workspace `aiperf-mock-server` binary — not an in-process stub.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -38,7 +38,7 @@ use loadgen_core::sink::RequestObserver;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-/// A child `aiperf-mock-rs` process on a free port, killed on drop.
+/// A child `aiperf-mock-server` process on a free port, killed on drop.
 struct RealMock {
     child: Child,
     base_url: String,
@@ -95,7 +95,7 @@ fn mock_binary() -> PathBuf {
         return PathBuf::from(path);
     }
 
-    let binary_name = format!("aiperf-mock-rs{}", std::env::consts::EXE_SUFFIX);
+    let binary_name = format!("aiperf-mock-server{}", std::env::consts::EXE_SUFFIX);
     if let Ok(current_exe) = std::env::current_exe()
         && let Some(profile_dir) = current_exe.parent().and_then(|deps_dir| deps_dir.parent())
     {

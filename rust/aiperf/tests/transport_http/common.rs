@@ -1,5 +1,5 @@
 // rust/transport-http/tests/common/mod.rs
-//! Spawns the workspace `aiperf-mock-rs` binary for integration tests.
+//! Spawns the workspace `aiperf-mock-server` binary for integration tests.
 #![allow(dead_code)]
 
 use std::path::PathBuf;
@@ -24,7 +24,7 @@ fn binary() -> PathBuf {
         return PathBuf::from(path);
     }
 
-    let binary_name = format!("aiperf-mock-rs{}", std::env::consts::EXE_SUFFIX);
+    let binary_name = format!("aiperf-mock-server{}", std::env::consts::EXE_SUFFIX);
     if let Ok(current_exe) = std::env::current_exe()
         && let Some(profile_dir) = current_exe.parent().and_then(|deps_dir| deps_dir.parent())
     {

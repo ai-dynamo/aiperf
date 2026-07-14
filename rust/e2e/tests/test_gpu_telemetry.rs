@@ -1,0 +1,182 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Tests for GPU telemetry collection and reporting.
+//!
+//! Ported from `tests/integration/test_gpu_telemetry.py`. DCGM telemetry
+//! requires Linux (DCGM is Linux-only); the whole suite is skipped elsewhere.
+
+mod common;
+use common::*;
+
+use serde_json::Value;
+
+/// True when the run's `*aiperf.json` carries a non-empty telemetry endpoint map.
+fn has_gpu_telemetry(json: &Value) -> bool {
+    json.get("telemetry_data")
+        .and_then(|t| t.get("endpoints"))
+        .and_then(|e| e.as_object())
+        .map(|m| !m.is_empty())
+        .unwrap_or(false)
+}
+
+/// GPU telemetry collection with DCGM endpoint.
+#[tokio::test]
+async fn test_gpu_telemetry() {
+    if cfg!(target_os = "windows") || cfg!(target_os = "macos") {
+        return;
+    }
+    let h = AIPerfHarness::new().await;
+    let dcgm = h.mock.dcgm_urls().join(" ");
+    let r = h.run(&format!(
+        "--model nvidia/llama-3.1-nemotron-70b-instruct --url {} \
+         --endpoint-type chat --gpu-telemetry {dcgm} --streaming \
+         --request-count 100 --concurrency 2 --workers-max 2 --ui dashboard",
+        h.mock.url
+    ));
+    assert!(r.success(), "run failed: {}", r.stderr);
+    assert_eq!(r.artifacts.request_count() as u32, 100);
+
+    let json = r.artifacts.json();
+    assert!(has_gpu_telemetry(&json), "GPU telemetry should be collected");
+
+    let endpoints = json["telemetry_data"]["endpoints"]
+        .as_object()
+        .expect("telemetry_data.endpoints must be an object");
+    assert!(!endpoints.is_empty());
+
+    let counter_metrics = ["energy_consumption", "xid_errors", "power_violation"];
+
+    for (_dcgm_url, endpoint) in endpoints {
+        let gpus = endpoint["gpus"]
+            .as_object()
+            .expect("endpoint.gpus must be an object");
+        assert!(!gpus.is_empty());
+
+        for gpu_data in gpus.values() {
+            let metrics = gpu_data["metrics"]
+                .as_object()
+                .expect("gpu.metrics must be an object");
+            assert!(!metrics.is_empty());
+
+            for (metric_name, metric_value) in metrics {
+                assert!(!metric_value.is_null());
+                assert!(!metric_value["avg"].is_null());
+                assert!(!metric_value["unit"].is_null());
+                // Gauge metrics should have min/max; counter metrics only have avg.
+                if !counter_metrics.contains(&metric_name.as_str()) {
+                    assert!(!metric_value["min"].is_null());
+                    assert!(!metric_value["max"].is_null());
+                }
+            }
+        }
+    }
+}
+
+/// Test GPU telemetry export to JSONL file with validation.
+#[tokio::test]
+async fn test_gpu_telemetry_export() {
+    if cfg!(target_os = "windows") || cfg!(target_os = "macos") {
+        return;
+    }
+    let h = AIPerfHarness::new().await;
+    let dcgm = h.mock.dcgm_urls().join(" ");
+    let r = h.run(&format!(
+        "--model nvidia/llama-3.1-nemotron-70b-instruct --url {} \
+         --endpoint-type chat --gpu-telemetry {dcgm} --streaming \
+         --request-count 50 --concurrency 2 --workers-max 2",
+        h.mock.url
+    ));
+    assert!(r.success(), "run failed: {}", r.stderr);
+    assert_eq!(r.artifacts.request_count() as u32, 50);
+    assert!(has_gpu_telemetry(&r.artifacts.json()));
+
+    // Verify GPU telemetry export JSONL file exists and is well-formed.
+    let export = r
+        .artifacts
+        .find_file("**/gpu_telemetry_export.jsonl")
+        .expect("GPU telemetry export file should exist");
+    let content = std::fs::read_to_string(&export).expect("read export file");
+    let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert!(!lines.is_empty(), "Export file should contain telemetry records");
+
+    let mut gpu_uuids = std::collections::HashSet::new();
+
+    for line in &lines {
+        let record: Value = serde_json::from_str(line).expect("valid telemetry record JSON");
+
+        // Verify required fields are present.
+        assert!(record["timestamp_ns"].as_i64().expect("timestamp_ns") > 0);
+        assert!(!record["dcgm_url"].is_null());
+        assert!(record["gpu_index"].as_i64().expect("gpu_index") >= 0);
+        assert!(!record["gpu_uuid"].is_null());
+        assert!(!record["gpu_model_name"].is_null());
+        assert!(!record["telemetry_data"].is_null());
+
+        gpu_uuids.insert(record["gpu_uuid"].as_str().unwrap_or_default().to_string());
+    }
+
+    // Records are not necessarily in timestamp order due to async collection.
+    assert!(
+        gpu_uuids.len() >= 2,
+        "Should have records from at least two GPUs"
+    );
+}
+
+/// Test GPU telemetry export with custom filename prefix.
+#[tokio::test]
+async fn test_gpu_telemetry_export_with_custom_prefix() {
+    if cfg!(target_os = "windows") || cfg!(target_os = "macos") {
+        return;
+    }
+    let h = AIPerfHarness::new().await;
+    let dcgm = h.mock.dcgm_urls().join(" ");
+    let r = h.run(&format!(
+        "--model nvidia/llama-3.1-nemotron-70b-instruct --url {} \
+         --endpoint-type chat --gpu-telemetry {dcgm} --streaming \
+         --request-count 25 --concurrency 1 --workers-max 1 \
+         --profile-export-prefix custom_test",
+        h.mock.url
+    ));
+    assert!(r.success(), "run failed: {}", r.stderr);
+
+    // Verify custom filename is used (optional: only validate if present).
+    if let Some(export) = r.artifacts.find_file("**/custom_test_gpu_telemetry.jsonl") {
+        let content = std::fs::read_to_string(&export).expect("read export file");
+        let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert!(!lines.is_empty(), "Export file should contain telemetry records");
+
+        let first: Value = serde_json::from_str(lines[0]).expect("valid first record JSON");
+        assert!(first["timestamp_ns"].as_i64().expect("timestamp_ns") > 0);
+        assert!(!first["dcgm_url"].is_null());
+    }
+}
+
+/// GPU telemetry collection is disabled with `--no-gpu-telemetry` flag.
+#[tokio::test]
+async fn test_gpu_telemetry_disabled() {
+    if cfg!(target_os = "windows") || cfg!(target_os = "macos") {
+        return;
+    }
+    let h = AIPerfHarness::new().await;
+    let r = h.run(&format!(
+        "--model nvidia/llama-3.1-nemotron-70b-instruct --url {} \
+         --endpoint-type chat --streaming \
+         --request-count 25 --concurrency 1 --workers-max 1 --no-gpu-telemetry",
+        h.mock.url
+    ));
+    assert!(r.success(), "run failed: {}", r.stderr);
+    assert_eq!(r.artifacts.request_count() as u32, 25);
+
+    // GPU telemetry should NOT be collected when disabled.
+    assert!(
+        !has_gpu_telemetry(&r.artifacts.json()),
+        "GPU telemetry should not be collected"
+    );
+
+    // Verify no GPU telemetry files were created.
+    assert!(
+        r.artifacts.find_file("**/*gpu_telemetry*.jsonl").is_none(),
+        "Unexpected GPU telemetry files present"
+    );
+}

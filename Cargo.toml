@@ -9,8 +9,8 @@ members = [
     "rust/loadgen-core",
     "rust/aiperf",
     "rust/runner",
-    "rust/mock-rs",
-    "rust/integration",
+    "rust/mock-server",
+    "rust/e2e",
 ]
 
 [workspace.package]
