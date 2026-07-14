@@ -203,6 +203,11 @@ pub struct BenchmarkConfigWireV2 {
     /// Native metrics policy.
     #[serde(default)]
     pub metrics: Value,
+    /// Optional run-failure policy (`"continue"` / `"abort"`); absent applies
+    /// each execution path's historical default (scheduled resilient, graph
+    /// fail-fast). Lowered into the shared workload config so both paths decode it.
+    #[serde(default)]
+    pub failure_policy: Value,
     /// Goodput/SLO policy.
     #[serde(default)]
     pub slos: Value,
@@ -279,6 +284,7 @@ impl BenchmarkRunWireV2 {
                 "dataset": dataset,
                 "tokenizer": self.cfg.tokenizer.unwrap_or_else(|| serde_json::json!({})),
                 "phases": self.cfg.phases,
+                "failure_policy": self.cfg.failure_policy,
             }))?,
         };
         let (sidecars, sidecars_present) = if !self.cfg.sidecars.is_null()

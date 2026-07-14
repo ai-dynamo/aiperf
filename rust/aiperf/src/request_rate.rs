@@ -29,10 +29,12 @@ use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use tokio::sync::Notify;
 
+use crate::failure::OnFailure;
 use crate::fixed_schedule::milliseconds_to_ns;
 use crate::multiturn::{ConversationSource, TurnResponse, TurnToSend};
 use crate::scheduled::{ScheduledRuntime, Workload};
 use crate::scheduler::LocalTaskScheduler;
+use loadgen_core::collector::ReplayTerminalStatus;
 
 /// Arrival and admission settings for a request-rate workload.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -142,6 +144,7 @@ pub struct RequestRateWorkload {
     session_slots: Option<Rc<SlotPool>>,
     prefill_slots: Option<Rc<SlotPool>>,
     state: Rc<RequestRateState>,
+    on_failure: OnFailure,
 }
 
 impl RequestRateWorkload {
@@ -201,7 +204,19 @@ impl RequestRateWorkload {
             session_slots,
             prefill_slots,
             state: Rc::new(RequestRateState::default()),
+            // Default is the scheduled path's historical behavior: resilient
+            // (a failed transport request is recorded and the run continues).
+            on_failure: OnFailure::for_scheduled_default(),
         })
+    }
+
+    /// Select the run-failure discipline. `Abort` latches the whole run on the
+    /// first `Failed` terminal (a real transport failure — cancellations and
+    /// admission rejections never latch); `Continue` (the default) records the
+    /// failed request and keeps issuing.
+    pub fn with_failure_policy(mut self, on_failure: OnFailure) -> Self {
+        self.on_failure = on_failure;
+        self
     }
 
     /// Live interval generator used by the issuer and rate actuators.
@@ -243,6 +258,7 @@ impl RequestRateWorkload {
             turn,
             scheduled_ns,
             prefill_guard,
+            self.on_failure,
         )
     }
 
@@ -298,6 +314,7 @@ impl RequestRateWorkload {
             turn,
             scheduled_ns,
             prefill_guard,
+            self.on_failure,
         ) {
             self.state.release_session(&correlation_id);
             return Ok(NewSessionOutcome::Stopped);
@@ -418,6 +435,7 @@ impl Workload for RequestRateWorkload {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn issue_rate_turn(
     runtime: Rc<ScheduledRuntime>,
     conversations: Rc<RefCell<Box<dyn ConversationSource>>>,
@@ -425,6 +443,7 @@ fn issue_rate_turn(
     turn: TurnToSend,
     scheduled_ns: i64,
     prefill_guard: Option<SlotGuard>,
+    on_failure: OnFailure,
 ) -> bool {
     let correlation_id = turn.x_correlation_id.clone();
     let prefill_guard = Rc::new(RefCell::new(prefill_guard));
@@ -445,6 +464,21 @@ fn issue_rate_turn(
                 // response that never produced the first-token callback.
                 prefill_for_terminal.borrow_mut().take();
                 let correlation_id = credit.turn.x_correlation_id.clone();
+                // Fail-fast discipline (config-selected; default is resilient).
+                // A real transport failure latches the run so the issuer loop
+                // breaks and `execute` bails at teardown. Cancellations and
+                // admission rejections are authored/expected outcomes and never
+                // latch — mirroring the graph fail-fast policy, which ignores
+                // `TraceError::Cancelled`.
+                if on_failure.is_abort()
+                    && matches!(outcome.terminal, ReplayTerminalStatus::Failed)
+                {
+                    state_for_completion.fail(format!(
+                        "request-rate turn {correlation_id:?} failed under abort-on-failure policy"
+                    ));
+                    state_for_completion.release_session(&correlation_id);
+                    return;
+                }
                 if credit.is_final_turn() {
                     state_for_completion.release_session(&correlation_id);
                     return;
@@ -604,5 +638,132 @@ mod tests {
         });
 
         assert!(!outcome.deadlocked);
+    }
+
+    /// Dispatcher whose every turn ends in the scripted way, so failure-policy
+    /// behavior can be exercised deterministically under `SimClock`.
+    enum ScriptedResult {
+        /// Real transport failure: `dispatch_turn` returns `Err`. The runtime
+        /// synthesizes a `Failed` terminal (the resilient path) before invoking
+        /// the completion hook.
+        TransportError,
+        /// A terminal outcome the dispatcher reports as `Ok` (e.g. a
+        /// cancellation), so the hook sees the exact `ReplayTerminalStatus`.
+        Terminal(ReplayTerminalStatus),
+    }
+
+    struct ScriptedDispatcher {
+        clock: Rc<dyn Clock>,
+        result: ScriptedResult,
+    }
+
+    #[async_trait(?Send)]
+    impl TurnDispatcher for ScriptedDispatcher {
+        async fn dispatch_turn(
+            &self,
+            turn: TurnToSend,
+            observer: &dyn RequestObserver,
+            _on_first_token: &dyn Fn(i64),
+        ) -> Result<TurnDispatchOutcome> {
+            self.clock.clone().sleep(1).await;
+            match &self.result {
+                ScriptedResult::TransportError => {
+                    Err(anyhow!("scripted transport failure for {:?}", turn.uuid))
+                }
+                ScriptedResult::Terminal(terminal) => {
+                    observer.on_terminal(turn.uuid, *terminal);
+                    Ok(TurnDispatchOutcome {
+                        start_ns: self.clock.now_ns().saturating_sub(1),
+                        end_ns: self.clock.now_ns(),
+                        terminal: *terminal,
+                        response_text: String::new(),
+                        model_response: ModelResponseMetadata::default(),
+                        prompt_tokens: None,
+                        completion_tokens: None,
+                        http: Default::default(),
+                    })
+                }
+            }
+        }
+    }
+
+    fn run_single_turn_with_policy(
+        result: ScriptedResult,
+        on_failure: OnFailure,
+    ) -> Result<()> {
+        let source = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(synthetic_prepared_source(1, 8, 4, Some(0), "m"));
+        let clock = Rc::new(SimClock::new());
+        let runtime_clock: Rc<dyn Clock> = clock.clone();
+        let mut captured: Option<Result<()>> = None;
+        let captured_slot = &mut captured;
+        drive_sim(clock, move |_handle| {
+            let source = source;
+            async move {
+                let workload = RequestRateWorkload::new(
+                    RequestRateConfig {
+                        arrival_pattern: ArrivalPattern::ConcurrencyBurst,
+                        request_rate: None,
+                        arrival_smoothness: None,
+                        session_concurrency: Some(1),
+                        prefill_concurrency: None,
+                        seed: 0,
+                    },
+                    source,
+                )
+                .unwrap()
+                .with_failure_policy(on_failure);
+                let runtime = ScheduledRuntime::new(
+                    runtime_clock.clone(),
+                    0,
+                    Rc::new(ScriptedDispatcher {
+                        clock: runtime_clock,
+                        result,
+                    }),
+                    StopConfig {
+                        total_expected_requests: Some(3),
+                        ..StopConfig::default()
+                    },
+                    true,
+                );
+                *captured_slot = Some(workload.execute(runtime).await);
+            }
+        });
+        captured.expect("workload future ran to completion")
+    }
+
+    #[test]
+    fn abort_policy_latches_run_on_transport_failure() {
+        let result =
+            run_single_turn_with_policy(ScriptedResult::TransportError, OnFailure::Abort);
+        assert!(
+            result.is_err(),
+            "abort-on-failure must bail the run on the first transport failure"
+        );
+    }
+
+    #[test]
+    fn continue_policy_records_failure_and_run_succeeds() {
+        let result =
+            run_single_turn_with_policy(ScriptedResult::TransportError, OnFailure::Continue);
+        assert!(
+            result.is_ok(),
+            "resilient policy records failed requests and completes the run"
+        );
+    }
+
+    #[test]
+    fn abort_policy_ignores_cancellation() {
+        let result = run_single_turn_with_policy(
+            ScriptedResult::Terminal(ReplayTerminalStatus::Canceled),
+            OnFailure::Abort,
+        );
+        assert!(
+            result.is_ok(),
+            "cancellation is an authored outcome and must not latch abort-on-failure"
+        );
     }
 }

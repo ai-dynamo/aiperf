@@ -27,9 +27,10 @@ use aiperf::graph::model::{GraphTracePlan, LlmNode};
 use aiperf::graph::placement::{
     GraphPlacementError, GraphTraceExecutionBackendFactory, ThreadPerCoreGraphTraceExecutionBackend,
 };
+use aiperf::failure::OnFailure;
 use aiperf::graph::policy::{
     AbortTraceNodeFailurePolicy, CancellationNodePolicy, CompositeNodeDispatchPolicy,
-    NodeDispatchPolicy, PrefillSlotNodePolicy,
+    NodeDispatchPolicy, NodeFailurePolicy, PrefillSlotNodePolicy, ResilientNodeFailurePolicy,
 };
 use aiperf::graph::sink::{GraphDispatchOptions, GraphReply, GraphSink};
 use aiperf::graph::wire::OpenAiChatMessage;
@@ -480,6 +481,10 @@ pub(crate) struct RunnerGraphBackendFactoryConfig {
     pub(crate) cancellation: Option<GraphCancellationConfig>,
     pub(crate) raw_enabled: bool,
     pub(crate) events: Arc<dyn RunnerGraphExecutionEventSink>,
+    /// Config-selected per-node failure discipline. `Abort` aborts the trace on
+    /// the first node failure (default); `Continue` treats a failed node as
+    /// empty and drains the DAG.
+    pub(crate) on_failure: OnFailure,
 }
 
 /// Worker-local cancellation construction inputs.
@@ -562,6 +567,7 @@ impl GraphTraceExecutionBackendFactory for RunnerGraphBackendFactory {
             raw_enabled: self.config.raw_enabled,
             events: self.config.events.clone(),
             node_policy,
+            on_failure: self.config.on_failure,
             prefill_slots,
             next_session: Cell::new(0),
             next_execution: Cell::new(0),
@@ -585,6 +591,7 @@ struct RunnerGraphWorkerBackend {
     raw_enabled: bool,
     events: Arc<dyn RunnerGraphExecutionEventSink>,
     node_policy: Option<Rc<dyn NodeDispatchPolicy>>,
+    on_failure: OnFailure,
     prefill_slots: Option<Rc<SlotPool>>,
     next_session: Cell<u64>,
     next_execution: Cell<u64>,
@@ -639,7 +646,14 @@ impl GraphTraceExecutionBackend for RunnerGraphWorkerBackend {
         if let Some(policy) = &self.node_policy {
             local = local.with_node_policy(policy.clone());
         }
-        local = local.with_node_failure(Rc::new(AbortTraceNodeFailurePolicy));
+        // Node failure discipline mirrors the run-level policy: `Abort` aborts
+        // the trace on a node failure (default); `Continue` treats it as empty
+        // and lets the DAG drain (the dormant Python-parity resilient default).
+        let node_failure: Rc<dyn NodeFailurePolicy> = match self.on_failure {
+            OnFailure::Abort => Rc::new(AbortTraceNodeFailurePolicy),
+            OnFailure::Continue => Rc::new(ResilientNodeFailurePolicy),
+        };
+        local = local.with_node_failure(node_failure);
         let local = Rc::new(local);
         let execution_id = self.next_execution.get();
         self.next_execution.set(execution_id.saturating_add(1));

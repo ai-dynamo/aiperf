@@ -16,6 +16,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use aiperf::endpoints::{EndpointId, EndpointRegistry, RawEndpointConfig, RequestContentType};
+use aiperf::failure::OnFailure;
 use aiperf::extensions::AiperfRegistry;
 use aiperf::metrics_core::{
     NativeReport, ReportEndpointProfileIdentity, ReportExtensionIdentity, ReportPairRunFacts,
@@ -847,6 +848,10 @@ pub struct ScheduledWorkloadConfigV2 {
     pub tokenizer: Box<RawValue>,
     /// Phase-factory-owned authored objects.
     pub phases: Vec<PhaseSpec>,
+    /// Optional run-failure policy; absent selects the scheduled default
+    /// (resilient — record failed requests and continue).
+    #[serde(default)]
+    pub failure_policy: Option<OnFailure>,
 }
 
 impl Debug for ScheduledWorkloadConfigV2 {
@@ -871,6 +876,10 @@ pub struct GraphWorkloadConfigV2 {
     pub tokenizer: Box<RawValue>,
     /// Ordered graph phase policy objects.
     pub phases: Vec<PhaseSpec>,
+    /// Optional run-failure policy; absent selects the graph default
+    /// (fail-fast — abort the run on the first non-cancellation failure).
+    #[serde(default)]
+    pub failure_policy: Option<OnFailure>,
 }
 
 impl Debug for GraphWorkloadConfigV2 {

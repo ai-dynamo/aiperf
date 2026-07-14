@@ -27,6 +27,7 @@ pub mod aic_runtime;
 pub mod ancillary;
 #[cfg(feature = "dynosim")]
 pub mod dynosim;
+pub mod failure;
 pub mod fixed_schedule;
 pub mod grpc;
 pub mod http;

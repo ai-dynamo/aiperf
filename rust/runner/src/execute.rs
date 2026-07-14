@@ -9,6 +9,7 @@ use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use aiperf::failure::OnFailure;
 use aiperf::accuracy::{
     AccuracyDataset, AccuracyRecordProcessor, accuracy_report_errors, grade_accuracy_responses,
     load_evaluator_problems_with_grader,
@@ -211,6 +212,10 @@ pub(crate) struct NativeRunSpec {
     pub(crate) artifacts: crate::protocol::ArtifactSpec,
     pub(crate) sidecars: NativeSidecarPlan,
     pub(crate) user_files: Vec<crate::protocol_v2::UserFileSpecV2>,
+    /// Optional configured run-failure behavior. `None` lets each execution
+    /// path apply its historical default at the point of use
+    /// ([`OnFailure::scheduled_or_default`] / [`OnFailure::graph_or_default`]).
+    pub(crate) failure_policy: Option<OnFailure>,
 }
 
 /// Protocol-neutral retention of one run's already decoded sidecar inputs.
@@ -1070,6 +1075,7 @@ struct OnlineGraphPhaseBackendFactory<'a> {
     segments: Arc<dyn aiperf::dataset::SegmentStore>,
     metrics: MetricsConfig,
     raw_enabled: bool,
+    on_failure: OnFailure,
 }
 
 impl RunnerGraphPhaseBackendFactory for OnlineGraphPhaseBackendFactory<'_> {
@@ -1091,6 +1097,7 @@ impl RunnerGraphPhaseBackendFactory for OnlineGraphPhaseBackendFactory<'_> {
                 cancellation: config.cancellation,
                 raw_enabled: self.raw_enabled,
                 events: config.events,
+                on_failure: self.on_failure,
             },
         ));
         let requires_node_records = self.placement.requires_node_records();
@@ -1148,6 +1155,7 @@ async fn execute_graph_native(
     let clock = sidecars.clock.clone();
     let start_ns = clock.now_ns();
     let rng_root = RngRoot::new(graph_random_seed.or(request.random_seed));
+    let on_failure = OnFailure::graph_or_default(request.failure_policy);
     let backends = OnlineGraphPhaseBackendFactory {
         placement: graph_placement,
         worker_count: request.workers,
@@ -1159,6 +1167,7 @@ async fn execute_graph_native(
         segments: input.segments.clone(),
         metrics: metrics_config.clone(),
         raw_enabled: request.artifacts.raw_path.is_some(),
+        on_failure,
     };
     // Telemetry sidecars are side-channel producers synchronized to phase
     // barriers, not to the workload, so the graph path attaches the same
@@ -1196,12 +1205,19 @@ async fn execute_graph_native(
         allow_dataset_wrap,
         phase_sidecars,
         &backends,
+        on_failure,
     )
     .await?;
-    ensure!(
-        phased.workload.failed == 0,
-        "graph phase runtime returned failed traces without failing execution"
-    );
+    // Under `Abort` (the graph default) the fail-fast policy latches the run on
+    // the first non-cancellation failure, so a surviving failed count is a bug.
+    // Under `Continue` failed traces are an expected, recorded outcome — the run
+    // succeeds and the records carry the failures, so the assertion must not fire.
+    if on_failure.is_abort() {
+        ensure!(
+            phased.workload.failed == 0,
+            "graph phase runtime returned failed traces without failing execution"
+        );
+    }
     let phase_stats = phased.phases;
     let captured = phased.captured;
 
@@ -1546,6 +1562,7 @@ async fn execute_native_inner(
         });
 
         let shared_resources = native_scheduled_resources(&request.phases);
+        let on_failure = OnFailure::scheduled_or_default(request.failure_policy);
 
         let mut plans = Vec::with_capacity(request.phases.len());
         for (phase_index, phase) in request.phases.iter().enumerate() {
@@ -1569,6 +1586,7 @@ async fn execute_native_inner(
                 &shared_resources,
                 wants_adaptive_record
                     .then(|| capture.clone() as Rc<dyn AdaptiveTerminalRecordSource>),
+                on_failure,
             )?;
             let record_processor: Rc<dyn TurnRecordProcessor> = Rc::new(CapturePhaseProcessor {
                 capture: capture.clone(),
@@ -1875,6 +1893,7 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
     endpoint_names: &[String],
     shared: &NativeScheduledResources,
     adaptive_record_source: Option<Rc<dyn AdaptiveTerminalRecordSource>>,
+    on_failure: OnFailure,
 ) -> Result<ScheduledPhasePlan> {
     let phase_rng =
         RngRoot::new(dataset_rng_root.derive_seed(&format!("runner.phase.{phase_index}.dataset")));
@@ -1920,12 +1939,15 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
                 smoothness,
                 arrival_seed,
             )));
-            let workload = Rc::new(RequestRateWorkload::with_components(
-                source,
-                intervals.clone(),
-                shared.session.clone(),
-                shared.prefill.clone(),
-            )?) as Rc<dyn Workload>;
+            let workload = Rc::new(
+                RequestRateWorkload::with_components(
+                    source,
+                    intervals.clone(),
+                    shared.session.clone(),
+                    shared.prefill.clone(),
+                )?
+                .with_failure_policy(on_failure),
+            ) as Rc<dyn Workload>;
             (
                 workload,
                 intervals,

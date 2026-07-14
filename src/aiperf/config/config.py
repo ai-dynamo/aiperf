@@ -381,6 +381,19 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         ),
     ]
 
+    failure_policy: Annotated[
+        Literal["continue", "abort"] | None,
+        Field(
+            default=None,
+            description="How the run reacts to a failed request. 'continue' "
+            "records the failure and keeps running (resilient); 'abort' fails "
+            "the whole benchmark on the first non-cancellation failure "
+            "(fail-fast). When unset, each execution path applies its historical "
+            "default: scheduled runs are resilient, graph (DAG) runs are "
+            "fail-fast. Cancellations are never treated as failures.",
+        ),
+    ]
+
     logging: Annotated[
         LoggingConfig,
         Field(

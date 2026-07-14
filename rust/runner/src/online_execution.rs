@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use aiperf::content_server::ContentServerMediaPublisher;
+use aiperf::failure::OnFailure;
 use aiperf::dataset::{
     DatasetFetcher, HttpDatasetFetcher, MaterializedTracePromptStorage,
     NativeSyntheticMediaGeneratorFactory, SyntheticMediaGeneratorFactory, TiktokenEncoding,
@@ -979,6 +980,7 @@ pub(crate) fn lower_scheduled(
         &workload.phases,
         NativeEndpointPlan::Prepared(context.endpoint_profiles_handle()),
         NativeSidecarPlan::Prepared(context.sidecar_inputs_handle()),
+        workload.failure_policy,
     )
 }
 
@@ -1043,6 +1045,7 @@ fn lower_graph(
         &workload.phases,
         NativeEndpointPlan::Prepared(context.endpoint_profiles_handle()),
         NativeSidecarPlan::Prepared(context.sidecar_inputs_handle()),
+        workload.failure_policy,
     )
 }
 
@@ -1064,6 +1067,9 @@ fn lower_static_accuracy(
         &workload.phases,
         NativeEndpointPlan::Prepared(context.endpoint_profiles_handle()),
         NativeSidecarPlan::Prepared(context.sidecar_inputs_handle()),
+        // Static accuracy has no failure knob today; it inherits the scheduled
+        // default (resilient) via `None`.
+        None,
     )
 }
 
@@ -1092,6 +1098,7 @@ fn build_common_plan(
     phases: &[PhaseSpec],
     endpoint: NativeEndpointPlan,
     sidecars: NativeSidecarPlan,
+    failure_policy: Option<OnFailure>,
 ) -> Result<NativeRunSpec> {
     Ok(NativeRunSpec {
         benchmark_id: run.identity.benchmark_id.clone(),
@@ -1113,6 +1120,7 @@ fn build_common_plan(
         },
         sidecars,
         user_files: run.artifacts.user_files.clone(),
+        failure_policy,
     })
 }
 

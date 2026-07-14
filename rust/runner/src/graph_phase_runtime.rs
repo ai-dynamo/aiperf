@@ -24,7 +24,8 @@ use aiperf::clock::Clock;
 use aiperf::graph::errors::TraceError;
 use aiperf::graph::execution::GraphTraceExecutionBackend;
 use aiperf::graph::input::GraphInputBundle;
-use aiperf::graph::policy::FailFastRunFailurePolicy;
+use aiperf::failure::OnFailure;
+use aiperf::graph::policy::{ContinueRunFailurePolicy, FailFastRunFailurePolicy, RunFailurePolicy};
 use aiperf::graph::workload::{
     CyclingGraphTraceSource, GraphArrivalPolicy, GraphTraceInstanceSequence, GraphTraceRunResult,
     GraphTraceSource, GraphWorkload, GraphWorkloadObserver, GraphWorkloadReport,
@@ -974,6 +975,7 @@ pub(crate) async fn run_graph_phases(
     allow_dataset_wrap: bool,
     phase_sidecars: Vec<Vec<Rc<dyn ScheduledPhaseSidecar>>>,
     backends: &dyn RunnerGraphPhaseBackendFactory,
+    on_failure: OnFailure,
 ) -> Result<GraphPhaseRunOutput> {
     validate_dataset_wrap_policy(phases, input, allow_dataset_wrap)?;
     ensure!(
@@ -998,6 +1000,7 @@ pub(crate) async fn run_graph_phases(
             trace_instances.clone(),
             session_slots.clone(),
             backends,
+            on_failure,
         )?);
     }
 
@@ -1101,6 +1104,7 @@ fn prepare_graph_phase(
     trace_instances: GraphTraceInstanceSequence,
     session_slots: Option<Rc<SlotPool>>,
     backends: &dyn RunnerGraphPhaseBackendFactory,
+    on_failure: OnFailure,
 ) -> Result<PreparedGraphPhase> {
     let phase_index = u64::try_from(phase_index).context("graph phase index exceeds u64")?;
     let phase_rng = rng_root.derive_indexed_root(namespace::GRAPH_PHASE, phase_index);
@@ -1186,9 +1190,18 @@ fn prepare_graph_phase(
         phase_rng,
         failures.clone(),
     )?;
+    // Run-level failure discipline is config-selected (default fail-fast for the
+    // graph path). `Abort` latches the whole run on the first non-cancellation
+    // trace failure; `Continue` keeps admitting unrelated roots and records the
+    // failed traces (the coordinator relaxes its `failed == 0` assertion to
+    // match). See `specs/2026-07-13-scheduled-graph-convergence-implementation.md`.
+    let run_failure: Rc<dyn RunFailurePolicy> = match on_failure {
+        OnFailure::Abort => Rc::new(FailFastRunFailurePolicy::default()),
+        OnFailure::Continue => Rc::new(ContinueRunFailurePolicy),
+    };
     let mut workload = GraphWorkload::new(clock, source, placement.clone())
         .with_arrival(arrival)
-        .with_run_failure(Rc::new(FailFastRunFailurePolicy::default()));
+        .with_run_failure(run_failure);
     if graph_phase_uses_session_admission(phase) {
         workload = workload.with_admission(Rc::new(SlotPoolTraceAdmission::new(
             session_slots

@@ -21,6 +21,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use aiperf::clock::Clock;
+use aiperf::failure::OnFailure;
 use aiperf::dataset::{
     HashIdentityTracePromptStorage, NativeSyntheticMediaGeneratorFactory, SamplerRegistry,
     SegmentStore, TextTokenizer, TraceHashAwareRequestMaterializer,
@@ -1320,6 +1321,10 @@ impl PreparedRunnerOperation for PreparedDynosimScheduledOperation {
                             // directly, so the sampler needs no worker-record
                             // source (and must not be double-fed).
                             None,
+                            // Offline replay keeps its historical resilient
+                            // behavior; the failure-policy knob is an online-path
+                            // convergence and is not wired to co-simulation.
+                            OnFailure::for_scheduled_default(),
                         )?
                         .with_metrics_config(metrics.clone())
                         .with_performance_record_capture(false)
@@ -1796,6 +1801,10 @@ impl PreparedRunnerOperation for PreparedDynosimGraphOperation {
                         allow_dataset_wrap,
                         phase_sidecars,
                         &backends,
+                        // Offline replay keeps its historical fail-fast graph
+                        // behavior; the failure-policy knob is an online-path
+                        // convergence and is not wired to co-simulation.
+                        OnFailure::for_graph_default(),
                     )
                     .await?;
                     Ok(OfflineGraphExecution {
