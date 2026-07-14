@@ -284,6 +284,20 @@ fn normalize_endpoint_name(name: &str) -> String {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct EndpointRequestMaterializer;
 
+/// Select a complete prebuilt body via the unified [`Turn::body`] handles and
+/// their segment domain (segment-unification §2): a `raw`-domain `body[0]` is a
+/// full body dispatched byte-for-byte without endpoint formatting. This is the
+/// domain lookup that replaces the `raw_payload`-wins branch; a `message`- or
+/// `token-ids`-domain body falls through to the formatter / token-native path.
+fn raw_body_handle<S: SegmentStore + ?Sized>(current: &Turn, store: &S) -> Result<Option<Handle>> {
+    match current.body.first() {
+        // "raw" is the stable `Payload::kind_name` for a complete prebuilt body
+        // (segment-unification §2); `domain` is documented to return it.
+        Some(&handle) if store.domain(handle)? == "raw" => Ok(Some(handle)),
+        _ => Ok(None),
+    }
+}
+
 impl RequestMaterializer for EndpointRequestMaterializer {
     fn materialize(
         &self,
@@ -295,7 +309,7 @@ impl RequestMaterializer for EndpointRequestMaterializer {
     ) -> Result<MaterializedRequest> {
         let (conversation, current, turn_index) = session.current()?;
         let store = session.dataset.segments().as_ref();
-        let (body, effective) = if let Some(raw) = current.raw_payload {
+        let (body, effective) = if let Some(raw) = raw_body_handle(current, store)? {
             (
                 // Segment-unification §4: the raw body is a one-field BodyPlan
                 // whose single `raw`-domain segment is the complete prebuilt
@@ -392,7 +406,7 @@ impl RequestMaterializer for EndpointRequestMaterializer {
         let store = session.dataset.segments().as_ref();
         let configured_streaming = endpoint.config().streaming();
         let supports_streaming = endpoint.descriptor().supports_streaming;
-        let (body, effective) = if let Some(raw) = current.raw_payload {
+        let (body, effective) = if let Some(raw) = raw_body_handle(current, store)? {
             (
                 // Segment-unification §4: the raw body is a one-field BodyPlan
                 // whose single `raw`-domain segment is the complete prebuilt
