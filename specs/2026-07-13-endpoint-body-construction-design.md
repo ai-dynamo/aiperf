@@ -197,3 +197,42 @@ framing + completion + cancellation. Full design:
 - `2026-07-13-websocket-transport-design.md` — the WS transport that adds a third materializer over this same `BodyPlan`.
 - `2026-07-11-aiperf-runner-owned-endpoint-registry-design.md` / `2026-07-11-aiperf-rust-endpoints-design.md` — the endpoint registry + `format_payload` this changes.
 - `2026-07-12-aiperf-native-grpc-kserve-v2-design.md` — the `transport_grpc` codec the protobuf branch reuses.
+
+## Addendum — 2026-07-13 (implementation status: stage 1 landed; stage 2 scoped)
+
+Grounded in `rust/aiperf/src/dataset/body_plan.rs`. **Built:**
+
+- **§3/§7 stage 1 — `BodyPlan` + `JsonBodyMaterializer`** (`dataset/body_plan.rs`):
+  `BodyPlan` is `Raw(Handle)` (the degenerate whole-body case) or an ordered
+  `Fields(SmallVec<[(FieldName, FieldValue); 8]>)` with `FieldValue ∈
+  {Literal(Value), Segment(Handle), Segments([Handle])}`, built with the fluent
+  `array/segment/opt_segment/str/int/bool/literal` builder from §3. The shared
+  `JsonBodyMaterializer` walks a plan against the frozen store, concatenating
+  literal bytes + pre-serialized segment bytes into one `Full<Bytes>` with **zero
+  content re-serialize** (only endpoint `Literal` scalars and the override tail
+  are serialized). It is a strict generalization of `build_message_body_from_wires`
+  and reuses `splice_raw_object` for the raw arm, so byte-parity is *structural*:
+  a `Fields([("messages", Segments)])` plan is byte-identical to the legacy splice
+  (oracle test `messages_plan_is_byte_identical_to_legacy_splice`) and a `Raw`
+  plan reproduces the `raw_payload` fast path exactly.
+- **Live wiring (raw arm):** the `raw_payload` dispatch in `dataset/request.rs`
+  now runs through `BodyPlan::raw` + `JsonBodyMaterializer`, selected by segment
+  domain (see the companion spec's addendum), and is validated end-to-end against
+  the real `aiperf-mock-server` (`tests/scheduled_real_mock.rs`).
+
+**Stage 2 scoping finding (blocks a mechanical conversion).** Converting the ~35
+structured (non-raw) JSON endpoints to `format_payload → BodyPlan` is **not**
+byte-neutral and is a substantive decision, not a swap. Today the structured path
+(`request.rs` `format_payload → Value`, then `merge_overrides`, then
+`effective_from_structured_body`) merges dispatch overrides **in place** on the
+`serde_json::Map` — a single `model`/`stream`/`max_tokens` key at the formatter's
+position — and then reads effective metadata **back out of the serialized Value**.
+A `BodyPlan` that declared those params as `Literal` fields and let
+`JsonBodyMaterializer` append the override *tail* (as the raw/splice path does)
+would emit **duplicate keys** with last-wins semantics and different ordering.
+The correct stage-2 form (§4) folds the params into the plan's `Literal` fields
+and drops the tail, and moves effective-metadata computation off the serialized
+Value onto the plan/turn directly — per endpoint. **Not yet built:** the
+per-endpoint `format_payload → BodyPlan` conversions (§7 stage 2), the gRPC packed
+`raw_input_contents` fast path (§7 stage 3), and deletion of the
+`format_payload → Value → to_vec` path (§7 stage 4).

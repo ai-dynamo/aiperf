@@ -236,3 +236,40 @@ tests are the guard.
 - `2026-07-13-greenfield-execution-vocabulary.md` / `2026-07-13-p1-generic-execution-substrate-names.md` — the `Turn`→`Request` naming this enables.
 - `2026-07-10-aiperf-transport-rust-port-design.md` — the `Full<Bytes>` + `SendCompletion` send path §6 protects.
 - `2026-07-13-websocket-transport-design.md` — segments are transport-agnostic; a WS materializer consumes the same pool (§6's one-body rule is HTTP-local, so WS is additive).
+
+## Addendum — 2026-07-13 (implementation status: stage 1 + raw stage 2 landed)
+
+Grounded in `rust/aiperf/src/`; the four migration stages in §9 are landing
+incrementally with the suite green each step. **Built so far:**
+
+- **§2/§9 stage 1 — `SegmentStore::domain(handle)`** (`dataset/segment.rs`): the
+  disjoint-domain discriminant, returning the stable `Payload::kind_name`
+  (`message`/`raw`/`token-ids`/…). Unit-tested.
+- **§2/§9 stage 1 — `Turn.body: SmallVec<[Handle; 1]>`** (`dataset/model.rs`):
+  the unified body handles, populated once centrally in `Dataset::new` (the
+  single freeze choke point — no churn across the fifteen loader construction
+  sites) by `Turn::populate_body`, mirroring today's precedence (`raw_payload`
+  wins, else `raw_token_ids`, else the ordered `messages` handles;
+  content-only / `raw_messages`-only turns stay formatter-driven with an empty
+  `body`). The legacy fields remain authoritative; `serde(default,
+  skip_serializing_if)` keeps existing dataset round-trips byte-stable.
+- **§4 — raw dispatch on the new materializer, domain-driven** (`dataset/request.rs`):
+  both `EndpointRequestMaterializer` paths select the raw body via
+  `raw_body_handle()` (a `store.domain(body[0]) == "raw"` lookup over the unified
+  `body`, not the `raw_payload` Option) and materialize it through
+  `BodyPlan::raw` + `JsonBodyMaterializer` (see the companion endpoint spec).
+  Byte-identical to the prior `store.build_body` path — guarded by the existing
+  `raw_payload_is_byte_exact…` and `token_ids_inside_an_ordinary_raw_body…`
+  tests — and validated end-to-end against the real `aiperf-mock-server` binary
+  (`tests/scheduled_real_mock.rs`).
+
+**Not yet built (staged follow-up):** lowering `content` → a `message` segment
+at load (§3); routing the *message-array* dispatch through `body` + domain
+(§9 stage 2, blocked on content→segment lowering + the multi-turn live-reply
+interleaving becoming handle-based); deleting the five legacy fields and the
+`raw_payload`-wins branching (§9 stage 3); running the endpoint formatter at
+lowering rather than per-dispatch (§3a); and the `Turn`/`EndpointTurn`
+reconciliation (§9 stage 4). The structured (non-raw) JSON path still formats
+per-dispatch and merges overrides in place; see the endpoint spec's addendum for
+why that conversion is a substantive, non-byte-neutral step rather than a
+mechanical swap.
