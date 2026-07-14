@@ -267,6 +267,20 @@ class _RuntimeSettings(BaseSettings):
         "Set via AIPERF_RUNTIME_ENGINE.",
     )
 
+    NATIVE_EXPORT: bool = Field(
+        default=True,
+        description="Whether the native Rust `aiperf::export` sink plane is the "
+        "sole emitter for every report artifact (profile_export_aiperf.{json,csv}, "
+        "timeslices, server_metrics.{json,csv,parquet}, accuracy_results.csv, "
+        "profile_export_console.txt, and the OTel/MLflow/W&B network sinks). When "
+        "true (default) the frontend projects cfg.export for the runner, suppresses "
+        "the Python live-streaming sidecar, and skips the Python ExporterManager + "
+        "post-run uploaders entirely so each destination receives a single native "
+        "emission. Set AIPERF_RUNTIME_NATIVE_EXPORT=0 to restore the legacy Python "
+        "emitters (ExporterManager, mlflow/wandb uploaders, OTel sidecar) for A/B "
+        "verification, mirroring AIPERF_RUNTIME_ENGINE=python. Reversible.",
+    )
+
 
 class _DatasetSettings(BaseSettings):
     """Dataset loading and configuration.
@@ -1503,17 +1517,6 @@ class _Environment(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="allow",
-    )
-
-    NATIVE_NETWORK_EXPORT: bool = Field(
-        default=False,
-        description="Route the OTel (OTLP/HTTP), MLflow, and Weights & Biases "
-        "network exports through the native Rust sinks instead of the legacy "
-        "Python live-streaming sidecar and post-run upload exporters. When true "
-        "the frontend projects cfg.export.{otel,mlflow,wandb} for the runner and "
-        "gates the Python paths off so each destination receives a single "
-        "emission. Set via AIPERF_NATIVE_NETWORK_EXPORT. Reversible: clearing it "
-        "restores the Python network-export paths.",
     )
 
     # Nested subsystem settings (alphabetically ordered)

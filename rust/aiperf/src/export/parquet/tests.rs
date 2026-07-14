@@ -301,6 +301,9 @@ fn cross_check_against_python_exporter() {
     ParquetExporter
         .export(&report, dir.path(), &enabled_cfg())
         .unwrap();
+    // The sink consumes (deletes) the wire file once rendered; the Python oracle
+    // below reads the same wire, so re-materialize it for the cross-check.
+    write_wire(dir.path(), WIRE_JSONL);
 
     let script = dir.path().join("cross_check.py");
     std::fs::write(&script, PYTHON_CROSS_CHECK).unwrap();

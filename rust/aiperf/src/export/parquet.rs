@@ -113,6 +113,18 @@ impl Exporter for ParquetExporter {
         let (start_ns, end_ns) = profiling_boundary(report)?;
         let wire_path = resolve_wire_path(artifact_dir);
         let hierarchy = Hierarchy::from_wire_file(&wire_path)?;
+        // The wire JSONL is a private runner→sink intermediate, not a user
+        // artifact; remove it once consumed so it never lingers in the run
+        // directory. Mirrors the retired Python renderer's `wire_path.unlink()`
+        // (`orchestrator/native_report.py::_render_server_metrics_parquet`).
+        // Best-effort: a cleanup failure never aborts the export (the native-v2
+        // report is the committed authority).
+        if let Err(error) = std::fs::remove_file(&wire_path) {
+            tracing::debug!(
+                "server-metrics parquet: could not remove wire file {}: {error}",
+                wire_path.display()
+            );
+        }
         let rows = hierarchy.collect_rows(start_ns, end_ns);
 
         // Mirror the Python exporter: no rows -> skip file creation entirely.
@@ -235,9 +247,8 @@ struct WireSample {
 /// default serde_json number path is unsuitable.
 fn parse_exact_f64<E: serde::de::Error>(raw: &serde_json::value::RawValue) -> Result<f64, E> {
     let text = raw.get().trim();
-    text.parse::<f64>().map_err(|error| {
-        serde::de::Error::custom(format!("invalid wire number {text:?}: {error}"))
-    })
+    text.parse::<f64>()
+        .map_err(|error| serde::de::Error::custom(format!("invalid wire number {text:?}: {error}")))
 }
 
 /// Correctly-rounded `Option<f64>` decoder. Absent (`#[serde(default)]`) and JSON
