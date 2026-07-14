@@ -12,17 +12,13 @@ contract.
 
 from __future__ import annotations
 
-import base64
 import contextlib
-import hashlib
-import json
 import os
 import shutil
 import signal
-import stat
 import subprocess
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import metadata
 from pathlib import Path
@@ -45,28 +41,6 @@ _CAPABILITIES_TIMEOUT_SECONDS = 30.0
 _RUNNER_ENV = "AIPERF_RUNNER_BIN"
 _RUNNER_COMPANION_DISTRIBUTION = "aiperf-runner"
 _RUNNER_COMMAND = "aiperf-runner"
-_PROVIDER_ROOTS_ENV = "AIPERF_EVALUATOR_PROVIDER_ROOTS"
-_PROVIDER_ROOTS_SCHEMA = "aiperf-stock-evaluator-roots-v1"
-_PROVIDER_ROOTS_REGISTRY = "evaluator-roots-v1.json"
-_PROVIDER_ROOTS_WHEEL_PREFIX = "_aiperf_runner/evaluator-roots"
-_PROVIDER_ROOTS_SIDECAR_SUFFIX = ".evaluator-roots"
-_PROVIDER_ROOT_SPECS = (
-    ("cpython_3_12_10_linux_x86_64", "python_runtime", "runtime"),
-    ("nvidia_nemo_evaluator_0_4_locked", "python_environment", "nemo"),
-    (
-        "groq_openbench_0_5_3_inspect_0_3_141_locked",
-        "python_environment",
-        "openbench",
-    ),
-    ("system_linux_x86_64", "system", "system"),
-)
-_EVALUATION_UNAVAILABLE_REASON_CODES = frozenset(
-    {
-        "provider_roots_unavailable",
-        "unsupported_platform",
-        "isolation_unavailable",
-    }
-)
 _DISTRIBUTION_ID_DOMAIN = b"aiperf-runner-distribution-v1\0"
 _DISTRIBUTION_ID_PREFIX = "blake3:"
 _DISTRIBUTION_ID_HEX_LENGTH = 64
@@ -85,36 +59,12 @@ class RunnerInstallation:
 
     binary: Path
     capabilities: dict[str, Any]
-    provider_roots: tuple[Path, ...] = ()
 
     @classmethod
-    def resolve(
-        cls,
-        binary: Path | None = None,
-        *,
-        provider_roots: Sequence[Path] | None = None,
-    ) -> RunnerInstallation:
-        """Discover one runner and negotiate its catalog once.
-
-        ``provider_roots`` is an explicit test/deployment injection for
-        mutually independent evaluator environments.  Product discovery does
-        not inspect the active Python prefix or ambient root variables: an
-        installed companion uses only its own wheel RECORD, while an explicit,
-        environment-selected, or PATH runner uses only its generated adjacent
-        sidecar.  Ambient child variables never broaden either selection.
-        """
-        if provider_roots is None:
-            deployment = _resolve_runner_deployment(binary)
-            resolved = deployment.binary
-            selected_provider_roots = _deployment_provider_roots(deployment)
-        else:
-            resolved = _resolve_runner_binary(binary)
-            selected_provider_roots = _normalize_provider_roots(provider_roots)
-        return cls(
-            binary=resolved,
-            capabilities=_load_capabilities(resolved, selected_provider_roots),
-            provider_roots=selected_provider_roots,
-        )
+    def resolve(cls, binary: Path | None = None) -> RunnerInstallation:
+        """Discover one runner and negotiate its catalog once."""
+        resolved = _resolve_runner_binary(binary)
+        return cls(binary=resolved, capabilities=_load_capabilities(resolved))
 
     def preflight_endpoint(self, endpoint_id: str) -> None:
         """Reject an endpoint absent from this exact compiled runner catalog."""
@@ -221,7 +171,6 @@ class RunnerInstallation:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            env=_runner_subprocess_environment(self.provider_roots),
         )
 
     def validate_authored_run(self, run: BenchmarkRun) -> dict[str, Any]:
@@ -355,46 +304,28 @@ def _communicate_forwarding_signals(
     return b"".join(stdout_chunks), b"".join(stderr_chunks)
 
 
-@dataclass(frozen=True, slots=True)
-class _RunnerDeployment:
-    """One selected executable and its sole deployment-metadata authority."""
-
-    binary: Path
-    companion_distribution: metadata.Distribution | None = None
-
-
-def _resolve_runner_deployment(explicit: Path | None) -> _RunnerDeployment:
-    """Resolve one precedence tier while retaining its exact metadata owner."""
+def _resolve_runner_binary(explicit: Path | None) -> Path:
+    """Resolve one runner by precedence: explicit → env → companion → PATH."""
     if explicit is not None:
-        return _RunnerDeployment(
-            _require_runner_binary(Path(explicit), "explicit --runner-bin")
-        )
+        return _require_runner_binary(Path(explicit), "explicit --runner-bin")
 
     configured = os.environ.get(_RUNNER_ENV)
     if configured:
-        return _RunnerDeployment(_require_runner_binary(Path(configured), _RUNNER_ENV))
+        return _require_runner_binary(Path(configured), _RUNNER_ENV)
 
-    distribution = _installed_companion_distribution()
-    if distribution is not None:
-        return _RunnerDeployment(
-            _companion_binary_from_distribution(distribution),
-            companion_distribution=distribution,
-        )
+    companion = _installed_companion_binary()
+    if companion is not None:
+        return companion
 
     discovered = shutil.which(_RUNNER_COMMAND)
     if discovered:
-        return _RunnerDeployment(_require_runner_binary(Path(discovered), "PATH"))
+        return _require_runner_binary(Path(discovered), "PATH")
 
     raise FileNotFoundError(
         "aiperf-runner executable was not found; install the platform companion "
         f"package {_RUNNER_COMPANION_DISTRIBUTION!r}, pass --runner-bin, set "
         f"{_RUNNER_ENV}, or place {_RUNNER_COMMAND} on PATH for development"
     )
-
-
-def _resolve_runner_binary(explicit: Path | None) -> Path:
-    """Compatibility helper returning only the selected executable path."""
-    return _resolve_runner_deployment(explicit).binary
 
 
 def _installed_companion_binary() -> Path | None:
@@ -407,7 +338,6 @@ def _installed_companion_binary() -> Path | None:
     distribution = _installed_companion_distribution()
     if distribution is None:
         return None
-
     return _companion_binary_from_distribution(distribution)
 
 
@@ -435,10 +365,7 @@ def _companion_binary_from_distribution(
         (
             entry
             for entry in files
-            if not str(entry)
-            .replace("\\", "/")
-            .startswith(f"{_PROVIDER_ROOTS_WHEEL_PREFIX}/")
-            and str(entry).replace("\\", "/").rsplit("/", 1)[-1] in filenames
+            if str(entry).replace("\\", "/").rsplit("/", 1)[-1] in filenames
         ),
         key=str,
     )
@@ -466,270 +393,12 @@ def _require_runner_binary(candidate: Path, source: str) -> Path:
     )
 
 
-def _deployment_provider_roots(
-    deployment: _RunnerDeployment,
-) -> tuple[Path, ...]:
-    """Discover roots owned by the selected runner deployment only.
-
-    An implicit installed-companion selection consumes only that same wheel's
-    RECORD-owned payload. Explicit, ``AIPERF_RUNNER_BIN``, and PATH selections
-    consume only a generated directory adjacent to the selected executable.
-    Missing or invalid deployment metadata intentionally produces no roots.
-    """
-    if deployment.companion_distribution is not None:
-        return _installed_companion_provider_roots(deployment.companion_distribution)
-    binary = deployment.binary
-    sidecar = binary.with_name(f"{binary.name}{_PROVIDER_ROOTS_SIDECAR_SUFFIX}")
-    return _provider_roots_from_registry(sidecar)
-
-
-def _installed_companion_provider_roots(
-    distribution: metadata.Distribution,
-) -> tuple[Path, ...]:
-    """Validate exact payload membership in the selected wheel RECORD."""
-    files = distribution.files
-    if files is None:
-        return ()
-    prefix = f"{_PROVIDER_ROOTS_WHEEL_PREFIX}/"
-    registry_relative = f"{prefix}{_PROVIDER_ROOTS_REGISTRY}"
-    entries: dict[str, metadata.PackagePath] = {}
-    for entry in files:
-        normalized = str(entry).replace("\\", "/")
-        if not normalized.startswith(prefix):
-            continue
-        if normalized in entries:
-            return ()
-        entries[normalized] = entry
-    registry_entry = entries.get(registry_relative)
-    if registry_entry is None:
-        return ()
-    try:
-        located_registry = Path(distribution.locate_file(registry_entry))
-        if located_registry.is_symlink() or located_registry.parent.is_symlink():
-            raise ValueError("evaluator payload RECORD root cannot be a symlink")
-        registry_path = located_registry.resolve(strict=True)
-        base = registry_path.parent
-        recorded: dict[str, tuple[str, int]] = {}
-        for relative, entry in entries.items():
-            logical = relative.removeprefix(prefix)
-            if not logical or logical in recorded:
-                raise ValueError("duplicate or empty evaluator payload RECORD path")
-            file_hash = entry.hash
-            if file_hash is None or file_hash.mode != "sha256":
-                raise ValueError("evaluator payload RECORD requires SHA-256")
-            if entry.size is None or entry.size < 0:
-                raise ValueError("evaluator payload RECORD requires a byte length")
-            digest = base64.b64decode(
-                file_hash.value + "=" * (-len(file_hash.value) % 4),
-                altchars=b"-_",
-                validate=True,
-            ).hex()
-            if len(digest) != 64:
-                raise ValueError("evaluator payload RECORD SHA-256 is malformed")
-            located = Path(distribution.locate_file(entry)).resolve(strict=True)
-            if not located.is_relative_to(base):
-                raise ValueError("evaluator payload RECORD escaped its owned root")
-            recorded[logical] = (digest, entry.size)
-        return _provider_roots_from_registry(base, recorded=recorded)
-    except (OSError, TypeError, ValueError):
-        return ()
-
-
-def _provider_roots_from_registry(
-    base: Path,
-    *,
-    recorded: dict[str, tuple[str, int]] | None = None,
-) -> tuple[Path, ...]:
-    """Validate one canonical provider-root registry and its complete payload."""
-    try:
-        if base.is_symlink():
-            return ()
-        base = base.resolve(strict=True)
-        if not base.is_dir():
-            return ()
-        registry_path = base / _PROVIDER_ROOTS_REGISTRY
-        registry_bytes = registry_path.read_bytes()
-        value = json.loads(registry_bytes)
-        if _canonical_provider_registry(value) != registry_bytes:
-            return ()
-        roots = _validate_provider_registry(value)
-        physical = _physical_provider_payload(base)
-        if recorded is not None:
-            if set(recorded) != set(physical):
-                return ()
-            if any(
-                path.stat().st_size != recorded[relative][1]
-                for relative, path in physical.items()
-            ):
-                return ()
-        actual_digests = {
-            relative: _file_sha256(path) for relative, path in physical.items()
-        }
-        if recorded is not None:
-            for relative in physical:
-                expected_digest, _ = recorded[relative]
-                if actual_digests[relative] != expected_digest:
-                    return ()
-            registry_digest, _ = recorded[_PROVIDER_ROOTS_REGISTRY]
-            if hashlib.sha256(registry_bytes).hexdigest() != registry_digest:
-                return ()
-        selected = []
-        for root in roots:
-            prefix = f"{root['path']}/"
-            members = {
-                relative.removeprefix(prefix): actual_digests[relative]
-                for relative in physical
-                if relative.startswith(prefix)
-            }
-            if len(members) != root["file_count"]:
-                return ()
-            if _provider_tree_sha256(members) != root["tree_sha256"]:
-                return ()
-            selected.append((base / root["path"]).resolve(strict=True))
-        return _normalize_provider_roots(selected)
-    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
-        return ()
-
-
-def _canonical_provider_registry(value: object) -> bytes:
-    return (
-        json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-        + "\n"
-    ).encode()
-
-
-def _validate_provider_registry(value: object) -> list[dict[str, Any]]:
-    if not isinstance(value, dict) or set(value) != {
-        "platform",
-        "roots",
-        "schema_version",
-    }:
-        raise ValueError("invalid evaluator root registry object")
-    if value["schema_version"] != _PROVIDER_ROOTS_SCHEMA:
-        raise ValueError("unsupported evaluator root registry schema")
-    if value["platform"] != "linux-x86_64":
-        raise ValueError("unsupported evaluator root platform")
-    roots = value["roots"]
-    if not isinstance(roots, list) or len(roots) != len(_PROVIDER_ROOT_SPECS):
-        raise ValueError("incomplete evaluator root registry")
-    result: list[dict[str, Any]] = []
-    for entry, (expected_id, expected_kind, expected_path) in zip(
-        roots, _PROVIDER_ROOT_SPECS, strict=True
-    ):
-        if not isinstance(entry, dict) or set(entry) != {
-            "file_count",
-            "id",
-            "kind",
-            "path",
-            "tree_sha256",
-        }:
-            raise ValueError("invalid evaluator root entry")
-        if (
-            entry["id"] != expected_id
-            or entry["kind"] != expected_kind
-            or entry["path"] != expected_path
-            or not isinstance(entry["file_count"], int)
-            or isinstance(entry["file_count"], bool)
-            or entry["file_count"] <= 0
-            or not _is_sha256(entry["tree_sha256"])
-        ):
-            raise ValueError("evaluator root entry drifted")
-        result.append(entry)
-    return result
-
-
-def _physical_provider_payload(base: Path) -> dict[str, Path]:
-    files: dict[str, Path] = {}
-    for path in base.rglob("*"):
-        metadata_value = path.lstat()
-        if stat.S_ISDIR(metadata_value.st_mode):
-            if path.is_symlink():
-                raise ValueError("evaluator payload contains a symlink directory")
-            continue
-        if not stat.S_ISREG(metadata_value.st_mode) or path.is_symlink():
-            raise ValueError("evaluator payload contains a special file")
-        relative = path.relative_to(base).as_posix()
-        if relative in files:
-            raise ValueError("duplicate evaluator payload path")
-        files[relative] = path
-    expected_top_level = {
-        _PROVIDER_ROOTS_REGISTRY,
-        *(path for _, _, path in _PROVIDER_ROOT_SPECS),
-    }
-    actual_top_level = {relative.split("/", 1)[0] for relative in files}
-    if actual_top_level != expected_top_level:
-        raise ValueError("evaluator payload has an incomplete root set")
-    return files
-
-
-def _provider_tree_sha256(files: dict[str, str]) -> str:
-    digest = hashlib.sha256()
-    for relative, content_sha256 in sorted(files.items()):
-        encoded = relative.encode()
-        digest.update(len(encoded).to_bytes(8, "big"))
-        digest.update(encoded)
-        digest.update(bytes.fromhex(content_sha256))
-    return f"sha256:{digest.hexdigest()}"
-
-
-def _file_sha256(path: Path) -> str:
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(path, flags)
-    digest = hashlib.sha256()
-    try:
-        metadata_value = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata_value.st_mode):
-            raise ValueError("evaluator payload file is not regular")
-        with os.fdopen(descriptor, "rb", closefd=False) as source:
-            while chunk := source.read(1024 * 1024):
-                digest.update(chunk)
-    finally:
-        os.close(descriptor)
-    return digest.hexdigest()
-
-
-def _is_sha256(value: object) -> bool:
-    return (
-        isinstance(value, str)
-        and value.startswith("sha256:")
-        and len(value) == 71
-        and all(character in "0123456789abcdef" for character in value[7:])
-    )
-
-
-def _normalize_provider_roots(provider_roots: Sequence[Path]) -> tuple[Path, ...]:
-    """Freeze one explicit deployment-owned evaluator-root selection."""
-    authored = tuple(Path(root) for root in provider_roots)
-    if any(root.is_symlink() for root in authored):
-        raise RuntimeError("runner evaluator provider roots cannot be symlinks")
-    normalized = tuple(root.resolve(strict=True) for root in authored)
-    if len(set(normalized)) != len(normalized) or not all(
-        root.is_dir() for root in normalized
-    ):
-        raise RuntimeError("runner evaluator provider roots are invalid or duplicated")
-    return normalized
-
-
-def _runner_subprocess_environment(provider_roots: tuple[Path, ...]) -> dict[str, str]:
-    """Bind child discovery to deployment-owned roots, overriding ambient input."""
-    environment = os.environ.copy()
-    if provider_roots:
-        normalized = _normalize_provider_roots(provider_roots)
-        environment[_PROVIDER_ROOTS_ENV] = os.pathsep.join(map(os.fspath, normalized))
-    else:
-        environment.pop(_PROVIDER_ROOTS_ENV, None)
-    return environment
-
-
-def _load_capabilities(
-    binary: Path, provider_roots: tuple[Path, ...] = ()
-) -> dict[str, Any]:
+def _load_capabilities(binary: Path) -> dict[str, Any]:
     try:
         completed = subprocess.run(
             [str(binary), "--capabilities"],
             capture_output=True,
             check=False,
-            env=_runner_subprocess_environment(provider_roots),
             timeout=_CAPABILITIES_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired as error:
