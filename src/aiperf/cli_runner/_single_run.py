@@ -18,10 +18,43 @@ if TYPE_CHECKING:
 
 
 def _execute_native_run(run: BenchmarkRun) -> RunResult:
-    """Execute one resolved run through the canonical subprocess adapter."""
+    """Execute one resolved run through the canonical subprocess adapter.
+
+    ``AIPERF_RUNTIME_ENGINE=python`` (``Environment.RUNTIME.ENGINE``) routes
+    execution through the pre-Rust pure-Python service mesh instead of the
+    default ``rust`` runner, so the old hot path can be A/B benchmarked against
+    the Rust core with an identical ``BenchmarkRun``.
+    """
+    from aiperf.common.environment import _RuntimeSettings
+
+    if _RuntimeSettings().ENGINE == "python":
+        return _execute_legacy_python_run(run)
+
     from aiperf.orchestrator.rust_executor import RustSubprocessExecutor
 
     return RustSubprocessExecutor(base_dir=run.artifact_dir).execute_sync(run)
+
+
+def _execute_legacy_python_run(run: BenchmarkRun) -> RunResult:
+    """Run the legacy pure-Python service mesh in-process for this one run.
+
+    Boots the ``SystemController`` (which spawns the Worker / TimingManager /
+    RecordsManager children) against the same ``BenchmarkRun`` the native path
+    consumes. ``bootstrap_and_run_service`` blocks until the mesh drains and
+    raises ``SystemExit(1)`` on service failure; a normal return means the run
+    completed and wrote its artifacts.
+    """
+    from aiperf.common.bootstrap import bootstrap_and_run_service
+    from aiperf.orchestrator.models import RunResult
+    from aiperf.plugin.enums import ServiceType
+
+    bootstrap_and_run_service(ServiceType.SYSTEM_CONTROLLER, run=run)
+
+    return RunResult(
+        label=run.label or f"run_{run.trial:04d}",
+        success=True,
+        artifacts_path=run.artifact_dir,
+    )
 
 
 def _run_single_benchmark(

@@ -244,6 +244,30 @@ class _CLIRunnerSettings(BaseSettings):
     )
 
 
+class _RuntimeSettings(BaseSettings):
+    """Selects which execution engine runs a single benchmark.
+
+    ``rust`` (default) dispatches through the Rust ``aiperf-runner``; that is
+    the only Rust executable on the product path. ``python`` routes the same
+    ``BenchmarkRun`` through the pre-Rust pure-Python service mesh
+    (SystemController + Worker / TimingManager / RecordsManager children) so the
+    legacy hot path can be A/B benchmarked against the Rust core. Both consume
+    an identical ``BenchmarkRun``; only the execution engine differs.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_RUNTIME_",
+    )
+
+    ENGINE: Literal["rust", "python"] = Field(
+        default="rust",
+        description="Execution engine for a single benchmark: `rust` (the "
+        "aiperf-runner, default) or `python` (the legacy pure-Python "
+        "service mesh, for A/B benchmarking against the Rust core). "
+        "Set via AIPERF_RUNTIME_ENGINE.",
+    )
+
+
 class _DatasetSettings(BaseSettings):
     """Dataset loading and configuration.
 
@@ -1505,6 +1529,10 @@ class _Environment(BaseSettings):
     CLI_RUNNER: _CLIRunnerSettings = Field(
         default_factory=_CLIRunnerSettings,
         description="CLI runner post-run callback isolation settings",
+    )
+    RUNTIME: _RuntimeSettings = Field(
+        default_factory=_RuntimeSettings,
+        description="Execution-engine selector (rust runner vs legacy Python mesh)",
     )
     DATASET: _DatasetSettings = Field(
         default_factory=_DatasetSettings,

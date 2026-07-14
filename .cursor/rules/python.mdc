@@ -145,6 +145,8 @@ aiperf profile --config dynosim_offline_replay.yaml
 
 Content server: `AIPERF_CONTENT_SERVER_ENABLED=true` + non-empty `AIPERF_CONTENT_SERVER_CONTENT_DIR`. See `docs/tutorials/content-server.md`.
 
+Execution-engine off switch: `AIPERF_RUNTIME_ENGINE=python` (default `rust`) routes a single `aiperf profile` run through the legacy pure-Python service mesh (`SystemController` + Worker/TimingManager/RecordsManager children) instead of the native `aiperf-runner`, for A/B benchmarking the old hot path against the Rust core on an identical `BenchmarkRun`. Enum field `Environment.RUNTIME.ENGINE` in `src/aiperf/common/environment.py`; `rust` (default) rejects unknown values.
+
 Unit tests use in-process axum endpoints. `tests/scheduled_real_mock.rs` retains real wall-clock library coverage; runner product coverage lives in `aiperf-runner/tests/`.
 
 ## Design specs (`specs/`)
