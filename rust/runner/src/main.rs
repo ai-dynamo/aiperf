@@ -164,12 +164,7 @@ fn run_controller(envelope: &Value) -> ! {
         .unwrap_or_default();
     let report_path = std::path::Path::new(artifact_dir).join("native-v2.json");
     let cell_count = aiperf_runner::cellular_controller::cell_count_from_envelope(envelope);
-    match aiperf_runner::cellular_controller::run_cellular(
-        envelope,
-        cell_count,
-        &report_path,
-        aiperf::metrics_core::MetricsConfig::default(),
-    ) {
+    match aiperf_runner::cellular_controller::run_cellular(envelope, cell_count, &report_path) {
         Ok(outcome) => {
             let mut provenance = BTreeMap::new();
             provenance.insert(

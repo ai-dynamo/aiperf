@@ -53,11 +53,13 @@ pub fn run_cellular(
     envelope: &serde_json::Value,
     cell_count: u32,
     report_path: &Path,
-    metrics_config: MetricsConfig,
 ) -> Result<CellularRunOutcome> {
     ensure!(cell_count >= 1, "cell_count must be at least 1");
     validate_cellular_run_shape(envelope)?;
     validate_cellular_phase_budgets(envelope)?;
+    // Derive the metrics policy from the envelope so the merge reproduces the
+    // authored SLOs / timeslices, exactly as the single-process path does.
+    let metrics_config = cellular_metrics_config(envelope)?;
     let total_requests = profiling_request_budget(envelope)?;
     ensure!(
         total_requests >= cell_count as u64,
@@ -438,6 +440,26 @@ fn owned_positions(total: u64, cell_id: u32, cell_count: u32) -> u64 {
     (total - k).div_ceil(count)
 }
 
+/// The native metrics policy for the merge, derived from the v2 envelope exactly as
+/// the single-process path does — `cfg.metrics` (SLOs + slice duration) plus
+/// `cfg.endpoint.use_server_token_count`. Passing `MetricsConfig::default()` would
+/// silently drop authored goodput SLOs and timeslice sweep-lines from the merged
+/// report. Mirrors [`crate::protocol::BenchmarkRunConfigWireV2`]'s
+/// `from_value(cfg.metrics).unwrap_or_default()` so an absent/loose `metrics` block
+/// falls back the same way (`metrics_config` still validates any SLO names present).
+fn cellular_metrics_config(envelope: &serde_json::Value) -> Result<MetricsConfig> {
+    let spec: crate::protocol::MetricsSpec = envelope
+        .pointer("/run/cfg/metrics")
+        .cloned()
+        .map(|value| serde_json::from_value(value).unwrap_or_default())
+        .unwrap_or_default();
+    let use_server_token_count = envelope
+        .pointer("/run/cfg/endpoint/use_server_token_count")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    crate::execute::metrics_config(&spec, use_server_token_count)
+}
+
 /// Each phase's global ordinal base (`phase name -> turns dispatched by prior
 /// phases`) from the v2 envelope. Phases execute in array order, so a phase's base is
 /// the running sum of prior phases' `requests`. Assumes distinct phase names (the
@@ -588,6 +610,34 @@ mod tests {
                 "should reject {bad}"
             );
         }
+    }
+
+    #[test]
+    fn derives_metrics_config_from_the_envelope() {
+        // Authored SLOs + slice duration + server-token-count flow into the merge
+        // config (the merge would silently drop goodput/timeslices under
+        // MetricsConfig::default()).
+        let env = serde_json::json!({"run": {"cfg": {
+            "metrics": {"slos": {"request_latency": 60.0}, "slice_duration_seconds": 2.0},
+            "endpoint": {"use_server_token_count": true},
+        }}});
+        let config = cellular_metrics_config(&env).expect("valid metrics");
+        assert_eq!(config.slos.len(), 1);
+        assert_eq!(config.slice_duration_ns, Some(2_000_000_000));
+        assert!(config.use_server_token_count);
+        // Absent metrics/endpoint → the default policy (empty SLOs, no timeslicing).
+        let bare =
+            cellular_metrics_config(&serde_json::json!({"run": {"cfg": {}}})).expect("default");
+        assert!(bare.slos.is_empty());
+        assert_eq!(bare.slice_duration_ns, None);
+        assert!(!bare.use_server_token_count);
+        // An SLO metric absent from the catalog is rejected, like the 1-cell path.
+        assert!(
+            cellular_metrics_config(&serde_json::json!({"run": {"cfg": {
+                "metrics": {"slos": {"not_a_real_metric": 1.0}},
+            }}}))
+            .is_err()
+        );
     }
 
     #[test]
