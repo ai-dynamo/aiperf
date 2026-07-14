@@ -684,7 +684,193 @@ def _export(run: BenchmarkRun) -> dict[str, Any]:
     server_metrics = _server_metrics_frontend_projection(run)
     if server_metrics is not None:
         result["server_metrics"] = server_metrics
+
+    # Network sinks (OTLP/HTTP, MLflow, W&B) are only projected onto the native
+    # export plane when the operator opts in via AIPERF_NATIVE_NETWORK_EXPORT.
+    # Absent the gate these blocks are omitted, so the Rust sinks stay disabled
+    # (enabled=false / no tracking_uri / no project) and the legacy Python
+    # streaming sidecar + post-run exporters remain the single emitter. With the
+    # gate on, these blocks drive the Rust sinks and the Python paths are gated
+    # off (see :func:`_live_streaming` and ``ExporterManager.export_data``), so
+    # each network destination receives exactly one emission.
+    if Environment.NATIVE_NETWORK_EXPORT:
+        otel = _otel_frontend_projection(run)
+        if otel is not None:
+            result["otel"] = otel
+        mlflow = _mlflow_frontend_projection(run)
+        if mlflow is not None:
+            result["mlflow"] = mlflow
+        wandb = _wandb_frontend_projection(run)
+        if wandb is not None:
+            result["wandb"] = wandb
     return result
+
+
+def _otel_frontend_projection(run: BenchmarkRun) -> dict[str, Any] | None:
+    """Project ``cfg.otel`` onto the native OTLP/HTTP metrics sink block.
+
+    Mirrors the four wire fields the Rust emitter decodes (see
+    ``aiperf::export::otel::OtelExportConfig``): ``enabled`` (true iff a metrics
+    URL is configured), the already-normalized ``endpoint`` (``cfg.otel``'s
+    ``BeforeValidator`` guarantees the ``…/v1/metrics`` suffix), the optional
+    ``provider`` (``gen_ai.provider.name`` override), and the ``resource_attributes``
+    map. ``service.name=aiperf`` is added by the sink, so the map here reproduces
+    the rest of ``OtelMetricsResultsProcessor._build_resource_attributes``
+    (``otel_metrics_results_processor.py:433``): ``service.instance.id`` (the
+    records-manager default, matching the Python fanout's ``service_id`` fallback),
+    ``aiperf.benchmark.id``, ``aiperf.endpoint.type``, ``aiperf.model.name``, then
+    the user ``custom_resource_attributes``.
+    """
+    otel = run.cfg.otel
+    if otel.metrics_url is None:
+        return None
+
+    resource_attributes: dict[str, str] = {"service.instance.id": "records-manager"}
+    if run.benchmark_id is not None:
+        resource_attributes["aiperf.benchmark.id"] = run.benchmark_id
+    resource_attributes["aiperf.endpoint.type"] = str(run.cfg.endpoint.type)
+    model_names = run.cfg.get_model_names()
+    if model_names:
+        resource_attributes["aiperf.model.name"] = model_names[0]
+    resource_attributes.update(otel.custom_resource_attributes)
+
+    projection: dict[str, Any] = {
+        "enabled": True,
+        "endpoint": otel.metrics_url,
+        "resource_attributes": resource_attributes,
+    }
+    if otel.gen_ai_provider is not None:
+        projection["provider"] = otel.gen_ai_provider
+    return projection
+
+
+def _mlflow_frontend_projection(run: BenchmarkRun) -> dict[str, Any] | None:
+    """Project ``cfg.mlflow`` onto the native MLflow run-tracker block.
+
+    Enabled iff a tracking URI is set (``MLflowConfig.enabled``). Reproduces the
+    fields the Rust uploader decodes (``aiperf::export::mlflow::MlflowExportConfig``):
+    the endpoint/experiment/run identity, the user ``tags``, the resolved
+    ``artifact_globs``, the ``benchmark_id``, and the pre-built ``params`` payload
+    (``MLflowDataExporter._build_param_payload``, ``mlflow_data_exporter.py:357``)
+    — pure frontend config the native report cannot reconstruct. Metric VALUES and
+    the ``metric.tag`` / ``metric.tag.<stat>`` key scheme are assembled by the Rust
+    sink from the report; only config-derived params/tags are projected here.
+    """
+    mlflow_cfg = run.cfg.mlflow
+    if mlflow_cfg.tracking_uri is None:
+        return None
+
+    projection: dict[str, Any] = {
+        "enabled": True,
+        "tracking_uri": mlflow_cfg.tracking_uri,
+        "experiment": mlflow_cfg.experiment,
+        "tags": mlflow_cfg.tags_dict,
+        "artifact_globs": mlflow_cfg.resolved_artifact_globs,
+        "params": _mlflow_param_payload(run),
+    }
+    if mlflow_cfg.run_name is not None:
+        projection["run_name"] = mlflow_cfg.run_name
+    if mlflow_cfg.parent_run_id is not None:
+        projection["parent_run_id"] = mlflow_cfg.parent_run_id
+    if run.benchmark_id is not None:
+        projection["benchmark_id"] = run.benchmark_id
+    total_expected = _mlflow_total_expected(run)
+    if total_expected is not None:
+        projection["total_expected_requests"] = total_expected
+    return projection
+
+
+def _mlflow_param_payload(run: BenchmarkRun) -> dict[str, str]:
+    """Reproduce ``MLflowDataExporter._build_param_payload`` (``mlflow_data_exporter.py:357``).
+
+    Pure frontend config: endpoint type/models/urls (URLs redacted), the artifact
+    directory, and — from the first profiling phase — the timing mode and any
+    concurrency / request-rate / request-count / benchmark-duration loadgen axis,
+    plus the redacted CLI command. The native report carries none of this, so it
+    is assembled and redacted here and forwarded verbatim to the Rust sink.
+    """
+    from aiperf.common.redact import redact_cli_command, redact_url
+    from aiperf.config.phases import get_phase_rate
+
+    cfg = run.cfg
+    params: dict[str, str] = {
+        "endpoint.type": str(cfg.endpoint.type),
+        "endpoint.models": ",".join(cfg.get_model_names()),
+        "endpoint.urls": ",".join(redact_url(url) for url in cfg.endpoint.urls),
+        "output.artifact_directory": str(cfg.artifacts.artifact_directory),
+    }
+
+    profiling_phases = cfg.get_profiling_phases()
+    if profiling_phases:
+        phase = profiling_phases[0]
+        params["timing.mode"] = str(phase.type)
+        if getattr(phase, "concurrency", None) is not None:
+            params["loadgen.concurrency"] = str(phase.concurrency)
+        rate = get_phase_rate(phase)
+        if rate is not None:
+            params["loadgen.request_rate"] = str(rate)
+        if phase.requests is not None:
+            params["loadgen.request_count"] = str(phase.requests)
+        if phase.duration is not None:
+            params["loadgen.benchmark_duration"] = str(phase.duration)
+
+    cli_command = getattr(cfg, "cli_command", None) or run.cli_command
+    if cli_command:
+        params["aiperf.cli_command"] = redact_cli_command(cli_command)
+    return params
+
+
+def _mlflow_total_expected(run: BenchmarkRun) -> float | None:
+    """Derive ``total_expected_requests`` for the ``aiperf.total_expected_requests`` metric.
+
+    ``MLflowDataExporter`` reads this from ``ProfileResults.total_expected``; the
+    native report has no such field, so it is derived from the first profiling
+    phase's configured ``requests`` when present (``None`` otherwise, matching the
+    exporter's skip-when-absent behavior).
+    """
+    profiling_phases = run.cfg.get_profiling_phases()
+    if not profiling_phases:
+        return None
+    requests = profiling_phases[0].requests
+    return float(requests) if requests is not None else None
+
+
+def _wandb_frontend_projection(run: BenchmarkRun) -> dict[str, Any] | None:
+    """Project ``cfg.wandb`` onto the native Weights & Biases sink block.
+
+    Enabled iff a project is set (``WandbConfig.enabled``). Reproduces the fields
+    the Rust offline-``.wandb`` writer decodes
+    (``aiperf::export::wandb::WandbExportConfig``): project/entity/run-name, the
+    user ``tags`` (the ``aiperf-<version>`` / ``benchmark-<id8>`` tags are derived
+    by the sink), the ``benchmark_id``, the serialized redacted ``config_json``
+    (``cfg.model_dump(mode="json", exclude_none=True)`` — the same object
+    ``WandbDataExporter._build_config_payload`` logs, ``wandb_data_exporter.py:160``),
+    and the redacted ``cli_command`` recorded under ``aiperf.cli_command``.
+    """
+    import orjson
+
+    from aiperf.common.redact import redact_cli_command
+
+    wandb_cfg = run.cfg.wandb
+    if wandb_cfg.project is None:
+        return None
+
+    config_payload = run.cfg.model_dump(mode="json", exclude_none=True)
+    projection: dict[str, Any] = {
+        "project": wandb_cfg.project,
+        "config_json": orjson.dumps(config_payload).decode("utf-8"),
+    }
+    if wandb_cfg.entity is not None:
+        projection["entity"] = wandb_cfg.entity
+    if wandb_cfg.run_name is not None:
+        projection["run_name"] = wandb_cfg.run_name
+    if wandb_cfg.tags:
+        projection["tags"] = list(wandb_cfg.tags)
+    if run.benchmark_id is not None:
+        projection["benchmark_id"] = run.benchmark_id
+    if run.cli_command:
+        projection["cli_command"] = redact_cli_command(run.cli_command)
+    return projection
 
 
 def _timeslice_frontend_projection(run: BenchmarkRun) -> dict[str, Any] | None:
@@ -919,10 +1105,15 @@ def _genai_perf_frontend_projection(run: BenchmarkRun) -> dict[str, Any]:
 def _live_streaming(run: BenchmarkRun) -> dict[str, Any] | None:
     """Lower OTel/live-MLflow into the supervised Python extension ABI."""
     config = run.cfg
+    # When the native network-export gate is on, the Rust OTel/MLflow sinks are
+    # the single emitter (see :func:`_export`); suppress the Python streaming
+    # sidecar so those destinations are not written twice. Reversible: clearing
+    # AIPERF_NATIVE_NETWORK_EXPORT restores the legacy live-streaming path.
+    if Environment.NATIVE_NETWORK_EXPORT:
+        return None
     if not config.otel.collector_enabled and not config.mlflow.enabled:
         return None
 
-    from aiperf.common.environment import Environment
     from aiperf.config.otel import normalize_otel_metrics_url
 
     metrics_url = normalize_otel_metrics_url(config.otel.metrics_url)

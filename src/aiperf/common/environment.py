@@ -1505,6 +1505,17 @@ class _Environment(BaseSettings):
         extra="allow",
     )
 
+    NATIVE_NETWORK_EXPORT: bool = Field(
+        default=False,
+        description="Route the OTel (OTLP/HTTP), MLflow, and Weights & Biases "
+        "network exports through the native Rust sinks instead of the legacy "
+        "Python live-streaming sidecar and post-run upload exporters. When true "
+        "the frontend projects cfg.export.{otel,mlflow,wandb} for the runner and "
+        "gates the Python paths off so each destination receives a single "
+        "emission. Set via AIPERF_NATIVE_NETWORK_EXPORT. Reversible: clearing it "
+        "restores the Python network-export paths.",
+    )
+
     # Nested subsystem settings (alphabetically ordered)
     ACCURACY: _AccuracySettings = Field(
         default_factory=_AccuracySettings,

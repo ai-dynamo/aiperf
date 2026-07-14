@@ -25,6 +25,22 @@ if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
 
+# Data exporter entry names whose destinations are owned by the native Rust
+# network sinks (aiperf::export::{otel,mlflow,wandb}) when the operator sets
+# AIPERF_NATIVE_NETWORK_EXPORT. The Python OTel sidecar is suppressed separately
+# in rust_wire._live_streaming; these two post-run upload exporters are gated
+# here so each destination receives a single emission.
+_NATIVE_NETWORK_EXPORT_NAMES = frozenset({"mlflow", "wandb"})
+
+
+def _native_network_export_gates(exporter_name: str) -> bool:
+    """Whether this data exporter is superseded by a native Rust network sink."""
+    return (
+        Environment.NATIVE_NETWORK_EXPORT
+        and str(exporter_name) in _NATIVE_NETWORK_EXPORT_NAMES
+    )
+
+
 class ExporterManager(AIPerfLoggerMixin):
     """
     ExporterManager is responsible for exporting records using all
@@ -68,6 +84,18 @@ class ExporterManager(AIPerfLoggerMixin):
             if exporter_entry.name == DataExporterType.SERVER_METRICS_PARQUET:
                 # TODO: Until the exporters move to the records manager, we need to skip the
                 # parquet exporter here, as it requires the server metrics accumulator to be available.
+                continue
+
+            if _native_network_export_gates(exporter_entry.name):
+                # The native Rust OTLP/MLflow/W&B sinks are the single emitter for
+                # these destinations under AIPERF_NATIVE_NETWORK_EXPORT; skip the
+                # legacy Python upload exporter so the destination is not written
+                # twice (see rust_wire._export). Reversible: clearing the env var
+                # restores the Python post-run exporter.
+                self.debug(
+                    f"Data exporter {exporter_entry.name} is gated off by "
+                    "AIPERF_NATIVE_NETWORK_EXPORT (native Rust sink is authoritative)"
+                )
                 continue
 
             try:

@@ -188,6 +188,86 @@ def test_export_server_metrics_omits_input_config_when_csv_only(tmp_path: Path) 
     assert server_metrics["benchmark_id"] == "authored-v2"
 
 
+def _network_run(artifact_target: Path) -> BenchmarkRun:
+    """A run with OTel/MLflow/W&B all configured, for the network-export gate."""
+    run = _run(artifact_target)
+    # Already normalized by the config validator's BeforeValidator on the real
+    # load path (verified end-to-end in the live run); set here directly since
+    # attribute assignment bypasses validation.
+    run.cfg.otel.metrics_url = "http://127.0.0.1:4318/v1/metrics"
+    run.cfg.otel.gen_ai_provider = "openai"
+    run.cfg.otel.custom_resource_attributes = {"deployment.environment": "e2e"}
+    run.cfg.mlflow.tracking_uri = "file:///tmp/mlruns"
+    run.cfg.mlflow.experiment = "e2e"
+    run.cfg.wandb.project = "e2e"
+    run.cfg.wandb.tags = ["netclose"]
+    return run
+
+
+def test_network_export_omitted_without_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aiperf.common.environment import Environment
+    from aiperf.orchestrator.rust_wire import _export, _live_streaming
+
+    monkeypatch.setattr(Environment, "NATIVE_NETWORK_EXPORT", False)
+    run = _network_run(tmp_path / "artifacts")
+
+    export = _export(run)
+    # Absent the gate the Rust network sinks are not driven; the legacy Python
+    # streaming sidecar stays active (single emitter).
+    assert "otel" not in export
+    assert "mlflow" not in export
+    assert "wandb" not in export
+    assert _live_streaming(run) is not None
+
+
+def test_network_export_projected_and_python_gated_with_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    from aiperf.common.environment import Environment
+    from aiperf.orchestrator.rust_wire import _export, _live_streaming
+
+    monkeypatch.setattr(Environment, "NATIVE_NETWORK_EXPORT", True)
+    run = _network_run(tmp_path / "artifacts")
+
+    export = _export(run)
+
+    otel = export["otel"]
+    assert otel["enabled"] is True
+    # metrics_url is normalized to the OTLP/HTTP metrics path by the config validator.
+    assert otel["endpoint"].endswith("/v1/metrics")
+    assert otel["provider"] == "openai"
+    attrs = otel["resource_attributes"]
+    assert attrs["aiperf.benchmark.id"] == "authored-v2"
+    assert attrs["aiperf.endpoint.type"] == "chat"
+    assert attrs["aiperf.model.name"] == "mock-model"
+    assert attrs["deployment.environment"] == "e2e"
+    # service.name is set by the sink, not projected.
+    assert "service.name" not in attrs
+
+    mlflow = export["mlflow"]
+    assert mlflow["enabled"] is True
+    assert mlflow["tracking_uri"] == "file:///tmp/mlruns"
+    assert mlflow["experiment"] == "e2e"
+    assert mlflow["benchmark_id"] == "authored-v2"
+    assert mlflow["params"]["endpoint.type"] == "chat"
+    assert mlflow["params"]["loadgen.concurrency"] == "1"
+
+    wandb = export["wandb"]
+    assert wandb["project"] == "e2e"
+    assert wandb["tags"] == ["netclose"]
+    assert wandb["benchmark_id"] == "authored-v2"
+    # config_json is the serialized redacted config object (a JSON string).
+    parsed = json.loads(wandb["config_json"])
+    assert parsed["endpoint"]["type"] == "chat"
+
+    # With the gate on the Python streaming sidecar is suppressed (single emitter).
+    assert _live_streaming(run) is None
+
+
 def test_dump_strips_python_only_cfg_sections(tmp_path: Path) -> None:
     run = _run(tmp_path / "artifacts")
     dumped = dump_benchmark_run(run)

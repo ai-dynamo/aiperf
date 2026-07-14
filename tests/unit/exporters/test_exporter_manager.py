@@ -269,3 +269,20 @@ class TestExporterManager:
             await manager.export_console(Console(file=io.StringIO()))
 
         assert captured_widths == [140]
+
+
+@pytest.mark.parametrize(
+    ("name", "gated"),
+    [("mlflow", True), ("wandb", True), ("csv", False), ("json", False)],
+)
+def test_native_network_export_gates(monkeypatch, name, gated):
+    """Only the mlflow/wandb upload exporters are gated, and only with the env on."""
+    from aiperf.common.environment import Environment
+    from aiperf.exporters.exporter_manager import _native_network_export_gates
+
+    monkeypatch.setattr(Environment, "NATIVE_NETWORK_EXPORT", True)
+    assert _native_network_export_gates(name) is gated
+
+    # With the gate off nothing is superseded (the Python path stays authoritative).
+    monkeypatch.setattr(Environment, "NATIVE_NETWORK_EXPORT", False)
+    assert _native_network_export_gates(name) is False
