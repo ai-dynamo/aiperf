@@ -18,10 +18,10 @@ use std::rc::Rc;
 
 use crate::metrics_core::MetricsConfig;
 use crate::timing::{
-    ClockPhaseOrchestrator, ClockPhaseRunnerFactory, LocalPhaseFuture, PhaseConfig, PhaseContext,
-    PhaseExecution, PhaseExecutionError, PhaseExecutionFactory, PhaseKind, PhaseObserver,
-    PhaseOrchestrator, PhaseReturn, PhaseSend, PhaseStats, RampDriver, RampHandle,
-    ReleasedStuckSlots, SlotPool,
+    ClockPhaseOrchestrator, ClockPhaseRunnerFactory, LocalPhaseFuture, PhaseBranchStats,
+    PhaseConfig, PhaseContext, PhaseExecution, PhaseExecutionError, PhaseExecutionFactory,
+    PhaseKind, PhaseObserver, PhaseOrchestrator, PhaseReturn, PhaseSend, PhaseStats, RampDriver,
+    RampHandle, ReleasedStuckSlots, SlotPool,
 };
 use anyhow::{Result, anyhow};
 use loadgen_core::collector::ReplayTerminalStatus;
@@ -689,6 +689,12 @@ async fn run_scheduled_phases_inner(
         .enumerate()
         .map(|(index, config)| (config.id.clone(), (index, config.kind)))
         .collect::<BTreeMap<_, _>>();
+    // Emit a one-shot lifecycle marker on STDERR when the profiling phase
+    // starts. By this point readiness has completed and the SIGINT/SIGTERM
+    // listener below is armed, so a lifecycle owner (the Python orchestrator)
+    // that relays this line can safely deliver an interrupt knowing the run is
+    // actually profiling and can be cancelled gracefully into partial results.
+    let observer: Rc<dyn PhaseObserver> = Rc::new(ProfilingBannerObserver::new(observer));
     let reports = Rc::new(RefCell::new(Vec::new()));
     let execution_factory = Rc::new(ScheduledPhaseExecutionFactory {
         clock: clock.clone(),
@@ -711,7 +717,16 @@ async fn run_scheduled_phases_inner(
     ));
     let orchestrator = ClockPhaseOrchestrator::new(configs, runner_factory, observer)
         .map_err(|error| anyhow!(error))?;
+    // Trigger run-level cancellation on the first SIGINT/SIGTERM. The signal
+    // future is driven by the runtime's own signal driver (never a raw handler),
+    // so it stays inside the thread-per-core `current_thread` + `LocalSet` model.
+    // The active phase then drains through the existing cancellation latch and
+    // yields `PhaseStats { was_cancelled: true }` while the runner still writes
+    // its partial native report. Subsequent signals are ignored: the task
+    // completes after the first `cancel()`.
+    let signal_guard = spawn_cancel_on_signal(orchestrator.clone());
     let phase_result = orchestrator.run_all().await.map_err(|error| anyhow!(error));
+    drop(signal_guard);
     let processor_result = execution_factory.wait_record_processors().await;
     let phases = match (phase_result, processor_result) {
         (Ok(phases), Ok(())) => phases,
@@ -730,6 +745,112 @@ async fn run_scheduled_phases_inner(
         order,
         reports,
     })
+}
+
+/// Spawn a `LocalSet` task that cancels the orchestrator on the first
+/// SIGINT/SIGTERM, returning a guard that aborts the listener on drop.
+///
+/// Only `tokio::signal` (async, driven by the runtime's signal driver) is used
+/// so the listener obeys the thread-per-core `!Send` model — no raw OS handler
+/// runs outside the executor. On the first delivered signal the active phase is
+/// cancelled once; later signals are ignored because the task has completed.
+#[cfg(unix)]
+fn spawn_cancel_on_signal(orchestrator: ClockPhaseOrchestrator) -> SignalCancelGuard {
+    let handle = tokio::task::spawn_local(async move {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut sigint = signal(SignalKind::interrupt()).ok();
+        let mut sigterm = signal(SignalKind::terminate()).ok();
+        match (sigint.as_mut(), sigterm.as_mut()) {
+            (Some(interrupt), Some(terminate)) => {
+                tokio::select! {
+                    _ = interrupt.recv() => {}
+                    _ = terminate.recv() => {}
+                }
+            }
+            (Some(interrupt), None) => {
+                interrupt.recv().await;
+            }
+            (None, Some(terminate)) => {
+                terminate.recv().await;
+            }
+            // Registration failed for both signals: never cancel from here.
+            (None, None) => std::future::pending::<()>().await,
+        }
+        let _ = orchestrator.cancel().await;
+    });
+    SignalCancelGuard { handle }
+}
+
+/// Aborts the background signal listener when the phase run returns.
+#[cfg(unix)]
+struct SignalCancelGuard {
+    handle: tokio::task::JoinHandle<()>,
+}
+
+#[cfg(unix)]
+impl Drop for SignalCancelGuard {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
+
+/// Non-unix builds carry no signal listener; the product target is Linux.
+#[cfg(not(unix))]
+fn spawn_cancel_on_signal(_orchestrator: ClockPhaseOrchestrator) -> SignalCancelGuard {
+    SignalCancelGuard
+}
+
+/// Placeholder guard on platforms without `tokio::signal::unix`.
+#[cfg(not(unix))]
+struct SignalCancelGuard;
+
+/// The lifecycle marker relayed to a signal-forwarding lifecycle owner.
+///
+/// The Python orchestrator waits for this exact substring before it delivers a
+/// Ctrl+C during integration testing, and operators on the simple UI use it to
+/// know the measured phase has begun. It is written to STDERR because the
+/// runner reserves STDOUT for its single terminal JSON line.
+const PROFILING_BANNER: &str = "AIPerf System is PROFILING";
+
+/// Observer decorator that emits [`PROFILING_BANNER`] once, when the first
+/// profiling phase starts, then delegates every event to the inner observer.
+struct ProfilingBannerObserver {
+    inner: Rc<dyn PhaseObserver>,
+    announced: Cell<bool>,
+}
+
+impl ProfilingBannerObserver {
+    fn new(inner: Rc<dyn PhaseObserver>) -> Self {
+        Self {
+            inner,
+            announced: Cell::new(false),
+        }
+    }
+}
+
+impl PhaseObserver for ProfilingBannerObserver {
+    fn on_phase_start(&self, config: &PhaseConfig, stats: PhaseStats) {
+        if config.kind == PhaseKind::Profiling && !self.announced.replace(true) {
+            eprintln!("{PROFILING_BANNER}");
+        }
+        self.inner.on_phase_start(config, stats);
+    }
+
+    fn on_progress(&self, stats: PhaseStats) {
+        self.inner.on_progress(stats);
+    }
+
+    fn on_sending_complete(&self, stats: PhaseStats) {
+        self.inner.on_sending_complete(stats);
+    }
+
+    fn on_phase_complete(&self, stats: PhaseStats, branch_stats: Option<PhaseBranchStats>) {
+        self.inner.on_phase_complete(stats, branch_stats);
+    }
+
+    fn on_phases_complete(&self, stats: Vec<PhaseStats>) {
+        self.inner.on_phases_complete(stats);
+    }
 }
 
 struct ScheduledPhaseExecutionFactory {

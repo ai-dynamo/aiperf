@@ -71,14 +71,18 @@ class RustSubprocessExecutor(RunExecutor):
         try:
             request = self._request_for_run(run)
             _clear_prior_report(run.artifact_dir)
-            completed = self.installation.execute(request)
-            # Surface the runner's control-plane stderr (endpoint readiness
-            # probe progress lives here) in the run log regardless of outcome.
-            # The runner reserves stdout for its single terminal JSON line, so
-            # readiness "waiting for model", 404-fallback, and inference-probe
-            # lines only reach operators through stderr forwarding. On failure
-            # the same text is additionally embedded in the error detail below.
-            _forward_runner_stderr(completed.stderr)
+            # Surface the runner's control-plane stderr (endpoint readiness probe
+            # progress lives here) in the run log live, line by line. The runner
+            # reserves stdout for its single terminal JSON line, so readiness
+            # "waiting for model", 404-fallback, inference-probe, and the
+            # profiling banner only reach operators (and a Ctrl+C lifecycle
+            # owner) through this stderr forwarding. Forwarding live - rather
+            # than after the child exits - lets a signal-forwarding parent see
+            # the profiling banner while the run is still in flight. On failure
+            # the full text is additionally embedded in the error detail below.
+            completed = self.installation.execute(
+                request, on_stderr_line=_forward_runner_stderr_line
+            )
             terminal = _parse_terminal(
                 completed.stdout,
                 run,
@@ -140,24 +144,20 @@ class RustSubprocessExecutor(RunExecutor):
         GpuMetricsResolver().resolve(run)
 
 
-def _forward_runner_stderr(stderr: bytes) -> None:
-    """Re-emit the native runner's stderr through the aiperf logger.
+def _forward_runner_stderr_line(raw: bytes) -> None:
+    """Re-emit one native-runner stderr line through the aiperf logger, live.
 
     The runner's stdout is contractually one terminal JSON line, so its
-    human-readable readiness/diagnostic trace is written to stderr. Forwarding
-    it here (redacted, line by line) lets that trace land in ``logs/aiperf.log``
-    on both success and failure, which is where operators and the pre-flight
-    readiness integration tests look for probe progress.
+    human-readable readiness/diagnostic trace (including the profiling banner)
+    is written to stderr. Forwarding each line as it arrives (redacted) lets the
+    trace land in ``logs/aiperf.log`` and on the console in real time, which is
+    where operators and the pre-flight readiness integration tests look for
+    probe progress - and lets a Ctrl+C lifecycle owner observe the profiling
+    banner while the run is still in flight. Called from a reader thread.
     """
-    if not stderr:
-        return
-    text = redact_string(stderr.decode(errors="replace")).strip()
-    if not text:
-        return
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped:
-            logger.info("aiperf-runner: %s", stripped)
+    text = redact_string(raw.decode(errors="replace")).strip()
+    if text:
+        logger.info("aiperf-runner: %s", text)
 
 
 def _clear_prior_report(artifact_dir: Path) -> None:

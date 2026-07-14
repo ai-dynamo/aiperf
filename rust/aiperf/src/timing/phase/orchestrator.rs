@@ -287,13 +287,19 @@ impl ClockPhaseOrchestrator {
 
     async fn cancel_active(&self) -> Result<(), PhaseOrchestratorError> {
         self.inner.cancelled.set(true);
-        let shared_result = self.inner.runner_factory.cancel_all().await;
+        // Flip each active runner's lifecycle to cancelled BEFORE cancelling the
+        // shared backend. Cancelling shared issuance first can let a runner
+        // observe "sending complete" and finish through the normal completion
+        // path, dropping the `was_cancelled` flag even though the run was
+        // interrupted; signalling the runner first guarantees the Cancelled
+        // completion path and a `was_cancelled = true` snapshot.
         let active = self.inner.active.borrow().clone();
         for runner in &active {
             if !runner.is_complete() {
                 runner.cancel();
             }
         }
+        let shared_result = self.inner.runner_factory.cancel_all().await;
         shared_result.map_err(PhaseOrchestratorError::Cancel)
     }
 }

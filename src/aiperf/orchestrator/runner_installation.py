@@ -13,13 +13,16 @@ contract.
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import json
 import os
 import shutil
+import signal
 import stat
 import subprocess
-from collections.abc import Sequence
+import threading
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from importlib import metadata
 from pathlib import Path
@@ -171,10 +174,32 @@ class RunnerInstallation:
             )
         _require_v2_request_capabilities(self.capabilities, request)
 
-    def execute(self, request: dict[str, Any]) -> subprocess.CompletedProcess[bytes]:
-        """Run one request with the same binary whose catalog was negotiated."""
+    def execute(
+        self,
+        request: dict[str, Any],
+        *,
+        on_stderr_line: Callable[[bytes], None] | None = None,
+    ) -> subprocess.CompletedProcess[bytes]:
+        """Run one request with the same binary whose catalog was negotiated.
+
+        When invoked on the main thread this forwards the first SIGINT/SIGTERM
+        to the child, so a Ctrl+C during a benchmark triggers the runner's
+        graceful phase cancellation (partial results written, native summary
+        ``was_cancelled=true``) instead of tearing the child down before it can
+        write results. Off the main thread (e.g. the sweep orchestrator's
+        ``asyncio.to_thread`` worker, where ``signal.signal`` raises) the child
+        runs without local forwarding.
+
+        ``on_stderr_line`` is invoked for each captured stderr line as it
+        arrives (bytes, newline stripped). The run path uses this to surface the
+        runner's live lifecycle/readiness trace - including the profiling banner
+        a Ctrl+C harness waits for - instead of only forwarding it after the
+        child exits. The full stderr is still captured and returned.
+        """
         child = self.spawn(request)
-        stdout, stderr = child.communicate(orjson.dumps(request))
+        stdout, stderr = _communicate_forwarding_signals(
+            child, orjson.dumps(request), on_stderr_line
+        )
         return subprocess.CompletedProcess(
             child.args,
             child.returncode,
@@ -236,6 +261,98 @@ class RunnerInstallation:
             f"aiperf-runner rejected authored run {benchmark_id!r} "
             f"(exit {completed.returncode}): {detail}"
         )
+
+
+def _communicate_forwarding_signals(
+    child: subprocess.Popen[bytes],
+    payload: bytes,
+    on_stderr_line: Callable[[bytes], None] | None = None,
+) -> tuple[bytes, bytes]:
+    """Drive one runner child to completion, forwarding the first Ctrl+C/term.
+
+    On the main thread this installs temporary SIGINT/SIGTERM handlers that send
+    SIGINT to the child exactly once and then keep waiting for its graceful exit
+    and report. The handler swallows the signal (never raises
+    ``KeyboardInterrupt``) so the parent does not tear the child down before it
+    writes its partial results; the runner cancels the active phase, drains
+    in-flight requests, and exits 0 after writing ``native-v2.json`` with
+    ``was_cancelled=true``. Prior handlers are always restored.
+
+    Signal installation only works on the main thread, so off-main-thread
+    callers (the sweep orchestrator's ``asyncio.to_thread`` worker) run without
+    local forwarding.
+
+    stdout and stderr are drained on dedicated reader threads so the main thread
+    stays free to run the Python signal handler while the child is still alive.
+    When ``on_stderr_line`` is provided each captured stderr line is delivered to
+    it live (bytes, newline stripped), which is how the runner's profiling banner
+    reaches a signal-forwarding lifecycle owner before the run finishes. The full
+    stderr is still captured and returned.
+    """
+    stdout_chunks: list[bytes] = []
+    stderr_chunks: list[bytes] = []
+
+    def _drain_stdout() -> None:
+        if child.stdout is not None:
+            stdout_chunks.append(child.stdout.read())
+
+    def _drain_stderr() -> None:
+        if child.stderr is None:
+            return
+        for raw in iter(child.stderr.readline, b""):
+            stderr_chunks.append(raw)
+            if on_stderr_line is not None:
+                line = raw.rstrip(b"\r\n")
+                if line:
+                    with contextlib.suppress(Exception):
+                        on_stderr_line(line)
+
+    # Send the request and close stdin so the runner can begin. Writing before
+    # the reader threads consume output is safe: the payload is small and the
+    # runner reads its whole request before emitting anything.
+    with contextlib.suppress(BrokenPipeError, OSError):
+        if child.stdin is not None:
+            child.stdin.write(payload)
+            child.stdin.close()
+
+    out_thread = threading.Thread(target=_drain_stdout, daemon=True)
+    err_thread = threading.Thread(target=_drain_stderr, daemon=True)
+    out_thread.start()
+    err_thread.start()
+
+    forwarded = False
+
+    def _forward(_signum: int, _frame: object) -> None:
+        nonlocal forwarded
+        if forwarded:
+            return
+        forwarded = True
+        # The child may already have exited or be otherwise unreachable.
+        with contextlib.suppress(ProcessLookupError, ValueError, OSError):
+            child.send_signal(signal.SIGINT)
+
+    on_main = threading.current_thread() is threading.main_thread()
+    installed: list[tuple[int, Any]] = []
+    try:
+        if on_main:
+            for signum in (signal.SIGINT, getattr(signal, "SIGTERM", None)):
+                if signum is None:
+                    continue
+                try:
+                    previous = signal.signal(signum, _forward)
+                except (ValueError, OSError):
+                    # Not the main thread, or not installable here.
+                    continue
+                installed.append((signum, previous))
+        child.wait()
+        out_thread.join()
+        err_thread.join()
+    finally:
+        for signum, previous in installed:
+            with contextlib.suppress(ValueError, OSError):
+                signal.signal(signum, previous)
+
+    return b"".join(stdout_chunks), b"".join(stderr_chunks)
 
 
 @dataclass(frozen=True, slots=True)

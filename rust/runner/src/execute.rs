@@ -1733,6 +1733,11 @@ async fn execute_native_inner(
         summary: ReportSummary {
             endpoints_configured: endpoint_urls,
             server_metrics: server_metrics_report,
+            // Propagate external (SIGINT/SIGTERM) cancellation so the Python
+            // orchestrator reports was_cancelled=true alongside the partial
+            // results written on a graceful Ctrl+C. The graph path sets this
+            // the same way; the scheduled summary previously left it default.
+            was_cancelled: phased.phases.iter().any(|phase| phase.was_cancelled),
             ..ReportSummary::default()
         },
         warmup,
