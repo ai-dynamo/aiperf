@@ -25,7 +25,7 @@ use aiperf::adaptive_core::{
     AdaptiveScale, CorrelationContext, SharedWindowSampler, SlaFilter, UserTarget,
 };
 use aiperf::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
-use aiperf::cellular::{DirectIssuanceAuthority, IssuanceAuthority};
+use aiperf::cellular::{IssuanceAuthority, RecordsShardPartition};
 use aiperf::clock::{Clock, RealClock, RealClockAnchor};
 use aiperf::content_server::{
     ContentServerConfig, ContentServerFactory, ContentServerRuntime, NativeContentServerFactory,
@@ -1685,6 +1685,18 @@ async fn execute_native_inner(
         .map(|turn| (turn.uuid, turn.issued_offset_ns))
         .collect::<HashMap<_, _>>();
     let captured = capture.finish(&issued_times, drained)?;
+    // A cell ships its captured records — each carrying the dense global dispatch
+    // ordinal the autonomous issuer stamped — to the controller, which merges every
+    // cell's records in global order into the single authoritative report. Absent
+    // the controller address (the single-process path) this is inert.
+    if let Some(shipper) = crate::cellular_cell::CellRecordsShipper::from_env() {
+        let records = captured
+            .iter()
+            .map(|record| record.ingest.clone())
+            .collect();
+        let partition = RecordsShardPartition::new(shipper.cell_id(), records);
+        shipper.ship(partition)?;
+    }
     let gpu_telemetry = sidecars.gpu_telemetry.as_ref();
     let network_latency = sidecars.network_latency.as_ref();
     let server_metrics = sidecars.server_metrics.as_ref();
@@ -3323,7 +3335,10 @@ impl RunCapture {
             adaptive_records: RefCell::new(HashMap::new()),
             wants_live_sink_record,
             wants_adaptive_record,
-            issuance: Rc::new(DirectIssuanceAuthority::new()),
+            // Cell processes select the autonomous issuer from the environment
+            // (`AIPERF_CELL_ID`/`_COUNT`); the single-process default is Direct
+            // (identity), so non-cell output is byte-unchanged.
+            issuance: crate::cellular_cell::issuance_authority_from_env(),
         }
     }
 

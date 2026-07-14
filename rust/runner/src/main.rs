@@ -67,8 +67,9 @@ fn main() {
         let application = compose_stock_application();
         write_json_line(&application.catalog(), 0);
     }
-    if !arguments.is_empty() {
-        tracing::error!("usage: aiperf-runner [--capabilities]");
+    let cell_mode = arguments.len() == 1 && arguments[0] == "--cell";
+    if !arguments.is_empty() && !cell_mode {
+        tracing::error!("usage: aiperf-runner [--capabilities|--cell]");
         std::process::exit(2);
     }
 
@@ -77,12 +78,134 @@ fn main() {
         tracing::error!(error = %error, "failed to read runner request from stdin");
         std::process::exit(2);
     }
+
+    // A cell child runs its budget slice single-process, with the autonomous issuer
+    // and per-cell sampler selected from the controller-set environment.
+    if cell_mode {
+        run_cell(input);
+    }
+
+    // A non-cell execute request asking for more than one cell becomes the
+    // controller: it spawns the cell subprocesses and merges their records.
+    if std::env::var(aiperf::cellular::partition::CELL_ID_ENV).is_err()
+        && let Ok(envelope) = serde_json::from_slice::<Value>(&input)
+        && envelope.pointer("/operation").and_then(Value::as_str) == Some("execute")
+        && aiperf_runner::cellular_controller::cell_count_from_envelope(&envelope) > 1
+    {
+        run_controller(&envelope);
+    }
+
     configure_dynosim_process_defaults(&input);
     let application = compose_stock_application();
     // The runner speaks only protocol v2. run_v2 rejects a non-v2 or malformed
     // request as a v2 failure envelope (a v1 request fails EnvelopeBootstrapV2
     // parsing and is reported as an invalid protocol-v2 request).
     run_v2(&input, &application);
+}
+
+/// Runs this process as one cell of a multi-cell run: set the partition/controller
+/// environment from the launch spec, then execute the sliced envelope through the
+/// ordinary single-process path (which the environment makes cell-aware).
+fn run_cell(input: Vec<u8>) -> ! {
+    let spec: aiperf_runner::cellular_cell::CellLaunchSpec = match serde_json::from_slice(&input) {
+        Ok(spec) => spec,
+        Err(error) => {
+            tracing::error!(error = %error, "invalid cell launch spec");
+            std::process::exit(2);
+        }
+    };
+    // SAFETY: single process thread, before any runtime is built or the benchmark
+    // allocates — the same window `configure_dynosim_process_defaults` mutates env in.
+    unsafe {
+        std::env::set_var(
+            aiperf::cellular::partition::CELL_ID_ENV,
+            spec.cell_id.to_string(),
+        );
+        std::env::set_var(
+            aiperf::cellular::partition::CELL_COUNT_ENV,
+            spec.cell_count.to_string(),
+        );
+        std::env::set_var(
+            aiperf_runner::cellular_cell::CELL_CONTROLLER_ADDR_ENV,
+            &spec.controller_addr,
+        );
+    }
+    let envelope_bytes = match serde_json::to_vec(&spec.envelope) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            tracing::error!(error = %error, "invalid cell envelope");
+            std::process::exit(2);
+        }
+    };
+    configure_dynosim_process_defaults(&envelope_bytes);
+    let application = compose_stock_application();
+    run_v2(&envelope_bytes, &application);
+}
+
+/// Runs this process as the cellular controller: spawn the cells, merge their
+/// records into the single report, and emit the one terminal envelope.
+fn run_controller(envelope: &Value) -> ! {
+    let benchmark_id = envelope
+        .pointer("/run/benchmark_id")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let artifact_dir = envelope
+        .pointer("/run/artifact_dir")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let report_path = std::path::Path::new(artifact_dir).join("native-v2.json");
+    let cell_count = aiperf_runner::cellular_controller::cell_count_from_envelope(envelope);
+    match aiperf_runner::cellular_controller::run_cellular(
+        envelope,
+        cell_count,
+        &report_path,
+        aiperf::metrics_core::MetricsConfig::default(),
+    ) {
+        Ok(outcome) => {
+            let mut provenance = BTreeMap::new();
+            provenance.insert(
+                "transport".to_owned(),
+                envelope
+                    .pointer("/run/cfg/transport/type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("http")
+                    .to_owned(),
+            );
+            provenance.insert("workload".to_owned(), "scheduled".to_owned());
+            provenance.insert("cells".to_owned(), outcome.cell_count.to_string());
+            write_json_line(
+                &RunTerminalV2 {
+                    protocol_version: RUNNER_PROTOCOL_V2,
+                    event: "run_terminal",
+                    benchmark_id,
+                    success: true,
+                    report_path: Some(outcome.report_path),
+                    stage: None,
+                    errors: Vec::new(),
+                    diagnostic_artifacts: Vec::new(),
+                    provenance,
+                },
+                0,
+            );
+        }
+        Err(error) => {
+            tracing::error!(error = format!("{error:#}"), "cellular run failed");
+            write_json_line(
+                &RunTerminalV2 {
+                    protocol_version: RUNNER_PROTOCOL_V2,
+                    event: "run_terminal",
+                    benchmark_id,
+                    success: false,
+                    report_path: None,
+                    stage: Some(RunnerFailureStageV2::Execution),
+                    errors: Vec::new(),
+                    diagnostic_artifacts: Vec::new(),
+                    provenance: BTreeMap::new(),
+                },
+                1,
+            );
+        }
+    }
 }
 
 fn compose_stock_application() -> RunnerApplication {

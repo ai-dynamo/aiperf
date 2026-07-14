@@ -64,6 +64,11 @@ pub struct ModuloCellPartition {
     cell_count: u32,
 }
 
+/// Env var carrying this process's zero-based cell id (set by the controller).
+pub const CELL_ID_ENV: &str = "AIPERF_CELL_ID";
+/// Env var carrying the total cell count (set by the controller).
+pub const CELL_COUNT_ENV: &str = "AIPERF_CELL_COUNT";
+
 impl ModuloCellPartition {
     /// The identity partition: one cell `(0, 1)` owning the entire instance space.
     ///
@@ -74,6 +79,16 @@ impl ModuloCellPartition {
             cell_id: 0,
             cell_count: 1,
         }
+    }
+
+    /// Reads this process's cell partition from [`CELL_ID_ENV`] / [`CELL_COUNT_ENV`],
+    /// or `None` when the process is not a cell. This is how the ordinary execute
+    /// path selects the autonomous issuer and the per-cell sampler without a new
+    /// wire field; absent the vars the single-process path is byte-unchanged.
+    pub fn from_env() -> Option<Self> {
+        let cell_id = std::env::var(CELL_ID_ENV).ok()?.parse().ok()?;
+        let cell_count = std::env::var(CELL_COUNT_ENV).ok()?.parse().ok()?;
+        Self::new(cell_id, cell_count).ok()
     }
 
     /// Construct a validated round-robin partition.

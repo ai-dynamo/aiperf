@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::cellular::partition::{CellPartition, ModuloCellPartition};
 use crate::rng::{RandomGenerator, RngRoot};
 
 use crate::dataset::error::{DatasetError, Result};
@@ -257,6 +258,56 @@ impl Sampler for ShuffleSampler {
     }
 }
 
+/// Wraps a sampler so this cell yields only the positions it owns — `N` cells
+/// partition one deterministic instance space by ownership (roadmap S4).
+///
+/// Over a sequential inner sampler the draw position is the instance index, so cell
+/// `k` yields instances `{k, k+N, k+2N, …}`; paired with the autonomous issuer's
+/// `global_ordinal = position`, a merged `N`-cell run lands each instance at the
+/// same ordinal a single cell would — a byte-identical trace set. (Over a random
+/// inner sampler it partitions draw order rather than instance index; a merge stays
+/// well-formed but is not one-cell-identical, matching the roadmap's determinism
+/// scope.)
+pub struct PartitionedSampler {
+    inner: Box<dyn Sampler>,
+    partition: ModuloCellPartition,
+    position: u64,
+}
+
+impl PartitionedSampler {
+    /// Wraps `inner` with `partition`'s ownership filter.
+    pub fn new(inner: Box<dyn Sampler>, partition: ModuloCellPartition) -> Self {
+        Self {
+            inner,
+            partition,
+            position: 0,
+        }
+    }
+
+    /// Wraps `inner` with this process's cell partition when it is one cell of a
+    /// multi-cell run; otherwise returns `inner` unchanged (single process or the
+    /// identity partition), so non-cell sampling stays byte-identical.
+    pub fn from_env(inner: Box<dyn Sampler>) -> Box<dyn Sampler> {
+        match ModuloCellPartition::from_env() {
+            Some(partition) if partition.cell_count() > 1 => Box::new(Self::new(inner, partition)),
+            _ => inner,
+        }
+    }
+}
+
+impl Sampler for PartitionedSampler {
+    fn next(&mut self) -> SessionId {
+        loop {
+            let id = self.inner.next();
+            let owned = self.partition.owns(self.position);
+            self.position += 1;
+            if owned {
+                return id;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -285,6 +336,35 @@ mod tests {
         assert_eq!(
             sampled.iter().map(SessionId::as_str).collect::<Vec<_>>(),
             vec!["a", "b", "c", "d", "a", "b"]
+        );
+    }
+
+    #[test]
+    fn partitioned_sampler_yields_disjoint_owned_positions() {
+        // Over a sequential inner (position == instance index), the two cells of a
+        // 2-cell run split the instance space: cell 0 owns even positions, cell 1 odd.
+        let mut cell0 = PartitionedSampler::new(
+            Box::new(SequentialSampler::new(ids()).unwrap()),
+            ModuloCellPartition::new(0, 2).unwrap(),
+        );
+        let mut cell1 = PartitionedSampler::new(
+            Box::new(SequentialSampler::new(ids()).unwrap()),
+            ModuloCellPartition::new(1, 2).unwrap(),
+        );
+        // positions 0,2 -> a,c ; positions 1,3 -> b,d ; union is the whole set.
+        assert_eq!(
+            [cell0.next(), cell0.next()]
+                .iter()
+                .map(SessionId::as_str)
+                .collect::<Vec<_>>(),
+            vec!["a", "c"]
+        );
+        assert_eq!(
+            [cell1.next(), cell1.next()]
+                .iter()
+                .map(SessionId::as_str)
+                .collect::<Vec<_>>(),
+            vec!["b", "d"]
         );
     }
 

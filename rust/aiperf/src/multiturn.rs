@@ -1090,6 +1090,9 @@ impl NativeDatasetConversationSource {
         if default_output_tokens == 0 {
             bail!("native dataset default output tokens must be positive");
         }
+        // A cell of a multi-cell run yields only its owned instances (roadmap S4);
+        // the single-process path returns the sampler unchanged (byte-identical).
+        let sampler = crate::dataset::sampler::PartitionedSampler::from_env(sampler);
         let metadata = dataset
             .sampleable_metadata()
             .map(|conversation| {
