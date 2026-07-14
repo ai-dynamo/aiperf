@@ -214,3 +214,58 @@ exact from S2; the sketch is live-only.
 controller/cell multi-process topology (cross-cell heartbeat aggregation and
 records-shard partition transfer). The heartbeat/partition types are already
 serde-wire-ready for it.
+
+## Addendum — 2026-07-14 — Phase 2 CellTransport + controller/cell topology built
+
+Phase 2 is **built** (supersedes the "still designed, not built: `CellTransport` +
+controller/cell topology" note in the prior addendum). This completes the roadmap's
+"fully-autonomous cellular" phase for the single-host multi-process case; the seam
+is transport-neutral, so a cross-host impl is a `CellClient`/`ControllerTransport`
+swap, not a rewrite.
+
+- **`CellTransport` seam** (`aiperf::cellular::transport`): a length-prefixed
+  MessagePack frame (`u32` BE length + `rmp-serde` body) carrying `CellMessage`
+  (`Hello` / `Heartbeat` / `Partition` / `Done`). MessagePack because it is
+  self-describing (round-trips the untagged `MetricValue`) and preserves the
+  NaN/`+inf` sketch sentinels JSON cannot. Two traits: `CellClient` (the cell,
+  blocking `std::net::TcpStream` — off its hot path) and `ControllerTransport` (the
+  controller, a Tokio listener that accepts `expected_cells` connections and merges
+  their framed streams into one channel). `TcpCellClient` / `TcpControllerTransport`
+  are the process impls; a thread-cell would implement the same two traits over an
+  in-process channel.
+- **Cell mode** (`aiperf-runner --cell`, `runner::cellular_cell`): a child runs the
+  ordinary single-process execute path over its budget slice, made cell-aware purely
+  by three controller-set env vars — `AIPERF_CELL_ID` / `AIPERF_CELL_COUNT` (select
+  the `CellularAutonomousIssuer`'s partition, so its dense global dispatch ordinals
+  and the `PartitionedSampler`'s instance selection reproduce the single-process
+  trace set) and `AIPERF_CELL_CONTROLLER_ADDR` (the records shipper's target). After
+  the run it ships one final `RecordsShardPartition` + its merged heartbeat, never
+  writing a report.
+- **Controller** (`runner::cellular_controller`): a non-cell execute request with
+  `cfg.runtime.cells > 1` becomes the controller. It slices each phase's request
+  budget and concurrency cap by the `owned_share` round-robin (shares tile `0..total`
+  exactly), spawns one `--cell` child per cell (`current_exe`, spec piped to stdin),
+  serves the transport, and — critically — watches every child so a cell that dies
+  **before** connecting aborts the run (`select!` of the partition-collect loop
+  against a child-exit channel) rather than hanging the accept loop. It then merges
+  every cell's records in global dispatch-ordinal order (S2 records-first re-ingest)
+  into the single authoritative `native-v2.json`, and aggregates the cells' live
+  heartbeats (counter sum + t-digest merge) into a `cellular-heartbeat.json` sidecar.
+  To Python this is still one run behind one v2 request.
+
+**Verified** (multi-process, OS tools): a 4-cell mock run emits `success:true` with
+240 merged records; every dataset-deterministic metric (request/token counts,
+ISL/OSL full distributions) is **byte-identical** to the 1-cell run, confirming the
+S1+S4 autonomous partition reproduces the single-cell trace set and the S2 merge is
+order-exact; only wall-clock timing metrics differ (independent live-server
+variance). The cross-cell heartbeat aggregates all 240 requests. A crashed-cell run
+(cells fault during preparation) aborts the controller in <1s with a `success:false`
+execution envelope — not a hang. `ps`/`ss` confirm the controller + N cell processes
+and their TCP sockets during a run and no leaks after.
+
+**Not on the product path:** Python emits no `cells > 1`, so a stock `aiperf profile`
+run is byte-unchanged (single process, `DirectIssuanceAuthority`, no transport). The
+multi-process topology is reachable only by an authored `cfg.runtime.cells` envelope
+— a developer/experimental capability, not yet a product surface. **Out of scope
+still:** cross-host deployment (the seam is ready; only TCP-loopback impls exist),
+S5 executor changes, and any Python orchestration of cells.
