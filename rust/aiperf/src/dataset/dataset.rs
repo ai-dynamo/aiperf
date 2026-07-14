@@ -14,7 +14,10 @@ use crate::dataset::model::{
     Conversation, ConversationBranchMode, ConversationContextMode, ConversationMetadata,
     DispatchTiming, MediaKind, PrerequisiteKind, SessionId, Turn,
 };
-use crate::dataset::segment::{Handle, Payload, SegmentStore};
+use crate::dataset::request::resolve_turn;
+use crate::dataset::segment::{Handle, Payload, Role, SegmentPool, SegmentStore};
+use crate::endpoints::TurnMessageLowerer;
+use smallvec::SmallVec;
 
 /// Media-free structural metadata for one frozen dataset.
 #[derive(Debug, Clone)]
@@ -167,6 +170,71 @@ impl Dataset {
     /// Borrow the shared segment-store trait object.
     pub fn segments(&self) -> &Arc<dyn SegmentStore> {
         &self.segments
+    }
+
+    /// Lower every static content turn's message to a pre-serialized `Message`
+    /// segment for the bound endpoint (segment spec §3/§3a/§5), so dispatch
+    /// splices the stored wire instead of re-rendering and re-serializing the
+    /// turn's content on every request.
+    ///
+    /// Run once at load, after the endpoint is bound and before the dataset is
+    /// shared (`Arc::new`). The store is thawed (preserving every existing
+    /// handle), each eligible turn is rendered through the injected
+    /// [`TurnMessageLowerer`] to the exact wire the dispatch path would emit,
+    /// interned as a `Message` segment, and recorded on `turn.messages`; the
+    /// unified `body` handles are refreshed and the frozen store is swapped in.
+    ///
+    /// Carve-outs (kept on the live render path for byte-parity): turns with a
+    /// per-turn `endpoint` override, complete `raw_payload` bodies, token-native
+    /// `raw_token_ids`, preformatted `raw_messages`, or already-lowered/authored
+    /// `messages`. The turn's `content` is intentionally retained so
+    /// input-token accounting and the warmup first-turn re-render still resolve
+    /// it. A turn whose content cannot render for this shape (Responses video,
+    /// Messages audio/video, …) is skipped so the identical error still surfaces
+    /// at dispatch. Idempotent: a second call finds every eligible turn already
+    /// carrying `messages` and is a no-op.
+    pub fn lower_messages_for_endpoint(&mut self, lowerer: &dyn TurnMessageLowerer) -> Result<()> {
+        let mut pool = SegmentPool::thaw(self.segments.as_ref());
+        let mut conversations: Vec<Conversation> = self.conversations.to_vec();
+        let mut changed = false;
+        for conversation in &mut conversations {
+            for turn in &mut conversation.turns {
+                if !turn_is_lowerable(turn) {
+                    continue;
+                }
+                let endpoint_turn = resolve_turn(&pool, turn)?;
+                // A shape that cannot render this content (e.g. audio under the
+                // Anthropic Messages shape) is left unlowered so the identical
+                // error surfaces at dispatch, not at load.
+                let Ok(wires) = lowerer.lower_turn(&endpoint_turn) else {
+                    continue;
+                };
+                let role = turn
+                    .role
+                    .clone()
+                    .unwrap_or_else(|| Role::new("user"));
+                let mut handles: SmallVec<[Handle; 1]> = SmallVec::new();
+                let mut parent = None;
+                for wire in wires {
+                    // Empty token vector: the lowered `Message` identity keys on
+                    // its wire + role + prefix (never re-read for accounting,
+                    // which uses the turn's precomputed `input_tokens`), so
+                    // identical content dedups regardless of token IDs.
+                    let handle =
+                        pool.intern_message(parent, role.clone(), wire, Vec::<u32>::new())?;
+                    parent = Some(handle);
+                    handles.push(handle);
+                }
+                turn.messages = handles;
+                turn.populate_body();
+                changed = true;
+            }
+        }
+        if changed {
+            self.segments = Arc::new(pool.freeze());
+            self.conversations = conversations.into();
+        }
+        Ok(())
     }
 
     /// Borrow media-free structural metadata.
@@ -507,6 +575,20 @@ fn validate_turn(
         }
     }
     Ok(())
+}
+
+/// Whether a turn renders its request message from `content` and carries none of
+/// the representations that must stay on the live render path (segment spec §3a
+/// carve-outs). A content turn with no per-turn endpoint override, no complete
+/// raw body, no token-native IDs, no preformatted `raw_messages`, and no
+/// already-set `messages` is the lowerable case.
+fn turn_is_lowerable(turn: &Turn) -> bool {
+    !turn.content.is_empty()
+        && turn.messages.is_empty()
+        && turn.raw_messages.is_none()
+        && turn.raw_payload.is_none()
+        && turn.raw_token_ids.is_none()
+        && turn.endpoint.is_none()
 }
 
 fn payload_error<T>(handle: Handle, expected: &'static str, payload: &Payload) -> Result<T> {

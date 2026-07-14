@@ -139,7 +139,10 @@ fn raw_payload_body_plan_dispatches_byte_exactly_to_the_real_mock() {
     // No overrides: byte-identical to the authored body.
     let plan = BodyPlan::raw(raw);
     let verbatim = JsonBodyMaterializer::materialize(&plan, &store, &Overrides::new()).unwrap();
-    assert_eq!(verbatim, authored, "raw body must be byte-identical without overrides");
+    assert_eq!(
+        verbatim, authored,
+        "raw body must be byte-identical without overrides"
+    );
 
     // Dispatch overrides for fields absent from the authored body: the tail is
     // spliced immediately before the closing brace, and the authored bytes and
@@ -158,7 +161,8 @@ fn raw_payload_body_plan_dispatches_byte_exactly_to_the_real_mock() {
     // The real rust mock server must accept and answer the materialized bytes.
     // A dependency-free HTTP/1.1 POST over a raw socket keeps this test in the
     // `aiperf` crate without pulling an HTTP client dev-dependency.
-    let (status_line, response_body) = post_raw(&mock.base_url, "/v1/chat/completions", &dispatched);
+    let (status_line, response_body) =
+        post_raw(&mock.base_url, "/v1/chat/completions", &dispatched);
     assert!(
         status_line.contains("200"),
         "mock rejected materialized raw body: {status_line}"

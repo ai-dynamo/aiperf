@@ -1048,7 +1048,7 @@ fn split_snapshot(mut turn: EndpointTurn) -> Vec<EndpointTurn> {
     }
 }
 
-fn resolve_turn(store: &dyn SegmentStore, turn: &Turn) -> Result<EndpointTurn> {
+pub(crate) fn resolve_turn(store: &dyn SegmentStore, turn: &Turn) -> Result<EndpointTurn> {
     let mut raw_messages = Vec::new();
     for handle in &turn.messages {
         raw_messages.push(raw_value(store, *handle, "message")?);

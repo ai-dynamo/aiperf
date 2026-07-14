@@ -287,6 +287,32 @@ impl SegmentPool {
         Self::default()
     }
 
+    /// Reopen a frozen store as a mutable pool, preserving every existing dense
+    /// [`Handle`] index and stored [`SegmentId`] exactly.
+    ///
+    /// This is the write side of content→segment lowering: a dataset thaws its
+    /// frozen store, interns freshly-rendered `Message` wires (appended after the
+    /// existing arena so prior handle indices stay stable), then refreezes. The
+    /// arena is rebuilt from each `0..len` entry through the [`SegmentStore`]
+    /// trait — never a downcast — and the write-side hash map is reconstructed
+    /// from the stored ids rather than re-hashing, so pre-existing content keeps
+    /// its original identity even if the hashing scheme evolves.
+    pub fn thaw(store: &dyn SegmentStore) -> Self {
+        let len = store.len();
+        let mut arena = Vec::with_capacity(len);
+        let mut ids = HashMap::with_capacity(len);
+        for index in 0..len {
+            let handle = Handle::new(index as u32);
+            let segment = store
+                .segment(handle)
+                .expect("a segment store exposes every handle in 0..len")
+                .clone();
+            ids.insert(segment.id, handle);
+            arena.push(segment);
+        }
+        Self { arena, ids }
+    }
+
     /// Intern one payload under an optional prefix parent.
     pub fn intern(&mut self, parent: Option<Handle>, payload: Payload) -> Result<Handle> {
         let parent_id = match parent {
@@ -300,6 +326,18 @@ impl SegmentPool {
         };
         let id = payload_id(parent_id, &payload);
         if let Some(handle) = self.ids.get(&id) {
+            // A content-addressed collision must be a true duplicate: with the
+            // wire folded into the `Message` identity (multimodal correctness), a
+            // deduped handle's stored wire must byte-equal the freshly-rendered
+            // wire, never a different-media wire that merely shares text tokens.
+            debug_assert!(
+                match (&self.arena[handle.as_usize()].payload, &payload) {
+                    (Payload::Message { wire: stored, .. }, Payload::Message { wire: fresh, .. }) =>
+                        stored == fresh,
+                    _ => true,
+                },
+                "segment id collision returned a message with a different wire"
+            );
             return Ok(*handle);
         }
         let index =
@@ -451,7 +489,7 @@ fn payload_id(parent: Option<SegmentId>, payload: &Payload) -> SegmentId {
     let mut hasher = blake3::Hasher::new();
     hasher.update(HASH_VERSION);
     match payload {
-        Payload::Message { role, tokens, .. } => {
+        Payload::Message { role, wire, tokens } => {
             hasher.update(b"message\0");
             hash_parent(&mut hasher, parent);
             hasher.update(role.as_str().as_bytes());
@@ -459,6 +497,13 @@ fn payload_id(parent: Option<SegmentId>, payload: &Payload) -> SegmentId {
             for token in tokens {
                 hasher.update(&token.to_le_bytes());
             }
+            // Multimodal correctness: two turns with identical prompt text (and
+            // therefore identical authoritative token IDs) but different media
+            // render to different message wires. Folding the exact wire bytes into
+            // the identity keeps them distinct so dedup never returns the wrong
+            // media wire for a colliding text+role+token key.
+            hasher.update(b"\0");
+            hasher.update(wire);
         }
         Payload::Text { role, tokens, .. } => {
             hasher.update(b"text-only\0");
@@ -654,6 +699,84 @@ mod tests {
         assert_eq!(store.domain(raw).unwrap(), SegmentDomain::Raw);
         assert_eq!(store.domain(tokens).unwrap(), SegmentDomain::TokenIds);
         assert!(store.domain(Handle::new(99)).is_err());
+    }
+
+    #[test]
+    fn messages_with_same_tokens_but_different_wire_do_not_dedup() {
+        // Multimodal correctness: identical prompt text (identical token IDs) but
+        // different rendered media wires must remain distinct segments.
+        let mut pool = SegmentPool::new();
+        let text_only = pool
+            .intern_message(
+                None,
+                "user",
+                Bytes::from_static(br#"{"role":"user","content":"look"}"#),
+                vec![1_u32, 2],
+            )
+            .unwrap();
+        let with_image = pool
+            .intern_message(
+                None,
+                "user",
+                Bytes::from_static(
+                    br#"{"role":"user","content":[{"type":"text","text":"look"},{"type":"image_url","image_url":{"url":"a"}}]}"#,
+                ),
+                vec![1_u32, 2],
+            )
+            .unwrap();
+        let with_other_image = pool
+            .intern_message(
+                None,
+                "user",
+                Bytes::from_static(
+                    br#"{"role":"user","content":[{"type":"text","text":"look"},{"type":"image_url","image_url":{"url":"b"}}]}"#,
+                ),
+                vec![1_u32, 2],
+            )
+            .unwrap();
+
+        assert_ne!(text_only, with_image);
+        assert_ne!(with_image, with_other_image);
+        assert_eq!(pool.len(), 3);
+        // A true duplicate (same wire + tokens + role + parent) still dedups.
+        let duplicate = pool
+            .intern_message(
+                None,
+                "user",
+                Bytes::from_static(br#"{"role":"user","content":"look"}"#),
+                vec![1_u32, 2],
+            )
+            .unwrap();
+        assert_eq!(duplicate, text_only);
+        assert_eq!(pool.len(), 3);
+    }
+
+    #[test]
+    fn thaw_preserves_handles_and_ids_and_appends_new_segments() {
+        let mut pool = SegmentPool::new();
+        let a = pool.intern_raw(None, Bytes::from_static(b"{\"a\":1}")).unwrap();
+        let b = pool
+            .intern_message(Some(a), "user", Bytes::from_static(b"{}"), vec![1_u32])
+            .unwrap();
+        let store = pool.freeze();
+        let id_a = store.id(a).unwrap();
+        let id_b = store.id(b).unwrap();
+
+        let mut thawed = SegmentPool::thaw(&store);
+        // Pre-existing handles and ids are byte-for-byte preserved.
+        assert_eq!(thawed.id(a).unwrap(), id_a);
+        assert_eq!(thawed.id(b).unwrap(), id_b);
+        assert_eq!(thawed.len(), 2);
+        // Re-interning existing content dedups back to the original handle.
+        let b_again = thawed
+            .intern_message(Some(a), "user", Bytes::from_static(b"{}"), vec![1_u32])
+            .unwrap();
+        assert_eq!(b_again, b);
+        // New content appends after the preserved arena.
+        let c = thawed
+            .intern_raw(None, Bytes::from_static(b"{\"c\":3}"))
+            .unwrap();
+        assert_eq!(c.index(), 2);
     }
 
     #[test]
