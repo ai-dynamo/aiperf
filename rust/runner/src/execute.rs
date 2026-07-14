@@ -3759,6 +3759,14 @@ impl TurnDispatcher for ConfiguredDispatcher {
             Err(error) => Err(error),
         }
     }
+
+    async fn prewarm(&self, turn: TurnToSend) -> Result<()> {
+        // Warm the execution backend (every worker) with the real prepared
+        // request shape; the backend discards the round-trip and records
+        // nothing, so timed issuance starts from a warmed transport.
+        let turn = PreparedTurn::from_turn(turn, &self.model);
+        self.execution_backend.prewarm(turn).await
+    }
 }
 
 #[cfg(test)]

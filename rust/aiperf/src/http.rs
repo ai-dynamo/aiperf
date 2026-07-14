@@ -392,6 +392,23 @@ pub trait RequestExecutor {
         ))
     }
 
+    /// Warm the dispatch cold path on every execution worker before timed
+    /// issuance begins, so the first authored request is not delayed relative to
+    /// its schedule by one-time setup (connection establishment, endpoint body
+    /// materialization, tokenizer/JIT warmup).
+    ///
+    /// This is the Rust-native analogue of the Python engine's ZMQ "workers
+    /// ready, go" barrier: each worker sends one throwaway request through its
+    /// real sink and discards the result, so the timed run starts warm and all
+    /// workers begin issuing from the same warmed state. The warmup request is
+    /// **never recorded** (a no-op observer, discarded outcome), so it does not
+    /// enter the metrics. Failures are non-fatal — the timed run surfaces any
+    /// real transport error itself. The default is a no-op for placements that
+    /// need no warmup.
+    async fn prewarm(&self, _turn: PreparedTurn) -> Result<()> {
+        Ok(())
+    }
+
     /// Drain every worker observer into flat `(uuid, record)` pairs after all
     /// dispatched turns reach terminal.
     ///
@@ -1195,6 +1212,18 @@ impl RequestExecutor for TransportSink {
         })
     }
 
+    async fn prewarm(&self, turn: PreparedTurn) -> Result<()> {
+        // One discarded warmup round-trip through this sink's real dispatch
+        // path, so the first timed request pays none of the connection /
+        // body-materialization / tokenizer / JIT setup cost. Not recorded (the
+        // no-op observer discards every callback and the DispatchResult is
+        // dropped); a warmup transport error is non-fatal because the timed run
+        // reports any persistent failure itself.
+        let observer = PrewarmObserver;
+        let _ = self.dispatch_collect(turn, &observer, &|_| {}).await;
+        Ok(())
+    }
+
     fn drain_records(&self, end_ns: i64) -> Result<Vec<(Uuid, RecordIngest)>> {
         match self.measurement.borrow_mut().take() {
             Some(observer) => Ok(observer
@@ -1204,6 +1233,17 @@ impl RequestExecutor for TransportSink {
             None => Ok(Vec::new()),
         }
     }
+}
+
+/// No-op [`RequestObserver`] used only by warmup dispatches, so a prewarm
+/// round-trip warms the transport without entering the metrics.
+struct PrewarmObserver;
+
+impl RequestObserver for PrewarmObserver {
+    fn on_arrival(&self, _uuid: Uuid, _arrival_ms: f64, _input_length: usize, _requested: usize) {}
+    fn on_admit(&self, _uuid: Uuid, _admit_ms: f64, _reused_input_tokens: usize) {}
+    fn on_token(&self, _uuid: Uuid, _at_ms: f64) {}
+    fn on_terminal(&self, _uuid: Uuid, _status: ReplayTerminalStatus) {}
 }
 
 impl TransportSink {
