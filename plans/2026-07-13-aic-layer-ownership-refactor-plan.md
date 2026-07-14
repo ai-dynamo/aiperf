@@ -10,7 +10,7 @@ its correct owner, leaving AIPerf holding only the consumer-side install glue.
 
 ## Problem statement
 
-`crates/aiperf/src/aic_runtime.rs` (~350 lines, feature-gated behind
+`rust/aiperf/src/aic_runtime.rs` (~350 lines, feature-gated behind
 `dynamo-aic-forward-pass`) is a wholesale port of dynamo's
 `lib/bindings/python/rust/llm/aic_callback.rs` plus the KV-block scaling from
 `replay.rs:1668-1715`. The module doc says the intent is "keeping the
@@ -116,7 +116,7 @@ code.
 
 ## Phase 2 — collapse AIPerf onto the new surface
 
-In `crates/aiperf/src/aic_runtime.rs`:
+In `rust/aiperf/src/aic_runtime.rs`:
 
 - Delete `normalize_quant_mode(s)`, `resolve_backend_version`, `build_engine`,
   `estimate_engine_num_gpu_blocks`, `populate_missing_offload_kv_bytes_per_token`,
@@ -130,7 +130,7 @@ In `crates/aiperf/src/aic_runtime.rs`:
 - Update the `dynamo-aic-forward-pass` feature: it still needs
   `aiconfigurator-core` and `dynamo-kv-router`; it should no longer need `pyo3`
   or `parking_lot` directly if all pyo3 use moved to `aiconfigurator-core`.
-  Verify and drop the now-unused optional deps from `crates/aiperf/Cargo.toml`.
+  Verify and drop the now-unused optional deps from `rust/aiperf/Cargo.toml`.
 
 Evidence: `cargo build -p aiperf --features dynamo-full` green; the offline/online
 replay stdio tests that exercise AIC still pass byte-for-byte against the Dynamo
@@ -153,8 +153,8 @@ Evidence: dynamo's own AIC-backed replay tests pass against the shared surface.
 - The runner offline/online replay parity: AIC-backed runs still serialize to
   identical bytes against the Dynamo flat summary (the existing offline return
   path already enforces this — it must remain green, unmodified).
-- No pyo3 symbol remains reachable from `crates/aiperf` on the AIC path (grep
-  `Python::with_gil` under `crates/aiperf/src/` returns nothing after Phase 2).
+- No pyo3 symbol remains reachable from `rust/aiperf` on the AIC path (grep
+  `Python::with_gil` under `rust/aiperf/src/` returns nothing after Phase 2).
 - Line-count check: `aic_runtime.rs` shrinks from ~350 to under ~50 lines.
 
 ## Risk / rollback
@@ -169,7 +169,7 @@ Evidence: dynamo's own AIC-backed replay tests pass against the shared surface.
 
 ## Docs to update on completion
 
-- `crates/aiperf/CLAUDE.md` (and the three synced agent files) — the
+- `rust/aiperf/CLAUDE.md` (and the three synced agent files) — the
   "Canonical vs aspirational" AIC line now points at `aiconfigurator-core` as the
   owner; sync with `tools/sync_agent_files.py`.
 - `docs/module-organization.md` if `aic_runtime` is reduced to install glue.
