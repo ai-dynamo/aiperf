@@ -1228,6 +1228,58 @@ async fn execute_graph_native(
     }
     let phase_stats = phased.phases;
     let captured = phased.captured;
+    // A graph cell ships its captured records to the controller, which merges
+    // every cell's graph records in global order into the single authoritative
+    // report; the accumulator/report the cell keeps building below lands only in
+    // the controller's throwaway scratch artifact_dir and is discarded. Absent the
+    // controller address (the single-process path) this is inert.
+    if let Some(shipper) = crate::cellular_cell::CellRecordsShipper::from_env() {
+        let records: Vec<RecordIngest> = captured
+            .iter()
+            .map(|record| record.ingest.clone())
+            .collect();
+        // Build this cell's terminal heartbeat from the same records: one end-of-run
+        // aggregate (not a per-tick snapshot), so the controller can fold the cells
+        // into one view (counters summed, sketches t-digest-merged). Saturation is
+        // zero — the run has drained, so there is no meaningful in-flight count.
+        let mut heartbeat = aiperf::cellular::HeartbeatAccumulator::new();
+        let mut completed = 0_u64;
+        let mut errored = 0_u64;
+        for record in &records {
+            crate::heartbeat_lane::observe_ingest(&mut heartbeat, record);
+            if record.errored || record.canceled {
+                errored += 1;
+            } else {
+                completed += 1;
+            }
+        }
+        let counters = aiperf::cellular::HeartbeatCounters {
+            issued: records.len() as u64,
+            completed,
+            errored,
+        };
+        // No `capture`/wall clock is in scope on the graph path, so derive the run
+        // span from the records themselves: last observed end minus first observed
+        // start, matching the elapsed span the scheduled path passes.
+        let first_start_ns = records
+            .iter()
+            .map(|record| record.start_ns)
+            .min()
+            .unwrap_or(0);
+        let last_end_ns = records
+            .iter()
+            .map(|record| record.end_ns)
+            .max()
+            .unwrap_or(0);
+        let span_ns = last_end_ns.saturating_sub(first_start_ns).max(0);
+        let heartbeat = heartbeat.snapshot(
+            span_ns,
+            counters,
+            aiperf::cellular::HeartbeatSaturation::default(),
+        );
+        let partition = RecordsShardPartition::new(shipper.cell_id(), records);
+        shipper.ship(partition, heartbeat)?;
+    }
 
     let gpu_telemetry = sidecars.gpu_telemetry.as_ref();
     let network_latency = sidecars.network_latency.as_ref();
