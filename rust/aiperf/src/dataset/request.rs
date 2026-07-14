@@ -21,6 +21,7 @@ use crate::endpoints::{
 use bytes::Bytes;
 use serde_json::{Map, Value};
 
+use crate::dataset::body_plan::{BodyPlan, JsonBodyMaterializer};
 use crate::dataset::dataset::Dataset;
 use crate::dataset::error::{DatasetError, Result};
 use crate::dataset::materialize::Overrides;
@@ -296,7 +297,12 @@ impl RequestMaterializer for EndpointRequestMaterializer {
         let store = session.dataset.segments().as_ref();
         let (body, effective) = if let Some(raw) = current.raw_payload {
             (
-                store.build_body(&[raw], overrides)?,
+                // Segment-unification §4: the raw body is a one-field BodyPlan
+                // whose single `raw`-domain segment is the complete prebuilt
+                // body; the shared JSON materializer clones/tail-splices it
+                // byte-for-byte. This replaces the bespoke `raw_payload`-wins
+                // branch with the domain-driven dispatch materializer.
+                JsonBodyMaterializer::materialize(&BodyPlan::raw(raw), store, overrides)?,
                 EffectiveRequest {
                     model: effective_model(current, &model_endpoint.primary_model_name, overrides)?,
                     max_tokens: effective_max_tokens(current, overrides)?,
@@ -388,7 +394,12 @@ impl RequestMaterializer for EndpointRequestMaterializer {
         let supports_streaming = endpoint.descriptor().supports_streaming;
         let (body, effective) = if let Some(raw) = current.raw_payload {
             (
-                store.build_body(&[raw], overrides)?,
+                // Segment-unification §4: the raw body is a one-field BodyPlan
+                // whose single `raw`-domain segment is the complete prebuilt
+                // body; the shared JSON materializer clones/tail-splices it
+                // byte-for-byte. This replaces the bespoke `raw_payload`-wins
+                // branch with the domain-driven dispatch materializer.
+                JsonBodyMaterializer::materialize(&BodyPlan::raw(raw), store, overrides)?,
                 EffectiveRequest {
                     model: effective_model(current, primary_model_name, overrides)?,
                     max_tokens: effective_max_tokens(current, overrides)?,

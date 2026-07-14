@@ -220,6 +220,19 @@ pub trait SegmentStore: Send + Sync {
             .ok_or(DatasetError::UnknownHandle(handle))
     }
 
+    /// Resolve the disjoint content domain of a handle.
+    ///
+    /// This is the discriminant the segment-unification design
+    /// (`specs/2026-07-13-segment-unification-design.md` §2) uses to replace the
+    /// five-field `raw_payload`/`raw_token_ids`/`messages`/… precedence with a
+    /// single lookup: a `body` of `message` segments formats as an array, one
+    /// `raw` segment is a complete body (endpoint bypass), one `token-ids`
+    /// segment is the token-native path. Returns the stable [`Payload::kind_name`]
+    /// (`message` | `text-only` | `raw` | `token-ids` | `media` | `trace-hash-ids`).
+    fn domain(&self, handle: Handle) -> Result<&'static str> {
+        self.get(handle).map(Payload::kind_name)
+    }
+
     /// Assemble a JSON request body by concatenating stored wire slices and only
     /// serializing the per-dispatch override tail.
     fn build_body(&self, handles: &[Handle], overrides: &Overrides) -> Result<Bytes> {
@@ -591,6 +604,22 @@ mod tests {
         assert_eq!(first, equivalent_tokens);
         assert_ne!(first, different_tokens);
         assert_eq!(pool.len(), 2);
+    }
+
+    #[test]
+    fn domain_reports_the_disjoint_content_kind_per_handle() {
+        let mut pool = SegmentPool::new();
+        let message = pool
+            .intern_message(None, "user", Bytes::from_static(b"{}"), [1_u32])
+            .unwrap();
+        let raw = pool.intern_raw(None, Bytes::from_static(b"{}")).unwrap();
+        let tokens = pool.intern_token_ids(None, [1_u32, 2]).unwrap();
+        let store = pool.freeze();
+
+        assert_eq!(store.domain(message).unwrap(), "message");
+        assert_eq!(store.domain(raw).unwrap(), "raw");
+        assert_eq!(store.domain(tokens).unwrap(), "token-ids");
+        assert!(store.domain(Handle::new(99)).is_err());
     }
 
     #[test]
