@@ -225,7 +225,8 @@ swap, not a rewrite.
 
 - **`CellTransport` seam** (`aiperf::cellular::transport`): a length-prefixed
   MessagePack frame (`u32` BE length + `rmp-serde` body) carrying `CellMessage`
-  (`Hello` / `Heartbeat` / `Partition` / `Done`). MessagePack because it is
+  (`Heartbeat` / `Partition` — the initial `Hello`/`Done` framing was later dropped as
+  unused; see the 2026-07-14 addenda). MessagePack because it is
   self-describing (round-trips the untagged `MetricValue`) and preserves the
   NaN/`+inf` sketch sentinels JSON cannot. Two traits: `CellClient` (the cell,
   blocking `std::net::TcpStream` — off its hot path) and `ControllerTransport` (the
@@ -320,5 +321,12 @@ run on the **full** ISL distribution (avg/std/min/max/all percentiles) and every
 dataset-deterministic metric, for both the profiling and warmup sections. A cell's own
 (discarded) report accumulator holds sparse global slots — bounded by the 1-cell row
 count, transient, and never serialized — the merged report is the authoritative one.
-Also fail-closed now: a non-HTTP transport (gRPC/dynosim) or a graph-program dataset
-with `cells>1` is rejected up front (its executor never ships a partition).
+Also fail-closed now (`validate_cellular_run_shape`): `cells>1` is accepted only for
+the exact shape the partition/issuance seam is sound for — the scheduled **HTTP**
+transport over **synthetic, single-turn** datasets. A non-HTTP transport
+(gRPC/dynosim) or a non-synthetic (`file`/`public`, incl. graph-program) dataset runs
+a different executor that never ships a partition; and a **multi-turn** dataset
+diverges the sampler's per-*draw* partition from the issuer's per-*turn* ordinal (the
+same silent-wrong-report class as the multi-phase fix above — continuations advance
+the turn count but not the draw position), so only `turns == 1` is sound. Each is
+rejected up front with a clear error rather than a silent divergence.
