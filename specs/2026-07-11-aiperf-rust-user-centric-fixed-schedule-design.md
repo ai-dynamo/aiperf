@@ -536,3 +536,7 @@ identically online, mock, and (deterministically) offline; Python Config v2 auth
 and the registered scheduled pair injects either the online hyper transport or the
 feature-gated offline (`dynosim`) Dynamo `TurnDispatcher` without changing the workload
 policy.
+
+## Addendum — 2026-07-13
+
+Reference to `aiperf-mock-rs` at §fixed-schedule test plan is superseded by `aiperf-mock-server` (renamed 2026-07-13).

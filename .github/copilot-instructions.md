@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # AIPerf
 
-> ✅ **CANONICAL PRODUCT ARCHITECTURE.** The Python `aiperf` command owns the only human-facing CLI, Config v2, outer orchestration, and presentation. A fresh `aiperf-runner` child is the **only Rust executable on the product execution path** and owns exactly one run's high-performance path; `aiperf-mock-rs` is a standalone developer/test inference target, not an orchestrated backend process. The `rust/aiperf` package is a runtime library with no binary target. There is no ZMQ, service mesh, multiprocess credit protocol, mmap dataset cache, or `plugins.yaml` on the native path. The `aiperf-rs` and `~/projects/aiperf-rust` trees remain **DEPRECATED**. Design record: [`specs/`](specs/); start-here index: [`llms.txt`](llms.txt).
+> ✅ **CANONICAL PRODUCT ARCHITECTURE.** The Python `aiperf` command owns the only human-facing CLI, Config v2, outer orchestration, and presentation. A fresh `aiperf-runner` child is the **only Rust executable on the product execution path** and owns exactly one run's high-performance path; `aiperf-mock-server` is a standalone developer/test inference target, not an orchestrated backend process. The `rust/aiperf` package is a runtime library with no binary target. There is no ZMQ, service mesh, multiprocess credit protocol, mmap dataset cache, or `plugins.yaml` on the native path. The `aiperf-rs` and `~/projects/aiperf-rust` trees remain **DEPRECATED**. Design record: [`specs/`](specs/); start-here index: [`llms.txt`](llms.txt).
 >
 > Rust execution truth is in `rust/`; canonical Python frontend truth includes `src/aiperf/config/`, `src/aiperf/orchestrator/`, and `src/aiperf/cli_runner/`. Other inherited Python controller/service code is legacy, not an alternate hot path.
 
@@ -14,10 +14,10 @@ SPDX-License-Identifier: Apache-2.0
 A Python-orchestrated, Rust-executed load generator + measurement front-end for inference servers. The runner dispatches OpenAI-compatible, Anthropic Messages, KServe, and NVIDIA Riva ASR/TTS/NLP requests over native HTTP/SSE or gRPC, records fine-grained timing (TTFT / ITL / TPOT / e2e / throughput / goodput), and serializes native results. The execution substrate is designed for **three interchangeable modes** over a single `{transport, clock}` seam:
 
 1. **ONLINE-real** — real HTTP or gRPC to a real server, wall clock. *(built)*
-2. **ONLINE-mock** — real HTTP to a mock server (`aiperf-mock-rs`), wall clock. *(built — same code as (1), different target)*
+2. **ONLINE-mock** — real HTTP to a mock server (`aiperf-mock-server`), wall clock. *(built — same code as (1), different target)*
 3. **OFFLINE-mock** — in-process virtual-clock co-simulation of the Dynamo mocker engine, no sockets, deterministic. *(built behind the non-default `dynosim` Cargo feature; requires the sibling `dynamo-aiperf-native` checkout.)*
 
-Online-real and online-mock are product-reachable through Python + the base runner. The workspace-owned `aiperf-mock-rs` server is launched independently and supplies an ordinary online target URL; Python does not supervise it as part of a run. Offline-mock is product-reachable through the same Python Config-v2 path when the selected `aiperf-runner` is built with `dynosim`; exact-image capabilities omit those pairs from the base build.
+Online-real and online-mock are product-reachable through Python + the base runner. The workspace-owned `aiperf-mock-server` server is launched independently and supplies an ordinary online target URL; Python does not supervise it as part of a run. Offline-mock is product-reachable through the same Python Config-v2 path when the selected `aiperf-runner` is built with `dynosim`; exact-image capabilities omit those pairs from the base build.
 
 ## Canonical vs aspirational — the code is a walking skeleton
 
@@ -38,7 +38,6 @@ Ground every claim in `crate/src/file.rs`, not the specs: specs are design inten
 - **WEKA and Dynamo recorded-graph adapters are built.** `aiperf::graph::recorded`: strict WEKA/Dynamo decode, shared LCP-trie lowerer, dense segment interning. All content via `aiperf::rng` BLAKE3/PCG64; Python never parses or lowers either input.
 - **Performance metrics are built** as `aiperf::metrics_core`: 119-row catalog, NaN-sparse storage, ragged ICL, all sweep-lines, phase windows, worker merge, typed native-v2 `Reporter`. Genai-perf-v1 compatibility unbuilt.
 - **Legacy static/stateful accuracy uses canonical Python evaluators.** Rust: scheduling, HTTP I/O, timing, metrics. Python worker: prompts, hidden tests, execution, scoring over JSONL stdio. Pinned: Harbor 0.18, AgentLab 0.4.2 + BrowserGym 0.14.3, MCPMark `cd45b7f57923b9b3985467f5139927575f83141c`. No Rust prompt builders, graders, or model clients. OSWorld/AppWorld still need canonical providers.
-- **Provider-neutral evaluator host and GSM8K canaries are built.** `aiperf::accuracy_core`: provider protocol v2, Bubblewrap isolation, sealing. Stock: NeMo 0.4.0 and OpenBench 0.5.3 + Inspect 0.3.141 over frozen GSM8K canary only. `http + evaluation` requires deployment-owned attested roots; without them the pair is absent.
 - **Compile-time extensibility is built.** `AiperfRegistry` / `AiperfExtension`: static registration, duplicate rejection. `RunnerApplication` freezes at bootstrap. No `plugins.yaml`, runtime discovery, or dynamic ABI.
 - **Dataset/segment unified store is built end to end** as `aiperf::dataset`. `Payload::TokenIds` + `Turn::raw_token_ids` for exact token arrays. `dag_jsonl` / `weka_trace` / `dynamo_trace` bypass the linear loader registry: runner-owned resolver → one compiler → frozen `SegmentStore`; no `Dataset` / `DagMetadata` intermediate.
 - **Native content serving is built** (`aiperf::content_server`). `AIPERF_CONTENT_SERVER_ENABLED=true` + non-empty dir: stable image/video URLs, audio inline. gRPC, offline, and agentic/evaluation pairs reject the sidecar.
@@ -54,10 +53,10 @@ Workspace: `edition = "2024"`, `resolver = "3"`. Four crates; 16 former `aiperf-
 |---|---|---|
 | `loadgen-core` | Transport-neutral dispatch/measure seam + the collector. `Dispatchable`, `RequestSink<R>`, local-loop `RequestObserver` (no `Send`/`Sync`; f64-ms timestamps; optional `ObservedTokenKind` classification; terminal `ObservedUsage` with optional fields), `TraceCollector` → `TraceSimulationReport`; the `CollectorObserver` pure recorder. Zero engine/KV/HTTP deps. | `sink.rs`, `collector.rs`, `observer.rs` |
 | `aiperf` | Library-only runtime composition used by `aiperf-runner`; there is no `src/main.rs` or native `aiperf` executable. It owns scheduled/transport composition, HTTP and gRPC prepared sinks, online pacing, datasets, exact token-array response observation/usage, the provider-neutral evaluation workload/typed host registry/fair arbiter/ledger/retry/scoped proxy/report join, legacy static and stateful accuracy seams, adaptive/ancillary policy, native report persistence, and the feature-gated direct raw-token Dynamo adapter. Sixteen former library crates are inlined as modules (see §Module organization). | `lib.rs`, `evaluation.rs`, `evaluation/`, `dynosim.rs`, `ancillary.rs`, `metrics.rs`, `accuracy.rs`, `adaptive.rs`, `http.rs`, `grpc.rs`, `run.rs`, `phase_runtime.rs`, `scheduled.rs`, `report.rs` |
-| `aiperf-runner` | Sole strict Rust executable used by the Python orchestrator. Python always sends exact-image-bound protocol-v2 `validate`/`execute` operations; the runner is protocol-v2-only, advertises `protocol_versions: [2]`, and rejects any non-v2 request as a v2 failure envelope. Frozen transport/workload/pair registries direct-load one prepared operation and derive executable capabilities. One injected runner-owned graph-input resolver performs identity-only selection, strict decode, and direct compilation. The base build registers HTTP scheduled/graph/static-accuracy/agentic plus native gRPC scheduled; exact deployment-owned evaluator roots conditionally add the stock `http + evaluation` pair for only the NeMo/OpenBench GSM8K canaries; `dynosim` adds `dynosim_offline`/`dynosim_online` scheduled/graph. | `main.rs`, `protocol_v2.rs`, `registry.rs`, `graph_input.rs`, `execute.rs`, `online_execution.rs`, `evaluation_execution.rs`, `stock_evaluation.rs`, `offline_execution.rs`, `agentic_execution.rs`, `grpc_execution.rs`, `grpc_turn_execution.rs`, `graph_phase_runtime.rs`, `graph_execution.rs`, `records.rs` |
-| `aiperf-mock-rs` | Standalone online test/benchmark inference target: OpenAI chat/completions/embeddings, TGI, rerank, image, multimodal, and RAG routes; real SSE; analytic or batch-scheduler latency; deterministic token generation; prefix-cache policy; Prometheus backend dialects; and synthetic DCGM telemetry. It exports an Axum router for tests and a tuned Hyper server binary, but is not part of the runner dependency graph. | `app.rs`, `config.rs`, `handlers.rs`, `tokens.rs`, `latency.rs`, `scheduler.rs`, `prefix_cache.rs`, `metrics.rs`, `prom.rs`, `dcgm.rs`, `main.rs` |
+| `aiperf-runner` | Sole strict Rust executable used by the Python orchestrator. Python always sends exact-image-bound protocol-v2 `validate`/`execute` operations; the runner is protocol-v2-only, advertises `protocol_versions: [2]`, and rejects any non-v2 request as a v2 failure envelope. Frozen transport/workload/pair registries direct-load one prepared operation and derive executable capabilities. One injected runner-owned graph-input resolver performs identity-only selection, strict decode, and direct compilation. The base build registers HTTP scheduled/graph/static-accuracy/agentic plus native gRPC scheduled; `dynosim` adds `dynosim_offline`/`dynosim_online` scheduled/graph. | `main.rs`, `protocol_v2.rs`, `registry.rs`, `graph_input.rs`, `execute.rs`, `online_execution.rs`, `offline_execution.rs`, `agentic_execution.rs`, `grpc_execution.rs`, `grpc_turn_execution.rs`, `graph_phase_runtime.rs`, `graph_execution.rs`, `records.rs` |
+| `aiperf-mock-server` | Standalone online test/benchmark inference target: OpenAI chat/completions/embeddings, TGI, rerank, image, multimodal, and RAG routes; real SSE; analytic or batch-scheduler latency; deterministic token generation; prefix-cache policy; Prometheus backend dialects; and synthetic DCGM telemetry. It exports an Axum router for tests and a tuned Hyper server binary, but is not part of the runner dependency graph. | `app.rs`, `config.rs`, `handlers.rs`, `tokens.rs`, `latency.rs`, `scheduler.rs`, `prefix_cache.rs`, `metrics.rs`, `prom.rs`, `dcgm.rs`, `main.rs` |
 
-Dependency direction: `aiperf-runner` → {`aiperf`, `loadgen-core`}; `aiperf` → {`loadgen-core`} plus optional `dynamo-mocker` only under `dynosim`; `aiperf-mock-rs` → {`aiperf`}. The runner and mock-rs do not depend on each other; real-network integration tests spawn the mock binary as an ordinary target.
+Dependency direction: `aiperf-runner` → {`aiperf`, `loadgen-core`}; `aiperf` → {`loadgen-core`} plus optional `dynamo-mocker` only under `dynosim`; `aiperf-mock-server` → {`aiperf`}. The runner and mock-rs do not depend on each other; real-network integration tests spawn the mock binary as an ordinary target.
 
 ## Module organization (`rust/aiperf/src/`)
 
@@ -99,7 +98,7 @@ cargo build                  # debug build of the whole workspace
 cargo build --release        # optimized — use for any throughput number
 cargo test                   # all unit tests (self-contained: in-process axum mock, no external server)
 cargo test -p aiperf-graph   # one crate
-cargo test -p aiperf-mock-rs # standalone mock-server unit + HTTP integration suite
+cargo test -p aiperf-mock-server # standalone mock-server unit + HTTP integration suite
 cargo clippy --all-targets   # lints
 cargo fmt                    # format (rustfmt)
 
@@ -111,7 +110,7 @@ cargo test -p aiperf --features dynosim --lib
 cargo build -p aiperf --features dynamo-full
 
 # Standalone online mock target for local integration runs.
-cargo run -p aiperf-mock-rs -- --fast
+cargo run -p aiperf-mock-server -- --fast
 ```
 
 Run the product:
@@ -139,7 +138,7 @@ aiperf profile --config dynosim_offline_replay.yaml
 
 `cargo run -p aiperf` is invalid: the `aiperf` package has no binary. Python projects one side-effect-free authored-v2 request; an absent pair fails closed without conversion to v1. `dag_jsonl`/`weka_trace`/`dynamo_trace` enter the runner-owned graph-input resolver once, call exactly one compiler, and never pass through a second registry. gRPC endpoints require `transport.type: grpc` with `grpc://`/`grpcs://` URLs. Offline/online replay requires `dynosim_offline`/`dynosim_online` and a feature-bearing runner.
 
-Provider-neutral `evaluation` requires deployment-owned attested roots; without them the `http + evaluation` pair is absent. Content server: `AIPERF_CONTENT_SERVER_ENABLED=true` + non-empty `AIPERF_CONTENT_SERVER_CONTENT_DIR`. See `docs/tutorials/content-server.md`.
+Content server: `AIPERF_CONTENT_SERVER_ENABLED=true` + non-empty `AIPERF_CONTENT_SERVER_CONTENT_DIR`. See `docs/tutorials/content-server.md`.
 
 Unit tests use in-process axum endpoints. `tests/scheduled_real_mock.rs` retains real wall-clock library coverage; runner product coverage lives in `aiperf-runner/tests/`.
 

@@ -9,7 +9,7 @@ use common::*;
 // (`RunnerInstallation` / `RustSubprocessExecutor`), stand up a custom
 // body-recording graph chat server, and assert against the raw protocol-v2
 // request wire and captured request bodies. The Rust `AIPerfHarness` shells
-// out to `python -m aiperf profile` against `aiperf-mock-rs` and cannot
+// out to `python -m aiperf profile` against `aiperf-mock-server` and cannot
 // observe the v2 request wire or record per-dispatch bodies, so the deep
 // wire/body assertions are ported as `#[ignore]`d tests documenting the
 // required infrastructure. The CLI-expressible graph reachability run is

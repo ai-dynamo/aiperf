@@ -314,3 +314,12 @@ Two designed elements remain unbuilt:
 Until those land, `loadgen-core`'s neutral identity is a forward-looking
 commitment realized in dependency direction and package naming, not yet in an
 external release contract.
+
+## Addendum — 2026-07-13
+
+Crate `aiperf-mock-rs` (directory `rust/mock-rs`) has been renamed to `aiperf-mock-server` (directory `rust/mock-server`) and crate `aiperf-integration-tests` (directory `rust/integration`) has been renamed to `aiperf-e2e-tests` (directory `rust/e2e`). The §8 layout table entry at line 155 is superseded by:
+
+| `rust/mock-server` | `aiperf-mock-server` | `aiperf_mock_server` |
+| `rust/e2e`         | `aiperf-e2e-tests`   | `aiperf_e2e_tests`   |
+
+Rationale: `mock-rs` was a Rust-suffix anti-pattern (all crates are Rust); `mock-server` names the role. `integration` is the wrong term for tests that drive a full CLI subprocess; `e2e` is accurate.

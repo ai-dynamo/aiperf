@@ -257,3 +257,7 @@ cargo test -p aiperf-runner --test offline_scheduled_stdio   # existing online�
 - **Reuse, don't rebuild:** the 77-field `verify_parity` gate (`offline_execution.rs:2266`, `dynosim.rs:655-666`) already guards A2-offline; `per_worker_merge_matches_single_accumulator_ingest_order` (`accumulator.rs:1781`) + `worker_stores_merge…` (`store.rs:1437`) are the A1 unit substrate to *extend*, not replace; `~/tmp/a1-spec`, `~/tmp/a2-spec`, `~/tmp/connector-spec`, `~/tmp/a4-spec/proof` scratch proofs promote directly into Harnesses B/E/D.
 </content>
 </invoke>
+
+## Addendum — 2026-07-13
+
+All references to `aiperf-mock-rs` / `rust/aiperf-mock-rs` in this spec are superseded by `aiperf-mock-server` / `rust/mock-server` (renamed 2026-07-13). Cargo commands: replace `-p aiperf-mock-rs` with `-p aiperf-mock-server`.

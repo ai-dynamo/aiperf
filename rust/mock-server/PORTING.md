@@ -5,8 +5,8 @@ SPDX-License-Identifier: Apache-2.0
 
 # Port provenance
 
-`aiperf-mock-rs` was copied wholesale from the deprecated sibling checkout at
-`../aiperf-rs/rust/rust/aiperf-mock-rs` while that checkout was clean at
+`aiperf-mock-server` was copied wholesale from the deprecated sibling checkout at
+`../aiperf-rs/rust/rust/aiperf-mock-server` while that checkout was clean at
 commit `f9456b3d9f69729f398315ca6d85fab39d624fa9`. The byte-for-byte initial import
 is preserved in commit `25964b137`.
 
@@ -33,10 +33,10 @@ discover the workspace binary before falling back to `PATH`.
 The focused port gate is:
 
 ```bash
-cargo build --release -p aiperf-mock-rs --bins --examples
-cargo test --locked -p aiperf-mock-rs --all-targets
-cargo clippy --locked -p aiperf-mock-rs --all-targets -- -D warnings
-cargo doc -p aiperf-mock-rs --no-deps
+cargo build --release -p aiperf-mock-server --bins --examples
+cargo test --locked -p aiperf-mock-server --all-targets
+cargo clippy --locked -p aiperf-mock-server --all-targets -- -D warnings
+cargo doc -p aiperf-mock-server --no-deps
 cargo machete --with-metadata rust/mock-rs
 ruff check rust/mock-rs/tune_to_trace.py
 ruff format --check rust/mock-rs/tune_to_trace.py

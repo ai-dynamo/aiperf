@@ -36,10 +36,7 @@ and direct-loads its one registered adapter. It drives **ONLINE-real** over
 native HTTP or gRPC (including KServe OIP and NVIDIA Riva ASR/TTS/NLP) and
 **ONLINE-mock** over HTTP through one `{transport,
 clock}` seam. The base image registers HTTP scheduled/graph/static-accuracy/
-agentic and native gRPC scheduled execution. The stock NeMo/OpenBench GSM8K
-evaluators and their deployment-owned provider-roots were removed; the
-provider-neutral evaluator host seam and the bespoke Python static/stateful
-accuracy path (callable from Rust over JSONL stdio) remain. **OFFLINE-mock** is product-
+agentic and native gRPC scheduled execution. **OFFLINE-mock** is product-
 reachable through the same Python Config-v2 path when the runner is built with
 the non-default `dynosim` feature; that image adds `dynosim_offline` and
 `dynosim_online` scheduled and graph pairs. Unregistered pairs fail closed.
@@ -107,7 +104,7 @@ native segments and HTTP bodies under that canonical stream.
 | `aiperf-transport-http` | the Clock-injected hyper transport plus object-safe endpoint binding (canonical JSON ↔ HTTP URL/body/lifecycle and HTTP/SSE response decoding); h1/h2c/UDS, rustls, trace timing, send-complete cancellation, and reuse strategies | `src/transport/endpoint_binding.rs`, `src/client/`, `src/transport/`, `src/sse/`, `src/models/` |
 | `aiperf-transport-grpc` | Clock-injected raw Tonic transport with an open endpoint-binding registry, exact checked-in KServe DTOs and reference-grounded Riva Prost DTOs, OIP typed/raw tensor conversion, Riva ASR/TTS/NLP codecs, grpc/grpcs TLS, unary/server/bidirectional streaming, optional readiness, native status/trace facts, pooled/never/sticky channels, and post-send cancellation | `src/binding.rs`, `src/codec.rs`, `src/riva_binding.rs`, `src/riva_codec.rs`, `src/riva_proto.rs`, `src/transport.rs`, `src/models.rs`, `src/proto.rs`, `src/raw_codec.rs` |
 | `aiperf-graph` | Backend-neutral Graph-IR dataflow over the unified segment store, canonical DAG plus WEKA/Dynamo recorded-trace compilation/lowering, trait-backed root/arrival/admission/placement/failure policy, shared phase-lifecycle adaptation, ramps/adaptive controls, placement-wide cancellation/prefill updates, DES drivers, and worker-local native metrics merged once at join | `src/input.rs`, `src/dag_source.rs`, `src/lowering.rs`, `src/recorded/`, `src/workload.rs`, `src/placement.rs`, `src/runtime.rs`, `src/executor.rs`, `src/materialize.rs`, `src/transport_bench.rs` |
-| `aiperf-runner` | sole strict Rust executable: Python always sends exact-image-bound protocol-v2 `validate`/`execute`; the runner is protocol-v2-only, advertises `protocol_versions: [2]`, and rejects any non-v2 request as a v2 failure envelope. One immutable linked `RunnerApplication` owns capabilities, one runner-owned identity-dispatched graph-input resolver, other input resolvers, factories, and coordinators; the v2 graph path uses that resolver and direct compiler. Its frozen pair registry direct-loads one prepared operation. The base image registers HTTP scheduled/graph/static-accuracy/agentic and native gRPC scheduled; `dynosim` adds `dynosim_offline`/`dynosim_online` scheduled/graph. Stock NeMo/OpenBench evaluators and their provider-roots were removed | `src/application.rs`, `src/main.rs`, `src/protocol_v2.rs`, `src/registry.rs`, `src/graph_input.rs`, `src/execute.rs`, `src/online_execution.rs`, `src/offline_execution.rs`, `src/agentic_execution.rs`, `src/grpc_execution.rs`, `src/grpc_turn_execution.rs`, `src/graph_phase_runtime.rs`, `src/graph_execution.rs` |
+| `aiperf-runner` | sole strict Rust executable: Python always sends exact-image-bound protocol-v2 `validate`/`execute`; the runner is protocol-v2-only, advertises `protocol_versions: [2]`, and rejects any non-v2 request as a v2 failure envelope. One immutable linked `RunnerApplication` owns capabilities, one runner-owned identity-dispatched graph-input resolver, other input resolvers, factories, and coordinators; the v2 graph path uses that resolver and direct compiler. Its frozen pair registry direct-loads one prepared operation. The base image registers HTTP scheduled/graph/static-accuracy/agentic and native gRPC scheduled; `dynosim` adds `dynosim_offline`/`dynosim_online` scheduled/graph | `src/application.rs`, `src/main.rs`, `src/protocol_v2.rs`, `src/registry.rs`, `src/graph_input.rs`, `src/execute.rs`, `src/online_execution.rs`, `src/offline_execution.rs`, `src/agentic_execution.rs`, `src/grpc_execution.rs`, `src/grpc_turn_execution.rs`, `src/graph_phase_runtime.rs`, `src/graph_execution.rs` |
 | `aiperf` | library-only load-generation runtime composed by `aiperf-runner`: prepared HTTP/gRPC sinks, online paced/scheduled/adaptive/static-accuracy paths, the provider-neutral evaluation workload/typed host registry/fair arbiter/ledger/Clock retry/scoped proxy/report join, legacy stateful agentic seams, and the feature-gated offline implementation | `src/evaluation.rs`, `src/evaluation/`, `src/grpc.rs`, `src/http.rs`, `src/agentic.rs`, `src/dynosim.rs`, `src/phase_runtime.rs`, `src/ancillary.rs`, `src/metrics.rs`, `src/accuracy.rs`, `src/scheduled.rs`, `src/report.rs` |
 
 Deps: `aiperf` → {`aiperf-accuracy`, `aiperf-adaptive`,
@@ -314,10 +311,8 @@ profiler.
 - **Where is evaluator ownership split?** Provider-neutral control/isolation lives
   in `aiperf-accuracy/src/{provider,provider_protocol,supervisor,isolation,artifacts}.rs`;
   Rust-owned host effects, admission, ledger, proxy, sealing, and report join live
-  in `aiperf/src/evaluation{.rs,/}`. The stock NeMo/OpenBench composition and its
-  provider-roots were removed (no `stock_evaluation.rs`/`evaluation_execution.rs`).
-  The provider-neutral host seam remains under `src/aiperf/accuracy/evaluation/`.
-  Legacy static/stateful ownership remains in
+  in `aiperf/src/evaluation{.rs,/}`; the provider-neutral host seam lives under
+  `src/aiperf/accuracy/evaluation/`. Legacy static/stateful ownership remains in
   `aiperf-accuracy/src/{protocol,worker}.rs`,
   `src/aiperf/accuracy/{worker,agentic,model_broker,harbor,harbor_agent,browsergym,mcpmark}.py`,
   `aiperf/src/{accuracy,agentic,agentic_gateway}.rs`, and
@@ -505,14 +500,6 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   Static Lighteval and the stateful agentic pair are runner subprocess-tested.
   Harbor, AgentLab/BrowserGym, and MCPMark remain canonical Python providers;
   every model call returns through Rust's scheduled endpoint/transport path.
-- `specs/2026-07-12-external-evaluator-provider-host-boundary-design.md` —
-  **neutral foundation + exact GSM8K canaries built; broad migration/deletion
-  gated + addendum**: provider protocol/runtime, attested Bubblewrap isolation,
-  typed host effects, scoped Unix proxy, sealing, and generic native-v2 reporting
-  are built. Root-conditioned stock distributions cover only NeMo Evaluator
-  0.4.0 and OpenBench 0.5.3 + Inspect 0.3.141 over the frozen five-record GSM8K
-  canary and `model.generate`; all full benchmarks, arbitrary tasks/effects, and
-  legacy deletions remain gated.
 - `specs/2026-07-10-aiperf-rust-metrics-accumulator-sweepline-design.md` — **built +
   addenda**: columnar/ragged engine, formulas/SLOs, full effective/active/ICL sweeps,
   duration-weighted stats, authoritative completion-usage reconciliation,

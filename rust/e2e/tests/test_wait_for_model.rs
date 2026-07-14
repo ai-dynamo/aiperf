@@ -60,7 +60,7 @@ async fn test_models_probe_success_immediate() {
 /// early attempts and must retry until the model appears.
 ///
 /// requires: mock server `models_ready_delay_seconds` support (not implemented
-/// in aiperf-mock-rs).
+/// in aiperf-mock-server).
 #[tokio::test]
 #[ignore]
 async fn test_models_probe_success_after_retries() {
@@ -117,7 +117,7 @@ async fn test_models_probe_timeout() {
 /// accept a 2xx as 'server is up'.
 ///
 /// requires: mock server `disable_models_endpoint` support (not implemented in
-/// aiperf-mock-rs).
+/// aiperf-mock-server).
 #[tokio::test]
 #[ignore]
 async fn test_models_probe_404_fallback() {
@@ -172,7 +172,7 @@ async fn test_inference_probe_success_immediate() {
 /// 2xx.
 ///
 /// requires: mock server `inference_ready_delay_seconds` support (not
-/// implemented in aiperf-mock-rs).
+/// implemented in aiperf-mock-server).
 #[tokio::test]
 #[ignore]
 async fn test_inference_probe_success_after_retries() {

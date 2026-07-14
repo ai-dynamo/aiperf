@@ -7,7 +7,7 @@ use common::*;
 //
 // The Python originals (`tests/integration/test_rust_executor_e2e.py`) each
 // spin up a bespoke Python `http.server` handler with test-only behavior that
-// the shared in-process `aiperf-mock-rs` target does not emulate, and drive the
+// the shared in-process `aiperf-mock-server` target does not emulate, and drive the
 // native child through the Python `RustSubprocessExecutor` object API + Pydantic
 // `AIPerfConfig`/`BenchmarkRun` envelopes rather than the `aiperf profile` CLI.
 //

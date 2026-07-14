@@ -1,7 +1,7 @@
 // rust/transport-http/examples/rps_bench.rs
 //! Throughput load generator for `aiperf-transport-http`: proves sustained
 //! requests-per-second against a running OpenAI-compatible server (the
-//! `aiperf-mock-rs --fast` mock).
+//! `aiperf-mock-server --fast` mock).
 //!
 //! Design: thread-per-core (`THREADS` OS threads, each a current-thread tokio
 //! runtime + `LocalSet`). Each thread opens `CONNS` HTTP/2 (h2c prior-knowledge)

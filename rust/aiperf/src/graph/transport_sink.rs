@@ -5,7 +5,7 @@
 //!
 //! This is the graph dataflow's live dispatch path: it streams real OpenAI
 //! chat-completions over HTTP to the target server (Dynamo frontend / the
-//! `aiperf-mock-rs` mock / a real inference server), parses the SSE deltas into
+//! `aiperf-mock-server` mock / a real inference server), parses the SSE deltas into
 //! assistant text + per-token arrival times, and feeds the shared
 //! [`RequestObserver`] the measurement events.
 

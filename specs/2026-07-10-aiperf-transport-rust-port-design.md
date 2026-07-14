@@ -353,3 +353,7 @@ OpenAI-compatible mock server: `/v1/chat/completions` (streaming SSE),
 - **h2 request-sent signal for cancellation:** the "body fully sent" point
   differs on h2; the cancellation timer keys off the body-wrapper completion in
   both h1 and h2, so it stays well-defined.
+
+## Addendum — 2026-07-13
+
+All references to `aiperf-mock-rs` in this spec are superseded by `aiperf-mock-server` (crate renamed 2026-07-13; directory `rust/mock-rs` → `rust/mock-server`). Operational commands: replace `-p aiperf-mock-rs` with `-p aiperf-mock-server` and binary `aiperf-mock-rs` with `aiperf-mock-server`.

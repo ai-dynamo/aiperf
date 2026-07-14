@@ -9,7 +9,7 @@ use common::*;
 // request is tokenized inline with the configured tokenizer and written as one
 // JSONL line, and a sibling `.summary.json` file is emitted on server shutdown.
 //
-// The Rust harness (`aiperf-mock-rs` + `AIPerfHarness`) exposes no
+// The Rust harness (`aiperf-mock-server` + `AIPerfHarness`) exposes no
 // `record_requests` config knob, no builtin-tokenizer recorder, and no direct
 // aiohttp-style request driver, so these are ported faithfully but ignored:
 // they exercise the Python mock server package, not the Rust one.

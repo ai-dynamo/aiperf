@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! End-to-end integration tests for aiperf-mock-rs.
+//! End-to-end integration tests for aiperf-mock-server.
 //!
 //! These spin up a real axum server on a random port, hit it via reqwest, and
 //! validate responses, streaming behaviour, and Prometheus exposition.

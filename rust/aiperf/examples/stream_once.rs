@@ -1,6 +1,6 @@
 // rust/transport-http/examples/stream_once.rs
 //! Minimal driver: one streaming chat request against a server, printing the
-//! record. Usage: aiperf-mock-rs --no-tokenizer & then run with BASE_URL set.
+//! record. Usage: aiperf-mock-server --no-tokenizer & then run with BASE_URL set.
 
 use std::rc::Rc;
 

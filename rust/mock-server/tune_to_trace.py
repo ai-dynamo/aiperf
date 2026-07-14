@@ -25,12 +25,12 @@ Key tricks that keep this cheap:
 
 Usage (single point):
   python tune_to_trace.py --trace c512.jsonl --concurrency 512 \
-      --mock-bin target/release/aiperf-mock-rs
+      --mock-bin target/release/aiperf-mock-server
 
 Usage (two points -> concurrency-transferable config):
   python tune_to_trace.py --trace c512.jsonl --concurrency 512 \
       --trace2 c1024.jsonl --concurrency2 1024 \
-      --mock-bin target/release/aiperf-mock-rs
+      --mock-bin target/release/aiperf-mock-server
 """
 
 from __future__ import annotations
@@ -316,7 +316,7 @@ def main():
         else ""
     )
     print(
-        f"aiperf-mock-rs --scheduler-enabled \\\n"
+        f"aiperf-mock-server --scheduler-enabled \\\n"
         f"  --scheduler-step-ms {real_step:.0f} --scheduler-max-batch-size {max_batch} \\\n"
         f"  --scheduler-prefill-chunks-per-request {chunks} "
         f"--scheduler-max-prefill-chunks-per-step {args.pmax} \\\n"

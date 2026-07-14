@@ -3,7 +3,7 @@
 
 //! Full-stack integration-test harness.
 //!
-//! Boots the `aiperf-mock-rs` Axum router in-process on a random loopback port
+//! Boots the `aiperf-mock-server` Axum router in-process on a random loopback port
 //! and drives the canonical Python frontend (`python -m aiperf profile ...`)
 //! against it as a subprocess, then reads back the emitted artifact tree.
 //!
@@ -35,7 +35,7 @@ pub const DEFAULT_REQUEST_COUNT: u32 = 10;
 /// Default subprocess timeout, in seconds.
 const DEFAULT_TIMEOUT_SECS: u64 = 300;
 
-/// An in-process `aiperf-mock-rs` server bound to a random loopback port.
+/// An in-process `aiperf-mock-server` server bound to a random loopback port.
 ///
 /// The Axum router runs on the `MockServer`'s own multi-threaded tokio runtime,
 /// not the ambient `#[tokio::test]` runtime. That decoupling is deliberate: the
