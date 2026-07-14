@@ -19,6 +19,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
+use crate::body_plan::BodyPlan;
 use crate::endpoints::DynosimEndpointFactory;
 use crate::endpoints::MessagesEndpoint;
 use crate::endpoints::VllmGenerateFactory;
@@ -388,10 +389,13 @@ pub trait PreparedEndpointBehavior: Endpoint {
         &self,
         request: &PreparedRequest<'_>,
         config: &RawEndpointConfig,
-    ) -> EndpointResult<Value>;
+    ) -> EndpointResult<BodyPlan>;
 }
 
-pub(crate) fn format_legacy_payload<E>(endpoint: &E, request: &RequestInfo) -> EndpointResult<Value>
+pub(crate) fn format_legacy_payload<E>(
+    endpoint: &E,
+    request: &RequestInfo,
+) -> EndpointResult<BodyPlan>
 where
     E: PreparedEndpointBehavior + ?Sized,
 {
@@ -456,8 +460,24 @@ pub trait PreparedEndpoint: fmt::Debug {
     /// Validated immutable effective configuration.
     fn config(&self) -> &EffectiveEndpointConfig;
 
-    /// Format a decoded JSON request body.
-    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<Value>;
+    /// Build a request-body plan the shared materializer splices into wire bytes.
+    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<BodyPlan>;
+
+    /// Whether this endpoint's [`format_payload`](Self::format_payload) output is a
+    /// pure function of bind-time inputs for a static-context turn, so its
+    /// [`BodyPlan`] can be built once at endpoint-bind and cached rather than
+    /// rebuilt per dispatch (segment spec §3a).
+    ///
+    /// Defaults to `true`: the message-array dialects (chat/responses/messages)
+    /// derive their whole body from the frozen turns, model, and endpoint config.
+    /// Overridden to `false` by dialects whose body depends on per-dispatch state
+    /// the cache cannot capture — template rendering (`x_request_id` and friends),
+    /// raw passthrough (authored per-turn `raw_payload`), and token-native
+    /// composition. This is a trait method, never an [`EndpointDescriptor`] field,
+    /// so it stays off the serialized `--capabilities` catalog wire.
+    fn precomputable_body(&self) -> bool {
+        true
+    }
 
     /// Borrow endpoint-owned request headers prepared once per worker/profile.
     fn headers(&self) -> &BTreeMap<String, String>;
@@ -549,7 +569,7 @@ where
         &self.config
     }
 
-    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<Value> {
+    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<BodyPlan> {
         self.endpoint
             .format_prepared_payload(request, self.config.as_raw())
     }

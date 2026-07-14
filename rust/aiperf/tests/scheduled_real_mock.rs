@@ -259,14 +259,19 @@ fn both_scheduled_strategies_match_real_mock_timing() {
         .iter()
         .filter(|turn| turn.conversation_id == "a")
         .collect::<Vec<_>>();
-    assert_eq!(a[0].scheduled_offset_ns, 0);
-    assert_eq!(a[1].scheduled_offset_ns, 140_000_000);
+    // The scheduler anchors the whole grid at `now + SCHEDULE_START_LEAD_NS`
+    // (a fixed warm-start lead, `fixed_schedule.rs`), so absolute
+    // `scheduled_offset_ns` carries that lead plus sub-millisecond setup jitter.
+    // Assert the trace-derived RELATIVE spacing instead — it is invariant to the
+    // lead and the jitter cancels in the differences.
+    let base = a[0].scheduled_offset_ns;
+    assert_eq!(a[1].scheduled_offset_ns - base, 140_000_000);
     let b = fixed
         .turns
         .iter()
         .filter(|turn| turn.conversation_id == "b")
         .collect::<Vec<_>>();
-    assert_eq!(b[0].scheduled_offset_ns, 60_000_000);
+    assert_eq!(b[0].scheduled_offset_ns - base, 60_000_000);
     assert_eq!(
         b[1].scheduled_offset_ns - b[0].terminal_offset_ns.unwrap(),
         30_000_000,
@@ -301,7 +306,11 @@ fn both_scheduled_strategies_match_real_mock_timing() {
         .filter(|turn| turn.turn_index == 0)
         .map(|turn| turn.scheduled_offset_ns / 1_000_000)
         .collect::<Vec<_>>();
-    assert_eq!(first_targets, vec![0, 50, 150, 300]);
+    // Relative to the first target — invariant to the fixed warm-start grid lead
+    // (`SCHEDULE_START_LEAD_NS`) that shifts every absolute offset equally.
+    let base = first_targets[0];
+    let relative_targets: Vec<i64> = first_targets.iter().map(|t| t - base).collect();
+    assert_eq!(relative_targets, vec![0, 50, 150, 300]);
     for session_id in user
         .turns
         .iter()

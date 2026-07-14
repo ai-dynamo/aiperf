@@ -41,6 +41,7 @@ use aiperf::dataset::{
     TiktokenEncoding, TiktokenTokenizer, TracePromptStoragePolicy, TraceSynthesisConfig,
 };
 use aiperf::endpoints::{EndpointKey, EndpointRegistry, PreparedEndpointTable};
+use aiperf::export::otel::OtelRecordAccumulator;
 use aiperf::extensions::AiperfRegistry;
 use aiperf::failure::OnFailure;
 use aiperf::fixed_schedule::{
@@ -115,7 +116,8 @@ use crate::protocol::{
 use crate::readiness::{PreparedOnlineReadiness, ReadinessTransportFactory};
 use crate::records::{
     CapturedHttpExchange, CapturedModelOutput, CapturedRecord, InputSession, group_record_errors,
-    write_inputs_json, write_outputs_json, write_raw_records_jsonl, write_records_jsonl,
+    observe_otel_record, write_inputs_json, write_outputs_json, write_raw_records_jsonl,
+    write_records_jsonl,
 };
 use crate::registry::ValidatedEndpointProfileV2;
 use crate::server_metrics::ServerMetricsRun;
@@ -217,6 +219,11 @@ pub(crate) struct NativeRunSpec {
     /// path apply its historical default at the point of use
     /// ([`OnFailure::scheduled_or_default`] / [`OnFailure::graph_or_default`]).
     pub(crate) failure_policy: Option<OnFailure>,
+    /// Whether the native OTLP metrics sink is enabled for this run. When set,
+    /// the scheduled path accumulates per-record GenAI-semconv histograms so the
+    /// post-report sink emits populated `bucket_counts`; otherwise that
+    /// projection is skipped entirely (no per-record recompute cost).
+    pub(crate) native_otel_enabled: bool,
 }
 
 /// Protocol-neutral retention of one run's already decoded sidecar inputs.
@@ -1641,6 +1648,18 @@ async fn execute_native_inner(
             if !phase_sidecars.is_empty() {
                 plan = plan.with_sidecars(phase_sidecars);
             }
+            // The coordinator's per-run `CollectorObserver`/`NativeMetricsObserver`
+            // retention is dead work on the runner path: the native-v2 report is
+            // rebuilt from the drained per-worker records, and the only value the
+            // coordinator report supplies is per-turn `issued_offset_ns`, which
+            // comes from the runtime's own `DetailedSchedule` (gated separately by
+            // timing-record capture), not from these observers. Drop the discarded
+            // full-record retention and keep the coordinator native metrics
+            // aggregate-only so we do not accumulate a per-request record graph
+            // that is never read.
+            plan = plan
+                .with_performance_record_capture(false)
+                .with_native_metric_record_dimensions(false);
             plans.push(plan);
         }
 
@@ -1850,7 +1869,26 @@ async fn execute_native_inner(
         outcome.evaluator = Some(evaluation.evaluator_report);
         outcome.errors = accuracy_report_errors(&evaluation.failures);
     }
-    Ok(NativeReport::from_outcome(&profiling_metrics, &outcome))
+    let mut report = NativeReport::from_outcome(&profiling_metrics, &outcome);
+    // Per-record OTLP histograms: accumulate the same profiling-record metric
+    // projection the aggregate report is built from (and the live-streaming sink
+    // forwards to Python) so the post-report OTLP sink emits populated
+    // `bucket_counts` instead of zeros. Gated on the native OTLP sink being
+    // enabled so no per-record recompute happens otherwise. Merged here (the
+    // scheduled online path runs one current-thread worker set that already
+    // joins its per-worker records into `captured`).
+    if request.native_otel_enabled {
+        let mut otel_records = OtelRecordAccumulator::new();
+        for record in &captured {
+            if record.ingest.phase == MetricsPhase::Profiling {
+                observe_otel_record(&mut otel_records, record, &metrics_config);
+            }
+        }
+        if !otel_records.is_empty() {
+            report.otel_per_record = Some(otel_records);
+        }
+    }
+    Ok(report)
 }
 
 fn dataset_default_output_tokens(dataset: &Dataset) -> Result<usize> {
@@ -3848,6 +3886,14 @@ impl TurnDispatcher for ConfiguredDispatcher {
             // dispatcher only propagates the error, exactly as before.
             Err(error) => Err(error),
         }
+    }
+
+    async fn prewarm(&self, turn: TurnToSend) -> Result<()> {
+        // Warm the execution backend (every worker) with the real prepared
+        // request shape; the backend discards the round-trip and records
+        // nothing, so timed issuance starts from a warmed transport.
+        let turn = PreparedTurn::from_turn(turn, &self.model);
+        self.execution_backend.prewarm(turn).await
     }
 }
 

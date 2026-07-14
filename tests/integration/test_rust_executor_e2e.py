@@ -268,6 +268,13 @@ class _ServerMetricsHandler(BaseHTTPRequestHandler):
 def test_config_v2_streams_rust_metrics_live_through_canonical_python_otel(
     tmp_path: Path,
 ) -> None:
+    # This test pins the legacy live-streaming Python OTel sidecar (mid-run OTLP
+    # emission). On the default native path that sidecar is suppressed and the
+    # native aiperf::export::otel sink emits post-run instead, so mid-run arrival
+    # is not observable. Exercise the still-supported legacy path via
+    # AIPERF_RUNTIME_NATIVE_EXPORT=0 (mirrors AIPERF_RUNTIME_ENGINE=python A/B).
+    from aiperf.common.environment import Environment
+
     metrics_service_pb2 = pytest.importorskip(
         "opentelemetry.proto.collector.metrics.v1.metrics_service_pb2"
     )
@@ -339,9 +346,12 @@ def test_config_v2_streams_rust_metrics_live_through_canonical_python_otel(
                 tmp_path, binary=binary
             ).execute_sync(run)
 
-        with mock.patch.dict(
-            os.environ,
-            {"AIPERF_OTEL_FLUSH_INTERVAL_SECONDS": "0.1"},
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"AIPERF_OTEL_FLUSH_INTERVAL_SECONDS": "0.1"},
+            ),
+            mock.patch.object(Environment.RUNTIME, "NATIVE_EXPORT", False),
         ):
             runner_thread = threading.Thread(target=execute)
             runner_thread.start()
@@ -551,6 +561,14 @@ def test_config_v2_collects_server_metrics_in_rust_across_exact_phase_boundaries
 def test_config_v2_joins_rust_gpu_telemetry_into_all_artifacts(
     tmp_path: Path,
 ) -> None:
+    # The telemetry_data block embedded in profile_export_aiperf.json is a
+    # Python-ExporterManager artifact; the native genai_perf sink omits it by
+    # design (GPU telemetry lives in native-v2.json series, the CSV GPU rows, and
+    # gpu_telemetry_export.jsonl). This test pins the legacy Python compat
+    # renderer via AIPERF_RUNTIME_NATIVE_EXPORT=0 to assert the telemetry_data
+    # projection end-to-end (mirrors AIPERF_RUNTIME_ENGINE=python A/B).
+    from aiperf.common.environment import Environment
+
     _assert_protocol_v2_only()
     _ChatHandler.bodies.clear()
     _ChatHandler.telemetry_scrapes = 0
@@ -596,7 +614,8 @@ def test_config_v2_joins_rust_gpu_telemetry_into_all_artifacts(
         default_binary = Path(__file__).parents[2] / "target/debug/aiperf-runner"
         binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default_binary))
 
-        result = RustSubprocessExecutor(tmp_path, binary=binary).execute_sync(run)
+        with mock.patch.object(Environment.RUNTIME, "NATIVE_EXPORT", False):
+            result = RustSubprocessExecutor(tmp_path, binary=binary).execute_sync(run)
 
         assert result.success, result.error
         assert result.summary_metrics["request_count"].avg == 4.0

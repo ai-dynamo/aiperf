@@ -223,6 +223,22 @@ impl AIPerfHarness {
         self.exec(args, secs)
     }
 
+    /// Like [`run`](Self::run) but with extra environment variables set on the
+    /// `aiperf` subprocess (e.g. `AIPERF_RUNTIME_ENGINE=python` to drive the
+    /// legacy Python engine). Mirrors [`run`](Self::run)'s tokenizer/artifact
+    /// injection.
+    pub fn run_env(&self, profile_args: &str, extra_env: &[(&str, &str)]) -> RunResult {
+        let mut args = vec!["profile".to_string()];
+        args.extend(shell_split(profile_args));
+        args.push("--artifact-dir".to_string());
+        args.push(self.artifact_path().display().to_string());
+        if !args.iter().any(|a| a == "--tokenizer") {
+            args.push("--tokenizer".to_string());
+            args.push(DEFAULT_MODEL.to_string());
+        }
+        self.exec_env(args, DEFAULT_TIMEOUT_SECS, extra_env)
+    }
+
     /// Run an arbitrary non-profile subcommand (e.g. `plot ...`). No
     /// `--artifact-dir`/`--tokenizer` are appended and no server is required.
     pub fn run_no_server(&self, args: &str) -> RunResult {
@@ -230,6 +246,15 @@ impl AIPerfHarness {
     }
 
     fn exec(&self, args: Vec<String>, timeout_secs: u64) -> RunResult {
+        self.exec_env(args, timeout_secs, &[])
+    }
+
+    fn exec_env(
+        &self,
+        args: Vec<String>,
+        timeout_secs: u64,
+        extra_env: &[(&str, &str)],
+    ) -> RunResult {
         let python = python_binary();
 
         let mut cmd = Command::new(&python);
@@ -243,6 +268,9 @@ impl AIPerfHarness {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        for (key, value) in extra_env {
+            cmd.env(key, value);
+        }
 
         let mut child = cmd.spawn().unwrap_or_else(|e| {
             panic!("failed to spawn `{python} -m aiperf`: {e}");

@@ -185,9 +185,33 @@ impl Workload for FixedScheduleWorkload {
     }
 
     async fn execute(&self, runtime: Rc<ScheduledRuntime>) -> Result<()> {
+        // Warm the dispatch path before anchoring so the first authored request
+        // is not delayed relative to its scheduled time by one-time transport
+        // setup (connection, body materialization, tokenizer/JIT). This is the
+        // synchronization barrier that lets issuance start flowing on-grid; the
+        // warmup round-trip is discarded and never recorded.
+        if let Some(entry) = self.schedule.entries.first() {
+            if let Err(error) = runtime.prewarm(entry.turn.clone()).await {
+                tracing::debug!(error = %error, "fixed-schedule prewarm round-trip failed");
+            }
+        }
+        // Anchor the replay to the moment issuance actually begins, not the run
+        // origin (`start_ns`) captured before per-phase dataset/schedule setup.
+        // Add a small start lead so the earliest authored target sits just in
+        // the future when the scheduler begins draining: every turn is scheduled
+        // up front on this task, and that O(n) scheduling pass runs before the
+        // scheduler can fire anything, so without the lead the first target is
+        // already overdue and fires as-soon-as-possible (a few ms late relative
+        // to its grid position). The lead moves the whole grid a few ms later
+        // (negligible over a run) and lets every send land on the authored grid.
+        // Combined with the connection prewarm above, issuance starts warm and
+        // on-schedule — the Rust-native equivalent of the Python engine's
+        // ZMQ "workers ready, go" barrier.
+        const SCHEDULE_START_LEAD_NS: i64 = 25_000_000;
+        let anchor_ns = runtime.now_ns().saturating_add(SCHEDULE_START_LEAD_NS);
         for entry in &self.schedule.entries {
             let target_ns = self.schedule_source.timestamp_to_ns(
-                runtime.start_ns(),
+                anchor_ns,
                 self.schedule.schedule_zero_ms,
                 entry.timestamp_ms,
             )?;
@@ -198,6 +222,7 @@ impl Workload for FixedScheduleWorkload {
                 self.schedule.schedule_zero_ms,
                 entry.turn.clone(),
                 target_ns,
+                anchor_ns,
             );
         }
         Ok(())
@@ -211,6 +236,7 @@ fn schedule_fixed_turn(
     schedule_zero_ms: f64,
     turn: TurnToSend,
     target_ns: i64,
+    anchor_ns: i64,
 ) {
     let scheduler = runtime.scheduler();
     scheduler.schedule_at_ns(
@@ -270,7 +296,7 @@ fn schedule_fixed_turn(
 
                         let next_target = if let Some(timestamp_ms) = next_metadata.timestamp_ms {
                             match schedule_source_for_completion.timestamp_to_ns(
-                                runtime_for_completion.start_ns(),
+                                anchor_ns,
                                 schedule_zero_ms,
                                 timestamp_ms,
                             ) {
@@ -299,6 +325,7 @@ fn schedule_fixed_turn(
                             schedule_zero_ms,
                             next_turn,
                             next_target,
+                            anchor_ns,
                         );
                     })
                 }),

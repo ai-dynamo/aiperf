@@ -5,8 +5,10 @@
 
 use std::fmt::{self, Display};
 
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use smallvec::SmallVec;
 
 use crate::endpoints::config::EndpointConfig;
 
@@ -118,6 +120,13 @@ pub struct Turn {
     pub extra_body: Option<Map<String, Value>>,
     /// Prebuilt raw request body used by the raw endpoint reconstruction path.
     pub raw_payload: Option<Value>,
+    /// Pre-serialized message wire(s) lowered at load for a static content turn
+    /// (segment spec §3/§3a/§5). When present, message-array formatters splice
+    /// these bytes verbatim instead of re-rendering and re-serializing the turn's
+    /// content. Bytes only — this carries no dataset/segment-store dependency,
+    /// and it is a pure dispatch-time optimization, never serialized.
+    #[serde(skip)]
+    pub lowered: Option<SmallVec<[Bytes; 1]>>,
 }
 
 /// Full request context consumed by endpoint formatters.

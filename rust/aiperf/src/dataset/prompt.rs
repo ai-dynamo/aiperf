@@ -11,12 +11,12 @@
 
 use std::collections::HashMap;
 
+use crate::rng::namespace::DATASET_PROMPT_CORPUS;
 use crate::rng::{RandomGenerator, RngRoot};
 
+use crate::dataset::corpus::{SHAKESPEARE_CORPUS, tokenize_corpus_chunked};
 use crate::dataset::error::{DatasetError, Result};
 use crate::dataset::tokenizer::TextTokenizer;
-
-const DEFAULT_CORPUS: &str = "To benchmark inference faithfully, deterministic prompts preserve shared prefixes while varied continuations exercise the complete serving path. ";
 
 /// Generated text paired with the authoritative token sequence used to build it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,30 +57,73 @@ pub trait PromptGeneratorFactory: Send + Sync {
     ) -> Result<Box<dyn PromptGenerator + 'a>>;
 }
 
+/// Text body a [`CorpusPromptGeneratorFactory`] samples prompts from.
+///
+/// A trait-free enum is deliberate: the corpus is data, not behavior, and both
+/// variants flow through the identical chunk-tokenization policy in
+/// [`tokenize_corpus_chunked`]. A future non-text corpus source would become a
+/// `PromptGeneratorFactory` impl in its own right, not a third variant here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CorpusSource {
+    /// The embedded Shakespeare ("sonnet") corpus, matching Python's default
+    /// `DEFAULT_CORPUS_FILE = "assets/shakespeare.txt"`.
+    Sonnet,
+    /// A caller-supplied corpus body (custom-corpus configs and tests).
+    Custom(String),
+}
+
+impl CorpusSource {
+    fn text(&self) -> &str {
+        match self {
+            Self::Sonnet => SHAKESPEARE_CORPUS,
+            Self::Custom(text) => text,
+        }
+    }
+}
+
 /// Corpus-token generator with prefix block reuse.
+///
+/// Ports the inherited Python `PromptGenerator`
+/// (`src/aiperf/dataset/generator/prompt.py`): the default corpus is the
+/// Shakespeare sonnet text, tokenized once through the character-chunked
+/// [`tokenize_corpus_chunked`] policy, then sampled with wrap-around and prefix
+/// block reuse to produce exact-length synthetic prompts.
 #[derive(Debug, Clone)]
 pub struct CorpusPromptGeneratorFactory {
-    corpus: String,
+    corpus: CorpusSource,
 }
 
 impl CorpusPromptGeneratorFactory {
-    /// Use a caller-provided non-empty corpus.
+    /// Use the embedded Shakespeare ("sonnet") corpus — the product default and
+    /// the byte-for-byte equivalent of Python's default `PromptGenerator`.
+    pub fn sonnet() -> Self {
+        Self {
+            corpus: CorpusSource::Sonnet,
+        }
+    }
+
+    /// Use a caller-provided non-empty corpus body.
+    ///
+    /// The corpus is tokenized through the same character-chunked policy as the
+    /// sonnet corpus, so a custom source stays on the identical reproducibility
+    /// contract.
     pub fn new(corpus: impl Into<String>) -> Result<Self> {
         let corpus = corpus.into();
-        if corpus.is_empty() {
+        if corpus.trim().is_empty() {
             return Err(DatasetError::Validation(
                 "prompt generator corpus cannot be empty".into(),
             ));
         }
-        Ok(Self { corpus })
+        Ok(Self {
+            corpus: CorpusSource::Custom(corpus),
+        })
     }
 }
 
 impl Default for CorpusPromptGeneratorFactory {
+    /// The default corpus is the Shakespeare sonnet text, matching Python AIPerf.
     fn default() -> Self {
-        Self {
-            corpus: DEFAULT_CORPUS.repeat(32),
-        }
+        Self::sonnet()
     }
 }
 
@@ -90,7 +133,7 @@ impl PromptGeneratorFactory for CorpusPromptGeneratorFactory {
         tokenizer: &'a dyn TextTokenizer,
         root: RngRoot,
     ) -> Result<Box<dyn PromptGenerator + 'a>> {
-        let corpus_tokens = tokenizer.encode(&self.corpus)?;
+        let corpus_tokens = tokenize_corpus_chunked(self.corpus.text(), tokenizer)?;
         if corpus_tokens.is_empty() {
             return Err(DatasetError::Validation(
                 "prompt generator corpus encoded to zero tokens".into(),
@@ -100,7 +143,7 @@ impl PromptGeneratorFactory for CorpusPromptGeneratorFactory {
             corpus_tokens,
             block_separator: tokenizer.block_separation_token_id(),
             tokenizer,
-            rng: RandomGenerator::from_seed(root.derive_seed("dataset.prompt.corpus")),
+            rng: RandomGenerator::from_seed(root.derive_seed(DATASET_PROMPT_CORPUS)),
             blocks: HashMap::new(),
         }))
     }
@@ -267,6 +310,55 @@ mod tests {
         assert_eq!(second.tokens.len(), 8);
         assert_eq!(&first.tokens[..4], &second.tokens[..4]);
         assert_eq!(tokenizer.encode(&first.text).unwrap(), first.tokens);
+    }
+
+    #[test]
+    fn sonnet_prompts_are_natural_language_and_seed_deterministic() {
+        let tokenizer = TiktokenTokenizer::builtin();
+        let factory = CorpusPromptGeneratorFactory::sonnet();
+
+        let mut generator = factory.create(&tokenizer, RngRoot::new(Some(11))).unwrap();
+        let prompt = generator.generate(64, &[], 1).unwrap();
+        assert_eq!(prompt.tokens.len(), 64);
+        // Sampled from the Shakespeare corpus: the decoded text is real English,
+        // not the former placeholder sentence.
+        let alphabetic = prompt.text.chars().filter(|c| c.is_alphabetic()).count();
+        assert!(
+            alphabetic >= prompt.text.len() / 2,
+            "expected natural-language corpus text, got {:?}",
+            prompt.text
+        );
+
+        // Same seed reproduces the identical prompt; a different seed diverges.
+        let mut same = factory.create(&tokenizer, RngRoot::new(Some(11))).unwrap();
+        assert_eq!(same.generate(64, &[], 1).unwrap(), prompt);
+        let mut other = factory.create(&tokenizer, RngRoot::new(Some(12))).unwrap();
+        assert_ne!(other.generate(64, &[], 1).unwrap().tokens, prompt.tokens);
+    }
+
+    #[test]
+    fn custom_and_sonnet_factories_produce_distinct_corpora() {
+        let tokenizer = TiktokenTokenizer::builtin();
+        let custom = CorpusPromptGeneratorFactory::new("alpha beta gamma delta epsilon").unwrap();
+        let sonnet = CorpusPromptGeneratorFactory::sonnet();
+        let custom_prompt = custom
+            .create(&tokenizer, RngRoot::new(Some(5)))
+            .unwrap()
+            .generate(4, &[], 1)
+            .unwrap();
+        let sonnet_prompt = sonnet
+            .create(&tokenizer, RngRoot::new(Some(5)))
+            .unwrap()
+            .generate(4, &[], 1)
+            .unwrap();
+        assert_eq!(custom_prompt.tokens.len(), 4);
+        assert_eq!(sonnet_prompt.tokens.len(), 4);
+        assert_ne!(custom_prompt.tokens, sonnet_prompt.tokens);
+    }
+
+    #[test]
+    fn empty_corpus_is_rejected() {
+        assert!(CorpusPromptGeneratorFactory::new("   \n\t  ").is_err());
     }
 
     #[test]

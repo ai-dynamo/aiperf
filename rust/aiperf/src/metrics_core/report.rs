@@ -1012,6 +1012,9 @@ impl Reporter for NativeReporter {
             accuracy_records: outcome.accuracy_records.clone(),
             evaluator: outcome.evaluator.clone(),
             errors: outcome.errors.clone(),
+            // Filled by the runner after report construction (see the online
+            // execution path); the aggregate reporter has no per-record samples.
+            otel_per_record: None,
         }
     }
 }
@@ -1050,6 +1053,13 @@ pub struct NativeReport {
     /// Grouped run errors.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<ReportError>,
+    /// Transient per-record GenAI-semconv histograms, filled by the runner's
+    /// per-record path and consumed by the OTLP sink to emit populated
+    /// `bucket_counts`. Never serialized into the committed native-v2 report
+    /// (`#[serde(skip)]`) — it is an in-memory side channel from execution to the
+    /// post-report export plane, so the authoritative report bytes are unchanged.
+    #[serde(skip)]
+    pub otel_per_record: Option<crate::export::otel::OtelRecordAccumulator>,
 }
 
 impl NativeReport {

@@ -12,6 +12,12 @@ use aiperf::endpoints::{
 };
 use serde_json::{Map, Value, json};
 
+/// Materialize a prepared endpoint's [`BodyPlan`] into a decoded JSON value so
+/// the structural assertions below keep comparing against `json!` objects.
+fn plan_body(plan: aiperf::body_plan::BodyPlan) -> Value {
+    serde_json::from_slice(&plan.materialize_standalone().unwrap()).unwrap()
+}
+
 fn prepared(id: &str, extra: Option<Map<String, Value>>) -> Box<dyn PreparedEndpoint> {
     let registry = EndpointRegistry::builtin().unwrap();
     registry
@@ -112,9 +118,11 @@ fn kserve_v1_predict_matches_instances_predictions_and_autodetection() {
     );
     let turns = [text_turn(&["hello", "", "world"], None)];
     assert_eq!(
-        endpoint
-            .format_payload(&request("classifier", &turns))
-            .unwrap(),
+        plan_body(
+            endpoint
+                .format_payload(&request("classifier", &turns))
+                .unwrap(),
+        ),
         json!({"instances": [{"sentence": "hello world"}]})
     );
     assert!(matches!(
@@ -162,16 +170,25 @@ fn kserve_v2_infer_and_vlm_match_tensor_payloads_and_text_fallback() {
         ),
     );
     let turns = [text_turn(&["one", "two"], Some(17))];
+    let expected = json!({
+        "inputs": [
+            {"name": "prompt", "shape": [1], "datatype": "BYTES", "data": ["one two"]},
+            {"name": "max_tokens", "shape": [1], "datatype": "INT32", "data": [17]},
+        ],
+        "parameters": {"temperature": 0.2},
+    });
+    let bytes = infer
+        .format_payload(&request("llm", &turns))
+        .unwrap()
+        .materialize_standalone()
+        .unwrap();
+    // Golden-byte gate (stage B): materialized KServe plan bytes are identical to
+    // `to_vec` of the equivalent hand-built tensor object.
     assert_eq!(
-        infer.format_payload(&request("llm", &turns)).unwrap(),
-        json!({
-            "inputs": [
-                {"name": "prompt", "shape": [1], "datatype": "BYTES", "data": ["one two"]},
-                {"name": "max_tokens", "shape": [1], "datatype": "INT32", "data": [17]},
-            ],
-            "parameters": {"temperature": 0.2},
-        })
+        &bytes[..],
+        serde_json::to_vec(&expected).unwrap().as_slice()
     );
+    assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), expected);
     let parsed = infer
         .parse_response(&ServerResponse::from_json(
             20,
@@ -200,7 +217,7 @@ fn kserve_v2_infer_and_vlm_match_tensor_payloads_and_text_fallback() {
         ..Turn::default()
     }];
     assert_eq!(
-        vlm.format_payload(&request("vlm", &turns)).unwrap(),
+        plan_body(vlm.format_payload(&request("vlm", &turns)).unwrap()),
         json!({"inputs": [
             {"name": "text_input", "shape": [1], "datatype": "BYTES", "data": ["describe"]},
             {"name": "image", "shape": [2], "datatype": "BYTES", "data": ["image-a", "image-b"]},
@@ -214,9 +231,11 @@ fn kserve_v2_embeddings_and_rankings_preserve_shape_and_numeric_rules() {
     let embeddings = prepared("kserve_v2_embeddings", None);
     let turns = [text_turn(&["a", "b"], Some(4))];
     assert_eq!(
-        embeddings
-            .format_payload(&request("embed", &turns))
-            .unwrap(),
+        plan_body(
+            embeddings
+                .format_payload(&request("embed", &turns))
+                .unwrap(),
+        ),
         json!({"inputs": [{
             "name": "text_input", "shape": [2], "datatype": "BYTES", "data": ["a", "b"]
         }]})
@@ -253,9 +272,11 @@ fn kserve_v2_embeddings_and_rankings_preserve_shape_and_numeric_rules() {
         ..Turn::default()
     }];
     assert_eq!(
-        rankings
-            .format_payload(&request("reranker", &turns))
-            .unwrap(),
+        plan_body(
+            rankings
+                .format_payload(&request("reranker", &turns))
+                .unwrap(),
+        ),
         json!({"inputs": [
             {"name": "query", "shape": [1], "datatype": "BYTES", "data": ["question"]},
             {"name": "passages", "shape": [2], "datatype": "BYTES", "data": ["p0", "p1"]},
@@ -298,9 +319,11 @@ fn kserve_v2_images_separates_typed_tensors_and_generic_parameters() {
     );
     let turns = [text_turn(&["a", "cat"], Some(99))];
     assert_eq!(
-        endpoint
-            .format_payload(&request("diffusion", &turns))
-            .unwrap(),
+        plan_body(
+            endpoint
+                .format_payload(&request("diffusion", &turns))
+                .unwrap(),
+        ),
         json!({
             "inputs": [
                 {"name": "prompt", "shape": [1], "datatype": "BYTES", "data": ["a cat"]},

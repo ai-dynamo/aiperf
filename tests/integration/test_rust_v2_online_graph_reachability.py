@@ -184,9 +184,12 @@ def _execute_v2(
     captured: list[tuple[dict[str, Any], subprocess.CompletedProcess[bytes]]] = []
 
     def recording_execute(
-        selected: RunnerInstallation, request: dict[str, Any]
+        selected: RunnerInstallation,
+        request: dict[str, Any],
+        *,
+        on_stderr_line: Any = None,
     ) -> subprocess.CompletedProcess[bytes]:
-        completed = original_execute(selected, request)
+        completed = original_execute(selected, request, on_stderr_line=on_stderr_line)
         captured.append((copy.deepcopy(request), completed))
         return completed
 

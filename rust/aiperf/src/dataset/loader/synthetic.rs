@@ -258,7 +258,7 @@ impl Composer for SyntheticComposer {
                         turn.input_tokens = token_ids.len() as u64;
                         let handle = segments.intern_token_ids(parent, token_ids)?;
                         parent = Some(handle);
-                        turn.raw_token_ids = Some(handle);
+                        turn.body = Turn::dispatch_body(None, Some(handle), &[]);
                     } else {
                         let mut handles = SmallVec::new();
                         for _ in 0..prompt.batch_size {
@@ -337,7 +337,7 @@ impl Composer for SyntheticComposer {
                         "video_url",
                     )?;
                 }
-                if turn.content.is_empty() && turn.raw_token_ids.is_none() {
+                if turn.content.is_empty() && turn.body.is_empty() {
                     return Err(DatasetError::Validation(
                         "synthetic turn generated no text, image, audio, or video content".into(),
                     ));
@@ -868,7 +868,7 @@ mod tests {
         let turn = &conversation.turns[0];
         assert!(turn.content.is_empty());
         assert_eq!(turn.input_tokens, 8);
-        let handle = turn.raw_token_ids.expect("raw token handle");
+        let handle = *turn.body.first().expect("raw token handle");
         let Payload::TokenIds { token_ids } = dataset.segments().get(handle).unwrap() else {
             panic!("raw-token synthetic prompt must be stored as token IDs");
         };

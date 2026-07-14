@@ -1,0 +1,54 @@
+
+╭──────────────────────────────────────────── Unsupported Parameter: max_completion_tokens ────────────────────────────────────────────╮
+│  The backend rejected 'max_completion_tokens'. This backend only supports 'max_tokens'.                                              │
+│                                                                                                                                      │
+│  Possible Causes:                                                                                                                    │
+│    • AIPerf generated 'max_completion_tokens' due to --output-tokens-mean.                                                           │
+│    • The backend rejects 'max_completion_tokens' because it only supports 'max_tokens'.                                              │
+│                                                                                                                                      │
+│  Investigation Steps:                                                                                                                │
+│    1. Inspect request payloads in profile_export.jsonl.                                                                              │
+│    1. Check the backend's supported parameters.                                                                                      │
+│                                                                                                                                      │
+│  Suggested Fixes:                                                                                                                    │
+│    • Remove --output-tokens-mean.                                                                                                    │
+│    • Or use --extra-inputs "max_tokens:<value>".                                                                                     │
+│    • Or run AIPerf with '--use-legacy-max-tokens' to force use of the legacy 'max_tokens' field instead of 'max_completion_tokens'.  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+                                      NVIDIA AIPerf | Error Summary                                      
+┏━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Code ┃            Type ┃ Message                                                              ┃ Count ┃
+┡━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│  400 │ BadRequestError │ extra_forbidden max_completion_tokens Extra inputs are not permitted │     2 │
+└──────┴─────────────────┴──────────────────────────────────────────────────────────────────────┴───────┘
+
+
+                                  NVIDIA AIPerf | LLM Metrics                                   
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━┓
+┃                          Metric ┃    avg ┃    min ┃    max ┃    p99 ┃    p90 ┃    p50 ┃  std ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━┩
+│            Request Latency (ms) │ 123.46 │ 122.46 │ 124.46 │ 123.46 │ 123.46 │ 123.46 │ 1.00 │
+│   osl_mismatch_count (requests) │   3.00 │   3.00 │   3.00 │    N/A │    N/A │    N/A │  N/A │
+│ osl_mismatch_diff_pct (percent) │   7.50 │   6.50 │   8.50 │   7.50 │   7.50 │   7.50 │ 1.00 │
+│        request_count (requests) │  10.00 │  10.00 │  10.00 │    N/A │    N/A │    N/A │  N/A │
+└─────────────────────────────────┴────────┴────────┴────────┴────────┴────────┴────────┴──────┘
+
+╭───────────────────────────── Output Sequence Length Mismatch Warning ──────────────────────────────╮
+│  3 of 10 requests (30.0%) have output length differing from requested by more than the threshold.  │
+│  Threshold (tokens): min(requested x 5%, 50)                                                       │
+│  Average mismatch: 7.5%                                                                            │
+│                                                                                                    │
+│  Why: Server hit EOS token before reaching requested output length.                                │
+│                                                                                                    │
+│  Fix Options:                                                                                      │
+│    - --extra-inputs ignore_eos:true - Generate until max_tokens (vLLM, TensorRT-LLM)               │
+│    - --extra-inputs min_tokens:<N> - Set minimum output length (vLLM, TensorRT-LLM, SGLang)        │
+│    - --use-server-token-count - Use server-reported token counts if tokenizer mismatch suspected   │
+│                                                                                                    │
+│  Diagnostics:                                                                                      │
+│    - Review profile_export.jsonl -> osl_mismatch_diff_pct for per-request values                   │
+│    - Adjust: AIPERF_METRICS_OSL_MISMATCH_PCT_THRESHOLD=5                                           │
+│    - Adjust: AIPERF_METRICS_OSL_MISMATCH_MAX_TOKEN_THRESHOLD=50                                    │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────╯

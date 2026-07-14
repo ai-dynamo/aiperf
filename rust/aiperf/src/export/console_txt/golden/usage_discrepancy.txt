@@ -1,0 +1,13 @@
+2 of 10 requests (20.0%) show a difference exceeding 10% between:
+  - API-reported usage tokens (from 'usage' field)
+  - Client-computed token counts (from tokenization)
+
+Possible Causes:
+  - Different tokenization methods (API vs client)
+  - API special tokens or preprocessing
+
+Investigation Steps:
+  1. Review profile_export.jsonl for per-request usage_*_diff_pct values
+  2. Verify client tokenizer matches the model's tokenizer
+  3. Use server token counts: --use-server-token-count (disables client tokenization and diff metrics)
+  4. Adjust threshold: AIPERF_METRICS_USAGE_PCT_DIFF_THRESHOLD=10

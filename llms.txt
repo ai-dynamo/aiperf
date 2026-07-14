@@ -194,6 +194,15 @@ requires both `AIPERF_CONTENT_SERVER_ENABLED=true` and a non-empty existing
 `AIPERF_CONTENT_SERVER_CONTENT_DIR`; enabled with an empty directory starts a
 temporary server but keeps media inline. See `docs/tutorials/content-server.md`.
 
+`AIPERF_RNG_BACKEND=rust_parity` (default `legacy`) swaps the seeded random
+substrate from Python's Mersenne Twister + NumPy (SHA-256 derivation) to a
+pure-Python byte-exact port of the Rust `aiperf::rng` `Pcg64` + BLAKE3 substrate
+(`src/aiperf/common/rng_parity/`), so seeded Python and Rust produce identical
+streams in tests. `Environment.RNG.BACKEND` in `src/aiperf/common/environment.py`;
+parity is proved against committed Rust golden vectors
+(`rust/aiperf/examples/rng_parity_vectors.rs` ->
+`rust/aiperf/tests/data/rng_parity_vectors.json`).
+
 The online concurrency and request-rate issuers own all applicable live ramp
 actuators. User-centric owns only its optional session-concurrency pool, while
 fixed schedule owns none; unsupported ramps fail validation rather than becoming
@@ -531,11 +540,14 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   workload/pair were deleted. `aiperf-server-metrics` regained its self-contained
   exposition parser; live GPU/server/network telemetry producers are unaffected.
   There is no durable operational-history archive plane.
-- `specs/2026-07-11-aiperf-rust-exporters-overhaul-design.md` — **partially built +
-  addenda**: native-v2 typed reporter + runner JSON writer are built. The removed
-  Rust CLI's tables, accuracy CSV, logger, and legacy writers are deleted; Python
-  owns presentation. General metric CSV, genai-perf-v1 compatibility, warnings,
-  console replay, and uploaders remain unbuilt in Rust.
+- `specs/2026-07-11-aiperf-rust-exporters-overhaul-design.md` — **built (see 2026-07-14
+  addendum)**: the full native-Rust exporter plane (`aiperf::export`) is built and is
+  the default sole emitter (`AIPERF_RUNTIME_NATIVE_EXPORT=0` restores legacy Python).
+  Nine sinks behind one `Exporter` trait — aiperf-v1 (genai-perf-v1) JSON+CSV, timeslice
+  JSON+CSV, server-metrics JSON+CSV+parquet, accuracy CSV, console.txt (+warning/insight
+  detectors), OTLP per-record metrics, MLflow, W&B — parity-verified byte-for-byte (or
+  schema+data for parquet) vs the retired Python exporters via the `AIPERF_EXPORT_SUBDIR`
+  same-report diff.
 - `specs/2026-07-11-aiperf-rust-endpoints-design.md` — **built + implementation/
   token-native addenda**: every tier-1 and tier-2 dialect plus the open PR-1113
   `vllm_generate` factory is implemented behind trait-backed prepared endpoints,
@@ -569,11 +581,18 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   wrappers over the same primitives. Only failure behavior genuinely differs
   (graph fail-fast/abort-run vs. scheduled resilient). Corrects the
   graph-is-metrics-lite impression; flags incidental cleanups; no refactor.
+- `specs/2026-07-14-python-rust-timing-parity-proof.md` — **built + proven**:
+  A/B every legacy timing mode under `AIPERF_RUNTIME_ENGINE=python` vs `rust`
+  against a deterministic mock — worst response-timing divergence 1.06% (all
+  within 5%), send-schedule adherence tighter than Python. Fixes: token-counting
+  alignment (`--use-server-token-count`), fixed-schedule anchor→issuance-start,
+  warm-start prewarm+lead barrier. Non-bugs: RNG-stream variance, Python
+  saturation jitter.
 - `specs/2026-07-13-p1-generic-execution-substrate-names.md` — **P1 naming pass**
-  (built: renames; fold + `inference_dimensions` signature deferred — see the
-  2026-07-14 addendum): give the already-shared execution substrate one generic
-  vocabulary. The DTO/placement/method renames landed; collapsing `TransportSink`'s
-  dispatch methods to two primitives is a deferred structural refactor.
+  (built: renames + fold; `inference_dimensions` signature kept by design — see
+  the 2026-07-14 addenda): give the already-shared execution substrate one generic
+  vocabulary. The DTO/placement/method renames and the dispatch-method fold landed
+  (collect surface → two primitives).
   `PreparedHttpTurn`/`MeasuredTurn*`/`HttpTurnDispatchResult` →
   `PreparedTurn`/`Measured*`/`DispatchResult`; placement seams →
   `RequestExecutor` (per-request) / `TracePlacement` (per-trace). Pure rename +

@@ -103,7 +103,10 @@ impl PreparedEndpoint for ExternalPreparedEndpoint {
         &self.config
     }
 
-    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<serde_json::Value> {
+    fn format_payload(
+        &self,
+        request: &PreparedRequest<'_>,
+    ) -> EndpointResult<aiperf::body_plan::BodyPlan> {
         let text = request
             .turns()
             .last()
@@ -111,11 +114,14 @@ impl PreparedEndpoint for ExternalPreparedEndpoint {
             .and_then(|media| media.contents.first())
             .cloned()
             .unwrap_or_default();
-        Ok(serde_json::json!({
+        let payload = serde_json::json!({
             "model": request.primary_model_name(),
             "echo": text,
             "stream": self.config.streaming(),
-        }))
+        });
+        Ok(aiperf::body_plan::BodyPlan::from_object(
+            payload.as_object().expect("external payload is an object"),
+        )?)
     }
 
     fn headers(&self) -> &BTreeMap<String, String> {
@@ -254,8 +260,16 @@ fn linked_extension_registers_and_resolves_a_trait_implementation() {
         None,
         None,
     );
+    let body: serde_json::Value = serde_json::from_slice(
+        &prepared
+            .format_payload(&request)
+            .unwrap()
+            .materialize_standalone()
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(
-        prepared.format_payload(&request).unwrap(),
+        body,
         serde_json::json!({"model":"external-model","echo":"hello","stream":false})
     );
     assert_eq!(prepared.headers()["x-external"], "echo");

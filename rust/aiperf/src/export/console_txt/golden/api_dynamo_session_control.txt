@@ -1,0 +1,14 @@
+The Dynamo frontend rejected nvext.session_control with action='bind'. This Dynamo build's SessionAction only accepts 'open' and 'close' -- the 'bind' action was added after the v1.2.x release line (first available in v1.3.0-dev / upstream commit d97c889ba).
+
+Possible Causes:
+  • --use-dynamo-conv-aware-routing emits action='bind' on every non-final turn.
+  • The target Dynamo server predates the 'bind' action (e.g. v1.2.1).
+
+Investigation Steps:
+  1. Check the Dynamo frontend version and its supported SessionAction values.
+  1. Inspect request payloads in profile_export.jsonl -> nvext.session_control.
+
+Suggested Fixes:
+  • Upgrade Dynamo to a build that supports action='bind' (>= v1.3.0-dev, upstream commit d97c889ba).
+  • Or run with --use-legacy-dynamo-session-control to emit the v1.2.x-compatible open/close lifecycle (requires the worker to expose a session_control endpoint).
+  • Or disable --use-dynamo-conv-aware-routing.

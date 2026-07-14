@@ -408,9 +408,9 @@ impl RunnerGraphEndpointRuntime for PreparedRunnerGraphEndpointRuntime {
             Some(&input.trace_id),
             Some(&input.trace_id),
         );
-        let payload = Bytes::from(serde_json::to_vec(
-            &endpoint.format_payload(&request_info)?,
-        )?);
+        let payload = endpoint
+            .format_payload(&request_info)?
+            .materialize_standalone()?;
         let input_tokens = self.input_token_counter.count_prepared_input_tokens(
             endpoint,
             &payload,

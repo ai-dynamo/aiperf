@@ -295,7 +295,13 @@ impl RunnerV2Coordinator {
         match operation.execute() {
             Ok(outcome) => {
                 let mut provenance =
-                    match persist_prepared_report(outcome, report_provenance, &report_path) {
+                    match persist_prepared_report(
+                        outcome,
+                        report_provenance,
+                        &report_path,
+                        &run.artifact_target,
+                        &run.export,
+                    ) {
                         Ok(provenance) => provenance,
                         Err(error) => {
                             return terminal_failure(
@@ -366,6 +372,8 @@ fn persist_prepared_report(
     outcome: PreparedRunOutcome,
     report_provenance: ReportRunProvenance,
     report_path: &Path,
+    artifact_dir: &Path,
+    export: &aiperf::export::ExportConfig,
 ) -> std::result::Result<BTreeMap<String, String>, ReportPersistenceFailure> {
     if report_path.exists() {
         return Err(ReportPersistenceFailure {
@@ -382,7 +390,7 @@ fn persist_prepared_report(
         provenance,
         report_commit,
     } = outcome;
-    finalize_and_write_native_report_json(
+    let finalized = finalize_and_write_native_report_json(
         native_report,
         report_provenance,
         report_facts,
@@ -392,6 +400,23 @@ fn persist_prepared_report(
         code: "reporting_failed",
         message: format!("{error:#}"),
     })?;
+    // Native post-report export plane. Best-effort: the native-v2 report above is
+    // the committed authority; genai-perf compat / OTLP / MLflow side outputs log
+    // and never fail the run (see `aiperf::export`).
+    //
+    // `AIPERF_EXPORT_SUBDIR` (parity-proof only) redirects the native sink outputs
+    // into `<artifact_dir>/<subdir>/` so they coexist with the legacy Python
+    // exporter files under `<artifact_dir>/`, enabling a same-`native-v2.json`
+    // byte-diff. Unset in normal runs (sinks write to the artifact root).
+    let export_dir = match std::env::var("AIPERF_EXPORT_SUBDIR") {
+        Ok(subdir) if !subdir.is_empty() => {
+            let dir = artifact_dir.join(subdir);
+            let _ = std::fs::create_dir_all(&dir);
+            dir
+        }
+        _ => artifact_dir.to_path_buf(),
+    };
+    aiperf::export::run_exporters(&finalized, &export_dir, export);
     if let Some(report_commit) = report_commit {
         report_commit
             .commit()
@@ -602,7 +627,7 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
 
         let error =
-            persist_prepared_report(outcome(calls.clone(), false), provenance(), &report_path)
+            persist_prepared_report(outcome(calls.clone(), false), provenance(), &report_path, root.path(), &aiperf::export::ExportConfig::default())
                 .unwrap_err();
 
         assert_eq!(error.code, "report_target_exists");
@@ -617,7 +642,7 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
 
         let error =
-            persist_prepared_report(outcome(calls.clone(), false), provenance(), &report_path)
+            persist_prepared_report(outcome(calls.clone(), false), provenance(), &report_path, root.path(), &aiperf::export::ExportConfig::default())
                 .unwrap_err();
 
         assert_eq!(error.code, "reporting_failed");
@@ -632,7 +657,7 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
 
         let persisted =
-            persist_prepared_report(outcome(calls.clone(), false), provenance(), &report_path)
+            persist_prepared_report(outcome(calls.clone(), false), provenance(), &report_path, root.path(), &aiperf::export::ExportConfig::default())
                 .unwrap();
 
         assert_eq!(persisted["fixture"], "durable");
@@ -657,7 +682,7 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
 
         let error =
-            persist_prepared_report(outcome(calls.clone(), true), provenance(), &report_path)
+            persist_prepared_report(outcome(calls.clone(), true), provenance(), &report_path, root.path(), &aiperf::export::ExportConfig::default())
                 .unwrap_err();
 
         assert_eq!(error.code, "report_commit_failed");

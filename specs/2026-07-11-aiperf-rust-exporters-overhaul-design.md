@@ -357,3 +357,49 @@ table can show the `type`/`higher_is_better` metadata inline.
 4. **Extract an `aiperf-report` crate vs keep the writer as a runner-facing module** — today the
    single JSON writer stays as the `aiperf::report` module; extract a lean crate when a second IO
    sink lands, testable on a synthetic `Report`.
+
+---
+
+## Addendum — 2026-07-14 (the full native-Rust exporter plane is BUILT and is the default)
+
+Supersedes the "unbuilt in Rust / Python-owned" status throughout §2, §3, §5, §6, §7, §8. The
+static `Exporter` plane (`aiperf::export`) is now built, wired into the runner's report-commit
+site (`coordinator::persist_prepared_report`), and is the **default sole emitter** on the native
+path. Nine sinks behind one object-safe `Exporter` trait with explicit `enabled(&ExportConfig)`
+gating, projected from the frontend via `rust_wire._export`:
+
+- **`genai_perf`** — aiperf v1 summary `profile_export_aiperf.{json,csv}` (schema 1.4). **Byte-identical**
+  to the legacy Python `metrics_json/csv_exporter` on a live run (empty `cmp` diff), via the
+  frontend projecting `MetricRegistry` header/filter/scalar maps + the `input_config`/`run_info`
+  envelope; Rust assembles in exact `JsonExportData` order.
+- **`timeslice`**, **`server_metrics`** (json/csv) — **byte-identical** on live runs (server-metrics
+  driven against a live Prometheus endpoint).
+- **`parquet`** — `server_metrics_export.parquet`, **schema+data equal** (`pyarrow Table.equals`);
+  byte-identity not targeted (arrow-rs vs pyarrow encoding defaults). Consumes the runner's
+  `.aiperf-server-metrics-parquet-wire.jsonl` and deletes it after (the Python round-trip is retired).
+- **`accuracy_csv`** — **byte-equal** (offline oracle; live enable→emit path confirmed).
+- **`otel`** — OTLP/HTTP GenAI-semconv metrics. Per-record histograms with **populated
+  `bucket_counts`** from a runner per-record accumulator (`OtelRecordAccumulator`); count/sum match
+  the native-v2 report exactly (decoded via `opentelemetry-proto`). Residual: single terminal
+  cumulative export vs Python periodic (final aggregate identical); `aiperf.*` per-record attribute
+  fragmentation omitted; online-scheduled + profiling-phase only.
+- **`mlflow`** — REST + `file://` FileStore; live filestore matches the `metric.tag[.stat]` scheme.
+- **`wandb`** — offline `.wandb` transaction log (leveldb framing + protobuf), SDK-decodable.
+- **`console_txt`** — `profile_export_console.txt`. The Rich table+panel renderer is **byte-exact
+  geometry**; the warning/insight detectors (OSL-mismatch, usage-discrepancy, MaxCompletionTokens,
+  DynamoSessionControl) + error table are **byte-exact**. Content grouping/headers projected from
+  Python's console metadata to match the `MetricRegistry` view.
+
+**Default cutover (zero-Python):** `Environment.RUNTIME.NATIVE_EXPORT` (default true) makes the
+native plane authoritative; `export_python_compatibility_reports` is a no-op on the native path.
+`AIPERF_RUNTIME_NATIVE_EXPORT=0` restores the legacy Python emitters for A/B (mirroring
+`AIPERF_RUNTIME_ENGINE=python`). The Python exporter modules are retained for the legacy path and
+unit tests, not invoked natively. Live-verified: a default run emits the native compat files with
+zero `ExporterManager` invocation.
+
+**Parity harness:** `AIPERF_EXPORT_SUBDIR=<dir>` redirects the native sinks under
+`<artifact_dir>/<dir>/` so they coexist with the legacy Python files for a same-`native-v2.json`
+byte-diff (the verification vehicle for every "byte-identical" claim above).
+
+The §5 `TimedUploader` seam is realized inside the otel/mlflow sinks (short-lived `current_thread`
+runtime + `tokio::time::timeout`). The v2-native-report core (§1) remains as described.

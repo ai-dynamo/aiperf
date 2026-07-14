@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use serde_json::{Map, Number, Value, json};
 
+use crate::body_plan::BodyPlan;
 use crate::endpoints::config::{EffectiveEndpointConfig, EndpointConfig, RawEndpointConfig};
 use crate::endpoints::endpoints::{ChatEndpoint, CompletionsEndpoint, EmbeddingsEndpoint};
 use crate::endpoints::metadata::{EndpointDescriptor, EndpointType, Modality};
@@ -300,7 +301,7 @@ where
         &self.config
     }
 
-    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<Value> {
+    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<BodyPlan> {
         self.endpoint
             .format_prepared_payload(request, self.config.as_raw())
     }
@@ -460,8 +461,15 @@ impl PreparedEndpoint for PreparedKServeEndpoint {
         &self.config
     }
 
-    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<Value> {
-        self.behavior.format_payload(request)
+    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<BodyPlan> {
+        // KServe behaviors author a complete JSON object (`v2_payload`/`instances`);
+        // wrap it once into a plan here so the internal behavior trait stays
+        // Value-shaped for the protobuf-wire codec that also reads these bodies.
+        let value = self.behavior.format_payload(request)?;
+        let object = value.as_object().ok_or_else(|| {
+            EndpointError::InvalidRequest("KServe endpoint body must be a JSON object".into())
+        })?;
+        Ok(BodyPlan::from_object(object)?)
     }
 
     fn headers(&self) -> &BTreeMap<String, String> {
