@@ -1253,9 +1253,10 @@ async fn execute_graph_native(
     {
         gpu_telemetry.write_records_jsonl(gpu_records_path)?;
     }
-    if let (Some(network_latency), Some(records_path)) =
-        (network_latency, sidecars.network_latency_records_path.as_ref())
-    {
+    if let (Some(network_latency), Some(records_path)) = (
+        network_latency,
+        sidecars.network_latency_records_path.as_ref(),
+    ) {
         network_latency.write_records_jsonl(records_path)?;
     }
     if let (Some(server_metrics), Some(path)) =
@@ -1384,7 +1385,7 @@ async fn prepare_static_accuracy(request: &NativeRunSpec) -> Result<Option<Prepa
         })),
         Err(error) => {
             let shutdown = evaluator.shutdown().await.map_err(anyhow::Error::from);
-            finish_accuracy_shutdown(Err(error), shutdown)
+            finish_with_shutdown(Err(error), shutdown, "accuracy evaluator")
         }
     }
 }
@@ -1401,27 +1402,21 @@ async fn finish_accuracy_lifecycle<T>(
             .map_err(anyhow::Error::from),
         None => Ok(()),
     };
-    finish_accuracy_shutdown(result, shutdown)
+    finish_with_shutdown(result, shutdown, "accuracy evaluator")
 }
 
-fn finish_accuracy_shutdown<T>(result: Result<T>, shutdown: Result<()>) -> Result<T> {
+/// Reconcile a primary result with the outcome of a subsequent resource
+/// shutdown, preserving the primary error while surfacing any shutdown failure.
+///
+/// `label` names the resource being torn down (for example `"accuracy
+/// evaluator"` or `"execution backend"`) so both call sites share one match.
+fn finish_with_shutdown<T>(result: Result<T>, shutdown: Result<()>, label: &str) -> Result<T> {
     match (result, shutdown) {
         (Ok(value), Ok(())) => Ok(value),
         (Err(error), Ok(())) => Err(error),
-        (Ok(_), Err(error)) => Err(error.context("shutting down accuracy evaluator")),
+        (Ok(_), Err(error)) => Err(error.context(format!("shutting down {label}"))),
         (Err(error), Err(shutdown)) => Err(error.context(format!(
-            "accuracy evaluator also failed during shutdown: {shutdown:#}"
-        ))),
-    }
-}
-
-fn finish_execution_backend_shutdown<T>(result: Result<T>, shutdown: Result<()>) -> Result<T> {
-    match (result, shutdown) {
-        (Ok(value), Ok(())) => Ok(value),
-        (Err(error), Ok(())) => Err(error),
-        (Ok(_), Err(error)) => Err(error.context("shutting down execution backend")),
-        (Err(error), Err(shutdown)) => Err(error.context(format!(
-            "execution backend also failed during shutdown: {shutdown:#}"
+            "{label} also failed during shutdown: {shutdown:#}"
         ))),
     }
 }
@@ -1634,7 +1629,7 @@ async fn execute_native_inner(
         Ok(Vec::new())
     };
     let shutdown = execution_backend.shutdown();
-    let phased = finish_execution_backend_shutdown(execution_result, shutdown)?;
+    let phased = finish_with_shutdown(execution_result, shutdown, "execution backend")?;
     let drained = drained?;
     let issued_times = phased
         .reports
@@ -2461,7 +2456,7 @@ fn sequence_length_distribution(
 fn distribution_expected_i64(spec: &DistributionSpec, field: &str) -> Result<i64> {
     let expected = distribution(spec)?.expected_value();
     ensure!(
-        expected.is_finite() && expected > 0.0 && expected <= i64::MAX as f64,
+        expected.is_finite() && expected > 0.0 && expected < i64::MAX as f64,
         "{field} expected value must be positive and representable as i64"
     );
     Ok(expected as i64)
@@ -2898,7 +2893,7 @@ pub(crate) fn adaptive_run_config(
 
 pub(crate) fn integer_adaptive_bound(value: f64, label: &str) -> Result<usize> {
     ensure!(
-        value.is_finite() && value >= 1.0 && value.fract() == 0.0 && value <= usize::MAX as f64,
+        value.is_finite() && value >= 1.0 && value.fract() == 0.0 && value < usize::MAX as f64,
         "adaptive {label} must be an integer in the usize range"
     );
     Ok(value as usize)
@@ -3176,7 +3171,7 @@ fn seconds_to_ns(value: f64) -> Result<i64> {
 
 pub(crate) fn seconds_to_u64_ns(value: f64) -> Result<u64> {
     ensure!(
-        value.is_finite() && value >= 0.0 && value * 1_000_000_000.0 <= i64::MAX as f64,
+        value.is_finite() && value >= 0.0 && value * 1_000_000_000.0 < i64::MAX as f64,
         "duration must be finite, non-negative, and representable in nanoseconds"
     );
     Ok((value * 1_000_000_000.0).round_ties_even() as u64)

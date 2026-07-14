@@ -1276,6 +1276,14 @@ impl PreparedRunnerOperation for PreparedDynosimScheduledOperation {
 
         let phase_count = phases.len();
         let single_pass_engine = backend.engine.single_pass_engine;
+        tracing::info!(
+            topology = backend.topology.as_str(),
+            workers = backend.engine.workers,
+            online = backend.online,
+            single_pass_engine,
+            phase_count,
+            "offline scheduled execution starting"
+        );
         let terminal_event_delivery = terminal_event_delivery_is_safe(&phases);
         let backend_sla_metrics = backend.sla.native_metrics_config()?;
         let artifact_for_factory = artifact_target.clone();
@@ -1375,6 +1383,12 @@ impl PreparedRunnerOperation for PreparedDynosimScheduledOperation {
         let outcome = backend
             .executor(model.clone(), &artifact_target)?
             .execute_scheduled_deferred_with_delivery(factory, event_delivery)?;
+        tracing::info!(
+            online = backend.online,
+            shared_fields = outcome.report.parity.shared_fields,
+            serialized_bytes = outcome.report.parity.serialized_bytes,
+            "offline scheduled parity verified"
+        );
         let warmup = outcome
             .report
             .auxiliary_phase_reports
@@ -1794,25 +1808,7 @@ impl PreparedRunnerOperation for PreparedDynosimGraphOperation {
         let outcome = backend
             .executor(model.clone(), &artifact_target)?
             .execute_graph_deferred(segments, default_max_tokens, metrics, factory)?;
-        if outcome.report.workload.failed > 0 {
-            let detail = outcome
-                .report
-                .workload
-                .traces
-                .iter()
-                .find_map(|trace| {
-                    trace
-                        .result
-                        .as_ref()
-                        .err()
-                        .map(|error| format!("trace {:?}: {error}", trace.trace_id))
-                })
-                .unwrap_or_else(|| "unknown trace failure".into());
-            return Err(anyhow!(
-                "offline graph aborted after {} failed root(s): {detail}",
-                outcome.report.workload.failed
-            ));
-        }
+        ensure_no_failed_traces(&outcome.report.workload)?;
 
         let native_report = NativeReport::from_outcome(
             &outcome.report.native_metrics,
@@ -2077,24 +2073,7 @@ impl DynosimExecutor {
         } else {
             verify_parity(&report.performance, &report.dynamo, report.parity)?;
         }
-        if report.workload.failed > 0 {
-            let detail = report
-                .workload
-                .traces
-                .iter()
-                .find_map(|trace| {
-                    trace
-                        .result
-                        .as_ref()
-                        .err()
-                        .map(|error| format!("trace {:?}: {error}", trace.trace_id))
-                })
-                .unwrap_or_else(|| "unknown trace failure".into());
-            return Err(anyhow!(
-                "offline graph aborted after {} failed root(s): {detail}",
-                report.workload.failed
-            ));
-        }
+        ensure_no_failed_traces(&report.workload)?;
         let artifacts = self.emit_backend_artifacts(
             |path| write_dynamo_report_json(&report.dynamo, path),
             |path| write_dynamo_per_request_jsonl(&report.dynamo, path),
@@ -2145,24 +2124,7 @@ impl DynosimExecutor {
         } else {
             verify_parity(&report.performance, &report.dynamo, report.parity)?;
         }
-        if report.workload.failed > 0 {
-            let detail = report
-                .workload
-                .traces
-                .iter()
-                .find_map(|trace| {
-                    trace
-                        .result
-                        .as_ref()
-                        .err()
-                        .map(|error| format!("trace {:?}: {error}", trace.trace_id))
-                })
-                .unwrap_or_else(|| "unknown trace failure".into());
-            return Err(anyhow!(
-                "offline graph aborted after {} failed root(s): {detail}",
-                report.workload.failed
-            ));
-        }
+        ensure_no_failed_traces(&report.workload)?;
         let artifacts = self.emit_backend_artifacts(
             |path| write_dynamo_report_json(&report.dynamo, path),
             |path| write_dynamo_per_request_jsonl(&report.dynamo, path),
@@ -2324,6 +2286,47 @@ fn create_artifact_target(path: &Path) -> Result<()> {
         .with_context(|| format!("creating offline artifact target {}", path.display()))
 }
 
+/// Abort an offline graph run when any root trace failed, surfacing the first
+/// available trace error exactly as the inline call sites once did.
+fn ensure_no_failed_traces(
+    workload: &aiperf::graph::workload::GraphWorkloadReport,
+) -> Result<()> {
+    if workload.failed == 0 {
+        return Ok(());
+    }
+    let detail = workload
+        .traces
+        .iter()
+        .find_map(|trace| {
+            trace
+                .result
+                .as_ref()
+                .err()
+                .map(|error| format!("trace {:?}: {error}", trace.trace_id))
+        })
+        .unwrap_or_else(|| "unknown trace failure".into());
+    Err(anyhow!(
+        "offline graph aborted after {} failed root(s): {detail}",
+        workload.failed
+    ))
+}
+
+/// Field-accounting, serialized-byte, and non-empty-schema invariants shared by
+/// the byte-exact offline and relaxed online parity checks.
+fn verify_parity_invariants(parity: OfflineMetricParity, aiperf_bytes_len: usize) -> Result<()> {
+    ensure!(
+        parity.independently_accumulated_fields + parity.backend_owned_fields
+            == parity.shared_fields,
+        "offline parity evidence has inconsistent field accounting"
+    );
+    ensure!(
+        parity.serialized_bytes == aiperf_bytes_len,
+        "offline parity evidence has an inconsistent serialized byte count"
+    );
+    ensure!(parity.shared_fields > 0, "offline parity schema is empty");
+    Ok(())
+}
+
 fn verify_parity(
     aiperf: &impl CanonicalSharedMetrics,
     dynamo: &impl CanonicalSharedMetrics,
@@ -2339,17 +2342,7 @@ fn verify_parity(
         aiperf_bytes == dynamo_bytes,
         "offline library returned mismatched AIPerf/Dynamo summaries to the runner adapter"
     );
-    ensure!(
-        parity.independently_accumulated_fields + parity.backend_owned_fields
-            == parity.shared_fields,
-        "offline parity evidence has inconsistent field accounting"
-    );
-    ensure!(
-        parity.serialized_bytes == aiperf_bytes.len(),
-        "offline parity evidence has an inconsistent serialized byte count"
-    );
-    ensure!(parity.shared_fields > 0, "offline parity schema is empty");
-    Ok(())
+    verify_parity_invariants(parity, aiperf_bytes.len())
 }
 
 /// Relaxed parity verification for wall-clock in-process (`dynosim_online`)
@@ -2364,17 +2357,7 @@ fn verify_parity_online(
     let aiperf_bytes = aiperf
         .canonical_shared_metric_bytes()
         .context("serializing runner-side AIPerf online parity summary")?;
-    ensure!(
-        parity.independently_accumulated_fields + parity.backend_owned_fields
-            == parity.shared_fields,
-        "online parity evidence has inconsistent field accounting"
-    );
-    ensure!(
-        parity.serialized_bytes == aiperf_bytes.len(),
-        "online parity evidence has an inconsistent serialized byte count"
-    );
-    ensure!(parity.shared_fields > 0, "online parity schema is empty");
-    Ok(())
+    verify_parity_invariants(parity, aiperf_bytes.len())
 }
 
 /// Successful scheduled offline execution and backend-owned outputs.
