@@ -129,6 +129,13 @@ enum WorkerMessage {
     },
     /// Execute one prepared turn (buffered or measured).
     Command(Box<WorkerCommand>),
+    /// Warm this worker's sink with one discarded round-trip before timed
+    /// issuance, then acknowledge so the coordinator can release all workers
+    /// from a warmed state (the Rust-native "workers ready, go" barrier).
+    Prewarm {
+        turn: PreparedTurn,
+        done: oneshot::Sender<()>,
+    },
     /// Finalize the worker observer at `end_ns` and return its records, then
     /// exit. Sent once, after all commands for this worker have been enqueued.
     Drain {
@@ -326,6 +333,36 @@ impl RequestExecutor for ThreadPerCoreRequestExecutor {
                     origin_ns,
                 })
                 .map_err(|_| anyhow!("HTTP execution worker rejected measurement configuration"))?;
+        }
+        Ok(())
+    }
+
+    async fn prewarm(&self, turn: PreparedTurn) -> Result<()> {
+        // Broadcast one discarded warmup round-trip to every worker and wait for
+        // all to finish, so timed issuance starts from a uniformly warmed state
+        // (connections established, body/tokenizer/JIT paths hot). Non-fatal.
+        let dones = {
+            let senders = self.senders.borrow();
+            let Some(senders) = senders.as_ref() else {
+                return Ok(());
+            };
+            let mut dones = Vec::with_capacity(senders.len());
+            for sender in senders.iter() {
+                let (done, wait) = oneshot::channel();
+                if sender
+                    .try_send(WorkerMessage::Prewarm {
+                        turn: turn.clone(),
+                        done,
+                    })
+                    .is_ok()
+                {
+                    dones.push(wait);
+                }
+            }
+            dones
+        };
+        for wait in dones {
+            let _ = wait.await;
         }
         Ok(())
     }
@@ -586,6 +623,13 @@ async fn run_worker(
                         let observer = observer.clone();
                         jobs.spawn_local(async move {
                             execute_worker_command(sink, observer, *command).await;
+                        });
+                    }
+                    Some(WorkerMessage::Prewarm { turn, done }) => {
+                        let sink = sink.clone();
+                        jobs.spawn_local(async move {
+                            let _ = sink.prewarm(turn).await;
+                            let _ = done.send(());
                         });
                     }
                     Some(WorkerMessage::Drain { end_ns, reply }) => {

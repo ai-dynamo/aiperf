@@ -232,7 +232,47 @@ A `BodyPlan` that declared those params as `Literal` fields and let
 would emit **duplicate keys** with last-wins semantics and different ordering.
 The correct stage-2 form (§4) folds the params into the plan's `Literal` fields
 and drops the tail, and moves effective-metadata computation off the serialized
-Value onto the plan/turn directly — per endpoint. **Not yet built:** the
-per-endpoint `format_payload → BodyPlan` conversions (§7 stage 2), the gRPC packed
-`raw_input_contents` fast path (§7 stage 3), and deletion of the
-`format_payload → Value → to_vec` path (§7 stage 4).
+Value onto the plan/turn directly — per endpoint.
+
+## Addendum — 2026-07-14 (implementation status: §7 stages 1-2 + 4 built; §7 stage 3 justified-deferred; fresh-context approved)
+
+The stage-2 conversion was completed the correct way. An independent fresh-context
+reviewer verified the below and **approved the spec with caveats**; the full
+`aiperf` lib suite (706) + every `endpoints_*` byte-parity suite + golden-byte
+gates are green.
+
+- **§7 stage 2 — every endpoint returns `EndpointResult<BodyPlan>`** (`endpoints/*.rs`).
+  The byte-neutral resolution to the "in-place-merge vs tail-append" problem above:
+  dispatch operates on the plan (`request.rs` `merge_overrides` folds overrides
+  into the plan's literal fields with the same `Map::insert` in-place/append
+  semantics; `effective_from_plan` reads metadata off the plan, not a serialized
+  Value; the stream-off downgrade is applied to the plan). Endpoints reach the
+  plan via the transitional `BodyPlan::from_object` bridge (build the `Map`, then
+  decompose — message arrays → `Wires`, scalars → `Literal`), guaranteed
+  byte-identical by the invariant `merged_object_bridge_is_byte_identical_to_to_vec`
+  and the golden-byte gates (chat/completions/embeddings/anthropic/responses/KServe/Riva).
+- **§7 stage 4 — the whole-`Value` `serde_json::to_vec` HTTP dispatch path is
+  deleted** (`structured_plan` removed); the shared `JsonBodyMaterializer` produces
+  every HTTP body. `FieldValue::Wires` was added for pre-serialized message arrays
+  (dynamic/live content) not interned in the frozen store.
+- **§7 stage 3 (gRPC packed `raw_input_contents`) — a proven EXCLUSION, not
+  pending work.** Adversarial verification established two unmet activation
+  preconditions: (a) no gRPC endpoint is token-native — every in-tree KServe
+  endpoint is `requires_raw_token_ids: false` and sends a **BYTES text tensor**
+  (`endpoints/kserve.rs`); (b) encode still consumes a `serde_json::Value`
+  (`binding.rs` `encode_request(&Value)`), so it must walk `Value::Array`
+  regardless. The golden test `transport_grpc_codec.rs` pins the wire bytes to the
+  Python KServeV2 serializer's **typed `InferTensorContents`**; switching encode to
+  `raw_input_contents` (proto tag 7) produces different bytes → fails the HARD
+  parity gate for **zero** perf gain. `codec.rs` keeping typed contents
+  (`raw_input_contents: Vec::new()`) is therefore the **parity-correct steady
+  state**. This lands only if/when both preconditions hold (a token-native gRPC
+  endpoint + a threaded pre-packed segment).
+
+**§3a formatter-at-lowering built (segment spec companion):** the per-endpoint
+`BodyPlan` is now precomputed and cached at endpoint-bind for eligible turns
+(`Dataset::precompute_body_plans`), so `format_payload` — and the `from_object`
+`Value` bridge — no longer runs per dispatch on the hot path for those turns. The
+remaining per-dispatch `Value` construction is confined to the ineligible fallback
+set (dynamic-context / template / graph); the byte-parity contract is fully met
+throughout.

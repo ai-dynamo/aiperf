@@ -272,6 +272,12 @@ impl PreparedEndpoint for PreparedRawEndpoint {
         RawEndpoint.format_prepared_payload(request, self.config.as_raw())
     }
 
+    fn precomputable_body(&self) -> bool {
+        // Raw passthrough splices the dispatching turn's authored `raw_payload`;
+        // its body is not derivable from static-context turns at bind.
+        false
+    }
+
     fn headers(&self) -> &BTreeMap<String, String> {
         &self.headers
     }
@@ -327,6 +333,12 @@ impl PreparedEndpoint for PreparedTemplateEndpoint {
             self.config.as_raw(),
             self.legacy_extra_config,
         )
+    }
+
+    fn precomputable_body(&self) -> bool {
+        // The Jinja template can reference per-dispatch identity (`x_request_id`,
+        // `x_correlation_id`) the cache does not capture, so it must render live.
+        false
     }
 
     fn headers(&self) -> &BTreeMap<String, String> {

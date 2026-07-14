@@ -463,6 +463,22 @@ pub trait PreparedEndpoint: fmt::Debug {
     /// Build a request-body plan the shared materializer splices into wire bytes.
     fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<BodyPlan>;
 
+    /// Whether this endpoint's [`format_payload`](Self::format_payload) output is a
+    /// pure function of bind-time inputs for a static-context turn, so its
+    /// [`BodyPlan`] can be built once at endpoint-bind and cached rather than
+    /// rebuilt per dispatch (segment spec §3a).
+    ///
+    /// Defaults to `true`: the message-array dialects (chat/responses/messages)
+    /// derive their whole body from the frozen turns, model, and endpoint config.
+    /// Overridden to `false` by dialects whose body depends on per-dispatch state
+    /// the cache cannot capture — template rendering (`x_request_id` and friends),
+    /// raw passthrough (authored per-turn `raw_payload`), and token-native
+    /// composition. This is a trait method, never an [`EndpointDescriptor`] field,
+    /// so it stays off the serialized `--capabilities` catalog wire.
+    fn precomputable_body(&self) -> bool {
+        true
+    }
+
     /// Borrow endpoint-owned request headers prepared once per worker/profile.
     fn headers(&self) -> &BTreeMap<String, String>;
 

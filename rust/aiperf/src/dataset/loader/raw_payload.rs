@@ -193,8 +193,7 @@ impl Composer for RawPayloadComposer {
                     raw_max_tokens(&row.value)
                 },
                 streaming: row.value.get("stream").and_then(Value::as_bool),
-                raw_payload,
-                raw_token_ids: raw_token_handle,
+                body: Turn::dispatch_body(raw_payload, raw_token_handle, &[]),
                 extra_body,
                 input_tokens: raw_token_ids.as_ref().map_or_else(
                     || raw_input_tokens(&row.value, state.tokenizer),
@@ -586,7 +585,7 @@ mod tests {
         let turn = &dataset.conversations()[0].turns[0];
         assert_eq!(turn.model.as_ref().unwrap().as_str(), "authored");
         assert_eq!(turn.max_tokens, Some(9));
-        let handle = turn.raw_payload.unwrap();
+        let handle = *turn.body.first().expect("raw body handle");
         assert!(matches!(
             dataset.segments().get(handle).unwrap(),
             Payload::Raw { .. }
@@ -625,14 +624,16 @@ mod tests {
             .await
             .unwrap();
         let turn = &dataset.conversations()[0].turns[0];
-        assert!(turn.raw_payload.is_none());
+        // Token-native composition frees the raw body: the only body handle is
+        // the token-native segment, never a raw one.
+        let token_handle = *turn.body.first().expect("token handle");
+        assert!(!matches!(
+            dataset.segments().get(token_handle).unwrap(),
+            Payload::Raw { .. }
+        ));
         assert_eq!(turn.input_tokens, 3);
         assert_eq!(turn.max_tokens, Some(7));
-        let Payload::TokenIds { token_ids } = dataset
-            .segments()
-            .get(turn.raw_token_ids.expect("token handle"))
-            .unwrap()
-        else {
+        let Payload::TokenIds { token_ids } = dataset.segments().get(token_handle).unwrap() else {
             panic!("raw payload token IDs must be interned in the token domain")
         };
         assert_eq!(&**token_ids, &[7, 8, 9]);

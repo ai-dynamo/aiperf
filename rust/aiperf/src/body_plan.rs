@@ -191,6 +191,30 @@ impl BodyPlan {
         Ok(plan)
     }
 
+    /// Replace a named message-array field's value with spliceable pre-serialized
+    /// wires, preserving the field's existing position.
+    ///
+    /// The content→segment lowering path (segment spec §5) builds the body object
+    /// with the message array as an empty-array placeholder so [`from_object`]
+    /// fixes the field's insertion position and classifies it as a
+    /// [`Literal`](FieldValue::Literal) `[]`, then swaps in the real
+    /// [`Wires`](FieldValue::Wires) here. An empty wire list is left untouched:
+    /// `Literal([])` and `Wires([])` both materialize to `[]` byte-for-byte, so
+    /// the empty-array carve-out (an empty message array must stay `[]`) holds
+    /// either way.
+    ///
+    /// [`from_object`]: BodyPlan::from_object
+    pub fn splice_message_wires(&mut self, name: &str, wires: SmallVec<[Bytes; 1]>) {
+        if wires.is_empty() {
+            return;
+        }
+        if let Self::Fields(fields) = self
+            && let Some(slot) = fields.iter_mut().find(|(field, _)| field == name)
+        {
+            slot.1 = FieldValue::Wires(wires);
+        }
+    }
+
     /// Borrow a top-level literal field's value by name.
     pub fn literal_field(&self, name: &str) -> Option<&Value> {
         match self {

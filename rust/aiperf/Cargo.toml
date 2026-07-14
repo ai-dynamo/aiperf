@@ -107,6 +107,10 @@ parking_lot = { version = "0.12", optional = true }
 # monocrate's normal deps already cover most needs; these add the extra feature
 # surface the integration tests require.
 [dev-dependencies]
+# Cross-language parity tests load committed JSON reference fixtures and digest
+# token streams to compare against the Python reference generator.
+serde_json = { workspace = true }
+sha2.workspace = true
 # transport-http integration tests stand up an in-process hyper server.
 hyper = { version = "1.10", features = ["server", "http1", "http2"] }
 # transport-grpc integration tests stand up an in-process Tonic server.

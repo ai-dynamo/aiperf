@@ -33,7 +33,7 @@ pub use config::{EffectiveEndpointConfig, EndpointConfig, RawEndpointConfig, Req
 pub use dynosim::DynosimEndpointFactory;
 pub use endpoints::{
     ChatEmbeddingsEndpoint, ChatEndpoint, CompletionsEndpoint, EmbeddingsEndpoint, Endpoint,
-    ResponsesEndpoint, WARMUP_SYSTEM_MESSAGE_PREFIX,
+    ResponsesEndpoint, ShapeLowerer, TurnMessageLowerer, WARMUP_SYSTEM_MESSAGE_PREFIX,
 };
 pub use extraction::extract_payload;
 pub use kserve::{

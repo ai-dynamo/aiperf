@@ -5,7 +5,9 @@
 
 use std::collections::BTreeMap;
 
+use bytes::Bytes;
 use serde_json::{Map, Value, json};
+use smallvec::SmallVec;
 
 use crate::body_plan::BodyPlan;
 use crate::endpoints::config::{EndpointConfig, RawEndpointConfig};
@@ -343,13 +345,12 @@ impl PreparedEndpointBehavior for ChatEndpoint {
         endpoint: &RawEndpointConfig,
     ) -> EndpointResult<BodyPlan> {
         let turns = require_prepared_turns(request, "Chat endpoint requires at least one turn")?;
-        let mut messages = format_chat_messages(request, build_messages(turns, PartShape::Chat)?);
+        let message_wires = format_chat_message_wires(request, turns)?;
         let last = turns.last().expect("non-empty turns");
         let mut payload = Map::new();
-        payload.insert(
-            "messages".into(),
-            Value::Array(std::mem::take(&mut messages)),
-        );
+        // Empty-array placeholder fixes the field's insertion position; the real
+        // spliced wires replace it after decomposition (segment spec §5).
+        payload.insert("messages".into(), Value::Array(Vec::new()));
         payload.insert(
             "model".into(),
             Value::String(
@@ -378,7 +379,9 @@ impl PreparedEndpointBehavior for ChatEndpoint {
         if endpoint.streaming && endpoint.use_server_token_count {
             ensure_include_usage(&mut payload);
         }
-        Ok(BodyPlan::from_object(&payload)?)
+        let mut plan = BodyPlan::from_object(&payload)?;
+        plan.splice_message_wires("messages", message_wires);
+        Ok(plan)
     }
 }
 
@@ -496,16 +499,11 @@ impl PreparedEndpointBehavior for ResponsesEndpoint {
         let turns =
             require_prepared_turns(request, "Responses endpoint requires at least one turn")?;
         let last = turns.last().expect("non-empty turns");
-        let mut input = Vec::new();
-        if let Some(context) = request
-            .user_context_message()
-            .filter(|value| !value.is_empty())
-        {
-            input.push(json!({"type": "message", "role": "user", "content": context}));
-        }
-        input.extend(build_messages_responses(turns)?);
+        let input_wires = format_responses_input_wires(request, turns)?;
         let mut payload = Map::new();
-        payload.insert("input".into(), Value::Array(input));
+        // Empty-array placeholder fixes the field's insertion position; the real
+        // spliced wires replace it after decomposition (segment spec §5).
+        payload.insert("input".into(), Value::Array(Vec::new()));
         payload.insert(
             "model".into(),
             Value::String(
@@ -529,7 +527,9 @@ impl PreparedEndpointBehavior for ResponsesEndpoint {
         if endpoint.streaming && endpoint.use_server_token_count {
             ensure_include_usage(&mut payload);
         }
-        Ok(BodyPlan::from_object(&payload)?)
+        let mut plan = BodyPlan::from_object(&payload)?;
+        plan.splice_message_wires("input", input_wires);
+        Ok(plan)
     }
 }
 
@@ -692,53 +692,274 @@ pub(crate) fn require_prepared_turns<'a>(
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) enum PartShape {
     Chat,
     Responses,
     Messages,
 }
 
-pub(crate) fn build_messages(turns: &[Turn], shape: PartShape) -> EndpointResult<Vec<Value>> {
-    let mut messages = Vec::new();
-    for turn in turns {
-        if let Some(raw_messages) = &turn.raw_messages
-            && !raw_messages.is_empty()
-        {
-            messages.extend(raw_messages.clone());
-            continue;
-        }
-        messages.push(render_turn_message(turn, shape)?);
-    }
-    Ok(messages)
+/// One assembled message: either a lowered pre-serialized wire spliced verbatim,
+/// or a freshly-rendered value serialized once at dispatch.
+enum RenderedMessage {
+    /// A pre-serialized message wire (a lowered static turn) spliced as-is.
+    Wire(Bytes),
+    /// A message value rendered at dispatch (live reply, system/context prefix,
+    /// warmup-mutated first turn, preformatted `raw_messages`).
+    Value(Value),
 }
 
-fn build_messages_responses(turns: &[Turn]) -> EndpointResult<Vec<Value>> {
-    let mut messages = Vec::new();
-    for turn in turns {
-        if let Some(raw_messages) = &turn.raw_messages
-            && !raw_messages.is_empty()
+/// Assemble the per-turn messages for a message-array body, splicing each static
+/// turn's lowered wire (segment spec §5) and rendering only the turns that were
+/// not lowered. Mirrors [`build_messages`] / [`build_messages_responses`] exactly,
+/// so the resulting wire sequence is byte-identical to the live render path.
+///
+/// `render_first` forces the first turn to render to a mutable value even when it
+/// carries a lowered wire — the warmup carve-out, where the system prompt is
+/// folded into the first message in place (which a spliced wire cannot support).
+fn rendered_turn_messages(
+    turns: &[Turn],
+    shape: PartShape,
+    render_first: bool,
+) -> EndpointResult<Vec<RenderedMessage>> {
+    let mut out = Vec::new();
+    for (index, turn) in turns.iter().enumerate() {
+        if let Some(lowered) = &turn.lowered
+            && !(render_first && index == 0)
         {
-            for item in raw_messages {
-                if item
-                    .as_object()
-                    .and_then(|obj| obj.get("type"))
-                    .and_then(Value::as_str)
-                    .is_some_and(is_replay_unsafe_output_item)
-                {
-                    continue;
-                }
-                messages.push(item.clone());
-            }
+            out.extend(lowered.iter().cloned().map(RenderedMessage::Wire));
             continue;
         }
-        let mut message = render_turn_message(turn, PartShape::Responses)?;
-        if let Value::Object(obj) = &mut message {
-            obj.insert("type".into(), Value::String("message".into()));
+        match shape {
+            PartShape::Responses => {
+                if let Some(raw_messages) = &turn.raw_messages
+                    && !raw_messages.is_empty()
+                {
+                    for item in raw_messages {
+                        if !item
+                            .as_object()
+                            .and_then(|obj| obj.get("type"))
+                            .and_then(Value::as_str)
+                            .is_some_and(is_replay_unsafe_output_item)
+                        {
+                            out.push(RenderedMessage::Value(item.clone()));
+                        }
+                    }
+                } else {
+                    let mut message = render_turn_message(turn, PartShape::Responses)?;
+                    if let Value::Object(obj) = &mut message {
+                        obj.insert("type".into(), Value::String("message".into()));
+                    }
+                    out.push(RenderedMessage::Value(message));
+                }
+            }
+            PartShape::Chat | PartShape::Messages => {
+                if let Some(raw_messages) = &turn.raw_messages
+                    && !raw_messages.is_empty()
+                {
+                    out.extend(raw_messages.iter().cloned().map(RenderedMessage::Value));
+                } else {
+                    out.push(RenderedMessage::Value(render_turn_message(turn, shape)?));
+                }
+            }
         }
-        messages.push(message);
     }
-    Ok(messages)
+    Ok(out)
+}
+
+/// Serialize an assembled message list to spliceable wires, cloning lowered wires
+/// and serializing rendered values exactly once.
+fn serialize_rendered_messages(
+    messages: Vec<RenderedMessage>,
+) -> EndpointResult<SmallVec<[Bytes; 1]>> {
+    messages
+        .into_iter()
+        .map(|message| match message {
+            RenderedMessage::Wire(wire) => Ok(wire),
+            RenderedMessage::Value(value) => serde_json::to_vec(&value)
+                .map(Bytes::from)
+                .map_err(EndpointError::from),
+        })
+        .collect()
+}
+
+/// Whether the first assembled message carries a `system` role. A lowered content
+/// wire is `render_turn_message` output — `{"role":"...",...}` with the role
+/// first — so a byte-prefix check is exact and avoids parsing on the hot path.
+fn rendered_first_is_system(messages: &[RenderedMessage]) -> bool {
+    match messages.first() {
+        Some(RenderedMessage::Value(value)) => {
+            value
+                .as_object()
+                .and_then(|obj| obj.get("role"))
+                .and_then(Value::as_str)
+                == Some("system")
+        }
+        Some(RenderedMessage::Wire(wire)) => wire.starts_with(br#"{"role":"system""#),
+        None => false,
+    }
+}
+
+/// Assemble the Chat Completions `messages` array as spliceable wires, mirroring
+/// [`format_chat_messages`] over the lowered/rendered turn messages.
+fn format_chat_message_wires(
+    request: &PreparedRequest<'_>,
+    turns: &[Turn],
+) -> EndpointResult<SmallVec<[Bytes; 1]>> {
+    let warmup = request.credit_phase() == CreditPhase::Warmup;
+    // Under warmup the first turn is rendered to a mutable value so the system
+    // prompt can be folded in place; otherwise its lowered wire is spliced.
+    let mut rendered = rendered_turn_messages(turns, PartShape::Chat, warmup)?;
+    let first_is_system = rendered_first_is_system(&rendered);
+    let mut out = Vec::new();
+    if let Some(system) = request.system_message().filter(|value| !value.is_empty()) {
+        if first_is_system && warmup {
+            if let Some(RenderedMessage::Value(Value::Object(first))) = rendered.first_mut() {
+                prepend_system_into_object(first, system);
+            }
+        } else if !first_is_system {
+            out.push(RenderedMessage::Value(
+                json!({"role":"system","content":system}),
+            ));
+        }
+    }
+    if let Some(context) = request
+        .user_context_message()
+        .filter(|value| !value.is_empty())
+    {
+        out.push(RenderedMessage::Value(
+            json!({"role":"user","content":context}),
+        ));
+    }
+    out.extend(rendered);
+    serialize_rendered_messages(out)
+}
+
+/// Assemble the Responses `input` array as spliceable wires, mirroring the
+/// user-context prefix plus [`build_messages_responses`] over lowered/rendered
+/// turn messages.
+fn format_responses_input_wires(
+    request: &PreparedRequest<'_>,
+    turns: &[Turn],
+) -> EndpointResult<SmallVec<[Bytes; 1]>> {
+    let mut out = Vec::new();
+    if let Some(context) = request
+        .user_context_message()
+        .filter(|value| !value.is_empty())
+    {
+        out.push(RenderedMessage::Value(
+            json!({"type": "message", "role": "user", "content": context}),
+        ));
+    }
+    out.extend(rendered_turn_messages(turns, PartShape::Responses, false)?);
+    serialize_rendered_messages(out)
+}
+
+/// Assemble the Anthropic Messages `messages` array as spliceable wires,
+/// mirroring the user-context prefix plus [`build_messages`] under the Messages
+/// part shape over lowered/rendered turn messages.
+pub(crate) fn format_messages_array_wires(
+    request: &PreparedRequest<'_>,
+    turns: &[Turn],
+) -> EndpointResult<SmallVec<[Bytes; 1]>> {
+    let mut out = Vec::new();
+    if let Some(context) = request
+        .user_context_message()
+        .filter(|value| !value.is_empty())
+    {
+        out.push(RenderedMessage::Value(json!({"role":"user","content":context})));
+    }
+    out.extend(rendered_turn_messages(turns, PartShape::Messages, false)?);
+    serialize_rendered_messages(out)
+}
+
+/// Load-time content→segment lowering seam (segment spec §3/§3a).
+///
+/// A static content turn's per-turn message(s) are rendered and serialized once,
+/// at load (post endpoint-bind), to the exact wire bytes the dispatch path would
+/// otherwise produce every request. Dispatch then splices the stored wires
+/// verbatim (zero re-serialize) instead of re-rendering the turn's content. The
+/// contract is byte-exact: `lower_turn` returns exactly
+/// `serde_json::to_vec(render_turn_message(turn, shape))` per rendered message,
+/// applying the Responses `type:"message"` injection and replay-unsafe filter
+/// before serializing, so the shape's dispatch output is unchanged.
+///
+/// This is a trait (not a bare function) so a future endpoint dialect with its
+/// own message geometry can lower without the dataset pass branching on a shape
+/// enum — it registers a lowerer and the same load/splice machinery applies.
+pub trait TurnMessageLowerer: Send + Sync {
+    /// Render and serialize one turn's message wire(s) exactly as the dispatch
+    /// message-array formatter would emit them for this turn in isolation.
+    fn lower_turn(&self, turn: &Turn) -> EndpointResult<SmallVec<[Bytes; 1]>>;
+}
+
+/// The built-in [`TurnMessageLowerer`] over the three message-array part shapes.
+#[derive(Debug, Clone, Copy)]
+pub struct ShapeLowerer {
+    shape: PartShape,
+}
+
+impl ShapeLowerer {
+    /// Select the lowerer for a registered endpoint descriptor id, or `None` for
+    /// dialects whose body is not a per-turn message array (embeddings,
+    /// completions, rankings, media, …) and therefore is never lowered.
+    pub fn for_descriptor_id(id: &str) -> Option<Self> {
+        let shape = match id {
+            "chat" | "chat_completions" | "chat_embeddings" => PartShape::Chat,
+            "responses" => PartShape::Responses,
+            "messages" => PartShape::Messages,
+            _ => return None,
+        };
+        Some(Self { shape })
+    }
+}
+
+impl TurnMessageLowerer for ShapeLowerer {
+    fn lower_turn(&self, turn: &Turn) -> EndpointResult<SmallVec<[Bytes; 1]>> {
+        // Mirror `build_messages` / `build_messages_responses` for one turn: a
+        // preformatted `raw_messages` turn splices its items (Responses drops
+        // replay-unsafe items); otherwise the turn renders one message (Responses
+        // injects `type:"message"`).
+        let values: Vec<Value> = match self.shape {
+            PartShape::Responses => {
+                if let Some(raw_messages) = &turn.raw_messages
+                    && !raw_messages.is_empty()
+                {
+                    raw_messages
+                        .iter()
+                        .filter(|item| {
+                            !item
+                                .as_object()
+                                .and_then(|obj| obj.get("type"))
+                                .and_then(Value::as_str)
+                                .is_some_and(is_replay_unsafe_output_item)
+                        })
+                        .cloned()
+                        .collect()
+                } else {
+                    let mut message = render_turn_message(turn, PartShape::Responses)?;
+                    if let Value::Object(obj) = &mut message {
+                        obj.insert("type".into(), Value::String("message".into()));
+                    }
+                    vec![message]
+                }
+            }
+            PartShape::Chat | PartShape::Messages => {
+                if let Some(raw_messages) = &turn.raw_messages
+                    && !raw_messages.is_empty()
+                {
+                    raw_messages.clone()
+                } else {
+                    vec![render_turn_message(turn, self.shape)?]
+                }
+            }
+        };
+        values
+            .iter()
+            .map(|value| serde_json::to_vec(value).map(Bytes::from))
+            .collect::<std::result::Result<SmallVec<[Bytes; 1]>, _>>()
+            .map_err(EndpointError::from)
+    }
 }
 
 fn render_turn_message(turn: &Turn, shape: PartShape) -> EndpointResult<Value> {
@@ -850,44 +1071,16 @@ fn render_video_part(url: &str, shape: PartShape) -> EndpointResult<Value> {
     }
 }
 
-fn format_chat_messages(request: &PreparedRequest<'_>, mut rendered: Vec<Value>) -> Vec<Value> {
-    let mut messages = Vec::new();
-    let first_is_system = rendered
-        .first()
-        .and_then(Value::as_object)
-        .and_then(|obj| obj.get("role"))
-        .and_then(Value::as_str)
-        == Some("system");
-    if let Some(system) = request.system_message().filter(|value| !value.is_empty()) {
-        if first_is_system && request.credit_phase() == CreditPhase::Warmup {
-            rendered = prepend_system_message(rendered, system);
-        } else if !first_is_system {
-            messages.push(json!({"role":"system","content":system}));
+fn prepend_system_into_object(first: &mut Map<String, Value>, system: &str) {
+    match first.get_mut("content") {
+        Some(Value::String(content)) if content.is_empty() => *content = system.to_string(),
+        Some(Value::String(content)) => *content = format!("{system}\n{content}"),
+        Some(Value::Array(parts)) => parts.insert(0, json!({"type":"text","text":system})),
+        Some(Value::Null) | None => {
+            first.insert("content".into(), Value::String(system.to_string()));
         }
+        Some(other) => *other = Value::String(format!("{system}\n{other}")),
     }
-    if let Some(context) = request
-        .user_context_message()
-        .filter(|value| !value.is_empty())
-    {
-        messages.push(json!({"role":"user","content":context}));
-    }
-    messages.extend(rendered);
-    messages
-}
-
-fn prepend_system_message(mut rendered: Vec<Value>, system: &str) -> Vec<Value> {
-    if let Some(Value::Object(first)) = rendered.first_mut() {
-        match first.get_mut("content") {
-            Some(Value::String(content)) if content.is_empty() => *content = system.to_string(),
-            Some(Value::String(content)) => *content = format!("{system}\n{content}"),
-            Some(Value::Array(parts)) => parts.insert(0, json!({"type":"text","text":system})),
-            Some(Value::Null) | None => {
-                first.insert("content".into(), Value::String(system.to_string()));
-            }
-            Some(other) => *other = Value::String(format!("{system}\n{other}")),
-        }
-    }
-    rendered
 }
 
 pub(crate) fn latest_turn_attr<'a, T, F>(turns: &'a [Turn], get: F) -> Option<&'a T>
@@ -1492,4 +1685,134 @@ pub(crate) fn build_plain_assistant_turn<E: Endpoint + ?Sized>(
         texts: vec![Media::new(vec![text])],
         ..Turn::default()
     }))
+}
+
+#[cfg(test)]
+mod lowering_tests {
+    use super::*;
+
+    fn text_turn() -> Turn {
+        Turn {
+            role: Some("user".into()),
+            texts: vec![Media::new(vec!["hello".to_string()])],
+            ..Turn::default()
+        }
+    }
+
+    fn multimodal_turn(image: &str) -> Turn {
+        Turn {
+            role: Some("user".into()),
+            texts: vec![Media::new(vec!["look".to_string()])],
+            images: vec![Media::new(vec![image.to_string()])],
+            ..Turn::default()
+        }
+    }
+
+    /// Oracle: a lowered wire is byte-identical to the dispatch render path
+    /// (`serde_json::to_vec(render_turn_message(...))`) for the Chat shape.
+    #[test]
+    fn lowered_wire_matches_rendered_dispatch_wire_text_only() {
+        let turn = text_turn();
+        let lowerer = ShapeLowerer::for_descriptor_id("chat").unwrap();
+        let wires = lowerer.lower_turn(&turn).unwrap();
+        assert_eq!(wires.len(), 1);
+        let expected =
+            Bytes::from(serde_json::to_vec(&render_turn_message(&turn, PartShape::Chat).unwrap()).unwrap());
+        assert_eq!(wires[0], expected);
+    }
+
+    /// Oracle: multimodal content lowers byte-identically to the dispatch render.
+    #[test]
+    fn lowered_wire_matches_rendered_dispatch_wire_multimodal() {
+        let turn = multimodal_turn("http://example/a.png");
+        let lowerer = ShapeLowerer::for_descriptor_id("chat").unwrap();
+        let wires = lowerer.lower_turn(&turn).unwrap();
+        let expected =
+            Bytes::from(serde_json::to_vec(&render_turn_message(&turn, PartShape::Chat).unwrap()).unwrap());
+        assert_eq!(wires[0], expected);
+    }
+
+    /// Oracle: the Responses shape lowers with the `type:"message"` injection,
+    /// matching the dispatch render exactly.
+    #[test]
+    fn lowered_wire_matches_rendered_dispatch_wire_responses() {
+        let turn = text_turn();
+        let lowerer = ShapeLowerer::for_descriptor_id("responses").unwrap();
+        let wires = lowerer.lower_turn(&turn).unwrap();
+        let mut expected_value = render_turn_message(&turn, PartShape::Responses).unwrap();
+        if let Value::Object(obj) = &mut expected_value {
+            obj.insert("type".into(), Value::String("message".into()));
+        }
+        assert_eq!(wires[0], Bytes::from(serde_json::to_vec(&expected_value).unwrap()));
+        // The injected discriminant is present in the wire bytes.
+        assert!(
+            std::str::from_utf8(&wires[0])
+                .unwrap()
+                .contains(r#""type":"message""#)
+        );
+    }
+
+    /// Two turns with identical text but different media render to distinct wires
+    /// (the byte-parity companion to the segment hash-key fix).
+    #[test]
+    fn same_text_different_media_lowers_to_distinct_wires() {
+        let lowerer = ShapeLowerer::for_descriptor_id("chat").unwrap();
+        let a = lowerer.lower_turn(&multimodal_turn("http://example/a.png")).unwrap();
+        let b = lowerer.lower_turn(&multimodal_turn("http://example/b.png")).unwrap();
+        assert_ne!(a[0], b[0]);
+    }
+
+    /// A dialect whose body is not a per-turn message array has no lowerer.
+    #[test]
+    fn non_message_array_dialects_have_no_lowerer() {
+        assert!(ShapeLowerer::for_descriptor_id("embeddings").is_none());
+        assert!(ShapeLowerer::for_descriptor_id("completions").is_none());
+    }
+
+    /// Segment spec §5: both live-reply constructors used by
+    /// `multiturn::build_next_turn` — the text-only reply (`assistant_message ==
+    /// None`) and the preformatted `raw_messages` reply (`assistant_message ==
+    /// Some(..)`) — lower to the exact bytes the pre-change `RenderedMessage::Value`
+    /// dispatch path emitted, for every message-array shape. `lower_turn` is
+    /// compared against the live `rendered_turn_messages` → `serialize_rendered_messages`
+    /// pipeline (the code the reply spliced through before this change), so this is
+    /// the byte-parity oracle for capture-time lowering.
+    #[test]
+    fn reply_constructors_lower_to_value_dispatch_wire_all_shapes() {
+        let text_reply = Turn {
+            role: Some("assistant".into()),
+            texts: vec![Media::new(vec!["live answer".to_string()])],
+            ..Turn::default()
+        };
+        let raw_reply = Turn {
+            raw_messages: Some(vec![json!({
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "why", "signature": "sig"},
+                    {"type": "text", "text": "answer"},
+                    // A replay-unsafe Responses item, to exercise the shared filter.
+                    {"type": "reasoning", "id": "r-1"}
+                ]
+            })]),
+            ..Turn::default()
+        };
+        for (id, shape) in [
+            ("chat", PartShape::Chat),
+            ("responses", PartShape::Responses),
+            ("messages", PartShape::Messages),
+        ] {
+            let lowerer = ShapeLowerer::for_descriptor_id(id).unwrap();
+            for reply in [&text_reply, &raw_reply] {
+                // The reply carries no `lowered` wire, so `rendered_turn_messages`
+                // takes the Value render path — exactly the pre-change dispatch body.
+                assert!(reply.lowered.is_none());
+                let value_path = serialize_rendered_messages(
+                    rendered_turn_messages(std::slice::from_ref(reply), shape, false).unwrap(),
+                )
+                .unwrap();
+                let lowered = lowerer.lower_turn(reply).unwrap();
+                assert_eq!(lowered, value_path, "shape {id} reply wire diverged");
+            }
+        }
+    }
 }
