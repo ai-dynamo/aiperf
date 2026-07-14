@@ -42,6 +42,18 @@ async fn test_cellular_run_from_python_frontend() {
         60,
         "merged cellular report must carry every cell's records"
     );
+    // Non-vacuous proof the CONTROLLER (multi-cell) path actually ran: the
+    // cellular-heartbeat.json sidecar is written only by the controller after
+    // aggregating the cells' shipped heartbeats. If `--cells` were stripped from the
+    // wire (or otherwise inert) this run would be a plain single process and the
+    // sidecar would be absent — so success()+request_count alone cannot mask it.
+    assert!(
+        r.artifacts
+            .find_file("**/cellular-heartbeat.json")
+            .is_some(),
+        "cellular run must emit the controller's cellular-heartbeat.json sidecar; \
+         its absence means --cells did not reach the runner (single-process run)"
+    );
 }
 
 /// A 3-cell run reproduces the 1-cell run's dataset-deterministic metrics exactly.
@@ -68,6 +80,25 @@ async fn test_cellular_matches_single_cell() {
     let h3 = AIPerfHarness::new().await;
     let cellular = h3.run(&args(3, &h3.mock.url));
     assert!(cellular.success(), "3-cell run failed: {}", cellular.stderr);
+
+    // Guard against a vacuous pass: prove the two runs really differ in topology.
+    // The 3-cell run goes through the controller (emits cellular-heartbeat.json); the
+    // 1-cell baseline is single-process (no sidecar). Without this, a stripped
+    // `--cells` would make both runs 1-cell and byte-identical by construction.
+    assert!(
+        cellular
+            .artifacts
+            .find_file("**/cellular-heartbeat.json")
+            .is_some(),
+        "3-cell run must go through the controller (cellular-heartbeat.json sidecar)"
+    );
+    assert!(
+        baseline
+            .artifacts
+            .find_file("**/cellular-heartbeat.json")
+            .is_none(),
+        "1-cell baseline must be single-process (no cellular sidecar)"
+    );
 
     let base_json = baseline.artifacts.json();
     let cell_json = cellular.artifacts.json();

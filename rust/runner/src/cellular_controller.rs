@@ -218,6 +218,18 @@ pub fn run_cellular(
         std::fs::write(report_path, json)
             .with_context(|| format!("writing merged report to {}", report_path.display()))?;
 
+        // Run the native export plane on the merged report, exactly as the
+        // single-process path does in coordinator::persist_prepared_report. The
+        // exporter-plane cutover made the runner the sole emitter of the user-facing
+        // sink outputs (genai-perf-v1 aiperf.json/CSV, console.txt, timeslice, OTLP,
+        // MLflow, W&B); native-v2.json above is the committed authority but is NOT one
+        // of them. Without this a cellular run would emit only native-v2.json and the
+        // frontend would find no aiperf.json. Best-effort by contract: run_exporters
+        // logs per-sink and never fails the run.
+        if let Some(artifact_dir) = report_path.parent() {
+            aiperf::export::run_exporters(&report, artifact_dir, &cellular_export_config(envelope));
+        }
+
         // Aggregate the cells' final heartbeats (counters summed, sketches t-digest
         // merged) into one run-wide view written beside the report. The exact report
         // stays authoritative from S2; this is the cross-cell live-lane aggregate.
@@ -539,6 +551,18 @@ fn cellular_metrics_config(envelope: &serde_json::Value) -> Result<MetricsConfig
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
     crate::execute::metrics_config(&spec, use_server_token_count)
+}
+
+/// The native export policy for the merged report, parsed from the envelope's
+/// `cfg.export` exactly as the single-process path does
+/// (`protocol_v2::RunConfig::export`), defaulting when absent so the cellular run
+/// emits the same user-facing sink outputs (genai-perf-v1 JSON/CSV, console.txt, …).
+fn cellular_export_config(envelope: &serde_json::Value) -> aiperf::export::ExportConfig {
+    envelope
+        .pointer("/run/cfg/export")
+        .cloned()
+        .and_then(|value| serde_json::from_value(value).ok())
+        .unwrap_or_default()
 }
 
 /// Each phase's global ordinal base (`phase name -> turns dispatched by prior

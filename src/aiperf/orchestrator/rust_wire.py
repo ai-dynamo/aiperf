@@ -103,7 +103,7 @@ def dump_benchmark_run(run: BenchmarkRun) -> dict[str, Any]:
     cfg["runtime"] = {
         key: value
         for key, value in (cfg.get("runtime") or {}).items()
-        if key in {"workers", "workers_max", "workers_min"}
+        if key in {"workers", "workers_max", "workers_min", "cells"}
     }
     cfg["metrics"] = _authored_metrics(run.cfg)
     cfg["artifacts"] = _authored_artifacts(run)
