@@ -82,6 +82,10 @@ This document provides a comprehensive reference of all metrics available in AIP
   - [OSL Mismatch Metrics](#osl-mismatch-metrics)
     - [OSL Mismatch Diff %](#osl-mismatch-diff-)
     - [OSL Mismatch Count](#osl-mismatch-count)
+  - [Replay Schedule Lag Metrics](#replay-schedule-lag-metrics)
+    - [Replay Send Schedule Offset](#replay-send-schedule-offset)
+    - [Replay Schedule Lag p50 / p90 / p99](#replay-schedule-lag-p50--p90--p99)
+    - [Replay Schedule Degraded](#replay-schedule-degraded)
   - [Goodput Metrics](#goodput-metrics)
     - [Good Request Count](#good-request-count)
     - [Good Request Fraction](#good-request-fraction)
@@ -1277,6 +1281,69 @@ osl_mismatch_count = sum(1 for r in records if diff_tokens > threshold_tokens)
 | [TensorRT-LLM](https://nvidia.github.io/TensorRT-LLM/llm-api/reference.html) | `min_tokens` | Default: 1 |
 | [SGLang](https://github.com/sgl-project/sglang) | `min_new_tokens` | Default: 0 |
 | [TGI](https://github.com/huggingface/text-generation-inference) | `min_new_tokens` | Unclear API support; TGI in maintenance mode |
+
+---
+
+## Replay Schedule Lag Metrics
+
+<Note>
+These metrics report how faithfully a fixed-schedule trace replay delivered its offered (recorded) request schedule. The whole family is `FIXED_SCHEDULE_ONLY`: it is computed only when the profiling phase type is `fixed_schedule`, and stays inactive under any other timing mode even when the dataset carries turn timestamps (e.g. a timestamped trace swept with `--no-fixed-schedule`). The metrics are **not displayed in console output** but are available in exports; a warning is logged when the run is flagged degraded.
+</Note>
+
+Note that an explicit `--fixed-schedule` flag is not required for the family to activate: a timestamped `--custom-dataset-type` trace (a top-level `timestamp` field in the first record of JSONL traces such as `mooncake_trace` and `bailian_trace`, or a `timestamp_start_unix_ms` column in `baseten_trace` Parquet) auto-promotes the profiling phase to `fixed_schedule`, so these metrics then appear in profile exports. Pass `--no-fixed-schedule` to keep the user-selected timing mode, which also deactivates the family.
+
+Every absolutely-scheduled turn carries its intended send time (`Turn.timestamp`, ms relative to the schedule zero), and the worker stamps `RequestRecord.timestamp_ns` (wall clock) when the request is dispatched to the transport. The wall-clock instant of the schedule zero is not recorded, so lag is reported **relative to the least-late request** of the run (`lag = offset - min(offset)`).
+
+The derived family is computed once over the whole run and is **excluded from `--slice-duration` timeslice exports**: re-deriving it per slice would re-anchor each slice at its own least-late request and erase the cumulative schedule drift these metrics exist to expose.
+
+**What this cannot measure:**
+- A constant delay applied uniformly to every request (the least-late request defines zero).
+- Lag of delay-scheduled continuation turns (back-pressure replay fires them relative to the prior turn's completion; they carry no absolute intended time and are excluded).
+- True wire time (`timestamp_ns` is stamped worker-side at transport dispatch, before the TCP write).
+
+### Replay Send Schedule Offset
+
+**Type:** [Record Metric](#record-metrics)
+
+Internal building block: the raw per-request send offset. Values are epoch-scale nanoseconds; only differences between them are meaningful.
+
+**Formula:**
+```python
+replay_send_schedule_offset = record.timestamp_ns - turn.timestamp * 1e6
+```
+
+**Notes:**
+- `INTERNAL`: hidden from output unless `AIPERF_DEV_SHOW_INTERNAL_METRICS` is enabled.
+- Skipped for records whose dispatched turn has no absolute schedule timestamp.
+
+---
+
+### Replay Schedule Lag p50 / p90 / p99
+
+**Type:** [Derived Metric](#derived-metrics)
+
+Percentiles of the anchored send lag across the run, in milliseconds. Schedule degradation (event-loop stalls, worker saturation, queue buildup) shows up as growing lag percentiles.
+
+**Formula:**
+```python
+lag_ms = (offsets - offsets.min()) / 1e6
+replay_sched_lag_p50 = percentile(lag_ms, 50)
+replay_sched_lag_p90 = percentile(lag_ms, 90)
+replay_sched_lag_p99 = percentile(lag_ms, 99)
+```
+
+---
+
+### Replay Schedule Degraded
+
+**Type:** [Derived Metric](#derived-metrics)
+
+Boolean (0/1) signal that the replay could not keep up with the offered schedule: anchored send-lag p99 exceeded 500 ms. When degraded, a warning with the lag percentiles is logged at most once per run (the first time the run is flagged); the metric value itself is re-derived on every summarize tick.
+
+**Formula:**
+```python
+replay_sched_degraded = 1 if percentile(lag_ms, 99) > 500.0 else 0
+```
 
 ---
 

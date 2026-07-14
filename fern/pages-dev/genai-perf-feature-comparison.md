@@ -111,7 +111,7 @@ If you're porting a GenAI-Perf invocation, `--server-metrics-url http://node:940
 | **Dataset Entries** | `--num-dataset-entries --num-prompts` | ✅ | ✅ | GenAI-Perf and AIPerf both accept this flag. In AIPerf it is collapsed with `--num-sessions / --conversation-num / --num-conversations` into a single conversation count; GenAI-Perf keeps `--num-dataset-entries` and `--num-sessions` distinct (see [Session Configuration](#sessionconversation-configuration-multi-turn)). |
 | **Public Dataset** | `--public-dataset` | ❌ | ✅ | sharegpt, aimo, mmstar, vision_arena, llava_onevision, speed_bench_* (50+ subsets), librispeech, voxpopuli, gigaspeech, ami, spgispeech, instruct_coder, blazedit_5k, blazedit_10k, ... |
 | **HuggingFace Subset Override** | `--hf-subset` | ❌ | ✅ | Override the HF subset/config for HF-backed public datasets |
-| **Custom Dataset Type** | `--custom-dataset-type`<br/>`{single_turn,multi_turn,random_pool,mooncake_trace,bailian_trace,burst_gpt_trace,sagemaker_data_capture}` | ❌ | ✅ | GenAI-Perf infers dataset type from input file format |
+| **Custom Dataset Type** | `--custom-dataset-type`<br/>`{single_turn,multi_turn,random_pool,mooncake_trace,bailian_trace,baseten_trace,burst_gpt_trace,sagemaker_data_capture}` | ❌ | ✅ | GenAI-Perf infers dataset type from input file format |
 | **Dataset Sampling Strategy** | `--dataset-sampling-strategy`<br/>`{sequential,random,shuffle}` | ❌ | ✅ | Controls how entries are drawn during benchmarking |
 | **Fixed Schedule** | `--fixed-schedule` | ✅ | ✅ | |
 | **Fixed Schedule Auto Offset** | `--fixed-schedule-auto-offset` | ❌ | ✅ | |
@@ -246,7 +246,7 @@ If you're porting a GenAI-Perf invocation, `--server-metrics-url http://node:940
 |---------|------------|------------|---------|-------|
 | **Input Tokens Mean** | `--synthetic-input-tokens-mean`<br/>`--isl` | ✅ | ✅ | |
 | **Input Tokens Stddev** | `--synthetic-input-tokens-stddev` | ✅ | ✅ | |
-| **Input Tokens Block Size** | `--prompt-input-tokens-block-size`<br/>`--isl-block-size` | ❌ | ✅ | Used for `mooncake_trace` hash_id blocks |
+| **Input Tokens Block Size** | `--prompt-input-tokens-block-size`<br/>`--isl-block-size` | ❌ | ✅ | Used for trace `hash_ids` block alignment (`mooncake_trace`, `bailian_trace`, `baseten_trace`) |
 
 ---
 

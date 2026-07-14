@@ -181,6 +181,8 @@ navigation:
         path: ../pages-dev/benchmark-modes/timing-modes-reference.md
       - page: Trace Replay with Mooncake Traces
         path: ../pages-dev/benchmark-modes/trace-replay.md
+      - page: Baseten Trace Replay
+        path: ../pages-dev/tutorials/baseten-trace.md
       - page: Conversation DAG Benchmarks
         path: ../pages-dev/benchmark-modes/dag.md
   - section: Accuracy

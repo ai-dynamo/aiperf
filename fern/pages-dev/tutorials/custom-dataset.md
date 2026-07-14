@@ -6,21 +6,24 @@ sidebar-title: Custom Dataset Guide
 
 # Custom Dataset Guide
 
-Benchmark LLMs with your own data using single-turn requests, multi-turn conversations, or random sampling.
+Benchmark LLMs with your own data using single-turn requests, multi-turn conversations, random sampling, or production trace replay.
 
 ## Overview
 
-AIPerf supports three custom dataset types for benchmarking with your own data:
+AIPerf supports these custom dataset types for benchmarking with your own data:
 
 | Dataset Type | Best For | Multi-Turn | Timing Control | Random Sampling |
 |-------------|----------|-----------|---------------|-----------------|
 | **Single Turn** | Independent single requests | No | Yes | No |
 | **Multi Turn** | Conversations with context | Yes | Yes (per turn) | No |
 | **Random Pool** | Load testing with variety | No | No | Yes |
+| **Mooncake / Bailian / Baseten Trace** | Production trace replay | Yes | Yes | No |
 
-**All three support:**
+**Single Turn, Multi Turn, and Random Pool support:**
 - Client-side batching
 - Automatic media handling: local files are converted to base64 format, while remote URLs are sent directly to the API
+
+Trace replay requests are text-only, so client-side batching and media handling do not apply. See [Trace Replay](../benchmark-modes/trace-replay.md) and [Baseten Trace Replay](baseten-trace.md).
 
 ---
 

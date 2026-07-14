@@ -43,6 +43,11 @@ This document describes datasets that AIPerf can use to generate stimulus. Addit
     <td>Mooncake trace file <a href="benchmark-modes/trace-replay.md"><code>--input-file your_trace_file.jsonl --custom-dataset-type mooncake_trace</code></a></td>
     </tr>
     <tr>
+    <td><strong>Baseten Trace</strong></td>
+    <td style="text-align: center;">✅</td>
+    <td>Baseten completion trace parquet <a href="tutorials/baseten-trace.md"><code>--input-file your_trace.parquet --custom-dataset-type baseten_trace</code></a></td>
+    </tr>
+    <tr>
       <td><strong>ShareGPT</strong></td>
       <td style="text-align: center;">✅</td>
       <td>Conversations from <a href="https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json"><code>--public-dataset sharegpt</code></a></td>
