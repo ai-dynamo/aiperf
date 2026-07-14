@@ -515,6 +515,7 @@ fn labels_for(metadata: &GpuMetadata) -> BTreeMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metrics_core::Unit;
 
     fn record(timestamp_ns: i64, gpu: i32, power: f64, energy_mj: f64) -> GpuTelemetryRecord {
         GpuTelemetryRecord {
@@ -620,6 +621,93 @@ mod tests {
         assert_eq!(
             accumulator.query_time_range(10, 30),
             vec![true, true, false]
+        );
+    }
+
+    fn custom_spec(name: &str, unit: Unit) -> RuntimeGpuMetricSpec {
+        RuntimeGpuMetricSpec {
+            name: name.to_string(),
+            header: name.to_string(),
+            unit,
+            kind: GpuMetricKind::Gauge,
+        }
+    }
+
+    /// Records carrying custom-CSV signal names only surface when their specs
+    /// are registered: the summarizer iterates registered specs, so a scraped
+    /// value whose name has no spec is silently dropped. This mirrors the
+    /// runner projecting `custom_metrics` (from the `--gpu-telemetry` CSV) into
+    /// the accumulator so all default + custom fields report.
+    #[test]
+    fn registered_custom_specs_report_alongside_defaults_with_their_units() {
+        let build = |timestamp_ns: i64, sm_clock: f64, mem_clock: f64, memory_temp: f64| {
+            GpuTelemetryRecord {
+                timestamp_ns,
+                endpoint_url: "http://dcgm/metrics".to_string(),
+                metadata: GpuMetadata {
+                    gpu_index: 0,
+                    gpu_uuid: "GPU-0".to_string(),
+                    gpu_model_name: "H200".to_string(),
+                    pci_bus_id: None,
+                    device: None,
+                    hostname: Some("node".to_string()),
+                    namespace: None,
+                    pod_name: None,
+                },
+                metrics: BTreeMap::from([
+                    ("gpu_power_usage".to_string(), 500.0),
+                    ("sm_clock".to_string(), sm_clock),
+                    ("mem_clock".to_string(), mem_clock),
+                    ("memory_temp".to_string(), memory_temp),
+                ]),
+            }
+        };
+
+        let mut accumulator = GpuTelemetryAccumulator::new()
+            .with_additional_metric_specs([
+                custom_spec("sm_clock", Unit::Megahertz),
+                custom_spec("mem_clock", Unit::Megahertz),
+                custom_spec("memory_temp", Unit::Celsius),
+            ])
+            .unwrap();
+        let start = build(10, 1_400.0, 2_600.0, 60.0);
+        let end = build(20, 1_500.0, 2_700.0, 62.0);
+        accumulator.ingest_record(&start);
+        accumulator.ingest_record(&end);
+        let boundary = GpuPhaseBoundary::new(snapshot(10, &[start]), snapshot(20, &[end])).unwrap();
+        let summary = accumulator.summarize_phase(&boundary, None, None);
+
+        for (name, unit) in [
+            ("sm_clock", Unit::Megahertz),
+            ("mem_clock", Unit::Megahertz),
+            ("memory_temp", Unit::Celsius),
+            ("gpu_power_usage", Unit::Watt),
+        ] {
+            let metric = summary
+                .sidecar_metrics()
+                .get(name)
+                .unwrap_or_else(|| panic!("missing custom metric {name}"));
+            assert_eq!(metric.unit, Some(unit), "wrong unit for {name}");
+        }
+    }
+
+    /// Python deduplicates custom CSV rows against the default catalog before
+    /// projecting them, so the runner never receives a name that collides with
+    /// a built-in. The registration guard still fails closed if it ever does,
+    /// rather than silently shadowing a built-in spec.
+    #[test]
+    fn duplicate_and_empty_custom_specs_are_rejected() {
+        assert_eq!(
+            GpuTelemetryAccumulator::new()
+                .with_additional_metric_specs([custom_spec("gpu_power_usage", Unit::Watt)])
+                .unwrap_err(),
+            GpuMetricRegistrationError::DuplicateName("gpu_power_usage".to_string())
+        );
+        assert_eq!(
+            GpuTelemetryAccumulator::new()
+                .with_additional_metric_specs([custom_spec("  ", Unit::Megahertz)])
+                .unwrap_err(),
+            GpuMetricRegistrationError::EmptyName
         );
     }
 

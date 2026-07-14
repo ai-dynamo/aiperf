@@ -108,13 +108,36 @@ class RustSubprocessExecutor(RunExecutor):
         Python never resolves runner-owned inputs and never projects a second
         protocol shape. The selected pair adapter is therefore the only load
         boundary between Config v2 and its prepared Rust harness.
+
+        The one exception is the custom GPU-telemetry CSV: the runner cannot
+        parse it (there is no Rust CSV metric loader), yet its accumulator must
+        register each custom field's name and unit to summarize the values the
+        Python telemetry worker scrapes. ``GpuMetricsResolver`` reads and
+        validates that CSV here — a discrete resolution step before the strict,
+        side-effect-free projection reads ``run.resolved.gpu_custom_metrics``.
+        Without it the custom metrics are scraped but silently dropped from the
+        native report (see ``rust/aiperf/src/gpu_telemetry/accumulator.rs``).
         """
+        self._resolve_gpu_custom_metrics(run)
         authored = self.installation.project_authored_request(
             run,
             operation="execute",
         )
         self.installation.preflight_request(authored)
         return authored
+
+    @staticmethod
+    def _resolve_gpu_custom_metrics(run: BenchmarkRun) -> None:
+        """Validate the ``--gpu-telemetry`` custom-metrics CSV into ``resolved``.
+
+        No-op unless ``gpu_telemetry.metrics_file`` is configured. This is the
+        sole pre-projection resolver retained after the direct-pair refactor
+        (``4557d26b9``): its output is the only ``run.resolved`` field the
+        authored-v2 projection consumes, and the runner has no way to derive it.
+        """
+        from aiperf.config.resolution.resolvers import GpuMetricsResolver
+
+        GpuMetricsResolver().resolve(run)
 
 
 def _forward_runner_stderr(stderr: bytes) -> None:

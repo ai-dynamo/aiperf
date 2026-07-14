@@ -412,7 +412,7 @@ def _authored_sidecars(run: BenchmarkRun) -> dict[str, Any]:
     content_server = _content_server()
     if content_server is not None:
         result["content_server"] = content_server
-    gpu_telemetry = _gpu_telemetry(run, include_resolved_custom_metrics=False)
+    gpu_telemetry = _gpu_telemetry(run)
     if gpu_telemetry is not None:
         result["gpu_telemetry"] = gpu_telemetry
     network_latency = _network_latency(run)
@@ -484,12 +484,16 @@ def _worker_count(cfg: Any) -> int:
     return max(workers, cfg.runtime.workers_min or 1)
 
 
-def _gpu_telemetry(
-    run: BenchmarkRun,
-    *,
-    include_resolved_custom_metrics: bool = True,
-) -> dict[str, Any] | None:
-    """Lower GPU sources while retaining canonical Python-only collectors."""
+def _gpu_telemetry(run: BenchmarkRun) -> dict[str, Any] | None:
+    """Lower GPU sources while retaining canonical Python-only collectors.
+
+    The resolved custom-metric catalog (validated from the ``--gpu-telemetry``
+    CSV by ``GpuMetricsResolver``) must reach the runner: the Python collector
+    worker scrapes those custom DCGM fields, but the runner's
+    ``GpuTelemetryAccumulator`` only summarizes signals it has a registered
+    spec for. Omitting the catalog silently drops every custom metric from the
+    native-v2 report even though the values are scraped.
+    """
     config = run.cfg.gpu_telemetry
     if not config.enabled:
         return None
@@ -552,9 +556,7 @@ def _gpu_telemetry(
         ),
         "sources": sources,
     }
-    custom_metrics = (
-        run.resolved.gpu_custom_metrics or [] if include_resolved_custom_metrics else []
-    )
+    custom_metrics = run.resolved.gpu_custom_metrics or []
     if custom_metrics:
         result["custom_metrics"] = [
             {
