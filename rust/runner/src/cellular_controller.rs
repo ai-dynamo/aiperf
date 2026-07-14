@@ -74,7 +74,9 @@ pub fn run_cellular(
     ensure!(cell_count >= 1, "cell_count must be at least 1");
     validate_cellular_run_shape(envelope)?;
     let is_graph = is_graph_dataset(envelope);
-    if !is_graph {
+    if is_graph {
+        validate_graph_cellular_phases(envelope, cell_count)?;
+    } else {
         validate_cellular_phase_budgets(envelope, cell_count)?;
     }
     warn_dropped_sidecar_telemetry(envelope);
@@ -566,6 +568,55 @@ fn validate_cellular_phase_budgets(envelope: &serde_json::Value, cell_count: u32
     Ok(())
 }
 
+/// Rejects a cellular *graph* run whose phases cannot partition cleanly across cells.
+///
+/// A graph cell is partitioned by [`PartitionedGraphTraceSource`] (selected in
+/// `graph_phase_runtime.rs`), which slices the **SESSION** space — the trace instances
+/// bounded by `sessions` / `--num-conversations` or a duration — round-robin across
+/// cells. That source is chosen ONLY when the phase carries no `requests` budget. A
+/// phase that instead carries a static-node `requests` budget falls back to the
+/// single-cell [`CyclingGraphTraceSource`], so *every* cell replays the FULL
+/// un-partitioned cycle (N× load and N× records, or an overlapping low-index-biased
+/// trace subset) — a silent mis-partition the completeness check would accept. Until
+/// the request-budget partition is built, fail closed: a graph phase must bound its
+/// work by the session space (or a duration), never by `requests`.
+///
+/// The session/prefill concurrency caps are still split round-robin per cell, so the
+/// same `>= cell_count` floor as the scheduled path applies (below it every cell floors
+/// to 1 and the aggregate over-subscribes to `cell_count`).
+///
+/// [`PartitionedGraphTraceSource`]: aiperf::graph::workload::PartitionedGraphTraceSource
+/// [`CyclingGraphTraceSource`]: aiperf::graph::workload::CyclingGraphTraceSource
+fn validate_graph_cellular_phases(envelope: &serde_json::Value, cell_count: u32) -> Result<()> {
+    let phases = envelope
+        .pointer("/run/cfg/phases")
+        .and_then(serde_json::Value::as_array)
+        .context("run cfg has no phases array")?;
+    let cells = cell_count as u64;
+    for phase in phases {
+        let name = phase
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("<unnamed>");
+        ensure!(
+            phase.get("requests").is_none(),
+            "cellular graph runs do not yet partition a static-node `requests` budget (phase {name:?}); \
+             use `sessions` / `--num-conversations` or a duration bound so the trace instances partition across cells"
+        );
+        // Session/prefill concurrency caps split round-robin per cell; below cell_count
+        // they floor to 1 and over-subscribe the aggregate, so require >= cell_count.
+        for cap in ["concurrency", "prefill_concurrency"] {
+            if let Some(value) = phase.get(cap).and_then(serde_json::Value::as_u64) {
+                ensure!(
+                    value >= cells,
+                    "cellular graph runs require a `{cap}` cap >= cell_count ({cell_count}) so it splits evenly; phase {name:?} has {value}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The number of dispatch-stream positions in `[0, total)` that cell `k` owns under
 /// round-robin ownership (`position % cell_count == cell_id`) — `ceil((total-k)/C)`.
 /// A phase's per-cell slice is the difference of this over the phase's `[base,
@@ -988,6 +1039,56 @@ mod tests {
                 "should reject {bad}"
             );
         }
+    }
+
+    #[test]
+    fn rejects_graph_requests_budget_but_allows_sessions() {
+        // PartitionedGraphTraceSource partitions the SESSION space (sessions /
+        // --num-conversations / a duration), not a static-node `requests` budget: a
+        // `requests` phase falls back to the single-cell CyclingGraphTraceSource and
+        // every cell replays the full un-partitioned cycle. Fail closed on `requests`
+        // (and on a concurrency cap below cell_count), accept a session/duration bound.
+        //
+        // REJECT: a graph phase carrying a static-node `requests` budget.
+        assert!(
+            validate_graph_cellular_phases(
+                &serde_json::json!({"run": {"cfg": {"phases": [
+                    {"type": "concurrency", "name": "profiling", "requests": 100, "concurrency": 8},
+                ]}}}),
+                4
+            )
+            .is_err()
+        );
+        // REJECT: a concurrency cap below cell_count (floors to 1 per cell, over-subscribes).
+        assert!(
+            validate_graph_cellular_phases(
+                &serde_json::json!({"run": {"cfg": {"phases": [
+                    {"type": "concurrency", "name": "profiling", "sessions": 100, "concurrency": 2},
+                ]}}}),
+                4
+            )
+            .is_err()
+        );
+        // ACCEPT: a `sessions`-bounded phase with a concurrency cap >= cell_count and no `requests`.
+        assert!(
+            validate_graph_cellular_phases(
+                &serde_json::json!({"run": {"cfg": {"phases": [
+                    {"type": "concurrency", "name": "profiling", "sessions": 100, "concurrency": 8},
+                ]}}}),
+                4
+            )
+            .is_ok()
+        );
+        // ACCEPT: a `duration`-bounded phase with no `requests` budget.
+        assert!(
+            validate_graph_cellular_phases(
+                &serde_json::json!({"run": {"cfg": {"phases": [
+                    {"type": "concurrency", "name": "profiling", "duration": 30.0, "concurrency": 8},
+                ]}}}),
+                4
+            )
+            .is_ok()
+        );
     }
 
     #[test]
