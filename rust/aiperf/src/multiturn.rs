@@ -24,7 +24,7 @@ use crate::dataset::{
 };
 use crate::endpoints::{
     CreditPhase, Endpoint, EndpointId, EndpointKey, Media as EndpointMedia, PreparedEndpoint,
-    PreparedEndpointTable, Turn as EndpointTurn,
+    PreparedEndpointTable, ShapeLowerer, Turn as EndpointTurn,
 };
 use crate::graph::wire::OpenAiChatMessage;
 use crate::rng::RngRoot;
@@ -511,6 +511,25 @@ impl PreparedTurnEndpointResolver for PreparedEndpointTableResolver {
 
 fn normalize_endpoint_name(name: &str) -> String {
     name.trim().to_ascii_lowercase().replace(['-', '/'], "_")
+}
+
+/// Lower every static content turn to a pre-serialized `Message` segment for the
+/// run's default prepared endpoint (segment spec §5), so dispatch splices the
+/// stored wire instead of re-rendering. Endpoints whose body is not a per-turn
+/// message array (embeddings, completions, media, …) have no lowerer and are
+/// left on the live render path; per-turn endpoint overrides are skipped inside
+/// the lowering pass itself.
+fn lower_static_messages(
+    dataset: &mut NativeDataset,
+    endpoint_resolver: &dyn PreparedTurnEndpointResolver,
+) -> Result<()> {
+    let resolved = endpoint_resolver.resolve(None)?;
+    if let Some(lowerer) = ShapeLowerer::for_descriptor_id(resolved.endpoint.descriptor().id) {
+        dataset
+            .lower_messages_for_endpoint(&lowerer)
+            .map_err(|error| anyhow!("failed to lower static messages: {error}"))?;
+    }
+    Ok(())
 }
 
 /// Endpoint selection retained by one schedulable turn.
@@ -1019,6 +1038,8 @@ impl NativeDatasetConversationSource {
         samplers: &SamplerRegistry,
         endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
     ) -> Result<Self> {
+        let mut dataset = dataset;
+        lower_static_messages(&mut dataset, endpoint_resolver.as_ref())?;
         let dataset = Arc::new(dataset);
         let sampler = samplers.create(
             &dataset.metadata().sampling_strategy,
@@ -1064,6 +1085,8 @@ impl NativeDatasetConversationSource {
         default_output_tokens: usize,
         endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
     ) -> Result<Self> {
+        let mut dataset = dataset;
+        lower_static_messages(&mut dataset, endpoint_resolver.as_ref())?;
         let dataset = Arc::new(dataset);
         let sampler = SequentialSampler::from_metadata(&dataset.metadata().conversations)?;
         Self::new_with_endpoint(

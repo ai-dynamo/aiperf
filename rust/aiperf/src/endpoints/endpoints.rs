@@ -699,48 +699,6 @@ pub(crate) enum PartShape {
     Messages,
 }
 
-pub(crate) fn build_messages(turns: &[Turn], shape: PartShape) -> EndpointResult<Vec<Value>> {
-    let mut messages = Vec::new();
-    for turn in turns {
-        if let Some(raw_messages) = &turn.raw_messages
-            && !raw_messages.is_empty()
-        {
-            messages.extend(raw_messages.clone());
-            continue;
-        }
-        messages.push(render_turn_message(turn, shape)?);
-    }
-    Ok(messages)
-}
-
-fn build_messages_responses(turns: &[Turn]) -> EndpointResult<Vec<Value>> {
-    let mut messages = Vec::new();
-    for turn in turns {
-        if let Some(raw_messages) = &turn.raw_messages
-            && !raw_messages.is_empty()
-        {
-            for item in raw_messages {
-                if item
-                    .as_object()
-                    .and_then(|obj| obj.get("type"))
-                    .and_then(Value::as_str)
-                    .is_some_and(is_replay_unsafe_output_item)
-                {
-                    continue;
-                }
-                messages.push(item.clone());
-            }
-            continue;
-        }
-        let mut message = render_turn_message(turn, PartShape::Responses)?;
-        if let Value::Object(obj) = &mut message {
-            obj.insert("type".into(), Value::String("message".into()));
-        }
-        messages.push(message);
-    }
-    Ok(messages)
-}
-
 /// One assembled message: either a lowered pre-serialized wire spliced verbatim,
 /// or a freshly-rendered value serialized once at dispatch.
 enum RenderedMessage {
@@ -890,6 +848,24 @@ fn format_responses_input_wires(
         ));
     }
     out.extend(rendered_turn_messages(turns, PartShape::Responses, false)?);
+    serialize_rendered_messages(out)
+}
+
+/// Assemble the Anthropic Messages `messages` array as spliceable wires,
+/// mirroring the user-context prefix plus [`build_messages`] under the Messages
+/// part shape over lowered/rendered turn messages.
+pub(crate) fn format_messages_array_wires(
+    request: &PreparedRequest<'_>,
+    turns: &[Turn],
+) -> EndpointResult<SmallVec<[Bytes; 1]>> {
+    let mut out = Vec::new();
+    if let Some(context) = request
+        .user_context_message()
+        .filter(|value| !value.is_empty())
+    {
+        out.push(RenderedMessage::Value(json!({"role":"user","content":context})));
+    }
+    out.extend(rendered_turn_messages(turns, PartShape::Messages, false)?);
     serialize_rendered_messages(out)
 }
 
@@ -1089,31 +1065,6 @@ fn render_video_part(url: &str, shape: PartShape) -> EndpointResult<Value> {
                 .into(),
         )),
     }
-}
-
-fn format_chat_messages(request: &PreparedRequest<'_>, mut rendered: Vec<Value>) -> Vec<Value> {
-    let mut messages = Vec::new();
-    let first_is_system = rendered
-        .first()
-        .and_then(Value::as_object)
-        .and_then(|obj| obj.get("role"))
-        .and_then(Value::as_str)
-        == Some("system");
-    if let Some(system) = request.system_message().filter(|value| !value.is_empty()) {
-        if first_is_system && request.credit_phase() == CreditPhase::Warmup {
-            rendered = prepend_system_message(rendered, system);
-        } else if !first_is_system {
-            messages.push(json!({"role":"system","content":system}));
-        }
-    }
-    if let Some(context) = request
-        .user_context_message()
-        .filter(|value| !value.is_empty())
-    {
-        messages.push(json!({"role":"user","content":context}));
-    }
-    messages.extend(rendered);
-    messages
 }
 
 fn prepend_system_into_object(first: &mut Map<String, Value>, system: &str) {
@@ -1730,4 +1681,87 @@ pub(crate) fn build_plain_assistant_turn<E: Endpoint + ?Sized>(
         texts: vec![Media::new(vec![text])],
         ..Turn::default()
     }))
+}
+
+#[cfg(test)]
+mod lowering_tests {
+    use super::*;
+
+    fn text_turn() -> Turn {
+        Turn {
+            role: Some("user".into()),
+            texts: vec![Media::new(vec!["hello".to_string()])],
+            ..Turn::default()
+        }
+    }
+
+    fn multimodal_turn(image: &str) -> Turn {
+        Turn {
+            role: Some("user".into()),
+            texts: vec![Media::new(vec!["look".to_string()])],
+            images: vec![Media::new(vec![image.to_string()])],
+            ..Turn::default()
+        }
+    }
+
+    /// Oracle: a lowered wire is byte-identical to the dispatch render path
+    /// (`serde_json::to_vec(render_turn_message(...))`) for the Chat shape.
+    #[test]
+    fn lowered_wire_matches_rendered_dispatch_wire_text_only() {
+        let turn = text_turn();
+        let lowerer = ShapeLowerer::for_descriptor_id("chat").unwrap();
+        let wires = lowerer.lower_turn(&turn).unwrap();
+        assert_eq!(wires.len(), 1);
+        let expected =
+            Bytes::from(serde_json::to_vec(&render_turn_message(&turn, PartShape::Chat).unwrap()).unwrap());
+        assert_eq!(wires[0], expected);
+    }
+
+    /// Oracle: multimodal content lowers byte-identically to the dispatch render.
+    #[test]
+    fn lowered_wire_matches_rendered_dispatch_wire_multimodal() {
+        let turn = multimodal_turn("http://example/a.png");
+        let lowerer = ShapeLowerer::for_descriptor_id("chat").unwrap();
+        let wires = lowerer.lower_turn(&turn).unwrap();
+        let expected =
+            Bytes::from(serde_json::to_vec(&render_turn_message(&turn, PartShape::Chat).unwrap()).unwrap());
+        assert_eq!(wires[0], expected);
+    }
+
+    /// Oracle: the Responses shape lowers with the `type:"message"` injection,
+    /// matching the dispatch render exactly.
+    #[test]
+    fn lowered_wire_matches_rendered_dispatch_wire_responses() {
+        let turn = text_turn();
+        let lowerer = ShapeLowerer::for_descriptor_id("responses").unwrap();
+        let wires = lowerer.lower_turn(&turn).unwrap();
+        let mut expected_value = render_turn_message(&turn, PartShape::Responses).unwrap();
+        if let Value::Object(obj) = &mut expected_value {
+            obj.insert("type".into(), Value::String("message".into()));
+        }
+        assert_eq!(wires[0], Bytes::from(serde_json::to_vec(&expected_value).unwrap()));
+        // The injected discriminant is present in the wire bytes.
+        assert!(
+            std::str::from_utf8(&wires[0])
+                .unwrap()
+                .contains(r#""type":"message""#)
+        );
+    }
+
+    /// Two turns with identical text but different media render to distinct wires
+    /// (the byte-parity companion to the segment hash-key fix).
+    #[test]
+    fn same_text_different_media_lowers_to_distinct_wires() {
+        let lowerer = ShapeLowerer::for_descriptor_id("chat").unwrap();
+        let a = lowerer.lower_turn(&multimodal_turn("http://example/a.png")).unwrap();
+        let b = lowerer.lower_turn(&multimodal_turn("http://example/b.png")).unwrap();
+        assert_ne!(a[0], b[0]);
+    }
+
+    /// A dialect whose body is not a per-turn message array has no lowerer.
+    #[test]
+    fn non_message_array_dialects_have_no_lowerer() {
+        assert!(ShapeLowerer::for_descriptor_id("embeddings").is_none());
+        assert!(ShapeLowerer::for_descriptor_id("completions").is_none());
+    }
 }

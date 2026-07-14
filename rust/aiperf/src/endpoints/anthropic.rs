@@ -13,7 +13,7 @@ use serde_json::{Map, Value, json};
 
 use crate::body_plan::BodyPlan;
 use crate::endpoints::endpoints::{
-    PartShape, build_messages, build_plain_assistant_turn, latest_turn_attr, merge_extra,
+    build_plain_assistant_turn, format_messages_array_wires, latest_turn_attr, merge_extra,
     non_empty_field, require_prepared_turns,
 };
 use crate::endpoints::extraction::{PartTypes, extract_inputs};
@@ -210,14 +210,7 @@ impl PreparedEndpointBehavior for MessagesEndpoint {
         )?;
         let last = turns.last().expect("non-empty turns");
 
-        let mut messages = Vec::new();
-        if let Some(context) = request
-            .user_context_message()
-            .filter(|value| !value.is_empty())
-        {
-            messages.push(json!({"role":"user","content":context}));
-        }
-        messages.extend(build_messages(turns, PartShape::Messages)?);
+        let message_wires = format_messages_array_wires(request, turns)?;
 
         let mut payload = Map::new();
         payload.insert(
@@ -229,7 +222,9 @@ impl PreparedEndpointBehavior for MessagesEndpoint {
                     .unwrap_or_else(|| request.primary_model_name().to_string()),
             ),
         );
-        payload.insert("messages".into(), Value::Array(messages));
+        // Empty-array placeholder fixes the field's insertion position; the real
+        // spliced wires replace it after decomposition (segment spec §5).
+        payload.insert("messages".into(), Value::Array(Vec::new()));
         payload.insert(
             "max_tokens".into(),
             Value::from(last.max_tokens.unwrap_or(1_024)),
@@ -249,7 +244,9 @@ impl PreparedEndpointBehavior for MessagesEndpoint {
 
         merge_extra(&mut payload, endpoint.extra.as_ref());
         merge_extra(&mut payload, last.extra_body.as_ref());
-        Ok(BodyPlan::from_object(&payload)?)
+        let mut plan = BodyPlan::from_object(&payload)?;
+        plan.splice_message_wires("messages", message_wires);
+        Ok(plan)
     }
 }
 

@@ -24,7 +24,8 @@ use serde_json::{Map, Value};
 use crate::body_plan::{BodyPlan, JsonBodyMaterializer};
 use crate::dataset::dataset::Dataset;
 use crate::dataset::error::{DatasetError, Result};
-use crate::dataset::materialize::Overrides;
+use crate::dataset::materialize::{Overrides, message_wire};
+use smallvec::SmallVec;
 use crate::dataset::model::{
     AccuracyAssociation, Conversation, ConversationContextMode, MediaKind, SessionId, Turn,
 };
@@ -1049,9 +1050,27 @@ fn split_snapshot(mut turn: EndpointTurn) -> Vec<EndpointTurn> {
 }
 
 pub(crate) fn resolve_turn(store: &dyn SegmentStore, turn: &Turn) -> Result<EndpointTurn> {
+    // A static content turn lowered at load (segment spec §5) carries both its
+    // `content` and the pre-serialized `Message` handle(s) written onto
+    // `messages`. Its wires are routed to `lowered` for verbatim splicing rather
+    // than parsed into `raw_messages` and re-serialized; the content is still
+    // resolved below so the warmup first-turn re-render path stays available. An
+    // authored `messages` turn (no content) keeps the raw_messages render path
+    // unchanged, and `raw_messages` and lowering never coexist (validation +
+    // load-time carve-out).
+    let lowered_content = !turn.content.is_empty() && !turn.messages.is_empty();
     let mut raw_messages = Vec::new();
-    for handle in &turn.messages {
-        raw_messages.push(raw_value(store, *handle, "message")?);
+    let mut lowered: Option<SmallVec<[Bytes; 1]>> = None;
+    if lowered_content {
+        let mut wires: SmallVec<[Bytes; 1]> = SmallVec::with_capacity(turn.messages.len());
+        for handle in &turn.messages {
+            wires.push(message_wire(store, *handle)?);
+        }
+        lowered = Some(wires);
+    } else {
+        for handle in &turn.messages {
+            raw_messages.push(raw_value(store, *handle, "message")?);
+        }
     }
     if let Some(handle) = turn.raw_messages {
         match raw_value(store, handle, "raw_messages")? {
@@ -1073,6 +1092,7 @@ pub(crate) fn resolve_turn(store: &dyn SegmentStore, turn: &Turn) -> Result<Endp
         raw_system: raw_array(store, turn.raw_system, "raw_system")?,
         extra_body: raw_object(store, turn.extra_body, "extra_body")?,
         raw_token_ids: raw_token_ids(store, turn.raw_token_ids)?,
+        lowered,
         ..EndpointTurn::default()
     };
     for group in &turn.content {
@@ -1889,5 +1909,157 @@ mod tests {
         assert_eq!(body["max_output_tokens"], 9);
         assert_eq!(request.endpoint.as_deref(), Some("responses"));
         assert_eq!(request.endpoint_path.as_deref(), Some("/v1/responses"));
+    }
+
+    use crate::endpoints::ShapeLowerer;
+
+    fn content_turn(text: Handle, image: Option<Handle>) -> Turn {
+        let mut content = smallvec![ContentGroup {
+            kind: MediaKind::Text,
+            name: String::new(),
+            handles: smallvec![text],
+        }];
+        if let Some(image) = image {
+            content.push(ContentGroup {
+                kind: MediaKind::Image,
+                name: String::new(),
+                handles: smallvec![image],
+            });
+        }
+        Turn {
+            role: Some(Role::from("user")),
+            content,
+            input_tokens: 2,
+            max_tokens: Some(7),
+            ..Turn::default()
+        }
+    }
+
+    fn prepared_chat() -> Box<dyn PreparedEndpoint> {
+        EndpointRegistry::builtin()
+            .unwrap()
+            .prepare(
+                &EndpointId::new("chat").unwrap(),
+                RawEndpointConfig::default(),
+            )
+            .unwrap()
+    }
+
+    fn dispatch_body(dataset: Arc<Dataset>, endpoint: &dyn PreparedEndpoint) -> Bytes {
+        let mut session = ConversationSession::new(dataset, SessionId::from("session")).unwrap();
+        session.advance_to(0).unwrap();
+        session
+            .materialize_prepared(
+                &EndpointRequestMaterializer,
+                endpoint,
+                "primary-model",
+                CreditPhase::Profiling,
+                &Overrides::new(),
+            )
+            .unwrap()
+            .body
+    }
+
+    fn one_content_turn_dataset(text: Handle, image: Option<Handle>, pool: SegmentPool) -> Dataset {
+        let mut conversation = Conversation::new("session");
+        conversation.context_mode = Some(ConversationContextMode::MessageArrayWithResponses);
+        conversation.turns = vec![content_turn(text, image)];
+        Dataset::new(
+            vec![conversation],
+            Arc::new(pool.freeze()),
+            "sequential",
+            ConversationContextMode::MessageArrayWithResponses,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn lowered_dispatch_body_is_byte_identical_to_pre_lowering() {
+        let mut pool = SegmentPool::new();
+        let text = pool
+            .intern_text(None, Role::from("user"), Bytes::from_static(b"hello"), vec![1, 2])
+            .unwrap();
+        let image = pool
+            .intern_media(
+                None,
+                MediaKind::Image,
+                Bytes::from_static(b"http://example/a.png"),
+            )
+            .unwrap();
+        let base = one_content_turn_dataset(text, Some(image), pool);
+        let endpoint = prepared_chat();
+
+        let unlowered = Arc::new(base.clone());
+        let mut lowered_ds = base;
+        let lowerer = ShapeLowerer::for_descriptor_id(endpoint.descriptor().id).unwrap();
+        lowered_ds.lower_messages_for_endpoint(&lowerer).unwrap();
+        // Idempotent: a second pass is a no-op.
+        lowered_ds.lower_messages_for_endpoint(&lowerer).unwrap();
+        let lowered = Arc::new(lowered_ds);
+
+        // The lowered turn spliced its stored wire; the pre-lowering turn rendered
+        // its content live. The dispatched bytes must be identical.
+        let before = dispatch_body(unlowered, endpoint.as_ref());
+        let after = dispatch_body(lowered.clone(), endpoint.as_ref());
+        assert_eq!(before, after);
+        // The lowered turn actually carries a message handle now.
+        assert_eq!(lowered.conversations()[0].turns[0].messages.len(), 1);
+    }
+
+    #[test]
+    fn identical_content_turns_dedup_to_one_segment_when_lowered() {
+        let mut pool = SegmentPool::new();
+        let text = pool
+            .intern_text(None, Role::from("user"), Bytes::from_static(b"same"), vec![9])
+            .unwrap();
+        let mut conversation = Conversation::new("session");
+        conversation.context_mode = Some(ConversationContextMode::MessageArrayWithResponses);
+        conversation.turns = vec![content_turn(text, None), content_turn(text, None)];
+        let mut dataset = Dataset::new(
+            vec![conversation],
+            Arc::new(pool.freeze()),
+            "sequential",
+            ConversationContextMode::MessageArrayWithResponses,
+        )
+        .unwrap();
+        let lowerer = ShapeLowerer::for_descriptor_id("chat").unwrap();
+        dataset.lower_messages_for_endpoint(&lowerer).unwrap();
+
+        let turns = &dataset.conversations()[0].turns;
+        // Identical rendered content dedups to a single shared segment handle.
+        assert_eq!(turns[0].messages[0], turns[1].messages[0]);
+    }
+
+    #[test]
+    fn same_text_different_media_turns_lower_to_distinct_segments() {
+        let mut pool = SegmentPool::new();
+        let text = pool
+            .intern_text(None, Role::from("user"), Bytes::from_static(b"look"), vec![9])
+            .unwrap();
+        let image_a = pool
+            .intern_media(None, MediaKind::Image, Bytes::from_static(b"http://a"))
+            .unwrap();
+        let image_b = pool
+            .intern_media(None, MediaKind::Image, Bytes::from_static(b"http://b"))
+            .unwrap();
+        let mut conversation = Conversation::new("session");
+        conversation.context_mode = Some(ConversationContextMode::MessageArrayWithResponses);
+        conversation.turns = vec![
+            content_turn(text, Some(image_a)),
+            content_turn(text, Some(image_b)),
+        ];
+        let mut dataset = Dataset::new(
+            vec![conversation],
+            Arc::new(pool.freeze()),
+            "sequential",
+            ConversationContextMode::MessageArrayWithResponses,
+        )
+        .unwrap();
+        let lowerer = ShapeLowerer::for_descriptor_id("chat").unwrap();
+        dataset.lower_messages_for_endpoint(&lowerer).unwrap();
+
+        let turns = &dataset.conversations()[0].turns;
+        // Same text, different media must not mis-dedup to one wire.
+        assert_ne!(turns[0].messages[0], turns[1].messages[0]);
     }
 }
