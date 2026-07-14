@@ -62,7 +62,9 @@ def test_derive_vectors(golden: dict) -> None:
         assert str(root.derive_seed(name)) == derive[name], name
     assert str(RngRoot(42).derive_seed("")) == derive["empty_id"]
     assert str(RngRoot(0).derive_seed("a")) == derive["root0_a"]
-    assert str(RngRoot(42).derive_variation_seed("concurrency=4")) == derive["variation"]
+    assert (
+        str(RngRoot(42).derive_variation_seed("concurrency=4")) == derive["variation"]
+    )
 
 
 def test_u64_stream(golden: dict) -> None:
@@ -83,7 +85,9 @@ def test_integer_ranges(golden: dict) -> None:
     ranges += [g.randint(1, 3) for _ in range(5)]
     ranges += [g.randbelow(100) for _ in range(5)]
     assert ranges == golden["randrange"]
-    assert [str(g.randrange_u64(1000, 2000)) for _ in range(5)] == golden["randrange_u64"]
+    assert [str(g.randrange_u64(1000, 2000)) for _ in range(5)] == golden[
+        "randrange_u64"
+    ]
 
 
 def test_choice(golden: dict) -> None:
@@ -158,9 +162,9 @@ def test_sample_normal(golden: dict) -> None:
 
 def test_positive_normal_integer(golden: dict) -> None:
     g = ParityRandomGenerator.from_seed(55)
-    assert [
-        g.sample_positive_normal_integer(100.0, 10.0) for _ in range(12)
-    ] == golden["positive_normal_int"]
+    assert [g.sample_positive_normal_integer(100.0, 10.0) for _ in range(12)] == golden[
+        "positive_normal_int"
+    ]
 
 
 def test_hash_id_stream(golden: dict) -> None:

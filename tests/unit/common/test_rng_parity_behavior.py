@@ -39,7 +39,11 @@ def test_ziggurat_tables_have_expected_shape_and_scalars():
 # --------------------------------------------------------------------- derivation
 def test_derivation_is_order_independent():
     root = RngRoot(99)
-    ids = ["dataset.audio.duration", "timing.request.poisson_interval", "dataset.sampler.shuffle"]
+    ids = [
+        "dataset.audio.duration",
+        "timing.request.poisson_interval",
+        "dataset.sampler.shuffle",
+    ]
     expected = {i: root.derive_seed(i) for i in ids}
     for order in ([2, 0, 1], [1, 2, 0], [0, 1, 2]):
         for idx in order:

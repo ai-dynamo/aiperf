@@ -186,6 +186,15 @@ requires both `AIPERF_CONTENT_SERVER_ENABLED=true` and a non-empty existing
 `AIPERF_CONTENT_SERVER_CONTENT_DIR`; enabled with an empty directory starts a
 temporary server but keeps media inline. See `docs/tutorials/content-server.md`.
 
+`AIPERF_RNG_BACKEND=rust_parity` (default `legacy`) swaps the seeded random
+substrate from Python's Mersenne Twister + NumPy (SHA-256 derivation) to a
+pure-Python byte-exact port of the Rust `aiperf::rng` `Pcg64` + BLAKE3 substrate
+(`src/aiperf/common/rng_parity/`), so seeded Python and Rust produce identical
+streams in tests. `Environment.RNG.BACKEND` in `src/aiperf/common/environment.py`;
+parity is proved against committed Rust golden vectors
+(`rust/aiperf/examples/rng_parity_vectors.rs` ->
+`rust/aiperf/tests/data/rng_parity_vectors.json`).
+
 The online concurrency and request-rate issuers own all applicable live ramp
 actuators. User-centric owns only its optional session-concurrency pool, while
 fixed schedule owns none; unsupported ramps fail validation rather than becoming

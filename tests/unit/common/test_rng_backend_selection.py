@@ -35,9 +35,7 @@ def test_default_backend_is_legacy():
     generator = manager.derive("dataset.loader")
     assert isinstance(generator, RandomGenerator)
     # Legacy derivation is SHA-256 of "{root}:{identifier}".
-    expected = int.from_bytes(
-        hashlib.sha256(b"42:dataset.loader").digest()[:8], "big"
-    )
+    expected = int.from_bytes(hashlib.sha256(b"42:dataset.loader").digest()[:8], "big")
     assert generator.seed == expected
 
 

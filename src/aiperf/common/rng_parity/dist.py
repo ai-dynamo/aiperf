@@ -291,8 +291,10 @@ class NormalDistribution:
         self.max = None
 
     def sample(self, gen) -> float:
-        raw = self.mean if self.stddev <= 0.0 else gen.sample_positive_normal(
-            self.mean, self.stddev
+        raw = (
+            self.mean
+            if self.stddev <= 0.0
+            else gen.sample_positive_normal(self.mean, self.stddev)
         )
         return _clamp(raw, self.min, self.max)
 
