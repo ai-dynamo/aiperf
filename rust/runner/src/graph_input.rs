@@ -647,7 +647,7 @@ fn recorded_default_output_tokens(osl: Option<&DistributionSpec>) -> Result<usiz
         .map(|value| value.expected_value().ceil())
         .unwrap_or(1.0);
     ensure!(
-        expected.is_finite() && expected > 0.0 && expected <= usize::MAX as f64,
+        expected.is_finite() && expected > 0.0 && expected < usize::MAX as f64,
         "recorded graph dataset.osl expected value is outside usize range"
     );
     Ok(expected as usize)
@@ -762,7 +762,7 @@ impl DagJsonlFileInput {
             .map(|value| value.expected_value().ceil())
             .unwrap_or(1.0);
         ensure!(
-            expected.is_finite() && expected > 0.0 && expected <= usize::MAX as f64,
+            expected.is_finite() && expected > 0.0 && expected < usize::MAX as f64,
             "graph dataset.osl expected value is outside the native usize range"
         );
         Ok(expected as usize)

@@ -891,7 +891,7 @@ fn file_default_output_tokens(spec: &FileDatasetSpec) -> Result<usize> {
 
 fn checked_default_output_tokens(expected: f64) -> Result<usize> {
     ensure!(
-        expected.is_finite() && expected > 0.0 && expected <= usize::MAX as f64,
+        expected.is_finite() && expected > 0.0 && expected < usize::MAX as f64,
         "default OSL expected value is outside the native usize range"
     );
     Ok(expected as usize)
