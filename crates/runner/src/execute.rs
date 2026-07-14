@@ -112,8 +112,8 @@ use crate::protocol::{
 };
 use crate::readiness::{PreparedOnlineReadiness, ReadinessTransportFactory};
 use crate::records::{
-    CapturedHttpExchange, CapturedModelOutput, CapturedRecord, write_outputs_json,
-    write_raw_records_jsonl, write_records_jsonl,
+    CapturedHttpExchange, CapturedModelOutput, CapturedRecord, group_record_errors,
+    write_outputs_json, write_raw_records_jsonl, write_records_jsonl,
 };
 use crate::registry::ValidatedEndpointProfileV2;
 use crate::server_metrics::ServerMetricsRun;
@@ -1645,6 +1645,7 @@ async fn execute_native_inner(
             .as_ref()
             .map(|summary| summary.sidecar_metrics().clone())
             .unwrap_or_default(),
+        errors: group_record_errors(&captured),
         ..RunOutcome::default()
     };
     if let Some(accuracy) = accuracy.as_mut() {

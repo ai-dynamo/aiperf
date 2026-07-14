@@ -15,6 +15,7 @@ use std::path::Path;
 
 use aiperf::metrics_core::{
     CATALOG, MetricFlags, MetricType, MetricsAccumulator, MetricsConfig, Phase, RecordIngest,
+    ReportError,
 };
 use aiperf::transport_http::models::{
     ErrorKind, RequestRecord, Response, SseFieldName, SseMessage, TextResponse,
@@ -109,9 +110,105 @@ struct RecordMetric {
 
 #[derive(Serialize)]
 struct RecordError {
+    /// HTTP or pseudo-status code, e.g. 499 for a post-send cancellation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<u16>,
     #[serde(rename = "type")]
     error_type: &'static str,
-    message: &'static str,
+    message: String,
+}
+
+/// Terminal error classification shared by the per-request record row and the
+/// run-level error summary so both agree on the code, the stable type, and the
+/// message for one failed or cancelled request.
+struct ClassifiedRecordError {
+    /// HTTP or pseudo-status code; `Some(499)` for post-send cancellation.
+    code: Option<u16>,
+    /// Stable error type mirrored into the Python `ErrorDetails.type`.
+    error_type: &'static str,
+    /// Human-readable message.
+    message: String,
+}
+
+/// Classify a captured record's terminal error.
+///
+/// The exact transport [`ErrorDetails`](aiperf::transport_http::models::ErrorDetails)
+/// is preferred when raw artifacts retained it, so a real HTTP status and kind
+/// survive. Otherwise the code and stable type are derived from the record's
+/// terminal disposition: post-send cancellation is HTTP 499
+/// `RequestCancellationError`. Records that reached a normal terminal return
+/// `None`.
+fn classify_record_error(captured: &CapturedRecord) -> Option<ClassifiedRecordError> {
+    if let Some(error) = captured
+        .raw
+        .as_ref()
+        .and_then(|raw| raw.record.error.as_ref())
+    {
+        return Some(ClassifiedRecordError {
+            code: error.code,
+            error_type: error_kind_type_name(error.kind),
+            message: error.message.clone(),
+        });
+    }
+    let record = &captured.ingest;
+    if record.canceled {
+        return Some(ClassifiedRecordError {
+            code: Some(499),
+            error_type: "RequestCancellationError",
+            message: "request was cancelled by benchmark policy".to_string(),
+        });
+    }
+    if record.errored {
+        return Some(ClassifiedRecordError {
+            code: None,
+            error_type: "NativeRequestError",
+            message: "request failed in the native transport".to_string(),
+        });
+    }
+    None
+}
+
+/// Stable `ErrorDetails.type` name for a transport [`ErrorKind`].
+fn error_kind_type_name(kind: ErrorKind) -> &'static str {
+    match kind {
+        ErrorKind::Http => "HttpError",
+        ErrorKind::Sse => "SSEResponseError",
+        ErrorKind::Cancelled => "RequestCancellationError",
+        ErrorKind::Connect => "ConnectError",
+        ErrorKind::Timeout => "TimeoutError",
+        ErrorKind::Other => "TransportError",
+    }
+}
+
+/// Group profiling-phase terminal errors into the run-level report summary,
+/// keyed by `(code, stable type, message)`.
+///
+/// This preserves the HTTP 499 post-send cancellation code and its
+/// `RequestCancellationError` type in the aggregated `error_summary`, which the
+/// Python native-report projection reads from the report `errors` array. Only
+/// profiling-phase records are grouped so the summary matches the profiling
+/// `error_request_count`.
+pub(crate) fn group_record_errors(records: &[CapturedRecord]) -> Vec<ReportError> {
+    let mut grouped: BTreeMap<(Option<u16>, &'static str, String), usize> = BTreeMap::new();
+    for captured in records
+        .iter()
+        .filter(|captured| captured.ingest.phase == Phase::Profiling)
+    {
+        if let Some(classified) = classify_record_error(captured) {
+            *grouped
+                .entry((classified.code, classified.error_type, classified.message))
+                .or_insert(0) += 1;
+        }
+    }
+    grouped
+        .into_iter()
+        .map(|((code, error_type, message), count)| ReportError {
+            code,
+            error_type: error_type.to_string(),
+            message,
+            count,
+        })
+        .collect()
 }
 
 #[derive(Serialize)]
@@ -328,17 +425,10 @@ pub(crate) fn write_outputs_json(
 fn record_row(captured: &CapturedRecord, config: &MetricsConfig, include_trace: bool) -> RecordRow {
     let record = &captured.ingest;
     let metrics = record_metrics(captured, config);
-    let error = (record.errored || record.canceled).then_some(RecordError {
-        error_type: if record.canceled {
-            "NativeRequestCancelled"
-        } else {
-            "NativeRequestError"
-        },
-        message: if record.canceled {
-            "request was cancelled by benchmark policy"
-        } else {
-            "request failed in the native transport"
-        },
+    let error = classify_record_error(captured).map(|classified| RecordError {
+        code: classified.code,
+        error_type: classified.error_type,
+        message: classified.message,
     });
     RecordRow {
         metadata: RecordMetadata {
@@ -479,14 +569,7 @@ fn text_response_value(response: &TextResponse) -> Value {
 fn error_value(error: &aiperf::transport_http::models::ErrorDetails) -> Value {
     json!({
         "code": error.code,
-        "type": match error.kind {
-            ErrorKind::Http => "HttpError",
-            ErrorKind::Sse => "SSEResponseError",
-            ErrorKind::Cancelled => "RequestCancellationError",
-            ErrorKind::Connect => "ConnectError",
-            ErrorKind::Timeout => "TimeoutError",
-            ErrorKind::Other => "TransportError",
-        },
+        "type": error_kind_type_name(error.kind),
         "message": error.message,
     })
 }
@@ -605,6 +688,34 @@ mod tests {
         assert_eq!(row["metrics"]["inter_token_latency"]["value"], 2.5);
         assert!(row.get("trace_data").is_none());
         assert!(row["error"].is_null());
+    }
+
+    #[test]
+    fn cancelled_record_projects_http_499_and_cancellation_type() {
+        let mut ingest = RecordIngest::minimal(1_000_000, 5_000_000, Phase::Profiling);
+        ingest.canceled = true;
+        ingest.tokens.input = Some(128);
+        let captured = CapturedRecord {
+            uuid: Uuid::from_u128(3),
+            x_correlation_id: "session-3".into(),
+            output: CapturedModelOutput::default(),
+            raw: None,
+            ingest,
+        };
+
+        let row = record_row(&captured, &MetricsConfig::default(), false);
+        let value = serde_json::to_value(&row).unwrap();
+        assert_eq!(value["metadata"]["was_cancelled"], true);
+        assert_eq!(value["error"]["code"], 499);
+        assert_eq!(value["error"]["type"], "RequestCancellationError");
+        // error_isl is still computed for the cancelled request's input tokens.
+        assert!(value["metrics"]["error_isl"]["value"].as_f64().unwrap() > 0.0);
+
+        let errors = group_record_errors(std::slice::from_ref(&captured));
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].code, Some(499));
+        assert_eq!(errors[0].error_type, "RequestCancellationError");
+        assert_eq!(errors[0].count, 1);
     }
 
     #[test]
