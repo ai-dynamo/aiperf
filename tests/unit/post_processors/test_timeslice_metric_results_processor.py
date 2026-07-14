@@ -1,22 +1,60 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import uuid
 from unittest.mock import Mock, patch
 
 import pytest
 
-from aiperf.common.constants import NANOS_PER_SECOND
+from aiperf.common.constants import NANOS_PER_MILLIS, NANOS_PER_SECOND
 from aiperf.common.enums import MetricType
 from aiperf.common.exceptions import NoMetricValue, PostProcessorDisabled
 from aiperf.common.models import MetricResult
 from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
+from aiperf.metrics.types.replay_sched_lag_metrics import (
+    ReplaySchedDegradedMetric,
+    ReplaySchedLagP50Metric,
+    ReplaySchedLagP90Metric,
+    ReplaySchedLagP99Metric,
+    ReplaySendScheduleOffsetMetric,
+)
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
+from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
 from aiperf.post_processors.timeslice_metric_results_processor import (
     TimesliceMetricResultsProcessor,
 )
 from tests.unit.post_processors.conftest import create_metric_records_message
+
+
+@pytest.fixture
+def fixed_schedule_slice_run():
+    """Real (unmocked) fixed-schedule BenchmarkRun with --slice-duration set,
+    so FIXED_SCHEDULE_ONLY metrics survive the applicability filters."""
+    from aiperf.config import BenchmarkConfig, BenchmarkRun
+    from aiperf.plugin.enums import EndpointType
+
+    cfg = BenchmarkConfig.model_validate(
+        {
+            "models": ["test-model"],
+            "endpoint": {
+                "type": EndpointType.COMPLETIONS,
+                "urls": ["http://localhost:8000/v1"],
+                "streaming": False,
+            },
+            "datasets": [{"name": "default", "type": "synthetic"}],
+            "phases": [{"name": "profiling", "type": "fixed_schedule"}],
+            "artifacts": {"slice_duration": 1.0},
+        }
+    )
+    return BenchmarkRun(
+        benchmark_id=uuid.uuid4().hex,
+        cfg=cfg,
+        artifact_dir=cfg.artifacts.dir,
+        random_seed=None,
+        variables={},
+    )
 
 
 class TestTimesliceMetricResultsProcessor:
@@ -349,6 +387,64 @@ class TestTimesliceMetricResultsProcessor:
             assert list(processor._timeslice_results[i]["test_record"].data) == [
                 float(i)
             ]
+
+    @pytest.mark.asyncio
+    async def test_run_scoped_derived_metrics_not_rederived_per_slice(
+        self, fixed_schedule_slice_run
+    ) -> None:
+        """The replay lag family anchors to the run-global minimum offset;
+        per-slice re-derivation would re-anchor each slice at its own minimum
+        and erase cumulative schedule drift, so it must be skipped."""
+        run_scoped_tags = {
+            ReplaySchedLagP50Metric.tag,
+            ReplaySchedLagP90Metric.tag,
+            ReplaySchedLagP99Metric.tag,
+            ReplaySchedDegradedMetric.tag,
+        }
+        processor = TimesliceMetricResultsProcessor(fixed_schedule_slice_run)
+
+        # Send offsets whose lag grows by a full second between slice 0 and
+        # slice 1 -- per-slice anchoring would report ~5 ms p50 in each slice.
+        sends_ns = [
+            (int(0.2 * NANOS_PER_SECOND), 0),
+            (int(0.7 * NANOS_PER_SECOND), 10 * NANOS_PER_MILLIS),
+            (int(1.2 * NANOS_PER_SECOND), 1000 * NANOS_PER_MILLIS),
+            (int(1.7 * NANOS_PER_SECOND), 1010 * NANOS_PER_MILLIS),
+        ]
+        for i, (request_start_ns, offset_ns) in enumerate(sends_ns):
+            message = create_metric_records_message(
+                x_request_id=f"req-{i}",
+                request_start_ns=request_start_ns,
+                results=[{ReplaySendScheduleOffsetMetric.tag: offset_ns}],
+            )
+            await processor.process_result(message.to_data())
+
+        await processor.update_derived_metrics()
+
+        assert sorted(processor._timeslice_results) == [0, 1]
+        for timeslice_results in processor._timeslice_results.values():
+            assert not (set(timeslice_results) & run_scoped_tags)
+        # The raw per-slice offsets stay available (they are honest values).
+        assert list(
+            processor._timeslice_results[0][ReplaySendScheduleOffsetMetric.tag].data
+        ) == [0, 10 * NANOS_PER_MILLIS]
+
+    def test_run_scoped_exclusion_is_exact_and_run_level_unaffected(
+        self, fixed_schedule_slice_run
+    ) -> None:
+        """Only the run-scoped family is excluded from per-slice derivation,
+        and the run-level processor keeps deriving it."""
+        timeslice_processor = TimesliceMetricResultsProcessor(fixed_schedule_slice_run)
+        run_level_processor = MetricResultsProcessor(fixed_schedule_slice_run)
+
+        assert set(run_level_processor.derive_funcs) - set(
+            timeslice_processor.derive_funcs
+        ) == {
+            ReplaySchedLagP50Metric.tag,
+            ReplaySchedLagP90Metric.tag,
+            ReplaySchedLagP99Metric.tag,
+            ReplaySchedDegradedMetric.tag,
+        }
 
     @pytest.mark.asyncio
     async def test_timeslice_instances_map_creates_separate_instances(

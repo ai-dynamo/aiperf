@@ -286,12 +286,19 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         Default implementation extracts `timestamp`, `delay`, `output_length`,
         and `extra` via getattr, which works for both Mooncake and Bailian traces.
         """
+        # extra="allow" surfaces stray row keys as attributes; only a DECLARED
+        # request_body field (e.g. BasetenTrace) may override the row's extra.
+        request_body = (
+            getattr(trace, "request_body", None)
+            if "request_body" in type(trace).model_fields
+            else None
+        )
         return Turn(
             timestamp=getattr(trace, "timestamp", None),
             delay=getattr(trace, "delay", None),
             texts=[Text(name="text", contents=[prompt])],
             max_tokens=getattr(trace, "output_length", None),
-            extra_body=getattr(trace, "extra", None),
+            extra_body=request_body or getattr(trace, "extra", None),
         )
 
     def convert_to_conversations(

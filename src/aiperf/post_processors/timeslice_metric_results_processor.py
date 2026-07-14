@@ -37,6 +37,15 @@ class TimesliceMetricResultsProcessor(MetricResultsProcessor):
             self.run.cfg.artifacts.slice_duration * NANOS_PER_SECOND
         )
 
+        # Derived metrics anchored to a run-global reference (timeslice_derivable
+        # is False) are only derived at run level; re-deriving them per slice
+        # would re-anchor each slice at its own reference.
+        self.derive_funcs = {
+            tag: func
+            for tag, func in self.derive_funcs.items()
+            if MetricRegistry.get_class(tag).timeslice_derivable
+        }
+
         # Set up aggregate metric object default initialization for each timeslice
         self._timeslice_instances_maps: dict[
             TimeSliceT, dict[MetricTagT, BaseMetric]
