@@ -2,7 +2,10 @@
 
 **Date:** 2026-07-10 (rev 2 — reframed around the explicit product goal + Level-B measurement)
 **Author:** Anthony Casagrande (Tech Lead) + Claude
-**Status:** design (supersedes rev 1 "unified graph-runtime")
+**Status:** design — the realization design: every load mode reduces to one
+dispatch verb on the clock-scheduled graph executor, and strategies become
+`Workload` schedule generators (supersedes rev 1 "unified graph-runtime" and the
+earlier scheduling-policy sketch).
 **Grounding:** line-by-line read of `src/aiperf/timing/**` and of dynamo
 `lib/mocker/**` (loadgen, replay offline single/agg/disagg, collector, protocols,
 perf_model, handoff, scheduler). Companion specs: the north-star,
@@ -44,6 +47,16 @@ The entire engineering problem is: **make the `Backend`/`Clock` seam universal, 
 make `SimBackend` (OFFLINE) emit aiperf's own measurement stream so every command
 produces aiperf's report offline too.** That last clause is the **Level-B** decision
 (§6), and it is exactly what your engine-boundary spec already specified.
+
+**Terminology mapping to today's crates.** `Backend` and `ResponseSink` are the
+north-star *explanatory* vocabulary used throughout this doc; the built workspace
+exposes the same dispatch seam concretely as `loadgen-core::{RequestSink<R>,
+RequestObserver, Dispatchable}`, with time supplied by `aiperf-clock::Clock`. When
+implementing against the current crates, read `Backend::dispatch` as
+`RequestSink<R>::dispatch`, `ResponseSink`/`Event`-emission as `RequestObserver`
+callbacks (`on_arrival`/`on_admit`/`on_token`/`on_usage`/`on_terminal`), and a
+dispatchable request as `Dispatchable`. Virtual-time controls stay on `SimClock`
+rather than being added to the `Clock` trait itself.
 
 ---
 
@@ -399,13 +412,16 @@ of ONLINE-REAL with zero code difference.
 | 18 | `CancellationPolicy` | dyn | ClientDisconnectSim | no |
 | 19 | `Reporter` + exporters | dyn | genai-perf CSV/JSON/console | no |
 | 20 | `ConversationSource` / `Sampler` | dyn | Dataset / random·seq·shuffle | no |
-| 21 | `IdFactory` / `Rng` | dyn | Counter / SHA-256-seeded | no |
+| 21 | `IdFactory` / `Rng` | dyn | Counter / BLAKE3-derived order-independent seeds | no |
 | 22 | `RequestObserver` (mocker-side) | dyn | `ObsAdapter`→aiperf Events; `TraceCollector` co-observer | no |
 
 ¹ one blessed impl; trait for test doubles only. Parkable seams (#2,3,6,7,8,11) build
 on `WaitQueue`. #5/#6/#22 are OFFLINE-only (absent in the two ONLINE modes). The
 mocker's `TraceCollector` is now just *one* `RequestObserver` impl (#22), optional and
-co-observed; aiperf's `Collector` (#4) is primary on all three backends.
+co-observed; aiperf's `Collector` (#4) is primary on all three backends. The `Rng`
+(#21) substrate derives seeds with BLAKE3 in an order-independent way and explicitly
+does **not** pursue cross-language byte parity with Python's RNG — determinism is a
+Rust-side reproducibility contract, not a Python-parity one.
 
 ---
 
@@ -436,17 +452,3 @@ ONLINE-MOCK are already one code path (a URL apart). OFFLINE-MOCK needs the
 exist in dynamo's runtimes. The shipped graph-offline `SteppableReplay` was the right
 subset for one feature; Level B is the superset that makes *every* command work
 offline with aiperf's report.
-
-## Addendum — 2026-07-11
-
-The trait inventory's `IdFactory / Rng` row is superseded where it says
-`SHA-256-seeded`. The accepted native Rust RNG design uses BLAKE3-derived
-order-independent seeds and explicitly rejects cross-language byte parity with
-Python's RNG substrate.
-
-The `Backend` / `ResponseSink` vocabulary in this design remains useful for the
-north-star explanation, but the current built workspace exposes the dispatch seam as
-`loadgen-core::{RequestSink<R>, RequestObserver, Dispatchable}` with time supplied by
-`aiperf-clock::Clock`. When implementing against today's crates, translate the
-concepts to those concrete trait names and keep virtual-time controls on `SimClock`
-instead of adding them to the `Clock` trait.

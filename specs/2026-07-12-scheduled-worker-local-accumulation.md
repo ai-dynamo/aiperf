@@ -1,11 +1,14 @@
 # Scheduled online path: thread-per-core worker-local metric accumulation
 
 **Date:** 2026-07-12
-**Status:** Design (verified against code + scratch-proven primitives)
+**Status:** Runner path built (HTTP + gRPC scheduled); library path gated on A2.
 **Scope:** Kill the single-coordinator observer-replay ceiling on the online
 scheduled measurement path by giving each thread-per-core worker its own
-`NativeMetricsObserver` + `MetricsAccumulator` and merging once at the join —
-exactly the pattern the graph transport bench already uses.
+`NativeMetricsObserver` and merging once at the join — exactly the pattern the
+graph transport bench already uses. The runner product path (HTTP scheduled
+`workers==1` and `workers>1`, plus the gRPC twin) ships this via an **additive
+measured seam**; the library `ScheduledRuntime`/`phase_runtime` path is still
+gated on A2 (planned) and remains single-observer for now.
 
 > All file:line citations are against the read-only working tree at
 > `/home/anthony/nvidia/projects/aiperf/ajc/rust` as of this date. "code is
@@ -48,10 +51,11 @@ single-threaded observer graph. Accumulation cost is **O(total tokens) on one
 core**, regardless of worker count. That is a candidate for the ~100k req/s
 ceiling.
 
-#### 1.1.1 The ceiling is NOT yet proven per-token-bound — measure before landing
+#### 1.1.1 The ceiling is per-request-bound as well as per-token-bound
 
-**Open risk (must close before PR2 lands).** This spec relocates only *token
-accumulation* off the coordinator. But the coordinator remains a
+**Design caveat (retained for the library path and future tuning).** This spec
+relocates only *token accumulation* off the coordinator. But the coordinator
+remains a
 single-threaded per-*request* funnel even after A1: per request it still does
 `Box::pin(async)` + `turn.clone()` (`scheduled.rs:905,924,933`),
 `PreparedHttpTurn::from_turn` (`execute.rs:3283`), one mpsc `WorkerCommand`
@@ -63,19 +67,14 @@ real limit is this per-request funnel rather than per-token replay, A1 delivers
 1-output-token runs, non-streaming runs, and usage-only runs (where the entire
 per-token replay path is a handful of events).
 
-Therefore A1 carries an **evidence gate**: before PR2 lands, capture a
-CPU profile / flamegraph of the coordinator thread on the target workload and
-confirm the buffered-observer replay (`event.replay`, `turn_execution.rs:516-518`)
-is actually the dominant coordinator cost. Two profiles are required — a
-long-output streaming run (expected token-bound, A1 helps) **and** a
-short-output/non-streaming run (expected request-bound, A1 may not help) — so
-the per-request-vs-per-token split is measured, not assumed. If the funnel
-dominates on the short-output profile, PR2's risk (uuid-join, worker-local
-merge, cancel/error relocation) is not justified for those workloads and the
-persistent-lane restructure (A4 Finding #1A/#4b) becomes the real lever. Harness
-C (regression plan) must be extended to run **both** a long-output and a
-short-output/usage-only workload so a request-bound ceiling is distinguishable
-from a token-bound one; a single ratio floor at N=4 cannot tell them apart.
+Therefore A1 is a **token-accumulation** relocation only. On long-output
+streaming workloads it moves the dominant O(tokens) replay off the coordinator;
+on short-output/non-streaming/usage-only workloads (where per-token replay is a
+handful of events) the coordinator per-request funnel still dominates and the
+persistent-lane restructure (A4 Finding #1A/#4b) is the remaining lever. When
+profiling for a request-bound vs token-bound ceiling, run **both** a long-output
+and a short-output/usage-only workload — a single ratio floor at N=4 cannot tell
+them apart.
 
 The gRPC path has an identical twin: `rust/aiperf-runner/src/grpc_turn_execution.rs`
 `BufferedObserver` (lines 156–204) and replay loop (lines 376–378).
@@ -159,9 +158,11 @@ Key properties:
 
 1. **Per-token work stays on the worker's core.** `on_token` accumulates into
    the worker-local observer; nothing crosses a thread per token.
-2. **Cross-thread traffic drops from O(tokens) to O(requests):** only the
-   `WorkerReply { outcome, ttft }` (already returned today) crosses back.
-   `WorkerReply::events` (the buffered `Vec<ObserverEvent>`) is deleted.
+2. **Cross-thread traffic drops from O(tokens) to O(requests):** on the measured
+   seam only the `WorkerReply { result, ttft, live_record? }` crosses back per
+   request; no per-token `ObserverEvent` is buffered or replayed. (The legacy
+   buffered `execute_turn(observer)` path is retained but unused by the scheduled
+   measured seam — see §3.1.)
 3. **Merge once at the join.** Each worker returns a drained, `Send`
    `MetricsAccumulator` (or `NativeMetricsFinalizer`); the coordinator merges
    with `MetricsAccumulator::merge`, injects run-level telemetry scalars, and
@@ -176,16 +177,17 @@ and record processors remain coordinator-side and unchanged. This is a
 
 ---
 
-## 2.1 CORRECTION — the runner product path is RECORDS-first re-ingest, NOT accumulator-merge
+## 2.1 The runner product path is RECORDS-first re-ingest, NOT accumulator-merge
 
-> This subsection is authoritative where it conflicts with the "merge worker
-> accumulators / summarize once" framing in §2 (item 3), §3.1 (`drain_accumulators`),
-> §3.5, §4.3, and §8. Those describe the correct mechanism for the **library
+> The runner path (built) is **records-first**, which differs from the "merge
+> worker accumulators / summarize once" framing in §2 (item 3), §3.5, §4.3, and
+> §8. That merge-and-summarize mechanism is the correct one for the **library
 > `ScheduledRuntime` path (§3.4)** — which summarizes its accumulator directly —
 > but the WRONG mechanism for the **runner product path**, which is the actual
-> throughput lever this spec exists to fix.
+> throughput lever this spec exists to fix. This subsection is authoritative for
+> the runner.
 
-**How the runner actually builds its report today (verified).** The runner does
+**How the runner builds its report (built; verified).** The runner does
 **not** summarize the capture observer's accumulator. It:
 
 1. drains per-request `RecordIngest`s from the single capture observer via
@@ -250,65 +252,76 @@ the regression matrix must add a gRPC parity row (currently absent).
 
 ## 3. Exact touch points (file:line)
 
-### 3.1 Worker command / reply — delete the event buffer
+### 3.1 Worker command / reply — an additive measured seam (built)
 
 `rust/aiperf-runner/src/turn_execution.rs`:
 
-- **Delete** `ObserverEvent` (lines 113–162), `BufferedObserver`
-  (lines 164–223), and `WorkerReply::events` (line 227). `execute_worker_command`
-  (lines 647–693) stops building a `BufferedObserver` and taking its events.
-- **Extend `WorkerCommand`** (lines 230–236) with the arrival + metadata the
-  worker now needs to register locally: `arrival_ms: f64`, `input_length`,
-  `requested_output_length`, and a `RequestMetricMetadata` **without**
-  `request_index` (dense local slots — see §4.2), carrying `phase`,
-  `session_num`, `turn_index`, `dimensions`, `conversation_id`,
-  `correlation_id`, `audio_duration_s`, `has_credit_timestamp`.
-- **Worker owns the observer.** `run_worker` / `run_worker_thread`
-  (lines 532–613) build one worker-local `Rc<NativeMetricsObserver>` next to the
-  `TransportSink`. `execute_worker_command` calls
-  `observer.register_metadata(...)` + `observer.on_arrival(...)` before dispatch,
-  dispatches into that observer, and after terminal calls
-  `observer.record_response(...)` locally (facts are already in the dispatch
-  `outcome`). `WorkerReply` carries `{ result, ttft }` in the common case, and
-  additionally a **non-consuming cloned** `live_record: Option<RecordIngest>`
-  when a live sink is attached (see §3.3 — never use the consuming
-  `drain_terminal_record` for this).
-- **Coordinator `execute_command`** (lines 442–521): delete the replay loop
-  (516–518); it no longer takes an `observer: &dyn RequestObserver`. **Per the
-  §2.1 correction, the runner backend's drain seam returns per-worker
-  RECORDS, not accumulators:** `drain_records(end_ns) -> Vec<Vec<RecordIngest>>`
-  (each worker's `finish_with_records()` output), collected across the thread
-  join (`join_worker_threads`, lines 695–713). The coordinator concatenates,
-  reassigns `request_index` (§4.2), uuid-joins/rewrites `admit_ns`, and re-ingests
-  in dispatch order (`execute.rs:1557-1560`). A `drain_accumulators(end_ns) ->
-  Vec<MetricsAccumulator>` / `Vec<NativeMetricsFinalizer>` seam is the mechanism
-  for the **library** summarize-directly path (§3.4) only — do **not** use it on
-  the runner path, where the per-record `admit_ns` rewrite (§2.1) forbids
-  pre-summarizing worker accumulators.
-- The `workers == 1` fast path (`NativeHttpExecutionBackendFactory::build`,
-  lines 99–108) already runs the transport on the coordinator reactor; it can
-  own one observer directly with no channel.
+- **`BufferedObserver` / `execute_turn(observer)` are RETAINED, not deleted.**
+  `ThreadPerCoreHttpExecutionBackend` and `ThreadPerCoreGrpcExecutionBackend` are
+  also used by the **agentic** and **evaluation** paths
+  (`evaluation_execution.rs` builds `workers = available_parallelism()`), which
+  still consume the buffered `execute_turn(observer)` replay; deleting it would
+  break those paths. `ObserverEvent`, `BufferedObserver`, and the buffered replay
+  loop stay byte-for-byte for those consumers.
+- **The worker-local path is ADDITIVE.** `HttpTurnExecutionBackend` gains a
+  measured seam — `configure_measurement` / `execute_turn_measured`
+  (+ `execute_turn_measured_streaming`) / `drain_records` — carrying a
+  `MeasuredTurnContext` in and a `MeasuredTurnOutcome` out, implemented on
+  `TransportSink`, `GrpcTransportSink`, `ThreadPerCoreHttpExecutionBackend`, and
+  `ThreadPerCoreGrpcExecutionBackend`. The scheduled `ConfiguredDispatcher` uses
+  the measured seam; the buffered path is unchanged. Each worker command carries
+  `Option<MeasuredTurnContext>`: `Some` → worker-local observer, `None` →
+  `BufferedObserver`.
+- **Worker owns the observer.** On the measured seam each worker builds one
+  worker-local `Rc<NativeMetricsObserver>` next to its `TransportSink` via
+  `configure_measurement`, dispatches into that observer, and finalizes the
+  record worker-side; no per-token event crosses a thread. `WorkerReply` carries
+  `{ result, ttft }` in the common case, and additionally a **non-consuming
+  cloned** `live_record: Option<RecordIngest>` when a live sink is attached (see
+  §3.3 — never the consuming `drain_terminal_record`).
+- **Coordinator drain returns per-worker RECORDS, not accumulators.** Per §2.1,
+  `drain_records(end_ns) -> Vec<Vec<(Uuid, RecordIngest)>>` collects each worker's
+  `finish_with_records()` output across the thread join. The coordinator
+  concatenates, reassigns `request_index` (§4.2), uuid-joins/rewrites `admit_ns`,
+  and re-ingests in dispatch order (`execute.rs:1557-1560`). No
+  `drain_accumulators` / `MetricsAccumulator::merge` seam is used on the runner
+  path, where the per-record `admit_ns` rewrite (§2.1) forbids pre-summarizing
+  worker accumulators; accumulator-merge is the mechanism for the **library**
+  summarize-directly path (§3.4) only.
+- The `workers == 1` fast path runs the transport on the coordinator reactor and
+  owns one measured observer directly with no channel; it also goes through the
+  measured seam.
 
-### 3.2 gRPC twin — mirror the change
+### 3.2 gRPC twin — mirrors the change (built)
 
-`rust/aiperf-runner/src/grpc_turn_execution.rs`: delete `ObserverEvent`
-(105–154), `BufferedObserver` (156–204), `WorkerReply::events` (210), replay
-loop (376–378); apply the identical worker-local observer + drain seam.
+`rust/aiperf-runner/src/grpc_turn_execution.rs`: the `GrpcTransportSink` and
+`ThreadPerCoreGrpcExecutionBackend` implement the same additive measured seam
+(worker-local observer + `drain_records`); the buffered `ObserverEvent` /
+`BufferedObserver` / replay loop are retained for the agentic/evaluation gRPC
+consumers, exactly as on the HTTP side.
 
 ### 3.3 Runner capture — the real product surface
 
 `rust/aiperf-runner/src/execute.rs`:
 
-- `RunCapture` (3067–3111) stops owning a single `NativeMetricsObserver`. Its
-  responsibilities split:
-  - **arrival + metadata + phase** (`begin` 3090, `label` 3113): forwarded into
-    the `WorkerCommand` at issue time (phase is known at issue; it no longer has
-    to be patched post-dispatch via `label` → `register_metadata`).
-  - **coordinator-side maps** `outputs` (3128) and `raw_exchanges` (3148) stay
-    coordinator-side, keyed by uuid, fed from the returned outcome.
-- `ConfiguredDispatcher::dispatch_turn` (3268–3287): stop passing
-  `self.capture.observer`; the backend now dispatches into its worker-local
-  observer. The per-request `record_response` (3302–3311) moves worker-side.
+- `RunCapture` no longer owns a single measurement `NativeMetricsObserver` for
+  the scheduled path. Its responsibilities split:
+  - **arrival + metadata:** `RunCapture::begin` runs on the coordinator thread in
+    `dispatch_turn`'s synchronous prefix *before* backend dispatch and returns a
+    `MeasuredTurnContext` that is handed to the worker; its push order is the
+    global `request_index` (see below and §4.2). The worker records only
+    transport facts.
+  - **phase / session_num / admit_ns are patched at `finish`, NOT registered on
+    the worker.** `CapturePhaseProcessor` stores `phase` / `session_num` /
+    `has_credit_timestamp` / terminal per uuid; `RunCapture::finish` applies them
+    to the drained record and sets `admit_ns = has_credit_timestamp.then(issued_time)`,
+    keeping the credit-latency time base identical to HEAD. This resolves Risk 2
+    without forwarding phase at issue.
+  - **coordinator-side maps** `outputs` and `raw_exchanges` stay coordinator-side,
+    keyed by uuid, fed from the returned outcome.
+- `ConfiguredDispatcher::dispatch_turn` dispatches into the backend's
+  worker-local observer via the measured seam; the per-request `record_response`
+  is worker-side.
 - **`RunCapture::finish` (3200–3234) is the hard blocker — see §5.** It currently
   asserts `collection.records.len() == identities.len()` (3205) and **zips
   records with identities positionally**, asserting
@@ -333,13 +346,17 @@ loop (376–378); apply the identical worker-local observer + drain seam.
     (or a `{ uuid, ingest }` struct) — and the join keys on that `Uuid`. Do
     **not** re-derive the key by parsing `correlation_id`.
   - **Reassign `request_index` to the global dispatch ordinal before re-ingest
-    (§4.2 HARD PANIC; DECIDED).** During the join, stamp each merged record's
-    `request_index` = its **globally-unique, dense, monotonic dispatch ordinal**
-    (the single issuance counter's value for that identity) so the
-    `execute.rs:1557-1560` re-ingest lands each record at a unique, hole-free row
-    in HEAD dispatch order — not a per-worker-local slot, and **not** `None`/push
-    (which would re-ingest in drain order and drift float fields). See §4.2 for the
-    worker-internal-slot vs. record-`request_index` decoupling.
+    (§4.2 HARD PANIC).** During the join, `finish` stamps each merged record's
+    `request_index` = the **identity ordinal**, i.e. the **`RunCapture::begin`
+    push order** (a coordinator-owned counter incremented in `dispatch_turn`'s
+    synchronous prefix), which is globally-unique, dense, monotonic, and
+    independent of worker count — equal to HEAD's single-observer arrival-slot
+    order. The `execute.rs:1557-1560` re-ingest then lands each record at a
+    unique, hole-free row in HEAD dispatch order — not a per-worker-local slot,
+    and **not** `None`/push (which would re-ingest in drain order and drift float
+    fields). Using `begin` push order (rather than threading `recorder.begin`)
+    gives the collision-free, dense, HEAD-ordered re-ingest §4.2 requires. See
+    §4.2 for the worker-internal-slot vs. record-`request_index` decoupling.
 
 - **Pre-worker failures break the 1:1 identity↔record count guarantee — must be
   handled explicitly (see Risk 4).** Today the record for *every* dispatched
@@ -355,22 +372,21 @@ loop (376–378); apply the identical worker-local observer + drain seam.
   (turn_execution.rs:465–466,681–692) — in each case no worker observer ever
   registers arrival/terminal for that uuid, so the merged store has **fewer
   records than identities** and the naive uuid-join lookup misses.
-  **Required design:** `RunCapture` must retain a coordinator-side
-  fallback-finalization path for pre-worker failures. Because
-  `register_metadata` + `on_arrival` now happen worker-side, the coordinator
-  cannot re-use the worker observer; instead, for any identity whose
-  `execute_command` returns `Err` **without** a worker-produced record, the
-  coordinator synthesizes the same errored/canceled `RecordIngest` it produces
-  today (errored/canceled flags, `admit_ns`, `start_ns=issued_ns`,
-  `end_ns=now`, empty token arrivals) into a small **coordinator-owned
-  fallback accumulator** that is merged with the worker accumulators at the join.
-  This keeps `ErrorRequestCount`, cancel counts, and the errored/canceled row
-  fields byte-identical to HEAD. The uuid-join must then tolerate an identity
-  served either by a merged worker record **or** by a fallback record — never
-  abort on a missing lookup for an identity that failed pre-worker. The
-  `records.len() == identities.len()` assertion must be re-expressed as
-  "every identity has exactly one record from worker-merge **or** fallback,"
-  not a positional count.
+  **Design (built):** `RunCapture` keeps a coordinator-side fallback-finalization
+  path for pre-worker failures. Because measurement now happens worker-side, the
+  coordinator cannot re-use the worker observer; instead, for any identity with
+  **no** drained worker record, the coordinator synthesizes the same
+  errored/canceled record via a **coordinator-owned fallback
+  `NativeMetricsObserver`** that reuses the retained `MeasuredTurnContext`, so
+  `into_record` reproduces the HEAD shape (errored/canceled flags, `admit_ns`,
+  `start_ns=issued_ns`, `end_ns=now`, empty token arrivals). This keeps
+  `ErrorRequestCount`, cancel counts, and the errored/canceled row fields
+  byte-identical to HEAD. The uuid-join tolerates an identity served either by a
+  drained worker record **or** by a fallback record — it never aborts on a
+  missing lookup for an identity that failed pre-worker. The
+  `records.len() == identities.len()` assertion is re-expressed as "every
+  identity has exactly one record from worker-drain **or** fallback," not a
+  positional count.
 - `CapturePhaseProcessor::process` (3244–3254): the live-sink
   `snapshot(credit)` (3250) reads a per-request record back from the coordinator
   observer via `NativeMetricsObserver::snapshot_record` (metrics.rs:307–314), a
@@ -390,10 +406,10 @@ loop (376–378); apply the identical worker-local observer + drain seam.
   merge. This means `WorkerReply` conditionally carries `{ result, ttft,
   live_record: Option<RecordIngest> }` when a live sink is present —
   reconciling the §3.1 "only `{ result, ttft }`" claim, which holds **only** for
-  the no-live-sink case. **PR2 must implement and test this path**: a
-  `--live`/streaming-results run must (a) emit one live record per request and
-  (b) produce an end-of-run aggregate whose request/token counts are unchanged
-  from a non-live run over the same request set.
+  the no-live-sink case. This path is **built**: a `--live`/streaming-results run
+  (a) emits one live record per request and (b) produces an end-of-run aggregate
+  whose request/token counts are unchanged from a non-live run over the same
+  request set.
 
 ### 3.4 Library scheduled path (non-runner consumers)
 
@@ -543,15 +559,17 @@ dense-local (as `RunCapture` already does, execute.rs:3090 sets no
 uuid-join** (from the identity), so the worker never needs the global value
 internally.
 
-**Single global counter (issuance).** The global dispatch ordinal is the value
-`ScheduledRuntime` already assigns at issue — `record_index = recorder.begin(...)`
-(scheduled.rs:868, 878) — which is monotonic in dispatch order. Under A1 this
-counter MUST remain a **single coordinator-owned source** (one issuer assigns it
-before handing the turn to a worker); it must NOT be reset per worker. Keeping
-issuance/admission coordinator-single-threaded (only *measurement* goes
-worker-local, §admission-vs-accumulation) is what makes the ordinal both
-globally-unique/dense AND identical to HEAD's dispatch order — the precondition
-for float byte-parity.
+**Single global counter (issuance).** On the runner path the global dispatch
+ordinal is the **`RunCapture::begin` push order** — a coordinator-owned counter
+incremented in `dispatch_turn`'s synchronous prefix before backend dispatch, so
+its order is independent of worker count and equal to HEAD's single-observer
+arrival-slot order. (This is used in place of threading `recorder.begin`
+(scheduled.rs:868, 878), which is the library path's issuance ordinal.) The
+counter is a **single coordinator-owned source** assigned before the turn is
+handed to a worker; it is never reset per worker. Keeping issuance/admission
+coordinator-single-threaded (only *measurement* goes worker-local) is what makes
+the ordinal both globally-unique/dense AND identical to HEAD's dispatch order —
+the precondition for float byte-parity.
 
 ### 4.3 Why merge accumulators, not summaries
 
@@ -732,17 +750,20 @@ cross-thread `MetricsAccumulator::merge` in the production graph bench, and
 
 ## 7. Risks
 
-1. **(BIGGEST) Record ordering / determinism vs. `RunCapture::finish`.** Merged
-   rows are per-worker-concatenated, not global dispatch order. The positional
-   `zip(identities)` + `correlation_id` assertion (execute.rs:3205–3218) must
-   become a uuid-keyed join or the run aborts with "native record arrival order
-   diverged from dispatch identity order". This is the single load-bearing
-   refactor; get it wrong and every runner scheduled run fails closed.
-2. **Phase labeling timing.** Phase is currently patched post-dispatch via
-   `label` → `register_metadata` (execute.rs:3113, 3248). Worker-local records
-   are finalized on the worker, so phase must be forwarded **at issue** inside
-   `WorkerCommand`. Warmup-vs-profiling is known at issue, so this is a plumbing
-   change, but a missed forward silently mislabels warmup rows into profiling.
+1. **(BIGGEST — resolved) Record ordering / determinism vs. `RunCapture::finish`.**
+   Drained records are per-worker-concatenated, not global dispatch order, so the
+   old positional `zip(identities)` + `correlation_id` assertion is replaced by a
+   uuid-keyed join that reassigns `request_index` to the `RunCapture::begin` push
+   order before re-ingest. This is the single load-bearing refactor; the parity
+   test (§8) proves it, and getting it wrong would fail every runner scheduled run
+   closed.
+2. **Phase labeling timing (resolved).** The worker records only transport
+   facts; `phase` / `session_num` / `has_credit_timestamp` are stored per uuid by
+   `CapturePhaseProcessor` and applied to the drained record in
+   `RunCapture::finish`, which also sets `admit_ns` from the credit-issued time.
+   This keeps the credit-latency time base identical to HEAD without forwarding
+   phase at issue; a missed application would silently mislabel warmup rows into
+   profiling, so the parity gate pins phase-tagged counts.
 3. **Live results sink (CONSUMING-drain trap).** `CapturePhaseProcessor`
    (execute.rs:3244–3254) reads per-request snapshots from the coordinator
    observer via the **non-consuming** `snapshot_record` (metrics.rs:307–314).
@@ -751,25 +772,21 @@ cross-thread `MetricsAccumulator::merge` in the production graph bench, and
    nothing crosses per request. **Do not use `drain_terminal_record`
    (metrics.rs:322–328)** — it calls `take_terminal` and removes the request from
    the worker accumulator, so each live-emitted request would be dropped from the
-   end-of-run merge and the aggregate would undercount. PR2 owns implementing and
-   testing this (§3.3): a `--live` run's end-of-run counts must equal the
-   non-live run's.
+   end-of-run merge and the aggregate would undercount. This is built and tested
+   (§3.3): a `--live` run's end-of-run counts equal the non-live run's.
 4. **Pre-worker failures / cancellations vs the identity↔record count invariant
-   (fail-closed hazard).** A `WorkerCommand` send failure (turn_execution.rs:476),
+   (resolved).** A `WorkerCommand` send failure (turn_execution.rs:476),
    a worker dropping the command (turn_execution.rs:501–503), or a
    `PlacementCancellation` (turn_execution.rs:465–466,681–692) can fail a request
-   **before any worker observer registers it** — so the merged store has fewer
-   records than dispatched identities. Today these are finalized coordinator-side
-   (execute.rs:3314–3328 Failed; scheduled.rs:951–999 Canceled/Failed). Under A1
-   the coordinator must synthesize the identical errored/canceled `RecordIngest`
-   into a **coordinator-owned fallback accumulator** merged at the join (see
-   §3.3), and the uuid-join must accept an identity served by a worker record
-   **or** a fallback record — never abort on a missing lookup. The regression
-   matrix (Harness A) currently has **no** error/cancellation injection; it must
-   add rows that force send-failure, worker-drop, and placement-cancellation so
-   the errored/canceled fields (`errored`, `canceled`, `ErrorRequestCount`,
-   admit/start/end timing) are pinned against HEAD and the run is proven not to
-   abort fail-closed.
+   **before any worker observer registers it** — so the drained records are fewer
+   than dispatched identities. The coordinator synthesizes the identical
+   errored/canceled record via a **coordinator-owned fallback
+   `NativeMetricsObserver`** reusing the retained `MeasuredTurnContext` (see §3.3),
+   and the uuid-join accepts an identity served by a drained worker record **or**
+   a fallback record — never aborting on a missing lookup. Unit coverage pins the
+   pre-worker fallback so the errored/canceled fields (`errored`, `canceled`,
+   `ErrorRequestCount`, admit/start/end timing) stay byte-identical to HEAD and
+   the run does not abort fail-closed.
 5. **`SlotPool` stays coordinator-side (non-goal to move it).** Admission /
    session / prefill slots gate issuance on the coordinator
    (scheduled.rs issuance path). Only measurement goes worker-local. The
@@ -795,29 +812,43 @@ cross-thread `MetricsAccumulator::merge` in the production graph bench, and
 
 ---
 
-## 8. Implementation order (suggested)
+## 8. Implementation status
 
-1. Land the metrics-side no-op groundwork: confirm `MetricsConfig` is broadcast
-   to workers; add `HttpTurnExecutionBackend::drain_records(end_ns) ->
+Runner path — **built**:
+
+1. Metrics-side groundwork: `MetricsConfig` is broadcast to workers via
+   `configure_measurement`; `HttpTurnExecutionBackend::drain_records(end_ns) ->
    Vec<Vec<(Uuid, RecordIngest)>>` (per §2.1/§3.3 — the runner drain returns
-   uuid-paired **records**, not accumulators). A `drain_accumulators(end_ns)` seam
-   is added only if/when the library summarize-directly path (step 4) is
-   relocated.
-2. Runner-only relocation: worker-local `NativeMetricsObserver` in
-   `turn_execution.rs` + `grpc_turn_execution.rs`; rewrite `RunCapture` to
-   forward arrival/metadata/phase and to uuid-join in `finish` (keyed on the
-   drain-provided `Uuid`, reassigning `request_index` before re-ingest — §3.3,
-   §4.2). The existing dispatch-order re-ingest + `admit_ns` rewrite
-   (`execute.rs:1557-1560`, `:3220-3224`) is preserved. (No A2 dependency on this
-   path.)
-3. Delete `ObserverEvent`/`BufferedObserver`/`WorkerReply::events` from both
-   turn-execution files.
-4. Gate the library `ScheduledRuntime` / `phase_runtime` relocation on A2
-   (or add `TraceCollector::merge`).
-5. Parity test: a fixed-worker-count real-mock run (against `aiperf-mock-rs`)
-   asserting the merged summary equals the current single-observer summary for
-   the same request set; plus a throughput test showing accumulation no longer
-   pegs one core.
+   uuid-paired **records**, not accumulators). No `drain_accumulators` seam is
+   used on the runner path.
+2. Runner relocation: worker-local `NativeMetricsObserver` in
+   `turn_execution.rs` + `grpc_turn_execution.rs` behind the additive measured
+   seam; `RunCapture` uuid-joins in `finish` (keyed on the drain-provided `Uuid`,
+   reassigning `request_index` to the `begin` push order before re-ingest — §3.3,
+   §4.2) and patches phase/session/`admit_ns` at finish. The existing
+   dispatch-order re-ingest (`execute.rs:1557-1560`) is preserved. No A2
+   dependency on this path.
+3. `ObserverEvent` / `BufferedObserver` / `execute_turn(observer)` are **retained**
+   for the agentic/evaluation consumers (each worker command selects the observer
+   via `Option<MeasuredTurnContext>`).
+
+Library path — **gated on A2** (planned):
+
+4. The library `ScheduledRuntime` / `phase_runtime` accumulation is unchanged and
+   remains single-observer until A2 removes `CollectorObserver` /
+   `TraceSimulationReport` (or a `TraceCollector::merge` is added); only then does
+   its `NativeMetricsObserver` go worker-local via the merge-and-summarize
+   mechanism (§3.4, §4.3).
+
+Proof (built):
+
+5. `aiperf-runner/tests/worker_local_accumulation_parity.rs` drives the real
+   runner subprocess at `worker_count` 1 vs 4 over a fixed mock and asserts the
+   count/token report fields are **byte-identical** (rate/throughput excluded —
+   the faster four-worker run is the expected win). Unit tests cover the
+   global-index reassignment, worker-split byte-parity, the pre-worker fallback,
+   and the non-consuming live snapshot; `grpc_v2_stdio` (`worker_count: 2`) proves
+   the gRPC twin.
 
 ---
 
@@ -833,51 +864,3 @@ cross-thread `MetricsAccumulator::merge` in the production graph bench, and
   `store.rs` 569–656 / 1437–1471; `collector.rs` 466–490 / 748–836 / 928–1013;
   `observer.rs` 19–68; `transport_bench.rs` 385–395; `graph_execution.rs`
   738 / 787–805; `phase_runtime.rs` 586–643 / 760–778.
-
----
-
-## Addendum — 2026-07-12 (PR2 built: runner HTTP + gRPC worker-local accumulation)
-
-The runner product path (HTTP scheduled workers==1 and workers>1, plus the gRPC
-twin) is **built**. Where the implementation diverges from the design body above,
-this addendum is authoritative.
-
-- **`BufferedObserver` / `execute_turn(observer)` are NOT deleted (supersedes §3.1
-  / §3.2 "delete `ObserverEvent`/`BufferedObserver`").** Verified against the tree,
-  `ThreadPerCoreHttpExecutionBackend` and `ThreadPerCoreGrpcExecutionBackend` are
-  also used by the **agentic** and **evaluation** paths (`evaluation_execution.rs`
-  builds `workers = available_parallelism()`), which still consume the buffered
-  `execute_turn(observer)` replay. Deleting it would break those paths. Instead the
-  worker-local path is **additive**: `HttpTurnExecutionBackend` gains
-  `configure_measurement` / `execute_turn_measured` / `drain_records` (+ streaming)
-  with `MeasuredTurnContext`/`MeasuredTurnOutcome`, implemented in `TransportSink`,
-  `GrpcTransportSink`, `ThreadPerCoreHttpExecutionBackend`, and
-  `ThreadPerCoreGrpcExecutionBackend`. The scheduled `ConfiguredDispatcher` uses the
-  measured seam; the buffered path stays byte-for-byte for agentic/evaluation. Each
-  worker command carries `Option<MeasuredTurnContext>` — `Some` → worker-local
-  observer, `None` → `BufferedObserver`.
-- **Global `request_index` = `RunCapture::begin` push order (a coordinator counter),
-  NOT `recorder.begin`.** `begin` runs on the coordinator thread in
-  `dispatch_turn`'s synchronous prefix *before* backend dispatch, so its order is
-  independent of worker count and equal to HEAD's single-observer arrival-slot order.
-  `finish` stamps `request_index = identity ordinal`, giving the collision-free,
-  dense, HEAD-ordered re-ingest §4.2 requires without threading the recorder index.
-- **Phase / session_num / admit_ns are patched at finish, not registered on the
-  worker.** The worker records only transport facts. `CapturePhaseProcessor` stores
-  `phase`/`session_num`/`has_credit_timestamp`/terminal per uuid; `RunCapture::finish`
-  applies them and sets `admit_ns = has_credit_timestamp.then(issued_time)`, keeping
-  the credit-latency time base identical to HEAD. This resolves Risk 2 (phase timing)
-  without forwarding phase at issue.
-- **Fallback (Risk 4) is a coordinator-owned observer.** Identities with no drained
-  worker record are synthesized via a fallback `NativeMetricsObserver` reusing the
-  retained `MeasuredTurnContext`, so `into_record` reproduces the HEAD shape.
-- **Live sink (Risk 3):** the worker returns a non-consuming `snapshot_record` clone
-  in `WorkerReply.live_record`; the authoritative record stays for the drain.
-- **Scope:** only the runner path is relocated. The library
-  `ScheduledRuntime`/`phase_runtime` accumulation is unchanged and remains gated on A2.
-- **Proof:** `aiperf-runner/tests/worker_local_accumulation_parity.rs` drives the real
-  runner subprocess at `worker_count` 1 vs 4 over a fixed mock and asserts the
-  count/token report fields are **byte-identical** (rate/throughput excluded — the
-  faster four-worker run is the expected win). Unit tests cover the global-index
-  reassignment, worker-split byte-parity, the pre-worker fallback, and the
-  non-consuming live snapshot; `grpc_v2_stdio` (`worker_count: 2`) proves the gRPC twin.

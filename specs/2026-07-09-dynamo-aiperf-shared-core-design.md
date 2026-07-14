@@ -1,9 +1,9 @@
 # dynamo-aiperf: a Rust-native AIPerf sharing DynoSim's core — Design
 
 - **Date:** 2026-07-09
-- **Status:** Approved design; ready for implementation plan
+- **Status:** SUPERSEDED — historical precursor / lineage only. This document describes the prior `dynamo-aiperf-native` working tree, built directly on AI-Dynamo application internals. It is retained solely as the origin record for the `RequestSink` / `RequestObserver` seam and the later `loadgen-core` extraction. It is NOT a current implementation plan. The current AIPerf Rust workspace lives under `rust/`; default builds carry no Dynamo dependency, and the optional `dynosim` adapter consumes only the curated public mocker boundary (not the in-repo application internals described below). Read everything that follows as historical design record.
 - **Author:** Anthony Casagrande (with Claude)
-- **Working tree:** `/home/anthony/nvidia/projects/dynamo-aiperf-native` (fresh top-of-tree `ai-dynamo/dynamo` clone, commit `f553c46a`, moved out of `/tmp`)
+- **Working tree (historical):** `/home/anthony/nvidia/projects/dynamo-aiperf-native` (fresh top-of-tree `ai-dynamo/dynamo` clone, commit `f553c46a`, moved out of `/tmp`)
 - **Scope of this spec:** Increment 1 only — a walking-skeleton HTTP load generator built *on* DynoSim's production loadgen/collector core and dynamo-llm's OpenAI protocol/aggregators. Later increments (other load modes, endpoints, `loadgen-core` extraction) are named but not specified here.
 
 ## 1. Motivation
@@ -161,14 +161,3 @@ pub trait RequestSink: Send + Sync {
 3. Trace/agentic/disagg workload modes through the shared driver.
 4. Extract `loadgen-core` crate; `dynamo-aiperf` and `lib/mocker` both depend on it.
 5. Exporters / summary parity with Python AIPerf output.
-
-## Addendum — 2026-07-12 (historical precursor)
-
-This document describes a prior `dynamo-aiperf-native` working tree built on
-AI-Dynamo application internals. It is retained only as lineage for the
-`RequestSink` / `RequestObserver` seam and the later `loadgen-core` extraction.
-
-The current AIPerf Rust workspace lives under `rust/`, default builds have no
-Dynamo dependency, and the optional `dynosim` adapter consumes only the curated
-public mocker boundary. Do not read the "Approved design" status above as a
-current implementation plan for this repository.

@@ -3,11 +3,17 @@ SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# AIPerf-Rust: Metrics Accumulator + Sweep-Line Engine (`aiperf-metrics`)
+# AIPerf-Rust: Metrics Accumulator + Sweep-Line Engine (`aiperf::metrics_core`)
 
 **Date:** 2026-07-10
 **Author:** Anthony Casagrande (Tech Lead) + Claude
-**Status:** design
+**Status:** built — the IO-free performance-metrics engine ships in `aiperf::metrics_core`
+(NaN-sparse column store, exact ragged replay, record/aggregate/derived metrics,
+authoritative completion-usage reconciliation, SLO goodput, all effective/active +
+ICL-aware sweep curves, duration-weighted stats, phase windows/timeslices, deterministic
+worker-local merge, per-model/per-endpoint native-v2 series, typed `Reporter`). The
+frozen genai-perf-v1 compatibility export (§14) is the one piece **not built** here — it
+remains a compatibility sink in the separate exporter-overhaul spec.
 **Grounding:** line-by-line read of `analysis/sweepline{,_stats,_kv_cache}.py`,
 `metrics/{accumulator,column_store,_column_store_handlers,accumulator_models,accumulator_sweeps,metric_dicts,derived_latency,metric_registry}.py`,
 `common/enums/metric_enums.py`, `common/accumulator_protocols.py`, the summary path
@@ -30,8 +36,9 @@ time-weighted curves, the percentile kernel, the failure-inflated `adj_*`
 distribution, phase-authoritative masking) wrapped in a thick layer of
 **multiprocess/ZMQ accidental complexity** (a fan-in service, SUB/PULL ordering
 hacks, a legacy per-instance replay processor kept alive beside the real one, a
-plugin registry with reverse-lookup, dead dependency metadata). We build a
-**from-scratch** `aiperf-metrics` crate that:
+plugin registry with reverse-lookup, dead dependency metadata). The
+**from-scratch** `aiperf::metrics_core` engine (a module of `aiperf`, formerly the
+standalone `aiperf-metrics` leaf crate):
 
 1. **Carries the scars exactly** — the numeric algorithms and boundary contracts
    below are ported *behavior-for-behavior* and guarded with parity fixtures. These
@@ -40,11 +47,14 @@ plugin registry with reverse-lookup, dead dependency metadata). We build a
    improvement.
 2. **Throws away the accidental complexity** — none of the process-boundary
    machinery survives; it collapses to owned Rust state behind clean traits.
-3. **Fits the unified runtime** — it provides the `Collector` (a `ResponseSink`
-   that turns the `Event` stream into per-record columns) and the `Reporter`
-   (columns → `Report`) that the unified-graph-runtime spec names but leaves to
-   "the columnar accumulator." Same summary math runs on ONLINE and OFFLINE because
-   both feed the same `Event` stream.
+3. **Fits the unified runtime** — it provides the columnar accumulator plus the typed
+   `Reporter` (columns → `Report`) that the unified-graph-runtime spec names but leaves
+   to "the columnar accumulator." Runtime translation lives one layer up, in
+   `aiperf::metrics::NativeMetricsObserver`, which joins the Clock-stamped observer
+   `Event` stream into per-record columns; the `metrics_core` engine itself stays
+   IO-free. Same summary math runs on ONLINE and OFFLINE because both feed the same
+   observer stream — online, fixed-schedule, user-centric, adaptive, accuracy, and
+   graph execution all feed one accumulator.
 
 The single most important thing this subsystem gets right: **the genai-perf output
 contract** (field names, STAT_KEYS ordering, NaN-vs-null semantics) is the reason
@@ -70,8 +80,8 @@ AIPerf's numbers are trusted downstream. That contract does not move.
 
 The current Rust `loadgen-core::collector` is a *fixed struct* (nearest-rank
 percentiles, population std, a hand-written `Serialize`). It is the walking-skeleton
-seam; this spec is what it grows into (and largely moves out of `loadgen-core` into
-`aiperf-metrics`).
+seam; this spec is what it grew into (and largely moved out of `loadgen-core` into
+`aiperf::metrics_core`).
 
 ---
 
@@ -118,38 +128,46 @@ All exist only because Python ran N record-processor *processes* over a ZMQ bus:
 
 ---
 
-## 4. The crate: `aiperf-metrics` (new leaf)
+## 4. The engine: `aiperf::metrics_core`
 
-A new crate; **no `ndarray`** (the sweep-line is `Vec<f64>` + `sort_by` + manual
-cumsum/searchsorted — full control over the tie-break and determinism, no hidden
-allocation). Depends only on a shared finite-float type, `serde`, and `blake3`/
-`rustc-hash` for categorical interning. Nothing in the workspace depends *into* it
-except the crate that owns the `Collector`.
+The engine ships as the `metrics_core` module of `aiperf` (it began life as the
+standalone `aiperf-metrics` leaf crate and was inlined when the sixteen former
+`aiperf-*` library crates became modules of `aiperf`). **No `ndarray`** (the
+sweep-line is `Vec<f64>` + `sort_by` + manual cumsum/searchsorted — full control over
+the tie-break and determinism, no hidden allocation). It depends only on a shared
+finite-float type, `serde`, and `rustc-hash` for categorical interning — **no
+`blake3`**: metric categorical interning is dense first-appearance code assignment via
+`FxHashMap` + a reverse vector, not content addressing (BLAKE3 stays relevant to
+segment content hashes and RNG seed derivation, not metric category codes). The engine
+stays the core metrics seam: telemetry domains reuse its accumulator/reporting seam and
+may contribute side-channel accumulators or summaries, but `metrics_core` never depends
+on telemetry-specific modules and forms no dependency cycle.
 
 ```
-rust/aiperf-metrics/
-  Cargo.toml            # serde, serde_json, rustc-hash; no ndarray
-  src/
-    lib.rs
-    value.rs            # MetricValue (finite | +inf | absent), FiniteFloat scrub
-    catalog.rs          # MetricSpec table + MetricType/AggregationKind/Flags/ConsoleGroup + toposort
-    units.rs            # the unit algebra (convert_to), MetricValueType
-    store.rs            # ColumnStore: typed sparse columns, sentinels, interning, O(1) sum/count
-    ingest.rs           # RecordIngest — the per-record shape the Collector fills
-    kernel.rs           # percentile/distribution kernels (linear + nearest + ddof)
-    derived.rs          # effective / credit_to_start / adj_* / network_adjusted
-    sweepline/
-      mod.rs            # _sweep_line_cumsum, step-fn ops (add/divide/lookup), curves
-      stats.rs          # duration-weighted + active-weighted stats
-      kv_cache.rs       # tokens-in-flight + ICL variants + the nextafter clamp
-    accumulator.rs      # MetricsAccumulator: ingest → mask → compute → summarize
-    window.rs           # ExportContext / phase mask / observation_duration / timeslices
-    report.rs           # Reporter: AccumulatorSummary → genai-perf-schema Report
-    accumulator_trait.rs# Accumulator / Analyzer / StreamExporter traits + toposort driver
+rust/aiperf/src/metrics_core/
+  mod.rs                # module root + Accumulator / Analyzer / Reporter seam
+  value.rs              # MetricValue (finite | +inf | absent), FiniteFloat scrub
+  catalog.rs            # MetricSpec table + MetricType/AggregationKind/Flags/ConsoleGroup + toposort
+  units.rs              # the unit algebra (convert_to), MetricValueType
+  store.rs              # ColumnStore: typed sparse columns, sentinels, interning, O(1) sum/count, worker-store merge
+  ingest.rs             # RecordIngest — the per-record shape the observer fills
+  kernel.rs             # percentile/distribution kernels (linear + nearest + ddof)
+  derived.rs            # effective / credit_to_start / adj_* / network_adjusted
+  counter.rs            # counter-delta + histogram side-channel accumulator seam
+  sidecar.rs            # side-channel accumulator injection points
+  accuracy.rs           # accuracy-join seam over this Accumulator
+  sweepline/
+    mod.rs              # _sweep_line_cumsum, step-fn ops (add/divide/lookup), curves
+    stats.rs            # duration-weighted + active-weighted stats
+    kv_cache.rs         # tokens-in-flight + ICL variants + the nextafter clamp
+  accumulator.rs        # MetricsAccumulator: ingest → mask → compute → summarize + per-worker merge
+  window.rs             # ExportContext / phase mask / observation_duration / timeslices
+  report.rs             # NativeReporter: AccumulatorSummary → native-v2 Report
 ```
 
-Dependency direction: `aiperf` → (runtime crate owning `Collector`) → `aiperf-metrics`.
-`aiperf-metrics` is a leaf beside `aiperf-clock` / `aiperf-rng`.
+Dependency direction: `aiperf::run`/`aiperf::graph` (owning the observer →
+`RecordIngest` translation in `aiperf::metrics`) → `aiperf::metrics_core`.
+`metrics_core` is a leaf module beside `aiperf::clock` / `aiperf::rng`.
 
 ---
 
@@ -260,10 +278,12 @@ pub type DeriveFn = fn(&ScalarDict) -> Option<MetricValue>;
 - **DERIVED** → `DeriveFn` over the `ScalarDict`, in topo order; one failing derive
   logs and is skipped (scar: "one bad derive must not abort the summary").
 
-The ~120-metric catalog (ITL `osl<2` guard, TTFO first-non-reasoning-token,
-osl_mismatch `min()` cap, thinking-efficiency, `good_request_count` per-metric
-`LARGER_IS_BETTER`, `cache_reporting_hint` absent-vs-0) is enumerated in a follow-up
-catalog appendix; this spec fixes the *engine*, the catalog is data over it.
+The catalog holds the **103 source-grounded Python metric identities plus 16 native
+sweep identities** (ITL `osl<2` guard, TTFO first-non-reasoning-token, osl_mismatch
+`min()` cap, thinking-efficiency, `good_request_count` per-metric `LARGER_IS_BETTER`,
+`cache_reporting_hint` absent-vs-0). Telemetry-owned rows remain explicit injected
+`NoValue` seams until their producer specs are implemented. This spec fixes the
+*engine*; the catalog is data over it.
 
 ---
 
@@ -411,9 +431,16 @@ pub struct ExportContext {
 
 ---
 
-## 12. Seams: `Accumulator` / `Analyzer` / `Reporter` (`accumulator_trait.rs`)
+## 12. Seams: `Accumulator` / `Analyzer` / `Reporter` (`mod.rs`)
 
-Fits the unified-graph-runtime `Collector` (a `ResponseSink`) + `Reporter`:
+The engine sits behind an observer feed and a typed `Reporter`. Runtime translation
+lives above the leaf module: `aiperf::metrics::NativeMetricsObserver` joins
+Clock-stamped observer events, terminal state, token classification, endpoint usage,
+fine-grained HTTP trace facts, and workload dimensions into `RecordIngest`. Fixed
+schedules explicitly omit the credit-relative latency family because they have no
+credit-issuance phase. Graph workers accumulate without a per-token cross-thread lock,
+return their local (lean) stores through scoped thread joins, and merge in
+deterministic worker order:
 
 ```rust
 /// Owns exactly one record type; ingest → mask → summarize. `!Send` single-thread.
@@ -476,7 +503,16 @@ pub trait Reporter { fn report(&self, summary: &AccumulatorSummary, run: &RunOut
 
 ---
 
-## 14. The genai-perf export contract (`report.rs`) — do not drift
+## 14. The report contract (`report.rs`) — do not drift
+
+**Built:** `NativeReporter` implements the IO-free, metrics-first native-v2 report
+model (per-model / per-endpoint series included); the application layer writes it for
+`--json` in every CLI mode.
+
+**Unbuilt:** the frozen genai-perf-v1 compatibility export described below is **not**
+part of the accumulator/sweep-line engine — it remains a compatibility sink in the
+separate exporter-overhaul spec. Its contract still governs any future genai-perf-v1
+sink and must not drift:
 
 The one frozen external contract. Three distinct STAT_KEY orderings (CSV / JSON /
 console), `profile_export_aiperf.json` (`SCHEMA_VERSION`, `extra="allow"`) +
@@ -527,60 +563,16 @@ text — keep them.
 
 ## 17. Open questions
 
-1. **`ndarray` vs `Vec<f64>`** for the sweep-line hot path. Recommend `Vec` +
-   manual ops (control over the tie-break/FP-snap, deterministic, no hidden alloc);
-   revisit only if a >1M-record summarize profiles hot.
-2. **Where does the `Collector` live** — in the runtime crate (owning the
-   `ResponseSink` → `RecordIngest` translation) with `aiperf-metrics` as the pure
-   engine, or does `aiperf-metrics` own a thin `Collector` too? Recommend the former:
-   the runtime knows the `Event` stream; the metrics crate stays IO-free and testable
-   on synthetic `RecordIngest`.
+1. **`ndarray` vs `Vec<f64>`** for the sweep-line hot path. **Resolved: `Vec` + manual
+   ops** (control over the tie-break/FP-snap, deterministic, no hidden alloc); revisit
+   only if a >1M-record summarize profiles hot.
+2. **Where does the record translation live** — **Resolved: above the leaf.**
+   `aiperf::metrics::NativeMetricsObserver` (in the runtime layer) owns the observer →
+   `RecordIngest` translation and knows the `Event` stream; `metrics_core` stays IO-free
+   and testable on synthetic `RecordIngest`.
 3. **Report kernel ddof for the mixed console table** — inference metrics are ddof=0,
    telemetry ddof=1; when both appear in one table the kernel must be told per-metric
    (carry `ddof` on `MetricSpec`, default 0). Confirm no metric needs a third rule.
 4. **Catalog encoding** — a `const` array of `MetricSpec` vs a build-time macro. Lean
    `const` array + a `#[test]` that asserts the toposort is acyclic and tier-valid
    (the port's equivalent of Python's import-time fail-fast).
-
-## Addendum — 2026-07-11
-
-The crate dependency sentence that included `blake3` for categorical interning is
-superseded. Metric categorical interning is dense first-appearance assignment via a
-hash map such as `rustc-hash::FxHashMap` plus a reverse vector; it is not content
-addressing and does not need BLAKE3. BLAKE3 remains relevant to segment content hashes
-and the RNG seed-derivation design, not to metric category codes.
-
-`aiperf-metrics` should remain the core metrics engine/seam. Telemetry domains reuse
-that accumulator/reporting seam and may contribute side-channel accumulators or
-summaries, but the core metrics crate must not depend on telemetry-specific crates or
-create a dependency cycle.
-
-## Addendum — 2026-07-11 (native Rust implementation)
-
-The performance-metrics engine described by this spec is now built in
-`rust/aiperf-metrics`. Code truth is split across `store.rs` (NaN-sparse numeric
-columns, dense categorical interning, exact CSR ragged replay, worker-store merge),
-`accumulator.rs` (record/aggregate/derived dispatch, SLO goodput, phase/window masks,
-timeslices, and per-worker merge), `kernel.rs` (the fixed percentile band and
-error-adjusted nearest-rank tails), and `sweepline/` (all effective/active curves,
-ICL-aware decode throughput and tokens-in-flight, clipping, and duration-weighted
-statistics). The catalog contains the 103 source-grounded Python metric identities
-plus 16 native sweep identities; telemetry-owned rows remain explicit injected
-`NoValue` seams until their producer specs are implemented.
-
-Runtime translation lives above the leaf crate, as this spec recommended:
-`aiperf::metrics::NativeMetricsObserver` joins Clock-stamped observer events,
-terminal state, token classification, endpoint usage, fine-grained HTTP trace facts,
-and workload dimensions into `RecordIngest`. Fixed schedules explicitly omit the
-credit-relative latency family because they have no credit-issuance phase. Online,
-fixed-schedule, user-centric, adaptive, accuracy, and graph execution feed the same
-accumulator. Graph workers accumulate without a per-token cross-thread lock, return
-their local stores through scoped thread joins, and merge in deterministic worker
-order.
-
-`aiperf-metrics::NativeReporter` also implements the IO-free, metrics-first native-v2
-report model; the application layer writes it for `--json` in every CLI mode. The
-frozen genai-perf-v1 compatibility export discussed in section 14 is not part of the
-accumulator/sweep-line implementation: it remains an unbuilt compatibility sink in
-the separate exporter-overhaul spec. Likewise, telemetry collection and its
-histogram series remain future producers over the built injection/report seams.

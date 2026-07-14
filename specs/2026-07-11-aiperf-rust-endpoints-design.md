@@ -7,7 +7,10 @@ SPDX-License-Identifier: Apache-2.0
 
 **Date:** 2026-07-11
 **Author:** Anthony Casagrande (Tech Lead) + Claude
-**Status:** built — tier-1 and tier-2 dialects plus their online wire lifecycles
+**Status:** built — every tier-1/tier-2 dialect, the KServe + Riva families, the open protocol-v2
+`vllm_generate` token-native factory, and their online wire lifecycles. Endpoint identity and
+ownership have moved to the runner-owned registry (see §4); this spec is authoritative for formatter,
+parser, replay, extraction, transport-lifecycle, and parity behavior.
 **Grounding:** line-by-line read of `endpoints/{base_endpoint,openai_chat,openai_responses,
 _openai_responses_replay,openai_completions,openai_embeddings,chat_embeddings,response_mixin,
 protocols,payload_extraction}.py`, `common/models/{model_endpoint_info,extracted_payload}.py`,
@@ -38,29 +41,29 @@ The parse logic is a minefield of vendor quirks paid for in wrong-metric bugs (t
 agentic-OSL-undercount fix; the ~64%-of-streaming-turns function-call fix). **Port the behavior
 exactly, guard with fixtures.** This is redo-*port*, not redo-*clean* — unlike the exporters.
 
-**Rust home:** `aiperf-endpoints` owns the `Endpoint` trait, every native dialect, the shared
-body-build skeleton, the input-ISL extractor, and the static capability table. It remains
-transport-neutral. `aiperf-transport-http` owns the object-safe `HttpEndpointBinding` seam plus URL
-construction, header composition, body encoding, inline-media fetch, SSE framing, polling,
-download, cancellation, and decoding back into the canonical response shape; `aiperf` retains
-endpoint parsing, observation, and scheduled result composition.
+**Rust home:** the `aiperf::endpoints` module owns the `Endpoint` trait, every native dialect, the
+shared body-build skeleton, the input-ISL extractor, and each adapter's capability descriptor. It
+remains transport-neutral. The `aiperf::transport_http` module owns the object-safe
+`HttpEndpointBinding` seam plus URL construction, header composition, body encoding, inline-media
+fetch, SSE framing, polling, download, cancellation, and decoding back into the canonical response
+shape; the rest of `aiperf` retains endpoint parsing, observation, and scheduled result composition.
 
-**Implementation addendum (2026-07-11):** the complete tier-2 set is built in
-`rust/aiperf-endpoints/src/tier2.rs` and `tier2/flexible.rs`: NIM/Cohere/Hugging Face rankings,
-image generation/edit, video generation, Hugging Face generate, NIM embeddings, image retrieval,
-Solido RAG, raw, and template. Multipart JSON/binary encoding, request-local inline-media fetch
-deduplication, Clock-paced video polling/download, and post-send cancellation across the entire
-poll lifecycle live under `rust/aiperf-transport-http/src/transport/`. Per-turn endpoint selection
-and response/usage/modality observation are wired in `rust/aiperf/src/http/endpoint_dispatch.rs`.
-`rust/aiperf/tests/tier2_endpoints_online.rs` proves all dialect families and all four special
-lifecycles against real loopback HTTP, including cancellation anchored to the original submit-body
-send completion and native image/video report metrics.
+The complete tier-2 set is built in `endpoints/tier2.rs` and `tier2/flexible.rs`: NIM/Cohere/Hugging
+Face rankings, image generation/edit, video generation, Hugging Face generate, NIM embeddings, image
+retrieval, Solido RAG, raw, and template. Multipart JSON/binary encoding, request-local inline-media
+fetch deduplication, Clock-paced video polling/download, and post-send cancellation across the entire
+poll lifecycle live under `transport_http/transport/`. Per-turn endpoint selection and
+response/usage/modality observation are wired in `http/endpoint_dispatch.rs`.
+`tests/tier2_endpoints_online.rs` proves all dialect families and all four special lifecycles against
+real loopback HTTP, including cancellation anchored to the original submit-body send completion and
+native image/video report metrics.
 
-**Implementation addendum (2026-07-12):** the concrete HTTP implementation is named
-`aiperf-transport-http`. `transport/endpoint_binding.rs` now owns the object-safe
-`HttpEndpointBinding`, its metadata-driven implementation, HTTP request lowering, and HTTP/SSE to
-`ServerResponse` decoding. The same endpoint implementation can therefore be paired with a future
-gRPC or WebSocket binding without transport-specific endpoint subclasses.
+`transport_http/transport/endpoint_binding.rs` owns the object-safe `HttpEndpointBinding`, its
+metadata-driven implementation, HTTP request lowering, and HTTP/SSE to `ServerResponse` decoding. The
+same endpoint implementation can therefore be paired with a future gRPC or WebSocket binding without
+transport-specific endpoint subclasses — the five KServe V2 OIP dialects already bind to the native
+Tonic transport (`2026-07-12-aiperf-native-grpc-kserve-v2-design.md`), and endpoint parsing sees the
+same canonical JSON shape after either HTTP JSON or gRPC protobuf decoding.
 
 ---
 
@@ -171,14 +174,14 @@ pub struct ExtractedPayload {
 
 ## 4. Capability metadata + the endpoint registry
 
-Each endpoint type carries an **`EndpointMetadata`** capability record (a **static table** in Rust,
-not a YAML plugin registry). The flags drive **four request lifecycles + two metric switches** —
-this is the endpoint layer's real control flow:
+Each adapter carries an **`EndpointMetadata`** capability descriptor. The flags drive **four request
+lifecycles + two metric switches** — this is the endpoint layer's real control flow:
 
 | Flag | Gates |
 |---|---|
 | `tokenizes_input` | whether client-side ISL tokenization runs + input-token metrics exist |
 | `produces_tokens` | whether output-token metrics exist |
+| `requires_raw_token_ids` | dataset composition + validation must supply an exact `Turn::raw_token_ids` array (token-native factories such as `vllm_generate`); a representation contract, not an endpoint-ID branch |
 | `requires_form_data` | body encoded as multipart `FormData` (not JSON); config auto-derives `request_content_type=MULTIPART` at load, rejects a JSON override |
 | `requires_polling` | the whole request routes to async submit → poll status → optional download (video) |
 | `requires_inline_media` | media URLs downloaded + base64-inlined pre-dispatch (image_retrieval) |
@@ -186,39 +189,77 @@ this is the endpoint layer's real control flow:
 | `supports_streaming` | config force-disables `streaming` with a warning if false |
 | `endpoint_path`, `metrics_title`, `service_kind`, `supports_/produces_{audio,images,videos}` | path append, display, modality acceptance |
 
-**The 16 registered types** (type → path → key flags): `chat` (`/v1/chat/completions`), `completions`,
-`responses` (`/v1/responses`), `embeddings`, `chat_embeddings`, `nim_embeddings`, `cohere_rankings`
-(`/v2/rerank`), `hf_tei_rankings`, `nim_rankings`, `huggingface_generate` (streaming_path),
-`image_generation`, `image_edit` (form-data), `video_generation` (polling+form-data), `image_retrieval`
-(inline-media, `tokenizes_input=false`), `solido_rag`, `raw`/`template` (`null` path, JMESPath/Jinja2).
+**Ownership — identity lives in the runner registry.** There is no closed `EndpointType` enum, no
+separate central metadata table, no Python endpoint manifest, and no Python endpoint-semantic
+validators. Each Rust adapter owns an **open string ID plus descriptor**; one frozen,
+extension-aware runner registry derives capabilities from these descriptors and creates validated
+adapter/config bindings, and runner validation shares the same preparation path as execution. Python
+treats endpoint IDs as structural strings and delegates all endpoint semantics to the exact selected
+runner. The full identity/registry model is
+`2026-07-11-aiperf-runner-owned-endpoint-registry-design.md`; the capability flags, formatter,
+parser, replay, extraction, and lifecycle behavior described here remain authoritative.
 
-**Config validators to port** (`EndpointConfig`): streaming auto-disable when unsupported;
+**Registered dialect families** (id → path → key flags):
+
+- **OpenAI-shaped:** `chat` (`/v1/chat/completions`), `completions`, `responses` (`/v1/responses`),
+  `embeddings`, `chat_embeddings`, `nim_embeddings`, `cohere_rankings` (`/v2/rerank`),
+  `hf_tei_rankings`, `nim_rankings`, `huggingface_generate` (streaming_path), `image_generation`,
+  `image_edit` (form-data), `video_generation` (polling+form-data), `image_retrieval` (inline-media,
+  `tokenizes_input=false`), `solido_rag`, `raw`/`template` (`null` path, JMESPath/Jinja2).
+- **KServe family (PR-664):** `kserve_chat`, `kserve_completions`, `kserve_embeddings`,
+  `kserve_v1_predict`, `kserve_v2_infer`, `kserve_v2_embeddings`, `kserve_v2_rankings`,
+  `kserve_v2_vlm`, `kserve_v2_images`. Factories preserve selector extras, tensor shapes and
+  datatypes, response fallbacks, embedding reshaping, ranking indexes, VLM media, and typed image
+  parameters. Open-registry and runner-protocol-v2-only; KServe V1 is a dialect identity, not a
+  runner-v1 adapter. The five V2 OIP dialects additionally bind to the native Tonic transport (§0).
+- **vLLM token-native (PR-1113):** `vllm_generate`, a protocol-v2-only factory for non-streaming
+  `POST /inference/v1/generate`. Its descriptor publishes `tokenizes_input=false`,
+  `produces_tokens=true`, token input/output modalities, and `requires_raw_token_ids=true`.
+  Formatting maps one typed `Turn::raw_token_ids` vector to `token_ids`, preserves validated
+  `sampling_params` and remaining extras, applies `max_tokens` as a set-default, fixes `stream=false`,
+  and selects the authored/effective model (ports `endpoints/vllm_generate.py:21-142`, moving
+  integer-array validation out of the dispatch hot path). The parser accepts `choices[0].token_ids`
+  as a non-text `ResponseData::TokenIds`, retains the exact `u32` values, and reconstructs completion
+  usage from the array length. HTTP dispatch emits an output-token observation per returned ID,
+  records the raw ID vector in normalized model metadata (alongside vLLM's `request_id` and
+  first-choice finish reason), and uses the dataset's exact input length as authoritative prompt
+  usage. Direct Graph-IR nodes do not yet carry the linear dataset's raw-token handle, so graph
+  preparation rejects `requires_raw_token_ids` descriptors up front rather than deferring a missing-ID
+  failure to dispatch; static accuracy likewise rejects raw-token-required endpoints (evaluator
+  problems carry semantic text), and agentic validation already requires a streaming text dialect.
+
+**Riva family.** `aiperf::endpoints::riva` adds the native ASR/TTS/NLP adapters that bind to the
+Tonic transport; they follow the same open-descriptor, protocol-v2-only registry discipline.
+
+**Config validators** (`EndpointConfig`): streaming auto-disable when unsupported;
 `request_content_type` auto-derived from `requires_form_data` (+ reject a conflicting explicit
 override); `type=TEMPLATE` auto-set when a template is given; URL boundary validation (reject
 whitespace, require scheme+netloc+**hostname** — catches `http://:8000`, http/https only);
 `wait_for_model` coherence (interval/mode need a timeout). Defaults: `TIMEOUT = 6h` (vLLM bench
-default), `WAIT_FOR_MODEL_TIMEOUT = 0` (probe off), streaming off, `POOLED` reuse.
+default), `WAIT_FOR_MODEL_TIMEOUT = 0` (probe off), streaming off, `POOLED` reuse. These validators
+run inside the runner's shared preparation path, not as a separate Python layer.
 
 The endpoint config carries the wire knobs (`headers`, `api_key`→Bearer, `url_params`, `streaming`,
 `use_legacy_max_tokens`, `use_server_token_count`, `extra`, `session_header`, `connection_reuse`,
-`download_video_content`) — most consumed by `aiperf-transport-http`; the body-relevant ones
+`download_video_content`) — most consumed by `aiperf::transport_http`; the body-relevant ones
 (`use_legacy_max_tokens`, `use_server_token_count`, `extra`, `primary_model_name`) by the endpoint.
 
 ---
 
 ## 5. Rust shape + scope
 
-- **In (`aiperf-endpoints`):** the `Endpoint` trait; tier-1 chat, responses, completions,
-  embeddings, and chat-embeddings dialects; every tier-2 dialect named above; the shared body-build
-  skeleton and content-part hooks; the `extract_inputs` ISL walk (§3, including tool-schema
-  byte-parity); the static `EndpointMetadata` table; and config validators. Raw/template use the
-  Rust `jmespath` and `minijinja` implementations, with safe template-file resolution.
-- **Built wire lifecycles (`aiperf-transport-http`):** the `HttpEndpointBinding` translation seam,
+- **In (`aiperf::endpoints`):** the `Endpoint` trait; tier-1 chat, responses, completions,
+  embeddings, and chat-embeddings dialects; every tier-2, KServe, Riva, and `vllm_generate` adapter
+  named above; the shared body-build skeleton and content-part hooks; the `extract_inputs` ISL walk
+  (§3, including tool-schema byte-parity); each adapter's open-ID `EndpointMetadata` descriptor; and
+  config validators. Raw/template use the Rust `jmespath` and `minijinja` implementations, with safe
+  template-file resolution.
+- **Built wire lifecycles (`aiperf::transport_http`):** the `HttpEndpointBinding` translation seam,
   multipart encoding, async polling and content download, inline-media retrieval/deduplication,
   endpoint-specific streaming paths, and canonical HTTP/SSE response decoding. All sleeps and
   cancellation deadlines use the injected `Clock`; polling retains one cancellation deadline rooted
   at the original submission's captured send completion.
-- **Not here (in `aiperf-transport-http`):** URL construction (`build_url`/`_dedup_path_overlap` — the
+- **Not here (in `aiperf::transport_http`):** URL construction (`build_url`/`_dedup_path_overlap` — the
   `/v1`+`v1/…` collapse), header composition (correlation header under `session_header`), SSE framing,
   cancellation. Endpoints build the body + parse decoded JSON only.
 - **Testing (parity fixtures):** a Python twin emits, per quirk, `{turns → wire body}` and
@@ -239,64 +280,3 @@ The endpoint config carries the wire knobs (`headers`, `api_key`→Bearer, `url_
 3. **The `raw`/`template` dependency cost — resolved.** The implementation uses `jmespath` and
    `minijinja`; a configured template path must resolve to a canonical regular file without symlink
    path components, while a non-path value remains a literal inline template.
-
-## Addendum — 2026-07-11 (runner-owned endpoint identity and validation)
-
-Sections 4 and 5 remain accurate descriptions of the currently built metadata flags and endpoint
-behavior, but their ownership model is superseded by
-`2026-07-11-aiperf-runner-owned-endpoint-registry-design.md`.
-
-The final design does not keep a closed `EndpointType` enum, a separate central metadata table, a
-Python endpoint manifest, or Python endpoint-semantic validators. Each Rust adapter owns an open
-string ID plus descriptor, one frozen extension-aware runner registry derives capabilities and
-creates validated adapter/config bindings, and runner validation shares the same preparation path
-as execution. Python treats endpoint IDs as structural strings and delegates endpoint semantics to
-the exact selected runner before its legacy endpoint implementations and metadata are deleted.
-
-This addendum does not supersede the formatter, parser, replay, extraction, transport-lifecycle, or
-parity-fixture requirements in this spec. Those source-grounded behaviors remain authoritative.
-
-## Addendum — 2026-07-12 (PR-664 KServe endpoint family)
-
-`aiperf-endpoints` now includes the complete PR-664 KServe behavior family:
-`kserve_chat`, `kserve_completions`, `kserve_embeddings`,
-`kserve_v1_predict`, `kserve_v2_infer`, `kserve_v2_embeddings`,
-`kserve_v2_rankings`, `kserve_v2_vlm`, and `kserve_v2_images`. The
-factories preserve selector extras, tensor shapes and datatypes, response
-fallbacks, embedding reshaping, ranking indexes, VLM media, and typed image
-parameters. They are open-registry and runner-protocol-v2-only; KServe V1 is a
-dialect identity, not a runner-v1 adapter.
-
-HTTP behavior remains in `aiperf-transport-http`. The five KServe V2 OIP
-dialects additionally bind to the native Tonic transport described by
-`2026-07-12-aiperf-native-grpc-kserve-v2-design.md`. Endpoint parsing sees
-the same canonical JSON shape after either HTTP JSON or gRPC protobuf decoding.
-
-## Addendum — 2026-07-12 (PR-1113 vLLM token-native generate)
-
-The open registry now includes the protocol-v2-only `vllm_generate` factory for
-non-streaming `POST /inference/v1/generate`. Its descriptor publishes
-`tokenizes_input=false`, `produces_tokens=true`, token input/output modalities,
-and `requires_raw_token_ids=true`. That last fact is a representation contract
-consumed by dataset composition and validation, not an endpoint-ID branch.
-
-Formatting maps one typed `Turn::raw_token_ids` vector to `token_ids`, preserves
-validated `sampling_params` and remaining extras, applies `max_tokens` as a
-set-default, fixes `stream=false`, and selects the authored/effective model. It
-ports `src/aiperf/endpoints/vllm_generate.py:21-142` from PR 1113 while moving
-integer-array validation out of the dispatch hot path.
-
-The response parser accepts `choices[0].token_ids` as a non-text
-`ResponseData::TokenIds`, retains the exact `u32` values, and reconstructs
-completion usage from the array length. HTTP dispatch emits an output-token
-observation for every returned ID, records the raw ID vector in normalized model
-metadata, and uses the dataset's exact input length as authoritative prompt
-usage. The generic normalized response metadata also retains vLLM's
-`request_id` and first-choice finish reason. Runner subprocess coverage proves
-the exact-image capability, synthetic
-no-text request body, non-text response, and native-v2 prompt/completion totals.
-Direct Graph-IR nodes do not yet carry the linear dataset's raw-token handle;
-graph preparation therefore rejects descriptors with this requirement rather
-than deferring a missing-ID failure to dispatch. Static accuracy likewise
-rejects raw-token-required endpoints because evaluator-authored problems carry
-semantic text; agentic validation already requires a streaming text dialect.

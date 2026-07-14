@@ -7,7 +7,10 @@ SPDX-License-Identifier: Apache-2.0
 
 **Date:** 2026-07-11
 **Author:** Anthony Casagrande (Tech Lead) + Claude
-**Status:** design
+**Status:** partially built — the typed, IO-free native-v2 report core and the runner's JSON writer
+are implemented; native CSV, the genai-perf-v1 compat sink, warning/insight and error-table
+renderers, console record/replay, and timed uploaders remain unbuilt in Rust (the Python `aiperf`
+parent owns human presentation and compatibility/export generation).
 **Grounding:** line-by-line read of `exporters/{metrics_json,metrics_csv,console_metrics,metrics_base}_exporter.py`,
 `exporters/{protocols,exporter_config,exporter_manager,outputs_json_exporter}.py`, the four
 console-warning exporters, the mlflow/wandb subprocess uploaders, plus
@@ -168,9 +171,22 @@ The Rust `MetricEntry` is `{ type, unit, group, higher_is_better, series: Vec<Se
 and `Stats` is an enum `Scalar{value} | Distribution{…} | Counter{…} | Histogram{…}` — the
 type-tagged shape serializes to exactly the leaf above.
 
+**Built.** This IO-free native-v2 core lives in `aiperf::metrics_core::report` (`rust/aiperf/src/
+metrics_core/report.rs`): `NativeReporter` behind the `Reporter` trait produces a typed
+`NativeReport` with run/summary/error, metric, series, timeslice, and distribution/scalar/counter
+stats plus warmup and accuracy joins. Metrics are name-keyed with typed series; per-metric metadata
+and per-series timeslices are inline; structurally absent values are omitted and present-but-non-
+finite adjusted tails encode as JSON `null`. A deterministic exact-JSON golden pins the shape. The
+server-HISTOGRAM leaf and a native CSV projection remain unbuilt.
+
 ---
 
 ## 2. The genai-perf v1 compat sink (opt-in — reproduce the frozen contract)
+
+**Unbuilt in Rust — owned by the Python parent.** The runner emits only the native-v2 report; the
+Python `aiperf` frontend validates it and generates genai-perf-v1 compatibility artifacts. The
+frozen v1 contract below is recorded as the acceptance target for whichever layer produces it, and
+does not constrain the Rust native-v2 default.
 
 An opt-in `Exporter` (`--export-genai-perf`) that translates the same `Report` into the **exact**
 legacy artifacts, for downstream tooling that still consumes them. It must reproduce the frozen v1
@@ -198,8 +214,9 @@ from the source read are its acceptance contract; they no longer constrain the v
 
 ## 3. What stays earned-in-blood in BOTH formats
 
-The warning/insight intelligence and the console behavior are format-independent domain value —
-render them the same regardless of v1/v2:
+**Unbuilt in Rust — owned by the Python parent.** The warning/insight intelligence and the console
+behavior are format-independent domain value rendered by the Python presentation layer, not the
+Rust runtime library. The lore below is the porting contract for that layer:
 
 - **OSL-mismatch warning** (`osl_mismatch_count.avg > 0`; threshold `min(requested·5%, 50 tokens)`)
   with the fix-text verbatim (`--extra-inputs ignore_eos:true` / `min_tokens:<N>` per backend,
@@ -240,10 +257,20 @@ render them the same regardless of v1/v2:
 
 ---
 
-## 5. The redesign — `aiperf-report`: one `Report` → static `Exporter`s
+## 5. The redesign — one `Report` → static `Exporter`s
 
-A thin sink crate above `aiperf-metrics` (it does file/console/network IO). Consumes the typed
-`Report` (metrics + telemetry + accuracy + `RunInfo` + errors + timeslices + per-record).
+**Built state.** The typed IO-free `NativeReport` model lives in `aiperf::metrics_core` and the sole
+native-v2 JSON write lives in `aiperf::report` (`rust/aiperf/src/report.rs`), which
+`aiperf-runner` calls to atomically commit the unified report. There is no plugin registry and no
+shard-glob path. The broader static-`Exporter`-list design below (multiple sink impls behind one
+trait, `enabled(cfg)` gating, console/uploader stages) is **the target shape once a second IO sink
+exists in Rust**; today only the single JSON writer is implemented, so no `aiperf-report` crate has
+been extracted — the writer stays in the runner-facing `aiperf::report` module. The type-driven
+`MetricEntry` enum described here is realized in `aiperf::metrics_core::report`.
+
+The design (for when a second sink lands): a thin sink layer above `aiperf::metrics_core` (it does
+file/console/network IO). Consumes the typed `Report` (metrics + telemetry + accuracy + `RunInfo` +
+errors + timeslices + per-record).
 
 ```rust
 pub trait Exporter {
@@ -277,6 +304,10 @@ ledger, mlflow/wandb are **deferred / side-car**; the trait leaves the seam, imp
 
 ## 7. Console record-then-replay (keep the behavior)
 
+**Unbuilt in Rust — owned by the Python parent.** The native CLI console tables, logger, and
+accuracy-summary CSV writer were deleted with the native binary; console presentation is a Python
+concern. The behavior below is the contract for that layer.
+
 Render the console table **twice**: once to a **fixed-width** buffer (`CONSOLE_EXPORT_WIDTH`) for the
 width-pinned `profile_export_console.txt` (stable CI-log artifact, decoupled from terminal width),
 then to the **live terminal** if attached (replay the recorded fixed-width text if non-tty). Same
@@ -287,18 +318,27 @@ table can show the `type`/`higher_is_better` metadata inline.
 
 ## 8. Scope + testing
 
-- **In:** the `Report` → sink layer (`aiperf-report`): the **v2 native** JSON+CSV serializers (the
-  new default), the **genai-perf v1** compat sink (opt-in, frozen contract), `outputs.json`
-  (in-RAM), the timeslice serializers, the warning/insight renderers, the error table, console
-  record-then-replay, and the `TimedUploader` seam.
+- **Built (Rust):** the typed IO-free native-v2 `Report` core in `aiperf::metrics_core::report`
+  (`NativeReporter` behind the `Reporter` trait; typed run/summary/error, metric, series, timeslice,
+  distribution/scalar/counter stats; warmup + accuracy joins; absent-omitted / non-finite-null
+  discipline) and the single native-v2 JSON writer in `aiperf::report` that `aiperf-runner` invokes,
+  pinned by a deterministic exact-JSON golden.
+- **Unbuilt in Rust (Python-owned or deferred):** the native **v2 CSV** projection, the
+  genai-perf-**v1** JSON/CSV + `outputs.json` compatibility sink, the warning/insight and error-table
+  renderers, console record-then-replay, and timed uploaders. The native CLI console tables, logger,
+  accuracy-summary CSV, and legacy aggregate/timing JSON helpers were **deleted** with the binary;
+  the Python `aiperf` parent owns human presentation and compatibility/export generation. The
+  static-`Exporter`-list, `enabled(cfg)` gating, and `TimedUploader` seam remain the target shape
+  for when a second runner-owned Rust IO sink has a demonstrated hot-path reason to exist.
 - **Deferred:** mlflow/wandb impls (side-car), parquet server-metrics, aggregate/sweep exporters
   (outer-loop coordinator), dashboards.
 - **Deleted:** everything in §4.
-- **Testing (two golden gates):** (a) **v2 golden** — a fixed `Report` → the exact
-  `aiperf_report.json` (nested `metrics`, scalar `value` vs distribution stats by type,
-  `percentiles` map, per-metric metadata, absent-omitted/non-finite-null); (b) **v1 compat golden**
-  — the exact `profile_export_aiperf.{json,csv}` + `outputs.json` (SCHEMA_VERSION 1.4, the three
-  frozen orderings, avg-for-scalars, extra=allow). A field/order drift in either fails its gate.
+- **Testing (two golden gates):** (a) **v2 golden — built** — a fixed `Report` → the exact native-v2
+  JSON (nested `metrics`, scalar `value` vs distribution stats by type, `percentiles` map, per-metric
+  metadata, absent-omitted/non-finite-null); a deterministic exact-JSON golden already pins this
+  shape. (b) **v1 compat golden — future/Python** — the exact `profile_export_aiperf.{json,csv}` +
+  `outputs.json` (SCHEMA_VERSION 1.4, the three frozen orderings, avg-for-scalars, extra=allow),
+  gating whichever layer produces the compat artifacts. A field/order drift in either fails its gate.
 
 ## 9. Open questions
 
@@ -314,37 +354,6 @@ table can show the `type`/`higher_is_better` metadata inline.
    the §1 table. Open sub-question: do inference-metric series ever need `labels` (per-model in
    multi-model runs, per-worker)? The `series[]` structure supports it for free; emit `labels:null`
    until a breakdown is wired.
-4. **`aiperf-report` crate vs binary module** (as before) — lean small crate, testable on a
-   synthetic `Report`.
-
-## Addendum — 2026-07-11 (native-v2 core implemented)
-
-The IO-free native-v2 core is now built in `aiperf-metrics::report`, with
-`NativeReporter` behind the `Reporter` trait and typed run/summary/error, metric,
-series, timeslice, distribution/scalar/counter, warmup, and accuracy fields.
-Structurally absent values are omitted while present non-finite adjusted tails encode
-as JSON `null`. A deterministic exact-JSON golden pins the shape. The `aiperf`
-application writes this unified report for `--json` in online, scheduled, accuracy,
-and graph execution; no plugin registry or shard-glob path is involved.
-
-This is a partial implementation of this broader exporter overhaul, not completion of
-the whole sink layer. The native CSV serializer, opt-in genai-perf-v1 JSON/CSV and
-`outputs.json` compatibility sink, warning/insight and error-table renderers, console
-record/replay, and `TimedUploader` seam remain unbuilt. The built code stays in the
-IO-free metrics leaf plus the binary writer for now; the proposed `aiperf-report`
-crate can still be extracted when a second IO sink is implemented.
-
-## Addendum — 2026-07-11 (presentation leaves the Rust runtime library)
-
-The `aiperf` crate is now library-only and its native CLI console tables,
-accuracy-summary CSV writer, legacy aggregate/timing JSON helpers, and logger
-are deleted. `aiperf::report` retains only native-v2 JSON persistence used by
-`aiperf-runner`; the typed IO-free reporter in `aiperf-metrics` remains the
-authoritative Rust result model.
-
-This supersedes the preceding addendum's `--json`/binary-writer wording and the
-claim that accuracy CSV is a built Rust product sink. The Python `aiperf`
-parent owns human presentation and compatibility/export generation after it
-validates the runner's native report. Native CSV, genai-perf-v1 compatibility,
-warnings/insights, console replay, and timed uploads remain unbuilt in Rust
-unless a future runner-owned sink has a demonstrated hot-path reason to exist.
+4. **Extract an `aiperf-report` crate vs keep the writer as a runner-facing module** — today the
+   single JSON writer stays as the `aiperf::report` module; extract a lean crate when a second IO
+   sink lands, testable on a synthetic `Report`.

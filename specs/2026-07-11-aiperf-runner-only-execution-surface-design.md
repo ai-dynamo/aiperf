@@ -7,7 +7,11 @@ SPDX-License-Identifier: Apache-2.0
 
 **Date:** 2026-07-11
 **Author:** Anthony Casagrande (Tech Lead) + Codex
-**Status:** decided — partially built; mode reachability incomplete
+**Status:** built — sole native executable, protocol-v2-only, canonical transport/workload
+matrix composed from frozen registries. The strict request envelope and discovery contract
+described historically here are **superseded by**
+`2026-07-13-benchmarkrun-wire-and-runner-catalog-design.md`, which owns the current
+BenchmarkRun-shaped wire and the plugins.yaml-shaped runner catalog.
 **Decision:** every end-user AIPerf execution backed by the native Rust implementation enters
 through a versioned `aiperf-runner` operation. There is no native `aiperf` CLI, Python inference
 fallback, second Rust executable, direct Python-to-Rust library binding, or mode-specific process
@@ -15,6 +19,10 @@ surface.
 
 **Companions:**
 
+- `2026-07-13-benchmarkrun-wire-and-runner-catalog-design.md` owns the authoritative request wire
+  (BenchmarkRun-shaped `run`) and capability discovery (plugins.yaml-shaped JSON catalog). It
+  supersedes the historical envelope/`supported_pairs`/`distribution_id`-pin contract sketched in
+  §3, §4, and §8 below.
 - `2026-07-11-python-orchestrator-rust-single-run-design.md` owns Python outer-loop orchestration
   and the fresh-process boundary.
 - `2026-07-11-aiperf-runner-owned-endpoint-registry-design.md` owns endpoint identity, catalog,
@@ -26,8 +34,8 @@ surface.
 - `2026-07-10-aiperf-rust-accuracy-accumulator-design.md` owns static and stateful canonical
   evaluator/provider behavior.
 
-This spec owns **product reachability**: the operation envelope, backend/workload selection,
-capability negotiation, feature-bearing runner distributions, common preparation/execution/report
+This spec owns **product reachability**: the operation model, transport/workload selection,
+capability discovery, feature-bearing runner distributions, common preparation/execution/report
 contract, and subprocess proofs that make those library implementations usable through the only
 native executable.
 
@@ -35,7 +43,7 @@ native executable.
 
 ## 0. Thesis
 
-The native product is one executable with multiple statically composed backend and workload
+The native product is one executable with multiple statically composed transport and workload
 implementations:
 
 ```text
@@ -43,7 +51,7 @@ Python aiperf command
     |
     | structural Config v2, sweeps, trials, search, presentation
     v
-strict RunnerRequest
+BenchmarkRun-shaped run (protocol v2)
     |
     v
 aiperf-runner
@@ -51,68 +59,87 @@ aiperf-runner
     +-- RunnerRegistry
     |     +-- endpoint factories
     |     +-- dataset/sampler factories
-    |     +-- backend factories
-    |     `-- workload factories
+    |     +-- transport factories
+    |     +-- workload factories
+    |     `-- explicit pair factories
     |
     +-- validate
-    |     `-- authored request -> validated plan (+ deferred checks)
+    |     `-- authored run -> validated plan (+ deferred checks)
     |
     `-- execute
-          +-- online HTTP  + scheduled / graph / static accuracy / agentic
-          `-- Dynamo offline + scheduled / graph
+          +-- http / grpc  + scheduled / graph
+          `-- dynosim_offline / dynosim_online + scheduled / graph
 ```
 
-ONLINE-real and ONLINE-mock are the same `online_http` backend. They differ only in configured
-target URL; a mock HTTP server is not another runner mode. OFFLINE-mock is the feature-gated
-`dynosim` backend using `SimClock` and the in-process steppable engine.
+ONLINE-real and ONLINE-mock are the same `http` transport. They differ only in configured target
+URL; a mock HTTP server is not another runner mode. OFFLINE-mock is the feature-gated
+`dynosim_offline` transport using `SimClock` and the in-process steppable engine;
+`dynosim_online` is the wall-clock apples-to-apples variant.
 
-Backend and workload are orthogonal selections. A new backend does not acquire its own CLI or
+Transport and workload are orthogonal selections. A new transport does not acquire its own CLI or
 duplicate every workload DTO, and a new workload does not acquire its own transport. Factories
-lower the versioned request into today's real seams—`Clock`, `RequestSink<R>`, `TurnDispatcher`,
+lower the versioned run into today's real seams—`Clock`, `RequestSink<R>`, `TurnDispatcher`,
 `GraphSink`, phase/runtime traits, observers, and reporters—not an aspirational parallel harness.
+An explicit `RunnerPairFactory` owns cross-component compatibility so the coordinator never matches
+on transport or workload strings.
 
 ---
 
 ## 1. Current code truth
 
-### 1.1 Product-reachable through runner v1
+`aiperf-runner` (`rust/runner/src/`) is the sole strict Rust executable on the product path. It
+speaks **protocol v2 only**: `main.rs` reads one stdin request, composes the stock application, and
+`run_v2` rejects any non-v2 or malformed request as a v2 failure envelope. `--capabilities` is the
+only command-line operation and writes the plugins.yaml-shaped catalog (§8).
 
-The current `rust/aiperf-runner` protocol and executor expose:
+### 1.1 Product-reachable, built matrix
 
-- scheduled online HTTP phases: concurrency, Poisson, Gamma, constant/request-rate,
-  user-centric, and fixed schedule;
-- native datasets, endpoint dialects, tokenizer configuration, phases, ramps, cancellation,
-  adaptive control, metrics, and artifacts;
-- static evaluator-backed accuracy through a supervised Python worker;
-- GPU/server/network telemetry and live Python OTel/MLflow sidecars;
-- one native-v2 report and strict terminal response.
+The frozen registry (`registry.rs::BuiltinRunnerRegistryFactory`) registers the `http` and `grpc`
+transports and the `scheduled` and `graph` workloads, then composes explicit pair factories. The
+base build advertises these executable protocol-v2 pairs:
 
-This is the built center of the target architecture.
+| Runner distribution | Executable protocol-v2 pairs |
+|---|---|
+| Base | `http + scheduled`, `http + graph`, `grpc + scheduled` |
+| `dynosim` feature | every base pair plus `dynosim_offline + {scheduled, graph}` and `dynosim_online + {scheduled, graph}` |
 
-### 1.2 Built as Rust libraries but not runner-v1 reachable
+`http` is a `RealClock` hyper transport (`aiperf::transport_http`) with h1/h2c/UDS/TLS/SSE,
+connection reuse, and post-send cancellation. `grpc` is a `RealClock` Tonic transport
+(`aiperf::transport_grpc`) where every multi-worker lane owns a current-thread runtime, `LocalSet`,
+Clock, prepared endpoint table, and dense gRPC binding table. `dynosim_offline` uses `SimClock` and
+the idle/quiescence DES pump; `dynosim_online` uses `RealClock` for apples-to-apples comparison with
+Dynamo's live driver. All four feed the same observer/metrics/report path.
 
-The following remain implemented but lack an end-user request in runner protocol v1:
+The `scheduled` workload owns concurrency, Poisson, Gamma, constant/request-rate, user-centric, and
+fixed-schedule phases plus ramps, cancellation, adaptive control, stop bounds, slots, and samplers.
+The `graph` workload composes `drive_real` (online) or `drive_sim_with_source` (offline) with
+per-worker metric accumulators merged once in deterministic order. Both consume the runner-owned
+endpoint registry and worker-local prepared bindings.
 
-| Capability | Current Rust home | Missing runner surface |
-|---|---|---|
-| Online Graph-IR | `aiperf-graph`, `aiperf_graph::runtime::drive_real` | graph workload DTO, runner composition, subprocess proof |
-| Dynamo scheduled offline | `aiperf::dynosim` behind `dynosim` | backend DTO, feature forwarding, capabilities, report/terminal projection |
-| Dynamo Graph-IR offline | `aiperf::dynosim::run_graph_offline` and graph DES | backend/workload pair, feature forwarding, subprocess proof |
-| Stateful agentic accuracy | `aiperf::agentic`, `agentic_gateway`, canonical Python providers | agentic workload DTO, callback/gateway lifecycle, runner subprocess canaries |
+### 1.2 Performance-only product cut
 
-The removed native `aiperf` CLI is not an alternate route. Focused library tests prove the
-algorithms but do not make them product-reachable.
+The canonical Python product path is protocol-v2-only. It projects one authored BenchmarkRun,
+verifies the exact runner image, preflights one registered pair against the linked catalog, and
+executes it. It contains no Config-v1 resolver call, protocol-v1 request builder, or fallback
+branch.
 
-### 1.3 Current protocol is not extensible enough
+The current product wire is the **performance path**: scheduled and graph execution selected from
+Config shape and `transport.type`. The stateful `agentic`, static-accuracy, provider-neutral
+`evaluation`, and telemetry-watch pairs have left the product wire as Config sheds them; the
+`http + static_accuracy` adapter remains in-tree behind a distribution gate
+(`online_execution::register_http_static_accuracy_pair*`) but is not registered by the base image.
+Any workload the linked registry does not compose fails closed.
 
-Runner v1 deserializes one fixed `RunRequest` and then executes it. It has no operation tag,
-backend selection, Graph-IR workload, stateful agentic workload, or offline feature inventory.
-`aiperf-runner` depends on the `aiperf` library but does not forward its `dynosim` /
-`dynamo-full` features.
+### 1.3 Composition structure
 
-Capabilities are handwritten static arrays rather than a description of the exact composed
-runner. This spec and the runner-owned endpoint companion replace that pattern with frozen
-registries and deterministic descriptors.
+Runner composition implements open double dispatch: transport and workload factories validate their
+own raw configuration, an explicit `RunnerPairFactory` owns cross-component compatibility, and
+preparation returns one `PreparedRunnerOperation`. Online execution further uses a direct
+`OnlineWorkloadAdapter -> PreparedOnlineHarness` transition. The coordinator does not match on
+workload strings or convert v2 values through a v1 DTO. Startup-only typed lowering into shared
+runtime values is the single adapter load, not a second wire conversion. `RunnerApplication` freezes
+the linked registry at bootstrap; duplicate IDs are rejected and capabilities are derived from the
+frozen factories, never a handwritten static array.
 
 ---
 
@@ -122,83 +149,66 @@ registries and deterministic descriptors.
 2. **Fresh process per run.** Validation may use a separate short-lived process, but execution
    retains one fresh child per variation/trial.
 3. **No Python inference fallback.** Missing runner capabilities fail before execution.
-4. **Orthogonal backend/workload selection.** The request describes both; compatibility is
-   validated explicitly.
-5. **Trait-backed registries.** Backend and workload IDs select statically linked factories, not
+4. **Orthogonal transport/workload selection.** The run describes both; compatibility is validated
+   explicitly through the pair factory.
+5. **Trait-backed registries.** Transport and workload IDs select statically linked factories, not
    central string branches or a closed enum of implementation kinds.
-6. **Exact-distribution handshake.** Capability, validation, and execution processes prove the
-   exact selected runner image through `distribution_id`.
-7. **Authored request first.** Python projects structural/authored state without creating run
+6. **Exact-image handshake.** Capability and execution processes identify the exact selected runner
+   image; Python preflights the linked catalog before executing.
+7. **Authored run first.** Python projects structural/authored state without creating run
    artifacts, warming tokenizers, fetching datasets, or importing native-equivalent loaders.
 8. **Rust preparation.** Rust resolves every input it already knows how to resolve, performs
    deferred semantic checks, and creates artifacts only after complete validation.
-9. **One endpoint registry.** Every backend/workload pair receives prepared endpoints from the
+9. **One endpoint registry.** Every transport/workload pair receives prepared endpoints from the
    runner-owned registry; modes do not construct private built-in catalogs.
-10. **One transport/clock timeline.** Workloads use the injected backend and clock seams. No mode
+10. **One transport/clock timeline.** Workloads use the injected transport and clock seams. No mode
     measures or schedules outside them.
 11. **One report family.** Every successful operation writes native-v2 with common run identity,
-    metrics, backend/workload provenance, and mode-specific typed blocks.
-12. **Fail-closed optional features.** A request for an uncompiled backend, workload, topology,
-    router, offload, evaluator capability, or report feature is rejected before side effects.
+    metrics, transport/workload provenance, and mode-specific typed blocks.
+12. **Fail-closed optional features.** A request for an uncompiled transport, workload, topology,
+    router, offload, or report feature is rejected before side effects.
 13. **Canonical external providers remain external.** Supervised Python evaluator/environment
     workers remain when they own canonical benchmark semantics; they never become an inference
     executor.
-14. **Delete duplicate Python behavior.** When a Rust capability is runner-reachable, the Python
+14. **No duplicate Python behavior.** When a Rust capability is runner-reachable, the Python
     implementation of that AIPerf capability is removed rather than retained in parallel.
-15. **Dynamo product separation.** The Python `aiperf dynosim` facade may continue to expose
-    Dynamo-owned products and raw canonical parsers. It is not an AIPerf-runner fallback and does
-    not satisfy AIPerf offline reachability.
+15. **Dynamo product separation.** The Python `python -m dynamo.*` facades continue to expose
+    Dynamo-owned products and raw canonical parsers. They are not an AIPerf-runner fallback and do
+    not satisfy AIPerf offline reachability; Dynamo replay is authored through `aiperf profile` with
+    `transport.type: dynosim_offline|dynosim_online`.
 
 ---
 
-## 3. Protocol-v2 operation envelope
+## 3. Protocol-v2 operation model
 
-### 3.1 Request
+The runner advertises `protocol_versions: [2]` only. Protocol v1 has been **fully removed**: the v1
+`dispatch` entry, `execute_v1`/`execute_run*` chain, the `RunRequest`/`RunSpec`/`RunTerminal`/
+`EndpointSpec`/`DatasetSpec`/`AccuracySpec` wire DTOs, the `load_protocol_v1` graph-input adapters,
+and the `Legacy` capability/enum variants are gone. No v1 decoder, authority, request builder, or
+fallback remains on the runner. (The `aiperf::endpoints` module keeps its own internal
+`EndpointType` metadata/compatibility adapters — unrelated to the removed runner wire protocol.)
 
-Every stdin operation uses one strict tagged envelope:
+### 3.1 Request envelope
+
+Every stdin operation uses one strict tagged envelope (`protocol_v2.rs::RunnerEnvelopeV2`):
 
 ```rust
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunnerEnvelopeV2 {
-    pub protocol_version: ProtocolV2,
-    pub operation: RunnerOperationV2,
-    pub expected_distribution_id: String,
-    pub run: AuthoredRunSpecV2,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RunnerOperationV2 {
-    Validate,
-    Execute,
+    pub protocol_version: u32,          // must equal RUNNER_PROTOCOL_V2
+    pub operation: RunnerOperationV2,   // Validate | Execute
+    pub run: BenchmarkRunWireV2,        // BenchmarkRun-shaped run
 }
 ```
 
-Wire examples:
+The exact shape of `run` (BenchmarkRun-shaped, including its Python-resolved `resolved` bindings) is
+defined authoritatively by `2026-07-13-benchmarkrun-wire-and-runner-catalog-design.md`. There is no
+`expected_distribution_id` on the wire and no `workload`/`backend` wire dialect; the runner derives
+scheduled-versus-graph from Config shape and binds the transport from `cfg.transport.type`. Unknown
+protocol versions, operations, and fields fail closed.
 
-```json
-{
-  "protocol_version": 2,
-  "operation": "validate",
-  "expected_distribution_id": "blake3:...",
-  "run": {}
-}
-```
-
-```json
-{
-  "protocol_version": 2,
-  "operation": "execute",
-  "expected_distribution_id": "blake3:...",
-  "run": {}
-}
-```
-
-The implementation first decodes only enough of the envelope to select a supported version, then
-strictly decodes that version's full DTO. Unknown versions, operations, and fields fail closed.
-
-`--capabilities` remains the only command-line operation and writes one capability line. Every
+`--capabilities` remains the only command-line operation and writes one catalog line. Every
 run/validation input stays on stdin so secrets do not enter argv or process listings.
 
 ### 3.2 Responses and exit codes
@@ -216,134 +226,62 @@ Each process writes exactly one non-empty JSON line to stdout and then exits:
 | `1` | well-formed operation failed semantically, during preparation, or during execution; typed stdout response present |
 | `2` | bootstrap/protocol/stdout-contract failure |
 
-Stderr is redacted diagnostic text only. It is never parsed for normal machine control.
-
-### 3.3 Protocol-v1 compatibility
-
-The runner temporarily accepts the current protocol-v1 fully resolved online/static-accuracy
-request. New fields, backends, workloads, and extensions target v2 only. New Python requires v2
-for runner-wide modes and never falls back to a legacy executor. V1 is removed after the announced
-compatibility window and subprocess matrix is green.
+Stderr is redacted diagnostic text only (`redaction.rs`). It is never parsed for normal machine
+control.
 
 ---
 
 ## 4. Authored run model
 
-```rust
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AuthoredRunSpecV2 {
-    pub identity: RunIdentitySpec,
-    pub artifact_target: PathBuf,
-    pub models: ModelsSpec,
-    pub endpoints: EndpointProfilesSpec,
-    pub backend: NamedBackendSpec,
-    pub workload: NamedWorkloadSpec,
-    pub metrics: MetricsSpec,
-    pub artifacts: ArtifactSpec,
-    pub sidecars: SidecarSpec,
-}
+Python projects one side-effect-free BenchmarkRun-shaped run and never creates run artifacts, warms
+tokenizers, fetches datasets, or imports native-equivalent loaders. The exact fields are owned by
+the BenchmarkRun wire spec; the runner-relevant invariants are:
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NamedBackendSpec {
-    #[serde(rename = "type")]
-    pub id: BackendId,
-    pub config: Box<serde_json::value::RawValue>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NamedWorkloadSpec {
-    #[serde(rename = "type")]
-    pub id: WorkloadId,
-    pub config: Box<serde_json::value::RawValue>,
-}
-```
-
-The outer DTO is strict. Each selected statically linked factory strictly deserializes its own
-`config` with `deny_unknown_fields`; using `RawValue` is not an untyped escape hatch. It lets a
-linked implementation own its configuration without extending a core enum or accepting unknown
-keys.
-
-`AuthoredRunSpecV2` contains no Python `ResolvedConfig`. In particular:
-
-- `artifact_target` is selected but does not exist yet;
-- tokenizer identity/revision/trust policy lives inside the selected workload source and has not
-  been cache-warmed;
+- the artifact directory is selected but does not exist yet;
+- tokenizer identity/revision/trust policy lives inside the authored Config and has not been
+  cache-warmed;
 - dataset path/public identity/filters/options are authored inputs, not Python loader results;
 - endpoint profiles are raw and become worker-local prepared bindings in Rust;
-- backend engine/router/topology inputs have not initialized an engine or socket;
-- evaluator/provider configuration has not spawned a worker or environment.
+- transport engine/router/topology inputs have not initialized an engine or socket.
 
-Python remains responsible for structural YAML/Jinja/environment/sweep expansion and secrets
-substitution. It explicitly projects every accepted field into this narrower ABI.
+Each selected statically linked factory strictly deserializes its own portion of the Config with
+`deny_unknown_fields`; a linked implementation owns its configuration without extending a core enum
+or accepting unknown keys. Python remains responsible for structural YAML/Jinja/environment/sweep
+expansion and secrets substitution, and explicitly projects every accepted field into this narrower
+ABI.
 
 ---
 
-## 5. Backend registry and factory seam
+## 5. Transport registry and factory seam
 
 ### 5.1 Identity and descriptor
 
-```rust
-pub struct BackendDescriptor {
-    pub id: &'static str,
-    pub description: &'static str,
-    pub clock_kind: ClockKind,
-    pub supports_scheduled: bool,
-    pub supports_graph: bool,
-    pub semantic_responses: bool,
-    pub feature_flags: &'static [&'static str],
-}
+Transport factories (`registry.rs::RunnerTransportFactory`) expose a deterministic descriptor
+(`id`, `description`, `clock` family, statically compiled `features`) and `validate` / `prepare`
+methods. The exact internal prepared-transport traits remain split along today's typed
+`RequestSink<HttpRequest>`, gRPC binding, `TurnDispatcher`, and `GraphSink` boundaries; this spec
+does not require an aspirational universal `Transport`/`Harness` trait. It requires the runner
+factory to lower into those current seams without string matching or a second transport/clock path.
 
-pub trait RunnerBackendFactory: std::fmt::Debug + Send + Sync {
-    fn descriptor(&self) -> &'static BackendDescriptor;
+The mutable builder freezes before validation or execution. Duplicate IDs are rejected. Transport
+descriptors and feature flags are enumerated deterministically into the catalog.
 
-    fn validate(
-        &self,
-        authored: &serde_json::value::RawValue,
-        requirements: &WorkloadRequirements,
-    ) -> RunnerResult<ValidatedBackendConfig>;
+### 5.2 `http` and `grpc`
 
-    fn prepare(
-        &self,
-        config: ValidatedBackendConfig,
-        context: &PreparationContext,
-    ) -> RunnerResult<Box<dyn PreparedBackend>>;
-}
-```
+`http` owns `RealClock`, `aiperf::transport_http` hyper client configuration, h1/h2c/UDS/TLS,
+connection reuse, cancellation, SSE, trace timing, URL selection, and sticky routing. Real inference
+endpoints and loopback mock endpoints use identical code; ONLINE-real versus ONLINE-mock is not
+represented in the protocol — the configured URL determines the target. Python accepts `grpc://` /
+`grpcs://` URLs only with the `grpc` transport.
 
-The exact internal prepared-backend traits may remain split along today's typed
-`RequestSink<HttpRequest>`, `TurnDispatcher`, and `GraphSink` boundaries. This spec does not require
-an aspirational universal `Backend`/`Harness` trait. It requires the runner factory to lower into
-those current seams without string matching or a second transport/clock path.
+### 5.3 `dynosim_offline` and `dynosim_online`
 
-The mutable builder freezes before validation or execution. Duplicate IDs are rejected. Backend
-descriptors and feature flags are enumerated deterministically into capabilities.
-
-### 5.2 `online_http`
-
-The default backend owns:
-
-- `RealClock`;
-- `aiperf-transport-http` hyper client configuration;
-- h1/h2c/UDS/TLS, connection reuse, cancellation, SSE, and trace timing;
-- URL selection and sticky routing;
-- real inference endpoints or loopback mock endpoints with identical code.
-
-ONLINE-real versus ONLINE-mock is not represented in the protocol. The configured URL determines
-the target, and reports may classify loopback/mock provenance only when explicitly authored.
-
-### 5.3 `dynosim`
-
-The feature-gated backend owns:
-
-- `SimClock` and the idle/quiescence DES pump;
-- passive `SteppableReplay` initialization and terminal operations;
-- engine/router JSON, aggregate/disaggregate topology, separate profiles, trace cutoff, routing,
-  cancellation, and backend-owned capacity facts;
-- parity comparison between AIPerf and Dynamo common summaries;
-- optional router runtime, ZMQ events, KV offload, AIC forward pass, and profiling features.
+The feature-gated transports own `SteppableReplay` initialization and terminal operations,
+engine/router JSON, aggregate/disaggregate topology, separate profiles, trace cutoff, routing,
+cancellation, backend-owned capacity facts, and parity comparison between AIPerf and Dynamo common
+summaries. `dynosim_offline` runs on `SimClock` and the idle/quiescence DES pump; `dynosim_online`
+runs on `RealClock` for apples-to-apples comparison with Dynamo's live driver. Optional router
+runtime, ZMQ events, KV offload, AIC forward pass, and profiling ride the same seam.
 
 `aiperf-runner` forwards Cargo features explicitly:
 
@@ -365,118 +303,72 @@ dynamo-full = [
 ```
 
 The exact selected runner advertises only compiled features. Requesting an absent feature fails
-static validation. Requested offload initialization remains fail-closed. An official offline-capable
-runner distribution and its dependency/source/lock identity are part of the release matrix; a
-default build that lacks Dynamo cannot claim offline product support.
+static validation; requested offload initialization remains fail-closed. A default build that lacks
+Dynamo cannot claim offline product support.
 
 ---
 
 ## 6. Workload registry and factory seam
 
-```rust
-pub struct WorkloadDescriptor {
-    pub id: &'static str,
-    pub description: &'static str,
-    pub requires_semantic_responses: bool,
-    pub supports_real_clock: bool,
-    pub supports_sim_clock: bool,
-    pub required_backend_features: &'static [&'static str],
-}
-
-pub struct WorkloadRequirements {
-    pub semantic_responses: bool,
-    pub clock_kind: ClockKind,
-    pub backend_features: BTreeSet<String>,
-}
-
-pub trait RunnerWorkloadFactory: std::fmt::Debug + Send + Sync {
-    fn descriptor(&self) -> &'static WorkloadDescriptor;
-
-    fn validate(
-        &self,
-        authored: &serde_json::value::RawValue,
-        registries: &RunnerRegistry,
-    ) -> RunnerResult<ValidatedWorkloadConfig>;
-
-    fn requirements(
-        &self,
-        config: &ValidatedWorkloadConfig,
-    ) -> WorkloadRequirements;
-
-    fn prepare(
-        &self,
-        config: ValidatedWorkloadConfig,
-        backend: &mut dyn PreparedBackend,
-        context: &PreparationContext,
-    ) -> RunnerResult<Box<dyn PreparedWorkload>>;
-}
-```
-
+Workload factories (`registry.rs::RunnerWorkloadFactory`) expose a descriptor (`id`, `description`,
+supported clock kinds, `required_transport_features`), `validate`, `requirements`, and `prepare`.
 The public factory seam is object-safe and startup-only. Hot loops retain their typed/generic
 current implementations after preparation; the runner does not introduce a per-token dynamic
 registry lookup or shared lock.
 
 ### 6.1 `scheduled`
 
-This workload generalizes runner v1. Its strict config owns:
+The strict config generalizes the former runner v1 request. It owns the authored native dataset
+source and tokenizer policy; ordered warmup/profiling phases; concurrency, request-rate,
+user-centric, fixed-schedule, and one-pass sources; ramps, cancellation, adaptive control, stop
+bounds, slots, and samplers; and endpoint profile materialization into per-turn prepared
+`EndpointKey`s.
 
-- authored native dataset source and tokenizer policy;
-- ordered warmup/profiling phases;
-- concurrency, request-rate, user-centric, fixed-schedule, and one-pass sources;
-- ramps, cancellation, adaptive control, stop bounds, slots, and samplers;
-- endpoint profile materialization and per-turn prepared `EndpointKey`s.
-
-It supports `online_http` and `dynosim`. The same phase/workload policy is injected with the
-selected clock/dispatcher. Fixed schedule and dataset timing validation occur after dataset load
-and before artifact creation or scheduling.
+It supports `http`, `grpc`, `dynosim_offline`, and `dynosim_online`. The same phase/workload policy
+is injected with the selected clock/dispatcher. Fixed schedule and dataset timing validation occur
+after dataset load and before artifact creation or scheduling. The scheduled offline adapter loads
+the authored dataset once into the unified store before running all phases on one simulator engine.
 
 All canonical Dynamo trace formats enter through the unified dataset/fixed-schedule source or a
 lowering into the same scheduled representation. They do not create a second public trace runner.
 
 ### 6.2 `graph`
 
-The strict Graph-IR workload config owns:
+The strict Graph-IR workload config owns the graph source/IR and unified dataset references; worker
+count, duration gate, firing-gate inputs, and deterministic merge order; graph endpoint
+materialization and response/metric configuration; and optional offline trace/event-source inputs
+required by the Dynamo transport.
 
-- graph source/IR and unified dataset references;
-- worker count, duration gate, firing-gate inputs, and deterministic merge order;
-- graph endpoint materialization and response/metric configuration;
-- optional offline trace/event-source inputs required by the Dynamo backend.
+It supports `http` through `drive_real` and the dynosim transports through `drive_sim_with_source`.
+Each graph worker owns its metric accumulator, endpoint binding table, and prepared sink; workers
+merge once in deterministic order. The graph adapters pass authored `dag_jsonl` directly to the
+registered graph-input adapter, producing `GraphTracePlan`s and one frozen segment store without a
+`Dataset`, `Conversation`, `DagMetadata`, Python resolver, or protocol-v1 intermediate. Unsupported
+phase lists, arrival/slot actuators, or other unbuilt Graph consumers fail validation rather than
+appearing as inert config.
 
-It supports `online_http` through `drive_real` and `dynosim` through
-`drive_sim_with_source`. Each graph worker owns its metric accumulator, endpoint binding table, and
-prepared sink; workers merge once in deterministic order.
+### 6.3 Sheddable canonical workloads
 
-Graph mode remains subject to its current feature coverage. Unsupported phase lists, arrival/slot
-actuators, or other unbuilt Graph consumers fail validation rather than appearing as inert config.
+The `static_accuracy`, stateful `agentic`, provider-neutral `evaluation`, and telemetry-watch
+workloads are **not** part of the current performance-only product wire. Their design intent is
+preserved here and their canonical-provider contract is owned by the accuracy-accumulator companion
+spec:
 
-### 6.3 `static_accuracy`
+- **`static_accuracy`** requires semantic response text (`http` only) and drives inference through
+  the ordinary scheduled path while a supervised pinned Python evaluator owns load/grade. Its
+  in-tree adapter (`online_execution::register_http_static_accuracy_pair*`) remains gated and is not
+  registered by the base image.
+- **`agentic`** requires semantic responses (`http` only), supervises Harbor / AgentLab+BrowserGym /
+  MCPMark canonical workers, and routes primary/environment/verifier calls through the authenticated
+  Rust inference gateway and the ordinary prepared endpoint/scheduling/transport/metrics path. Its
+  workers never contact the target model except through that callback.
+- **`evaluation`** requires deployment-owned attested evaluator roots; without them the
+  `http + evaluation` pair is absent.
+- **telemetry-watch** (the former operational-history pair) has been removed from the runner
+  entirely.
 
-The strict config owns the canonical evaluator worker identity, benchmark/tasks, problem limits,
-tokenizer policy, callback-free static load/grade protocol, scheduled inference phases, and typed
-accuracy artifacts.
-
-It requires semantic response text and therefore supports `online_http` only. The evaluator remains
-a supervised pinned Python process; Rust owns every inference request, endpoint/transport operation,
-timing event, metric, terminal response capture, and report join.
-
-### 6.4 `agentic`
-
-The strict config owns:
-
-- provider/environment/benchmark identity and pinned worker selection;
-- episode/task concurrency and overall inference concurrency;
-- primary/environment/verifier call policy;
-- optional authenticated inference-gateway binding;
-- endpoint profiles, canonical agent/provider settings, cancellation, and artifacts.
-
-It requires semantic model responses and supports `online_http` only. `aiperf-runner` supervises the
-provider worker, starts the Rust `AgenticInferenceGateway` when requested, admits every callback
-through the same Rust slot/scheduled/endpoint/transport path, and writes native-v2 reward,
-provenance, episode, and per-purpose accounting blocks.
-
-Harbor, AgentLab/BrowserGym, and MCPMark continue to own their canonical task/environment/agent/
-verifier loops. Their workers never contact the target model except through the authenticated Rust
-callback path.
+Re-adding any of these to the product wire re-registers its pair factory and restores its subprocess
+proof; until then, capability truth for a given image excludes them.
 
 ---
 
@@ -484,69 +376,49 @@ callback path.
 
 The built-in target matrix is:
 
-| Backend | `scheduled` | `graph` | `static_accuracy` | `agentic` |
-|---|:---:|:---:|:---:|:---:|
-| `online_http` | yes | yes | yes | yes |
-| `dynosim` | yes | yes | no | no |
+| Transport | `scheduled` | `graph` |
+|---|:---:|:---:|
+| `http` | yes | yes |
+| `grpc` | yes | no |
+| `dynosim_offline` | yes | yes |
+| `dynosim_online` | yes | yes |
 
-The matrix is derived from workload requirements and backend descriptors at registry freeze; it is
-not a handwritten runtime switch. Capabilities serialize the computed supported pairs. A linked
-factory may add a new ID/pair without editing a core enum, subject to its trait and protocol schema.
-
-Accuracy is online-only because a timing simulator cannot produce model-semantic answer text.
-ONLINE-mock can execute accuracy only when the HTTP mock intentionally supplies semantically valid
-fixture responses; that is still the `online_http` backend, not Dynamo offline.
+The matrix is derived from workload requirements and transport descriptors at registry freeze; it is
+not a handwritten runtime switch. The catalog serializes only the linked, executable transports and
+workloads. A linked factory may add a new ID/pair without editing a core enum, subject to its trait
+and Config schema. The `dynosim_*` transports appear only in a feature-bearing build; `grpc`
+currently pairs with `scheduled` only.
 
 ---
 
-## 8. Capabilities
+## 8. Capability discovery
 
-`--capabilities` describes the exact frozen runner distribution:
+`--capabilities` describes the exact frozen runner distribution as a plugins.yaml-shaped JSON
+catalog (`protocol.rs::RunnerCatalog`, emitted by `RunnerApplication::catalog()`):
 
 ```json
 {
-  "event": "runner_capabilities",
-  "capabilities_schema_version": 2,
-  "protocol_versions": [1, 2],
-  "report_schema_version": "2.0",
-  "distribution_id": "blake3:...",
-  "backends": [
-    {
-      "id": "online_http",
-      "clock": "real",
-      "features": ["h1", "h2c", "uds", "tls"]
-    },
-    {
-      "id": "dynosim",
-      "clock": "sim",
-      "features": ["aggregate", "disaggregate", "kv_routing"]
-    }
-  ],
-  "workloads": [
-    {"id": "scheduled"},
-    {"id": "graph"},
-    {"id": "static_accuracy"},
-    {"id": "agentic"}
-  ],
-  "supported_pairs": [
-    ["online_http", "scheduled"],
-    ["online_http", "graph"],
-    ["online_http", "static_accuracy"],
-    ["online_http", "agentic"],
-    ["dynosim", "scheduled"],
-    ["dynosim", "graph"]
-  ],
-  "endpoints": [],
-  "extensions": []
+  "schema_version": "…",
+  "endpoint": { "…": { "description": "…", "metadata": { } } },
+  "transport": {
+    "http":            { "description": "…", "metadata": { "transport_type": "http", "clock": "real", "features": ["h1", "h2c", "uds", "tls"], "url_schemes": ["http", "https"] } },
+    "grpc":            { "description": "…", "metadata": { "transport_type": "grpc", "clock": "real" } },
+    "dynosim_offline": { "description": "…", "metadata": { "transport_type": "dynosim_offline", "clock": "sim" } },
+    "dynosim_online":  { "description": "…", "metadata": { "transport_type": "dynosim_online", "clock": "real" } }
+  },
+  "custom_dataset_loader": { },
+  "public_dataset_loader": { },
+  "dataset_sampler": { }
 }
 ```
 
-The actual descriptors include all typed feature inventories required for fail-closed validation:
-phase features, graph features, Dynamo topologies/routers/trace formats/offload capabilities,
-evaluator/provider capabilities, endpoint catalog, telemetry sources, and artifact formats.
-
-No capability list is maintained separately from the frozen factories/registries. A feature-gated
-implementation absent from the exact binary is absent from capabilities.
+The authoritative catalog schema is owned by
+`2026-07-13-benchmarkrun-wire-and-runner-catalog-design.md`. This is a plugins.yaml-shaped inventory
+of the exact linked binary: endpoint dialects, transports, dataset loaders, and samplers — **not** a
+`supported_pairs` / transport-workload matrix and **not** a distribution-id pin. A feature-gated
+implementation absent from the exact binary is absent from the catalog. Python performs pair
+preflight against this catalog before executing; an absent capability fails closed without
+conversion to any legacy path.
 
 ---
 
@@ -556,15 +428,14 @@ implementation absent from the exact binary is absent from capabilities.
 
 The `validate` operation:
 
-1. verifies `distribution_id`;
-2. resolves backend/workload/endpoint IDs through frozen registries;
-3. strictly deserializes their owned configs;
-4. validates the backend/workload compatibility and compiled feature set;
-5. validates every rule possible without external dataset/evaluator/server IO;
-6. returns `completeness` plus typed deferred checks.
+1. resolves transport/workload/endpoint IDs through frozen registries;
+2. strictly deserializes their owned configs;
+3. validates transport/workload compatibility through the pair factory and the compiled feature set;
+4. validates every rule possible without external dataset/evaluator/server IO;
+5. returns `completeness` plus typed deferred checks.
 
-It creates no artifact directory, warms no tokenizer, downloads no dataset, starts no evaluator,
-initializes no Dynamo engine, and sends no inference traffic.
+It creates no artifact directory, warms no tokenizer, downloads no dataset, initializes no Dynamo
+engine, and sends no inference traffic.
 
 ### 9.2 Complete preparation
 
@@ -572,12 +443,12 @@ The `execute` operation repeats static validation and then:
 
 1. loads/localizes the dataset and tokenizer through Rust registries;
 2. discovers and binds every endpoint profile reference;
-3. validates fixed timing, graph inputs, evaluator-authored sources, and other deferred content;
+3. validates fixed timing, graph inputs, and other deferred content;
 4. prepares a worker-local endpoint table and compiled templates/selectors;
-5. prepares the backend clock/sink/engine without beginning workload events;
-6. completes backend/workload compatibility validation using prepared facts;
+5. prepares the transport clock/sink/engine without beginning workload events;
+6. completes transport/workload compatibility validation using prepared facts;
 7. creates the run artifact directory and materializes authorized user files;
-8. starts supervised sidecars/evaluators and the runtime;
+8. starts supervised sidecars and the runtime;
 9. executes and finalizes reports/artifacts.
 
 If preparation requires remote cache writes, those use a content-addressed shared cache and are not
@@ -591,34 +462,19 @@ bindings are worker-local, metrics are worker-local and merged once, and no opti
 backpressure request dispatch.
 
 All terminal paths drain/cancel according to the owning workload/phase policy, finalize typed
-backend/workload facts, and then serialize native-v2. Failure terminals identify `protocol`,
+transport/workload facts, and then serialize native-v2. Failure terminals identify `protocol`,
 `validation`, `preparation`, `execution`, or `reporting` stage without leaking secrets.
 
 ---
 
 ## 10. Native-v2 and artifacts
 
-Every report contains common provenance:
-
-```json
-{
-  "run": {
-    "distribution_id": "blake3:...",
-    "backend": "online_http",
-    "workload": "scheduled",
-    "extensions": [],
-    "endpoint_profiles": []
-  }
-}
-```
-
+Every report contains common provenance (run identity, transport, workload, endpoint profiles).
 Mode-specific typed blocks remain additive:
 
 - online HTTP trace/network/TLS facts;
 - Dynamo engine/router/topology/capacity/parity facts;
-- Graph worker/IR/firing facts;
-- static evaluator identity/accuracy records;
-- agentic provider/environment/verifier/reward/episode and per-purpose accounting.
+- Graph worker/IR/firing facts.
 
 The common metric catalog and report identity do not fork by mode. Offline returns are rejected
 unless the complete common AIPerf/Dynamo summary bytes match as required by the offline spec.
@@ -633,8 +489,8 @@ derived from Rust-owned results and are not another metric authority.
 ## 11. Packaging and distribution selection
 
 The normal Python installation selects a platform-specific `aiperf-runner` companion package.
-Official distributions may differ in compiled optional backends, but every distribution is
-self-describing and content-identified.
+Official distributions may differ in compiled optional transports, but every distribution is
+self-describing through its catalog.
 
 Discovery order remains:
 
@@ -647,96 +503,45 @@ The release matrix MUST contain:
 
 - a stock online runner for every supported platform;
 - an official offline-capable runner wherever the pinned Dynamo dependency is supported;
-- source/lock/feature provenance and exact `distribution_id` for each;
-- fresh-install capabilities and loopback subprocess tests;
+- source/lock/feature provenance for each;
+- fresh-install catalog and loopback subprocess tests;
 - no silent substitution of an online-only binary for an offline request.
 
 Custom statically linked extensions ship a custom runner distribution and are selected explicitly.
-Protocol/capability/report compatibility—not Python package-version equality—is authoritative.
+Protocol/catalog/report compatibility — not Python package-version equality — is authoritative.
 
 ---
 
-## 12. Migration plan
-
-### Increment 1 — common v2 envelope and authored projection
-
-1. Add exact distribution identity and capability schema v2.
-2. Add `validate`/`execute` envelopes and typed terminal stages.
-3. Add side-effect-free Python `AuthoredRunSpecV2` projection.
-4. Split path selection from artifact creation and remove `run.resolved` from v2.
-5. Keep protocol v1 online/static-accuracy compatibility.
-
-### Increment 2 — factory registries and current online path
-
-1. Add backend/workload builder/frozen registries.
-2. Register `online_http`, `scheduled`, and `static_accuracy` factories.
-3. Lower v1/v2 scheduled requests into the same current runner implementation.
-4. Derive capabilities and supported pairs from descriptors.
-5. Inject the runner-owned endpoint registry and prepared worker tables.
-
-### Increment 3 — online Graph-IR
-
-1. Define the strict graph workload config and authored Graph-IR source projection.
-2. Prepare unified dataset/endpoint/worker-local metric state.
-3. Compose `drive_real` with the normal online transport.
-4. Add process-level graph reports, failures, and throughput/metric tests.
-
-### Increment 4 — Dynamo offline
-
-1. Forward every Dynamo feature through `aiperf-runner`.
-2. Register `dynosim` only in feature-bearing builds.
-3. Add strict engine/router/topology/trace/feature config owned by that factory.
-4. Compose scheduled and graph workloads through the existing `SimClock`/steppable paths.
-5. Restore the complete parity/fail-closed matrix as runner subprocess tests.
-
-### Increment 5 — stateful agentic
-
-1. Register the `agentic` workload and strict provider/gateway config.
-2. Supervise canonical workers and callback gateway from the runner process.
-3. Route primary/environment/verifier calls through the shared prepared online backend.
-4. Restore Harbor, BrowserGym, and MCPMark real subprocess canaries.
-5. Prove cancellation/infrastructure failures never become wrong answers.
-
-### Increment 6 — deletion and v1 retirement
-
-1. Remove Python resolver/implementation behavior now owned by Rust preparation.
-2. Remove any alternate native or Python inference execution route.
-3. Remove legacy CLI/canary wording once runner subprocess proofs replace it.
-4. Remove protocol v1 after the compatibility matrix passes.
-5. Retain library-level focused tests as algorithm tests, not product-entry tests.
-
----
-
-## 13. Verification gates
+## 12. Verification gates
 
 ### Protocol and composition
 
-1. Capability, validate, and execute processes agree on exact `distribution_id`.
+1. Capability and execute processes agree on the exact linked runner image.
 2. Unknown versions/operations/fields fail with exit `2` and one typed response where possible.
-3. Backend/workload/endpoints in capabilities exactly equal the frozen registries.
+3. Transports/workloads/endpoints in the catalog exactly equal the frozen registries.
 4. Supported pairs are computed from descriptors/requirements and deterministically serialized.
 5. A custom factory/extension appears in validation and execution without Python registration.
 
 ### Reachability matrix
 
-1. `online_http + scheduled`: real HTTP/SSE subprocess, all phase families, adaptive controls,
-   artifacts, telemetry, and native-v2.
-2. `online_http + graph`: real Graph-IR transport subprocess and deterministic worker merge.
-3. `online_http + static_accuracy`: real supervised static evaluator subprocess.
-4. `online_http + agentic`: real Harbor, BrowserGym, and MCPMark provider subprocess canaries.
-5. `dynosim + scheduled`: all applicable scheduled workloads, ramps, cancellation,
-   adaptive controls, trace formats, topologies, routers, artifacts, and exact parity.
-6. `dynosim + graph`: Graph-IR DES with engine/cancellation/sleeper events and exact parity.
-7. Invalid accuracy/agentic plus offline combinations fail static validation.
+1. `http + scheduled`: real HTTP/SSE subprocess, all phase families, adaptive controls, artifacts,
+   telemetry, and native-v2.
+2. `http + graph`: real Graph-IR transport subprocess and deterministic worker merge.
+3. `grpc + scheduled`: real Tonic subprocess with per-lane runtime/LocalSet and native-v2.
+4. `dynosim_offline + {scheduled, graph}`: all applicable scheduled workloads and Graph-IR DES with
+   ramps, cancellation, adaptive controls, trace formats, topologies, routers, artifacts, and exact
+   parity.
+5. `dynosim_online + {scheduled, graph}`: wall-clock apples-to-apples parity with Dynamo's live
+   driver.
+6. Unregistered transport/workload combinations fail static validation.
 
 ### Side effects and failure
 
 1. Static validation creates no artifacts, cache entries, workers, engines, or traffic.
 2. Deferred validation completes before run artifact creation and scheduling.
-3. Missing compiled features fail before backend initialization.
-4. Digest mismatch fails before semantic validation.
-5. Stderr and typed errors redact secrets and URL userinfo.
-6. A failed run never emits a successful/partial authoritative report.
+3. Missing compiled features fail before transport initialization.
+4. Stderr and typed errors redact secrets and URL userinfo.
+5. A failed run never emits a successful/partial authoritative report.
 
 ### Packaging
 
@@ -748,7 +553,7 @@ Protocol/capability/report compatibility—not Python package-version equality�
 
 ---
 
-## 14. Rejected alternatives
+## 13. Rejected alternatives
 
 ### Keep a native `aiperf` CLI for missing modes
 
@@ -760,172 +565,55 @@ library-only mode remains unavailable until projected through `aiperf-runner`.
 Rejected. Python may orchestrate or supervise canonical external libraries, but it does not become
 an alternate inference scheduler, transport, metric engine, graph executor, or offline adapter.
 
-### Treat `aiperf dynosim` as AIPerf offline reachability
+### Treat a `python -m dynamo.*` facade as AIPerf offline reachability
 
-Rejected. That facade exposes Dynamo-owned products and parsers. It does not execute AIPerf's
-shared Rust front end or satisfy this runner contract.
+Rejected. Those facades expose Dynamo-owned products and parsers. They do not execute AIPerf's
+shared Rust front end or satisfy this runner contract. AIPerf offline is authored through
+`aiperf profile` with `transport.type: dynosim_offline|dynosim_online`.
 
 ### Define one executable or wire protocol per mode
 
-Rejected. It guarantees configuration and reporting drift. Backend and workload factories compose
-inside one versioned runner envelope.
+Rejected. It guarantees configuration and reporting drift. Transport and workload factories compose
+inside one versioned BenchmarkRun run.
 
 ### Pass raw argv into Rust mode parsers
 
 Rejected for AIPerf runner operations. The subprocess boundary is a strict versioned DTO with
 unknown-field rejection. Raw argv forwarding remains appropriate only for the separate canonical
-Dynamo-owned facade where Dynamo owns the parser.
+Dynamo-owned facades where Dynamo owns the parser.
 
-### Hardcode a central backend/workload enum and match
+### Hardcode a central transport/workload enum and match
 
-Rejected. Backend and workload are extension seams and use registered trait factories. The wire
+Rejected. Transport and workload are extension seams and use registered trait factories. The wire
 uses stable IDs; each factory strictly owns its config.
 
 ### Reuse one long-lived runner across trials
 
-Rejected. Fresh execution processes isolate allocator, connection pool, RNG, engine, evaluator,
-and extension state. The Python outer loop owns iteration and convergence.
+Rejected. Fresh execution processes isolate allocator, connection pool, RNG, engine, and extension
+state. The Python outer loop owns iteration and convergence.
 
 ### Claim product support from library tests
 
 Rejected. Product reachability requires a real Python-orchestrator -> `aiperf-runner` subprocess
-proof for the exact backend/workload pair and report contract.
+proof for the exact transport/workload pair and report contract.
 
 ---
 
-## 15. Completion criteria
+## 14. Completion criteria
 
 This design is complete when:
 
 - the only native AIPerf executable is `aiperf-runner`;
-- protocol v2 accepts authored, side-effect-free `validate` and `execute` operations;
-- exact runner distribution identity is verified across capability/validation/execution processes;
-- backend/workload factories and capabilities are derived from one frozen runner registry;
-- scheduled and Graph-IR workloads are product-reachable over online HTTP and Dynamo offline;
-- static accuracy and stateful agentic workloads are product-reachable over online HTTP;
+- protocol v2 accepts authored, side-effect-free `validate` and `execute` operations, and protocol
+  v1 has been removed;
+- the exact linked runner image is verified across capability and execution processes;
+- transport/workload factories and the catalog are derived from one frozen runner registry;
+- scheduled and Graph-IR workloads are product-reachable over `http`/`grpc` and Dynamo offline;
 - every applicable mode uses the same endpoint registry, dataset store, clock/transport seams,
   observer/metrics engine, and native-v2 reporter;
-- official feature-bearing distributions expose every supported optional backend fail-closed;
-- runner subprocess tests replace removed native-CLI product proofs;
-- Python contains no duplicate implementation of any capability now runner-reachable;
-- protocol v1 and every fallback route have been removed after compatibility.
+- official feature-bearing distributions expose every supported optional transport fail-closed;
+- runner subprocess tests replace any removed native-CLI product proofs;
+- Python contains no duplicate implementation of any capability now runner-reachable.
 
-Until then, capabilities—not library presence or this design record—are the authority for what the
-exact selected runner can execute.
-
-## Addendum — 2026-07-12 (native KServe/gRPC protocol-v2 pairs)
-
-The base runner now registers and subprocess-proves `online_http + scheduled`
-and `online_grpc + scheduled` protocol-v2 execution. The latter is a new
-real-clock backend over `aiperf-transport-grpc`; every multi-worker lane owns a
-current-thread runtime, `LocalSet`, Clock, prepared endpoint table, dense gRPC
-binding table, and Tonic channel set.
-
-The KServe endpoint family is deliberately absent from protocol-v1 endpoint
-compatibility. `kserve_v1_predict` names KServe's V1 HTTP dialect, not runner
-protocol v1, and executes through the same authored v2 prepared-binding path.
-Python accepts `grpc://` / `grpcs://` only with `online_grpc`, exact-image
-capabilities advertise only the registered pair, and the v1 projector rejects
-the backend. This addendum supersedes the earlier “pair execution pending” and
-empty-`supported_pairs` implementation-status statements; unregistered pairs
-and uncomposed sidecar/readiness lifecycles still fail closed.
-
-## Addendum — 2026-07-12 (direct pair adapters and completed canonical matrix)
-
-The canonical Python product path is now protocol-v2-only. It projects one
-authored request, verifies the exact runner image, and preflights one registered
-pair. It contains no Config-v1 resolver call, protocol-v1 request builder, or
-fallback branch. Protocol v1 remains accepted by the Rust executable only as
-an isolated compatibility decoder and is not selected by `aiperf profile`.
-
-Runner composition implements the double-dispatch structure designed here:
-open backend and workload factories validate their own raw configuration, an
-explicit `RunnerPairFactory` owns cross-component compatibility, and
-preparation returns one `PreparedRunnerOperation`. Online execution further
-uses a direct `OnlineWorkloadAdapter -> PreparedOnlineHarness` transition. The
-coordinator does not match on workload strings or convert v2 values through a
-v1 DTO. Startup-only typed lowering into shared runtime values is the single
-adapter load, not a second wire conversion.
-
-The executable pair matrix is now:
-
-| Runner distribution | Executable protocol-v2 pairs |
-|---|---|
-| Base | `online_http + scheduled`, `online_http + graph`, `online_http + static_accuracy`, `online_http + agentic`, `online_grpc + scheduled` |
-| `dynosim` feature | every base pair plus `dynosim + scheduled` and `dynosim + graph` |
-
-`supported_pairs` is still derived from registered executable adapters, so a
-base image never claims the optional offline pairs. The scheduled offline
-adapter loads the authored dataset once into the unified store before running
-all phases on one simulator engine. The graph adapters pass authored
-`dag_jsonl` directly to the registered graph-input adapter, producing
-`GraphTracePlan`s and one frozen segment store without a `Dataset`,
-`Conversation`, `DagMetadata`, Python resolver, or protocol-v1 intermediate.
-
-The stateful agentic pair supervises the canonical Python evaluator over JSONL,
-starts the authenticated Rust inference gateway, and routes primary and
-auxiliary calls through the ordinary prepared endpoint, scheduling, transport,
-metrics, and report path. Python Config-v2 subprocess coverage now complements
-the existing runner process proof, so the mode is product-reachable without
-restoring a native CLI or giving Python model-server coordinates.
-
-This addendum supersedes Sections 1.1–1.3's implementation snapshot, the
-migration plan's pending increments 3–5, and the completion criterion that
-allowed a Python fallback until protocol-v1 retirement. Remaining unregistered
-combinations and unsupported per-workload lifecycle fields continue to fail
-closed; capability truth remains exact-image-specific.
-
-## Addendum — 2026-07-12 (runner protocol-v1 fully removed)
-
-Protocol-v1 support has been deleted from `aiperf-runner` entirely. The runner
-now advertises `protocol_versions: [2]` only and rejects any non-v2 request as a
-protocol-v2 failure envelope. Removed from `rust/aiperf-runner`: the v1
-request `dispatch` entry, `execute_v1` and the `execute_run*` execution chain,
-the `RunRequest` / `RunSpec` / `RunTerminal` / `EndpointSpec` / `DatasetSpec` /
-`AccuracySpec` wire DTOs, the `load_protocol_v1` graph-input adapters, and the
-`Legacy` capability/enum variants, along with the accompanying v1 tests. Python
-had already dropped its v1 wire projection.
-
-This supersedes Section 3.3 "Protocol-v1 compatibility," the "runner temporarily
-accepts the current protocol-v1" language, the migration steps that kept v1
-online/static-accuracy compatibility, and the two prior addenda sentences
-describing an "isolated compatibility decoder": no v1 decoder, authority,
-request builder, or fallback remains on the runner. (The `aiperf-endpoints`
-crate keeps its own internal `EndpointType` metadata/compatibility adapters —
-those are unrelated to the removed runner wire protocol.)
-
-## Addendum — 2026-07-12 (transport vocabulary and telemetry-watch pair)
-
-The runner execution axis has been renamed from backend to transport in the
-strict protocol-v2 surface. Capabilities now emit `transports`, authored requests
-carry `run.transport`, and registered IDs are `http`, `grpc`,
-`dynosim_offline`, and `dynosim_online`. The older `online_http`,
-`online_grpc`, and single `dynosim` backend names in this spec are superseded.
-
-The base runner's executable protocol-v2 matrix now also includes the
-operational history plane:
-
-| Runner distribution | Executable protocol-v2 pairs |
-|---|---|
-| Base | `http + scheduled`, `http + graph`, `http + static_accuracy`, `http + agentic`, `http + telemetry_watch`, `grpc + scheduled` |
-| `dynosim` feature | every base pair plus `dynosim_offline + scheduled`, `dynosim_offline + graph`, `dynosim_online + scheduled`, and `dynosim_online + graph` |
-
-Exact deployment-owned evaluator roots may still conditionally add
-`http + evaluation`. Capability truth remains exact-image-specific, and
-`protocol_versions` remains `[2]`.
-
-## Addendum — 2026-07-13 (BenchmarkRun wire + runner catalog)
-
-The strict request envelope, `supported_pairs` / backend-workload capabilities
-shape, and distribution-id pinning described in this spec are superseded by
-`specs/2026-07-13-benchmarkrun-wire-and-runner-catalog-design.md` (decided / not
-yet implemented).
-
-Authoritative replacement: BenchmarkRun-shaped `run` (including `resolved`),
-plugins.yaml-like JSON catalog discovery from the linked binary, no
-`workload`/`backend` wire dialect, no `expected_distribution_id`. The
-performance-only cut keeps scheduled/graph execution selected from Config
-shape and `transport.type` (`http` / `grpc` / `dynosim_offline` /
-`dynosim_online`). Agentic / static-accuracy / evaluation / telemetry-watch
-pairs leave the product wire as Config sheds them. Sole-runner ownership and
-fail-closed unknown combinations remain.
+The exact runner catalog — not library presence or this design record — is the authority for what
+the selected runner can execute.

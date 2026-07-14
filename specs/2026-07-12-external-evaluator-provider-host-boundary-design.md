@@ -7,7 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 
 **Date:** 2026-07-12
 **Author:** Anthony Casagrande (Tech Lead) + Codex
-**Status:** decided / not implemented — adversarially reviewed and default-refute adjudicated
+**Status:** designed; the neutral provider-host foundation and GSM8K canaries were prototyped then
+REMOVED from the ajc/rust branch — only the static lighteval worker path (`aiperf::accuracy_core`)
+remains. No evaluation pair is registered. Adversarially reviewed and default-refute adjudicated.
 **Decision:** converge static and stateful accuracy on one provider-neutral evaluation workload,
 then retire AIPerf's duplicate Python evaluator/provider implementations after benchmark-by-
 benchmark parity gates. NeMo Evaluator and OpenBench/Inspect AI are sibling canonical evaluator
@@ -98,11 +100,14 @@ case that normally emits one inference operation before verification. An agentic
 session case that may emit many inference, tool, sandbox, or verifier operations. Batch evaluators
 are session execution units with explicitly different scheduling granularity.
 
-The delivery is ours on every side. We will implement the neutral NeMo Evaluator seams in our
-fork, the OpenBench/Inspect provider adapter and manifests in our OpenBench fork, the minimal
-generic Inspect AI changes that its official extension points cannot express, and the Rust
-host/provider seams in AIPerf. Upstream acceptance may reduce long-term fork cost, but it is not a
-prerequisite and cannot be a correctness dependency.
+The delivery is ours on every side. The Rust host/provider seams in AIPerf and the canary-scope
+neutral seams in our NeMo Evaluator and OpenBench/Inspect forks — the neutral NeMo Evaluator
+session/host extraction, the OpenBench/Inspect provider adapter and manifests, and the minimal
+generic Inspect AI changes that its official extension points cannot express — were prototyped for
+two stock GSM8K canaries and then removed from this branch (section 19); the current tree carries
+only the static lighteval worker seam. Re-implementing this foundation and broadening it to every
+environment, task, and effect is the gated work of section 14. Upstream acceptance may reduce
+long-term fork cost, but it is not a prerequisite and cannot be a correctness dependency.
 
 ---
 
@@ -1433,6 +1438,15 @@ environment merely because the protocol is unified.
 
 ## 14. Implementation increments
 
+Increments 0–3 were prototyped once on an earlier branch — the executable boundary proof, the
+neutral NeMo Evaluator and OpenBench/Inspect provider refactors at canary scope, the generic AIPerf
+evaluation workload and `online_http + evaluation` pair, and immutable-asset binding with
+one-executed-case static parity per provider — and were then **removed** from this tree (section 19).
+All six increments are therefore open work on `ajc/rust`: increments 0–3 must be re-landed before
+increments 4–6 (broad operation/route coverage, Rust host effects, and provider-by-provider
+migration and deletion), and no legacy provider or workload may be deleted until the section 15
+gates pass.
+
 ### Increment 0 — executable boundary proof
 
 - Define protocol/host/session DTOs and schema fingerprints in every participating repository.
@@ -1620,13 +1634,13 @@ Tests cover at least:
 
 The following are resolved during increment design/review without weakening the boundary:
 
-- exact Linux syscall-isolation mechanism and portable fail-closed provider availability;
-- whether stream event transport remains JSONL or uses a second inherited framed pipe after the
-  JSONL conformance proof;
-- the final crate/module home for host executor registries, subject to cycle-free dependency
-  direction;
+- portable fail-closed provider availability beyond the Linux x86_64 Bubblewrap
+  `linux-bubblewrap-rootfs-process-tree-v4` profile the removed prototype targeted (section 19);
+- whether stream event transport stays JSONL control (as the removed prototype used) or adds a
+  second inherited framed pipe after the JSONL conformance proof;
+- the crate/module home for the host executor registries when the foundation is re-landed;
 - exact compatibility-release duration for legacy report/workload aliases;
-- which simple static provider/task is the first real parity canary.
+- which simple static provider/task is the first real parity canary when re-landed.
 
 Any proposed answer that gives Python a real endpoint, upstream credential, unrestricted socket,
 raw upstream SSE, caller-selected forward URL, or generic network escape hatch is outside this RFC
@@ -1676,143 +1690,155 @@ corrections are deliberately merged.
 
 ---
 
-## Addendum — 2026-07-12: neutral host foundation and bounded stock canaries built
+## 19. Implementation status: prototyped, then removed from this branch
 
-This addendum supersedes the document header's blanket **not implemented** status and the open
-question in section 17 about the first parity canary. The ownership decision, fail-closed security
-boundary, staged-migration policy, and acceptance/deletion gates remain authoritative. The neutral
-provider/host foundation and two exact GSM8K canaries are built; broad NeMo Evaluator or
-OpenBench/Inspect task support and replacement of the legacy static/stateful providers are not.
+The neutral provider-host foundation and the two exact GSM8K canaries described by this design were
+prototyped on an earlier branch and have since been **removed** from the `ajc/rust` tree. The
+current code is authoritative: `rust/aiperf/src/accuracy_core/mod.rs`'s module doc states verbatim,
+"The external-evaluator provider-host and agentic verticals have been removed; only the static
+lighteval worker path remains." No `evaluation` module, provider/supervisor/isolation/proxy/
+stock-evaluation/evaluation-execution files, `EvaluationProvider` seam, or `bubblewrap` isolation
+exist under `rust/` today, and the runner registers no `evaluation` pair on the product wire — only
+scheduled/graph pairs over HTTP/gRPC (plus `dynosim` behind its feature). What remains of accuracy
+in Rust is the static lighteval worker seam `aiperf::accuracy_core` (`AccuracyEvaluator` /
+`PythonEvaluator` over JSONL stdio).
 
-### Built neutral protocol and runtime
+The ownership decision, fail-closed security boundary, staged-migration policy, and the section 15
+acceptance/deletion gates remain the authoritative design record for any future re-implementation.
+The subsections below record what the removed prototype implemented; none of these files or symbols
+are present in `rust/` on this branch.
 
-- `rust/aiperf-accuracy/src/{provider,provider_protocol,supervisor,lifecycle}.rs` implements the
-  object-safe `EvaluationProvider` / `EvaluationProviderFactory` / launcher seams, deterministic
-  availability-filtered registry, strict evaluator-worker protocol v2 DTOs, bounded correlated
-  JSONL control over dedicated inherited descriptors 3/4, factory-owned side-effect-free authored
-  validators, pre-exec launch-closure attestation, negotiated/final identity checks, cancellation,
-  and the complete lifecycle through deferred report commit. Ordinary stdout is not a protocol
-  channel, and provider stderr bytes remain restricted.
-- `rust/aiperf/src/evaluation/{host,arbiter,ledger,retry,inference,workload}.rs` implements open
-  typed host-executor registries, logical Rust-owned routes, bounded fair unit/operation admission,
-  exact logical-operation and transport-attempt accounting, Clock-driven retry/backoff,
+### Neutral protocol and runtime (removed)
+
+The removed prototype implemented, across former `aiperf-accuracy` provider/protocol/supervisor/
+lifecycle modules, `aiperf`'s `evaluation` host/arbiter/ledger/retry/inference/workload modules, and
+the runner's `evaluation_execution` adapter:
+
+- the object-safe `EvaluationProvider` / `EvaluationProviderFactory` / launcher seams, a
+  deterministic availability-filtered registry, strict evaluator-worker protocol v2 DTOs, bounded
+  correlated JSONL control over dedicated inherited descriptors 3/4, factory-owned side-effect-free
+  authored validators, pre-exec launch-closure attestation, negotiated/final identity checks,
+  cancellation, and the complete lifecycle through deferred report commit. Ordinary stdout was not a
+  protocol channel and provider stderr bytes were restricted.
+- open typed host-executor registries, logical Rust-owned routes, bounded fair unit/operation
+  admission, exact logical-operation and transport-attempt accounting, Clock-driven retry/backoff,
   cancellation, prepared-endpoint inference lowering, provider event draining, and the generic
-  evaluation workload. Provider code still owns prompts, solvers, scorers, semantic outcomes, and
+  evaluation workload. Provider code owned prompts, solvers, scorers, semantic outcomes, and
   canonical aggregates.
-- `rust/aiperf-runner/src/evaluation_execution.rs` supplies the protocol-v2
-  `online_http + evaluation` adapter, immutable GSM8K asset resolver, prepared HTTP route
-  composition, native metrics join, and runner report commit. Python authors only a registered
-  provider/distribution, opaque provider configuration, logical routes, and bounded concurrency;
-  it supplies no executable, import target, environment, endpoint URL, or credential.
+- the protocol-v2 `online_http + evaluation` adapter, immutable GSM8K asset resolver, prepared HTTP
+  route composition, native metrics join, and runner report commit. Python authored only a
+  registered provider/distribution, opaque provider configuration, logical routes, and bounded
+  concurrency; it supplied no executable, import target, environment, endpoint URL, or credential.
 
-The legacy `AccuracyEvaluator`, `AgenticEvaluator`, `static_accuracy`, and `agentic` surfaces remain
-exported and registered during migration. The new provider protocol does not silently reinterpret
-either legacy workload.
+The legacy static-accuracy surface (`AccuracyEvaluator`) remains exported; the prototype's parallel
+`AgenticEvaluator` / `static_accuracy` / `agentic` companion surfaces and the new provider protocol
+were removed together with the host.
 
-### Built launch isolation and process-tree proof
+### Launch isolation and process-tree proof (removed)
 
-`rust/aiperf-accuracy/src/isolation.rs` and
-`rust/aiperf-runner/src/stock_evaluation.rs` implement the stock
-`linux-bubblewrap-rootfs-process-tree-v4` profile. Rust independently resolves and hashes the exact
-registered CPython, provider package/source-overlay/dependency-lock, system-library, task-manifest,
-and asset closure; materializes a fresh single-link worker root; mounts it read-only at `/`; and
-adds only private writable staging plus the optional per-run Unix proxy socket. Bubblewrap runs the
-worker as uid/gid 65534 with `--unshare-all`, all capabilities dropped, a cleared allowlisted
-environment, private `/proc`, resource ceilings, descriptor confinement, `no_new_privs`, and no
-external network. The supervisor pins the worker and every observed descendant by PID/start time,
-captures each private PID-namespace init, and must prove the complete tree exited before sealing.
+The removed prototype implemented the stock `linux-bubblewrap-rootfs-process-tree-v4` profile across
+former `aiperf-accuracy` isolation and runner `stock_evaluation` modules. Rust independently
+resolved and hashed the exact registered CPython, provider package/source-overlay/dependency-lock,
+system-library, task-manifest, and asset closure; materialized a fresh single-link worker root;
+mounted it read-only at `/`; and added only private writable staging plus the optional per-run Unix
+proxy socket. Bubblewrap ran the worker as uid/gid 65534 with `--unshare-all`, all capabilities
+dropped, a cleared allowlisted environment, private `/proc`, resource ceilings, descriptor
+confinement, `no_new_privs`, and no external network. The supervisor pinned the worker and every
+observed descendant by PID/start time, captured each private PID-namespace init, and had to prove
+the complete tree exited before sealing.
 
-The profile is currently Linux x86_64 and fail-closed. An unavailable or digest-drifted runtime,
-provider root, system closure, Bubblewrap binary, source overlay, lock, manifest, or asset makes
-that distribution unavailable rather than weakening isolation.
+The profile was Linux x86_64 and fail-closed: an unavailable or digest-drifted runtime, provider
+root, system closure, Bubblewrap binary, source overlay, lock, manifest, or asset made that
+distribution unavailable rather than weakening isolation. No Bubblewrap isolation exists in `rust/`
+today.
 
-### Built scoped compatibility proxy
+### Scoped compatibility proxy (removed)
 
-`rust/aiperf/src/evaluation/proxy.rs` implements a per-run Unix-domain HTTP/SSE proxy. It accepts
-only registered local dialect paths and schema-validated operation payloads; it has no caller-
-selected upstream URL, forwarding method/header surface, real credential, or raw upstream SSE.
-Rust mints the grant, narrows it after provider planning to the exact cases/routes/purposes/
-operations and byte/concurrency/lifetime budgets, authenticates the Unix peer against the attested
-worker process subtree with kernel credentials, and routes accepted work into the same fair queue,
-host executor, transport-attempt ledger, cancellation, usage, and report path as pipe operations.
-Proxy timing and bounded shutdown use the run's injected `Clock`.
+The removed prototype implemented a per-run Unix-domain HTTP/SSE proxy in `aiperf`'s evaluation
+module. It accepted only registered local dialect paths and schema-validated operation payloads,
+with no caller-selected upstream URL, forwarding method/header surface, real credential, or raw
+upstream SSE. Rust minted the grant, narrowed it after provider planning to the exact cases/routes/
+purposes/operations and byte/concurrency/lifetime budgets, authenticated the Unix peer against the
+attested worker process subtree with kernel credentials, and routed accepted work into the same
+fair queue, host executor, transport-attempt ledger, cancellation, usage, and report path as pipe
+operations. Proxy timing and bounded shutdown used the run's injected `Clock`.
 
-The stock NeMo canary is pipe-only. The stock OpenBench canary uses only the registered
+The stock NeMo canary was pipe-only; the stock OpenBench canary used only the registered
 `openai_chat_completions` local dialect for its candidate `model.generate` route. No generic
-Internet proxy is present.
+Internet proxy existed then, and no evaluation proxy exists in `rust/` today.
 
-### Built artifact and report foundation
+### Artifact and report foundation (removed)
 
-`rust/aiperf-accuracy/src/artifacts.rs`,
-`rust/aiperf/src/evaluation/{workload,report}.rs`, and the generic evaluation types in
-`rust/aiperf-metrics/src/report.rs` enforce the terminal order
-drain/finalize → worker process-tree quiescence → proxy shutdown and socket removal →
-FD-relative no-follow artifact verification/promotion → atomic native-v2 report commit.
-Symlinks, hard links, devices, traversal, undeclared files, size/digest drift, and mutation during
-sealing fail closed. Provider artifacts and the canonical bundle are restricted unless a Rust
-factory owns an exact path/media/schema public-projection rule.
+Across former `aiperf-accuracy` artifacts, `aiperf`'s evaluation workload/report modules, and the
+generic evaluation types in the metrics report module, the removed prototype enforced the terminal
+order drain/finalize → worker process-tree quiescence → proxy shutdown and socket removal →
+FD-relative no-follow artifact verification/promotion → atomic native-v2 report commit. Symlinks,
+hard links, devices, traversal, undeclared files, size/digest drift, and mutation during sealing
+failed closed. Provider artifacts and the canonical bundle were restricted unless a Rust factory
+owned an exact path/media/schema public-projection rule.
 
-The native-v2 `evaluation` block publishes factory-projected safe config, opaque case/artifact
+The native-v2 `evaluation` block published factory-projected safe config, opaque case/artifact
 identities, reviewed score/numeric/aggregate projections, separate completed/infrastructure/
 cancelled counts, Rust-owned route and attempt summaries, exact identity/source-overlay/lock
-digests, and Rust-computed artifact/result digests. Rust validates and publishes the provider's
-aggregate value and counts under a factory-bound definition; it does not recompute the provider's
-scorer or reducer. Unregistered provider metadata and scores fall back to opaque/restricted rather
-than becoming public strings.
+digests, and Rust-computed artifact/result digests. Rust validated and published the provider's
+aggregate value and counts under a factory-bound definition without recomputing the provider's
+scorer or reducer. Unregistered provider metadata and scores fell back to opaque/restricted rather
+than becoming public strings. No native-v2 `evaluation` report block exists in `rust/` today.
 
-### Exact stock GSM8K canaries
+### Stock GSM8K canaries (removed)
 
-Both stock distributions bind the same five-record immutable asset
-`openai_gsm8k_main_test_canary`, sourced from
-`openai/gsm8k@740312add88f781978c0658806c59bc2815b9866:main:test:first5` with content SHA-256
-`fc9b5c03206d193c0013baf2d6344a133fe0096a2b47cd1eafdcee297dfd398a`. Their only declared host
-operation is chat-shaped `model.generate`.
+Both stock distributions bound the same five-record immutable asset `openai_gsm8k_main_test_canary`,
+sourced from `openai/gsm8k@740312add88f781978c0658806c59bc2815b9866:main:test:first5` with content
+SHA-256 `fc9b5c03206d193c0013baf2d6344a133fe0096a2b47cd1eafdcee297dfd398a`. Their only declared host
+operation was chat-shaped `model.generate`.
 
-| Provider | Exact built surface |
+| Provider | Prototyped surface (removed) |
 |---|---|
-| NeMo Evaluator | `nvidia_nemo_evaluator_0_4_locked`: NeMo Evaluator 0.4.0 at `a668af906b46c802984f2d471f15ca83b763092d` plus two pinned generic host/session overlays. Only `environment=gsm8k`, `solver=chat`, finite case granularity, selection seed 0, and limit 1–5 are accepted. Model traffic uses the typed pipe host. |
-| OpenBench / Inspect | `groq_openbench_0_5_3_inspect_0_3_141_locked`: OpenBench 0.5.3 at `3f190a835f7fee34ccd96e17242a36a29e0620a6` plus Inspect AI 0.3.141 at `bb78d82dde311b68dbfd0b49f3186b9fc13a1465`, with pinned explicit-runtime, public model-call-context, cache-veto, and entry-point-deny overlays. Only `task=gsm8k`, finite host-batch granularity, limit 1–5, and epochs 1–8 are accepted. The provider uses Inspect's public task/model APIs through the scoped local proxy; cache, provider retry/batch, arbitrary entry points, task arguments, and sandboxes are disabled. |
+| NeMo Evaluator | `nvidia_nemo_evaluator_0_4_locked`: NeMo Evaluator 0.4.0 at `a668af906b46c802984f2d471f15ca83b763092d` plus two pinned generic host/session overlays. Only `environment=gsm8k`, `solver=chat`, finite case granularity, selection seed 0, and limit 1–5 were accepted. Model traffic used the typed pipe host. |
+| OpenBench / Inspect | `groq_openbench_0_5_3_inspect_0_3_141_locked`: OpenBench 0.5.3 at `3f190a835f7fee34ccd96e17242a36a29e0620a6` plus Inspect AI 0.3.141 at `bb78d82dde311b68dbfd0b49f3186b9fc13a1465`, with pinned explicit-runtime, public model-call-context, cache-veto, and entry-point-deny overlays. Only `task=gsm8k`, finite host-batch granularity, limit 1–5, and epochs 1–8 were accepted. The provider used Inspect's public task/model APIs through the scoped local proxy; cache, provider retry/batch, arbitrary entry points, task arguments, and sandboxes were disabled. |
 
-Each provider retains its native GSM8K prompt preparation, score name, reducer definition, and
-restricted canonical bundle/EvalLog semantics. The only reviewed public case-score shape is the
-exact binary object `{"value": 0}` or `{"value": 1}` under
-`gsm8k_binary_score_v1`; NeMo's `reward/mean` and Inspect's
-`grade_school_math_scorer` identity/epoch semantics remain distinct provider-owned definitions.
-The coverage manifest deliberately records a one-executed-case parity proof for each provider,
-not full GSM8K migration. Provider-level parity tests cover standalone preservation, deterministic
-NeMo selection/seed behavior, public Inspect execution/fail-closed policies, and absence of
-private-Inspect mutation or provider-owned HTTP. The ignored real-root runner subprocess proof in
-`rust/aiperf-runner/tests/evaluation_process.rs` exercises both distributions through Rust-owned
-HTTP/SSE, verifies public redaction and artifact cleanup, and checks the exact capability surface.
+Each provider retained its native GSM8K prompt preparation, score name, reducer definition, and
+restricted canonical bundle/EvalLog semantics. The only reviewed public case-score shape was the
+exact binary object `{"value": 0}` or `{"value": 1}` under `gsm8k_binary_score_v1`; NeMo's
+`reward/mean` and Inspect's `grade_school_math_scorer` identity/epoch semantics were distinct
+provider-owned definitions. The coverage manifest deliberately recorded a one-executed-case parity
+proof for each provider, not full GSM8K migration. Provider-level parity tests covered standalone
+preservation, deterministic NeMo selection/seed behavior, public Inspect execution/fail-closed
+policies, and absence of private-Inspect mutation or provider-owned HTTP; an ignored real-root
+runner subprocess proof exercised both distributions through Rust-owned HTTP/SSE, verified public
+redaction and artifact cleanup, and checked the exact capability surface. None of these
+distributions, assets, or tests are present in `rust/` today.
 
-### Product registration is deployment-root conditioned
+### Product registration was deployment-root conditioned (now absent)
 
-The runner does not advertise evaluation merely because the Rust factories are linked.
-`stock_evaluation_composition()` freezes each distribution only after its complete launch closure
-and isolation implementation pass availability checks. `registry.rs` registers the
-`evaluation` workload and `online_http + evaluation` pair only when at least one stock
-distribution is executable, and capability combinations contain only the distributions and
-`model.generate` adapter that passed those checks. With no deployment-owned roots, the evaluation
-provider inventory and supported combinations are empty and the pair is absent.
+Even when the prototype was linked, the runner did not advertise evaluation merely because the Rust
+factories were present. A `stock_evaluation_composition()` froze each distribution only after its
+complete launch closure and isolation implementation passed availability checks; `registry.rs`
+registered the `evaluation` workload and `online_http + evaluation` pair only when at least one
+stock distribution was executable, and capability combinations contained only the distributions and
+`model.generate` adapter that passed those checks. With no deployment-owned roots the inventory was
+empty and the pair was absent — and with the host removed, no such registration path exists in the
+runner today; `registry.rs` registers only scheduled/graph pairs over HTTP/gRPC (plus `dynosim`).
 
-`src/aiperf/orchestrator/runner_installation.py` binds discovery to the selected runner deployment:
-an installed companion consumes only its own wheel-`RECORD`-verified evaluator-root registry,
-while an explicitly selected/PATH runner consumes only a generated adjacent sidecar. Missing,
-incomplete, symlinked, extra, or digest-drifted roots yield no evaluator roots; ambient
-`AIPERF_EVALUATOR_PROVIDER_ROOTS` cannot broaden product selection. The selected roots are passed
-only to capability negotiation and the fresh runner child.
+A Python-side `runner_installation.py` bound discovery to the selected runner deployment: an
+installed companion consumed only its own wheel-`RECORD`-verified evaluator-root registry, while an
+explicitly selected/PATH runner consumed only a generated adjacent sidecar. Missing, incomplete,
+symlinked, extra, or digest-drifted roots yielded no evaluator roots; ambient
+`AIPERF_EVALUATOR_PROVIDER_ROOTS` could not broaden product selection. That discovery path applies
+only if the host is re-introduced.
 
-### Migration and deletion gates remain open
+### Migration and deletion gates remain fully open
 
-`src/aiperf/accuracy/evaluation/manifests/provider_coverage.json` is authoritative for migration
-scope. It retains every complete static benchmark—including the full GSM8K split and configuration
-matrix—on its named legacy benchmark/grader path, and retains Harbor 0.18, AgentLab/BrowserGym,
-and MCPMark on their existing stateful paths. The two five-record stock canaries do not establish
-parity for any other NeMo Evaluator environment, OpenBench task/group, full GSM8K execution,
-`rust_occurrences`, auxiliary model role, sandbox/process/resource/MCP/browser effect, gRPC or
-offline evaluation backend, or legacy report consumer.
+With the prototype removed, no evaluation migration has occurred. Every complete static benchmark —
+including the full GSM8K split and configuration matrix — remains on its named legacy
+benchmark/grader path, and Harbor 0.18, AgentLab/BrowserGym, and MCPMark remain on their existing
+stateful paths. Even when the two five-record stock canaries existed they established parity for no
+other NeMo Evaluator environment, OpenBench task/group, full GSM8K execution, `rust_occurrences`,
+auxiliary model role, sandbox/process/resource/MCP/browser effect, gRPC or offline evaluation
+backend, or legacy report consumer.
 
-Those capabilities remain unsupported until an exact frozen manifest, executable Rust host
-adapter, isolation proof, provider parity evidence, product subprocess proof, and the original
-section 15 deletion gates all pass. The long-term full-replacement decision therefore stands, but
-no legacy provider or workload may be deleted on the evidence of these canaries alone.
+Any future re-implementation stays unsupported until an exact frozen manifest, executable Rust host
+adapter, isolation proof, provider parity evidence, product subprocess proof, and the section 15
+deletion gates all pass. The long-term full-replacement decision therefore stands as design intent,
+but no legacy provider or workload may be deleted — and nothing has been deleted on the evidence of
+the removed canaries.

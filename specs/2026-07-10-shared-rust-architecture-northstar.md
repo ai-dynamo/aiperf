@@ -1,11 +1,23 @@
 # Shared Dynamo + AIPerf Rust Architecture — North Star (Greenfield)
 
+Status: decided (aspirational north-star). The three-axis vision and the
+orthogonality discipline stand; the concrete `Backend` / `Engine` / `Harness` /
+`ResponseSink` vocabulary below is target-shape naming, not the current
+workspace API. Where the north-star symbols differ from what is built, the body
+now names the built seam inline; the built vocabulary is `Clock` +
+`loadgen-core::{RequestSink<R>, RequestObserver, Dispatchable}`, and the
+application layer is Python Config v2 plus the strict `aiperf-runner` rather than
+a native `aiperf` binary.
+
 > **Fresh-eyes design.** This describes the cleanest end-state abstraction, not a
 > migration. It deliberately ignores every existing symbol
 > (`ReplayWorkerCore`, `execute_pass`, `current_time_ms`, `DirectRequest`,
 > `WorkloadDriver`, `drive_sim`, …). Those belong to the *path* spec
 > (`2026-07-10-steppable-clock-injected-engine-design.md`); this is the
-> *target*. Pure Rust, one workspace, zero Python.
+> *target*. The Rust workspace is the execution substrate; the human-facing
+> frontend and run resolution stay in Python (Config v2 + the `aiperf` command),
+> which launches the strict `aiperf-runner` child as the sole Rust process
+> composition root.
 
 ## The one idea
 
@@ -129,6 +141,18 @@ pub trait Clock {
 That is the whole shared contract. ~120 lines. Everything else is one side's
 private business.
 
+**As built.** The `Backend` / `ResponseSink` / `Harness` / `Reply` names above are
+north-star vocabulary; they are not the symbols in the current Rust workspace. The
+built dispatch/measure seam is `loadgen-core::{RequestSink<R>, RequestObserver,
+Dispatchable}`: `RequestSink<R>::dispatch` drives a `Dispatchable` request to
+terminal and emits `on_arrival` / `on_admit` / `on_token` (or `on_classified_token`)
+/ terminal `on_usage` / `on_terminal` through a `RequestObserver` (no `Send`/`Sync`
+supertraits; each thread-per-core worker owns a local observer graph). The real
+HTTP path, native gRPC, mock HTTP, and the feature-gated in-process engine
+co-simulation all feed this one observer seam rather than implementing the
+`Backend` / `ResponseSink` traits sketched here. Read the observer vocabulary as
+the concrete realization of the `Backend` + `ResponseSink` idea.
+
 ## Layer 1 — Clock (AIPerf)
 
 Two impls of `Clock`. The virtual one exposes an extra runtime-only trait so the
@@ -148,6 +172,15 @@ pub trait Advance: Clock {
 Splitting `Clock` (now/sleep) from `Advance` (peek/advance) is what keeps
 workloads unable to cheat time: a generator can *read* and *await* time but can
 never *move* it. Only the Runtime moves it.
+
+**As built.** The consumer `Clock` trait exposes `now_ns`, `sleep`, and
+`is_virtual`; there is no separate `Advance` trait and no `Instant` newtype in the
+shared surface. The virtual-time controls (`next_event_time`, `advance_to`) are
+inherent methods on `SimClock` rather than a trait consumers could see — so real
+clocks never carry no-op virtual APIs, and the "only the Runtime moves time"
+property holds by construction because only the sim driver holds a concrete
+`SimClock`. Virtual time is integer nanoseconds with an `(at_ns, seq_no)`
+deterministic tie-break, never `tokio::time`.
 
 ## Layer 2 — Engine (Dynamo)
 
@@ -175,7 +208,10 @@ runtime) routes engine events to the registered sinks, waking parked dispatch
 futures.
 
 Both backends satisfy the same `Backend::dispatch` signature, so **nothing above
-Layer 3 can tell them apart.**
+Layer 3 can tell them apart.** In the built code this "same signature both ways"
+property is carried by `RequestSink<R>`: the HTTP sink, gRPC sink, and the
+feature-gated in-process engine co-sim all implement the same dispatch/observe
+contract, and callers above the sink cannot tell a socket from an engine.
 
 ## Layer 4 — Measure (AIPerf)
 
@@ -247,19 +283,28 @@ async fn adaptive(h, planner){ loop { let cfg = planner.next(last_report); run i
 The concurrency generator that runs against a real server is byte-identical to
 the one that runs against the sim. That is the payoff.
 
-## Layer 8 — App / CLI (AIPerf bin)
+## Layer 8 — App / CLI (Python Config v2 + the strict runner)
 
-The only place concrete types meet:
+The only place concrete types meet. In the north-star sketch this is a native
+`aiperf` binary; **as built, that native binary does not exist.** Python Config v2
+and the Python `aiperf` command own the human-facing CLI and fully resolve a run,
+then launch `aiperf-runner` — the sole Rust process composition root — which
+composes the injected clock, transport/backend, and workload seams once per child.
+The library-only `aiperf` crate supplies that composition; there is no
+`aiperf`-crate binary and no mode selection through native flags.
+
+The composition the runner performs is still the same one-place wiring the
+north-star describes — pick clock, pick backend/transport, pick workload, run —
+just with the built symbol names:
 
 ```rust
 let clock   = if offline { SimClock::new() } else { RealClock::new() };
-let backend = if offline { SimBackend::new(EngineHost::new(dynamo_engine::vllm(profile))) }
-              else        { HttpBackend::new(url, clock.clone()) };
-let harness = Harness::new(backend, clock.clone());
+let sink     = if offline { /* in-process engine co-sim RequestSink (dynosim feature) */ }
+               else        { /* HTTP or gRPC RequestSink, Clock-injected */ };
 let workload = select(mode);                 // rate | concurrency | trace | graph | adaptive
-if offline { run_sim(clock, host, workload.run(&harness)) }
-else       { run_real(clock,       workload.run(&harness)) }
-report(harness.collector);
+if offline { run_sim(clock, host, workload.run(&sink)) }
+else       { run_real(clock,       workload.run(&sink)) }
+report(collector);
 ```
 
 ## Crate & ownership map
@@ -272,8 +317,8 @@ flowchart LR
     subgraph dyn["dynamo"]
         e["dynamo-engine : impl Engine (vllm/sglang/trt + perf model)"]
     end
-    subgraph ap["aiperf"]
-        r["clock · backend · measure · harness · workload · runtime · bin"]
+    subgraph ap["aiperf (library) + aiperf-runner (bin)"]
+        r["clock · backend · measure · harness · workload · runtime — composed by aiperf-runner"]
     end
     e -->|implements| c
     r -->|consumes| c
@@ -287,7 +332,11 @@ flowchart LR
   `Engine` impls without touching AIPerf.
 - **AIPerf crates** — depend on the contract's `Engine`/`Backend` *traits*, not
   on `dynamo-engine`. Only the final binary names the concrete engine, so the
-  coupling is trait-level and either side swaps impls freely.
+  coupling is trait-level and either side swaps impls freely. As built, the
+  library-only `aiperf` crate holds the clock/backend/measure/harness/workload/
+  runtime composition and the strict `aiperf-runner` binary is the "final binary"
+  that names concrete engines; the former per-concern `aiperf-*` crates are now
+  modules of `aiperf` (`aiperf::<module>::`).
 
 ## Why this is the cleanest possible shape
 
@@ -317,29 +366,3 @@ A design is "contract-clean" iff:
    `RealClock`/`SimClock` swapped, unchanged. (Orthogonality holds.)
 4. `dynamo-engine` has zero `aiperf-*` dependencies and `aiperf-workload` has
    zero `dynamo-*` dependencies. (Only the bin bridges.)
-
-## Addendum — 2026-07-11
-
-The `Backend`, `ResponseSink`, `Harness`, and contract-crate vocabulary in the body
-above is north-star architecture language, not the current Rust workspace API. The
-built seam today is `aiperf-clock::Clock` plus `loadgen-core::{RequestSink<R>,
-RequestObserver, Dispatchable}`. Implementations such as the CLI online path and the
-graph benchmark dispatch through request sinks; they do not implement the `Backend` /
-`ResponseSink` traits sketched here.
-
-Likewise, virtual-time controls are not methods on the `Clock` trait in the current
-code. `Clock` exposes `now_ns`, `sleep`, and `is_virtual`; DES controls such as
-`next_event_time` and `advance_to` are inherent `SimClock` methods so real clocks do
-not carry no-op virtual APIs. Treat this spec as the historical north-star rationale;
-use `CLAUDE.md`, `llms.txt`, `rust/aiperf-clock`, and `rust/loadgen-core` for the
-current symbol names.
-
-## Addendum — 2026-07-11 (application layer is Python plus the strict runner)
-
-The native `aiperf` App/CLI layer sketched in Layer 8 no longer exists as an
-executable. Python Config v2 and the Python `aiperf` command select and fully
-resolve a run; `aiperf-runner` is the sole Rust process composition root; and
-the `aiperf` crate supplies library-only runtime composition. This supersedes
-the diagram's `bin` node and all references to selecting modes through native
-flags. It does not change the orthogonal clock, transport, workload, or backend
-seams: the runner must still compose those injected boundaries once per child.

@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Native Rust compile-time extension registry
 
-**Status:** decided; implementation accompanies this spec.
+**Status:** built.
 
 ## 1. Decision
 
@@ -35,7 +35,7 @@ contract; it does not make that type globally discoverable.
 The native equivalent separates three concerns:
 
 1. A public trait defines the behavior (`DatasetLoader`, `SamplerFactory`,
-   `Endpoint`, `AccuracyBenchmark`, `Grader`).
+   endpoint adapter).
 2. A category registry maps a normalized configuration name to a trait object or
    factory.
 3. `AiperfExtension::register` adds one linked crate's implementations to the
@@ -45,28 +45,28 @@ This retains the useful Python property—configuration can select among multipl
 implementations—without retaining dynamic imports, schema duplication, runtime
 package precedence, or a second source of truth beside the Rust type system.
 
-## 3. Crate boundary
+## 3. Where the aggregate lives
 
-The aggregate contract lives in a small `aiperf-extensions` crate:
-
-```text
-extension crate ──▶ aiperf-extensions ──▶ {aiperf-accuracy, aiperf-dataset}
-       │                                            │
-       └──────────── implements leaf traits ────────┘
-
-aiperf CLI ───────▶ aiperf-extensions
-```
-
-It must not live in the `aiperf` application crate. Keeping the contract below
-the application prevents this cycle:
+The aggregate contract is the `aiperf::extensions` module of the `aiperf`
+library crate (`rust/aiperf/src/extensions/`). It sits below the runner
+executable: the leaf categories it composes (dataset formats, samplers, endpoint
+adapters) are sibling modules of the same library crate, and no leaf depends on
+the aggregate. The single strict executable, `aiperf-runner`, is the composition
+root that constructs, extends, and freezes the aggregate.
 
 ```text
-aiperf ──optional dependency──▶ vendor-extension ──▶ aiperf
+extension crate ──▶ aiperf (extensions module) ──▶ {dataset, endpoints, samplers}
+       │                                                     │
+       └──────────────── implements leaf traits ─────────────┘
+
+aiperf-runner ─────▶ aiperf::extensions
 ```
 
-With the independent composition crate, a distribution may add an optional
-vendor extension dependency to `aiperf`; that extension depends only on the
-composition contract and the leaf crates whose traits it implements.
+Keeping the contract below the executable prevents a dependency cycle: a
+distribution may add an optional vendor extension dependency to `aiperf-runner`;
+that extension depends only on the `aiperf` library (its extension contract and
+the leaf traits it implements), never back on the runner. The application crate
+never depends on a vendor extension.
 
 ## 4. Public contract
 
@@ -76,8 +76,7 @@ The aggregate owns the registries selected by runtime names:
 pub struct AiperfRegistry {
     dataset_formats: LoaderRegistry,
     samplers: SamplerRegistry,
-    endpoints: BuiltinEndpointResolver,
-    accuracy: AccuracyRegistry,
+    endpoints: EndpointRegistry,
     extension_names: BTreeSet<String>,
 }
 
@@ -111,7 +110,6 @@ impl AiperfExtension for AcmeExtension {
     {
         registry.samplers_mut().register(AcmeSamplerFactory)?;
         registry.endpoints_mut().register("acme_chat", AcmeEndpoint)?;
-        registry.accuracy_mut().register_benchmark::<AcmeBenchmark>(&ACME)?;
         Ok(())
     }
 }
@@ -120,37 +118,49 @@ impl AiperfExtension for AcmeExtension {
 The extension crate is trusted native code. This mechanism is not a sandbox or
 an ABI boundary.
 
-## 5. Initial registered categories
+## 5. Registered categories
 
-The first aggregate includes categories that already have runtime name
-selection and object-safe factory/lookup seams:
+The aggregate composes exactly the categories that have runtime name selection
+and object-safe factory/lookup seams:
 
 | Category | Stored form | Selection |
 |---|---|---|
 | Dataset format | paired `Arc<dyn DatasetLoader>` + `Arc<dyn Composer>` | explicit format name or structural probe |
 | Sampler | `Arc<dyn SamplerFactory>` | dataset sampling-strategy name |
-| Endpoint dialect | `Arc<dyn Endpoint + Send + Sync>` | authored endpoint name with configured default |
-| Accuracy benchmark | `fn() -> Box<dyn AccuracyBenchmark>` | CLI benchmark name/alias |
-| Accuracy grader | `fn() -> Rc<dyn Grader>` | CLI grader name/alias |
+| Endpoint dialect | adapter descriptor keyed by open `EndpointId` string | authored endpoint name with configured default |
 
-Traits selected structurally by application code are still injected directly,
-not put into a name registry. `Clock`, `RequestSink<R>`, `RequestObserver`,
-`SegmentStore`, `RequestMaterializer`, and graph sinks remain ordinary constructor
-arguments or generic parameters. Registering them globally would hide ownership
-and would not improve configuration selection.
+Endpoint identity is an **open string ID** owned by the adapter descriptor
+(`EndpointId`), not a closed wire enum of identities compiled into core. A
+genuinely new dialect registers its own descriptor and executes as itself, not
+as another name for an existing adapter.
+
+Traits selected structurally by application code are injected directly, not put
+into a name registry. `Clock`, `RequestSink<R>`, `RequestObserver`,
+`SegmentStore`, `RequestMaterializer`, and graph sinks remain ordinary
+constructor arguments or generic parameters. Registering them globally would
+hide ownership and would not improve configuration selection.
+
+**Accuracy is a directly injected process seam, not a registry entry.**
+Canonical dataset preparation, prompt construction, private tests, and grading
+belong to one pinned Python/Lighteval worker behind the directly injected
+`AccuracyEvaluator` stdio trait (`aiperf::accuracy_core`). Adding Rust benchmark
+or grader factories to `AiperfRegistry` would recreate the duplicated semantics
+that boundary removes. External evaluator implementations are selected by
+constructing and injecting an `AccuracyEvaluator`, exactly as clocks and
+transports are constructor-injected seams rather than runtime-name registry
+entries.
 
 Future runtime-name categories—tokenizer factories, arrival factories,
-controller policies, reporters/exporters, and remote accuracy dataset
-providers—join `AiperfRegistry` only when their owning leaf crate exposes a
-typed registry. The aggregate is intentionally not a string-to-`Any` service
-locator.
+controller policies, reporters/exporters—join `AiperfRegistry` only when their
+owning leaf module exposes a typed registry. The aggregate is intentionally not
+a string-to-`Any` service locator.
 
 ## 6. Factories and state
 
 Registries store an object directly when the implementation is immutable shared
-policy (loaders, composers, endpoint adapters, sampler factories). They store a
-function pointer when every selection needs fresh mutable state (benchmarks and
-graders).
+policy (loaders, composers, endpoint adapters, sampler factories). Where a
+category instead needs fresh mutable state per selection, it stores a function
+pointer rather than a shared object.
 
 Factory registration accepts both a generic `Default` convenience API and an
 explicit function-pointer API. The latter supports implementations whose
@@ -167,13 +177,12 @@ process state.
 - Duplicate extension names are rejected.
 - Duplicate canonical names or aliases are rejected. An extension cannot
   silently replace a built-in.
-- Accuracy name listings remain lexicographically deterministic.
 - Dataset auto-detection retains registration order: built-ins first, then the
   explicit extension order. Multiple matching probes remain an ambiguity error.
 
-Python's priority-wins replacement is deliberately absent. Replacement makes a
-benchmark report depend on package installation order; a renamed implementation
-is clearer and reproducible.
+Python's priority-wins replacement is deliberately absent. Replacement makes
+behavior depend on package installation order; a renamed implementation is
+clearer and reproducible.
 
 ## 8. Atomic extension application
 
@@ -185,19 +194,26 @@ conflicts, the first four do not leak into the live registry.
 This cloning is outside every request/token hot path. Registered implementation
 objects are reference-counted; payloads and mutable run state are not copied.
 
-## 9. CLI wiring
+## 9. Runner wiring: one frozen object graph
 
-The native CLI constructs `AiperfRegistry::builtin()` once before mode
-selection. Accuracy benchmark/grader selection, dataset loading, sampler
-construction, and endpoint resolution must use that instance. Creating a fresh
-built-in category registry inside an execution path would make linked extensions
-invisible and is forbidden.
+`aiperf-runner` is the composition root. One fresh runner process builds exactly
+one `AiperfRegistry`, applies built-ins and any linked `AiperfExtension`s once,
+and freezes the aggregate. `RunnerApplication` freezes that linked registry
+together with the runner-owned graph-input resolver, the pair factories, the
+compatibility authority, and the protocol-v2 coordinator, so `--capabilities`,
+validation, and execution all consume the same exact object graph and the same
+frozen product registry.
+
+Creating a fresh built-in category registry inside an execution path would make
+linked extensions invisible and is forbidden; execution prepares operations
+through the coordinator-owned frozen product registry rather than building a
+private one.
 
 The stock workspace binary links no out-of-tree extensions and therefore has the
 same behavior and names as before. A vendor or internal distribution adds Cargo
-dependencies/features and applies its known extension list in its composition
-root. No runtime file or environment variable can add code to an already-built
-binary.
+dependencies/features and applies its known extension list in the runner's
+composition root. No runtime file or environment variable can add code to an
+already-built binary.
 
 ## 10. Rejected alternatives
 
@@ -209,12 +225,10 @@ types without another ABI/reflection mechanism.
 
 ### `inventory` / `linkme` self-registration
 
-Rejected for the initial implementation. Linker-section collection hides which
-extensions a distribution contains, has non-obvious linkage/dead-code behavior,
-and still requires Cargo dependencies. An explicit feature-gated list is small,
-ordered, searchable, and testable. A future addendum may add a deterministic
-descriptor collector if the explicit composition root becomes materially
-burdensome.
+Rejected. Linker-section collection hides which extensions a distribution
+contains, has non-obvious linkage/dead-code behavior, and still requires Cargo
+dependencies. An explicit feature-gated list is small, ordered, searchable, and
+testable.
 
 ### Rust dynamic libraries
 
@@ -238,36 +252,7 @@ values assembled before runtimes and worker threads start.
 4. A multi-category extension that fails partway leaves the original aggregate
    unchanged.
 5. Built-in catalog counts and aliases remain pinned.
-6. CLI tests prove dataset and accuracy paths receive the aggregate rather than
-   constructing private built-in registries.
+6. Runner tests prove dataset, sampler, and endpoint paths receive the frozen
+   aggregate rather than constructing private built-in registries, and that
+   capabilities, validation, and execution share one object graph.
 7. `cargo fmt`, focused crate tests, workspace tests, and clippy remain green.
-
-## Addendum — 2026-07-11 (accuracy is a process seam, not a Rust registry)
-
-The accuracy benchmark/grader categories in this design are superseded. Canonical
-dataset preparation, prompt construction, private tests, and grading now belong
-to one pinned Python/Lighteval worker behind the directly injected
-`AccuracyEvaluator` stdio trait. Keeping Rust benchmark or grader factories in
-`AiperfRegistry` would recreate the duplicated semantics this boundary removes.
-
-The built `aiperf-extensions` aggregate now composes dataset formats, sampler
-factories, and endpoint dialects only. Its dependency on `aiperf-accuracy` and
-its `AccuracyRegistry` accessors/error variant are deleted. External evaluator
-implementations are selected by constructing/injecting an `AccuracyEvaluator`,
-just as clocks and transports are constructor-injected seams rather than
-runtime-name registry entries.
-
-## Addendum — 2026-07-11 (the runner is the endpoint composition root)
-
-The compile-time and transactional extension decisions remain authoritative, but the currently
-built endpoint category is not yet open enough to satisfy them for a genuinely new dialect. The
-closed `EndpointType` wire enum bounds extensions to identities already compiled into core, the
-extension proof registers only another name for `ChatEndpoint`, and production execution creates a
-fresh built-in registry instead of consuming a registry composed by `aiperf-runner`.
-
-`2026-07-11-aiperf-runner-owned-endpoint-registry-design.md` supersedes that endpoint-specific
-shape. Endpoint identity becomes an open string ID owned by the adapter descriptor; the runner
-explicitly applies built-ins and linked `AiperfExtension`s once, freezes the aggregate, and uses
-that exact value for capabilities, validation, and execution. Dataset-format and sampler extension
-semantics in this spec are unchanged. Runtime discovery, linker self-registration, dynamic
-libraries, replacement priority, and global mutable registries remain rejected.

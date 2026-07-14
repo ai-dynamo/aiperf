@@ -5,9 +5,35 @@ SPDX-License-Identifier: Apache-2.0
 
 # AIPerf-Rust: durable telemetry archive and `aiperf watch`
 
+> ## Status: REMOVED 2026-07-13
+>
+> **This feature was designed, briefly built, and then permanently removed.** The
+> durable operational-history plane described below — the immutable WAL/Parquet
+> telemetry archive, its loss ledger, receipts, object-store sync, and query
+> surfaces — no longer exists in the workspace. The `aiperf-telemetry-archive` and
+> `aiperf-prometheus` crates, the Python `aiperf watch` command (and its CLI
+> registration/test), the runner `telemetry_watch` workload/transport-pair and its
+> `telemetry_*` integration modules and tests, and the additive native-v2
+> telemetry-archive report block in the metrics reporter were all deleted. The base
+> build no longer advertises an `http + telemetry_watch` pair. There is no durable
+> operational-history archive plane in the product.
+>
+> **What remains:** `aiperf::server_metrics` regained its self-contained
+> Prometheus/OpenMetrics exposition parser (`rust/aiperf/src/server_metrics/parser.rs`),
+> so it no longer depends on any extracted strict-parser crate. The live
+> GPU/server/network telemetry producers (`aiperf::gpu_telemetry`,
+> `aiperf::server_metrics`, `aiperf::network_latency`) that feed the run's metrics
+> report are unaffected. `control_plane_http.rs` defines its `LocalCancellationSignal`
+> locally rather than importing the deleted crate.
+>
+> The full design narrative below is retained as the historical record of what was
+> intended and briefly implemented. It frequently describes the archive plane in the
+> present tense ("is built", "the runner owns"); read all such statements as historical
+> design intent superseded by this removal notice, not as current product reality.
+
 **Date:** 2026-07-11
 **Author:** Anthony Casagrande (Tech Lead) + Codex
-**Status:** reviewed design — implementation-ready, not built
+**Status:** REMOVED 2026-07-13 (designed, briefly built, then permanently deleted — see the Status block above)
 **Decision:** adopt the useful operational ideas demonstrated by Tachometer—an always-on watch
 surface, per-source cadence/failure isolation, topology enrichment, immutable columnar history,
 and periodic object-store durability—without importing Tachometer's parser, row schema, filter
@@ -3334,129 +3360,3 @@ five source- and runtime-reproduced issues in
 stale-checkpoint duplication, Float32 precision loss, quoted-label truncation, and acceptance of
 non-2xx metric bodies. Review cycles 1–6 challenged this new AIPerf design and do not enlarge that
 bug list.
-
-## Addendum — 2026-07-12 (runner-reachable implementation)
-
-This spec is no longer merely implementation-ready. The operational history
-plane is substantially implemented and product-reachable through the Python
-`aiperf watch` command and the strict protocol-v2 `aiperf-runner` path.
-
-The implementation added `aiperf-prometheus` for strict Prometheus/OpenMetrics
-parsing and compatibility projection, plus `aiperf-telemetry-archive` for the
-archive schema, descriptors, canonical identities, WAL, local filesystem store,
-Parquet projection, loss ledger, object-store sync interfaces, receipts, and
-query surfaces. The runner owns the `telemetry_watch` workload and registers
-executable HTTP telemetry-watch operation wiring through its frozen registry;
-the same crate family also supplies attached archive ownership for benchmark
-sidecars. Python owns the human-facing `aiperf watch` command and still launches
-the sole Rust executable.
-
-The original `online_http` backend wording is superseded by the current
-protocol-v2 transport vocabulary: authored requests use `transport.type: http`
-and `workload.type: telemetry_watch`. The archive remains non-authoritative for
-benchmark metrics; native accumulators and reports remain the live source of
-measurement truth.
-
-This addendum does not claim the §18 and §21 final validation gates are fully
-closed. Until that final audit is recorded, status should be read as
-runner-reachable implementation with final validation pending, not as an
-unbuilt design.
-
-## Addendum — 2026-07-13 (feature removed)
-
-This design is **withdrawn**. The durable telemetry archive/watch feature has
-been deleted from the workspace. This addendum is authoritative where it
-conflicts with the body above; the body is retained as an append-only historical
-record of the original intent.
-
-Removed:
-
-- The `aiperf-telemetry-archive` crate in its entirety (`rust/telemetry-archive/`).
-- The runner integration modules `telemetry_archive_components.rs`,
-  `telemetry_archive_owner.rs`, `telemetry_attachment.rs`, `telemetry_execution.rs`,
-  `telemetry_operation.rs`, `telemetry_pipeline.rs`, `telemetry_source.rs`, and
-  `telemetry_watch.rs`, plus the `telemetry_watch_v2.rs` runner test.
-- The `telemetry_watch` workload and its transport/workload pair registration
-  (base build no longer advertises any `telemetry_watch` pair).
-- The Python `aiperf watch` command (`src/aiperf/cli_commands/watch.py`), its
-  test, and its CLI registration.
-- The additive native-v2 telemetry-archive report block in
-  `rust/metrics/src/report.rs` (`ReportTelemetryArchive*`, the loss-ledger and
-  boundary report types, `TELEMETRY_ARCHIVE_REPORT_SCHEMA_VERSION`, and the
-  `RunOutcome`/`NativeReport` `telemetry_archive` fields).
-
-Retained:
-
-- `aiperf-prometheus` survives as the IO-free Prometheus/OpenMetrics parsing leaf
-  consumed by the `aiperf-server-metrics` live producer.
-- Live GPU/server/network telemetry producers (`aiperf-gpu-telemetry`,
-  `aiperf-server-metrics`, `aiperf-network-latency`) that feed the run's metrics
-  report are unaffected.
-- The general control-plane HTTP seam (`aiperf-runner::control_plane_http`) is
-  kept; its previously-borrowed `LocalCancellationSignal` type was relocated
-  into that module since it is a general execution-factory seam, not archive code.
-
-## Addendum — 2026-07-13 (feature restored)
-
-The withdrawal recorded in the preceding addendum is **reversed**. The durable
-telemetry archive/watch feature has been restored to the workspace and rebuilt
-against the current HEAD; this addendum is authoritative where it conflicts with
-the "feature removed" addendum above. The prior addenda are retained as an
-append-only historical record.
-
-Restored to the state before removal:
-
-- The `aiperf-telemetry-archive` crate in its entirety (`rust/telemetry-archive/`),
-  recovered verbatim from the pre-removal blob. Its 205 unit tests pass.
-- The runner integration modules `telemetry_archive_components.rs`,
-  `telemetry_archive_owner.rs`, `telemetry_attachment.rs`, `telemetry_execution.rs`,
-  `telemetry_operation.rs`, `telemetry_pipeline.rs`, `telemetry_source.rs`, and
-  `telemetry_watch.rs`, plus the `telemetry_watch_v2.rs` runner test (8/8 passing).
-- The `telemetry_watch` workload and its transport/workload pair registration; the
-  base build again advertises the `http + telemetry_watch` pair in capabilities.
-- The Python `aiperf watch` command (`src/aiperf/cli_commands/watch.py`), its test
-  (5/5 passing), and its CLI registration in `src/aiperf/cli.py`.
-- The additive native-v2 telemetry-archive report block in
-  `rust/metrics/src/report.rs` (`ReportTelemetryArchive*`, the loss-ledger and
-  boundary report types, and `TELEMETRY_ARCHIVE_REPORT_SCHEMA_VERSION`).
-
-Reconciliation against intervening refactors: the local `LocalCancellationSignal`
-fork that `control_plane_http.rs` grew while the crate was deleted has been
-reverted; `control_plane_http.rs` again imports the shared
-`aiperf_telemetry_archive::LocalCancellationSignal`, eliminating the
-two-distinct-types collision. Original design intent in the body remains the
-"runner-reachable, final validation pending" state.
-
-## Addendum — 2026-07-13 (feature removed; supersedes the restoration addendum above)
-
-The telemetry archive/watch feature is removed for good, superseding the
-restoration addendum immediately above. The decision: the durable
-operational-history plane (immutable WAL/Parquet archive, loss ledger, receipts,
-object-store sync, query surfaces) was over-engineered for the product's needs,
-and its `aiperf-prometheus` strict parser dependency stood in the way of a
-slimmer server-telemetry ("tachometer") pipeline. Deleted:
-
-- The `aiperf-telemetry-archive` crate (`rust/telemetry-archive/`) in full.
-- The `aiperf-prometheus` crate (`rust/prometheus/`) in full — it had no
-  remaining consumer once `aiperf-server-metrics` re-embedded its own parser and
-  the archive was gone.
-- The runner integration modules (`telemetry_archive_components.rs`,
-  `telemetry_archive_owner.rs`, `telemetry_attachment.rs`,
-  `telemetry_execution.rs`, `telemetry_operation.rs`, `telemetry_pipeline.rs`,
-  `telemetry_source.rs`, `telemetry_watch.rs`) and the `telemetry_watch_v2.rs`
-  runner test.
-- The `telemetry_watch` workload and its transport/workload pair registration and
-  resource requirements in `registry.rs`; capabilities no longer advertise
-  `http + telemetry_watch`.
-- The Python `aiperf watch` command (`src/aiperf/cli_commands/watch.py`), its
-  test, and its CLI registration in `src/aiperf/cli.py`.
-- The native-v2 telemetry-archive report block in `rust/metrics/src/report.rs`
-  (`ReportTelemetryArchive*`, loss-ledger/boundary report types, and
-  `TELEMETRY_ARCHIVE_REPORT_SCHEMA_VERSION`) plus the two archive golden fixtures.
-
-Reconciliation: `aiperf-server-metrics` reverts to its self-contained embedded
-Prometheus/OpenMetrics parser (pre-extraction state). `control_plane_http.rs` no
-longer imports the deleted crate; its `LocalCancellationSignal` is now defined
-locally in that module. Live GPU/server/network telemetry producers that feed the
-run's metrics report are unaffected. This addendum is authoritative where it
-conflicts with the body or any earlier addendum.

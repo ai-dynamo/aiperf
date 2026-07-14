@@ -1,8 +1,9 @@
 # dynamo-aiperf Increment 2: request-rate + tokenizer-exact via shared WorkloadDriver — Design
 
 - **Date:** 2026-07-09
-- **Status:** IMPLEMENTED (2026-07-09, commit `449b4f8`). Tokenizer-exact prompts (`promptgen.rs`, TinyLlama fixture), concurrency + Poisson request-rate driven through the shared `WorkloadDriver` (`driven.rs`), CLI flags, `CollectorObserver` extracted. Zero `lib/mocker` changes needed (all driver/trace APIs were already `pub`). Proven via binary in both modes (50 reqs: concurrency-8 ~27k tok/s burst vs 200 qps ~7k tok/s paced; 1600 output tokens correct). Refinement discovered during grounding: `WorkloadDriver` mints its own uuids and synthesizes tokens, so the driver is used purely as a scheduler and prompts are generated per-`ReadyTurn` (no text side-table) — un-defers Task 12 cleanly.
-- **Working tree:** `/home/anthony/nvidia/projects/dynamo-aiperf-native`, branch `ajc/dynamo-aiperf-skeleton`
+- **Status:** SUPERSEDED — historical precursor / lineage only. This increment was implemented (2026-07-09, commit `449b4f8`) against the **prior `dynamo-aiperf-native` tree**, not the current standalone AIPerf Rust workspace under `rust/`. It is retained as the design lineage for the request-rate/tokenizer increment that later informed `loadgen-core`, `aiperf::rng`, the dataset store, and the scheduled-workload designs. Current product truth is the Python Config-v2 frontend plus `aiperf-runner`; default Rust builds carry no Dynamo dependency, and optional Dynamo replay enters only through the curated `dynosim` adapter. Read this file for design intent, not for current reality.
+- **Original working tree (historical):** `/home/anthony/nvidia/projects/dynamo-aiperf-native`, branch `ajc/dynamo-aiperf-skeleton`.
+- **What was built (in that tree):** Tokenizer-exact prompts (`promptgen.rs`, TinyLlama fixture), concurrency + Poisson request-rate driven through the shared `WorkloadDriver` (`driven.rs`), CLI flags, `CollectorObserver` extracted. Zero `lib/mocker` changes needed (all driver/trace APIs were already `pub`). Proven via binary in both modes (50 reqs: concurrency-8 ~27k tok/s burst vs 200 qps ~7k tok/s paced; 1600 output tokens correct). Refinement discovered during grounding: `WorkloadDriver` mints its own uuids and synthesizes tokens, so the driver is used purely as a scheduler and prompts are generated per-`ReadyTurn` (no text side-table) — un-deferring Task 12 cleanly.
 - **Builds on:** Increment 1 (walking skeleton), spec `2026-07-09-dynamo-aiperf-shared-core-design.md`. Un-defers that plan's Task 12.
 
 ## 1. Goal
@@ -78,14 +79,3 @@ flowchart LR
 - **Tokenizer construction API:** the concrete loader type for `tokenizer.json` in `dynamo-tokenizers` is not yet pinned; a short spike is the first plan task.
 - **Arrival accuracy under load:** request-rate honoring depends on the driver's `next_ready_time_ms` cadence; tolerance-based assertions only.
 - **Decoded-token text round-trip:** random in-vocab ids may decode to odd text; acceptable for load generation (server still processes tokens), but note it in a comment.
-
-## Addendum — 2026-07-12 (historical precursor)
-
-The "IMPLEMENTED" status above refers to the prior `dynamo-aiperf-native` tree,
-not to the current standalone AIPerf Rust workspace under `rust/`. This file is
-kept as lineage for the request-rate/tokenizer increment that informed the later
-`loadgen-core`, `aiperf-rng`, dataset, and scheduled-workload designs.
-
-Current product truth is the Python Config-v2 frontend plus `aiperf-runner`;
-default Rust builds have no Dynamo dependency, and optional Dynamo replay enters
-only through the curated `dynosim` adapter.

@@ -454,9 +454,6 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   executor; strategies become `Workload` schedule generators. Supersedes the
   scheduling sketch; addendum maps old RNG wording to BLAKE3 and translates
   north-star seam names to current `RequestSink` / `RequestObserver` symbols.
-- `specs/2026-07-10-aiperf-rust-scheduling-policy-sketch.md` — early `Scheduler`
-  sketch for credit *policy*. **Superseded by the unified-graph-runtime design's**
-  `Workload` / `SlotPool` / `RatePool` / `Gate` seams.
 - `specs/2026-07-11-aiperf-rust-request-rate-multiturn-design.md` — **built +
   implementation addendum**: `RequestRateWorkload` is the source-grounded
   single-loop issuer emitting one turn per interval (FIFO continuation-priority,

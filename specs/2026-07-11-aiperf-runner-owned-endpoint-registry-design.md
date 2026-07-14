@@ -7,12 +7,25 @@ SPDX-License-Identifier: Apache-2.0
 
 **Date:** 2026-07-11
 **Author:** Anthony Casagrande (Tech Lead) + Codex
-**Status:** decided — not yet built
+**Status:** foundation built (open registry, KServe factories, prepared online/gRPC execution,
+protocol-v2-only runner); remaining workload/lifecycle adapter convergence is open.
 **Decision:** the exact selected `aiperf-runner` binary is the sole authority for endpoint
 identity, metadata, semantic validation, normalization, request/response behavior, and execution.
 Python remains a structural Config-v2 and orchestration front end while that front end exists; it
 does not retain an endpoint implementation, endpoint manifest, endpoint enum, metadata fallback,
 or endpoint-specific validation engine.
+
+Endpoint identity, preparation, validation, catalog publication, and endpoint use by runner
+operations are owned here. Runner-wide reachability for scheduled online, Graph-IR, Dynamo offline,
+static accuracy, and stateful agentic execution is deliberately **not** designed in this record; it
+belongs to the normative companion `2026-07-11-aiperf-runner-only-execution-surface-design.md`.
+Product deletion is complete only when that companion makes every built Rust mode runner-addressable
+with the same composed endpoint registry.
+
+The `aiperf-endpoints` and `aiperf-dataset` crates named throughout this record are now modules of
+the `aiperf` runtime library (`aiperf::endpoints`, `aiperf::dataset`); the `aiperf-runner` executable
+is the `rust/runner` crate. Code truth lives in `rust/aiperf/src/endpoints*`,
+`rust/aiperf/src/extensions*`, and `rust/runner/src/*`.
 
 **Companions:**
 
@@ -278,22 +291,47 @@ pub struct EffectiveEndpointConfig {
 
 Only the registry/binding preparation path may create `EffectiveEndpointConfig`.
 
-### 3.4 Adapter/config binding
+### 3.4 Adapter/config binding: worker-local, allocation-free on dispatch
+
+Binding is expressed through two explicit seams — an object-safe factory registered at composition
+time and a worker-local prepared value — plus a dense copyable key:
 
 ```rust
-#[derive(Clone)]
-pub struct EndpointBinding {
-    pub canonical_id: EndpointId,
-    pub endpoint: Arc<dyn Endpoint>,
-    pub config: Arc<EffectiveEndpointConfig>,
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct EndpointKey(u32);
+
+pub trait EndpointFactory: std::fmt::Debug + Send + Sync {
+    fn descriptor(&self) -> &'static EndpointDescriptor;
+
+    fn prepare(
+        &self,
+        config: EffectiveEndpointConfig,
+    ) -> EndpointResult<Box<dyn PreparedEndpoint>>;
+}
+
+pub trait PreparedEndpoint: std::fmt::Debug {
+    fn descriptor(&self) -> &'static EndpointDescriptor;
+    fn config(&self) -> &EffectiveEndpointConfig;
+
+    // Existing format/header/parse/extraction/replay behavior is exposed here
+    // or through object-safe leaf traits owned by the endpoint behavior spec.
 }
 ```
 
-Current adapters are stateless zero-sized implementations. One adapter instance is registered and
-shared; a new adapter is not constructed per request. A binding is created once per distinct
-run/profile configuration. If a future dialect requires compiled run-scoped state, the registry
-MUST expose an object-safe `EndpointFactory` seam with a blanket stateless factory rather than
-placing mutable state in the global catalog or adding endpoint-ID branches.
+The registry stores immutable `Arc<dyn EndpointFactory>` values only during startup/composition.
+Before worker execution, each worker calls the selected factories and owns a dense
+`Vec<Box<dyn PreparedEndpoint>>` (`PreparedEndpointTable`) in worker-local state. A turn carries only
+a copyable `EndpointKey`. Dispatch performs one checked indexed borrow and no `Arc` clone, mutex
+operation, string lookup, endpoint construction, or endpoint-config mutation; `PreparedRequest`
+contains no endpoint configuration.
+
+This preparation seam is not deferred to a hypothetical future dialect — it is the shipped model.
+Raw/template preparation resolves template source safely, constructs the Minijinja
+environment/template, and compiles the JMESPath response selector once per effective worker/profile
+binding. Stateless endpoints use a blanket factory whose preparation only stores their validated
+configuration. `EffectiveEndpointConfig` and prepared-binding fields are private outside their
+owning module; only validation/preparation constructors can create them, so callers cannot
+construct an adapter and mismatched configuration with public struct literals.
 
 ---
 
@@ -378,7 +416,7 @@ registry or becomes a method on a runner application object. It MUST NOT call
 
 ## 5. One preparation and validation path
 
-### 5.1 Runner application object
+### 5.1 Runner application object and authored-request order
 
 ```rust
 pub struct Runner {
@@ -387,8 +425,8 @@ pub struct Runner {
 
 impl Runner {
     pub fn capabilities(&self) -> RunnerCapabilities;
-    pub fn validate(&self, request: RunRequest) -> RunValidation;
-    pub fn execute(&self, request: RunRequest) -> Result<RunTerminal>;
+    pub fn validate(&self, run: AuthoredRunSpecV2) -> RunValidation;
+    pub fn execute(&self, run: AuthoredRunSpecV2) -> Result<RunTerminal>;
 }
 ```
 
@@ -396,18 +434,47 @@ Both `validate` and `execute` invoke the same pure semantic preparation function
 
 ```rust
 fn validate_run(
-    request: RunRequest,
+    run: &AuthoredRunSpecV2,
     registry: &AiperfRegistry,
 ) -> Result<ValidatedRun>;
 ```
 
+The permanent request order places all Python side effects after the runner accepts static
+validation:
+
+```text
+Python structural Config-v2 validation and outer-loop expansion
+    |
+    v
+side-effect-free AuthoredRunSpecV2 projection
+    |
+    v
+aiperf-runner static validation
+    |
+    v
+Rust dataset/tokenizer/backend preparation and deferred validation
+    |
+    v
+artifact creation, supervised workers, scheduling, and dispatch
+```
+
+`AuthoredRunSpecV2` is built only from authored/structurally resolved configuration. It MUST NOT
+read a fully resolved `BenchmarkRun.resolved`, require a pre-created artifact directory, require a
+cache-localized tokenizer, or require Python to import a dataset loader. It carries the selected
+artifact target path without creating it, authored tokenizer identity/options rather than a
+Python-warmed cache result, authored local/inline/public dataset identity and options rather than
+Python loader metadata, the endpoint/profile IDs and raw endpoint policy, and the backend/workload
+request owned by the runner-only execution-surface companion. No Python resolver may perform a side
+effect before the selected runner accepts static validation.
+
 Execution extends `ValidatedRun` into IO-bound `PreparedRun` state by loading the selected dataset,
 tokenizer, and optional sidecars. No endpoint semantic rule is reimplemented in the IO phase. For
-local or inline datasets, validation may also scan authored endpoint/profile references. References
-only discoverable through a remote dataset are bound immediately after load and before scheduling
-or HTTP dispatch.
+local or inline datasets, static validation also scans authored endpoint/profile references.
+References only discoverable through a remote dataset are bound immediately after load and before
+scheduling or HTTP dispatch. Dataset cache population needed to read remote input is preparation
+state, not a run artifact.
 
-Pure validation MUST occur before:
+Pure static validation MUST occur before:
 
 - artifact directory creation;
 - tokenizer download/cache warming;
@@ -453,7 +520,7 @@ semantics:
 
 The normalized effective configuration and notices are recorded in native report provenance.
 
-### 5.3 Structured validation result
+### 5.3 Structured validation result and completeness
 
 Validation is a strict JSON operation of `aiperf-runner`, using the same one-line stdout discipline
 as capabilities and terminal results:
@@ -463,6 +530,14 @@ as capabilities and terminal results:
   "event": "run_validation",
   "protocol_version": 2,
   "success": false,
+  "completeness": "static",
+  "deferred_checks": [
+    {
+      "code": "dataset_endpoint_profiles",
+      "path": "run.dataset",
+      "reason": "endpoint profile references require loading the remote dataset"
+    }
+  ],
   "errors": [
     {
       "code": "unknown_endpoint",
@@ -480,6 +555,89 @@ Diagnostics use stable codes and field paths; human text may improve without bec
 key. Secrets, URL userinfo, API keys, headers, and payload bodies are redacted. Validation failure
 never creates artifacts or sends traffic.
 
+Static validation cannot inspect endpoint/profile references stored only inside rows of a remote
+dataset, so every result reports its scope:
+
+```rust
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ValidationCompleteness {
+    Static,
+    Complete,
+}
+
+#[derive(Serialize)]
+pub struct DeferredCheck {
+    pub code: &'static str,
+    pub path: String,
+    pub reason: String,
+}
+```
+
+`success=true, completeness=static` means every check possible without external dataset IO passed;
+it is not a claim that remote contents are valid or available. `success=true, completeness=complete`
+means every endpoint/profile reference in the prepared dataset has also been bound successfully.
+Normal execution performs:
+
+```text
+static validation
+    -> remote/local dataset load into preparation state
+    -> bind every deferred endpoint/profile reference
+    -> complete semantic validation
+    -> create run artifacts
+    -> start workers and scheduling
+```
+
+Any deferred failure is a preparation failure and occurs before run artifact creation, evaluator or
+telemetry worker startup, scheduling, or inference traffic. A separate public networkful `prepare`
+operation is not required by protocol v2; an implementation may add one only through a later
+versioned protocol extension.
+
+### 5.4 Strict protocol-v2 operation envelope
+
+The runner-wide companion owns the complete operation protocol. Endpoint validation uses this strict
+subset:
+
+```json
+{
+  "protocol_version": 2,
+  "operation": "validate",
+  "expected_distribution_id": "blake3:...",
+  "run": {}
+}
+```
+
+Normal execution changes only the operation:
+
+```json
+{
+  "protocol_version": 2,
+  "operation": "execute",
+  "expected_distribution_id": "blake3:...",
+  "run": {}
+}
+```
+
+The Rust envelope is a strict tagged sum type. The runner first deserializes only the protocol
+version, selects that version's strict envelope, and then dispatches the operation. `validate` emits
+exactly one `run_validation` JSON line. `execute` emits exactly one `run_terminal` JSON line.
+
+Process exit codes are stable:
+
+| Code | Meaning |
+|---:|---|
+| `0` | requested operation succeeded |
+| `1` | well-formed request reached a semantic, preparation, or execution failure; stdout contains the typed failure response |
+| `2` | malformed/unsupported protocol, invalid stdout contract, or runner bootstrap failure |
+
+An `expected_distribution_id` mismatch is a typed protocol failure, happens before request
+validation, and exits `2`. Stderr is diagnostic only and MUST be redacted; machine consumers use the
+typed stdout response. `--capabilities` remains a side-effect-free bootstrap query rather than an
+stdin operation; it uses the same executable and independently composes an equivalent frozen
+registry. Capability, validation, and execution normally run in separate processes and do not share
+one in-memory registry value; the invariant is deterministic composition from the same verified
+executable.
+
 ---
 
 ## 6. Per-turn endpoints become prebound profiles
@@ -488,19 +646,18 @@ The current dataset field `turn.endpoint` ambiguously names a dialect while inhe
 URLs, path, credentials, content type, and headers. That is sufficient only when every dialect in a
 conversation targets the same service configuration.
 
-### 6.1 Protocol-v1 compatibility
+The runner's protocol-v1 support has been deleted: `aiperf-runner` advertises `protocol_versions:
+[2]` only and rejects any non-v2 request as a protocol-v2 failure envelope. The former v1 `dispatch`
+entry, `execute_v1`/`execute_run*` chain, the `RunRequest`/`RunSpec`/`RunTerminal`/`EndpointSpec`/
+`DatasetSpec`/`AccuracySpec` wire DTOs, the `load_protocol_v1` graph-input adapters, and the
+`Legacy` capability/enum variants are gone. No v1 authority remains on the runner; only unregistered
+workload/lifecycle combinations continue to fail closed. (The `aiperf::endpoints` module retains its
+own internal `EndpointType` metadata/compatibility adapters, independent of the removed runner wire
+protocol.)
 
-The v1 adapter retains current meaning during migration:
+### 6.1 Protocol-v2 endpoint profiles
 
-- the run's `endpoint.type` is the default dialect ID;
-- each unique authored `turn.endpoint` is resolved as a dialect ID;
-- the base raw config is cloned and independently validated for each unique dialect;
-- every resulting binding is cached before scheduling;
-- invalid combinations fail before the affected turn can dispatch.
-
-### 6.2 Protocol-v2 endpoint profiles
-
-The final wire model separates a profile name from a dialect ID:
+The wire model separates a profile name from a dialect ID:
 
 ```json
 {
@@ -539,7 +696,7 @@ Capabilities are built from the frozen registry:
 {
   "event": "runner_capabilities",
   "capabilities_schema_version": 2,
-  "protocol_versions": [1, 2],
+  "protocol_versions": [2],
   "report_schema_version": "2.0",
   "runner_version": "0.12.0",
   "distribution_id": "blake3:...",
@@ -568,39 +725,51 @@ Capabilities are built from the frozen registry:
 }
 ```
 
-`endpoint_types` is retained temporarily for old orchestration clients but is derived from the
-canonical `endpoints` entries. Aliases appear only on their canonical entry. Catalog ordering and
-JSON serialization are deterministic.
+`endpoint_types` is retained as a derived convenience field but is generated from the canonical
+`endpoints` entries. Aliases appear only on their canonical entry. Catalog ordering and JSON
+serialization are deterministic.
 
-`distribution_id` is a BLAKE3 digest over the canonical capability contract, linked extension
-identities/versions, and other execution-relevant build identity. It identifies the exact runner
-distribution, not merely the package version.
+`distribution_id` is an executable-content identity, computed as:
+
+```text
+BLAKE3(
+  "aiperf-runner-distribution-v1\0"
+  || bytes_of_the_executing_image
+)
+```
+
+`bytes_of_the_executing_image` means the complete executable image from which the current process
+was launched, read through the platform's current-executable handle/path with replacement-safe
+semantics where the OS exposes them. If a platform cannot obtain the executing image reliably, the
+runner fails capability/bootstrap validation rather than substituting package version, Git revision,
+or catalog metadata. It identifies the exact runner distribution, not merely the package version. An
+endpoint catalog may additionally expose a `catalog_id` for canonicalization, but that identifier
+does not replace `distribution_id` and is not used for exact-executable TOCTOU protection.
 
 ### 7.2 Handshake and time-of-check/time-of-use protection
 
-Python resolves one `RunnerInstallation`, loads its capabilities once, and injects the same object
-through validation and execution. Protocol v2 requests carry the expected `distribution_id`. A run
-process whose distribution differs from the capability process fails before artifacts or traffic.
+Python resolves one `RunnerInstallation`, hashes the selected image using the same versioned domain,
+loads its capabilities once, and injects the same object through validation and execution. Protocol
+v2 requests carry the expected `distribution_id`. Every validation/execute process recomputes its own
+value before comparing `expected_distribution_id`; a run process whose distribution differs from the
+capability process fails before artifacts or traffic.
 
-This handles the executable being replaced between capability negotiation and execution and makes
-custom statically linked distributions reportable without requiring their package version to equal
-the stock Python orchestration package version.
+This detects the executable being replaced between capability negotiation and execution by any
+behavior-distinct executable — even when package version, descriptors, and extension names are
+unchanged — and makes custom statically linked distributions reportable without requiring their
+package version to equal the stock Python orchestration package version.
 
-### 7.3 Compatibility sequence
+### 7.3 Protocol posture
 
-1. Add capability schema v2, full descriptors, extension identities, and a digest additively.
-2. Keep legacy `endpoint_types`, derived from the registry.
-3. Change Rust's v1 internal endpoint type from the closed enum to `EndpointId`; the JSON field
-   remains the same string and therefore does not require a wire break.
-4. Add protocol v2 for the required distribution digest, structured validation, and named endpoint
-   profiles.
-5. Parse a minimal protocol envelope before selecting a version-specific strict DTO. The current
-   runner deserializes directly into v1 and cannot negotiate this safely.
-6. Echo the selected protocol version in every validation and terminal response.
-7. Remove v1 and legacy `endpoint_types` after the compatibility window.
+The runner is protocol-v2-only. Capability schema v2 carries full descriptors, extension identities,
+and the executable-content digest; the derived `endpoint_types` field remains for convenience.
+Protocol v2 carries the required distribution digest, structured validation with completeness
+reporting, and named endpoint profiles. The runner parses a minimal protocol envelope, selects the
+version-specific strict DTO, dispatches the operation, and echoes the selected protocol version in
+every validation and terminal response. There is no v1 wire path to negotiate against.
 
-New Python MUST fail clearly when paired with a catalog-less old runner. It MUST NOT fall back to
-Python endpoint metadata.
+New Python MUST fail clearly when paired with a catalog-less or non-v2 runner. It MUST NOT fall back
+to Python endpoint metadata.
 
 ---
 
@@ -768,7 +937,7 @@ are valid. Protocol versions, capability schema, report schema, and the distribu
 2. Add version-dispatched request envelopes and structured validation terminals.
 3. Add named endpoint profiles and dense prebound `EndpointKey`s.
 4. Carry the expected distribution digest in every v2 request.
-5. Retain the v1 adapter for the compatibility window.
+5. Delete the v1 adapter; the runner is protocol-v2-only.
 
 ### Increment 5 — packaging and deletion
 
@@ -776,7 +945,7 @@ are valid. Protocol versions, capability schema, report schema, and the distribu
 2. Delete the Python endpoint plugin category, enum, classes, validators, transport, and migrated
    consumers.
 3. Delete temporary parity machinery.
-4. Remove protocol v1 and legacy capability fields after the announced compatibility window.
+4. Protocol v1 and its legacy capability fields are removed; the runner advertises `[2]` only.
 
 Each increment is independently testable. New endpoints MUST NOT be added to the Python manifest
 during the migration; the first increments must make a Rust-only endpoint selectable before
@@ -807,9 +976,8 @@ further dialects land.
 
 ### Protocol and Python invariants
 
-1. Old Python + new runner/v1 succeeds during the compatibility window.
-2. New Python + new runner/v2 succeeds.
-3. New Python + catalog-less old runner fails with an upgrade instruction and no fallback.
+1. New Python + new runner/v2 succeeds; a non-v2 request is rejected as a v2 failure envelope.
+2. New Python + catalog-less or non-v2 runner fails with an upgrade instruction and no fallback.
 4. A custom endpoint can be selected, validated, and run without any Python registration/change.
 5. Fixed sweep variations and adaptive proposals are validated against the same installation.
 6. Digest mismatch fails before artifacts or inference traffic.
@@ -892,306 +1060,32 @@ This design is complete only when all of the following are true:
 - all three execution modes continue to consume the same endpoint, transport, clock, and metric
   paths.
 
-Until these criteria hold, the code is in migration and the code—not this spec—remains the source
-of truth for which pieces are actually built.
+### Built state
 
-## Addendum — 2026-07-11 (adversarial adjudication and binding corrections)
+The following are built:
 
-An independent adversarial review, a neutral reproduction, a rebuttal, and a final adjudication
-upheld this spec's ownership decision and required the corrections below. This addendum is
-authoritative wherever the original body is ambiguous or conflicts with it.
+- `aiperf::endpoints` (formerly `aiperf-endpoints`) owns validated open `EndpointId` syntax,
+  adapter-local descriptors, explicit aliases, deterministic `BTreeMap`-backed startup registration,
+  and a frozen registry. Endpoint identity is separate from `RawEndpointConfig`, and the registry
+  alone constructs the private validated `EffectiveEndpointConfig`.
+- Object-safe `EndpointFactory` and worker-local `PreparedEndpoint` values bind behavior and policy
+  before dispatch; `PreparedRequest` carries no endpoint configuration, and `EndpointKey` plus
+  `PreparedEndpointTable` provide the dense lookup seam. Raw/template factories compile the Minijinja
+  template and JMESPath selector once per prepared worker/profile binding. Readiness is an
+  object-safe dialect-owned policy with an explicit unsupported result.
+- The frozen registry owns nine open KServe factories (three OpenAI-compatible HTTP routes, KServe V1
+  Predict, five KServe V2 OIP dialects) plus `vllm_generate`; each owns its descriptor and prepared
+  behavior without a closed `EndpointType` variant.
+- `aiperf::extensions` transactionally registers a genuinely new test dialect whose ID and behavior
+  have no `EndpointType` variant; duplicate IDs and aliases fail atomically and catalogs remain
+  sorted.
+- Selected online execution convergence is built: runner-v2 HTTP scheduled and native gRPC scheduled
+  adapters prepare one dense endpoint table per worker; the `aiperf::transport_grpc` registry
+  prepares a matching dense `GrpcEndpointBinding` table for the five gRPC-capable KServe V2 IDs (see
+  `2026-07-12-aiperf-native-grpc-kserve-v2-design.md`).
+- The runner is protocol-v2-only, advertising `protocol_versions: [2]`.
 
-Runner-wide reachability for scheduled online, Graph-IR, Dynamo offline, static accuracy, and
-stateful agentic execution is deliberately **not** designed here. It belongs to the normative
-companion `2026-07-11-aiperf-runner-only-execution-surface-design.md`. This endpoint record owns
-only endpoint identity, preparation, validation, catalog publication, and endpoint use by those
-runner operations. Product deletion is complete only when that companion makes every built Rust
-mode runner-addressable with the same composed endpoint registry.
-
-### A. Authored request before side effects
-
-The protocol-v1 order in `2026-07-11-python-orchestrator-rust-single-run-design.md`—Python resolver
-side effects followed by projection—is superseded for protocol v2. The permanent order is:
-
-```text
-Python structural Config-v2 validation and outer-loop expansion
-    |
-    v
-side-effect-free AuthoredRunRequest projection
-    |
-    v
-aiperf-runner static validation
-    |
-    v
-Rust dataset/tokenizer/backend preparation and deferred validation
-    |
-    v
-artifact creation, supervised workers, scheduling, and dispatch
-```
-
-`AuthoredRunRequest` is built only from authored/structurally resolved configuration. It MUST NOT
-read `BenchmarkRun.resolved`, require a pre-created artifact directory, require a cache-localized
-tokenizer, or require Python to import a dataset loader. The request carries:
-
-- the selected artifact target path without creating it;
-- authored tokenizer identity/options rather than a Python-warmed cache result;
-- authored local/inline/public dataset identity and options rather than Python loader metadata;
-- the endpoint/profile IDs and raw endpoint policy;
-- the backend/workload request owned by the runner-only execution-surface companion.
-
-Rust consumes those authored dataset and tokenizer inputs directly while constructing
-`PreparedRun`. Python path selection that remains necessary for orchestration is split from
-directory creation and user-file materialization. No Python resolver may perform a side effect
-before the selected runner accepts static validation.
-
-Protocol v1 may retain the old fully resolved projection only during its compatibility window. It
-is not the model for new fields or operations.
-
-### B. Validation completeness is explicit
-
-Static validation cannot inspect endpoint/profile references stored only inside rows of a remote
-dataset. `RunValidation` therefore reports its scope:
-
-```rust
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ValidationCompleteness {
-    Static,
-    Complete,
-}
-
-#[derive(Serialize)]
-pub struct DeferredCheck {
-    pub code: &'static str,
-    pub path: String,
-    pub reason: String,
-}
-```
-
-Every validation result contains:
-
-```json
-{
-  "completeness": "static",
-  "deferred_checks": [
-    {
-      "code": "dataset_endpoint_profiles",
-      "path": "run.dataset",
-      "reason": "endpoint profile references require loading the remote dataset"
-    }
-  ]
-}
-```
-
-`success=true, completeness=static` means every check possible without external dataset IO passed;
-it is not a claim that remote contents are valid or available. `success=true,
-completeness=complete` means every endpoint/profile reference in the prepared dataset has also
-been bound successfully.
-
-Normal execution performs:
-
-```text
-static validation
-    -> remote/local dataset load into preparation state
-    -> bind every deferred endpoint/profile reference
-    -> complete semantic validation
-    -> create run artifacts
-    -> start workers and scheduling
-```
-
-Any deferred failure is a preparation failure and occurs before run artifact creation, evaluator or
-telemetry worker startup, scheduling, or inference traffic. Dataset cache population needed to read
-remote input is preparation state, not a run artifact. A separate public networkful `prepare`
-operation is not required by protocol v2; an implementation may add one only through a later
-versioned protocol extension.
-
-### C. Strict protocol-v2 operation envelope
-
-The runner-wide companion owns the complete operation protocol. Endpoint validation uses this
-strict subset:
-
-```json
-{
-  "protocol_version": 2,
-  "operation": "validate",
-  "expected_distribution_id": "blake3:...",
-  "run": {}
-}
-```
-
-Normal execution changes only the operation:
-
-```json
-{
-  "protocol_version": 2,
-  "operation": "execute",
-  "expected_distribution_id": "blake3:...",
-  "run": {}
-}
-```
-
-The Rust envelope is a strict tagged sum type. The runner first deserializes only the protocol
-version, selects that version's strict envelope, and then dispatches the operation. `validate` emits
-exactly one `run_validation` JSON line. `execute` emits exactly one `run_terminal` JSON line.
-
-Process exit codes are stable:
-
-| Code | Meaning |
-|---:|---|
-| `0` | requested operation succeeded |
-| `1` | well-formed request reached a semantic, preparation, or execution failure; stdout contains the typed failure response |
-| `2` | malformed/unsupported protocol, invalid stdout contract, or runner bootstrap failure |
-
-An `expected_distribution_id` mismatch is a typed protocol failure, happens before request
-validation, and exits `2`. Stderr is diagnostic only and MUST be redacted; machine consumers use
-the typed stdout response.
-
-`--capabilities` remains a side-effect-free bootstrap query rather than an stdin operation. It uses
-the same executable and independently composes an equivalent frozen registry. Capability,
-validation, and execution normally run in separate processes; they do not share one in-memory
-registry value. The invariant is deterministic composition from the same verified executable.
-
-### D. `distribution_id` is an executable-content identity
-
-The original phrase “other execution-relevant build identity” is replaced by this exact contract:
-
-```text
-BLAKE3(
-  "aiperf-runner-distribution-v1\0"
-  || bytes_of_the_executing_image
-)
-```
-
-`bytes_of_the_executing_image` means the complete executable image from which the current process
-was launched, read through the platform's current-executable handle/path with replacement-safe
-semantics where the OS exposes them. If a platform cannot obtain the executing image reliably, the
-runner fails capability/bootstrap validation rather than substituting package version, Git revision,
-or catalog metadata.
-
-The Python `RunnerInstallation` hashes the selected image using the same versioned domain and
-requires the capability process to report that value. Every validation/execute process recomputes
-its own value before comparing `expected_distribution_id`. This detects replacement by any
-behavior-distinct executable even when package version, descriptors, and extension names are
-unchanged.
-
-Endpoint catalog canonicalization may additionally have a `catalog_id`, but that identifier does
-not replace `distribution_id` and is not used for exact-executable TOCTOU protection. Tests build
-two behavior-distinct runner images and prove their distribution IDs differ.
-
-### E. Prepared bindings are worker-local and allocation-free on dispatch
-
-The illustrative `EndpointBinding` in section 3.4 is superseded by two explicit seams:
-
-```rust
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct EndpointKey(u32);
-
-pub trait EndpointFactory: std::fmt::Debug + Send + Sync {
-    fn descriptor(&self) -> &'static EndpointDescriptor;
-
-    fn prepare(
-        &self,
-        config: EffectiveEndpointConfig,
-    ) -> EndpointResult<Box<dyn PreparedEndpoint>>;
-}
-
-pub trait PreparedEndpoint: std::fmt::Debug {
-    fn descriptor(&self) -> &'static EndpointDescriptor;
-    fn config(&self) -> &EffectiveEndpointConfig;
-
-    // Existing format/header/parse/extraction/replay behavior is exposed here
-    // or through object-safe leaf traits owned by the endpoint behavior spec.
-}
-```
-
-The registry stores immutable `Arc<dyn EndpointFactory>` values only during startup/composition.
-Before worker execution, each worker calls the selected factories and owns a dense
-`Vec<Box<dyn PreparedEndpoint>>` in worker-local state. A turn carries only copyable
-`EndpointKey`. Dispatch performs one checked indexed borrow and no `Arc` clone, mutex operation,
-string lookup, endpoint construction, or endpoint-config mutation.
-
-The initial implementation MUST include this preparation seam; it is not deferred to a hypothetical
-future dialect. Raw/template preparation resolves template source safely, constructs the Minijinja
-environment/template, and compiles the JMESPath response selector once per effective worker/profile
-binding. Stateless endpoints use a blanket factory whose preparation only stores their validated
-configuration.
-
-`EffectiveEndpointConfig` and prepared-binding fields are private outside their owning module.
-Only validation/preparation constructors can create them, so callers cannot construct an adapter
-and mismatched configuration with public struct literals.
-
-### F. Adjudicated scope and completion gate
-
-The following concerns were explicitly overruled and require no design reversal:
-
-- moving registry ownership into `aiperf-endpoints` does not create a dependency cycle;
-- open string IDs are necessary for genuinely new statically linked endpoint dialects;
-- linked extensions can provide ordinary static descriptors;
-- the current per-turn adapter/config mismatch is real and requires prebinding.
-
-The core runner-owned endpoint architecture is accepted. It becomes implementation-ready only with
-this addendum and the separate runner-only execution-surface companion. No backend/workload mode DTO
-is added to this endpoint spec.
-
-## Addendum — 2026-07-11 (open-registry foundation implementation)
-
-The first in-tree implementation slice is now built, without claiming the full completion criteria
-in section 13:
-
-- `aiperf-endpoints` owns validated open `EndpointId` syntax, adapter-local descriptors, explicit
-  aliases, deterministic `BTreeMap`-backed startup registration, and a frozen registry;
-- endpoint identity is separate from `RawEndpointConfig`, while the registry alone constructs the
-  private validated `EffectiveEndpointConfig`;
-- object-safe `EndpointFactory` and worker-local `PreparedEndpoint` values bind behavior and policy
-  before dispatch; `PreparedRequest` contains no endpoint configuration, and `EndpointKey` plus
-  `PreparedEndpointTable` provide the dense lookup seam;
-- raw/template factories compile the Minijinja template and JMESPath selector once per prepared
-  worker/profile binding;
-- readiness is an object-safe dialect-owned policy with an explicit unsupported result, so callers
-  cannot substitute a chat probe;
-- `aiperf-extensions` transactionally registers a test dialect whose ID and behavior have no
-  `EndpointType` variant; duplicate IDs and aliases fail atomically and catalogs remain sorted.
-
-Protocol-v1 `EndpointType`, `EndpointMetadata`, and the dataset-owned compatibility resolver remain
-temporarily present, and the production runner still publishes a handwritten endpoint list and
-constructs built-ins internally. Consequently, exact-binary registry authority, registry-derived
-capabilities, shared validate/execute preparation, and full runner injection are still pending.
-This addendum records implementation progress only; it does not narrow the original completion
-criteria or authorize a second permanent endpoint authority.
-
-## Addendum — 2026-07-12 (KServe factories and prepared online execution)
-
-The frozen registry now owns nine additional open KServe factories: three
-OpenAI-compatible HTTP routes, KServe V1 Predict, and five KServe V2 OIP
-dialects. Each factory owns its descriptor and prepared behavior; none exposes
-the closed protocol-v1 `Endpoint` compatibility hook or adds an
-`EndpointType` variant.
-
-Selected execution convergence is now built. Runner-v2 HTTP scheduled and
-native gRPC scheduled adapters prepare one dense endpoint table per worker.
-The separate `aiperf-transport-grpc` registry prepares a matching dense
-`GrpcEndpointBinding` table for exactly the five gRPC-capable KServe V2 IDs.
-The complete transport and reachability contract is recorded in
-`2026-07-12-aiperf-native-grpc-kserve-v2-design.md`. This supersedes the
-previous statement that all runner capability and prepared-binding execution
-convergence remained pending; protocol-v1 authorities and unregistered
-workload/lifecycle combinations still remain.
-
-## Addendum — 2026-07-12 (runner protocol-v1 fully removed)
-
-The runner's protocol-v1 support has been deleted. `aiperf-runner` now
-advertises `protocol_versions: [2]` only and rejects any non-v2 request as a
-protocol-v2 failure envelope. Removed from `rust/aiperf-runner`: the v1
-request `dispatch` entry, `execute_v1` and the `execute_run*` chain, the
-`RunRequest` / `RunSpec` / `RunTerminal` / `EndpointSpec` / `DatasetSpec` /
-`AccuracySpec` wire DTOs, the `load_protocol_v1` graph-input adapters, and the
-`Legacy` capability/enum variants, along with the v1 tests.
-
-This supersedes Section 6.1 "Protocol-v1 compatibility," the `RunRequest`-typed
-`validate`/`execute` signatures shown in this spec (the runner's live envelope
-is the strict `AuthoredRunSpecV2`), and the prior addendum clause that
-"protocol-v1 authorities ... still remain": no v1 authority remains on the
-runner. Only unregistered workload/lifecycle combinations continue to fail
-closed. Note the `aiperf-endpoints` crate retains its own internal
-`EndpointType` metadata/compatibility adapters, which are independent of the
-removed runner wire protocol.
+Remaining open work: unregistered workload/lifecycle combinations still fail closed, and full
+runner-wide reachability convergence for every built Rust mode is owned by the runner-only
+execution-surface companion. Until every criterion above holds, the code is in migration and the
+code—not this spec—remains the source of truth for which pieces are actually built.

@@ -7,32 +7,34 @@ SPDX-License-Identifier: Apache-2.0
 
 **Date:** 2026-07-12
 **Author:** Anthony Casagrande (Tech Lead) + Codex
-**Status:** decided — not implemented
+**Status:** decided; implemented — workspace directory renamed `crates/` → `rust/`, the former per-capability `aiperf-*` library crates are consolidated into modules of `aiperf`, and the §8 conformance gate is built.
 **Decision:** AIPerf-owned Cargo packages use the `aiperf` namespace, their
-workspace directories omit the redundant `aiperf-` prefix, and the
-cross-product `loadgen-core` substrate keeps its neutral package identity.
+workspace directories omit the redundant `aiperf-` prefix and live directly
+under `rust/`, and the cross-product `loadgen-core` substrate keeps its neutral
+package identity.
 
-This is a greenfield naming decision. Package identities become expensive to
-change once downstream manifests, imports, documentation URLs, release
-automation, and external consumers depend on them. Filesystem paths are local
-implementation details, but choosing their convention now avoids permanent
-mixed styles.
+Package identities become expensive to change once downstream manifests,
+imports, documentation URLs, release automation, and external consumers depend
+on them. Filesystem paths are local implementation details, but a single
+convention avoids permanent mixed styles.
 
 ## 1. Scope and current state
 
 This spec governs:
 
 - Cargo package names (`[package].name`);
-- workspace member directory names below `crates/`;
+- workspace member directory names below `rust/`;
 - the corresponding Rust crate identifiers used in source;
 - the criteria for a package to use a namespace other than `aiperf`;
 - the intended product-neutral identity of `loadgen-core`.
 
-It does not rename a crate or directory by itself. At the time of this
-decision, most AIPerf package names and directories both carry `aiperf-`, for
-example `crates/aiperf-clock` containing package `aiperf-clock`.
-`loadgen-core` already has the intended neutral name and lives at
-`crates/loadgen-core`. The directory shortening in this spec remains unbuilt.
+The workspace currently holds four product/library packages plus a test-harness
+package. Package names carry the product prefix (`aiperf`, `aiperf-runner`,
+`aiperf-mock-rs`) while their directories drop it (`rust/aiperf`, `rust/runner`,
+`rust/mock-rs`). `loadgen-core` keeps its neutral name at `rust/loadgen-core`.
+The historical per-capability library crates (`aiperf-clock`, `aiperf-metrics`,
+`aiperf-transport-http`, and the rest) no longer exist as separate packages:
+they are consolidated into modules of the single `aiperf` crate (see §4).
 
 Cargo terminology matters here:
 
@@ -42,8 +44,8 @@ Cargo terminology matters here:
   tests, or benches);
 - a **workspace directory** is only a repository path and need not equal the
   package name;
-- Cargo exposes a hyphenated library package such as `aiperf-clock` to Rust
-  source as the identifier `aiperf_clock`.
+- Cargo exposes a hyphenated library package such as `aiperf-runner` to Rust
+  source as the identifier `aiperf_runner`.
 
 ## 2. Normative naming rules
 
@@ -62,25 +64,28 @@ The words MUST, MUST NOT, SHOULD, and MAY are normative.
    metadata, and possible publication; it therefore needs the product
    namespace.
 5. The corresponding Rust identifier MUST use Cargo's normal hyphen-to-
-   underscore mapping (`aiperf-clock` -> `aiperf_clock`). A package MUST NOT add
-   a custom `[lib].name` merely to remove the `aiperf_` prefix from imports.
+   underscore mapping (`aiperf-runner` -> `aiperf_runner`). A package MUST NOT
+   add a custom `[lib].name` merely to remove the `aiperf_` prefix from imports.
 
 ### 2.2 Workspace directory identity
 
-1. An AIPerf capability package SHOULD live at `crates/<capability>`, not
-   `crates/aiperf-<capability>`.
-2. The umbrella `aiperf` package SHOULD remain at `crates/aiperf` because it
+1. An AIPerf capability package SHOULD live at `rust/<capability>`, not
+   `rust/aiperf-<capability>`.
+2. The umbrella `aiperf` package SHOULD remain at `rust/aiperf` because it
    has no capability suffix to use as a shorter directory name.
 3. Directory names MUST be kebab-case and SHOULD equal the capability suffix
-   exactly.
+   exactly (`aiperf-runner` -> `rust/runner`, `aiperf-mock-rs` -> `rust/mock-rs`).
 4. Code, scripts, CI, and documentation MUST treat Cargo metadata as the
    authority for package identity. They MUST NOT infer a package name by
    prepending or stripping text from its directory basename.
 
-The path is already scoped by the AIPerf repository and `crates/` directory;
-repeating the product prefix there adds visual noise without supplying a new
-namespace. The package name remains fully qualified because it is meaningful
-outside that path.
+The path is already scoped by the AIPerf repository and the `rust/` language
+folder; repeating the product prefix there adds visual noise without supplying a
+new namespace. The package name remains fully qualified because it is meaningful
+outside that path. `rust/` holds the crates directly, with no extra nesting, so
+the Rust tree sits beside the Python `src/` tree under a self-describing
+top-level name — the language-folder convention used by polyglot repos, in place
+of the Rust-community `crates/` convention.
 
 ### 2.3 Independently owned subsystem exception
 
@@ -107,7 +112,7 @@ remain:
 | Concern | Decision |
 |---|---|
 | Package name | `loadgen-core` |
-| Workspace path while hosted here | `crates/loadgen-core` |
+| Workspace path while hosted here | `rust/loadgen-core` |
 | Rust identifier | `loadgen_core` |
 | Product dependencies | none: no `aiperf-*` or `dynamo-*` |
 | Backend dependencies | none: no HTTP client, engine, router, KV manager, or simulator |
@@ -139,39 +144,52 @@ repository boundary, `loadgen-core` MUST have:
 Physical residence in the AIPerf repository does not grant AIPerf semantic
 ownership of the package.
 
-## 4. Target workspace mapping
+## 4. Workspace mapping
 
-The target changes directory paths only. Existing AIPerf Cargo package names
-remain stable, and `loadgen-core` remains unchanged.
+The workspace members and their directories are:
 
-| Target directory | Cargo package | Rust identifier |
+| Directory | Cargo package | Rust identifier |
 |---|---|---|
-| `crates/aiperf` | `aiperf` | `aiperf` |
-| `crates/accuracy` | `aiperf-accuracy` | `aiperf_accuracy` |
-| `crates/adaptive` | `aiperf-adaptive` | `aiperf_adaptive` |
-| `crates/clock` | `aiperf-clock` | `aiperf_clock` |
-| `crates/core` | `aiperf-core` | `aiperf_core` |
-| `crates/dataset` | `aiperf-dataset` | `aiperf_dataset` |
-| `crates/endpoints` | `aiperf-endpoints` | `aiperf_endpoints` |
-| `crates/extensions` | `aiperf-extensions` | `aiperf_extensions` |
-| `crates/gpu-telemetry` | `aiperf-gpu-telemetry` | `aiperf_gpu_telemetry` |
-| `crates/graph` | `aiperf-graph` | `aiperf_graph` |
-| `crates/metrics` | `aiperf-metrics` | `aiperf_metrics` |
-| `crates/network-latency` | `aiperf-network-latency` | `aiperf_network_latency` |
-| `crates/rng` | `aiperf-rng` | `aiperf_rng` |
-| `crates/runner` | `aiperf-runner` | `aiperf_runner` |
-| `crates/server-metrics` | `aiperf-server-metrics` | `aiperf_server_metrics` |
-| `crates/timing` | `aiperf-timing` | `aiperf_timing` |
-| `crates/transport-http` | `aiperf-transport-http` | `aiperf_transport_http` |
-| `crates/loadgen-core` | `loadgen-core` | `loadgen_core` |
+| `rust/aiperf` | `aiperf` | `aiperf` |
+| `rust/runner` | `aiperf-runner` | `aiperf_runner` |
+| `rust/mock-rs` | `aiperf-mock-rs` | `aiperf_mock_rs` |
+| `rust/integration` | `aiperf-integration-tests` | `aiperf_integration_tests` |
+| `rust/loadgen-core` | `loadgen-core` | `loadgen_core` |
 
-The `crates/core` row records only the mechanical path implied by the naming
-rule. It does not ratify `aiperf-core` as the best long-term responsibility
-name. The current package combines OpenAI Chat/SSE wire helpers with a
-collector-backed observer adapter, while `loadgen-core` owns the lower neutral
-contract. That responsibility boundary SHOULD receive a separate semantic
-review before `aiperf-core` is treated as permanent; this spec does not rename
-or split it.
+Every package name follows §2.1; every directory follows §2.2 (the `aiperf-`
+prefix is stripped from the path, kept in the package identity). `rust/runner`
+additionally co-locates a maturin `pyproject.toml` beside its `Cargo.toml`,
+following ai-dynamo's `lib/bindings/python/` layout, so the `aiperf-runner`
+binary is packaged as a source-built wheel from within its own crate directory
+(the published wheel is online-only by default because the crate's default
+`dynosim` feature needs an external checkout absent in CI).
+
+### 4.1 Consolidation of the former per-capability crates
+
+The naming rules above were authored when AIPerf carried many separate
+`aiperf-<capability>` library crates (`aiperf-clock`, `aiperf-core`,
+`aiperf-dataset`, `aiperf-endpoints`, `aiperf-metrics`, `aiperf-timing`,
+`aiperf-transport-http`, `aiperf-transport-grpc`, `aiperf-graph`, `aiperf-rng`,
+`aiperf-adaptive`, `aiperf-accuracy`, `aiperf-gpu-telemetry`,
+`aiperf-network-latency`, `aiperf-server-metrics`, `aiperf-content-server`, and
+the rest). Those sixteen library crates are now consolidated into modules of the
+single `aiperf` crate, addressed as `aiperf::<module>::` (for example
+`aiperf::clock`, `aiperf::metrics_core`, `aiperf::transport_http`). No separate
+`aiperf-<capability>` library package remains. The module namespaces inherit the
+same capability vocabulary the crate names used, so the naming discipline still
+governs how a responsibility is named — it now names a module rather than a
+package. See [`docs/module-organization.md`](../docs/module-organization.md) for
+the full module table.
+
+The naming rules in §2 remain the standing policy for any *future* package: if a
+capability is ever re-extracted into its own Cargo package, it MUST be named
+`aiperf-<capability>` and live at `rust/<capability>`.
+
+The `aiperf-core` responsibility name was never ratified as a long-term
+boundary; the OpenAI Chat/SSE wire helpers and the collector-backed observer
+adapter it once held now live inside `aiperf` alongside the neutral
+`loadgen-core` contract. That responsibility boundary is a separate semantic
+question this spec does not decide.
 
 ## 5. Ecosystem precedent and rationale
 
@@ -186,13 +204,16 @@ Examples reviewed for this decision:
 - AI-Dynamo uses short paths such as `lib/runtime`, `lib/llm`, and
   `lib/mocker`, while their packages are `dynamo-runtime`, `dynamo-llm`, and
   `dynamo-mocker`. Its separately identified KV block-manager family uses
-  `kvbm-*`. This is the closest organizational precedent for AIPerf.
+  `kvbm-*`. This is the closest organizational precedent for AIPerf, including
+  the co-located `Cargo.toml` + `pyproject.toml` maturin bindings layout adopted
+  by `rust/runner`.
 - Wasmtime uses short paths such as `crates/environ` while retaining package
   identities such as `wasmtime-environ`; it additionally marks unsupported
   internals with `wasmtime-internal-*` package names.
 - Tokio and Tracing repeat their namespace in both workspace paths and package
   names (`tokio-util`, `tracing-core`). That style is valid, but AIPerf chooses
-  the shorter local path convention used by AI-Dynamo and Wasmtime.
+  the shorter local path convention (package identity fully qualified, directory
+  prefix dropped) used by AI-Dynamo and Wasmtime.
 
 Primary references, reviewed 2026-07-12:
 
@@ -218,10 +239,9 @@ downstream manifests, and they compete with broad ecosystem vocabulary.
 
 ### Prefixing both the directory and package
 
-`crates/aiperf-clock` containing `aiperf-clock` is valid and is the current
-layout, but it is rejected as the greenfield target because the repository path
-already supplies the AIPerf scope. Exact path/package equality is not valuable
-enough to retain the repeated prefix.
+`rust/aiperf-runner` containing `aiperf-runner` is valid but rejected because the
+repository path already supplies the AIPerf scope. Exact path/package equality
+is not valuable enough to retain the repeated prefix.
 
 ### Prefixing every workspace member with `aiperf-`
 
@@ -234,166 +254,63 @@ AIPerf/AI-Dynamo boundary.
 This is rejected for the same reason. AI-Dynamo Mocker is a consumer, not the
 sole owner of the shared contract.
 
-## 7. Migration plan
+## 7. Realized layout
 
-Directory shortening SHOULD land as one mechanical change before more external
-automation hard-codes the current paths:
+The layout is in place; the migration was a repository-path change, not a public
+Rust API rename:
 
-1. Move each `crates/aiperf-<capability>` directory to
-   `crates/<capability>` with Git history preserved.
-2. Keep every `[package].name` unchanged.
-3. Update root workspace dependency paths, relative path dependencies, scripts,
-   CI, documentation, tests, and source references.
-4. Keep `crates/aiperf` and `crates/loadgen-core` unchanged.
-5. Run `cargo metadata --no-deps` and verify the package set and package names
-   are identical before and after the move.
-6. Run formatting, build, tests, documentation guards, and the agent-file sync
-   check required by the repository.
-
-Because package names do not change, normal Rust imports, `cargo -p` selectors,
-Cargo.lock package identities, and prospective downstream dependency keys stay
-stable. The migration is intentionally a repository-path change, not a public
-Rust API rename.
+1. Each `aiperf-<capability>` directory dropped the `aiperf-` prefix, with Git
+   history preserved; `rust/aiperf` and `rust/loadgen-core` are unchanged.
+2. Every `[package].name` is unchanged.
+3. Root `[workspace.dependencies]` path values, relative path dependencies,
+   scripts, CI, documentation, tests, and source references point at the short
+   directories; the `members = ["rust/*"]`-style globs resolve them.
+4. The top-level workspace directory itself was renamed `crates/` -> `rust/`;
+   package *identity* is unchanged, only the workspace *path* moved.
+5. `cargo metadata --no-deps` reports an identical package set, so normal Rust
+   imports, `cargo -p` selectors, and `Cargo.lock` package identities stay
+   stable.
 
 ## 8. Conformance gate
 
-The directory migration SHOULD add a small metadata-based repository check.
-Given each workspace package's manifest path and package name, it should enforce:
+The metadata-based repository check is built as `tools/check_crate_layout.py`
+and wired into `.pre-commit-config.yaml` as `check-crate-layout`. Given each
+workspace package's manifest path and package name from `cargo metadata
+--no-deps` (never a directory basename), it enforces:
 
-- `aiperf` is at `crates/aiperf`;
-- `aiperf-<capability>` is at `crates/<capability>`;
-- `loadgen-core` is at `crates/loadgen-core`;
+- `aiperf` is at `rust/aiperf`;
+- `aiperf-<capability>` is at `rust/<capability>`;
+- `loadgen-core` is the allowlisted exception at `rust/loadgen-core`;
 - every additional exception is explicitly allowlisted with a link to its
   ownership decision;
-- no check derives Rust identifiers independently of Cargo.
+- fail-closed rejection of any other un-prefixed package.
 
-That guard is designed but not built. Until the directory migration lands, it
-would correctly fail the current prefixed paths and therefore MUST NOT be
-enabled as a required check prematurely.
+The check resolves its root as `repo_root / "rust"`. The `check-docs-current`
+guard's crate-manifest regex is `^rust/[^/]+/Cargo\.toml$`, and the CI path
+filters watch `rust/**`. The architecture-atlas additionally enforces
+package/path identity against `cargo metadata` in
+`apps/architecture-atlas/src/domain/integrity.ts`.
 
 ## 9. Consequences
 
 - Cargo package identities remain explicit and globally recognizable.
-- Local paths become shorter and easier to scan.
+- Local paths are short and easy to scan under a self-describing `rust/` folder.
 - AIPerf aligns with AI-Dynamo's separation between short component paths and
   namespaced package identities.
 - `loadgen-core` advertises its real cross-product ownership boundary.
 - Future extraction of `loadgen-core` does not force consumer import changes.
-- Tooling must consult Cargo metadata rather than assume directory/package
+- Tooling consults Cargo metadata rather than assuming directory/package
   basename equality.
-- `aiperf-core` remains a separate responsibility-naming question and is not
-  silently blessed by this mechanical convention.
 
-## Addendum — 2026-07-12 (new crates added after mapping table)
+## 10. Still unbuilt
 
-Several Cargo packages were added or became product-relevant after the target
-mapping table in §4 was written. The naming policy still holds: package names
-retain the `aiperf-` prefix, while the future target directory should use the
-short local capability name unless explicitly excepted.
+Two designed elements remain unbuilt:
 
-Additional target mappings:
+- an independent `loadgen-core` SemVer/versioning policy separate from the
+  shared workspace version;
+- actual AI-Dynamo Mocker consumption of `loadgen-core` across a repository
+  boundary.
 
-| Target directory | Cargo package | Rust identifier |
-|---|---|---|
-| `crates/content-server` | `aiperf-content-server` | `aiperf_content_server` |
-| `crates/mock-rs` | `aiperf-mock-rs` | `aiperf_mock_rs` |
-| `crates/prometheus` | `aiperf-prometheus` | `aiperf_prometheus` |
-| `crates/telemetry-archive` | `aiperf-telemetry-archive` | `aiperf_telemetry_archive` |
-| `crates/transport-grpc` | `aiperf-transport-grpc` | `aiperf_transport_grpc` |
-
-This addendum updates only the inventory. The directory migration, independent
-`loadgen-core` versioning, Dynamo consumption, and metadata conformance guard
-remain unimplemented.
-
-## Addendum — 2026-07-12 (directory migration + conformance guard implemented)
-
-The §7 directory migration has landed and the §8 conformance gate is now built
-and enabled. This addendum is authoritative where it conflicts with the top
-`Status:` line and the "remain unimplemented" note above.
-
-What changed:
-
-- Every `crates/aiperf-<capability>` directory was moved to
-  `crates/<capability>` with `git mv` (history preserved). `crates/aiperf`
-  and `crates/loadgen-core` are unchanged. All 23 `[package].name` values are
-  byte-identical before and after: package `aiperf-clock` now lives at
-  `crates/clock`, and so on across the §4/§287 mapping tables. `cargo metadata
-  --no-deps` reports the identical package set, so `cargo -p` selectors,
-  imports, and `Cargo.lock` identities are stable.
-- Root `[workspace.dependencies]` path values, sibling `../aiperf-<cap>` path
-  dependencies, the excluded test-fixture manifest's `../../../../aiperf-<cap>`
-  paths, and the `exclude` entry were repointed to the short directories. The
-  `members = ["crates/*"]` glob needed no change.
-- Non-spec source/test/doc references to the moved paths were updated:
-  in-source first-line path comments, the Python tests that read Rust source by
-  path, `llms.txt`, `docs/dev/`, `plans/`, `crates/mock-rs/PORTING.md`
-  (repo-local lines only; the external deprecated `aiperf-rs` checkout
-  reference is intentionally preserved), and the architecture-atlas content
-  evidence paths and route/slug expectations (crate routes remain keyed on the
-  unchanged package name, e.g. `/crates/aiperf-clock`).
-- The §8 gate is implemented as `tools/check_crate_layout.py`: it reads
-  `cargo metadata --no-deps` (never a directory basename) and enforces
-  `aiperf` -> `crates/aiperf`, `aiperf-<cap>` -> `crates/<cap>`, the
-  `loadgen-core` allowlisted exception, and fail-closed rejection of any other
-  un-prefixed package. It is wired into `.pre-commit-config.yaml` as
-  `check-crate-layout`. The architecture-atlas additionally enforces
-  package/path identity against `cargo metadata` in
-  `apps/architecture-atlas/src/domain/integrity.ts`.
-
-Still unbuilt (unchanged by this addendum): independent `loadgen-core`
-SemVer/versioning separate from the workspace version, and actual AI-Dynamo
-Mocker consumption of `loadgen-core` across a repository boundary. The
-`aiperf-core` responsibility-naming question (§4) also remains open; the
-directory move to `crates/core` is mechanical and does not bless the name.
-
-Spec bodies above are preserved verbatim per the repository's append-only spec
-policy; this addendum is the authoritative status.
-
-## Addendum — 2026-07-13 (workspace directory renamed `crates/` → `rust/`)
-
-The top-level workspace directory was renamed from `crates/` to `rust/`. This
-supersedes every `crates/<...>` path in the body above and in the first two
-addenda: the umbrella package now lives at `rust/aiperf`, each
-`aiperf-<capability>` package at `rust/<capability>`, and the `loadgen-core`
-exception at `rust/loadgen-core`. Package *identity* is unchanged (still
-`aiperf` / `aiperf-*` / `loadgen-core`); only the workspace *path* moved. The
-rename adopts the language-folder convention (`rust/` holding crates directly,
-no extra nesting) used by polyglot repos, replacing the Rust-community
-`crates/` convention, so the Rust tree sits beside the Python `src/` tree under
-a self-describing top-level name.
-
-`tools/check_crate_layout.py` now resolves `crates_root = repo_root / "rust"`
-and reports policy-mandated `rust/<capability>` directories; the
-`check-docs-current` guard's crate-manifest regex is `^rust/[^/]+/Cargo\.toml$`;
-and the `native-runner` / `rust-docs-guard` CI path filters watch `rust/**`.
-The §8 identity-vs-path split is otherwise intact. Everything listed as
-"still unbuilt" in the prior addendum remains unbuilt.
-
-Spec bodies above are preserved verbatim per the repository's append-only spec
-policy; this addendum is the authoritative status where paths conflict.
-
-## Addendum — 2026-07-13 (native runner wheel: prebuilt companion → co-located maturin build)
-
-The native runner is now packaged as a source-built maturin wheel co-located with
-its crate, adopting ai-dynamo's layout (`lib/bindings/python/` holds `Cargo.toml`
-+ `pyproject.toml` together). Concretely: `rust/runner/pyproject.toml`
-(`build-backend = "maturin"`, `bindings = "bin"`, `manifest-path = "Cargo.toml"`)
-compiles the `aiperf-runner` binary from source and installs it into the wheel's
-scripts scheme. The distribution is still named `aiperf-runner` so the frontend's
-`metadata.distribution("aiperf-runner")` discovery
-(`src/aiperf/orchestrator/runner_installation.py`) is unchanged.
-
-This supersedes the earlier prebuilt-binary companion pipeline: the
-`packaging/aiperf-runner/` hatch hook, the `native-runner.yml` workflow, and the
-`tools/{runner_release_input,verify_runner_companion,stage_stock_evaluator_roots,generate_stock_evaluator_manifest}.py`
-staging tools (plus `tools/stock_evaluators/`) are deleted. Where the 3rd addendum
-above names the `native-runner` CI path filter, that workflow no longer exists;
-`rust-docs-guard` still watches `rust/**`. The published wheel is online-only by
-default (`[tool.maturin] no-default-features = true`) because the crate's default
-`dynosim` feature needs the external `dynamo-aiperf-native` checkout absent in CI;
-build the offline-capable runner with `--features dynosim` where that repo exists.
-The container build (`Dockerfile` wheel-builder) compiles it with a Rust toolchain
-and `maturin build --release` (manylinux auditwheel repair), matching ai-dynamo.
-
-Spec bodies and prior addenda above are preserved verbatim per the append-only
-policy; this addendum is authoritative where the packaging mechanism conflicts.
+Until those land, `loadgen-core`'s neutral identity is a forward-looking
+commitment realized in dependency direction and package naming, not yet in an
+external release contract.

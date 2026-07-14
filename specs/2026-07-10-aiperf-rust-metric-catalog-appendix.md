@@ -7,7 +7,12 @@ SPDX-License-Identifier: Apache-2.0
 
 **Date:** 2026-07-10
 **Author:** Anthony Casagrande (Tech Lead) + Claude
-**Status:** design (appendix)
+**Status:** built — `aiperf::metrics_core::catalog` (`rust/aiperf/src/metrics*` / `metrics_core`).
+The `CATALOG` holds 103 inherited Python metric identities plus 16 native sweep-result
+identities, with exact metadata/dependencies and record/aggregate/derived implementations
+for every row whose source data exists; validation + a deterministic metadata fingerprint
+pin the graph; telemetry-owned injected rows stay catalogued-but-absent until their producer
+supplies values.
 **Grounding:** line-by-line read of `metrics/base_*.py`, `metrics/derived_sum_metric.py`,
 all `metrics/types/*.py` (44 files), and `common/enums/metric_enums.py`.
 **Companion / parent:** `2026-07-10-aiperf-rust-metrics-accumulator-sweepline-design.md`
@@ -24,6 +29,14 @@ The parent spec fixed the *engine* and made the taxonomy call: a static `MetricS
 catalog + `AggregationKind` fold for RECORD/AGGREGATE, a typed `DeriveFn` table for
 DERIVED, real `petgraph` toposort deps. This appendix is that catalog — every metric's
 identity fields + compute logic — so the engine has data to run.
+
+The catalog and its compute layer are built in `aiperf::metrics_core`. `CATALOG` holds all
+103 inherited Python metric rows with source-faithful headers, short headers, units/display
+units, flags, console groups, display order, value types, aggregation kinds, and dependency
+edges, followed by 16 native sweep-result rows. Startup/test validation rejects duplicate
+tags, missing dependencies, illegal type-tier edges, and cycles; a deterministic metadata
+fingerprint pins the full catalog identity. The record, aggregate, and derived
+implementations preserve every §4 scar.
 
 **Identity is fully declarative.** Every metric is exactly:
 
@@ -223,29 +236,14 @@ is `count/duration`; the only `−1` is ITL's `osl−1`); and there is **no `lon
 
 ## 6. Scope
 
-- **In:** every metric above as a `MetricSpec` row + its compute closure + the §4 scars.
-- **Deferred (need their upstream data):** the telemetry-injected metrics (`total_gpu_*`,
-  power-efficiency) land with the **telemetry spec**; `accuracy.*` display lands with the
-  **accuracy spec**; `network_adjusted_*` needs the network-RTT calibration (telemetry spec).
-  Their `MetricSpec` rows + injected-`NoValue` `DeriveFn`s live here; the *injectors* live there.
+- **In:** every metric above ships as a `MetricSpec` row + its compute closure + the §4 scars.
+- **Producer-gated (catalogued, absent until fed):** the telemetry-injected metrics
+  (`total_gpu_*`, power-efficiency) receive their values from the **telemetry spec**;
+  `accuracy.*` display comes from the **accuracy spec**; `network_adjusted_*` needs the
+  network-RTT calibration (telemetry spec). Their `MetricSpec` rows + injected-`NoValue`
+  `DeriveFn`s live here and are always catalogued; the *injectors* live there. These rows
+  intentionally remain absent unless a producer supplies an override — the deferred-producer
+  boundary, not an unimplemented catalog row.
 - **Testing:** a Python twin emits `{record → per-metric value}` goldens over a fixture corpus
   exercising each edge case (ITL osl<2, TTFO reasoning-skip, zero-error absence, absent-vs-0,
   osl min-cap, adj_* +inf, http-trace zero-cases); Rust asserts equality.
-
-## Addendum — 2026-07-11 (native Rust implementation)
-
-The catalog and its compute layer are now built in `aiperf-metrics`. `CATALOG`
-contains all 103 inherited Python metric rows with source-faithful headers, short
-headers, units/display units, flags, console groups, display order, value types,
-aggregation kinds, and dependency edges, followed by 16 native sweep result rows.
-Startup/test validation rejects duplicate tags, missing dependencies, illegal
-type-tier edges, and cycles; a deterministic metadata fingerprint pins the full
-catalog identity.
-
-The record, aggregate, and derived implementations preserve the scars in section 4,
-including authoritative phase masks, zero-error absence, ITL's `osl - 1`, reasoning
-aware TTFO, volume-weighted ratios, partial HTTP composite sums, finite-value
-sanitization, SLO direction/unit conversion, and error-adjusted `+inf` tails.
-Telemetry-injected rows intentionally remain catalogued but absent unless a producer
-supplies an override; this is the deferred-producer boundary already described in
-section 6, not an unimplemented catalog row.

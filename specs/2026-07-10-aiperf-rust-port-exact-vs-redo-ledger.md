@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-10
 **Author:** Anthony Casagrande (Tech Lead) + Claude
-**Status:** design reference / decision ledger
+**Status:** design reference / decision ledger — start-here port-exact vs redo-cleaner vs throw-away ledger. Parity means shared code path + report schema across modes, not byte-identical real-vs-sim metric values; credit *policy* survives through the unified-runtime `Workload`/`SlotPool`/`RatePool`/`Gate` seams.
 **Companions:** `2026-07-10-shared-rust-architecture-northstar.md`,
 `2026-07-10-steppable-clock-injected-engine-design.md`,
 `2026-07-10-aiperf-transport-rust-port-design.md`,
@@ -121,12 +121,13 @@ Not port, not drop — get the shape right up front.
   time-window alignment. **Put `phase` on the record struct; make summarization
   phase-windowed from day one.** Fixes "warmup record 0 overwrites profiling
   record 0" by construction.
-- **Config: do not leave it at hand-rolled `argv` scanning.** The spike's
-  positional/flag scan and `std::env::set_var("GRAPH_HTTP2", …)` (`main.rs:136`)
-  are fine for a throughput spike. "Redo cleaner" for the real tool = **`clap` +
-  `serde` structs** — the Pydantic *ergonomics* (validated, documented fields;
-  YAML/CLI unification) without the Pydantic *runtime*. This is a redo, not a
-  throw-away.
+- **Config: `clap` derive + `serde` structs, not hand-rolled `argv` scanning.**
+  The early spike's positional/flag scan and `std::env::set_var("GRAPH_HTTP2", …)`
+  are historical cautions — fine for a throughput spike, wrong for the tool. The
+  binary uses `clap` derive with structured arguments; config work preserves the
+  Pydantic *ergonomics* (validated, documented fields; YAML/CLI unification) and
+  Python's validated configuration semantics without the Pydantic *runtime*. This
+  is a redo, not a throw-away.
 - **Metric taxonomy — a real decision, not an inertia drop.** The spike replaced
   RECORD/AGGREGATE/DERIVED + registry + topo-sorted dependency order
   (`metric_registry.py`, `graphlib.TopologicalSorter`) with one fixed
@@ -142,8 +143,9 @@ Not port, not drop — get the shape right up front.
 no-op (`admit == dispatch`, `http_sink.rs:235`). Fine for synthetic throughput
 benchmarks; **wrong for real multi-turn / agentic runs.** The Python credit system
 encoded scheduling *policy*, not just an IPC protocol. Kill the ZMQ credit
-protocol; re-surface these as an explicit single-threaded `SchedulingPolicy`
-module.
+protocol; re-surface these policies through the unified graph/runtime executor's
+`Workload`, `SlotPool`, `RatePool`, and `Gate` seams — not a separate bespoke
+scheduler module unless a future design explicitly reintroduces one.
 
 **Checklist against the current `ajc/rust` crates:**
 
@@ -195,9 +197,18 @@ Adopt the `graph-rs` proof-of-method for every §2 row:
 3. Corpus grows per bug found. Byte-exact keys: deterministic `seq_no` tie-break,
    integer-ns time, injected deterministic id factory.
 
-The live path is the parity anchor: **a harness asserts OFFLINE-MOCK reproduces
-ONLINE byte-for-byte on a fixed workload suite**, so offline predictions stay
-trustworthy as the engine evolves.
+This byte-exact fixture harness governs the individual §2 algorithm ports (SSE
+parse, timing breakdown, firing-gate arithmetic, reconciliation), where
+byte-equality against the Python twin is the correctness gate.
+
+Cross-mode parity is a *different, weaker* contract and must not be read as
+byte-identical metric values. Online-real, online-mock, and offline-mock exercise
+the **same** workload/gate/slot/collector/exporter code where possible and emit
+the **same report schema** — that shared code path plus schema is the parity
+anchor. Simulated and real transports are **not** expected to produce
+byte-identical metric values; a simulated engine and a real GPU legitimately
+differ. The trust guarantee is "same front-end, same schema, one code path across
+all three modes," not "same numbers."
 
 ---
 
@@ -210,24 +221,5 @@ model** (ZMQ bus, services, credit protocol, plugins-YAML, shard export, GC
 hacks); and consciously **re-design three things Python retrofitted badly** —
 phase-scoped metrics, config ergonomics, and scheduling policy. The `ajc/rust`
 spike is ~80% aligned; its main gaps are the OFFLINE co-sim sink, phase-first-class
-metrics, and re-surfacing credit *policy* as explicit logic (§5).
-
-## Addendum — 2026-07-11
-
-The verification paragraph claiming OFFLINE-MOCK should reproduce ONLINE byte-for-byte
-on metric values is superseded by the unified-runtime design. The current contract is
-code-path and report-schema parity: online-real, online-mock, and offline-mock should
-exercise the same workload/gate/slot/collector/exporter code where possible and emit
-the same report schema, but simulated and real transports are not expected to produce
-byte-identical metric values.
-
-The `SchedulingPolicy` module wording is also superseded by the later unified graph
-runtime design. The preserved credit-policy semantics should surface through the
-`Workload`, `SlotPool`, `RatePool`, and `Gate` seams on the graph/runtime executor, not
-as a separate bespoke scheduler module unless a future design explicitly reintroduces
-one.
-
-The stale spike-era CLI/config notes (`--url`, hand-rolled argv scans, and
-`GRAPH_HTTP2`) should be read as historical cautions. The current binary uses `clap`
-derive and structured arguments; future config work should preserve Python's validated
-configuration semantics while using Rust `clap`/`serde` mechanisms.
+metrics, and re-surfacing credit *policy* through the runtime's workload/slot/rate/
+gate seams (§5).

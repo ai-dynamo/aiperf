@@ -103,9 +103,9 @@ Discovery (replaces today’s pair-matrix `--capabilities` payload):
 | `transport.type: dynosim_offline` | virtual-clock in-process Dynamo |
 | `transport.type: dynosim_online` | wall-clock in-process Dynamo |
 
-As Config drops `workload`, agentic, static `accuracy`, evaluation, and archive-watch sections, the wire shrinks with them because the wire *is* BenchmarkRun.
+As Config drops `workload`, agentic, static `accuracy`, evaluation, and archive-watch sections, the wire shrinks with them because the wire *is* BenchmarkRun. The runner strict-decodes BenchmarkRun and rejects authored `cfg.workload` / `cfg.accuracy` on the product wire; the agentic / static-accuracy / evaluation modules remain linked in the binary but sit off the product projection path.
 
-Python-only presentation/orchestration blocks that must never reach the runner (e.g. `mlflow`, `wandb`, `otel`, `logging`, leftover ZMQ service config) are excluded from the dump **or** removed from `BenchmarkConfig` over time so exclusion is not a permanent hand list. Prefer removing them from the model that crosses the boundary.
+Python-only presentation/orchestration blocks that must never reach the runner (e.g. `mlflow`, `wandb`, `otel`, `logging`, leftover ZMQ service config) are stripped from the dump **or** removed from `BenchmarkConfig` over time so exclusion is not a permanent hand list. Presentation sections (`logging` / `wandb` / `otel` / `mlflow`) and a null `workload` are stripped today; the standing preference is to remove them from the model that crosses the boundary.
 
 ## 3. `resolved` is part of the contract
 
@@ -197,27 +197,26 @@ Exit codes unchanged in spirit: 0 success, 1 validation/execution failure, 2 pro
 
 ## 7. Hard-cut migration
 
-Single change set (no dual decode):
+The cut landed as a single change set on the product performance path (no dual decode):
 
 **Python**
 
-- Replace `rust_wire` dialect projection with `BenchmarkRun` JSON dump (+ only transforms that cannot live in `resolved` / Config).
-- Drop distribution pin verify/stamp path.
-- Consume JSON runner catalog for preflight.
-- Remove product paths for agentic / static accuracy / evaluation / telemetry-watch as Config sheds them.
+- `rust_wire` dialect projection is replaced with a `BenchmarkRun` JSON dump in a thin `{protocol_version, operation, run}` envelope with no `expected_distribution_id`. Nested factory inputs (`phases`, `datasets`, `tokenizer`, endpoint readiness, artifacts/sidecars) are still lowered into the shapes the linked runner factories already decode, until those factories accept raw Config dumps directly.
+- The distribution-pin verify/stamp path is dropped.
+- Preflight consumes the plugins.yaml-shaped JSON runner catalog from `--capabilities` (no `supported_pairs` / distribution pin).
+- Product paths for agentic / static accuracy / evaluation / telemetry-watch are removed as Config sheds them.
 
 **Rust**
 
-- Strict-decode BenchmarkRun-shaped `run`.
-- Emit JSON catalog from linked registries.
-- Delete `backend` DTOs, pair-matrix capabilities, workload wire stuffing, `replay_mode` clock split (clock is on transport id).
-- Align provenance field names.
+- Strict-decodes BenchmarkRun-shaped `run`, selects scheduled vs graph from dataset format, and binds wire transport ids `http` / `grpc` / `dynosim_offline` / `dynosim_online` (clock is on the transport id, not a separate `replay_mode`).
+- Emits the JSON catalog from linked registries.
+- The `backend` DTOs, pair-matrix capabilities, and workload wire stuffing are gone; provenance field names are aligned.
 
 **Docs**
 
 - This spec is authoritative for the boundary.
-- Append addenda on the two superseded specs (done alongside this file).
-- On implementation: update agent files, `llms.txt`, tests, and golden fixtures in the same change.
+- Addenda were appended on the two superseded specs alongside this file.
+- Agent files, `llms.txt`, tests, and golden fixtures moved in the same change.
 
 ## 8. Testing
 
@@ -226,6 +225,7 @@ Single change set (no dual decode):
 - Python preflight tests assert catalog id lookup (plugins.yaml-style), not `supported_pairs`.
 - Delete dual-vocabulary fixtures (`backend`, `online_http`, workload-stuffed configs).
 - Runner stdio tests speak BenchmarkRun + catalog JSON only.
+- Some dynosim and dead-mode process fixtures are ignored pending a separate fixture migration; they do not gate the performance-path wire.
 
 ## 9. Implementation notes (non-normative)
 
@@ -238,14 +238,4 @@ Single change set (no dual decode):
 - Exact category list beyond endpoint/transport/dataset\* (add when a Config field needs preflight).
 - Whether discovery flag is renamed from `--capabilities` (cosmetic; payload is the contract).
 - Timing of deleting leftover Python plugin categories that the runner never owned.
-
-## Addendum — 2026-07-13 (implementation)
-
-Built the hard cut on the product performance path:
-
-- Python serializes a BenchmarkRun-shaped `run` in a thin `{protocol_version, operation, run}` envelope with no `expected_distribution_id`. Presentation sections (`logging` / `wandb` / `otel` / `mlflow`) and null `workload` are stripped; nested factory inputs (`phases`, `datasets`, `tokenizer`, endpoint readiness, artifacts/sidecars) are still lowered into the shapes linked runner factories already decode until those factories accept raw Config dumps directly.
-- Python preflight consumes the plugins.yaml-shaped JSON catalog from `--capabilities` (no `supported_pairs` / distribution pin).
-- Rust strict-decodes BenchmarkRun, selects scheduled vs graph from dataset format, binds wire transport ids `http` / `grpc` / `dynosim_offline` / `dynosim_online`, and rejects authored `cfg.workload` / `cfg.accuracy` on the product wire.
-- Agentic / static-accuracy / evaluation modules remain linked but off the product projection path; some dynosim and dead-mode process fixtures are ignored pending separate fixture migration.
-
-This addendum does not change the target contracts in §§1–5; it records the temporary nested lowering and ignored fixtures that remain until factories and Config converge further.
+- Convergence of factories and Config so nested inputs (`phases`, `datasets`, `tokenizer`, endpoint readiness, artifacts/sidecars) stop being lowered into factory-specific shapes and cross the boundary as raw Config dumps.

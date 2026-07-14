@@ -173,8 +173,27 @@ part of the loader and *not* per-dispatch.
 3. **Streaming/SSE request options** and per-request headers/params that aren't
    body fields — carried alongside the plan, not in it.
 
-## 10. Related
+## 10. Future transports (WebSockets and beyond)
+
+The format-vs-splice contract is **transport-parametric**: the endpoint declares a
+`BodyPlan` over transport-agnostic segments, and a **per-wire-type materializer** turns
+it into bytes/frames. Today that's JSON-splice (`transport_http`) and proto-encode
+(`transport_grpc`); a WebSocket transport is simply a **third materializer**
+(`BodyPlan → WS text/binary frames`) plus its own framing/completion/cancellation. gRPC
+bidi is the working precedent — `encode_bidi_requests` already emits *"ordered
+config-first messages for a bidirectional request"* (`transport_grpc/binding.rs:62`),
+i.e. a stream of framed messages over a persistent connection.
+
+Three properties keep this open (verified in-tree today): (1) `BodyPlan` carries **no
+framing assumption** — it's a content/field declaration; (2) the single-`Full<Bytes>`
+body + `SendCompletion` constraint (§6) is **HTTP-local** — `rg Full<Bytes>|SendCompletion`
+over `endpoints/` and `dataset/` is empty; (3) each transport owns its materializer +
+framing + completion + cancellation. Full design:
+`2026-07-13-websocket-transport-design.md`.
+
+## 11. Related
 
 - `2026-07-13-segment-unification-design.md` — the storage/lowering side; this is its dispatch-side companion.
+- `2026-07-13-websocket-transport-design.md` — the WS transport that adds a third materializer over this same `BodyPlan`.
 - `2026-07-11-aiperf-runner-owned-endpoint-registry-design.md` / `2026-07-11-aiperf-rust-endpoints-design.md` — the endpoint registry + `format_payload` this changes.
 - `2026-07-12-aiperf-native-grpc-kserve-v2-design.md` — the `transport_grpc` codec the protobuf branch reuses.

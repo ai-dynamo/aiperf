@@ -3,16 +3,17 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Native KServe endpoints and gRPC transport through runner protocol v2
+# Native KServe/Riva endpoints and gRPC transport through runner protocol v2
 
 Status: built
 
 ## Decision
 
 AIPerf ports PR 664's KServe endpoint family and Open Inference Protocol (OIP)
-gRPC transport into native Rust. The product projection is runner protocol v2
-only: no new `EndpointType` variant, protocol-v1 DTO field, Python transport
-plugin, or `plugins.yaml` entry is added.
+gRPC transport, plus the complete NVIDIA Riva ASR/TTS/NLP surface, into native
+Rust. The product projection is runner protocol v2 only: no new `EndpointType`
+variant, protocol-v1 DTO field, Python transport plugin, or `plugins.yaml` entry
+is added.
 
 “V1” has two independent meanings here. `kserve_v1_predict` is a supported
 KServe endpoint dialect (`instances` / `predictions` over HTTP), but it is still
@@ -20,7 +21,7 @@ selected and executed only by an AIPerf runner protocol-v2 authored operation.
 The five OIP gRPC bindings are KServe V2 dialects. This distinction is pinned by
 registry and subprocess tests.
 
-The source behavior is the complete PR checkout at
+The source behavior is the complete PR 664 checkout at
 `/home/anthony/tmp/pr-664-grpc-kserve` (`f9f92223`), especially:
 
 - `src/aiperf/endpoints/kserve_v1_predict.py:16-109`
@@ -35,14 +36,17 @@ The source behavior is the complete PR checkout at
 - `src/aiperf/transports/grpc/status_mapping.py:1-39`
 - `src/aiperf/transports/grpc/trace_data.py:1-51`
 
-Where that Python branch uses runtime plugins, `grpc.aio`, wall-clock timing,
+The Riva surface is grounded in reference branch `ajc/riva` at commit
+`a391cfe27a333915b0f058bd05f21c932c77a898`.
+
+Where those Python branches use runtime plugins, `grpc.aio`, wall-clock timing,
 and shared mutable controller state, the Rust implementation follows this
 workspace's canonical open registries, `Clock`, Tonic, worker-local ownership,
 and thread-per-core placement.
 
 ## Endpoint ownership
 
-`aiperf-endpoints::EndpointRegistry` registers nine open factories:
+`aiperf::endpoints::EndpointRegistry` registers nine open KServe factories:
 
 - `kserve_chat`, `kserve_completions`, and `kserve_embeddings`
 - `kserve_v1_predict`
@@ -56,8 +60,26 @@ embedding reshaping, ranking indexes, VLM media, typed image parameters, and
 image decoding. Configuration remains identity-free; endpoint IDs live in the
 registry and prepared references.
 
-None of the nine factories exposes `legacy_endpoint()`. Consequently the
-closed protocol-v1 compatibility lookup returns `NoLegacyAdapter`, even for
+It also registers nine additional open, runner-protocol-v2-only Riva factories,
+again without adding a closed `EndpointType` variant:
+
+- `riva_asr`, with unary `Recognize` and bidirectional `StreamingRecognize`;
+- `riva_tts`, with unary `Synthesize` and server-streaming `SynthesizeOnline`;
+  and
+- `riva_text_classify`, `riva_token_classify`, `riva_transform_text`,
+  `riva_punctuate_text`, `riva_natural_query`, `riva_analyze_intent`, and
+  `riva_analyze_entities` over unary Riva NLP RPCs.
+
+The Riva implementations preserve the reference defaults, first-turn audio/text
+extraction, ASR audio chunking, transcript concatenation, TTS PCM duration
+calculation, compact JSON NLP results, and top-answer selection.
+`ResponseData::Audio` carries synthesized bytes, sample rate, encoding, and
+optional duration through the common prepared-endpoint seam. Riva has no model
+readiness RPC, so its dialect and wire bindings explicitly report readiness as
+unsupported instead of fabricating a probe.
+
+None of these factories exposes `legacy_endpoint()`. Consequently the closed
+protocol-v1 compatibility lookup returns `NoLegacyAdapter`, even for
 `kserve_v1_predict`. Both HTTP and gRPC execution consume worker-local
 `PreparedEndpoint` bindings.
 
@@ -66,21 +88,28 @@ profile-owned custom paths and descriptor paths before applying existing `/v1`
 prefix de-duplication. The real KServe V1 subprocess proof exercises the
 descriptor path rather than supplying an authored override.
 
-## Native gRPC crate
+## Native gRPC transport module
 
-`aiperf-transport-grpc` is a separate Clock-injected transport crate. Its open
-seams are:
+`aiperf::transport_grpc` is the Clock-injected gRPC transport module of the
+`aiperf` crate. Its open seams are:
 
 - `GrpcEndpointBinding` for endpoint-specific wire encoding, RPC paths,
-  readiness, and response decoding;
+  readiness, and response decoding — admitting unary, server-streaming, and
+  optional bidirectional methods, plus an ordered config-first request-message
+  encoder;
 - `GrpcEndpointBindingFactory` for startup composition; and
 - `GrpcBindingRegistryBuilder` / `GrpcBindingRegistry` for deterministic,
   duplicate-rejecting lookup and worker-local preparation.
 
-The built-in registry binds exactly the five gRPC-capable KServe V2 dialects.
-The checked-in `grpc_predict_v2.proto` is byte-identical to PR 664. Checked-in
-Prost DTOs avoid a host `protoc` dependency, while the raw Tonic codec keeps the
-channel layer independent of that schema.
+The built-in registry binds the five gRPC-capable KServe V2 dialects together
+with the Riva ASR/TTS/NLP bindings. The checked-in `grpc_predict_v2.proto` is
+byte-identical to PR 664, and the checked-in Prost DTOs for Riva are grounded in
+the reference `riva_common.proto`, `riva_audio.proto`, `riva_asr.proto`,
+`riva_tts.proto`, and `riva_nlp.proto` field numbers. Checked-in Prost DTOs
+avoid a host `protoc` dependency, while the raw Tonic codec keeps the channel
+layer independent of that schema. Unary, server-streaming, and bidirectional
+cardinalities remain behavior objects behind the binding trait rather than a
+closed endpoint-kind switch.
 
 Canonical JSON converts to and from OIP protobuf for BYTES, signed and unsigned
 integers, FP16/FP32/FP64, BOOL, request/input parameters, typed response
@@ -96,8 +125,11 @@ One byte-exact test compares a native request with the serialized output of PR
 `GrpcTransport` is worker-local and owns no global runtime or locks. It supports
 `grpc://` and `grpcs://`, WebPKI roots, 256 MiB default message limits, lowercase
 ASCII metadata, request/correlation/session metadata, unary inference,
-server-streaming inference, model readiness, and all 17 native gRPC-to-HTTP
-status mappings used by common metrics.
+server-streaming inference, bidirectional streaming inference, model readiness,
+and all 17 native gRPC-to-HTTP status mappings used by common metrics.
+Bidirectional and server-streaming request messages are sent through Tonic's
+raw streaming API; every unframed request message is retained, and request
+message count and bytes are accounted in the existing Clock-derived trace.
 
 The three reuse strategies match the HTTP/native policy:
 
@@ -117,18 +149,18 @@ those HTTP-only fields are intentionally unavailable rather than fabricated.
 
 ## Runner protocol-v2 projection
 
-The runner registry contains an `online_grpc` real-clock backend and executable
-`online_grpc + scheduled` pair. `online_http + scheduled` is also registered so
-HTTP-only KServe dialects, including KServe V1 Predict, are product-reachable
-without falling through protocol v1. Python Config v2 accepts explicit
-`grpc://` / `grpcs://` URLs only with `backend.type: online_grpc`, rejects mixed
-schemes and the legacy Python `endpoint.transport` knob, and preserves the
-authored backend in the v2 envelope.
+The runner registry contains a `grpc` real-clock transport and executable
+`grpc + scheduled` pair. `http + scheduled` is also registered so HTTP-only
+KServe dialects, including KServe V1 Predict, are product-reachable without
+falling through protocol v1. Python Config v2 accepts explicit `grpc://` /
+`grpcs://` URLs only with `transport.type: grpc`, rejects mixed schemes and the
+legacy Python `endpoint.transport` knob, and preserves the authored transport in
+the v2 envelope.
 
 The gRPC pair strictly rejects HTTP schemes, HTTP/2 endpoint flags, unsupported
 gRPC endpoint bindings, readiness retries not yet composed by the runner, and
 unregistered sidecars. This is fail-closed capability behavior. Transport
-readiness itself is implemented in the leaf crate; product readiness remains
+readiness itself is implemented in the leaf module; product readiness remains
 disabled until the common protocol-v2 preparation lifecycle owns it.
 
 `GrpcTransportSink` consumes only `PreparedHttpEndpoint::Prepared`; receiving a
@@ -166,17 +198,20 @@ remain unadvertised until a complete protocol-v2 adapter is registered.
 
 The implementation is guarded by:
 
-- endpoint parity tests for all nine IDs, payloads, parsing, readiness,
-  selectors, and absence of protocol-v1 adapters;
-- protobuf tests for every tensor and parameter class, typed/raw precedence,
-  streaming envelopes, registry contents, and all status mappings;
-- a real loopback Tonic server covering unary and streaming RPCs, readiness,
-  metadata, pooled/never/sticky channels, errors, and post-send cancellation;
+- endpoint parity tests for all eighteen KServe and Riva IDs, payloads,
+  parsing, readiness, selectors, and absence of protocol-v1 adapters;
+- protobuf tests for every tensor and parameter class, every Riva RPC, exact
+  method/cardinality checks, typed/raw precedence, streaming envelopes, registry
+  contents, and all status mappings;
+- a real loopback Tonic server covering unary, server-streaming, and
+  bidirectional (ASR) RPCs, readiness, metadata, pooled/never/sticky channels,
+  errors, and post-send cancellation;
 - runner inventory tests distinguishing static compatibility from executable
   v2 pairs;
-- a full runner subprocess proof for `online_grpc + scheduled`, including two
+- a full runner subprocess proof for `grpc + scheduled`, including two
   concurrent OS-thread workers and two round-robin models whose exact OIP
-  `model_name` values are captured; and
+  `model_name` values are captured, plus a strict runner `validate`/`execute`
+  proof using an inline Rust-side WAV fixture for Riva;
 - a user-facing `aiperf profile --config ...` proof that crosses Python Config
   v2, capability negotiation, orchestration, the strict runner, and a real
   mock Tonic/OIP server before asserting the native-v2 artifact; and
@@ -184,61 +219,3 @@ The implementation is guarded by:
   with `protocol_version: 2`.
 
 No test imports or invokes the PR's Python gRPC implementation.
-
-## Addendum — 2026-07-12
-
-### NVIDIA Riva expands the native gRPC endpoint family
-
-The native Rust path now also ports the complete NVIDIA Riva surface from
-reference branch `ajc/riva` at commit
-`a391cfe27a333915b0f058bd05f21c932c77a898`. This addendum supersedes the
-statements above that the built-in gRPC registry contains exactly five KServe
-bindings and that the transport supports only unary and server-streaming
-inference. The KServe decisions and behavior remain unchanged.
-
-`aiperf-endpoints` registers nine additional open, runner-protocol-v2-only
-factories without adding a closed `EndpointType` variant:
-
-- `riva_asr`, with unary `Recognize` and bidirectional `StreamingRecognize`;
-- `riva_tts`, with unary `Synthesize` and server-streaming `SynthesizeOnline`;
-  and
-- `riva_text_classify`, `riva_token_classify`, `riva_transform_text`,
-  `riva_punctuate_text`, `riva_natural_query`, `riva_analyze_intent`, and
-  `riva_analyze_entities` over unary Riva NLP RPCs.
-
-The endpoint implementations preserve the reference defaults, first-turn
-audio/text extraction, ASR audio chunking, transcript concatenation, TTS PCM
-duration calculation, compact JSON NLP results, and top-answer selection.
-`ResponseData::Audio` carries synthesized bytes, sample rate, encoding, and
-optional duration through the common prepared-endpoint seam. Riva has no model
-readiness RPC, so its dialect and wire bindings explicitly report readiness as
-unsupported instead of fabricating a probe.
-
-`aiperf-transport-grpc` adds checked-in Prost DTOs grounded in the reference
-`riva_common.proto`, `riva_audio.proto`, `riva_asr.proto`, `riva_tts.proto`, and
-`riva_nlp.proto` field numbers. The open `GrpcEndpointBinding` seam now admits
-an optional bidirectional method and an ordered config-first request-message
-encoder. `GrpcTransport` sends those messages through Tonic's raw streaming
-API, retains every unframed request message, and accounts for request message
-count and bytes in the existing Clock-derived trace. Unary, server-streaming,
-and bidirectional cardinalities remain behavior objects behind the binding
-trait rather than a closed endpoint-kind switch.
-
-The strict Rust runner advertises all nine IDs through its frozen endpoint
-registry and executes them through the existing `online_grpc + scheduled`
-protocol-v2 pair. No Python source, Python gRPC plugin, `plugins.yaml`, or
-protocol-v1 compatibility adapter is added. Conformance includes endpoint
-parity tests for all nine dialects, semantic protobuf tests for every RPC,
-exact method/cardinality checks, a real Tonic bidirectional ASR loopback, and a
-strict runner `validate`/`execute` subprocess proof using an inline Rust-side
-WAV fixture.
-
-## Addendum — 2026-07-12 (transport vocabulary)
-
-The native gRPC execution surface now uses the protocol-v2 transport vocabulary.
-Authored Config v2 selects `transport.type: grpc`, not
-`backend.type: online_grpc`, and capabilities advertise the executable
-`grpc + scheduled` pair. The `online_grpc` wording in the body and prior
-addendum is superseded by this transport ID rename only; the endpoint registry,
-Tonic transport, KServe/Riva dialect behavior, readiness, cancellation, and
-subprocess proof requirements remain unchanged.

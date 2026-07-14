@@ -7,7 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 
 **Date:** 2026-07-11
 **Author:** Anthony Casagrande (Tech Lead) + Claude
-**Status:** design (not built)
+**Status:** built — `aiperf::adaptive_core` (formerly the `aiperf-adaptive` leaf crate,
+now a module of `aiperf`) plus the online/offline composition in `aiperf::run` and the
+CLI surface. All four control variables ramp online and offline over an injected backend.
 **Grounding:** line-by-line read of the Python adaptive-scale subsystem —
 `src/aiperf/timing/strategies/adaptive_scale.py`,
 `adaptive_scale_controller.py`, `adaptive_scale_sla.py`,
@@ -280,28 +282,29 @@ dispatch (`backends.py:127-145`).
 | Assessment-period sleep + window/sustain timing | `Clock::sleep` / `now_ns` | `aiperf-clock` | **built** |
 | Loop gate (`can_send_any_turn`) | `StopChecker` | `aiperf-timing` | **built** (`stop.rs:167`) |
 | Underlying credit issuance path | `CreditIssuer` / `RateWorkload` | request-rate multiturn spec | **designed** (its own spec) |
-| Percentile / agg kernel over window samples | `aiperf-metrics` percentile kernel | `aiperf-metrics` | **designed** (reuse, don't re-derive) |
-| Measured-return stream feeding the window | `RequestObserver` → `WindowSampler` | `loadgen-core` / `aiperf-core` | **built** observer; **designed** live tap |
-| **`ControlActuator` trait + 4 adapters** | — | new (`aiperf-timing` or new `aiperf-adaptive`) | **designed** |
-| **`SlaEvaluator`** | — | new | **designed** |
-| **`StepPolicy` (SlaMargin/FixedPercent)** | — | new | **designed** |
-| **`WindowSampler` (tumbling, reset)** | — | new | **designed** |
-| **`Controller` (RampUntilFail state machine)** | — | new | **designed** |
-| **Adaptive events/summary artifacts** | — | exporters-overhaul | **designed** |
+| Percentile / agg kernel over window samples | `aiperf-metrics` percentile kernel (`linear_distribution`) | `aiperf::metrics_core` | **built** (reused, not re-derived) |
+| Measured-return stream feeding the window | `RequestObserver` → `WindowSampler` (`AdaptiveObserver` tee) | `loadgen-core` / `aiperf::adaptive_core` | **built** |
+| **`ControlActuator` trait + 4 actuators** | — | `aiperf::adaptive_core` | **built** |
+| **`SlaEvaluator`** | — | `aiperf::adaptive_core` | **built** |
+| **`StepPolicy` (SlaMargin/FixedPercent)** | — | `aiperf::adaptive_core` | **built** |
+| **`WindowSampler` (tumbling, reset)** | — | `aiperf::adaptive_core` | **built** |
+| **`Controller` (RampUntilFail state machine)** | — | `aiperf::adaptive_core` | **built** |
+| **Adaptive events/summary artifacts** | — | `aiperf::adaptive_core` (`AdaptiveArtifactSink`/`FileArtifactSink`) | **built** |
 
-**Home crate:** propose a new leaf **`aiperf-adaptive`** depending on `aiperf-timing`
-(actuators/stop), `aiperf-clock` (time), and the metrics seam (percentile kernel) — it
-is pure control logic with no HTTP/engine deps, mirroring how `aiperf-timing` is a leaf.
-The actuator adapters live where their target lives (concurrency/prefill/rate adapters in
-`aiperf-timing`; users adapter alongside the user-centric workload).
+**Home module:** the control logic lives in `aiperf::adaptive_core` (the former
+`aiperf-adaptive` leaf crate, now a module of `aiperf`), depending on the timing
+primitives (actuators/stop), `aiperf-clock` (time), and the metrics seam (percentile
+kernel). It is pure control logic with no HTTP/engine deps. All four actuators
+(`SessionConcurrencyActuator`, `PrefillConcurrencyActuator`, `RequestRateActuator`,
+`UsersActuator`) live together in `adaptive_core`, superseding the earlier proposal to
+split them across their target crates.
 
-The built half is the whole **actuator row** — the ramp knobs already exist and are
-already debt-drain-graceful (a downward `set_limit` in `enter_sustain`/recovery drains
-in-flight rather than hard-cancelling, `slots.rs:151`, exactly the Python
-`DynamicConcurrencyLimit` semantics the request-rate spec §1.1 cites). The unbuilt half
-is the **controller + evaluator + sampler + step policy** — pure logic, no I/O,
-straightforward to unit-test against synthetic windows (the Python tests already pin
-`_percentile` and the pass/fail forks; port them as parity fixtures).
+The **actuator row** rides the ramp knobs that already existed and are debt-drain-graceful
+(a downward `set_limit` in `enter_sustain`/recovery drains in-flight rather than
+hard-cancelling, `slots.rs:151`, exactly the Python `DynamicConcurrencyLimit` semantics the
+request-rate spec §1.1 cites). The **controller + evaluator + sampler + step policy** are
+pure logic with no I/O, unit-tested against synthetic windows; the Python `_percentile`
+kernel and the pass/fail forks are ported as parity fixtures.
 
 ---
 
@@ -330,8 +333,11 @@ That said, nothing in the loop needs a wall clock:
 **The one hard requirement offline:** the engine sink must deliver completions
 *incrementally as virtual time advances*, so a window mid-run has samples. A sink that
 only reports at the end starves every window (`insufficient_samples`, §2.1) and the
-controller never ramps. This is the offline analogue of the request-rate spec's live
-TTFT/return hooks — the same "measurements must flow during the run" contract.
+controller never ramps. The feature-gated in-process Dynamo sink (`DynosimSink`) satisfies
+this — it feeds real engine completion events through the same paced issuer,
+`AdaptiveObserver`, and sampler for all four offline control variables — the offline
+analogue of the request-rate spec's live TTFT/return hooks (the same "measurements must
+flow during the run" contract).
 
 Parity is **code-path + report-schema, not byte-identical boundary values**: simulated
 vs real latencies differ by construction, so the *discovered* concurrency/rate will
@@ -339,27 +345,64 @@ differ; the event/summary schema and the decision logic are identical.
 
 ---
 
-## 6. Build order (increments)
+## 6. Composition (built)
 
-1. **`ControlActuator` trait + concurrency/prefill/rate adapters** over the built
-   `SlotPool::set_limit` / `IntervalGenerator::set_rate`, with clamp + `snapshot`.
-   Bounds validation from `backends.py:110-226` (int-≥1 for concurrency/prefill/users,
-   `max>min`, prefill `max ≤ concurrency`, rate rejects `CONCURRENCY_BURST`).
-2. **`WindowStats` + `SlaEvaluator`** — port the metric-family table + percentile kernel
-   + `passes`/`margin`/`binding`; reuse the `aiperf-metrics` percentile kernel. Port the
-   Python SLA unit tests as parity fixtures (empty→`inf`, ns→ms, goodput quality-gate).
-3. **`StepPolicy` (SlaMargin + FixedPercent)** — the margin→multiplier clamp exactly.
-4. **`WindowSampler`** — tumbling accumulate/snapshot/reset over the observer's returns
-   (`Rc<RefCell>`, no lock); TTFT-by-credit-id join.
-5. **`Controller` (RampUntilFail)** — the discover/sustain/complete state machine and all
-   terminal reasons; drive it from an assessment task paced by `Clock::sleep`.
-6. **Artifacts** — `AdaptiveEvent`/`AdaptiveSummary` typed records into the exporters
-   family (events JSONL + summary JSON, schema_version 2, binding-SLA + candidates).
-7. **`users` actuator** — once the user-centric workload lands, wire the target-users
-   adapter + snapshot.
+All of the following are built in `aiperf::adaptive_core` plus the composition functions
+in `aiperf::run` and the CLI surface:
 
-Increments 1–6 deliver adaptive concurrency/prefill/rate online + offline; 7 adds the
-user-centric variable.
+1. **`ControlActuator` trait + concurrency/prefill/rate/users actuators** over
+   `SlotPool::set_limit` / `IntervalGenerator::set_rate` and a live `UserTarget` gate,
+   with clamp + `snapshot`. Bounds validation follows `backends.py:110-226` (int-≥1 for
+   concurrency/prefill/users, `max>min`, prefill `max ≤ concurrency`, rate rejects
+   `CONCURRENCY_BURST`).
+2. **`WindowStats` + `DefaultSlaEvaluator`** — the metric-family table, aliases, and
+   statistics with `passes`/`margin`/`binding`, reusing the `aiperf::metrics_core`
+   `linear_distribution` percentile kernel. The Python SLA unit tests are ported as
+   parity fixtures (empty→`inf`, ns→ms, goodput quality-gate).
+3. **`SlaMarginStep` + `FixedPercentStep`** — the margin→multiplier clamp exactly.
+4. **`TumblingWindowSampler`** — tumbling accumulate/snapshot/reset over the observer's
+   returns (`Rc<RefCell>`, no lock); TTFT-by-credit-id join. `ObservedUsage` carries
+   authoritative `completion_tokens` into output sequence length and the
+   `(last−first)/(osl−1)` ITL denominator; missing usage leaves both absent.
+5. **`RampUntilFailController`** — the discover/sustain/complete state machine and every
+   terminal reason, driven by an `AdaptiveScale` assessment task paced exclusively through
+   `Clock::sleep` (so `SimClock` tests drive the same controller deterministically). A
+   local waker-backed stop future interrupts a long issuer arrival sleep as soon as the
+   controller becomes terminal.
+6. **Artifacts** — typed `AdaptiveEvent`/`AdaptiveSummary` records written through
+   `AdaptiveArtifactSink` / `FileArtifactSink` as schema-v2 `adaptive_scale_events.jsonl`
+   + `adaptive_scale_summary.json` (binding-SLA + candidates, recursively sorted keys).
+
+**Backend-neutral online/offline composition.** `aiperf::run` exposes backend-neutral
+paced, request-rate, user-centric, and adaptive composition functions. Online wrappers
+inject `RealClock + TransportSink`; offline (feature-gated) wrappers inject
+`SimClock + DynosimSink` and run the *same* futures, observers, actuators, issuance gates,
+and artifact sinks. The support matrix is complete for all four control variables in their
+owning workloads:
+
+- paced concurrency: `concurrency` and `prefill_concurrency`;
+- continuation-priority request rate: `request_rate`;
+- user-centric scheduling: `users`.
+
+The `AdaptiveObserver` tees returned-request events into the sampler and the ordinary
+collector on the one-thread `LocalSet`; to keep that hot path lock-free, `RequestObserver`
+is a local-loop trait without `Send`/`Sync` supertraits, its optional
+`on_usage(ObservedUsage)` callback carries endpoint counts, and `CollectorObserver` stores
+its collector in `RefCell`. Prefill slots release at the first meaningful parsed SSE
+token — not a role/usage frame — with terminal fallback
+(`HttpTransport::send_request_with_first_token_filter` retries the callback until the chat
+parser accepts a delta). Successful request latency runs from admission/dispatch to the
+last meaningful token; a terminal response with no meaningful token is an error, matching
+the Python credit-return record semantics.
+
+The CLI exposes `--adaptive-scale`, all four control variables, tumbling and sustain
+durations, the explicit `ramp_until_fail` strategy selector, repeatable SLA filters, both
+step policies, control bounds, minimum completions, and an artifact directory. Unit and
+integration coverage exercises SLA math and aliases, error/cancel and sparse windows, both
+step policies, every controller terminal path, recovery reset, all four live actuators,
+`SimClock` pacing, schema-v2 artifacts, early online stop, and executable CLI acceptance
+of terminal adaptive windows and failure/summary artifacts for offline concurrency,
+request rate, and users.
 
 ---
 
@@ -393,9 +436,10 @@ user-centric variable.
   deflate `success_rate`).
 - **`throughput`/`goodput` depend on `elapsed_sec`** — under `SimClock` this must be
   virtual-ns elapsed via `Clock`, or the rate SLAs are meaningless offline (§5).
-- **Users variable requires the user-centric workload.** `UsersControlBackend.set`
-  (`backends.py:94-99`) hard-requires a `set_target_users` hook; until that workload
-  exists in Rust, the `users` actuator is a stub (increment 7).
+- **Users variable rides the user-centric workload.** `UsersControlBackend.set`
+  (`backends.py:94-99`) hard-requires a `set_target_users` hook; the Rust `UsersActuator`
+  mutates a live `UserTarget` gate on the user-centric workload and starts from the
+  configured adaptive minimum, online and offline.
 
 ---
 
@@ -408,82 +452,7 @@ request rate (`IntervalGenerator::set_rate`), or target users — **upward with 
 SLA-margin-scaled step** until the SLA breaks (`discover`), then **holds at the last
 passing level** for a sustain duration with a single recovery step-down (`sustain`),
 emitting per-window decision events + a boundary summary; the ramp actuators are already
-built in `aiperf-timing`, the controller/evaluator/step-policy/window-sampler are new
-pure-logic seams, and the whole loop runs deterministically offline under `SimClock`
-**iff** completions flow during the run.
-
----
-
-## Addendum — 2026-07-11: implemented in `aiperf-adaptive`
-
-This design is now implemented. The authoritative code is the new
-`rust/aiperf-adaptive` leaf crate plus the online integration in
-`rust/aiperf/src/{adaptive,run,main}.rs`:
-
-- The object-safe `ControlActuator`, `SlaEvaluator`, `StepPolicy`,
-  `WindowSampler`, and `Controller` traits are built, with the four live
-  actuators (`SessionConcurrencyActuator`, `PrefillConcurrencyActuator`,
-  `RequestRateActuator`, and `UsersActuator`). Actuators live together in
-  `aiperf-adaptive`, superseding the proposed split across target crates.
-- `TumblingWindowSampler`, `DefaultSlaEvaluator`, `SlaMarginStep`,
-  `FixedPercentStep`, and `RampUntilFailController` implement the Python
-  window triage, metric aliases/statistics, all-filter SLA evaluation,
-  discover/sustain/single-recovery state machine, and boundary semantics.
-  Successful request latency runs from admission/dispatch to the last
-  meaningful token; a terminal response with no meaningful token is an error,
-  matching the Python credit-return record semantics. `ObservedUsage` carries
-  authoritative `completion_tokens` into output sequence length and the
-  `(last−first)/(osl−1)` ITL denominator; missing usage leaves both values
-  absent. Percentiles reuse `aiperf-metrics::linear_distribution`.
-- `AdaptiveScale` paces assessments exclusively through `Clock`; its
-  `SimClock` tests drive the same controller deterministically. The feature-gated
-  in-process Dynamo sink now feeds real engine completion events through the same
-  paced issuer, `AdaptiveObserver`, and sampler for offline concurrency control.
-  Adaptive request-rate and user-target modes use separately scheduled workloads
-  and are not yet composed with this backend. A local waker-backed stop future
-  interrupts a long issuer arrival sleep as soon as the controller becomes terminal.
-- `AdaptiveObserver` tees returned-request events into the sampler and the
-  ordinary collector on the one-thread `LocalSet`. To make that hot path
-  lock-free, `RequestObserver` is now a local-loop trait without `Send`/`Sync`
-  supertraits; its optional `on_usage(ObservedUsage)` callback carries endpoint
-  counts, and `CollectorObserver` stores its collector in `RefCell`.
-- The online issuer mutates the same live session/prefill `SlotPool` and
-  `IntervalGenerator` instances used for dispatch. Prefill slots release at
-  the first meaningful parsed SSE token—not a role/usage frame—with terminal
-  fallback; `HttpTransport::send_request_with_first_token_filter` retries the
-  callback until the chat parser accepts a delta. User-centric adaptive runs
-  mutate a live `UserTarget` gate and start from the configured adaptive minimum.
-- The CLI exposes `--adaptive-scale`, all four control variables, tumbling and
-  sustain durations, the explicit `ramp_until_fail` strategy selector,
-  repeatable SLA filters, both step policies, control
-  bounds, minimum completions, and an artifact directory. It writes the typed
-  schema-v2 `adaptive_scale_events.jsonl` and
-  `adaptive_scale_summary.json` through `AdaptiveArtifactSink` /
-  `FileArtifactSink`, with recursively sorted JSON keys.
-
-Unit and integration coverage exercises SLA math and aliases, error/cancel and
-sparse windows, both step policies, every controller terminal path, recovery
-reset, all four live actuators, `SimClock` pacing, schema-v2 artifacts, early
-online stop, and CLI acceptance. The original "designed" status and the
-increment plan above are historical; this addendum is authoritative where they
-conflict.
-
-## Addendum — 2026-07-12: all adaptive controls share the offline backend
-
-The preceding addendum's statement that offline request-rate and user-target
-composition remained unavailable is superseded. `aiperf::run` now has
-backend-neutral paced, request-rate, user-centric, and adaptive composition
-functions. Online wrappers inject `RealClock + TransportSink`; offline wrappers
-inject `SimClock + DynosimSink` and run the same futures, observers,
-actuators, issuance gates, and artifact sinks.
-
-The resulting support matrix is complete for the four control variables in
-their owning workloads:
-
-- paced concurrency: `concurrency` and `prefill_concurrency`;
-- continuation-priority request rate: `request_rate`;
-- user-centric scheduling: `users`.
-
-Executable CLI tests drive terminal adaptive windows and schema-v2
-failure/summary artifacts for offline concurrency, request rate, and users;
-the shared paced backend path also owns prefill concurrency exactly as online.
+built over the timing ramp knobs, the controller/evaluator/step-policy/window-sampler are
+pure-logic seams in `aiperf::adaptive_core`, and the whole loop runs deterministically
+offline under `SimClock` **iff** completions flow during the run — which the feature-gated
+`DynosimSink` supplies for all four control variables.

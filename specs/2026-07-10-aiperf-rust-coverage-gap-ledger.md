@@ -2,7 +2,12 @@
 
 **Date:** 2026-07-10
 **Author:** Anthony Casagrande (Tech Lead) + Claude
-**Status:** research synthesis / decision input
+**Status:** research synthesis / decision input. Several gaps catalogued below have
+since been closed by dedicated specs (metrics accumulator + metric-catalog,
+telemetry accumulators, RNG derive-system); those are marked **CLOSED** inline with a
+pointer to the spec that covers them. The still-open gap areas are endpoints/exporters
+(§2), config-v2 hidden algorithms (§3), timing-engine depth + the outer-loop
+sweep/BO/SLA coordinator (§4), and the presentation/API/plot surfaces (§6).
 **Method:** 7 parallel source-reading passes over the full 720-file Python tree
 (`src/aiperf/`), each briefed on what the existing 10 specs already cover, tasked
 with cataloguing only the DELTA and classifying every concept
@@ -27,7 +32,13 @@ ends with the concrete GAPS to fold into the master ledger or a new sub-spec.
 
 ---
 
-## 1. Metrics / records / post-processing plane
+## 1. Metrics / records / post-processing plane — CLOSED
+
+**CLOSED** by the metrics-accumulator and metric-catalog specs, and built as
+`aiperf::metrics_core` (119-row catalog, NaN-sparse columnar storage, ragged ICL, the
+sweep-line curves, phase windows, worker merge, typed native-v2 `Reporter`). The
+findings below are retained as the research record of what those specs had to absorb;
+they are no longer open gaps.
 
 **Single biggest structural finding: there are TWO metric engines in the tree.**
 Port `MetricsAccumulator` + `ColumnStore` (numpy-columnar, NaN-sparse; the
@@ -87,10 +98,10 @@ threshold), thinking-efficiency (per-record vs total), good_request_count (per-m
 `LARGER_IS_BETTER` direction), `cache_reporting_hint` (absent vs 0 = "cache off" vs
 "on/0-hits").
 
-**GAPS to fold in:** sweep-line curves are a whole sub-spec of their own;
-effective/credit-queue latencies; observation_duration; phase-tag masking;
-AggregationKind-fold as the taxonomy answer (strong evidence for "struct + fold enum"
-over a heavyweight Metric trait, unless user-extensibility is required).
+**GAPS (now ABSORBED by the metrics-accumulator + metric-catalog specs):** sweep-line
+curves (their own sub-spec); effective/credit-queue latencies; observation_duration;
+phase-tag masking; AggregationKind-fold as the taxonomy answer (the "struct + fold
+enum" choice over a heavyweight Metric trait won; see §8 decision 1).
 
 ---
 
@@ -260,9 +271,18 @@ a collision.)
 
 ---
 
-## 5. Telemetry planes (gpu_telemetry / server_metrics / network_latency)
+## 5. Telemetry planes (gpu_telemetry / server_metrics / network_latency) — CLOSED
 
-All three are ZMQ-service managers whose plumbing collapses to plain async tasks
+**CLOSED** by the telemetry-accumulators spec and built as `aiperf::gpu_telemetry`,
+`aiperf::server_metrics`, and `aiperf::network_latency` (Clock-injected side-channel
+accumulator modules feeding a shared accumulator seam). One authoritative revision to
+note: the telemetry-accumulators spec's 2026-07-10 addendum replaces the
+scrape-then-reconstruct window model described below with **phase-boundary counter
+snapshots** — where the two conflict, the phase-boundary snapshot design is
+authoritative and the `FINAL_SCRAPE_GRACE_NS` widening below is superseded. The
+findings are retained as the research record of what the spec absorbed.
+
+All three were ZMQ-service managers whose plumbing collapses to plain async tasks
 writing into in-process accumulators. Domain logic below.
 
 **Unify the counter-delta engine:** GPU energy and server counters implement the
@@ -358,9 +378,11 @@ enums.
   replicate or configs break.
 - **`random_generator.py`** determinism substrate — SHA-256 seed derivation
   (`sha256(f"{root}:{identifier}")[:8]`), bounded rejection sampling, gammavariate
-  arrival burstiness. **Decision needed: is cross-language byte-for-byte
-  reproducibility with the Python tool a requirement?** Dictates whether you replicate
-  the exact SHA-256/int-from-bytes algebra or use any deterministic Rust PRNG.
+  arrival burstiness. **RESOLVED (RNG derive-system spec, CLOSED):** there is NO
+  cross-language byte-parity requirement with the Python tool; native Rust seed
+  derivation is locked to BLAKE3-derived order-independent seeds (`aiperf::rng`:
+  `RngRoot::derive`, `RandomGenerator`, `HashIdRandomGenerator`), not Python SHA-256
+  parity.
 - **`models/sequence_distribution.py`** — 3-syntax ISL/OSL distribution parser
   (probabilities as percentages 0-100, a deliberate footgun-guard).
 - **`path_safety.py`** — CWE-22 sanitizer (rejects symlink in leaf OR any parent —
@@ -394,9 +416,9 @@ level set TRACE/NOTICE/SUCCESS is a log-parity UX contract).
    trait** — unless user-extensible metrics are a hard requirement. The columnar
    engine collapses AGGREGATE to a single-column fold; most `total_*` derived metrics
    are `numeric_sum(tag)`. (Resolves the master ledger §4 open decision.)
-2. **Cross-language byte-for-byte RNG reproducibility: yes or no?** Gates whether the
-   SHA-256 seed-derivation algebra and distribution samplers are PORT-EXACT or
-   REDO-with-any-deterministic-PRNG.
+2. **Cross-language byte-for-byte RNG reproducibility — RESOLVED: no** (RNG
+   derive-system spec, CLOSED). No Python byte-parity requirement; native derivation is
+   REDO-with-BLAKE3-order-independent-seeds (`aiperf::rng`), not PORT-EXACT SHA-256.
 3. **BO/SLA-search subsystem: native Rust vs Python-outer-shell-shelling-out-to-Rust.**
    Recommend the shell for SmoothIsotonic/Optuna/BoTorch (multi-month to port);
    native for Monotonic/MultiTier/grid/convergence/confidence.
@@ -417,27 +439,18 @@ level set TRACE/NOTICE/SUCCESS is a log-parity UX contract).
 ## 9. One-line summary
 
 The spine specs nailed the injection-seam architecture and the earned-in-blood
-algorithms they named. This research finds the risk lives in **five large unspec'd
-bodies**: (1) the sweep-line time-weighted metrics + the columnar accumulator, (2)
-the endpoint payload/parse zoo + genai-perf export contracts, (3) the already-v2
-config system with hidden runtime algorithms, (4) the timing engine's depth
-(UserCentric, debt/drain, cancel-drain, yield-on-zero) plus the whole outer-loop
-sweep/BO/SLA-search coordinator, and (5) the telemetry counter-delta + histogram
-estimator + backend metric atlas. (Multi-turn/FORK conversation semantics are NOT a
-sixth body — they are superseded by the graph-IR dataflow port.) Keep the
-presentation plane thin (console + progress + tracker math in core;
-API and plot renderer deferred/side-carred). The two decisions that most shape scope
-are **BO-native-vs-shell-out** and **the run-isolation primitive** for sweeps.
-
-## Addendum — 2026-07-11
-
-Several gaps called out in this ledger have since been covered by dedicated specs.
-The metrics accumulator and metric-catalog specs cover the sweep-line/columnar metric
-engine. The telemetry accumulators spec covers GPU final-scrape handling, server
-metrics fallback/auto-disable behavior, histogram percentiles, and network-RTT
-calibration; where its 2026-07-10 addendum replaces scrape-then-reconstruct with
-phase-boundary snapshots, that addendum is authoritative.
-
-The RNG open question is also resolved by the RNG derive-system spec: there is no
-cross-language byte-parity requirement, and native Rust seed derivation is locked to
-BLAKE3-derived order-independent seeds rather than Python SHA-256 parity.
+algorithms they named. This research found the risk in **five large unspec'd bodies**,
+of which two are now CLOSED: (1) the sweep-line time-weighted metrics + the columnar
+accumulator — **CLOSED** (metrics-accumulator + metric-catalog specs, built as
+`aiperf::metrics_core`); (5) the telemetry counter-delta + histogram estimator +
+backend metric atlas — **CLOSED** (telemetry-accumulators spec, built as
+`aiperf::gpu_telemetry` / `server_metrics` / `network_latency`). The three still-open
+bodies are (2) the endpoint payload/parse zoo + genai-perf export contracts, (3) the
+already-v2 config system with hidden runtime algorithms, and (4) the timing engine's
+depth (UserCentric, debt/drain, cancel-drain, yield-on-zero) plus the whole outer-loop
+sweep/BO/SLA-search coordinator. (Multi-turn/FORK conversation semantics are NOT a
+sixth body — they are superseded by the graph-IR dataflow port; the RNG-reproducibility
+question is likewise resolved by the RNG derive-system spec.) Keep the presentation
+plane thin (console + progress + tracker math in core; API and plot renderer
+deferred/side-carred). The two decisions that most shape remaining scope are
+**BO-native-vs-shell-out** and **the run-isolation primitive** for sweeps.

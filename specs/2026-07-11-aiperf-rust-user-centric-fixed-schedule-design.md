@@ -7,14 +7,17 @@ SPDX-License-Identifier: Apache-2.0
 
 **Date:** 2026-07-11
 **Author:** Anthony Casagrande (Tech Lead) + Claude
-**Status:** design (not built) — user-centric is *partly built* (the pure seeding math exists as `aiperf-timing::plan_user_centric`); fixed-schedule is unbuilt
+**Status:** built (online + offline). Both scheduled strategies run over shared
+Clock-backed `ScheduledRuntime` traits in `rust/aiperf`; Python Config v2 authors both,
+and the registered scheduled pair injects either the online or the feature-gated offline
+(`dynosim`) backend without changing workload policy.
 **Grounding:** end-to-end line-by-line read of
 `src/aiperf/timing/strategies/core.py`,
 `src/aiperf/timing/strategies/user_centric_rate.py`,
 `src/aiperf/timing/strategies/fixed_schedule.py`,
 `src/aiperf/timing/conversation_source.py`,
-`src/aiperf/timing/intervals.py`, and the already-ported
-`rust/aiperf-timing/src/user_centric.rs`.
+`src/aiperf/timing/intervals.py`, and the Rust realization in
+`rust/aiperf/src/{scheduled,scheduler,multiturn,fixed_schedule,user_centric}.rs`.
 **Companion (read first, not re-derived here):**
 `specs/2026-07-11-aiperf-rust-request-rate-multiturn-design.md` — establishes the
 single-loop credit-issuer model, the session/prefill `SlotPool` contract,
@@ -201,10 +204,13 @@ re-queues a blocked spawn at `now + stagger` (`user_centric_rate.py:302-303`).
 
 ---
 
-## 3. Reconcile with the already-built `aiperf-timing::plan_user_centric`
+## 3. The `plan_user_centric` seed and its binding
 
-`rust/aiperf-timing/src/user_centric.rs` ports **exactly the §2.1 setup math** — the
-pure, RNG-free, clock-free seeding — and nothing else (`user_centric.rs:4-13`).
+`rust/aiperf/src/user_centric.rs` carries `plan_user_centric`, which realizes
+**exactly the §2.1 setup math** — the pure, RNG-free, clock-free seeding
+(`user_centric.rs:4-13`). It is the deterministic core; `UserPool` /
+`UserCentricWorkload` / `UserTargetController` (same file) bind it to sampled sessions
+and drive the run loop.
 
 **Matches (verified line-for-line):**
 
@@ -224,30 +230,28 @@ Rust improves on Python by using **integer nanoseconds** with half-to-even round
 (`user_centric.rs:36-42`) instead of `float` perf-seconds — deterministic under
 `SimClock`.
 
-**One deliberate divergence to flag (§7):** the fresh replacement user's `max_turns`.
-Python sets it to the length of the *actually sampled* session (`generate(order=0)` →
-`max_turns=None` → `len(sampled.metadata.turns)`, `user_centric_rate.py:189-190`),
-whereas Rust hard-codes `avg_session_turns` (`user_centric.rs:171`). This is a
-consequence of the plan being **sampler-free**: it emits schedule math, not bound
-sessions. It matches only when the sampled session equals the dataset average. The
-online runner must decide whether to (a) keep the avg (pure, deterministic seeding) or
-(b) re-derive `max_turns` from the concrete sampled session at bind time to match
-Python. Recommend (b) for behavioral parity; document if (a) is chosen.
+**Fresh replacement user's `max_turns`.** The pure plan is **sampler-free** — it emits
+schedule math, not bound sessions — so `plan_user_centric` alone cannot know a sampled
+session's actual length. `UserCentricWorkload` therefore re-derives `max_turns` from the
+**concrete sampled session** at bind time, matching Python's
+`generate(order=0)` → `len(sampled.metadata.turns)` (`user_centric_rate.py:189-190`)
+rather than the dataset average, and clamps every planned length to the available turns
+so turn-`k+1` materialization never walks past the end of a shorter template.
 
-**Missing (everything past setup — the async run loop):**
+**The full run loop is built on top of the seed** (`user_centric.rs`):
 
-- `execute_phase`: scheduling initial users at `started + order*stagger`, seeding the
-  spawn heap, and the perpetual `spawn_queue` pump (`user_centric_rate.py:353-387`).
-- `handle_credit_return`: per-user `next_send_time = max(now, last+turn_gap)` pacing
-  and final-turn user eviction (`user_centric_rate.py:389-418`).
-- Adaptive target: `set_target_users` / `_should_spawn_user` /
-  `_should_spawn_replacement` / `_defer_next_spawn` and the churn snapshot
-  (`user_centric_rate.py:265-316`).
-- Binding users to sampled `SampledSession`s via a `ConversationSource`
-  (`user_centric_rate.py:183-193`).
-
-So `plan_user_centric` is the deterministic *seed*; the run loop, per-user pacer, and
-churn are the unbuilt design surface below.
+- `execute_phase` equivalent: initial users are scheduled at `started + order*stagger`,
+  the spawn heap is seeded, and a perpetual spawn pump drives open-loop replacement
+  churn (`user_centric_rate.py:353-387`).
+- `handle_credit_return` equivalent: per-user continuation pacing uses
+  `max(now, previous_issue + turn_gap)` with final-turn user eviction
+  (`user_centric_rate.py:389-418`).
+- Adaptive target: `UserTargetController` mirrors `set_target_users` /
+  `_should_spawn_user` / `_should_spawn_replacement` / `_defer_next_spawn` and the churn
+  snapshot (`user_centric_rate.py:265-316`); a target change interrupts a pending spawn
+  sleep and applies the new turn gap only to subsequent calculations.
+- Binding users to sampled sessions goes through the `ConversationSource` seam in
+  `multiturn.rs` (`user_centric_rate.py:183-193`).
 
 ---
 
@@ -296,9 +300,9 @@ offsets (`fixed_schedule.py:112-117`).
 
 No pacing loop, no catch-up: every first turn is handed to
 `scheduler.schedule_at_perf_sec(perf_sec, issue_credit(turn))` in one pass
-(`fixed_schedule.py:136-140`). The `LoopScheduler` owns the timeline. (Design note:
-this materializes the *entire* schedule at once — fine for filtered traces, but the
-Rust design should bound it, §6.)
+(`fixed_schedule.py:136-140`). The scheduler owns the timeline. `FixedScheduleWorkload`
+keeps this all-up-front scheduling (the loader pre-filters the trace, so the materialized
+set is bounded in practice).
 
 ### 4.4 `handle_credit_return` — trace-timed subsequent turns (`fixed_schedule.py:142-171`)
 
@@ -326,63 +330,82 @@ timestamp may already be in the past, and `ts_to_perf` can return a past `perf_s
 
 ---
 
-## 5. Mapping onto the crates — built vs designed
+## 5. Mapping onto the modules
 
-| Concern | Primitive / seam | Crate | Status |
+Sixteen former `aiperf-*` library crates are now modules of `aiperf`; these workloads
+live in `aiperf::{scheduled, scheduler, multiturn, fixed_schedule, user_centric}`.
+
+| Concern | Primitive / seam | Module | Status |
 |---|---|---|---|
-| User-centric steady-state seeding math | `plan_user_centric` / `UserCentricPlan` / `InitialUser` | `aiperf-timing` (`user_centric.rs`) | **built** |
-| Open-loop replacement spawn time | `next_replacement_spawn_ns` | `aiperf-timing` (`user_centric.rs:186`) | **built** |
-| Inter-arrival (Poisson/Gamma/Const/Burst) + `set_rate` | `IntervalGenerator` | `aiperf-timing` | **built** (unused by these two: user-centric derives its own stagger/turn_gap; fixed-schedule has no rate) |
-| Session + prefill caps (debt-drain) | `SlotPool` / `ConcurrencyManager` | `aiperf-timing` | **built** (user-centric uses only under `--concurrency`; fixed-schedule uses none) |
-| Stop bounds | `StopChecker` / `RunState` | `aiperf-timing` | **built** (user-centric: the `issue_credit`→falsy stop path; fixed-schedule: injected-but-unused) |
-| Absolute-at pacing / think-time sleeps | `Clock::sleep`, `now_ns` | `aiperf-clock` | **built** |
-| Turn prompt = prior replies spliced | `SegmentStore` + `materialize` | `aiperf-graph` | **built** |
-| Dispatch turn + record TTFT/ITL | `RequestSink` + observer | `loadgen-core`/`aiperf-transport-http` | **built** |
-| **`schedule_at_perf_sec` / `schedule_later` / `execute_async` scheduler** | a `LoopScheduler` seam over `Clock` | new | **designed** |
-| **User-centric run loop** (spawn heap + per-user pacer + churn) | `UserPool` + `UserCentricWorkload` | new / `aiperf-timing` | **designed** |
-| **Adaptive user target** (ramp) | `set_target_users` on `UserPool` | new | **designed** |
-| **Fixed-schedule source** (sorted absolute schedule + zero-offset) | `FixedScheduleSource` + `FixedScheduleWorkload` | new | **designed** |
-| **`ConversationSource`** (sample template, mint corr-id, next-turn meta) | `ConversationSource` trait | new (shared w/ companion) | **designed** |
+| User-centric steady-state seeding math | `plan_user_centric` / `UserCentricPlan` / `InitialUser` | `aiperf::user_centric` (`user_centric.rs`) | **built** |
+| Open-loop replacement spawn time | `next_replacement_spawn_ns` | `aiperf::user_centric` (`user_centric.rs:186`) | **built** |
+| Inter-arrival (Poisson/Gamma/Const/Burst) + `set_rate` | `IntervalGenerator` | `aiperf::timing` | **built** (unused by these two: user-centric derives its own stagger/turn_gap; fixed-schedule has no rate) |
+| Session + prefill caps (debt-drain) | `SlotPool` / `ConcurrencyManager` | `aiperf::timing` | **built** (user-centric uses only under `--concurrency`; fixed-schedule uses none) |
+| Stop bounds | `StopChecker` / `RunState` | `aiperf::timing` | **built** (user-centric: the issuance-return stop path; fixed-schedule: injected-but-unused) |
+| Absolute-at pacing / think-time sleeps | `Clock::sleep`, `now_ns` | `aiperf::clock` | **built** |
+| Turn prompt = prior replies spliced | `SegmentStore` + `materialize` | `aiperf::dataset` / `aiperf::graph` | **built** |
+| Dispatch turn + record TTFT/ITL | `RequestSink` + observer | `loadgen-core` / `aiperf::transport_http` | **built** |
+| `schedule_at` / `schedule_later` / `execute_async` scheduler | `LocalTaskScheduler` / `ClockTaskScheduler` over `Clock` | `aiperf::scheduler` | **built** |
+| Shared scheduled runtime (issuance/dispatch, metrics, drain) | `ScheduledRuntime` / `Workload` / `TurnDispatcher` | `aiperf::scheduled` | **built** |
+| User-centric run loop (spawn heap + per-user pacer + churn) | `UserPool` + `UserCentricWorkload` | `aiperf::user_centric` | **built** |
+| Adaptive user target (ramp) | `UserTargetController` | `aiperf::user_centric` | **built** |
+| Fixed-schedule source (sorted absolute schedule + zero-offset) | `FixedScheduleSource` + `FixedScheduleWorkload` | `aiperf::fixed_schedule` | **built** |
+| `ConversationSource` (sample template, mint corr-id, next-turn meta) | `ConversationSource` trait | `aiperf::multiturn` | **built** |
 
-### 5.1 The new seams (every extension point a trait)
+### 5.1 The seams (every extension point a trait)
 
-- **`Clock`-backed scheduler** — the Python `LoopScheduler` verbs
-  `schedule_at_perf_sec(abs_ns, fut)` / `schedule_later(dur_ns, fut)` /
-  `execute_async(fut)` (used at `fixed_schedule.py:137,159,164,169`;
-  `user_centric_rate.py:358,415`). In the single-loop `!Send` model this is
-  `spawn_local` of `async { clock.sleep(target - clock.now_ns()).await; fut.await }`
-  — the priority heap is the `Clock`'s own event queue under `SimClock`; no separate
-  `heapq` is needed except the user-centric spawn heap (which stays an explicit
-  `BinaryHeap<Reverse<i64>>` on the loop, matching `user_centric_rate.py:348`).
+- **`Clock`-backed scheduler** (`scheduler.rs`) — the object-safe `LocalTaskScheduler`
+  and Clock-injected `ClockTaskScheduler` realize the Python `LoopScheduler` verbs
+  `schedule_at` / `schedule_later` / `execute_async` (used at
+  `fixed_schedule.py:137,159,164,169`; `user_centric_rate.py:358,415`). In the
+  single-loop `!Send` model each is a `spawn_local` of
+  `async { clock.sleep(target - clock.now_ns()).await; fut.await }`; absolute, relative,
+  and immediate work share one `LocalSet`, and pending timers can be cancelled without
+  cancelling dispatched work. The priority heap is the `Clock`'s own event queue under
+  `SimClock`; the only explicit heap is the user-centric spawn `BinaryHeap` with an
+  `(at_ns, seq_no)` tie-break (matching `user_centric_rate.py:348`).
 
-- **`UserPool`** — owns `Vec<User { corr_id, session, next_send_ns, max_turns, order }>`
+- **`ScheduledRuntime`** (`scheduled.rs`) — the shared runtime, `Workload`, and
+  `TurnDispatcher` seams for request-rate, user-centric, and fixed-schedule. It owns
+  issuance/dispatch observation, native metrics, per-turn
+  scheduled/issued/dispatch/first-token/TTFT/terminal timestamps, aggregate early-issue
+  and lateness analysis, stop notification, cancellation, and final drain.
+
+- **`UserPool`** (`user_centric.rs`) — owns
+  `Vec<User { corr_id, session, next_send_ns, max_turns, order }>`
   (mirror of `user_centric_rate.py:91-119`) keyed by correlation id
-  (`session_to_user`, `user_centric_rate.py:164`). Methods: seed-from-`UserCentricPlan`,
-  `pace_next(corr) -> next_send_ns = max(now, last + turn_gap)`
-  (`user_centric_rate.py:414`), `retire(corr)` on final turn
-  (`user_centric_rate.py:401`), and the adaptive `set_target(v)` /
-  `should_spawn` / `should_spawn_replacement` gates
-  (`user_centric_rate.py:269-316`). `Rc<RefCell<..>>`, no `Arc`.
+  (`session_to_user`, `user_centric_rate.py:164`). Seeds from `UserCentricPlan`, paces
+  continuations at `max(now, previous_issue + turn_gap)` (`user_centric_rate.py:414`),
+  retires a user on its final turn (`user_centric_rate.py:401`), and — via
+  `UserTargetController` — applies the adaptive `set_target` / `should_spawn` /
+  `should_spawn_replacement` gates (`user_centric_rate.py:269-316`).
+  `Rc<RefCell<..>>`, no `Arc`.
 
 - **`UserCentricWorkload`** (the `Workload` impl) — drives §2.2 (seed the spawn heap
-  from the plan, pump spawns, bind each spawn to a `ConversationSource::next` sample)
-  and delegates turn-`k+1` pacing to `UserPool` on credit return.
+  from the plan, pump spawns, bind each spawn to a `ConversationSource` sample) and
+  delegates turn-`k+1` pacing to `UserPool` on credit return. Optional concurrency gates
+  whole sessions; request/session/duration stops prevent new sessions while already
+  started sessions drain.
 
-- **`FixedScheduleSource`** — builds the sorted `Vec<ScheduleEntry { at_ns, TurnToSend }>`
-  and resolves `schedule_zero_ms` from `auto_offset_timestamps` /
-  `fixed_schedule_start_offset` (`fixed_schedule.py:82-117`); exposes
+- **`FixedScheduleSource`** (`fixed_schedule.rs`) — builds the sorted
+  `Vec<ScheduleEntry { at_ns, TurnToSend }>` and resolves `schedule_zero_ms` from
+  `auto_offset_timestamps` / `fixed_schedule_start_offset` (`fixed_schedule.py:82-117`),
+  validating finite non-negative offsets; exposes
   `ts_to_ns(timestamp_ms) = started_ns + (ts - zero)*1e6` (`fixed_schedule.py:68-74`).
-  `FixedScheduleWorkload` schedules all first turns (§4.3) and resolves next-turn
-  timing (absolute / delay / immediate, §4.4) from `ConversationSource::next_turn_meta`.
+  `FixedScheduleWorkload` schedules all first turns (§4.3) and resolves next-turn timing
+  with the required precedence — absolute `timestamp_ms`, then `delay_ms` relative to the
+  preceding terminal return, then immediate (§4.4) — from `ConversationSource`.
 
-- **`ConversationSource`** (shared with the companion spec) — `next(corr_id) ->
-  SampledSession` (`conversation_source.py:112-121`) and `next_turn_meta(credit) ->
-  TurnMeta` (`conversation_source.py:184-198`). `SampledSession::build_first_turn(
-  max_turns)` yields the partial-conversation `TurnToSend`
-  (`conversation_source.py:68-85`).
+- **`ConversationSource`** (`multiturn.rs`, shared with the companion spec) — the
+  object-safe seam with synthetic and JSON/JSONL dataset sources: `next(corr_id) ->
+  SampledSession` (`conversation_source.py:112-121`), `next_turn_meta(credit) ->
+  TurnMeta` (`conversation_source.py:184-198`), prefix-dependent segment-backed prompt
+  materialization, response splicing, and correlation identity.
+  `SampledSession::build_first_turn(max_turns)` yields the partial-conversation
+  `TurnToSend` (`conversation_source.py:68-85`).
 
 Neither strategy needs the graph executor for its *linear* turns — the per-user pacer
-(user-centric) and the trace schedule (fixed) are the sequencers; `aiperf-graph` is
+(user-centric) and the trace schedule (fixed) are the sequencers; `aiperf::graph` is
 only for FORK/SPAWN DAG branching, exactly as in the companion spec.
 
 ---
@@ -395,9 +418,14 @@ Both `Workload`s are pure schedule generators over `{Clock, RequestSink}`:
   dispatch `spawn_local`'d; the two differ only by target URL. High-rate user-centric
   runs that exceed one core's HTTP CPU fan the data plane to worker threads (control
   stays single-loop), per the companion's two-plane framing.
-- **OFFLINE** — `SimClock`; every `schedule_at_perf_sec` / `schedule_later` / the
-  spawn-heap `sleep` / think-time `delay_ms` becomes a virtual-ns advance under
-  `drive_sim`. Single-owner-of-time is mandatory and is exactly the single-loop shape.
+- **OFFLINE** — `SimClock`; every scheduled/later dispatch, the spawn-heap `sleep`, and
+  the think-time `delay_ms` becomes a virtual-ns advance under `drive_sim`.
+  Single-owner-of-time is mandatory and is exactly the single-loop shape. Full
+  OFFLINE-mock inference is built behind the `dynosim` feature: the same
+  `ScheduledRuntime` dispatches user-centric and fixed turns through the in-process
+  Dynamo `TurnDispatcher` with no HTTP server. Authored ramps, request cancellation, and
+  adaptive user-target control remain explicit unsupported combinations in that optional
+  composition.
 
 Fixed-schedule is the *cleanest* parity case: with `auto_offset_timestamps` the trace
 is anchored to `started_ns` and, under `SimClock`, replays byte-identically regardless
@@ -419,141 +447,92 @@ ledger addendum): simulated vs real timings differ by construction.
 
 ---
 
-## 7. Build order (increments)
+## 7. How it is wired
 
-1. **`ConversationSource` (synthetic)** — shared with the companion; yields fixed
-   K-turn sessions + `next_turn_meta`. Unblocks both strategies without a dataset.
-2. **`Clock`-backed scheduler seam** — `schedule_at_ns` / `schedule_later` /
-   `execute_async` as `spawn_local` over `Clock::sleep`. Shared by all three siblings.
-3. **`FixedScheduleWorkload`** — thinnest strategy: build sorted schedule + zero-offset
-   (§4.1), schedule all first turns (§4.3), resolve next-turn timing (§4.4). No slots,
-   no rate — validates the scheduler seam end-to-end online + offline first.
-4. **`UserPool` + `UserCentricWorkload` (non-adaptive)** — seed from
-   `plan_user_centric` (already built), schedule initial users at `order*stagger`,
-   run the spawn-heap pump (§2.2), per-user `max()` pacing (§2.3). Bind the fresh
-   replacement user's `max_turns` to the sampled session (the §3 divergence fix).
-5. **Adaptive user target** — `set_target_users` + spawn/replacement gates +
-   `_defer_next_spawn` + churn snapshot (§2.4). Enables ramping.
-6. **`--concurrency` interaction** — the one place user-centric becomes closed-loop
-   (`user_centric_rate.py:346-347`): gate spawns/turns on the session `SlotPool`.
-7. **Dataset-backed `ConversationSource`** — real traces (fixed-schedule needs
-   per-turn `timestamp_ms`/`delay_ms`; the loader pre-filters as today).
+Python Config v2 authors both strategies once; the runner's registered scheduled pair
+(`aiperf-runner`) direct-loads the prepared operation and injects either the online
+Clock-injected hyper transport or, under `dynosim`, the offline in-process Dynamo
+`TurnDispatcher` — **the workload policy is identical either way**. The build layered
+cleanly on the shared seams:
 
-Increments 1–4 deliver both strategies online + offline for linear multi-turn; 5–7 add
-ramping, closed-loop concurrency, and real datasets.
+1. **`ConversationSource`** (`multiturn.rs`) — synthetic and JSON/JSONL dataset sources
+   yielding sessions + `next_turn_meta`, prefix-dependent segment-backed prompt
+   materialization, and response splicing.
+2. **`Clock`-backed scheduler** (`scheduler.rs`) — `LocalTaskScheduler` /
+   `ClockTaskScheduler` as `spawn_local` over `Clock::sleep`, shared by all three
+   siblings, with cancellable pending timers.
+3. **`ScheduledRuntime`** (`scheduled.rs`) — the shared runtime/`Workload`/`TurnDispatcher`
+   seams that own issuance, dispatch observation, native metrics, and final drain.
+4. **`FixedScheduleWorkload`** (`fixed_schedule.rs`) — sorted schedule + zero-offset
+   (§4.1), all first turns up front (§4.3), timestamp/delay/immediate continuation
+   precedence (§4.4).
+5. **`UserPool` + `UserCentricWorkload`** (`user_centric.rs`) — seed from
+   `plan_user_centric`, schedule initial users at `order*stagger`, run the spawn-heap
+   pump (§2.2), per-user `max()` pacing (§2.3), with fresh-replacement `max_turns` bound
+   to the sampled session.
+6. **`UserTargetController`** — adaptive user target (spawn/replacement gates,
+   defer-next-spawn, churn snapshot, §2.4) for ramping.
+7. **`--concurrency` interaction** — the one place user-centric becomes closed-loop
+   (`user_centric_rate.py:346-347`): session gating stays opt-in, off by default.
 
 ---
 
-## 8. Risks / open questions
+## 8. Design decisions locked in
 
-- **Fresh-user `max_turns` divergence (§3).** Rust `plan_user_centric` uses
-  `avg_session_turns` (`user_centric.rs:171`); Python uses the sampled session length
-  (`user_centric_rate.py:189-190`). Decide at bind time; recommend re-deriving from the
-  concrete sample for parity. **The plan itself is correct — the binding is the open
-  question.**
-- **`max_turns` vs actual session length.** Seeded users pass `turns_to_send` as
-  `num_turns` (`user_centric_rate.py:80`, `:253`) regardless of whether the sampled
-  conversation actually has that many turns. If a sampled template is *shorter* than
-  `turns_to_send`, downstream turn-`k+1` materialization can walk past the end. Python
-  relies on the dataset average being representative; the Rust `ConversationSource`
-  should clamp `max_turns` to `min(turns_to_send, len(session.turns))` or document the
-  assumption. Verified subtle at `conversation_source.py:80` + `:184-198`
-  (`get_next_turn_metadata` raises past the end).
-- **Fixed-schedule schedules everything up front** (`fixed_schedule.py:136-140`) — for
-  a large unfiltered trace this is O(N) tasks pinned at once. Bound with a windowed
-  scheduler (only materialize the next W entries) if traces get large; Python leans on
-  loader-side filtering (`fixed_schedule.py:78-81`).
+These were the subtle risks; the built code resolves each:
+
+- **Fresh-user `max_turns`.** `UserCentricWorkload` re-derives `max_turns` from the
+  concrete sampled session (Python parity, `user_centric_rate.py:189-190`), not the
+  dataset average — the pure `plan_user_centric` seed stays sampler-free and the binding
+  supplies the real length.
+- **`max_turns` vs actual session length.** All planned lengths are clamped to the
+  available turns (`min(turns_to_send, len(session.turns))`), so turn-`k+1`
+  materialization never walks past the end of a shorter template
+  (`conversation_source.py:80` + `:184-198`, where `get_next_turn_metadata` raises past
+  the end).
+- **Fixed-schedule schedules everything up front** (`fixed_schedule.py:136-140`). The
+  built workload keeps Python's all-up-front scheduling; the loader pre-filters the
+  trace, so the materialized set is bounded in practice (`fixed_schedule.py:78-81`).
 - **Fixed-schedule ignores `stop_checker`** (injected `fixed_schedule.py:53`, never
-  used). Confirm the Rust design intentionally omits stop bounds for pure replay, or
-  wire duration/cancel lifecycle stops (the trace defines the run length).
-- **Past-timestamp fires.** Both `ts_to_perf` (`fixed_schedule.py:68-74`) and the
+  used). Pure replay intentionally omits request/session/duration stop bounds; the trace
+  defines the run length.
+- **Past-timestamp fires.** Both `ts_to_ns` (`fixed_schedule.py:68-74`) and the
   user-centric `max()` (`user_centric_rate.py:414`) can produce a target ≤ now; the
-  `Clock`-scheduler must treat a non-positive sleep as "fire immediately," never panic
-  on a negative duration.
-- **Adaptive `turn_gap` recompute mid-run.** `set_target_users` mutates `turn_gap`
-  (`user_centric_rate.py:276`) while users already hold `next_send_time` computed under
-  the *old* gap; the next `handle_credit_return` uses the new gap — an intentional
-  step-change, not a smooth ramp. Preserve that (do not retro-fit outstanding users).
+  `Clock` scheduler treats a non-positive sleep as "fire immediately," never panicking on
+  a negative duration.
+- **Adaptive `turn_gap` recompute mid-run.** A target change interrupts a pending spawn
+  sleep and applies the new gap only to subsequent calculations — an intentional
+  step-change, not a smooth ramp; outstanding users are not retro-fit
+  (`user_centric_rate.py:276`).
 - **Open-loop vs `--concurrency`.** Only under `--concurrency` does user-centric become
-  closed-loop (`user_centric_rate.py:346-347`); the default is strictly open-loop. The
-  `SlotPool` wiring must be opt-in, not always-on, or the strategy's steady-state math
-  is distorted.
+  closed-loop (`user_centric_rate.py:346-347`); the default is strictly open-loop, and a
+  session-count stop blocks replacement sessions but never drops continuations from
+  sessions already admitted. Session gating is opt-in, not always-on, so the
+  steady-state math is preserved.
+
+### 8.1 Validation
+
+`tests/scheduled_sim.rs` uses `SimClock` with a Clock-injected fake dispatcher to assert
+exact nanosecond schedules, stable ordering, timestamp/delay/immediate continuation,
+response splicing, steady-state seeding, churn, concurrency caps, stop-and-drain,
+duration cancellation, and adaptive wake-up. `tests/scheduled_real_mock.rs` launches the
+real `aiperf-mock-rs` process and asserts zero early issues, bounded wall-clock lateness,
+configured TTFT, per-user non-overlap and gaps, terminal-relative delays, counts, and
+detailed JSON. The same `ScheduledRuntime` runs deterministically under `SimClock` and,
+behind `dynosim`, over the in-process Dynamo `TurnDispatcher`.
 
 ---
 
 ## 9. One-line summary
 
 User-centric-rate is a **per-user open-loop pacer** — `stagger=1/rate`,
-`turn_gap=num_users/rate`, a **virtual-history steady-state seed** (already ported as
-`aiperf-timing::plan_user_centric`) plus an absolute **spawn-heap churn** loop and a
-`max(now, last+turn_gap)` catch-up per user — while fixed-schedule is **absolute-
-timestamp trace replay** (sort by `timestamp_ms`, anchor to a schedule-zero, fire all
-first turns up front, then absolute/`delay_ms`/immediate subsequent turns); both are
-`Workload` schedule generators over `{Clock, RequestSink}` that run identically online,
-mock, and (deterministically) offline, with only the seeding math built today and the
-run loops, `UserPool`, `FixedScheduleSource`, and `ConversationSource` seams still to
-build.
-
----
-
-## Addendum — 2026-07-11: implemented end to end
-
-This addendum supersedes the original designed/partly-built status, the build-order
-future tense, and the implementation questions in §8. The scheduled workload plane
-is now built in `rust/aiperf` over the existing `{Clock, RequestSink}` seams:
-
-- `multiturn.rs` provides the object-safe `ConversationSource` seam, synthetic and
-  JSON/JSONL dataset sources, prefix-dependent segment-backed prompt materialization,
-  response splicing, correlation identity, and per-turn timing metadata.
-- `scheduler.rs` provides the object-safe `LocalTaskScheduler` and the
-  Clock-injected `ClockTaskScheduler`. Absolute, relative, and immediate work shares
-  one `LocalSet`; pending timers can be cancelled without cancelling dispatched work.
-- `scheduled.rs` provides the shared `ScheduledRuntime`, `Workload`, and
-  `TurnDispatcher` seams. It owns issuance/dispatch observation, native metrics,
-  per-turn scheduled/issued/dispatch/first-token/TTFT/terminal timestamps, aggregate
-  early-issue and lateness analysis, stop notification, cancellation, and final drain.
-- `fixed_schedule.rs` provides `FixedScheduleSource` and `FixedScheduleWorkload`.
-  It validates finite non-negative offsets, filters and stable-sorts traces, supports
-  auto or explicit schedule zero, schedules all first turns up front, and applies the
-  required continuation precedence: absolute `timestamp_ms`, then `delay_ms` relative
-  to the preceding terminal return, then immediate dispatch. Targets at or before
-  `now` fire immediately. Pure replay intentionally ignores request/session/duration
-  stop bounds, matching the cited Python behavior.
-- `user_centric.rs` provides `UserPool`, `UserCentricWorkload`, and the live
-  `UserTargetController`. Initial users bind the exact `plan_user_centric` virtual
-  history to sampled sessions; a deterministic `(at_ns, seq_no)` spawn heap drives
-  open-loop replacement churn; continuation targets use
-  `max(now, previous_issue + turn_gap)`; optional concurrency gates whole sessions;
-  request/session/duration stops prevent new sessions while already-started sessions
-  drain. Adaptive target changes interrupt a pending spawn sleep and apply the new
-  turn gap only to subsequent calculations.
-- `http.rs`, `run.rs`, `main.rs`, and `report.rs` wire both workloads through the
-  Clock-injected hyper transport. CLI entry points are `--user-centric-rate` with
-  `--num-users` (synthetic or `--input-file`) and `--fixed-schedule --input-file`;
-  `--timing-json` serializes the schedule evidence alongside the unified native-v2
-  `--json` report.
-
-The §8 choices are therefore resolved as follows: fresh users derive `max_turns`
-from the concrete sampled session; all planned lengths are clamped to the available
-turns; fixed replay keeps Python's all-up-front scheduling and no-stop semantics;
-past targets are immediate; adaptive gap changes are step changes; and the session
-cap remains opt-in. A session-count stop blocks replacement sessions but never drops
-continuations from sessions already admitted.
-
-Validation covers both time domains available today. `tests/scheduled_sim.rs` uses
-`SimClock` with a Clock-injected fake dispatcher to assert exact nanosecond schedules,
-stable ordering, timestamp/delay/immediate continuation behavior, response splicing,
-steady-state seeding, churn, concurrency caps, stop-and-drain, duration cancellation,
-and adaptive wake-up. `tests/scheduled_real_mock.rs` launches the real Rust
-`aiperf-mock-rs` process and exercises both the library APIs and the compiled CLI,
-asserting zero early issues, bounded wall-clock lateness, configured TTFT, per-user
-non-overlap and gaps, terminal-relative delays, counts, and detailed JSON. CLI conflict
-and required-input validation lives in `tests/scheduled_cli_validation.rs`.
-
-The strategy code is Clock- and dispatcher-neutral and is exercised deterministically
-under `SimClock`. Full OFFLINE-mock inference is now built behind
-`aiperf/dynosim`: the same `ScheduledRuntime` dispatches user-centric and fixed
-turns through the in-process Dynamo `TurnDispatcher`, and
-`tests/dynosim_cli.rs` covers both policies without an HTTP server. Authored
-ramps, request cancellation, and adaptive user-target control remain explicit
-unsupported combinations in that optional composition.
+`turn_gap=num_users/rate`, a **virtual-history steady-state seed** (`plan_user_centric`)
+plus an absolute **spawn-heap churn** loop and a `max(now, last+turn_gap)` catch-up per
+user — while fixed-schedule is **absolute-timestamp trace replay** (sort by
+`timestamp_ms`, anchor to a schedule-zero, fire all first turns up front, then
+absolute/`delay_ms`/immediate subsequent turns). Both are `Workload` schedule generators
+over the shared `ScheduledRuntime` `{Clock, RequestSink}` seams, built and running
+identically online, mock, and (deterministically) offline; Python Config v2 authors both,
+and the registered scheduled pair injects either the online hyper transport or the
+feature-gated offline (`dynosim`) Dynamo `TurnDispatcher` without changing the workload
+policy.

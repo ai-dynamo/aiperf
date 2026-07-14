@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 **Date:** 2026-07-11
 **Author:** Anthony Casagrande (Tech Lead) + Claude
-**Status:** design (not built)
+**Status:** built (`aiperf::timing` — ramps, cancellation, URL selection; consumed by both the HTTP and in-process offline runtimes)
 **Grounding:** end-to-end line-by-line reads of the Python timing subsystem —
 `src/aiperf/timing/ramping.py` (full: `Ramper` loop + `BaseRampStrategy` +
 `Linear`/`Exponential`/`Poisson` strategies), `src/aiperf/timing/request_cancellation.py`
@@ -44,8 +44,8 @@ perturbs an already-running phase:
 3. **URL sampling** — when several `--url` endpoints are given, pick which one each
    *conversation* hits, load-balancing across backends.
 
-All three are **policy** we keep; all three reduce to a tiny trait + an actuator that
-**already exists** in `aiperf-timing`/`aiperf-transport-http`. The Python code is small and
+All three are **policy** we keep; all three reduce to a small trait + an actuator that
+lives in `aiperf::timing`/`aiperf::transport_http`. The Python code is small and
 was read whole; the earned-in-blood details are the curve math (`ramping.py`), the
 "start the cancel timer at send-complete, not at issuance" invariant
 (`request_cancellation.py:62-81`), and the "advance round-robin on turn-0 only, then
@@ -159,7 +159,7 @@ so `next_step` schedules the same shape.
   debt first, then `release()` extra slots (`:121-127`). **Decrease:** drain available
   slots immediately, remainder tracked as **debt** absorbed by future `release()`
   (`:128-138`+`:154-164`). This debt-drain is exactly the `SlotPool` already ported into
-  `aiperf-timing` (companion spec §1.1).
+  `aiperf::timing` (companion spec §1.1).
 
 ### 1.6 Phase interaction
 
@@ -221,17 +221,22 @@ consumed at send-complete**.
 
 ### 2.4 Rust mapping
 
-The companion request-rate spec already puts `cancel_after_ns` on the credit/turn.
-Here it is produced by a `CancellationPolicy` (§4) and consumed by `aiperf-transport-http`:
+`cancel_after_ns` rides on the credit/turn (companion request-rate spec), is produced by
+a `CancellationPolicy` (§4), and is consumed by `aiperf::transport_http`. The decision uses
+signed nanoseconds (`Option<i64>`, the native `Clock`/transport representation);
+configuration validation rejects negative delays.
 
-- The transport already has a **real send-complete hook** (workspace commit
-  `e960752c5`, "real send-complete hook") and cancellation support (transport spec's
-  "cancellation-after-send" target). On send-complete, if `cancel_after_ns` is
-  `Some(d)`, arm a **`Clock`-scheduled abort**: `clock.sleep(d)` racing the response
-  future (`tokio::select!` on the `!Send` loop), and on timer-win abort the hyper
-  request + emit `on_terminal` with a `RequestCancellationError` cause.
+- `aiperf::transport_http` shares a `SendCompletion` signal between the `TimedBody` and the
+  cancellation race. On send-complete, if `cancel_after_ns` is `Some(d)`, a
+  **`Clock`-scheduled abort** arms `clock.sleep(d)` racing the response future
+  (`tokio::select!` on the `!Send` loop). The deadline is anchored to the captured
+  send-complete timestamp — not to issuance, connection acquisition, or the later wakeup
+  time. On timer-win the request future is dropped and the terminal record carries HTTP
+  499 `RequestCancellationError`; the response is biased at an exact tie so exactly one
+  terminal result wins.
 - Under `SimClock` the sleep is virtual, so the cancel fires at a deterministic
-  integer-ns instant relative to the (virtual) send-complete time.
+  integer-ns instant relative to the (virtual) send-complete time. Real-HTTP tests verify
+  the server received and parsed the complete JSON body before a zero-delay disconnect.
 
 ---
 
@@ -270,51 +275,59 @@ sampler impl.
 
 ### 3.3 Rust mapping
 
-- A small **`UrlSelector`** trait (§4) with the one `RoundRobin` impl. It lives on the
-  single-loop issuer (`Rc<RefCell>`, `!Send`); no locking needed.
-- The turn-0 gate stays in the **issuer** (it knows `turn_index`); `url_index: Option<u32>`
-  rides on the turn/credit into the `RequestSink`. The sink resolves it to a base URL
-  when building the `HttpRequest`.
-- Sticky-per-session state belongs wherever conversation/session state lives (the
-  companion spec's `ConversationSource` / worker-session equivalent): store the turn-0
-  `url_index` on the session, reuse for continuation turns.
+- A small **`UrlSelector`** trait (§4) with the one `RoundRobinUrlSelector` impl. It lives
+  on the single-loop issuer (`Rc<RefCell>`, `!Send`); no locking needed.
+- `aiperf::scheduled::ScheduledRuntime` advances endpoint selection **only on turn zero**,
+  retains the turn-zero selector result on the issued credit (`url_index: Option<u32>`),
+  and stores the effective endpoint in per-session state for continuations. `TransportSink`
+  resolves the pinned index over a prebuilt ordered URL list when building the request.
+  Deterministic three-turn tests and real two-endpoint HTTP tests pin both invariants
+  (advance-on-turn-0 and sticky-per-session).
+- Comma-separated positional base URLs select the ordered endpoint list on the online CLI.
 
 ---
 
-## 4. Mapping onto the crates — built vs designed
+## 4. Mapping onto the modules (all built)
 
-| Concern | Primitive | Crate | Status |
+All sixteen former `aiperf-*` library crates are now modules of `aiperf`; the ancillary
+policy lives in `aiperf::timing` (`rust/aiperf/src/timing/ramping.rs`, `cancellation.rs`,
+`url_selection.rs`), driven by `aiperf::clock` and seeded by `aiperf::rng`, with the
+cancel timer inside `aiperf::transport_http`.
+
+| Concern | Primitive | Module | Status |
 |---|---|---|---|
-| Rate actuator (`set_rate`; Poisson/Gamma/Const/Burst) | `IntervalGenerator::set_rate` | `aiperf-timing` | **built** |
-| Concurrency actuator (`set_limit`, debt-drain) | `SlotPool::set_limit` | `aiperf-timing` | **built** |
-| Stop bounds / phase scope | `StopChecker` / `ConcurrencyManager` | `aiperf-timing` | **built** |
-| All time (ramp elapsed + sleeps, cancel timer) | `Clock` (`now_ns`/`sleep`) | `aiperf-clock` | **built** |
-| Transport send-complete hook + request abort | `aiperf-transport-http` client | `aiperf-transport-http` | **built** (send-complete hook `e960752c5`; abort-after-send wiring **designed**) |
-| RNG for Poisson trajectory + Bernoulli draw | `aiperf-rng` (BLAKE3-derived) | `aiperf-rng` | **designed** (rng-derive spec) |
-| **Ramp curve family** (`Linear`/`Exp`/`Poisson`, `next_step`/`value_at`) | **`RampStrategy`** trait | new / `aiperf-timing` | **designed** |
-| **Ramp driver loop** (discrete/continuous, force-target, stop) | **`RampDriver`** + `RamperConfig` | new / `aiperf-timing` | **designed** |
-| **Cancellation decision** (rate %, warmup-off, fixed delay) | **`CancellationPolicy`** trait | new / `aiperf-timing` | **designed** |
-| **Cancel timer** (arm at send-complete, race response) | `Clock::sleep` + `select!` in sink | `aiperf-transport-http` | **designed** |
-| **URL selection** (round-robin, turn-0 gate) | **`UrlSelector`** trait | new / `aiperf-timing` | **designed** |
+| Rate actuator (`set_rate`; Poisson/Gamma/Const/Burst) | `IntervalGenerator::set_rate` | `aiperf::timing` | **built** |
+| Concurrency actuator (`set_limit`, debt-drain) | `SlotPool::set_limit` | `aiperf::timing` | **built** |
+| Stop bounds / phase scope | `StopChecker` / `ConcurrencyManager` | `aiperf::timing` | **built** |
+| All time (ramp elapsed + sleeps, cancel timer) | `Clock` (`now_ns`/`sleep`) | `aiperf::clock` | **built** |
+| Transport send-complete hook + request abort | `SendCompletion` signal + `select!` in sink | `aiperf::transport_http` | **built** |
+| RNG for Poisson trajectory + Bernoulli draw | BLAKE3-derived streams | `aiperf::rng` | **built** |
+| Ramp curve family (`Linear`/`Exp`/`Poisson`, `next_step`/`value_at`) | `RampStrategy` trait | `aiperf::timing` | **built** |
+| Ramp driver loop (discrete/continuous, force-target, stop) | `RampDriver` + `RamperConfig` | `aiperf::timing` | **built** |
+| Cancellation decision (rate %, warmup-off, fixed delay) | `CancellationPolicy` trait | `aiperf::timing` | **built** |
+| Cancel timer (arm at send-complete, race response) | `Clock::sleep` + `select!` in sink | `aiperf::transport_http` | **built** |
+| URL selection (round-robin, turn-0 gate) | `UrlSelector` trait | `aiperf::timing` | **built** |
 
-### 4.1 The new trait seams (every extension point a trait)
+### 4.1 The trait seams (every extension point a trait)
 
 - **`RampStrategy`** — object-safe:
-  `fn next_step(&mut self, current: f64, elapsed_ns: u64) -> Option<(u64 /*delay_ns*/, f64)>`
-  and `fn value_at(&self, elapsed_ns: u64) -> Option<f64>`, plus `start()`/`target()`.
+  `next_step(&mut self, current: f64, elapsed_ns) -> Option<(delay_ns, f64)>`
+  and `value_at(&self, elapsed_ns) -> Option<f64>`, plus `start()`/`target()`.
   Impls: `LinearRamp` (`step_size`), `ExponentialRamp` (`exponent`, ease-in via
-  `t^e` / `p^(1/e)`), `PoissonRamp` (pre-computed trajectory, `aiperf-rng`-seeded). New
-  curves (log, s-curve, cosine) drop in as impls — never a `match RampType`.
+  `t^e` / `p^(1/e)`), and the precomputed, normalized `PoissonRamp` (`aiperf::rng`-seeded).
+  New curves (log, s-curve, cosine) drop in as impls — never a `match RampType`.
 - **`RampDriver`** — wraps a `RampStrategy` + a setter closure
   (`FnMut(f64)`; the actuator's `set_rate`/`set_limit`), runs the discrete-or-continuous
-  loop on `Clock`, force-sets `target` on completion, freezes on cancel. One driver
-  spawned per active ramp (session/prefill/rate).
-- **`CancellationPolicy`** — `fn next_cancel_delay_ns(&mut self, phase: Phase) -> Option<u64>`.
-  Impl `BernoulliFixedDelay` (rate% + constant delay + warmup-off, `aiperf-rng`-seeded).
-  A future per-request-distributed delay is just another impl.
-- **`UrlSelector`** — `fn next_index(&mut self) -> usize` + `fn len(&self) -> usize`.
-  Impl `RoundRobin`. The turn-0 gate + session-pin stay in the issuer/session, not the
-  trait. Future weighted/least-loaded/hash selectors are new impls.
+  loop on injected `Clock` time. Natural completion force-applies the exact `target`;
+  abort freezes the last applied value. One driver spawned per active ramp
+  (session/prefill/rate).
+- **`CancellationPolicy`** — `next_cancel_delay_ns(&mut self, phase) -> Option<i64>`.
+  Impl `BernoulliFixedDelay` (rate% + constant delay + warmup-off, `aiperf::rng`-seeded);
+  warmup returns before the RNG draw. Signed nanoseconds match the native `Clock`/transport
+  representation; a future per-request-distributed delay is just another impl.
+- **`UrlSelector`** — `next_index(&mut self) -> usize` + `len(&self) -> usize`.
+  Impl `RoundRobinUrlSelector`. The turn-0 gate + session-pin stay in the issuer/session,
+  not the trait. Future weighted/least-loaded/hash selectors are new impls.
 
 ---
 
@@ -326,8 +339,8 @@ All three are `Clock`-driven, so `SimClock` makes them virtual-time and determin
   and continuous `sleep(update_interval)` are `Clock::sleep`. Under `SimClock` a ramp
   advances in discrete-event steps (`advance_to`), so the exact `(instant, value)`
   sequence is reproducible. The `PoissonRamp` trajectory is drawn once from an
-  `aiperf-rng` BLAKE3-derived stream → bit-reproducible for a given seed.
-- **Cancellation** — the Bernoulli draw is a seeded `aiperf-rng` stream (order-independent
+  `aiperf::rng` BLAKE3-derived stream → bit-reproducible for a given seed.
+- **Cancellation** — the Bernoulli draw is a seeded `aiperf::rng` stream (order-independent
   per the rng-derive spec); the delay is a constant. The abort timer is `Clock::sleep`
   armed at (virtual) send-complete, so the cancel instant is deterministic under
   `SimClock`.
@@ -336,36 +349,86 @@ All three are `Clock`-driven, so `SimClock` makes them virtual-time and determin
 
 **Parity is code-path + report-schema, not byte-identical metric values** (per the
 port-exact ledger addendum): the same `RampDriver`/`CancellationPolicy`/`UrlSelector`
-run under both clocks; only `{Clock, RequestSink}` are injected.
+run under both clocks; only `{Clock, HttpRequestDispatcher}` are injected.
+
+### 5.1 Backend-neutral runtime consumption
+
+The shared policies are consumed by both the HTTP and the in-process Dynamo (offline)
+backends. Backend-neutral run functions receive `{Clock, HttpRequestDispatcher}`; offline
+composition supplies `SimClock + DynosimSink` and merges ramp, cancellation, issuer, and
+engine deadlines in the same DES pump:
+
+- **Paced** offline workloads support session- and prefill-concurrency ramps.
+- **Continuation-priority request-rate** workloads support all three `Clock`-native rate
+  curves.
+- **User-centric** workloads support their session-concurrency ramp; their request cadence
+  is schedule-authored and there is no prefill pool, so rate and prefill ramps are rejected
+  rather than accepted inertly.
+- **Cancellation** calls the steppable engine's real terminal operation in single,
+  aggregate, and disaggregate topologies, including terminal cleanup and report
+  classification.
+
+**Fixed authored schedules reject ramps** — their timestamps are the complete run plan, so
+an actuator ramp is a configuration error, not an inert no-op. **Multi-URL selection is
+invalid for the one in-process endpoint** — a topology constraint, not an offline no-op.
+
+**Graph phases** consume arrival/prefill ramps and adaptive concurrency/prefill/request-rate
+controls through **placement-wide worker updates**: the graph placement exposes its live
+`IntervalGenerator` and `SlotPool` handles to the same `RampDriver`/adaptive controllers,
+and fails closed on actuator updates a worker-local shard cannot honor (silently accepting
+one would make graph ramps and adaptive control inert).
 
 ---
 
-## 6. Build order (increments)
+## 6. As-built structure and issuer wiring
 
-1. **`UrlSelector` + `RoundRobin`** — smallest, no clock/RNG. Add `url_index: Option<u32>`
-   to the turn/credit; issuer advances on turn-0 only; sink resolves index → base URL;
-   session pins the turn-0 index for continuation turns.
-2. **`CancellationPolicy` + `BernoulliFixedDelay`** — needs `aiperf-rng`. Produce
-   `cancel_after_ns` at issuance; store on the turn/credit (field already in the
-   companion design).
-3. **Cancel timer in the sink** — arm `Clock::sleep(cancel_after_ns)` at the transport
-   send-complete hook, race the response with `select!`, emit terminal
-   `RequestCancellationError` on timer-win. Validate against the in-repo mock (delay=0
-   and delay>0 cases).
-4. **`RampStrategy` (Linear) + `RampDriver`** — discrete mode first (concurrency ramp,
-   `SlotPool::set_limit`), then continuous mode (rate ramp, `IntervalGenerator::set_rate`,
+The three knobs landed as the following units (each independently testable):
+
+1. **`UrlSelector` + `RoundRobinUrlSelector`** — no clock/RNG. `url_index: Option<u32>`
+   rides the turn/credit; the issuer advances on turn-0 only; the sink resolves index →
+   base URL; the session pins the turn-0 index for continuation turns.
+2. **`CancellationPolicy` + `BernoulliFixedDelay`** — `aiperf::rng`-seeded. Produces
+   `cancel_after_ns` at issuance; stored on the turn/credit.
+3. **Cancel timer in the sink** — `Clock::sleep(cancel_after_ns)` armed at the
+   `SendCompletion` hook, racing the response with `select!`, emitting a terminal HTTP 499
+   `RequestCancellationError` on timer-win. Validated against the in-repo mock for delay=0
+   and delay>0.
+4. **`RampStrategy` (Linear) + `RampDriver`** — discrete mode (concurrency ramp,
+   `SlotPool::set_limit`) and continuous mode (rate ramp, `IntervalGenerator::set_rate`,
    proportional `start_rate`). All time via `Clock`.
-5. **`ExponentialRamp`** — the ease-in inverse-curve pair; unit-test that
+5. **`ExponentialRamp`** — the ease-in inverse-curve pair; unit-tested that
    `_time_to_value_progress` is the exact inverse of `_apply_curve`.
-6. **`PoissonRamp`** — pre-computed `aiperf-rng` trajectory (normalize time to duration,
+6. **`PoissonRamp`** — precomputed `aiperf::rng` trajectory (normalize time to duration,
    pin final value to target); `value_at` = binary search.
 
-1–3 deliver cancellation + multi-URL (independent of the credit-issuer core); 4–6 add
-the ramp curve family once the issuer/actuator wiring from the companion spec lands.
+### 6.1 Issuer wiring and CLI surface
+
+The ordinary online issuer (`aiperf::scheduled::ScheduledRuntime`) wires linear
+session/prefill ramps to the live `SlotPool`s and the proportional-start 100 ms continuous
+rate ramp to the live `IntervalGenerator`. User-centric mode additionally wires its owned
+session `SlotPool`; its request cadence is schedule-authored and it has no prefill pool, so
+rate and prefill ramps are rejected rather than accepted inertly. Fixed-schedule replay
+likewise rejects actuator ramps because its authored timestamps are the complete run plan.
+Both scheduled strategies still use cancellation and sticky multi-URL selection.
+
+The online CLI exposes `--concurrency-ramp-duration`,
+`--prefill-concurrency-ramp-duration`, `--request-rate-ramp-duration`,
+`--request-cancellation-rate`, and `--request-cancellation-delay`; comma-separated
+positional base URLs select the ordered endpoint list.
+
+Tests cover configuration bounds, both ramp directions, exact exponential inverse math,
+deterministic normalized Poisson trajectories, force-target and freeze-on-stop behavior,
+live actuator wiring under `SimClock`, warmup RNG non-consumption, Bernoulli
+reproducibility, round-robin wraparound, turn-zero session pinning, real endpoint
+resolution, positive and zero post-send delays, complete-body delivery, cancellation
+classification, and CLI validation.
 
 ---
 
-## 7. Risks / open questions
+## 7. Invariants preserved / caveats
+
+The implementation holds these invariants; they remain the failure modes to watch when
+extending the policy:
 
 - **Ramp ↔ debt-drain interaction.** A *down* concurrency ramp calls `set_limit` with a
   smaller value, which becomes **debt** absorbed by future `release()`
@@ -382,11 +445,12 @@ the ramp curve family once the issuer/actuator wiring from the companion spec la
   is relative to **T2** (`request_cancellation.py:62-81`), so it must be armed inside the
   sink at the send-complete hook, never at dispatch. Arming at issuance would cancel
   before/while sending and violate the "server sees the whole request" guarantee.
-- **Sticky-URL per-session state.** The turn-0 gate (`issuer.py:215`) only works if the
-  session stores the turn-0 `url_index` and continuation turns read it back
-  (`worker.py:496-501,744-748`). If the Rust `ConversationSource`/session doesn't carry
-  this field, multi-turn sessions would round-robin *within* a conversation and hit
-  different backends — a correctness bug that tests on single-turn workloads won't catch.
+- **Sticky-URL per-session state.** The turn-0 gate (`issuer.py:215`) only works because
+  `ScheduledRuntime` stores the turn-0 `url_index` in per-session state and continuation
+  turns read it back (mirroring `worker.py:496-501,744-748`). Were that field dropped,
+  multi-turn sessions would round-robin *within* a conversation and hit different backends
+  — a correctness bug that tests on single-turn workloads won't catch; the three-turn
+  session-pin test guards against it.
 - **Continuous-rate proportional start.** `start_rate = target*(update_interval/duration)`
   (`runner.py:512-514`) is deliberate to avoid ramping *up* a sub-1-QPS target; port the
   formula exactly rather than defaulting to 1 QPS.
@@ -407,81 +471,8 @@ Three ancillary knobs — a **`RampStrategy`/`RampDriver`** that walks rate
 Linear/Exponential-ease-in/Poisson curve over a fixed duration, a
 **`CancellationPolicy`** that arms a fixed-delay client-disconnect timer on a Bernoulli
 fraction of non-warmup requests (fired as a `Clock`-scheduled transport abort at
-send-complete), and a **`UrlSelector`** round-robin that ticks once per conversation
-(turn-0) and pins sticky per-session — every actuator already built in
-`aiperf-timing`/`aiperf-transport-http`, every new piece a small trait, all time through
-`Clock` so they run bit-deterministically under `SimClock`.
-
-## Addendum — 2026-07-11: implemented in the native Rust workspace
-
-This design is now built. This addendum supersedes the original `Status: design
-(not built)`, the designed rows in §4, and the prospective build order in §6.
-
-- `aiperf-timing::{RampStrategy, RampDriver}` is implemented in
-  `rust/aiperf-timing/src/ramping.rs`, with `LinearRamp`,
-  `ExponentialRamp`, and the precomputed, normalized `PoissonRamp`. Both driver
-  modes use injected `Clock` time, natural completion force-applies the exact
-  target, and abort freezes the last applied value. Poisson and cancellation
-  streams use the canonical `aiperf-rng` namespaces.
-- `CancellationPolicy` / `BernoulliFixedDelay` and `UrlSelector` /
-  `RoundRobinUrlSelector` are implemented in `cancellation.rs` and
-  `url_selection.rs`. Warmup returns before the RNG draw. The implementation
-  uses signed nanoseconds (`Option<i64>`) because that is the native `Clock` and
-  transport representation; validation prevents negative configured delays.
-- `aiperf-transport-http` now shares a `SendCompletion` signal between `TimedBody`
-  and the cancellation race. The deadline is anchored to the captured
-  send-complete timestamp, not to issuance, connection acquisition, or the
-  later wakeup time. A timer win drops the request future and produces HTTP 499
-  `RequestCancellationError`; response is biased at an exact tie, so only one
-  terminal result wins. Real-HTTP tests verify that the server received and
-  parsed the complete JSON body before a zero-delay disconnect.
-- `aiperf::scheduled::ScheduledRuntime` makes the cancellation decision for
-  every issued turn, advances endpoint selection only on turn zero, retains the
-  turn-zero selector result on the issued credit, and stores the effective
-  endpoint in per-session state for continuations. `TransportSink` resolves the
-  pinned index over a prebuilt ordered URL list. Deterministic three-turn tests
-  and real two-endpoint HTTP tests pin both invariants.
-- The ordinary online issuer wires linear session/prefill ramps to the live
-  `SlotPool`s and the proportional-start 100ms continuous rate ramp to the live
-  `IntervalGenerator`. User-centric mode additionally wires its owned session
-  `SlotPool`; its request cadence is schedule-authored and it has no prefill
-  pool, so rate and prefill ramps are rejected rather than accepted inertly.
-  Fixed-schedule replay likewise rejects actuator ramps because its authored
-  timestamps are the complete run plan. Both scheduled strategies still use
-  cancellation and sticky multi-URL selection. The separate warmup/phase
-  orchestrator remains the companion phase-runner spec's unbuilt scope; the
-  shared policy already accepts and tests `Phase::Warmup` for that future caller.
-- The online CLI exposes `--concurrency-ramp-duration`,
-  `--prefill-concurrency-ramp-duration`, `--request-rate-ramp-duration`,
-  `--request-cancellation-rate`, and `--request-cancellation-delay`.
-  Comma-separated positional base URLs select the ordered endpoint list. Graph
-  mode rejects these online issuer flags explicitly; the transport-neutral
-  traits and `SimClock` tests remain reusable by its future arrival/slot policy
-  consumer.
-
-Tests cover configuration bounds, both ramp directions, exact exponential
-inverse math, deterministic normalized Poisson trajectories, force-target and
-freeze-on-stop behavior, live actuator wiring under `SimClock`, warmup RNG
-non-consumption, Bernoulli reproducibility, round-robin wraparound, turn-zero
-session pinning, real endpoint resolution, positive and zero post-send delays,
-complete-body delivery, cancellation classification, and CLI validation.
-
-## Addendum — 2026-07-12: offline runtime consumption
-
-The shared policies are now consumed by the in-process Dynamo backend as well
-as HTTP. Backend-neutral run functions receive `{Clock, HttpRequestDispatcher}`;
-offline composition supplies `SimClock + DynosimSink` and merges ramp,
-cancellation, issuer, and engine deadlines in the same DES pump.
-
-- paced offline workloads support session- and prefill-concurrency ramps;
-- continuation-priority request-rate workloads support all three Clock-native
-  rate curves;
-- user-centric workloads support their session-concurrency ramp;
-- cancellation calls the steppable engine's real terminal operation in single,
-  aggregate, and disaggregate topologies, including terminal cleanup and report
-  classification.
-
-Fixed authored schedules still reject ramps because their timestamps are the
-workload, and Graph-IR still owns no arrival/slot actuator. Multi-URL selection
-is intentionally invalid for the one in-process endpoint; that is a topology
-constraint, not an offline no-op.
+send-complete, HTTP 499), and a **`UrlSelector`** round-robin that ticks once per
+conversation (turn-0) and pins sticky per-session — every actuator and every trait built in
+`aiperf::timing`/`aiperf::transport_http`, consumed by both the online HTTP issuer and the
+in-process offline (`SimClock + DynosimSink`) runtime, all time through `Clock` so they run
+bit-deterministically under `SimClock`.

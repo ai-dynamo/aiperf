@@ -1,18 +1,26 @@
-# aiperf-transport-http — Rust-native AIPerf HTTP client + timing recording
+# aiperf::transport_http — Rust-native AIPerf HTTP client + timing recording
 
 **Date:** 2026-07-10
 **Author:** Anthony Casagrande (with Claude)
-**Status:** Draft for review
+**Status:** Built as `aiperf::transport_http` (Clock-injected hyper stack). Two areas remain
+narrower than this design: full h2 connection-reuse/multiplexing semantics and the complete
+aiohttp-style trace field set. Post-send cancellation is built.
 
 ## 1. Summary
 
-A fresh, standalone Rust crate (`rust/aiperf-transport-http`) that ports AIPerf's
+The Clock-injected hyper HTTP transport described here is realized as the
+`aiperf::transport_http` module (formerly the standalone `aiperf-transport-http`
+crate, now a module of the `aiperf` crate; code lives under
+`rust/aiperf/src/transport_http*`). It ports AIPerf's
 Python `aiohttp`-based transport layer and its timing-*recording* machinery to
 idiomatic, high-performance Rust. It reproduces the measurement behavior of the
 Python `src/aiperf/transports/` package — streaming SSE inference over HTTP,
 first-token (TTFT) capture, authoritative `usage` token counts, fine-grained
 connection trace timing, request cancellation, and connection-reuse strategies
 — without any of AIPerf's scheduling/credit subsystem or its ZMQ service mesh.
+Transport-neutral scheduling and observation are reserved for `loadgen-core`;
+`aiperf::transport_http` is the single Clock-injected hyper stack used by both
+the CLI online path (`rust/aiperf/src/http.rs`) and the graph benchmark.
 
 "Timing logic" here means **timing recording** (per-request/per-token/per-chunk
 measurement into a record), **not** load scheduling (interval generators,
@@ -159,7 +167,10 @@ as `aiperf-mock-rs` (server: `hyper-util` `auto::Builder`) and reqwest 0.12
 - Under h2, streams multiplex over one connection: connection-level trace fires
   once at creation; subsequent streams record `connection_reused_ns`. Reuse
   strategies operate at the connection layer (pool disabled / pool-of-1 / shared),
-  decoupled from per-request concurrency as h2 intends.
+  decoupled from per-request concurrency as h2 intends. **Narrower than design:**
+  h2c prior-knowledge dispatch is built and soak-proven, but the full h2
+  connection-reuse and multiplexing semantics described here remain broader than
+  what the current `HttpTransport` facade exposes.
 
 ## 6. Idiomatic model layer (`src/models/`)
 
@@ -188,6 +199,9 @@ response receive start/end, response chunk count+bytes (+ optional per-chunk
 vec), error timestamp, socket info (local/remote ip+port). `to_export(reference)`
 produces wall-clock instants and the k6/HAR-compatible durations (`sending`,
 `waiting`, `receiving`, `duration`, `blocked`, `dns_lookup`, `connecting`).
+**Narrower than design:** this is the full aiohttp-style field set as intended;
+the current trace model and writers populate a subset of it, so complete
+aiohttp-style trace field parity remains a target.
 
 ## 7. Client / transport layers
 
@@ -219,12 +233,17 @@ trailing delimiter-less message at stream end. `inspect_message_for_error` raise
     `Other`; cancellation → `Cancelled` (499).
 
 ### 7.3 Cancellation (`src/client/cancellation.rs`) ≈ `_request_with_cancellation`
-Spawn the request future (`spawn_local`); an outbound-body wrapper fires a
-"request fully sent" `Notify` once `bytes_sent >= expected_body_size`; wait for
-it, bounded by a `clock.sleep(send_timeout_ns)` safety net (→ `SendTimeout` if
-never sent); then race the in-flight request against `clock.sleep(cancel_after_ns)`.
-On timer win: abort the request, record `cancellation_ns` + `ErrorKind::Cancelled`
-(499). Timer starts at send-complete, not request-start — matching Python. Under
+Post-send cancellation is built. HTTP cancellation is armed from the captured
+request-body `SendCompletion` signal, so the configured cancellation delay starts
+only after the outbound body has been fully sent — not from request submission.
+The request future is spawned (`spawn_local`); an outbound-body wrapper fires a
+"request fully sent" signal once `bytes_sent >= expected_body_size`, bounded by a
+`clock.sleep(send_timeout_ns)` safety net (→ `SendTimeout` if never sent); then the
+in-flight request races `clock.sleep(cancel_after_ns)`. On timer win: abort the
+request, record `cancellation_ns` + `ErrorKind::Cancelled` (499). Both the h1 and
+h2 paths key off that body-wrapper completion signal rather than racing the entire
+dispatch future from submission time; the "body fully sent" point is well-defined
+on both. Timer starts at send-complete, not request-start — matching Python. Under
 `SimClock` this is fully deterministic.
 
 ### 7.4 `HttpTransport` (`src/transport/…`) ≈ `AioHttpTransport`
@@ -240,33 +259,38 @@ On timer win: abort the request, record `cancellation_ns` + `ErrorKind::Cancelle
   cancellation / error; `Never` → pool-disabled per request; `Pooled` → shared.
 - `send_request(config, payload, first_token_cb) -> RequestRecord`.
 
-### 7.5 Config / defaults (`src/config/defaults.rs`)
+### 7.5 Endpoint binding (`transport/endpoint_binding.rs`)
+The module depends on `aiperf::endpoints` only at the translation boundary:
+`transport/endpoint_binding.rs` defines the object-safe `HttpEndpointBinding` and
+its metadata-driven implementation. The binding lowers canonical endpoint JSON to
+HTTP URL/body/lifecycle policy and decodes HTTP/SSE responses back into
+`ServerResponse`; `aiperf` retains endpoint parsing, observer emission, usage
+aggregation, and scheduled outcomes. Future gRPC and WebSocket transports are
+peer modules with their own bindings, not endpoint forks.
+
+### 7.6 Config / defaults (`src/config/defaults.rs`)
 Port `SocketDefaults` (TCP_NODELAY, keepalive idle/intvl/cnt, SO_RCVBUF/SNDBUF
 with ENOBUFS halving fallback, TCP_QUICKACK, TCP_USER_TIMEOUT — Linux-gated via
 `cfg`) applied to the socket before connect, and `AioHttpDefaults` (connection
 limit, DNS cache TTL, keepalive timeout, family/IP version, SSL verify) as typed
 config with matching default values.
 
-## 8. Crate layout
+## 8. Module layout
+
+The transport lives as the `aiperf::transport_http` module under
+`rust/aiperf/src/transport_http/`:
 
 ```
-rust/aiperf-transport-http/
-  Cargo.toml                # standalone; depends on aiperf-clock
-  src/
-    lib.rs
-    models/{mod,record,response,sse,trace,error,request}.rs
-    client/{mod,http_client,connection,resolver,pool,cancellation}.rs
-    transport/{mod,http_transport,url,headers}.rs
-    sse/reader.rs
-    config/defaults.rs
-  tests/
-    mock_fixture.rs         # spawn/teardown aiperf-mock-rs (RealClock)
-    integration.rs          # scenarios against the live mock
-  examples/
-    stream_once.rs          # minimal driver: one streaming request → record
+rust/aiperf/src/transport_http/
+  mod.rs
+  models/{mod,record,response,sse,trace,error,request}.rs
+  client/{mod,http_client,connection,resolver,pool,cancellation}.rs
+  transport/{mod,http_transport,url,headers,endpoint_binding,body,polling,inline_media}.rs
+  sse/reader.rs
+  config/defaults.rs
 ```
 
-Dependencies: `aiperf-clock` (the Clock), `tokio` (current-thread + macros +
+Dependencies: `aiperf::clock` (the Clock), `tokio` (current-thread + macros +
 net + io-util), `hyper` (features `client`, `http1`, `http2`), `hyper-util`
 **only** for `rt::{TokioIo, TokioExecutor}`, `http`, `http-body-util`,
 `tokio-rustls`, `rustls`, `webpki-roots`, `bytes`, `futures`, `serde`,
@@ -329,43 +353,3 @@ OpenAI-compatible mock server: `/v1/chat/completions` (streaming SSE),
 - **h2 request-sent signal for cancellation:** the "body fully sent" point
   differs on h2; the cancellation timer keys off the body-wrapper completion in
   both h1 and h2, so it stays well-defined.
-
-## Addendum — 2026-07-11
-
-Several sections above are design targets rather than guarantees of the current
-`aiperf-transport-http` implementation. In particular, cancellation is currently modeled
-by racing the dispatch future with the configured timer; the Python-exact "start the
-cancel timer only after the outbound body is fully sent" behavior remains a target.
-HTTP/2 support exists, including h2c prior knowledge, but the spec's multiplexing and
-connection-reuse semantics overstate what the current `HttpTransport` facade exposes.
-The aiohttp-style trace field list is likewise aspirational until the trace model and
-writers contain every advertised field.
-
-The current built path is still the single Clock-injected hyper stack used by both the
-CLI online path and graph benchmark. Avoid reading any remaining reqwest-era or
-`Instant` wording in this document as current implementation truth; use
-`rust/aiperf-transport-http`, `rust/aiperf/src/http.rs`, and `loadgen-core` as the
-authoritative code surfaces.
-
-## Addendum — 2026-07-12
-
-The concrete crate is now named `aiperf-transport-http`, reserving transport-neutral scheduling and
-observation for `loadgen-core`. It depends on `aiperf-endpoints` only at the translation boundary:
-`transport/endpoint_binding.rs` defines the object-safe `HttpEndpointBinding` and its metadata-driven
-implementation. The binding lowers canonical endpoint JSON to HTTP URL/body/lifecycle policy and
-decodes HTTP/SSE responses back into `ServerResponse`; `aiperf` retains endpoint parsing, observer
-emission, usage aggregation, and scheduled outcomes. Future gRPC and WebSocket implementations are
-peer transport crates with their own bindings, not endpoint forks.
-
-## Addendum — 2026-07-12 (post-send cancellation built)
-
-The cancellation-after-send behavior called out as a remaining target in the
-2026-07-11 addendum is now implemented. HTTP cancellation is armed from the
-captured request-body `SendCompletion`, so the configured cancellation delay
-starts only after the outbound body has been fully sent. Both h1 and h2 paths
-key off that body-wrapper completion signal rather than racing the entire
-dispatch future from submission time.
-
-The remaining "partly built" caveat is therefore limited to the original
-spec's broader h2 reuse/multiplexing ambitions and full aiohttp-style trace
-field parity, not to post-send cancellation.
