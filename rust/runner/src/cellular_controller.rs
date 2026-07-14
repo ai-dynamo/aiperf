@@ -17,11 +17,11 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use aiperf::cellular::{
-    CellMessage, ControllerTransport, MetricsHeartbeat, RecordsShardPartition,
+    CellMessage, ControllerTransport, MetricsHeartbeat, RecordsShardPartition, TDigest,
     TcpControllerTransport, merge_records_in_global_order,
 };
 use aiperf::metrics_core::report::NativeReport;
-use aiperf::metrics_core::{ExportContext, MetricsConfig};
+use aiperf::metrics_core::{ExportContext, MetricsConfig, PERCENTILES};
 use anyhow::{Context, Result, bail, ensure};
 
 use crate::cellular_cell::CellLaunchSpec;
@@ -133,6 +133,18 @@ pub fn run_cellular(
         let json = serde_json::to_string_pretty(&report).context("serializing merged report")?;
         std::fs::write(report_path, json)
             .with_context(|| format!("writing merged report to {}", report_path.display()))?;
+
+        // Aggregate the cells' live heartbeats (counters summed, sketches t-digest
+        // merged) into one run-wide view written beside the report. The exact report
+        // stays authoritative from S2; this is the live cross-cell aggregate.
+        let mut aggregate = heartbeats.into_values();
+        if let Some(mut merged_heartbeat) = aggregate.next() {
+            for heartbeat in aggregate {
+                merged_heartbeat.merge(&heartbeat);
+            }
+            write_heartbeat_sidecar(report_path, &merged_heartbeat)
+                .context("writing merged cellular heartbeat")?;
+        }
 
         let _ = std::fs::remove_dir_all(&temp_root);
         Ok(CellularRunOutcome {
@@ -261,6 +273,37 @@ pub fn cell_count_from_envelope(envelope: &serde_json::Value) -> u32 {
         .and_then(serde_json::Value::as_u64)
         .map(|cells| cells.clamp(1, 1024) as u32)
         .unwrap_or(1)
+}
+
+/// Writes the merged cross-cell live heartbeat beside the report as a JSON-safe
+/// percentile projection (a raw t-digest anchors `min = +inf`, which JSON cannot
+/// encode). The exact report percentiles stay authoritative from S2.
+fn write_heartbeat_sidecar(report_path: &Path, heartbeat: &MetricsHeartbeat) -> Result<()> {
+    let quantiles: Vec<f64> = PERCENTILES.iter().map(|&p| p as f64 / 100.0).collect();
+    let project = |sketch: &TDigest| -> serde_json::Value {
+        let percentiles: serde_json::Map<String, serde_json::Value> = PERCENTILES
+            .iter()
+            .zip(sketch.quantiles(&quantiles))
+            .filter_map(|(&p, value)| {
+                value.map(|value| (format!("p{p}"), serde_json::json!(value)))
+            })
+            .collect();
+        serde_json::json!({ "count": sketch.count(), "percentiles": percentiles })
+    };
+    let document = serde_json::json!({
+        "event": "cellular_heartbeat_merged",
+        "counters": {
+            "issued": heartbeat.counters.issued,
+            "completed": heartbeat.counters.completed,
+            "errored": heartbeat.counters.errored,
+        },
+        "ttft_ms": project(&heartbeat.ttft_ms),
+        "itl_ms": project(&heartbeat.itl_ms),
+        "latency_ms": project(&heartbeat.latency_ms),
+    });
+    let path = report_path.with_file_name("cellular-heartbeat.json");
+    std::fs::write(&path, serde_json::to_string_pretty(&document)?)
+        .with_context(|| format!("writing {}", path.display()))
 }
 
 #[cfg(test)]

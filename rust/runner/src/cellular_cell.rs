@@ -19,8 +19,8 @@
 
 use aiperf::cellular::partition::CellPartition;
 use aiperf::cellular::{
-    CellClient, CellMessage, CellularAutonomousIssuer, IssuanceAuthority, ModuloCellPartition,
-    RecordsShardPartition, TcpCellClient,
+    CellClient, CellMessage, CellularAutonomousIssuer, IssuanceAuthority, MetricsHeartbeat,
+    ModuloCellPartition, RecordsShardPartition, TcpCellClient,
 };
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -80,8 +80,14 @@ impl CellRecordsShipper {
     }
 
     /// Connects to the controller and ships `Hello`, the partition, then `Done`.
-    /// Blocking, called once after the run completes — never on the hot path.
-    pub fn ship(&self, partition: RecordsShardPartition) -> Result<()> {
+    /// Blocking, called once after the run completes — never on the hot path. The
+    /// controller merges the cells' heartbeats (counters by sum, sketches by
+    /// t-digest merge) into one run-wide live view.
+    pub fn ship(
+        &self,
+        partition: RecordsShardPartition,
+        heartbeat: MetricsHeartbeat,
+    ) -> Result<()> {
         let mut client = TcpCellClient::connect(&self.controller_addr)
             .with_context(|| format!("cell {} connecting to controller", self.cell_id))?;
         client
@@ -89,6 +95,12 @@ impl CellRecordsShipper {
                 cell_id: self.cell_id,
             })
             .context("cell sending hello")?;
+        client
+            .send(&CellMessage::Heartbeat {
+                cell_id: self.cell_id,
+                heartbeat: Box::new(heartbeat),
+            })
+            .context("cell shipping heartbeat")?;
         client
             .send(&CellMessage::Partition(partition))
             .context("cell shipping partition")?;

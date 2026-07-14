@@ -1690,12 +1690,35 @@ async fn execute_native_inner(
     // cell's records in global order into the single authoritative report. Absent
     // the controller address (the single-process path) this is inert.
     if let Some(shipper) = crate::cellular_cell::CellRecordsShipper::from_env() {
-        let records = captured
+        let records: Vec<RecordIngest> = captured
             .iter()
             .map(|record| record.ingest.clone())
             .collect();
+        // Build this cell's final heartbeat from the same records so the controller
+        // can merge the cells' live views (counters summed, sketches t-digest-merged).
+        let mut heartbeat = aiperf::cellular::HeartbeatAccumulator::new();
+        let mut completed = 0_u64;
+        let mut errored = 0_u64;
+        for record in &records {
+            crate::heartbeat_lane::observe_ingest(&mut heartbeat, record);
+            if record.errored || record.canceled {
+                errored += 1;
+            } else {
+                completed += 1;
+            }
+        }
+        let counters = aiperf::cellular::HeartbeatCounters {
+            issued: records.len() as u64,
+            completed,
+            errored,
+        };
+        let heartbeat = heartbeat.snapshot(
+            capture.clock.now_ns().saturating_sub(start_ns),
+            counters,
+            aiperf::cellular::HeartbeatSaturation::default(),
+        );
         let partition = RecordsShardPartition::new(shipper.cell_id(), records);
-        shipper.ship(partition)?;
+        shipper.ship(partition, heartbeat)?;
     }
     let gpu_telemetry = sidecars.gpu_telemetry.as_ref();
     let network_latency = sidecars.network_latency.as_ref();

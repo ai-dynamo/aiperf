@@ -35,6 +35,40 @@ use serde::Serialize;
 const HEARTBEAT_LOG_ENV: &str = "AIPERF_CELLULAR_HEARTBEAT_LOG";
 const HEARTBEAT_PROTOCOL_VERSION: u32 = 1;
 
+/// Feeds one completed record's latency facts into a heartbeat accumulator, matching
+/// the report's exact record-metric definitions (`metrics_core::accumulator`) so the
+/// live sketch converges to the exact report. Valid (non-errored, non-cancelled)
+/// records only. TTFT is the non-negative first-token gap, latency the whole request,
+/// and ITL `(latency − ttft)/(osl − 1)` with authoritative
+/// `osl = usage.completion_tokens` (else observed output+reasoning) for `osl ≥ 2` —
+/// one value per request, matching the report's `inter_token_latency` distribution
+/// rather than a per-token one. All milliseconds. Shared by the single-process live
+/// lane and the cellular cell's final heartbeat.
+pub(crate) fn observe_ingest(accumulator: &mut HeartbeatAccumulator, ingest: &RecordIngest) {
+    if ingest.errored || ingest.canceled {
+        return;
+    }
+    let ttft_ms = ingest
+        .first_token_ns
+        .map(|first| first - ingest.start_ns)
+        .filter(|delta| *delta >= 0)
+        .map(|delta| delta as f64 / 1e6);
+    let latency_ms =
+        (ingest.end_ns >= ingest.start_ns).then(|| (ingest.end_ns - ingest.start_ns) as f64 / 1e6);
+    let osl = ingest
+        .usage
+        .completion_tokens
+        .or_else(|| ingest.tokens.output_sequence_length());
+    // `Option<f64>` yields 0 or 1 value: one mean-ITL sample per request.
+    let inter_token_ms = match (ttft_ms, latency_ms, osl) {
+        (Some(ttft), Some(latency), Some(osl)) if osl >= 2 => {
+            Some((latency - ttft) / (osl - 1) as f64)
+        }
+        _ => None,
+    };
+    accumulator.observe(ttft_ms, inter_token_ms, latency_ms);
+}
+
 /// A JSON-safe percentile projection of one t-digest sketch.
 #[derive(Serialize)]
 struct SketchProjection {
@@ -106,39 +140,9 @@ impl HeartbeatLane {
         })))
     }
 
-    /// Feeds one completed record's latency facts into the live sketches, matching
-    /// the report's exact record-metric definitions (`metrics_core::accumulator`) so
-    /// the live sketch converges to the exact report. Valid (non-errored,
-    /// non-cancelled) records only. TTFT is the non-negative first-token gap, latency
-    /// the whole request, and ITL `(latency − ttft)/(osl − 1)` with authoritative
-    /// `osl = usage.completion_tokens` (else observed output+reasoning) for `osl ≥ 2`
-    /// — one value per request, matching the report's `inter_token_latency`
-    /// distribution rather than a per-token one. All milliseconds.
+    /// Feeds one completed record's latency facts into the live sketches.
     pub(crate) fn observe_record(&self, ingest: &RecordIngest) {
-        if ingest.errored || ingest.canceled {
-            return;
-        }
-        let ttft_ms = ingest
-            .first_token_ns
-            .map(|first| first - ingest.start_ns)
-            .filter(|delta| *delta >= 0)
-            .map(|delta| delta as f64 / 1e6);
-        let latency_ms = (ingest.end_ns >= ingest.start_ns)
-            .then(|| (ingest.end_ns - ingest.start_ns) as f64 / 1e6);
-        let osl = ingest
-            .usage
-            .completion_tokens
-            .or_else(|| ingest.tokens.output_sequence_length());
-        // `Option<f64>` yields 0 or 1 value: one mean-ITL sample per request.
-        let inter_token_ms = match (ttft_ms, latency_ms, osl) {
-            (Some(ttft), Some(latency), Some(osl)) if osl >= 2 => {
-                Some((latency - ttft) / (osl - 1) as f64)
-            }
-            _ => None,
-        };
-        self.accumulator
-            .borrow_mut()
-            .observe(ttft_ms, inter_token_ms, latency_ms);
+        observe_ingest(&mut self.accumulator.borrow_mut(), ingest);
     }
 
     /// Snapshots the sketches with the cadence's counters and writes one NDJSON
