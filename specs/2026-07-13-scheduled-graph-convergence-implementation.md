@@ -62,12 +62,13 @@ Scheduled resilient/fail-fast is wired in `rust/aiperf/src/request_rate.rs`: `Re
 
 ## 3. P1 renames (carried in this change)
 
-Implements `2026-07-13-p1-generic-execution-substrate-names.md` verbatim; flips that spec's status to **built**. Pure rename + dispatch-method consolidation, **no behavior change**, suite stays green unmodified.
+Implements the **rename** half of `2026-07-13-p1-generic-execution-substrate-names.md`; flips that spec's status to **built (renames)**. Pure rename, **no behavior change**, suite stays green unmodified (692 aiperf lib + runner stdio/graph/parity). Landed after the concurrent bodyplan work committed `http.rs`, using `\b`-anchored renames so compound names (`LocalGraphTraceExecutionBackend`) stayed untouched.
 
-- **Group A** (shared DTOs + `TransportSink` methods): `PreparedHttpTurn`→`PreparedTurn`, `MeasuredTurnContext`→`MeasuredContext`, `MeasuredTurnOutcome`→`MeasuredOutcome`, `HttpTurnDispatchResult`→`DispatchResult`; the ~6 `TransportSink` dispatch methods collapse to `dispatch_measured` + `dispatch_collect[_streaming]`.
-- **Group B** (placement seams): `HttpTurnExecutionBackend`→`RequestExecutor`, `GraphTraceExecutionBackend`→`TracePlacement`, factories + thread-per-core impls renamed in parallel; `inference_dimensions` decoupled to `&PreparedTurn`.
+- **Group A** (shared DTOs): `PreparedHttpTurn`→`PreparedTurn`, `MeasuredTurnContext`→`MeasuredContext`, `MeasuredTurnOutcome`→`MeasuredOutcome`, `HttpTurnDispatchResult`→`DispatchResult`.
+- **Group B** (placement seams, kept as two traits): `HttpTurnExecutionBackend`→`RequestExecutor`, `GraphTraceExecutionBackend`→`TracePlacement`, factories + thread-per-core impls renamed in parallel.
+- **Dispatch/execute methods** renamed to the level-generic names: `dispatch_measured`, `dispatch_collect[_streaming]`, `dispatch_collect_with_observer` (private), `execute_measured[_streaming]`.
 
-The two placement traits stay **two** traits (per-request vs per-trace) — merging them is the deferred v2 structural work, out of scope here.
+**Deferred (structural, not renames):** the method-count *fold* (collapsing `dispatch_collect_with_observer` into `dispatch_collect_streaming`) and the `inference_dimensions(&TurnToSend)`→`(&PreparedTurn)` signature decoupling — both are hot-dispatch-path signature refactors, deferred to keep this change rename-only. See the P1 spec's 2026-07-14 addendum. The two placement traits stay **two** traits — merging them is the deferred v2 structural work.
 
 ## 4. Incidental cleanups (audit §"Incidental cleanups surfaced")
 

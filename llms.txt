@@ -562,8 +562,10 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   (graph fail-fast/abort-run vs. scheduled resilient). Corrects the
   graph-is-metrics-lite impression; flags incidental cleanups; no refactor.
 - `specs/2026-07-13-p1-generic-execution-substrate-names.md` — **P1 naming pass**
-  (design): give the already-shared execution substrate one generic vocabulary
-  and collapse `TransportSink`'s ~6 dispatch methods to two primitives.
+  (built: renames; fold + `inference_dimensions` signature deferred — see the
+  2026-07-14 addendum): give the already-shared execution substrate one generic
+  vocabulary. The DTO/placement/method renames landed; collapsing `TransportSink`'s
+  dispatch methods to two primitives is a deferred structural refactor.
   `PreparedHttpTurn`/`MeasuredTurn*`/`HttpTurnDispatchResult` →
   `PreparedTurn`/`Measured*`/`DispatchResult`; placement seams →
   `RequestExecutor` (per-request) / `TracePlacement` (per-trace). Pure rename +
@@ -583,8 +585,9 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   dormant `Resilient`/`Continue` library policies, scheduled `Abort` latches a
   `Failed`-terminal `bail!`. Keeps `DurationGraphStop`/`ScheduledGraphArrival` as
   documented unwired seams; documents why scheduled streaming dispatch stays off.
-  P1 renames and the discarded-observer cleanup are deferred (both touch
-  `http.rs`/`metrics.rs`, under concurrent edit by the parallel bodyplan work).
+  Carries the P1 rename pass (DTO/placement/method renames, landed after the
+  concurrent bodyplan work committed `http.rs`); the P1 method-fold,
+  `inference_dimensions` signature change, and discarded-observer cleanup stay deferred.
 - `specs/2026-07-13-segment-unification-design.md` — **segment unification**
   (design): collapse `Turn`'s five body fields (content/messages/raw_payload/
   raw_messages/raw_token_ids) into segment `Handle`s in the one `SegmentPool`;

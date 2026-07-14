@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 # P1 — Generic shared names for the execution substrate
 
 **Date:** 2026-07-13
-**Status:** design (proposed, not built). **Revised 2026-07-13** after a naming review caught two collisions: `PreparedRequest` and `TraceExecutor` are already-taken names in crate `aiperf`, so the picks are now `PreparedTurn` and `TracePlacement` (see §3 note).
+**Status:** built (renames) — see the 2026-07-14 addendum. The Group A/B identifier and method renames are implemented; the method-count *consolidation* (fold) and the `inference_dimensions` signature decoupling are deferred. **Revised 2026-07-13** after a naming review caught two collisions: `PreparedRequest` and `TraceExecutor` are already-taken names in crate `aiperf`, so the picks are now `PreparedTurn` and `TracePlacement` (see §3 note).
 **Scope:** A **naming + dispatch-method-consolidation** pass over the execution substrate the scheduled and graph online paths *already share*. Pure rename + de-duplication — **no behavior change, no structural merge**. Premised on the production audit `2026-07-13-scheduled-graph-production-convergence.md`.
 
 > This supersedes the withdrawn "unify the dispatch seam" P1 draft, which was built on the false premise that the graph path was metrics-lite. The graph path (`RunnerGraphSink`) is full-fidelity and already calls the same `TransportSink` with the same `PreparedHttpTurn` and `NativeMetricsObserver`. What's actually wrong is that the shared substrate is **named path-specifically** (`Http*` / `Turn*`) and reached through a **sprawl of ~6 near-duplicate `TransportSink` dispatch methods**, so the convergence is invisible in the code.
@@ -88,3 +88,34 @@ Modest but real: the shared substrate becomes **visibly** shared (one vocabulary
 
 - `2026-07-13-scheduled-graph-production-convergence.md` — the audit this is premised on (what's shared vs. different).
 - `2026-07-12-scheduled-worker-local-accumulation.md` — Track A A1, which built the worker-local measured seam being renamed here.
+- `2026-07-13-scheduled-graph-convergence-implementation.md` — the change that carried these renames into the tree.
+
+## Addendum — 2026-07-14 (built: renames; deferred: consolidation)
+
+The rename half of this pass landed. Group A DTOs (`PreparedHttpTurn`→`PreparedTurn`,
+`MeasuredTurnContext`→`MeasuredContext`, `MeasuredTurnOutcome`→`MeasuredOutcome`,
+`HttpTurnDispatchResult`→`DispatchResult`) and Group B placement seams
+(`HttpTurnExecutionBackend`→`RequestExecutor`, `ThreadPerCoreHttpExecutionBackend`→
+`ThreadPerCoreRequestExecutor`, `Http`/`NativeHttpExecutionBackendFactory`→
+`RequestExecutor`/`NativeRequestExecutorFactory`; `GraphTraceExecutionBackend`→
+`TracePlacement`, `ThreadPerCoreGraphTraceExecutionBackend`→`ThreadPerCoreTracePlacement`,
+`GraphTraceExecutionBackendFactory`→`TracePlacementFactory`) are renamed. The dispatch
+methods are renamed to the level-generic names (`dispatch_measured`,
+`dispatch_collect[_streaming]`, `execute_measured[_streaming]`, plus the private
+`dispatch_collect_with_observer`). Pure rename, no behavior change; the full suite
+(692 aiperf lib + runner stdio/graph/parity) stays green unmodified — the §5 correctness
+argument.
+
+Two items in §2/§6 are **deferred, not built**, because they are structural refactors of
+the hot dispatch path (which was concurrently under a BodyPlan refactor), not renames:
+1. **The method-count fold.** `dispatch_collect_with_observer` remains a private primitive
+   that `dispatch_collect`/`dispatch_collect_streaming` wrap; it is not yet folded into
+   `dispatch_collect_streaming` (would change that method's signature to take
+   `Option<&dyn TurnResponseObserver>` and re-point callers). So the surface is renamed but
+   still ~3 collect methods, not the promised 2.
+2. **`inference_dimensions(&TurnToSend)`→`(&PreparedTurn)`** decoupling — a trait+impl+caller
+   signature change, left for the same reason.
+
+Two placement traits remain two traits, as §3 intends. `LocalGraphTraceExecutionBackend`
+was intentionally **not** renamed: it owns the `TraceExecutor` and executes a trace locally;
+it is not a placement.
