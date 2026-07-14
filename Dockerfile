@@ -90,21 +90,32 @@ ENV PATH="/root/.cargo/bin:${PATH}" \
 RUN uv pip install --python "${VIRTUAL_ENV}/bin/python" "maturin[patchelf]"
 
 # The runner's default `dynosim` feature path-depends on the external
-# dynamo-aiperf-native repo. Clone it adjacent to the workspace at a pinned ref,
+# ai-dynamo/dynamo repo. Fetch it adjacent to the workspace at a pinned rev,
 # mirroring how ai-dynamo stages its external native deps (nixl/ucx/gdrcopy are
 # git-cloned at ARG-pinned refs in its wheel_builder). rust/aiperf/Cargo.toml
 # resolves `../../../../../dynamo-aiperf-native/lib/mocker`, which from
-# /workspace/rust/aiperf lands at /dynamo-aiperf-native — hence the clone target.
-# A private fork requires the build to supply git credentials (token/secret).
-ARG DYNAMO_AIPERF_NATIVE_REPO=https://github.com/ajcasagrande/dynamo.git
-ARG DYNAMO_AIPERF_NATIVE_REF=ajc/dynamo-aiperf-skeleton
-RUN git clone --depth 1 --branch "${DYNAMO_AIPERF_NATIVE_REF}" \
-        "${DYNAMO_AIPERF_NATIVE_REPO}" /dynamo-aiperf-native
+# /workspace/rust/aiperf lands at /dynamo-aiperf-native — hence the target dir.
+# REF is pinned to an exact SHA (shallow fetch-by-rev) for a reproducible build;
+# a branch name also works. Override REPO/REF to build against a different tree.
+ARG DYNAMO_AIPERF_NATIVE_REPO=https://github.com/ai-dynamo/dynamo.git
+ARG DYNAMO_AIPERF_NATIVE_REF=14e2cf76b04736e9b99412dfbe76cf1af45ae67a
+RUN git init -q /dynamo-aiperf-native \
+    && git -C /dynamo-aiperf-native remote add origin "${DYNAMO_AIPERF_NATIVE_REPO}" \
+    && git -C /dynamo-aiperf-native fetch --depth 1 origin "${DYNAMO_AIPERF_NATIVE_REF}" \
+    && git -C /dynamo-aiperf-native checkout -q FETCH_HEAD
 
 # Copy the frontend sources plus the Rust workspace the runner wheel compiles.
 # The runner wheel's pyproject.toml is co-located with its crate in rust/runner.
-COPY pyproject.toml README.md LICENSE ATTRIBUTIONS.md ./src/ /workspace/
+# src/ is copied to /workspace/src (not flattened) so the real repo layout is
+# preserved: the Rust build `include_bytes!`/`include_str!`s a few Python-tree
+# assets via `rust/aiperf/src/...→ src/aiperf/dataset/generator/assets/...`, and
+# hatchling still auto-detects the src-layout frontend package.
+COPY pyproject.toml README.md LICENSE ATTRIBUTIONS.md /workspace/
+COPY src /workspace/src
 COPY Cargo.toml Cargo.lock /workspace/
+# .cargo/config.toml sets `--cfg tokio_unstable`, required to compile dynosim's
+# dynamo-runtime dependency (it uses Tokio's unstable runtime-metrics API).
+COPY .cargo /workspace/.cargo
 COPY rust /workspace/rust
 
 # Build the Python frontend wheel, then compile the native runner wheel with
