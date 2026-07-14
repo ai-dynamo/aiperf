@@ -72,6 +72,13 @@ class RustSubprocessExecutor(RunExecutor):
             request = self._request_for_run(run)
             _clear_prior_report(run.artifact_dir)
             completed = self.installation.execute(request)
+            # Surface the runner's control-plane stderr (endpoint readiness
+            # probe progress lives here) in the run log regardless of outcome.
+            # The runner reserves stdout for its single terminal JSON line, so
+            # readiness "waiting for model", 404-fallback, and inference-probe
+            # lines only reach operators through stderr forwarding. On failure
+            # the same text is additionally embedded in the error detail below.
+            _forward_runner_stderr(completed.stderr)
             terminal = _parse_terminal(
                 completed.stdout,
                 run,
@@ -108,6 +115,26 @@ class RustSubprocessExecutor(RunExecutor):
         )
         self.installation.preflight_request(authored)
         return authored
+
+
+def _forward_runner_stderr(stderr: bytes) -> None:
+    """Re-emit the native runner's stderr through the aiperf logger.
+
+    The runner's stdout is contractually one terminal JSON line, so its
+    human-readable readiness/diagnostic trace is written to stderr. Forwarding
+    it here (redacted, line by line) lets that trace land in ``logs/aiperf.log``
+    on both success and failure, which is where operators and the pre-flight
+    readiness integration tests look for probe progress.
+    """
+    if not stderr:
+        return
+    text = redact_string(stderr.decode(errors="replace")).strip()
+    if not text:
+        return
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            logger.info("aiperf-runner: %s", stripped)
 
 
 def _clear_prior_report(artifact_dir: Path) -> None:

@@ -287,11 +287,82 @@ fn readiness_classifier(success: &ReadinessSuccess) -> Arc<dyn ReadinessResponse
 struct PreparedReadinessTarget {
     profile_id: String,
     model: String,
+    /// Authored base URL for this target, used verbatim in progress and
+    /// timeout diagnostics so operators can correlate the failing endpoint.
+    base_url: String,
     request: ReadinessAttemptRequest,
+    /// Endpoint-owned success condition, retained to pick the exact progress
+    /// message (model listing vs. inference liveness) and to gate the
+    /// models-mode base-URL fallback.
+    success: ReadinessSuccess,
+    /// Base-URL `GET` issued when a models-listing probe returns 404, matching
+    /// the Python probe's "server has no model list but is responsive" path.
+    fallback: Option<ReadinessAttemptRequest>,
     timeout_ns: i64,
     interval_ns: i64,
     request_timeout_floor_ns: i64,
     classifier: Arc<dyn ReadinessResponseClassifier>,
+}
+
+impl PreparedReadinessTarget {
+    /// Emit the endpoint-appropriate readiness-ready progress line to stderr.
+    ///
+    /// The Python orchestrator forwards the runner's stderr into the run log,
+    /// so these lines are the operator-facing readiness trace. Message wording
+    /// mirrors `src/aiperf/common/readiness_probe.py` so existing log-scraping
+    /// and integration expectations continue to match on the native path.
+    fn log_ready(&self, attempts: usize, response: &ReadinessAttemptResponse) {
+        match &self.success {
+            ReadinessSuccess::ModelListed(_) => {
+                eprintln!(
+                    "readiness: Model '{}' ready at {} after {attempts} attempt(s)",
+                    self.model, self.base_url
+                );
+            }
+            ReadinessSuccess::NonServerError => {
+                let status = response
+                    .status
+                    .map_or_else(|| "unknown".to_owned(), |value| value.to_string());
+                eprintln!(
+                    "readiness: Inference probe ready at {} (status={status}, attempt {attempts})",
+                    self.request.url
+                );
+            }
+            ReadinessSuccess::SuccessfulStatus => {
+                eprintln!(
+                    "readiness: endpoint ready at {} after {attempts} attempt(s)",
+                    self.request.url
+                );
+            }
+        }
+    }
+
+    /// Emit the endpoint-appropriate retry progress line to stderr.
+    fn log_retry(&self, attempts: usize, response: &ReadinessAttemptResponse, interval_s: f64) {
+        let status = response
+            .status
+            .map_or_else(|| "connection error".to_owned(), |value| value.to_string());
+        match &self.success {
+            ReadinessSuccess::ModelListed(_) if response.status == Some(200) => {
+                eprintln!(
+                    "readiness: Model '{}' not yet in {} (attempt {attempts}), retrying in {interval_s}s",
+                    self.model, self.request.url
+                );
+            }
+            ReadinessSuccess::NonServerError => {
+                eprintln!(
+                    "readiness: Inference probe to {} returned {status} (attempt {attempts}), retrying in {interval_s}s",
+                    self.request.url
+                );
+            }
+            _ => {
+                eprintln!(
+                    "readiness: probe to {} returned {status} (attempt {attempts}), retrying in {interval_s}s",
+                    self.request.url
+                );
+            }
+        }
+    }
 }
 
 impl fmt::Debug for PreparedReadinessTarget {
@@ -418,9 +489,36 @@ fn prepare_target(
         }
         ReadinessMethod::Post => POST_REQUEST_TIMEOUT_FLOOR_NS,
     };
+    let success = request.success.clone();
+    // A models-listing probe accepts a responsive-but-listless server: when
+    // GET /v1/models 404s (endpoint disabled or unimplemented), a plain 2xx on
+    // the base URL proves the stack is up. Only this success mode declares the
+    // fallback; inference/liveness probes never fall back.
+    let fallback = if matches!(success, ReadinessSuccess::ModelListed(_)) {
+        let fallback_url = readiness_url(base_url, "/").with_context(|| {
+            format!(
+                "composing readiness base-URL fallback for profile {:?}",
+                profile.profile_id
+            )
+        })?;
+        Some(ReadinessAttemptRequest {
+            method: ReadinessMethod::Get,
+            url: fallback_url,
+            headers: request.headers.clone(),
+            body: None,
+            timeout_ns,
+            connection_reuse: profile.connection_reuse,
+            client: profile.client.clone(),
+        })
+    } else {
+        None
+    };
     Ok(PreparedReadinessTarget {
         profile_id: profile.profile_id.clone(),
         model: model.to_owned(),
+        base_url: base_url.to_owned(),
+        success,
+        fallback,
         request: ReadinessAttemptRequest {
             method: request.method,
             url,
@@ -508,6 +606,7 @@ async fn wait_for_target(
         .ok_or_else(|| anyhow!("readiness deadline exceeds the native Clock range"))?;
     let mut attempts = 0usize;
     let mut last_response = ReadinessAttemptResponse::default();
+    let interval_s = target.interval_ns as f64 / 1_000_000_000.0;
 
     loop {
         let remaining_ns = deadline_ns.saturating_sub(clock.now_ns());
@@ -520,8 +619,37 @@ async fn wait_for_target(
             remaining_ns.min(target.interval_ns.max(target.request_timeout_floor_ns));
         let response = transport.execute(request).await;
         if target.classifier.is_ready(&response) {
+            target.log_ready(attempts, &response);
             return Ok(attempts);
         }
+        // Models-listing probes accept a responsive base URL when the model
+        // list is unavailable (404). The fallback is a single extra GET within
+        // the same attempt; a 2xx there proves liveness even without a catalog.
+        if response.status == Some(404)
+            && let Some(fallback) = &target.fallback
+        {
+            let fallback_remaining_ns = deadline_ns.saturating_sub(clock.now_ns());
+            if fallback_remaining_ns > 0 {
+                let mut fallback_request = fallback.clone();
+                fallback_request.timeout_ns = fallback_remaining_ns
+                    .min(target.interval_ns.max(target.request_timeout_floor_ns));
+                let fallback_response = transport.execute(fallback_request).await;
+                if fallback_response
+                    .status
+                    .is_some_and(|status| (200..300).contains(&status))
+                {
+                    eprintln!(
+                        "readiness: /v1/models not available at {}; base URL responded {} — accepting as ready",
+                        target.base_url,
+                        fallback_response
+                            .status
+                            .expect("checked 2xx status is present")
+                    );
+                    return Ok(attempts);
+                }
+            }
+        }
+        target.log_retry(attempts, &response, interval_s);
         last_response = response;
 
         let remaining_ns = deadline_ns.saturating_sub(clock.now_ns());
@@ -548,9 +676,10 @@ fn readiness_timeout(
         .as_deref()
         .unwrap_or("no response diagnostic");
     anyhow!(
-        "readiness timed out for profile {:?}, model {:?} after {attempts} attempt(s); last status: {status} ({diagnostic})",
+        "Timed out waiting for endpoint readiness for profile {:?}, model {:?} at {} after {attempts} attempt(s); last status: {status} ({diagnostic})",
         target.profile_id,
-        target.model
+        target.model,
+        target.base_url
     )
 }
 
@@ -819,6 +948,53 @@ mod tests {
             assert_eq!(attempt.url(), "http://example.test/v1/models");
             assert!(attempt.body().is_none());
         }
+    }
+
+    #[test]
+    fn chat_models_readiness_falls_back_to_base_url_on_404() {
+        let endpoints = EndpointRegistry::builtin().unwrap();
+        let profiles = [profile(
+            "chat",
+            vec!["http://example.test/v1/chat/completions".into()],
+            10.0,
+        )];
+        let models = ["model-a".to_owned()];
+
+        let plan = NativeHttpReadinessPlanFactory
+            .prepare(ReadinessPlanInput {
+                endpoints: &endpoints,
+                profiles: &profiles,
+                models: &models,
+            })
+            .unwrap();
+        let clock = Rc::new(AdvancingClock::new());
+        // Primary GET /v1/models 404s (endpoint disabled); the base-URL GET
+        // then answers 2xx, which the models probe accepts as ready.
+        let transport = Rc::new(ScriptedTransport::new([
+            ReadinessAttemptResponse {
+                status: Some(404),
+                body: Some(r#"{"detail":"Not Found"}"#.into()),
+                error: None,
+            },
+            ReadinessAttemptResponse {
+                status: Some(200),
+                body: Some(r#"{"message":"AIPerf Mock Server"}"#.into()),
+                error: None,
+            },
+        ]));
+
+        let report = run_plan(plan.as_ref(), clock, transport.clone()).unwrap();
+
+        assert_eq!(report.targets_ready, 1);
+        // Both the primary probe and the single fallback GET land in one attempt.
+        assert_eq!(report.attempts, 1);
+        let attempts = transport.attempts.borrow();
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0].method(), ReadinessMethod::Get);
+        assert_eq!(attempts[0].url(), "http://example.test/v1/models");
+        assert_eq!(attempts[1].method(), ReadinessMethod::Get);
+        assert_eq!(attempts[1].url(), "http://example.test/");
+        assert!(attempts[1].body().is_none());
     }
 
     #[test]
