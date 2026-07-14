@@ -67,19 +67,28 @@ fn capabilities() -> Value {
 fn benchmark_run(legacy: Value) -> Value {
     let mut endpoint = legacy["resources"]["endpoints"]["profiles"][0].clone();
     endpoint.as_object_mut().unwrap().remove("id");
+    let mut cfg = json!({
+        "models": legacy["resources"]["models"],
+        "endpoint": endpoint,
+        "datasets": [legacy["workload"]["config"]["dataset"]],
+        "phases": legacy["workload"]["config"]["phases"],
+        "tokenizer": legacy["workload"]["config"]["tokenizer"],
+        "transport": {"type": legacy["transport"]["type"]},
+        "runtime": {"workers": legacy["workload"]["config"]["worker_count"]}
+    });
+    // Side-channel telemetry producers are authored under `cfg.sidecars`; the
+    // graph path accepts and runs them exactly as the scheduled path does.
+    let sidecars = legacy["resources"]["sidecars"].clone();
+    if !sidecars.is_null() {
+        cfg.as_object_mut()
+            .unwrap()
+            .insert("sidecars".to_owned(), sidecars);
+    }
     json!({
         "benchmark_id": legacy["identity"]["benchmark_id"],
         "artifact_dir": legacy["artifact_target"],
         "random_seed": legacy["identity"]["random_seed"],
-        "cfg": {
-            "models": legacy["resources"]["models"],
-            "endpoint": endpoint,
-            "datasets": [legacy["workload"]["config"]["dataset"]],
-            "phases": legacy["workload"]["config"]["phases"],
-            "tokenizer": legacy["workload"]["config"]["tokenizer"],
-            "transport": {"type": legacy["transport"]["type"]},
-            "runtime": {"workers": legacy["workload"]["config"]["worker_count"]}
-        }
+        "cfg": cfg
     })
 }
 
@@ -168,6 +177,83 @@ fn assert_success(output: &Output) {
     let terminal: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(terminal["event"], "run_terminal");
     assert_eq!(terminal["success"], true);
+}
+
+/// A Graph-IR run must accept and run the same GPU/network/server telemetry
+/// side-channels the scheduled path does. Telemetry is a barrier-synchronized
+/// side-channel, not part of the workload, so an enabled-but-unreachable source
+/// is tolerated (it logs and is skipped) and the run still completes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn graph_run_accepts_enabled_but_unreachable_telemetry_sidecars() {
+    let app = Router::new()
+        .route("/v1/chat/completions", post(chat))
+        .with_state(Arc::new(WireCapture::default()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let endpoint = format!("http://{address}");
+    let temporary = tempfile::tempdir().unwrap();
+    let dynamo_path = temporary.path().join("trace.jsonl");
+    let dynamo_record = json!({
+        "schema": "dynamo.request.trace.v1",
+        "event_type": "request_end",
+        "event_time_unix_ms": 1_000_200,
+        "event_source": "dynamo",
+        "agent_context": {"session_id": "telemetry"},
+        "request": {
+            "request_id": "request-0",
+            "model": "recorded-model",
+            "input_tokens": 16,
+            "output_tokens": 1,
+            "cached_tokens": 0,
+            "request_received_ms": 1_000_000,
+            "total_time_ms": 200,
+            "ttft_ms": 100,
+            "replay": {
+                "trace_block_size": 16,
+                "input_length": 16,
+                "input_sequence_hashes": [123456789]
+            }
+        }
+    });
+    std::fs::write(&dynamo_path, serde_json::to_vec(&dynamo_record).unwrap()).unwrap();
+
+    let dataset = json!({
+        "type": "file",
+        "format": "dynamo_trace",
+        "sampling": "sequential",
+        "synthesis": synthesis(),
+        "path": dynamo_path
+    });
+    let mut request = request(
+        &endpoint,
+        &temporary.path().join("telemetry-artifacts"),
+        "graph-telemetry",
+        dataset,
+    );
+    // An unreachable DCGM endpoint plus a fixed-mean network calibration and a
+    // server-metrics scrape target: none reachable, all authored under the same
+    // sidecar block the scheduled path consumes.
+    request["run"]["resources"]["sidecars"] = json!({
+        "gpu_telemetry": {
+            "collection_interval_ns": 100_000_000,
+            "request_timeout_ns": 50_000_000,
+            "records_path": "gpu.jsonl",
+            "sources": [{"type": "dcgm", "url": "http://127.0.0.1:1/metrics"}]
+        },
+        "network_latency": {"mean_rtt_ns": 250000.0},
+        "server_metrics": {
+            "collection_interval_ns": 100_000_000,
+            "reachability_timeout_ns": 50_000_000,
+            "urls": ["http://127.0.0.1:1/metrics"],
+            "formats": ["json"]
+        }
+    });
+    let output = tokio::task::spawn_blocking(move || run_child(request))
+        .await
+        .unwrap();
+    assert_success(&output);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

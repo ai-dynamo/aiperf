@@ -320,11 +320,8 @@ impl OnlineWorkloadAdapter for OnlineGraphAdapter {
     ) -> Result<()> {
         validate_online_run(context)?;
         ensure!(
-            run.sidecars.gpu_telemetry.is_none()
-                && run.sidecars.network_latency.is_none()
-                && run.sidecars.server_metrics.is_none()
-                && run.sidecars.live_streaming.is_none(),
-            "protocol-v2 graph execution supports only the content-server sidecar"
+            run.sidecars.live_streaming.is_none(),
+            "protocol-v2 graph execution supports the content-server and GPU/network/server telemetry side-channels but not the live-streaming record extension"
         );
         ensure!(
             run.models.items.len() == 1,

@@ -1465,7 +1465,7 @@ fn phase_allows_single_pass_engine(phase: &PhaseSpec) -> bool {
 
 fn seconds_to_ns(value: f64, name: &str) -> Result<i64> {
     ensure!(
-        value.is_finite() && value >= 0.0 && value * 1_000_000_000.0 <= i64::MAX as f64,
+        value.is_finite() && value >= 0.0 && value * 1_000_000_000.0 < i64::MAX as f64,
         "{name} must be finite, non-negative, and representable in nanoseconds"
     );
     Ok((value * 1_000_000_000.0).round_ties_even() as i64)
@@ -1768,6 +1768,10 @@ impl PreparedRunnerOperation for PreparedDynosimGraphOperation {
             move |clock: Rc<dyn Clock>, backends: Rc<dyn OfflineGraphBackendFactory>| {
                 let backends = DynosimGraphPhaseBackendFactory { backends };
                 Ok(Box::pin(async move {
+                    // The offline in-process replay path has no external
+                    // telemetry sources to probe; every phase runs without
+                    // side-channel sidecars.
+                    let phase_sidecars = phases.iter().map(|_| Vec::new()).collect::<Vec<_>>();
                     let phased = run_graph_phases(
                         &phases,
                         &benchmark_id,
@@ -1776,6 +1780,7 @@ impl PreparedRunnerOperation for PreparedDynosimGraphOperation {
                         clock,
                         rng_root,
                         allow_dataset_wrap,
+                        phase_sidecars,
                         &backends,
                     )
                     .await?;

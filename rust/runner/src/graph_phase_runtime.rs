@@ -31,7 +31,9 @@ use aiperf::graph::workload::{
     ImmediateGraphArrival, IntervalGraphArrival, SlotPoolTraceAdmission, TraceAdmissionInfo,
 };
 use aiperf::metrics_core::Phase as MetricsPhase;
-use aiperf::phase_runtime::{RampScheduledPhaseController, ScheduledPhaseController};
+use aiperf::phase_runtime::{
+    RampScheduledPhaseController, ScheduledPhaseController, ScheduledPhaseSidecar,
+};
 use aiperf::rng::{RngRoot, namespace};
 use aiperf::timing::{
     ClockPhaseOrchestrator, ClockPhaseRunnerFactory, LocalPhaseFuture, NoopPhaseObserver,
@@ -510,6 +512,7 @@ impl GraphRecordDrainStop {
 }
 
 struct GraphPhaseExecution {
+    clock: Rc<dyn Clock>,
     context: PhaseContext,
     workload: Rc<GraphWorkload>,
     placement: Rc<dyn GraphTraceExecutionBackend>,
@@ -522,6 +525,7 @@ struct GraphPhaseExecution {
     captured: Rc<RefCell<Vec<CapturedRecord>>>,
     progress: Rc<GraphPhaseProgress>,
     adaptive_sampler: Option<SharedWindowSampler>,
+    sidecars: Vec<Rc<dyn ScheduledPhaseSidecar>>,
     drain_stop: Rc<GraphRecordDrainStop>,
     drain_task: RefCell<Option<tokio::task::JoinHandle<()>>>,
     setup_error: Option<String>,
@@ -623,6 +627,23 @@ impl PhaseExecution for GraphPhaseExecution {
         Ok(())
     }
 
+    fn setup(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
+        let sidecars = self.sidecars.clone();
+        let clock = self.clock.clone();
+        Box::pin(async move {
+            for sidecar in &sidecars {
+                sidecar.start().await.map_err(|error| {
+                    PhaseExecutionError::new(format!("starting graph phase sidecar: {error:#}"))
+                })?;
+            }
+            let phase_start_ns = clock.now_ns();
+            for sidecar in &sidecars {
+                sidecar.on_phase_start(phase_start_ns);
+            }
+            Ok(())
+        })
+    }
+
     fn start_ramps(&self) -> Result<(), PhaseExecutionError> {
         self.start_record_drain()
             .map_err(|error| PhaseExecutionError::new(error.to_string()))?;
@@ -695,10 +716,21 @@ impl PhaseExecution for GraphPhaseExecution {
         self.drain_stop.stop();
         let drain = self.drain_task.borrow_mut().take();
         let failures = self.failures.clone();
+        let sidecars = self.sidecars.clone();
+        let clock = self.clock.clone();
         Box::pin(async move {
             if let Some(drain) = drain {
                 drain.await.map_err(|error| {
                     PhaseExecutionError::new(format!("graph record drain failed: {error}"))
+                })?;
+            }
+            let phase_end_ns = clock.now_ns();
+            for sidecar in &sidecars {
+                sidecar.on_phase_end(phase_end_ns);
+            }
+            for sidecar in &sidecars {
+                sidecar.finish().await.map_err(|error| {
+                    PhaseExecutionError::new(format!("finishing graph phase sidecar: {error:#}"))
                 })?;
             }
             match failures.first() {
@@ -711,6 +743,7 @@ impl PhaseExecution for GraphPhaseExecution {
 
 struct GraphPhaseExecutionFactory {
     phases: RefCell<HashMap<String, PreparedGraphPhase>>,
+    sidecars: RefCell<HashMap<String, Vec<Rc<dyn ScheduledPhaseSidecar>>>>,
     placements: Vec<Rc<dyn GraphTraceExecutionBackend>>,
     captured: Rc<RefCell<Vec<CapturedRecord>>>,
     outcome: Rc<RefCell<GraphWorkloadReport>>,
@@ -761,7 +794,13 @@ impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
             }
             sampler
         });
+        let sidecars = self
+            .sidecars
+            .borrow_mut()
+            .remove(&config.id)
+            .unwrap_or_default();
         Rc::new(GraphPhaseExecution {
+            clock: context.clock(),
             context,
             workload,
             placement: prepared.placement,
@@ -774,6 +813,7 @@ impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
             captured: self.captured.clone(),
             progress,
             adaptive_sampler,
+            sidecars,
             drain_stop: Rc::new(GraphRecordDrainStop::default()),
             drain_task: RefCell::new(None),
             setup_error,
@@ -932,9 +972,14 @@ pub(crate) async fn run_graph_phases(
     clock: Rc<dyn Clock>,
     rng_root: RngRoot,
     allow_dataset_wrap: bool,
+    phase_sidecars: Vec<Vec<Rc<dyn ScheduledPhaseSidecar>>>,
     backends: &dyn RunnerGraphPhaseBackendFactory,
 ) -> Result<GraphPhaseRunOutput> {
     validate_dataset_wrap_policy(phases, input, allow_dataset_wrap)?;
+    ensure!(
+        phase_sidecars.len() == phases.len(),
+        "graph phase sidecars must be provided one list per phase"
+    );
     let trace_instances = GraphTraceInstanceSequence::default();
     let session_slots = phases
         .iter()
@@ -972,8 +1017,17 @@ pub(crate) async fn run_graph_phases(
         .zip(&phase_configs)
         .map(|(phase, config)| (config.id.clone(), phase))
         .collect::<HashMap<_, _>>();
+    // Side-channel telemetry producers are barrier-synchronized, not per-token,
+    // so the graph runtime drives them through the shared phase-sidecar seam the
+    // scheduled runtime uses: start before issuance, finish after drain.
+    let sidecars = phase_configs
+        .iter()
+        .zip(phase_sidecars)
+        .map(|(config, sidecars)| (config.id.clone(), sidecars))
+        .collect::<HashMap<_, _>>();
     let execution_factory: Rc<dyn PhaseExecutionFactory> = Rc::new(GraphPhaseExecutionFactory {
         phases: RefCell::new(prepared),
+        sidecars: RefCell::new(sidecars),
         placements,
         captured: captured.clone(),
         outcome: outcome.clone(),
