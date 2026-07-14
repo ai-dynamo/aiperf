@@ -170,15 +170,20 @@ pub fn run_cellular(
         // run mode/model and configured endpoints. `was_cancelled` is left false — the
         // controller has no cross-cell cancellation.
         //
-        // Two blocks a 1-cell report carries are intentionally NOT reproduced here:
+        // Three blocks a 1-cell report can carry are intentionally NOT reproduced here
+        // (cells ship only their metric records + a heartbeat, so nothing else has a
+        // channel back, and the merged report simply omits them):
         // (1) the coordinator's finalize_run provenance (distribution_id / workload /
         //     alias-resolved endpoint_profiles / extensions) — the controller carries
         //     transport/workload/cells/record_count in its terminal envelope instead
-        //     of replaying the coordinator's alias resolution; and
-        // (2) the grouped per-error detail — cells ship metric records (with the
-        //     error/cancel flags, so error COUNTS are in the metrics) but not the
-        //     messages group_record_errors needs, and a cross-cell regroup could not
-        //     reproduce the single-cell error-list order.
+        //     of replaying the coordinator's alias resolution;
+        // (2) the grouped per-error detail — cells ship the error/cancel flags (so
+        //     error COUNTS are in the metrics) but not the messages group_record_errors
+        //     needs, and a cross-cell regroup could not reproduce the 1-cell order; and
+        // (3) side-channel sidecar data — server_metrics, GPU-telemetry-derived
+        //     metrics, and network-RTT-adjusted metrics — which each cell would scrape
+        //     locally but does not ship. All three are report-fidelity gaps, not metric
+        //     corruption; the record-derived distributions stay byte-identical.
         let warmup =
             merged.export_results(&ExportContext::phase(aiperf::metrics_core::Phase::Warmup));
         let outcome = aiperf::metrics_core::report::RunOutcome {
@@ -315,12 +320,21 @@ fn build_cell_envelope(
     Ok(cell)
 }
 
-/// Rejects a cellular run whose executor never ships a records-shard partition. The
-/// cell ship hook lives only in the scheduled HTTP execution path; a gRPC or dynosim
-/// transport, or a graph-program dataset (`dag_jsonl`/`weka_trace`/`dynamo_trace`),
-/// runs a different executor that never ships, so the controller would wait forever.
-/// Fail closed with a clear error instead. (Cellular is designed for the scheduled
-/// online path; other modes are out of scope for the roadmap's Phase 2.)
+/// Whitelists a cellular run to the exact shape the partition/issuance seam is sound
+/// for: the scheduled HTTP transport over **synthetic, single-turn** datasets. Two
+/// invariants underpin the byte-parity contract and each fails closed here:
+///
+/// - **Records ship only from the scheduled HTTP executor.** A gRPC/dynosim transport
+///   or a non-synthetic (`file`/`public`, incl. graph-program) dataset runs a
+///   different executor that never ships a partition, so the controller would hang.
+/// - **One sampler draw must equal one dispatched turn.** [`PartitionedSampler`]
+///   partitions by conversation *draw*, but the issuer stamps a per-*turn* ordinal
+///   ([`CellularAutonomousIssuer`]); a multi-turn conversation makes the two diverge,
+///   so the merged report silently reorders (or, for variable turn counts, draws a
+///   different instance set). Only `turns == 1` (the default) is sound.
+///
+/// [`PartitionedSampler`]: aiperf::dataset::sampler
+/// [`CellularAutonomousIssuer`]: aiperf::cellular::CellularAutonomousIssuer
 fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
     if let Some(transport) = envelope
         .pointer("/run/cfg/transport/type")
@@ -331,21 +345,26 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
             "cellular runs support only the scheduled HTTP transport; got transport.type={transport:?}"
         );
     }
-    if let Some(datasets) = envelope
+    let datasets = envelope
         .pointer("/run/cfg/datasets")
         .and_then(serde_json::Value::as_array)
-    {
-        for dataset in datasets {
-            for key in ["type", "format"] {
-                if let Some(kind) = dataset.get(key).and_then(serde_json::Value::as_str)
-                    && matches!(kind, "dag_jsonl" | "weka_trace" | "dynamo_trace")
-                {
-                    bail!(
-                        "cellular runs do not support graph-program datasets ({kind}); they run a non-shipping executor"
-                    );
-                }
-            }
-        }
+        .context("run cfg has no datasets array")?;
+    for dataset in datasets {
+        let kind = dataset.get("type").and_then(serde_json::Value::as_str);
+        ensure!(
+            kind == Some("synthetic"),
+            "cellular runs support only synthetic datasets (whose conversations the sampler can partition one-draw-per-turn); got dataset type {kind:?}"
+        );
+        // Single-turn only: `turns` absent defaults to a fixed 1; a fixed `{value: 1}`
+        // is the only other single-turn form. Anything else (a larger value or a
+        // distribution) makes a conversation dispatch multiple turns.
+        let single_turn = dataset.get("turns").is_none_or(|turns| {
+            turns.get("value").and_then(serde_json::Value::as_f64) == Some(1.0)
+        });
+        ensure!(
+            single_turn,
+            "cellular runs support only single-turn conversations (turns == 1); a multi-turn dataset diverges the sampler draw index from the issuer's per-turn ordinal and silently breaks byte parity"
+        );
     }
     Ok(())
 }
@@ -537,19 +556,32 @@ mod tests {
 
     #[test]
     fn rejects_non_shipping_run_shapes() {
-        // The scheduled HTTP path (default/http transport, non-graph dataset) passes.
-        let ok = serde_json::json!({"run": {"cfg": {
-            "transport": {"type": "http"},
-            "datasets": [{"type": "synthetic"}],
-        }}});
-        assert!(validate_cellular_run_shape(&ok).is_ok());
-        assert!(validate_cellular_run_shape(&serde_json::json!({"run": {"cfg": {}}})).is_ok());
-        // A non-HTTP transport or a graph-program dataset never ships → fail closed.
+        // http transport over a synthetic, single-turn dataset (turns absent, or a
+        // fixed 1) is the supported shape.
+        for ok in [
+            serde_json::json!({"run": {"cfg": {
+                "transport": {"type": "http"},
+                "datasets": [{"type": "synthetic"}],
+            }}}),
+            serde_json::json!({"run": {"cfg": {
+                "datasets": [{"type": "synthetic", "turns": {"value": 1}}],
+            }}}),
+        ] {
+            assert!(
+                validate_cellular_run_shape(&ok).is_ok(),
+                "should accept {ok}"
+            );
+        }
+        // Fail closed on: a non-HTTP transport; a non-synthetic (graph/trace/public)
+        // dataset; a missing datasets array; or a multi-turn synthetic dataset.
         for bad in [
-            serde_json::json!({"run": {"cfg": {"transport": {"type": "dynosim_offline"}}}}),
-            serde_json::json!({"run": {"cfg": {"transport": {"type": "grpc"}}}}),
-            serde_json::json!({"run": {"cfg": {"datasets": [{"format": "dag_jsonl"}]}}}),
-            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "weka_trace"}]}}}),
+            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "synthetic"}], "transport": {"type": "dynosim_offline"}}}}),
+            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "synthetic"}], "transport": {"type": "grpc"}}}}),
+            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "file", "format": "dag_jsonl"}]}}}),
+            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "public"}]}}}),
+            serde_json::json!({"run": {"cfg": {}}}),
+            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "synthetic", "turns": {"value": 3}}]}}}),
+            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "synthetic", "turns": {"mean": 2.0, "stddev": 1.0}}]}}}),
         ] {
             assert!(
                 validate_cellular_run_shape(&bad).is_err(),
