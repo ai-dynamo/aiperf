@@ -62,6 +62,10 @@ pub enum FieldValue {
 /// prebuilt body); a [`Fields`](BodyPlan::Fields) plan is an ordered named-field
 /// JSON object assembled by the shared materializer.
 #[derive(Debug, Clone, PartialEq)]
+// A `BodyPlan` is built once per turn at lowering, never in a hot per-dispatch
+// loop, so the size gap between the tiny `Raw` handle and the inline field list
+// is immaterial; the `;8` inline capacity avoids reallocation for typical bodies.
+#[allow(clippy::large_enum_variant)]
 pub enum BodyPlan {
     /// A complete prebuilt body spliced/cloned whole (the raw fast path).
     Raw(Handle),
