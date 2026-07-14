@@ -140,6 +140,56 @@ pub fn merge_records_in_global_order(
     Ok(accumulator)
 }
 
+/// Merges every cell's records by **dense re-numbering**, for graph-mode cellular
+/// where cells cannot pre-tile a global dispatch ordinal.
+///
+/// The byte-exact sibling [`merge_records_in_global_order`] requires every record's
+/// [`request_index`](RecordIngest::request_index) to already be a permutation of
+/// `0..total` — the absolute slot a single-cell run assigns. Graph cells cannot
+/// supply that: each cell stamps a **local** `request_index` (`0..N` per cell,
+/// ordered by wall-clock start), so the ordinals collide across cells. This merge
+/// instead concatenates the cells' records in ascending `cell_id` order and assigns a
+/// fresh dense global slot to each, preserving every cell's own start-time order
+/// through the local index it stamped.
+///
+/// This is **numerically correct**. `request_index` only selects which absolute
+/// column slot a record occupies in the store — it never feeds a metric formula — and
+/// phase separation rides each record's [`phase`](RecordIngest::phase) field, not its
+/// slot (see [`ExportContext`](crate::metrics_core::window::ExportContext): "phase
+/// masks are authoritative over wall-clock bounds"). So re-numbering can neither move
+/// a record between phases nor change any per-record value; it only changes which
+/// store column the record lands in.
+///
+/// It is **deterministic-per-topology, not byte-identical** to a single-cell run.
+/// Because concatenation interleaves the cells' records in a different order than a
+/// single cell's dispatch sequence, the order-sensitive floating-point reductions sum
+/// in a different order and can disagree in the last ULP. Sorting the partitions by
+/// `cell_id` makes the output independent of partition arrival order, so at a fixed
+/// topology the result is bit-stable. Unlike [`merge_records_in_global_order`] this
+/// cannot fail: any set of records renumbers into a dense `0..total`, so there is no
+/// permutation precondition to reject.
+pub fn merge_records_by_concatenation(
+    config: MetricsConfig,
+    mut partitions: Vec<RecordsShardPartition>,
+) -> MetricsAccumulator {
+    // Deterministic regardless of arrival order: concatenate in ascending cell_id.
+    partitions.sort_by_key(RecordsShardPartition::cell_id);
+    let mut accumulator = MetricsAccumulator::with_config(config);
+    let mut slot = 0usize;
+    for partition in partitions {
+        // Preserve each cell's own (start-time) order via the local request_index it
+        // stamped, then assign the dense global slot.
+        let mut records = partition.into_records();
+        records.sort_by_key(|record| record.request_index);
+        for mut record in records {
+            record.request_index = Some(slot);
+            accumulator.process_record(&record);
+            slot += 1;
+        }
+    }
+    accumulator
+}
+
 /// Error merging cell records: the union of global ordinals was not a permutation
 /// of `0..total` (dense, unique, in range), so re-ingestion could not proceed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -349,10 +399,11 @@ impl std::error::Error for PartitionCodecError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metrics_core::catalog::MetricTag;
     use crate::metrics_core::ingest::TokenCounts;
     use crate::metrics_core::store::NumericColumn;
     use crate::metrics_core::value::MetricValue;
-    use crate::metrics_core::window::Phase;
+    use crate::metrics_core::window::{ExportContext, Phase};
 
     /// A completed record at global dispatch ordinal `idx`, with real
     /// latency/TTFT/ITL/OSL so summaries are non-trivial.
@@ -667,5 +718,111 @@ mod tests {
         // cell_id-ordered reduction is identical regardless of input order.
         assert_eq!(first.summarize(), second.summarize());
         assert_eq!(first.record_count(), 20);
+    }
+
+    /// A completed record with an explicit phase and the **local** (per-cell)
+    /// request_index a graph cell stamps — deliberately colliding across cells.
+    fn local_record(seed: u64, phase: Phase, local: usize) -> RecordIngest {
+        let mut record = record(seed);
+        record.phase = phase;
+        record.request_index = Some(local);
+        record
+    }
+
+    #[test]
+    fn concatenation_merges_all_cells_and_renumbers_densely() {
+        // Two cells stamp colliding LOCAL ordinals: cell 0 has [0, 1], cell 1 has
+        // [0, 1, 2]. If the merge honored those local indices via insert_record_at,
+        // the overlap would land five records in three slots; dense re-numbering must
+        // place all five at unique global slots.
+        let cell0 = RecordsShardPartition::new(
+            0,
+            vec![
+                local_record(10, Phase::Profiling, 0),
+                local_record(11, Phase::Profiling, 1),
+            ],
+        );
+        let cell1 = RecordsShardPartition::new(
+            1,
+            vec![
+                local_record(20, Phase::Profiling, 0),
+                local_record(21, Phase::Profiling, 1),
+                local_record(22, Phase::Profiling, 2),
+            ],
+        );
+
+        let merged = merge_records_by_concatenation(MetricsConfig::default(), vec![cell0, cell1]);
+        assert_eq!(
+            merged.record_count(),
+            5,
+            "every record must occupy a unique dense slot; none dropped or overwritten"
+        );
+    }
+
+    #[test]
+    fn concatenation_is_deterministic_regardless_of_partition_order() {
+        // cell_id-ordered concatenation must ignore partition arrival order.
+        let p0 = RecordsShardPartition::new(
+            0,
+            vec![
+                local_record(100, Phase::Profiling, 0),
+                local_record(101, Phase::Profiling, 1),
+            ],
+        );
+        let p1 = RecordsShardPartition::new(
+            1,
+            vec![
+                local_record(200, Phase::Profiling, 0),
+                local_record(201, Phase::Profiling, 1),
+                local_record(202, Phase::Profiling, 2),
+            ],
+        );
+
+        let forward =
+            merge_records_by_concatenation(MetricsConfig::default(), vec![p0.clone(), p1.clone()]);
+        let reversed = merge_records_by_concatenation(MetricsConfig::default(), vec![p1, p0]);
+        assert_eq!(
+            forward.export_results(&ExportContext::phase(Phase::Profiling)),
+            reversed.export_results(&ExportContext::phase(Phase::Profiling)),
+            "sorting partitions by cell_id makes the merge independent of arrival order"
+        );
+    }
+
+    #[test]
+    fn concatenation_preserves_phase_separation() {
+        // Phase separation rides each record's `phase` field, not its slot, so
+        // re-numbering must never leak a record across the phase boundary. Each cell
+        // owns a mix of warmup and profiling records under its own local ordinals.
+        let cell0 = RecordsShardPartition::new(
+            0,
+            vec![
+                local_record(10, Phase::Warmup, 0),
+                local_record(11, Phase::Profiling, 1),
+            ],
+        );
+        let cell1 = RecordsShardPartition::new(
+            1,
+            vec![
+                local_record(20, Phase::Warmup, 0),
+                local_record(21, Phase::Warmup, 1),
+                local_record(22, Phase::Profiling, 2),
+            ],
+        );
+
+        let merged = merge_records_by_concatenation(MetricsConfig::default(), vec![cell0, cell1]);
+        assert_eq!(merged.record_count(), 5, "all five records placed");
+
+        let profiling = merged.export_results(&ExportContext::phase(Phase::Profiling));
+        let warmup = merged.export_results(&ExportContext::phase(Phase::Warmup));
+        assert_eq!(
+            profiling.finite_value(MetricTag::RequestCount),
+            Some(2.0),
+            "profiling export sees only the two profiling records"
+        );
+        assert_eq!(
+            warmup.finite_value(MetricTag::RequestCount),
+            Some(3.0),
+            "warmup export sees only the three warmup records"
+        );
     }
 }

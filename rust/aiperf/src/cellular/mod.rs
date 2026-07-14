@@ -57,7 +57,8 @@ pub use issuance::{CellularAutonomousIssuer, DirectIssuanceAuthority, IssuanceAu
 pub use partition::{CellPartition, CellPartitionError, ModuloCellPartition};
 pub use shard::{
     ColumnStorePartition, DirectRecordsShard, PartitionCodecError, RecordsMergeError, RecordsShard,
-    RecordsShardPartition, merge_records_in_global_order, merge_store_partitions,
+    RecordsShardPartition, merge_records_by_concatenation, merge_records_in_global_order,
+    merge_store_partitions,
 };
 pub use sketch::TDigest;
 pub use transport::{
