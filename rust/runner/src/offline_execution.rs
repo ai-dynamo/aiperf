@@ -21,7 +21,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use aiperf::clock::Clock;
-use aiperf::failure::OnFailure;
 use aiperf::dataset::{
     HashIdentityTracePromptStorage, NativeSyntheticMediaGeneratorFactory, SamplerRegistry,
     SegmentStore, TextTokenizer, TraceHashAwareRequestMaterializer,
@@ -43,6 +42,7 @@ use aiperf::dynosim::{
     write_dynamo_per_request_jsonl, write_dynamo_report_json, write_dynamo_worker_artifacts_json,
 };
 use aiperf::endpoints::{Modality, PreparedEndpointTable};
+use aiperf::failure::OnFailure;
 use aiperf::graph::bench::BenchConfig;
 use aiperf::graph::input::GraphInputBundle;
 use aiperf::graph::policy::{
@@ -2297,9 +2297,7 @@ fn create_artifact_target(path: &Path) -> Result<()> {
 
 /// Abort an offline graph run when any root trace failed, surfacing the first
 /// available trace error exactly as the inline call sites once did.
-fn ensure_no_failed_traces(
-    workload: &aiperf::graph::workload::GraphWorkloadReport,
-) -> Result<()> {
+fn ensure_no_failed_traces(workload: &aiperf::graph::workload::GraphWorkloadReport) -> Result<()> {
     if workload.failed == 0 {
         return Ok(());
     }

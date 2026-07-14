@@ -16,8 +16,8 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use aiperf::endpoints::{EndpointId, EndpointRegistry, RawEndpointConfig, RequestContentType};
-use aiperf::failure::OnFailure;
 use aiperf::extensions::AiperfRegistry;
+use aiperf::failure::OnFailure;
 use aiperf::metrics_core::{
     NativeReport, ReportEndpointProfileIdentity, ReportExtensionIdentity, ReportPairRunFacts,
     ReportRunProvenance,

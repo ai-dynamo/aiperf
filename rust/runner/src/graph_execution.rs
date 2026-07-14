@@ -20,6 +20,7 @@ use aiperf::endpoints::{
     CreditPhase, EndpointId, EndpointKey, EndpointRegistry, PreparedEndpointTable, PreparedRequest,
     Turn,
 };
+use aiperf::failure::OnFailure;
 use aiperf::graph::errors::TraceError;
 use aiperf::graph::execution::{GraphTraceExecutionBackend, LocalGraphTraceExecutionBackend};
 use aiperf::graph::materialize::SegmentItemsMaterializer;
@@ -27,7 +28,6 @@ use aiperf::graph::model::{GraphTracePlan, LlmNode};
 use aiperf::graph::placement::{
     GraphPlacementError, GraphTraceExecutionBackendFactory, ThreadPerCoreGraphTraceExecutionBackend,
 };
-use aiperf::failure::OnFailure;
 use aiperf::graph::policy::{
     AbortTraceNodeFailurePolicy, CancellationNodePolicy, CompositeNodeDispatchPolicy,
     NodeDispatchPolicy, NodeFailurePolicy, PrefillSlotNodePolicy, ResilientNodeFailurePolicy,

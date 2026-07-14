@@ -21,10 +21,10 @@ use aiperf::adaptive_core::{
 };
 use aiperf::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
 use aiperf::clock::Clock;
+use aiperf::failure::OnFailure;
 use aiperf::graph::errors::TraceError;
 use aiperf::graph::execution::GraphTraceExecutionBackend;
 use aiperf::graph::input::GraphInputBundle;
-use aiperf::failure::OnFailure;
 use aiperf::graph::policy::{ContinueRunFailurePolicy, FailFastRunFailurePolicy, RunFailurePolicy};
 use aiperf::graph::workload::{
     CyclingGraphTraceSource, GraphArrivalPolicy, GraphTraceInstanceSequence, GraphTraceRunResult,

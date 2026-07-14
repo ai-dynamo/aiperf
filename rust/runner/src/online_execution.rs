@@ -16,13 +16,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use aiperf::content_server::ContentServerMediaPublisher;
-use aiperf::failure::OnFailure;
 use aiperf::dataset::{
     DatasetFetcher, HttpDatasetFetcher, MaterializedTracePromptStorage,
     NativeSyntheticMediaGeneratorFactory, SyntheticMediaGeneratorFactory, TiktokenEncoding,
     download_hugging_face_tokenizer,
 };
 use aiperf::endpoints::Modality;
+use aiperf::failure::OnFailure;
 use aiperf::metrics_core::{NativeReport, ReportGraphRunInfo, ReportPairRunFacts};
 use aiperf::rng::RngRoot;
 use anyhow::{Context, Result, anyhow, bail, ensure};

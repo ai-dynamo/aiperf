@@ -687,10 +687,7 @@ mod tests {
         }
     }
 
-    fn run_single_turn_with_policy(
-        result: ScriptedResult,
-        on_failure: OnFailure,
-    ) -> Result<()> {
+    fn run_single_turn_with_policy(result: ScriptedResult, on_failure: OnFailure) -> Result<()> {
         let source = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -737,8 +734,7 @@ mod tests {
 
     #[test]
     fn abort_policy_latches_run_on_transport_failure() {
-        let result =
-            run_single_turn_with_policy(ScriptedResult::TransportError, OnFailure::Abort);
+        let result = run_single_turn_with_policy(ScriptedResult::TransportError, OnFailure::Abort);
         assert!(
             result.is_err(),
             "abort-on-failure must bail the run on the first transport failure"

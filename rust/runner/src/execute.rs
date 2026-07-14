@@ -9,7 +9,6 @@ use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use aiperf::failure::OnFailure;
 use aiperf::accuracy::{
     AccuracyDataset, AccuracyRecordProcessor, accuracy_report_errors, grade_accuracy_responses,
     load_evaluator_problems_with_grader,
@@ -42,6 +41,7 @@ use aiperf::dataset::{
 };
 use aiperf::endpoints::{EndpointKey, EndpointRegistry, PreparedEndpointTable};
 use aiperf::extensions::AiperfRegistry;
+use aiperf::failure::OnFailure;
 use aiperf::fixed_schedule::{
     DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload,
 };
@@ -1431,9 +1431,9 @@ fn finish_with_shutdown<T>(result: Result<T>, shutdown: Result<()>, label: &str)
         (Ok(value), Ok(())) => Ok(value),
         (Err(error), Ok(())) => Err(error),
         (Ok(_), Err(error)) => Err(error.context(format!("shutting down {label}"))),
-        (Err(error), Err(shutdown)) => Err(error.context(format!(
-            "{label} also failed during shutdown: {shutdown:#}"
-        ))),
+        (Err(error), Err(shutdown)) => {
+            Err(error.context(format!("{label} also failed during shutdown: {shutdown:#}")))
+        }
     }
 }
 
@@ -1563,6 +1563,22 @@ async fn execute_native_inner(
 
         let shared_resources = native_scheduled_resources(&request.phases);
         let on_failure = OnFailure::scheduled_or_default(request.failure_policy);
+        // Fail-fast is wired into the request-rate/concurrency workload only.
+        // Surface the gap instead of silently ignoring `abort` for the two
+        // specialized scheduled workloads that do not yet honor it.
+        if on_failure.is_abort()
+            && request.phases.iter().any(|phase| {
+                matches!(
+                    phase,
+                    PhaseSpec::UserCentric { .. } | PhaseSpec::FixedSchedule { .. }
+                )
+            })
+        {
+            tracing::warn!(
+                "failure_policy=abort is honored only for request-rate/concurrency scheduled \
+                 phases; user_centric and fixed_schedule phases in this run stay resilient"
+            );
+        }
 
         let mut plans = Vec::with_capacity(request.phases.len());
         for (phase_index, phase) in request.phases.iter().enumerate() {
