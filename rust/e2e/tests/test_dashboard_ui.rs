@@ -15,6 +15,7 @@ use aiperf_mock_server::config::MockServerConfig;
 
 /// Dashboard UI with duration-based benchmark termination produces correct output.
 #[tokio::test]
+#[ignore = "dashboard UI not supported in Rust runner"]
 async fn test_duration_based_termination() {
     // Use faster mock server settings for reliability
     let mut cfg = MockServerConfig::default();

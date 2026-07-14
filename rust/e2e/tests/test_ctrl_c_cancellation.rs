@@ -26,7 +26,7 @@ fn python_binary() -> String {
 }
 
 /// Spawn `python -m aiperf profile <args> --artifact-dir <dir> --tokenizer <model>`,
-/// wait for the "AIPerf is PROFILING" log line, delay `sigint_delay`, send SIGINT,
+/// wait for the "AIPerf System is PROFILING" log line, delay `sigint_delay`, send SIGINT,
 /// and wait for the process to flush partial artifacts and exit.
 ///
 /// Returns a `RunResult` reading the emitted artifact tree.
@@ -54,6 +54,7 @@ fn run_with_sigint(
         .env("TRANSFORMERS_OFFLINE", "1")
         .env("PYTHONUNBUFFERED", "1")
         .env("MALLOC_ARENA_MAX", "2")
+        .env("AIPERF_RUNNER_BIN", runner_binary())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -105,7 +106,7 @@ fn run_with_sigint(
             let seen = {
                 let o = out_buf.lock().unwrap();
                 let e = err_buf.lock().unwrap();
-                o.contains("AIPerf is PROFILING") || e.contains("AIPerf is PROFILING")
+                o.contains("AIPerf System is PROFILING") || e.contains("AIPerf System is PROFILING")
             };
             if seen {
                 break;

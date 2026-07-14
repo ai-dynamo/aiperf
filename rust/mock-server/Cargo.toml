@@ -27,7 +27,7 @@ clap = { version = "4", features = ["derive", "env"] }
 parking_lot = "0.12"
 futures = { workspace = true }
 bytes = { workspace = true }
-axum = { workspace = true, features = ["macros"] }
+axum = { workspace = true, features = ["macros", "multipart"] }
 tower = { version = "0.5", features = ["util"] }
 hyper = { version = "1", features = ["server", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["server", "http1", "http2", "tokio"] }

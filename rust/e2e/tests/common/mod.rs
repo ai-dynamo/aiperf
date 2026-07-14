@@ -215,8 +215,12 @@ impl AIPerfHarness {
         args.extend(shell_split(profile_args));
         args.push("--artifact-dir".to_string());
         args.push(self.artifact_path().display().to_string());
-        args.push("--tokenizer".to_string());
-        args.push(DEFAULT_MODEL.to_string());
+        // Only inject the default tokenizer when the test didn't specify one —
+        // mirrors the Python conftest behaviour.
+        if !args.iter().any(|a| a == "--tokenizer") {
+            args.push("--tokenizer".to_string());
+            args.push(DEFAULT_MODEL.to_string());
+        }
         self.exec(args, secs)
     }
 
@@ -329,7 +333,7 @@ fn python_binary() -> String {
 /// 2. `target/debug/aiperf-runner` relative to the Cargo workspace root
 ///    (derived from this file's `CARGO_MANIFEST_DIR` at compile time)
 /// 3. `aiperf-runner` on PATH as last resort
-fn runner_binary() -> String {
+pub fn runner_binary() -> String {
     if let Ok(v) = std::env::var("AIPERF_RUNNER_BIN") {
         if !v.is_empty() {
             return v;

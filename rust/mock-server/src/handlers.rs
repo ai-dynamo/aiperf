@@ -103,13 +103,15 @@ impl RequestCtx {
         // empirically independent of cache hits.
         let cached_tokens = match &state.prefix_cache {
             Some(pc) => {
-                let c = pc.cached_tokens(&tokenized.text, usage.prompt_tokens, req_gen.priority());
-                usage.prompt_tokens_details =
-                    Some(crate::models::PromptTokensDetails { cached_tokens: c });
-                c
+                pc.cached_tokens(&tokenized.text, usage.prompt_tokens, req_gen.priority())
             }
             None => 0,
         };
+        // Always emit prompt_tokens_details so callers can observe cache-read
+        // counts even when the prefix cache is disabled (cached_tokens == 0).
+        // The Python mock server always includes this field.
+        usage.prompt_tokens_details =
+            Some(crate::models::PromptTokensDetails { cached_tokens });
         let latency_cached = if state.config.prefix_cache_latency_aware {
             cached_tokens
         } else {
@@ -1957,4 +1959,99 @@ pub async fn dcgm_metrics_1(State(state): State<Arc<AppState>>) -> AppResult<Res
 
 pub async fn dcgm_metrics_2(State(state): State<Arc<AppState>>) -> AppResult<Response> {
     dcgm_response(&state, 1)
+}
+
+/// Mock `/v1/images/edits` — drain multipart body, return a synthetic JPEG.
+///
+/// Accepts multipart/form-data with optional `image` file and `prompt` text
+/// fields (same surface as the Python mock). Mirrors `image_generation` in
+/// response shape so the Rust runner receives a valid response.
+pub async fn image_edit(
+    State(state): State<Arc<AppState>>,
+    mut multipart: axum::extract::Multipart,
+) -> AppResult<Response> {
+    if let Some(e) = maybe_inject_error(&state) {
+        return Err(e);
+    }
+    let endpoint = "/v1/images/edits";
+    let start = Instant::now();
+
+    let mut prompt = String::from("edit");
+    let mut model = String::from("mock-model");
+    let mut n: u32 = 1;
+
+    // Drain all multipart fields; capture the ones we care about.
+    while let Ok(Some(field)) = multipart.next_field().await {
+        match field.name() {
+            Some("prompt") => {
+                if let Ok(v) = field.text().await {
+                    prompt = v;
+                }
+            }
+            Some("model") => {
+                if let Ok(v) = field.text().await {
+                    model = v;
+                }
+            }
+            Some("n") => {
+                if let Ok(v) = field.text().await {
+                    n = v.parse().unwrap_or(1);
+                }
+            }
+            _ => {
+                // Drain unknown / binary fields (e.g. image upload).
+                let _ = field.bytes().await;
+            }
+        }
+    }
+
+    let mock_chat = ChatCompletionRequest {
+        model: model.clone(),
+        messages: vec![Message {
+            role: "user".into(),
+            content: Value::String(prompt.clone()),
+        }],
+        stream: false,
+        stream_options: None,
+        max_tokens: None,
+        max_completion_tokens: None,
+        ignore_eos: false,
+        min_tokens: None,
+        reasoning_effort: None,
+        priority: None,
+    };
+    let req_gen = GenRequest::Chat(&mock_chat);
+    let ctx = RequestCtx::build("img", &req_gen, endpoint, start, &state);
+
+    state.recorder.record_request_start(endpoint, &model);
+    state.recorder.record_llm_inflight_start(&model);
+    let (prefill, _decode) = ctx.latency_sim.wait_for_tokens(ctx.tokenized.count()).await;
+    let latency = start.elapsed();
+    let info = LLMLatencyInfo {
+        e2e: latency,
+        prefill,
+        decode: latency.saturating_sub(prefill),
+    };
+
+    let mut data: Vec<Value> = Vec::with_capacity(n as usize);
+    for i in 0..n {
+        data.push(json!({ "b64_json": mock_jpeg_b64(&prompt, i) }));
+    }
+    let mut body = json!({
+        "created": now_secs(),
+        "data": data,
+    });
+    body["usage"] = serde_json::to_value(&ctx.usage).unwrap();
+
+    state.recorder.record_llm_success(
+        endpoint,
+        &model,
+        latency.as_secs_f64(),
+        &ctx.usage,
+        &info,
+    );
+    state.recorder.record_llm_inflight_end(&model);
+    state.recorder.record_request_end(endpoint);
+
+    Ok(Json(body).into_response())
 }

@@ -34,6 +34,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/generate_stream", post(handlers::tgi_generate_stream))
         // Image endpoints
         .route("/v1/images/generations", post(handlers::image_generation))
+        .route("/v1/images/edits", post(handlers::image_edit))
         .route("/v1/image/infer", post(handlers::image_retrieval))
         // Custom endpoints
         .route("/v1/custom-multimodal", post(handlers::custom_multimodal))

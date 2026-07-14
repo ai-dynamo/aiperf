@@ -125,8 +125,8 @@ benchmark:
         .collect();
     assert!(discover_windows.len() >= 2);
     assert_eq!(discover_windows[0]["control_variable"], "concurrency");
-    assert_eq!(discover_windows[0]["control_value"], 1);
-    assert_eq!(discover_windows[0]["schema_version"], 2);
+    assert_eq!(discover_windows[0]["control_value"].as_f64(), Some(1.0));
+    assert_eq!(discover_windows[0]["schema_version"].as_f64(), Some(2.0));
     assert_eq!(
         discover_windows[0]["timestamp_ns"],
         discover_windows[0]["timestamp"]
@@ -164,7 +164,7 @@ benchmark:
     assert_eq!(boundary["sla_metric"], "request_latency");
     assert_eq!(boundary["sla_stat"], "p95");
     assert_eq!(boundary["sla_op"], "le");
-    assert_eq!(boundary["sla_bound"], 100);
+    assert_eq!(boundary["sla_bound"].as_f64(), Some(100.0));
     assert!(
         boundary["sla_value"].as_f64().unwrap() > boundary["sla_bound"].as_f64().unwrap()
     );
@@ -182,18 +182,14 @@ benchmark:
     );
 
     let summary = read_json_value(&summary_path);
-    assert_eq!(summary["schema_version"], 2);
+    assert_eq!(summary["schema_version"].as_f64(), Some(2.0));
     assert_eq!(summary["status"], "completed");
     assert_eq!(summary["control_variable"], "concurrency");
-    assert_eq!(
-        summary["sla"],
-        serde_json::json!({
-            "metric": "request_latency",
-            "stat": "p95",
-            "op": "le",
-            "bound": 100,
-        })
-    );
+    let sla = &summary["sla"];
+    assert_eq!(sla["metric"], "request_latency");
+    assert_eq!(sla["stat"], "p95");
+    assert_eq!(sla["op"], "le");
+    assert_eq!(sla["bound"].as_f64(), Some(100.0));
     assert_eq!(summary["boundary_value"], boundary["boundary_value"]);
     assert_eq!(
         summary["first_failing_value"],
