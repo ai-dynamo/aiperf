@@ -16,9 +16,6 @@ use super::BlockHash;
 
 use super::{PromptCorpus, RecordedTraceError};
 
-const SHAKESPEARE: &str =
-    include_str!("../../../../../src/aiperf/dataset/generator/assets/shakespeare.txt");
-
 /// Content extension seam consumed by the shared trie lowerer.
 pub(crate) trait RecordedContentSynthesizer {
     /// Decode full cache blocks in order under a local or global hash namespace.
@@ -55,7 +52,8 @@ impl<'a> CorpusContentSynthesizer<'a> {
     ) -> Result<Self, RecordedTraceError> {
         let (tokens, hash_namespace) = match corpus {
             PromptCorpus::Sonnet => (
-                build_sonnet_corpus(tokenizer)?,
+                crate::dataset::corpus::tokenize_sonnet_corpus(tokenizer)
+                    .map_err(|error| RecordedTraceError(error.to_string()))?,
                 namespace::DATASET_PROMPT_CORPUS,
             ),
             PromptCorpus::Coding => (
@@ -132,38 +130,6 @@ impl RecordedContentSynthesizer for CorpusContentSynthesizer<'_> {
             .decode(tokens)
             .map_err(|error| RecordedTraceError(error.to_string()))
     }
-}
-
-fn build_sonnet_corpus(tokenizer: &dyn TextTokenizer) -> Result<Vec<u32>, RecordedTraceError> {
-    const MAX_CHARS_PER_CHUNK: usize = 10_000;
-    let mut corpus = Vec::new();
-    let mut buffer = Vec::<&str>::new();
-    let mut chars = 0_usize;
-    for raw in SHAKESPEARE.lines() {
-        let line = raw.trim();
-        if line.is_empty() {
-            continue;
-        }
-        buffer.push(line);
-        chars = chars.saturating_add(line.chars().count());
-        if chars >= MAX_CHARS_PER_CHUNK {
-            corpus.extend(
-                tokenizer
-                    .encode(&buffer.join(" "))
-                    .map_err(|error| RecordedTraceError(error.to_string()))?,
-            );
-            buffer.clear();
-            chars = 0;
-        }
-    }
-    if !buffer.is_empty() {
-        corpus.extend(
-            tokenizer
-                .encode(&buffer.join(" "))
-                .map_err(|error| RecordedTraceError(error.to_string()))?,
-        );
-    }
-    Ok(corpus)
 }
 
 fn wrapping_window(corpus: &[u32], start: usize, count: usize) -> Vec<u32> {

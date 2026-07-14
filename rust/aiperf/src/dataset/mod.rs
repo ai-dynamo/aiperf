@@ -10,6 +10,7 @@
 //! so sharing a [`Dataset`] across worker threads shares the payload bytes too.
 
 pub mod compose;
+pub mod corpus;
 pub mod dataset;
 pub mod error;
 pub mod fetch;
@@ -28,6 +29,9 @@ pub mod tokenizer;
 // without a `dataset -> endpoints` cycle. Re-exported here so existing
 // `crate::dataset::body_plan::*` callers keep resolving.
 pub use crate::body_plan::{BodyPlan, FieldName, FieldValue, JsonBodyMaterializer};
+pub use corpus::{
+    MAX_CHARS_PER_CHUNK, SHAKESPEARE_CORPUS, tokenize_corpus_chunked, tokenize_sonnet_corpus,
+};
 pub use dataset::{Dataset, DatasetMetadata};
 pub use error::{DatasetError, Result};
 pub use fetch::{DatasetFetcher, HttpDatasetFetcher};

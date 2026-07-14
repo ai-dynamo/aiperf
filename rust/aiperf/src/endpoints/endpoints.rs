@@ -818,9 +818,9 @@ fn serialize_rendered_messages(
         .into_iter()
         .map(|message| match message {
             RenderedMessage::Wire(wire) => Ok(wire),
-            RenderedMessage::Value(value) => {
-                serde_json::to_vec(&value).map(Bytes::from).map_err(EndpointError::from)
-            }
+            RenderedMessage::Value(value) => serde_json::to_vec(&value)
+                .map(Bytes::from)
+                .map_err(EndpointError::from),
         })
         .collect()
 }
@@ -860,14 +860,18 @@ fn format_chat_message_wires(
                 prepend_system_into_object(first, system);
             }
         } else if !first_is_system {
-            out.push(RenderedMessage::Value(json!({"role":"system","content":system})));
+            out.push(RenderedMessage::Value(
+                json!({"role":"system","content":system}),
+            ));
         }
     }
     if let Some(context) = request
         .user_context_message()
         .filter(|value| !value.is_empty())
     {
-        out.push(RenderedMessage::Value(json!({"role":"user","content":context})));
+        out.push(RenderedMessage::Value(
+            json!({"role":"user","content":context}),
+        ));
     }
     out.extend(rendered);
     serialize_rendered_messages(out)
@@ -1114,6 +1118,19 @@ fn format_chat_messages(request: &PreparedRequest<'_>, mut rendered: Vec<Value>)
     }
     messages.extend(rendered);
     messages
+}
+
+/// Fold the run-level system prompt into an existing leading system message.
+///
+/// Used on the warmup path when the rendered turn already opens with a system
+/// message: rather than emit a second system message, the run's system prompt is
+/// prepended into the existing one so warmup requests carry a single, merged
+/// system message. Non-object or empty leading entries are left untouched.
+fn prepend_system_message(mut rendered: Vec<Value>, system: &str) -> Vec<Value> {
+    if let Some(Value::Object(first)) = rendered.first_mut() {
+        prepend_system_into_object(first, system);
+    }
+    rendered
 }
 
 fn prepend_system_into_object(first: &mut Map<String, Value>, system: &str) {
