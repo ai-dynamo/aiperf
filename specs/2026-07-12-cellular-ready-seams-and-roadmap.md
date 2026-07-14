@@ -463,3 +463,40 @@ run-unique instance ordinal — so partitioning is `instance_ordinal % cell_coun
 with no sampler surgery, and duration/trace/multi-turn distribution falls out cleanly.
 Wiring cellular through the graph path (partitioned `RootPolicy` + graph-records shipping)
 is the honest home for those, tracked as the next cellular effort.
+
+## Addendum — 2026-07-14 — graph-mode cellular is built (the trace-partition path)
+
+The "next: graph-mode cellular" note above is now **built and proven end-to-end**. Graph
+programs (`dag_jsonl` / `weka_trace` / `dynamo_trace`) distribute across cells cleanly —
+each trace is a self-contained unit, so there is no shared-sampler / per-turn-ordinal
+problem, and the whole multi-turn/trace restriction class the scheduled path fails on
+simply does not arise. Realized as the design's *deterministic-per-topology* contract
+(same trace set across topologies, different cell ownership + merge order), not
+byte-parity.
+
+Four steps, each reviewed:
+- **`PartitionedGraphTraceSource`** (`aiperf::graph::workload`): cell `k` of `C` owns the
+  interleaved global session ordinals `k, k+C, …` and cycles templates by the global
+  ordinal, so the union across cells reproduces the 1-cell trace set. One formula covers
+  the finite (`--num-conversations`) and unbounded (duration) modes; `cell_count == 1`
+  reproduces `CyclingGraphTraceSource` exactly. (Weighted/mix sampling will derive a
+  per-cell RNG stream here — the skip-N composability — when that source lands.)
+- **Runner selection** (`graph_phase_runtime::prepare_graph_phase`): a cell with
+  `cell_count > 1` (and no static-node `request_limit`) selects the partitioned source
+  from `ModuloCellPartition::from_env`; the non-cell path is byte-unchanged.
+- **Cell records ship** (`execute_graph_native`): a graph cell ships its captured
+  `RecordIngest` records + a terminal heartbeat exactly like the scheduled path, additive
+  and env-gated, its own report going to the throwaway scratch dir.
+- **Controller admit + merge** (`run_cellular`): `is_graph_dataset` detects the graph
+  format; the controller admits it past the synthetic/single-turn guard, skips the
+  scheduled-only `requests`-budget validators, and merges via
+  **`merge_records_by_concatenation`** — graph cells carry LOCAL per-cell `request_index`
+  (wall-clock start order), so the controller concatenates by `cell_id` and re-numbers
+  densely (numerically correct — `request_index` only selects a column slot; phase
+  separation rides the `phase` field — matching a 1-cell run up to float summation order).
+
+**Proven** (`rust/e2e/tests/test_graph_cellular.rs`): `aiperf profile --cells 3` over a
+`dag_jsonl` dataset runs end-to-end, emits the controller sidecar, and reproduces the
+1-cell run's total record count and input-token distribution (partition covers the full
+trace set). Still out of scope: cross-host transport; weighted/mix RNG sampling; the
+graph static-node `request_limit` partition (falls back to the single-cell cycler).

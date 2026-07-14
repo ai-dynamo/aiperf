@@ -138,8 +138,10 @@ AIPERF_CONTENT_SERVER_ENABLED=true \
 # `--cells 1` (default) is the unchanged single-process path. Supported for synthetic,
 # single-turn HTTP runs with request-bounded phases; a run seed and single URL are NOT
 # required (seedless auto-derives a shared seed, multi-URL round-robins cell-locally,
-# ramps/rate/cancellation are aggregate-equivalent, warned). Fails closed on
-# non-HTTP/non-synthetic/multi-turn/duration/adaptive. E2e: rust/e2e/tests/test_cellular.rs.
+# ramps/rate/cancellation are aggregate-equivalent, warned). Graph programs
+# (dag_jsonl/weka_trace/dynamo_trace) also partition across cells (trace-level,
+# concatenation-merged). Fails closed on non-HTTP/gRPC/offline + scheduled
+# multi-turn/duration/adaptive. E2e: test_cellular.rs (scheduled) + test_graph_cellular.rs.
 aiperf profile --config benchmark.yaml --cells 4
 
 # Developer-only protocol inventory; normal children are launched by Python.
