@@ -64,7 +64,7 @@ impl PythonLiveResultsSink {
             Ok(line) => line,
             Err(error) => {
                 self.queue.borrow_mut().dropped_events += 1;
-                eprintln!("failed to serialize live telemetry event: {error}");
+                tracing::warn!(error = %error, "failed to serialize live telemetry event");
                 return;
             }
         };
@@ -99,7 +99,10 @@ impl LiveResultsSink for PythonLiveResultsSink {
             }),
             Err(error) => {
                 self.queue.borrow_mut().dropped_events += 1;
-                eprintln!("failed to project live native metric record: {error:#}");
+                tracing::warn!(
+                    error = format!("{error:#}"),
+                    "failed to project live native metric record"
+                );
             }
         }
     }
@@ -205,12 +208,12 @@ impl PythonLiveStreamingRun {
             "live telemetry worker returned an incompatible prepared response"
         );
         if !prepared.active {
-            eprintln!(
-                "live telemetry extension disabled itself: {}",
-                prepared
+            tracing::warn!(
+                reason = prepared
                     .disabled_reason
                     .as_deref()
-                    .unwrap_or("no reason supplied")
+                    .unwrap_or("no reason supplied"),
+                "live telemetry extension disabled itself"
             );
         }
 
@@ -264,12 +267,12 @@ impl PythonLiveStreamingRun {
         );
         self.sink.active.set(ready.active);
         if !ready.active {
-            eprintln!(
-                "live telemetry extension did not activate: {}",
-                ready
+            tracing::warn!(
+                reason = ready
                     .disabled_reason
                     .as_deref()
-                    .unwrap_or("no reason supplied")
+                    .unwrap_or("no reason supplied"),
+                "live telemetry extension did not activate"
             );
         }
         self.writer = Some(tokio::task::spawn_local(pump_worker_stdin(
@@ -336,18 +339,20 @@ impl PythonLiveStreamingRun {
             "live telemetry worker exited with status {status}"
         );
         if dropped_events > 0 || terminal.dropped_events > 0 {
-            eprintln!(
-                "live telemetry dropped events: rust={} worker_acknowledged={} delivered_records={} delivered_phase_events={}",
-                dropped_events,
-                terminal.dropped_events,
-                terminal.metric_records,
-                terminal.phase_events
+            tracing::warn!(
+                rust = dropped_events,
+                worker_acknowledged = terminal.dropped_events,
+                delivered_records = terminal.metric_records,
+                delivered_phase_events = terminal.phase_events,
+                "live telemetry dropped events"
             );
         }
         if terminal.processing_errors > 0 {
-            eprintln!(
-                "live telemetry processor rejected {} events after delivering {} records and {} phase events",
-                terminal.processing_errors, terminal.metric_records, terminal.phase_events
+            tracing::warn!(
+                rejected_events = terminal.processing_errors,
+                delivered_records = terminal.metric_records,
+                delivered_phase_events = terminal.phase_events,
+                "live telemetry processor rejected events"
             );
         }
         Ok(())

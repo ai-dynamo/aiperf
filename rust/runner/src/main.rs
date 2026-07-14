@@ -41,20 +41,40 @@ unsafe extern "C" {
     fn aiperf_mi_option_purge_delay() -> libmimalloc_sys::mi_option_t;
 }
 
+/// Install the stderr `tracing` subscriber for the runner's diagnostics.
+///
+/// STDOUT is the stdio protocol channel to the Python orchestrator (JSONL
+/// envelopes via `write_json_line`); the subscriber therefore writes only to
+/// STDERR so it can never corrupt the protocol stream. ANSI is disabled because
+/// Python inherits/pipes STDERR. The default filter is `warn` so the converted
+/// diagnostics (all `warn`/`error` today) stay visible without configuration;
+/// `AIPERF_RUNNER_LOG` overrides it with standard `EnvFilter` syntax.
+fn init_tracing() {
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_env("AIPERF_RUNNER_LOG")
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
+        .init();
+}
+
 fn main() {
+    init_tracing();
     let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
     if arguments.len() == 1 && arguments[0] == "--capabilities" {
         let application = compose_stock_application();
         write_json_line(&application.catalog(), 0);
     }
     if !arguments.is_empty() {
-        eprintln!("usage: aiperf-runner [--capabilities]");
+        tracing::error!("usage: aiperf-runner [--capabilities]");
         std::process::exit(2);
     }
 
     let mut input = Vec::new();
     if let Err(error) = io::stdin().read_to_end(&mut input) {
-        eprintln!("failed to read runner request from stdin: {error}");
+        tracing::error!(error = %error, "failed to read runner request from stdin");
         std::process::exit(2);
     }
     configure_dynosim_process_defaults(&input);
@@ -69,14 +89,17 @@ fn compose_stock_application() -> RunnerApplication {
     let distribution_id = match current_distribution_id() {
         Ok(distribution_id) => distribution_id,
         Err(error) => {
-            eprintln!("failed to identify executing aiperf-runner image: {error}");
+            tracing::error!(error = %error, "failed to identify executing aiperf-runner image");
             std::process::exit(2);
         }
     };
     match RunnerApplication::stock(distribution_id) {
         Ok(application) => application,
         Err(error) => {
-            eprintln!("failed to compose executing aiperf-runner image: {error:#}");
+            tracing::error!(
+                error = format!("{error:#}"),
+                "failed to compose executing aiperf-runner image"
+            );
             std::process::exit(2);
         }
     }

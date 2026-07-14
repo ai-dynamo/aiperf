@@ -245,15 +245,16 @@ impl NetworkLatencyState {
         }
         for probe in &self.probes {
             if let Err(error) = probe.resolve().await {
-                eprintln!(
-                    "network latency DNS pre-resolution failed for {}: {error}; probes will resolve per connect",
-                    probe.target().key()
+                tracing::warn!(
+                    target = %probe.target().key(),
+                    error = %error,
+                    "network latency DNS pre-resolution failed; probes will resolve per connect"
                 );
             }
             self.spawn_probe(probe.clone(), self.connect_timeout_ns);
         }
         if self.probes.is_empty() {
-            eprintln!("network latency enabled but no TCP endpoint targets were discovered");
+            tracing::warn!("network latency enabled but no TCP endpoint targets were discovered");
             return Ok(());
         }
 
@@ -303,7 +304,7 @@ impl NetworkLatencyState {
         if let Some(cadence_task) = cadence_task
             && let Err(error) = cadence_task.await
         {
-            eprintln!("network latency cadence task failed: {error}");
+            tracing::warn!(error = %error, "network latency cadence task failed");
         }
 
         let probe_tasks = std::mem::take(&mut *self.probe_tasks.borrow_mut());

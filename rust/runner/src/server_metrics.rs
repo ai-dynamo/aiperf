@@ -253,9 +253,10 @@ impl ServerMetricsPhaseSidecar {
                 }
                 Ok(ServerMetricsScrapeOutcome::Empty) => successful.push(source),
                 Ok(ServerMetricsScrapeOutcome::Disabled) => {}
-                Err(error) => eprintln!(
-                    "server metrics skipped unreachable source {}: {error}",
-                    source.endpoint_url()
+                Err(error) => tracing::warn!(
+                    source = %source.endpoint_url(),
+                    error = %error,
+                    "server metrics skipped unreachable source"
                 ),
             }
         }
@@ -301,9 +302,10 @@ impl ServerMetricsPhaseSidecar {
                     Ok(ServerMetricsScrapeOutcome::Empty) => {}
                     Ok(ServerMetricsScrapeOutcome::Disabled) => self.remove_source(&source),
                     Err(error) => {
-                        eprintln!(
-                            "server metrics cadence scrape failed for {}: {error}",
-                            source.endpoint_url()
+                        tracing::warn!(
+                            source = %source.endpoint_url(),
+                            error = %error,
+                            "server metrics cadence scrape failed"
                         );
                         if error.is_incompatible() {
                             self.remove_source(&source);
@@ -323,7 +325,7 @@ impl ServerMetricsPhaseSidecar {
         if let Some(task) = task
             && let Err(error) = task.await
         {
-            eprintln!("server metrics cadence task failed: {error}");
+            tracing::warn!(error = %error, "server metrics cadence task failed");
         }
 
         let sources = self.state.active.borrow().clone();
@@ -338,9 +340,10 @@ impl ServerMetricsPhaseSidecar {
                 Ok(ServerMetricsScrapeOutcome::Empty) => {}
                 Ok(ServerMetricsScrapeOutcome::Disabled) => self.remove_source(&source),
                 Err(error) => {
-                    eprintln!(
-                        "server metrics final scrape failed for {}: {error}",
-                        source.endpoint_url()
+                    tracing::warn!(
+                        source = %source.endpoint_url(),
+                        error = %error,
+                        "server metrics final scrape failed"
                     );
                     if error.is_incompatible() {
                         self.remove_source(&source);

@@ -147,7 +147,6 @@ name = "aiperf-runner"
 version = "0.0.0"
 dependencies = [
  "aiperf",
- "aiperf-test-static-extension",
  "anyhow",
  "async-trait",
  "axum",
@@ -176,16 +175,9 @@ dependencies = [
  "tokio-util",
  "tonic 0.14.6",
  "tracing",
+ "tracing-subscriber",
  "url",
  "uuid",
-]
-
-[[package]]
-name = "aiperf-test-static-extension"
-version = "0.0.0"
-dependencies = [
- "aiperf",
- "serde_json",
 ]
 
 [[package]]

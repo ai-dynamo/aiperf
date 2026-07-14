@@ -314,24 +314,29 @@ impl PreparedReadinessTarget {
     fn log_ready(&self, attempts: usize, response: &ReadinessAttemptResponse) {
         match &self.success {
             ReadinessSuccess::ModelListed(_) => {
-                eprintln!(
-                    "readiness: Model '{}' ready at {} after {attempts} attempt(s)",
-                    self.model, self.base_url
+                tracing::warn!(
+                    model = %self.model,
+                    base_url = %self.base_url,
+                    attempts,
+                    "readiness: model ready"
                 );
             }
             ReadinessSuccess::NonServerError => {
                 let status = response
                     .status
                     .map_or_else(|| "unknown".to_owned(), |value| value.to_string());
-                eprintln!(
-                    "readiness: Inference probe ready at {} (status={status}, attempt {attempts})",
-                    self.request.url
+                tracing::warn!(
+                    url = %self.request.url,
+                    status = %status,
+                    attempts,
+                    "readiness: inference probe ready"
                 );
             }
             ReadinessSuccess::SuccessfulStatus => {
-                eprintln!(
-                    "readiness: endpoint ready at {} after {attempts} attempt(s)",
-                    self.request.url
+                tracing::warn!(
+                    url = %self.request.url,
+                    attempts,
+                    "readiness: endpoint ready"
                 );
             }
         }
@@ -344,21 +349,30 @@ impl PreparedReadinessTarget {
             .map_or_else(|| "connection error".to_owned(), |value| value.to_string());
         match &self.success {
             ReadinessSuccess::ModelListed(_) if response.status == Some(200) => {
-                eprintln!(
-                    "readiness: Model '{}' not yet in {} (attempt {attempts}), retrying in {interval_s}s",
-                    self.model, self.request.url
+                tracing::warn!(
+                    model = %self.model,
+                    url = %self.request.url,
+                    attempts,
+                    interval_s,
+                    "readiness: model not yet listed, retrying"
                 );
             }
             ReadinessSuccess::NonServerError => {
-                eprintln!(
-                    "readiness: Inference probe to {} returned {status} (attempt {attempts}), retrying in {interval_s}s",
-                    self.request.url
+                tracing::warn!(
+                    url = %self.request.url,
+                    status = %status,
+                    attempts,
+                    interval_s,
+                    "readiness: inference probe returned error, retrying"
                 );
             }
             _ => {
-                eprintln!(
-                    "readiness: probe to {} returned {status} (attempt {attempts}), retrying in {interval_s}s",
-                    self.request.url
+                tracing::warn!(
+                    url = %self.request.url,
+                    status = %status,
+                    attempts,
+                    interval_s,
+                    "readiness: probe returned error, retrying"
                 );
             }
         }
@@ -638,12 +652,12 @@ async fn wait_for_target(
                     .status
                     .is_some_and(|status| (200..300).contains(&status))
                 {
-                    eprintln!(
-                        "readiness: /v1/models not available at {}; base URL responded {} — accepting as ready",
-                        target.base_url,
-                        fallback_response
+                    tracing::warn!(
+                        base_url = %target.base_url,
+                        status = fallback_response
                             .status
-                            .expect("checked 2xx status is present")
+                            .expect("checked 2xx status is present"),
+                        "readiness: /v1/models unavailable; base URL responded, accepting as ready"
                     );
                     return Ok(attempts);
                 }

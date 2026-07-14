@@ -62,8 +62,8 @@ use aiperf::multiturn::{
 };
 use aiperf::phase_runtime::{
     RampScheduledPhaseController, ScheduledPhaseController, ScheduledPhasePlan,
-    ScheduledPhaseResources, ScheduledRuntimeExtension, ScheduledRuntimeExtensionParts,
-    SlotPoolPhaseResources, run_scheduled_phases,
+    ScheduledPhaseResources, ScheduledPhaseSidecar, ScheduledRuntimeExtension,
+    ScheduledRuntimeExtensionParts, SlotPoolPhaseResources, run_scheduled_phases,
 };
 use aiperf::request_rate::RequestRateWorkload;
 use aiperf::rng::{
@@ -243,11 +243,6 @@ impl NativeSidecarPlan {
     pub(crate) fn live_streaming(&self) -> Result<Option<&LiveStreamingSpec>> {
         let Self::Prepared(inputs) = self;
         inputs.get(LIVE_STREAMING_SIDECAR_ID)
-    }
-
-    fn contains_only_content_server(&self) -> bool {
-        let Self::Prepared(inputs) = self;
-        inputs.contains_only(&[CONTENT_SERVER_SIDECAR_ID])
     }
 }
 
@@ -877,7 +872,10 @@ impl NativeSidecarResourceFactory for BuiltinNativeSidecarResourceFactory {
             {
                 Ok(worker) => Some(worker),
                 Err(error) => {
-                    eprintln!("live telemetry extension failed to start: {error:#}");
+                    tracing::warn!(
+                        error = format!("{error:#}"),
+                        "live telemetry extension failed to start"
+                    );
                     None
                 }
             }
@@ -914,7 +912,10 @@ impl PreparedNativeSidecarResources {
             None => return,
         };
         if let Err(error) = activation {
-            eprintln!("live telemetry extension failed to activate: {error:#}");
+            tracing::warn!(
+                error = format!("{error:#}"),
+                "live telemetry extension failed to activate"
+            );
             self.live_streaming.take();
         }
     }
@@ -923,7 +924,10 @@ impl PreparedNativeSidecarResources {
         if let Some(worker) = self.live_streaming.take()
             && let Err(error) = worker.shutdown().await
         {
-            eprintln!("live telemetry extension failed to shut down cleanly: {error:#}");
+            tracing::warn!(
+                error = format!("{error:#}"),
+                "live telemetry extension failed to shut down cleanly"
+            );
         }
 
         // Server-metrics tasks belong to phase sidecars and have already
@@ -937,7 +941,10 @@ impl PreparedNativeSidecarResources {
         if let Some(mut content_server) = self.content_server.take()
             && let Err(error) = content_server.shutdown().await
         {
-            eprintln!("content server failed to shut down cleanly: {error:#}");
+            tracing::warn!(
+                error = format!("{error:#}"),
+                "content server failed to shut down cleanly"
+            );
         }
     }
 }
@@ -1034,8 +1041,8 @@ async fn execute_scheduled_native(
 
 fn validate_graph_request(request: &NativeRunSpec) -> Result<()> {
     ensure!(
-        request.sidecars.contains_only_content_server(),
-        "authored Graph-IR runs support the content server but not GPU, network, server, or live-streaming telemetry"
+        request.sidecars.live_streaming()?.is_none(),
+        "authored Graph-IR runs support the content server and GPU/network/server telemetry side-channels but not the live-streaming record extension"
     );
     ensure!(
         request.models.items.len() == 1,
@@ -1153,6 +1160,31 @@ async fn execute_graph_native(
         metrics: metrics_config.clone(),
         raw_enabled: request.artifacts.raw_path.is_some(),
     };
+    // Telemetry sidecars are side-channel producers synchronized to phase
+    // barriers, not to the workload, so the graph path attaches the same
+    // phase-sidecar seam the scheduled path uses: server metrics run every
+    // phase; GPU and network calibration run only during profiling.
+    let phase_sidecars = request
+        .phases
+        .iter()
+        .map(|phase| -> Result<Vec<Rc<dyn ScheduledPhaseSidecar>>> {
+            let mut phase_sidecars: Vec<Rc<dyn ScheduledPhaseSidecar>> = Vec::new();
+            if let Some(server_metrics) = sidecars.server_metrics.as_ref() {
+                phase_sidecars.push(server_metrics.sidecar(metrics_phase(phase)?));
+            }
+            if phase.common().name == "profiling" {
+                if let Some(gpu_telemetry) = sidecars.gpu_telemetry.as_ref() {
+                    phase_sidecars.push(gpu_telemetry.sidecar());
+                }
+                if let Some(network_latency) = sidecars.network_latency.as_ref()
+                    && let Some(sidecar) = network_latency.sidecar()
+                {
+                    phase_sidecars.push(sidecar);
+                }
+            }
+            Ok(phase_sidecars)
+        })
+        .collect::<Result<Vec<_>>>()?;
     create_run_artifacts(&request)?;
     let phased = run_graph_phases(
         &request.phases,
@@ -1162,6 +1194,7 @@ async fn execute_graph_native(
         clock.clone(),
         rng_root,
         allow_dataset_wrap,
+        phase_sidecars,
         &backends,
     )
     .await?;
@@ -1172,17 +1205,75 @@ async fn execute_graph_native(
     let phase_stats = phased.phases;
     let captured = phased.captured;
 
+    let gpu_telemetry = sidecars.gpu_telemetry.as_ref();
+    let network_latency = sidecars.network_latency.as_ref();
+    let server_metrics = sidecars.server_metrics.as_ref();
     let mut accumulator = MetricsAccumulator::with_config(metrics_config.clone());
     for record in &captured {
         accumulator.process_record(&record.ingest);
     }
-    let profiling_metrics =
+    if let Some(network_latency) = network_latency {
+        let mean_rtt_ns = network_latency.mean_rtt_ns();
+        if network_latency.is_active_probe() && mean_rtt_ns.is_none() {
+            tracing::warn!(
+                "network latency calibration collected no successful probes; adjusted metrics are omitted"
+            );
+        }
+        accumulator.set_network_rtt_ns(mean_rtt_ns);
+    }
+    let mut profiling_metrics =
         accumulator.export_results(&ExportContext::phase(MetricsPhase::Profiling));
+    if let Some(gpu_telemetry) = gpu_telemetry {
+        let total_output_tokens = profiling_metrics.finite_value(MetricTag::TotalOutputTokens);
+        let concurrency = request
+            .phases
+            .iter()
+            .find(|phase| phase.common().name == "profiling")
+            .and_then(PhaseSpec::concurrency)
+            .map(|value| value as u64);
+        gpu_telemetry
+            .summarize(total_output_tokens, concurrency)
+            .attach_to(&mut profiling_metrics);
+    }
+    let profiling_server_summary = server_metrics.map(|server_metrics| {
+        server_metrics.summarize(MetricsPhase::Profiling, metrics_config.slice_duration_ns)
+    });
     let warmup = captured
         .iter()
         .any(|record| record.ingest.phase == MetricsPhase::Warmup)
         .then(|| accumulator.export_results(&ExportContext::phase(MetricsPhase::Warmup)));
+    let warmup_server_summary = server_metrics
+        .filter(|_| warmup.is_some())
+        .map(|server_metrics| {
+            server_metrics.summarize(MetricsPhase::Warmup, metrics_config.slice_duration_ns)
+        });
     write_graph_artifacts(&request, &captured, &metrics_config)?;
+    if let (Some(gpu_telemetry), Some(gpu_records_path)) =
+        (gpu_telemetry, sidecars.gpu_records_path.as_ref())
+    {
+        gpu_telemetry.write_records_jsonl(gpu_records_path)?;
+    }
+    if let (Some(network_latency), Some(records_path)) =
+        (network_latency, sidecars.network_latency_records_path.as_ref())
+    {
+        network_latency.write_records_jsonl(records_path)?;
+    }
+    if let (Some(server_metrics), Some(path)) =
+        (server_metrics, sidecars.server_metrics_jsonl_path.as_ref())
+    {
+        server_metrics.write_slim_jsonl(path)?;
+    }
+    if let (Some(server_metrics), Some(path)) = (
+        server_metrics,
+        sidecars.server_metrics_parquet_wire_path.as_ref(),
+    ) {
+        server_metrics.write_parquet_wire_jsonl(path)?;
+    }
+    let server_metrics_report = server_metrics.and_then(|server_metrics| {
+        profiling_server_summary.as_ref().map(|profiling| {
+            server_metrics.report_metadata(profiling, warmup_server_summary.as_ref())
+        })
+    });
 
     let profiling = captured
         .iter()
@@ -1206,7 +1297,7 @@ async fn execute_graph_native(
         was_cancelled: phase_stats.iter().any(|phase| phase.was_cancelled),
         endpoints_configured,
         endpoints_successful,
-        server_metrics: None,
+        server_metrics: server_metrics_report,
     };
     let outcome = RunOutcome {
         run: ReportRunInfo {
@@ -1215,6 +1306,14 @@ async fn execute_graph_native(
         },
         summary,
         warmup,
+        server_metrics: profiling_server_summary
+            .as_ref()
+            .map(|summary| summary.sidecar_metrics().clone())
+            .unwrap_or_default(),
+        warmup_server_metrics: warmup_server_summary
+            .as_ref()
+            .map(|summary| summary.sidecar_metrics().clone())
+            .unwrap_or_default(),
         ..RunOutcome::default()
     };
     Ok(NativeReport::from_outcome(&profiling_metrics, &outcome))
@@ -1558,7 +1657,7 @@ async fn execute_native_inner(
     if let Some(network_latency) = network_latency {
         let mean_rtt_ns = network_latency.mean_rtt_ns();
         if network_latency.is_active_probe() && mean_rtt_ns.is_none() {
-            eprintln!(
+            tracing::warn!(
                 "network latency calibration collected no successful probes; adjusted metrics are omitted"
             );
         }

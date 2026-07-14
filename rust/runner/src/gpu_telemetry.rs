@@ -138,7 +138,7 @@ impl GpuTelemetryRun {
                             collectors.push(Rc::new(GpuTelemetryCollector::new(Rc::new(source))))
                         }
                         Err(error) => {
-                            eprintln!("GPU telemetry skipped unavailable Python source: {error}")
+                            tracing::warn!(error = %error, "GPU telemetry skipped unavailable Python source")
                         }
                     }
                 }
@@ -306,9 +306,10 @@ impl GpuTelemetryState {
                     snapshots.push(snapshot);
                     active.push(collector.clone());
                 }
-                Err(error) => eprintln!(
-                    "GPU telemetry skipped unreachable source {}: {error}",
-                    collector.endpoint_url()
+                Err(error) => tracing::warn!(
+                    source = %collector.endpoint_url(),
+                    error = %error,
+                    "GPU telemetry skipped unreachable source"
                 ),
             }
         }
@@ -356,9 +357,10 @@ impl GpuTelemetryState {
                 ),
                 Ok(None) => {}
                 Err(error) => {
-                    eprintln!(
-                        "GPU telemetry cadence scrape failed for {}: {error}",
-                        collector.endpoint_url()
+                    tracing::warn!(
+                        source = %collector.endpoint_url(),
+                        error = %error,
+                        "GPU telemetry cadence scrape failed"
                     );
                 }
             }
@@ -374,7 +376,7 @@ impl GpuTelemetryState {
         if let Some(task) = task
             && let Err(error) = task.await
         {
-            eprintln!("GPU telemetry cadence task failed: {error}");
+            tracing::warn!(error = %error, "GPU telemetry cadence task failed");
         }
 
         let collectors = self.active.borrow().clone();
@@ -388,9 +390,10 @@ impl GpuTelemetryState {
                     );
                     end_snapshots.push(snapshot);
                 }
-                Err(error) => eprintln!(
-                    "GPU telemetry final scrape failed for {}: {error}",
-                    collector.endpoint_url()
+                Err(error) => tracing::warn!(
+                    source = %collector.endpoint_url(),
+                    error = %error,
+                    "GPU telemetry final scrape failed"
                 ),
             }
         }
@@ -425,9 +428,10 @@ impl GpuTelemetryState {
         }
         for collector in &self.candidates {
             if let Err(error) = collector.shutdown().await {
-                eprintln!(
-                    "GPU telemetry source shutdown failed for {}: {error}",
-                    collector.endpoint_url()
+                tracing::warn!(
+                    source = %collector.endpoint_url(),
+                    error = %error,
+                    "GPU telemetry source shutdown failed"
                 );
             }
         }
