@@ -433,7 +433,10 @@ mod tests {
             "user_extra_key": {"nested": [1, 2, 3]}
         });
         let map = object.as_object().unwrap();
-        let bridged = BodyPlan::from_object(map).unwrap().materialize_standalone().unwrap();
+        let bridged = BodyPlan::from_object(map)
+            .unwrap()
+            .materialize_standalone()
+            .unwrap();
         assert_eq!(bridged, Bytes::from(serde_json::to_vec(&object).unwrap()));
     }
 
