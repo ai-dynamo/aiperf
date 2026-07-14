@@ -172,6 +172,97 @@ impl GraphTraceSource for CyclingGraphTraceSource {
     }
 }
 
+/// A cell-partitioned graph trace source: cell `cell_id` of `cell_count` owns the
+/// interleaved GLOBAL session ordinals `cell_id, cell_id + cell_count, cell_id + 2·C, …`
+/// and cycles the root templates by that global ordinal. The union across all cells
+/// therefore reproduces a single-cell run's trace set and per-template distribution
+/// (the design's *deterministic-per-topology* contract), and each trace's
+/// globally-unique ordinal rides its `trace.id` (`"{template}::instance-{global}"`) so
+/// the controller can merge cells' records in one global order — the graph analogue of
+/// the scheduled path's `CellularAutonomousIssuer` absolute slot (`base + within·C + id`).
+///
+/// One formula covers both partition modes the runtime needs:
+/// - **finite** (SharedIterations, e.g. `--num-conversations`): a `session_limit` bounds
+///   the global ordinal, so each cell stops once its interleave passes the shared cap;
+/// - **unbounded sampler-loop** (duration-driven GraphAgentic): `session_limit = None`
+///   and a phase duration policy owns termination.
+///
+/// This is the deterministic-cycling partition. When weighted/mix trace sampling lands
+/// (the RNG GraphAgentic case), the per-cell independent stream derives *here* as
+/// `rng.derive(("graph-sampler", cell_id))` — the skip-N RNG composability — in place of
+/// the modulo interleave; the seam (one `next_trace` per cell, global identity) is
+/// unchanged. `request_limit` (static-node budget) is not yet partitioned here.
+pub struct PartitionedGraphTraceSource {
+    templates: Vec<GraphTracePlan>,
+    session_limit: Option<u64>,
+    cell_id: u64,
+    cell_count: u64,
+    next_local: Cell<u64>,
+}
+
+impl PartitionedGraphTraceSource {
+    /// Construct a partitioned cycle for cell `cell_id` of `cell_count`
+    /// (`cell_count >= 1`, `cell_id < cell_count`). `session_limit` bounds the GLOBAL
+    /// session ordinal (the same cap a 1-cell run would use), or `None` for the
+    /// unbounded duration-driven case. `cell_count == 1` reproduces
+    /// [`CyclingGraphTraceSource`] exactly.
+    pub fn new(
+        templates: Vec<GraphTracePlan>,
+        session_limit: Option<u64>,
+        cell_id: u32,
+        cell_count: u32,
+    ) -> Result<Self, GraphWorkloadError> {
+        if templates.is_empty() {
+            return Err(GraphWorkloadError(
+                "graph trace cycling requires at least one root template".into(),
+            ));
+        }
+        if cell_count == 0 || cell_id >= cell_count {
+            return Err(GraphWorkloadError(
+                "graph cell partition requires cell_count >= 1 and cell_id < cell_count".into(),
+            ));
+        }
+        if session_limit == Some(0) {
+            return Err(GraphWorkloadError(
+                "graph trace session budget must be positive when configured".into(),
+            ));
+        }
+        Ok(Self {
+            templates,
+            session_limit,
+            cell_id: u64::from(cell_id),
+            cell_count: u64::from(cell_count),
+            next_local: Cell::new(0),
+        })
+    }
+}
+
+impl GraphTraceSource for PartitionedGraphTraceSource {
+    fn next_trace(&self) -> Result<Option<GraphTracePlan>, GraphWorkloadError> {
+        let local = self.next_local.get();
+        let global_ordinal = local
+            .checked_mul(self.cell_count)
+            .and_then(|scaled| scaled.checked_add(self.cell_id))
+            .ok_or_else(|| GraphWorkloadError("graph partitioned ordinal exceeds u64".into()))?;
+        if self
+            .session_limit
+            .is_some_and(|limit| global_ordinal >= limit)
+        {
+            return Ok(None);
+        }
+        let template_count = u64::try_from(self.templates.len())
+            .map_err(|_| GraphWorkloadError("graph template count exceeds u64".into()))?;
+        let template_index = usize::try_from(global_ordinal % template_count)
+            .map_err(|_| GraphWorkloadError("graph template index exceeds usize".into()))?;
+        let mut plan = self.templates[template_index].clone();
+        plan.trace.id = format!("{}::instance-{global_ordinal}", plan.trace.id);
+        self.next_local.set(local.checked_add(1).ok_or_else(|| {
+            GraphWorkloadError("graph partitioned local ordinal exceeds u64".into())
+        })?);
+        Ok(Some(plan))
+    }
+}
+
 /// Arrival-pacing extension point.
 #[async_trait(?Send)]
 pub trait GraphArrivalPolicy {
@@ -758,6 +849,128 @@ mod tests {
             "a::instance-2"
         );
         assert!(source.next_trace().unwrap().is_none());
+    }
+
+    fn sample_handle() -> crate::dataset::Handle {
+        let mut pool = SegmentPool::new();
+        intern_message(
+            &mut pool,
+            &OpenAiChatMessage::new("user", "hello"),
+            None,
+            &TiktokenTokenizer::builtin(),
+        )
+        .unwrap()
+    }
+
+    fn instance_ordinal(id: &str) -> u64 {
+        id.split_once("::instance-").unwrap().1.parse().unwrap()
+    }
+
+    #[test]
+    fn partitioned_source_interleaves_and_covers_the_single_cell_set() {
+        let handle = sample_handle();
+        let templates = || vec![one_node_plan("a", handle), one_node_plan("b", handle)];
+        // 3 cells over a 2-template cycle, shared global session cap 10.
+        let mut owned: Vec<Vec<String>> = Vec::new();
+        for cell_id in 0..3u32 {
+            let source =
+                PartitionedGraphTraceSource::new(templates(), Some(10), cell_id, 3).unwrap();
+            let mut ids = Vec::new();
+            while let Some(plan) = source.next_trace().unwrap() {
+                ids.push(plan.trace.id);
+            }
+            owned.push(ids);
+        }
+        // Interleave: cell k owns exactly the global ordinals ≡ k (mod 3), below the cap.
+        assert_eq!(
+            owned[0]
+                .iter()
+                .map(|id| instance_ordinal(id))
+                .collect::<Vec<_>>(),
+            vec![0, 3, 6, 9]
+        );
+        assert_eq!(
+            owned[1]
+                .iter()
+                .map(|id| instance_ordinal(id))
+                .collect::<Vec<_>>(),
+            vec![1, 4, 7]
+        );
+        assert_eq!(
+            owned[2]
+                .iter()
+                .map(|id| instance_ordinal(id))
+                .collect::<Vec<_>>(),
+            vec![2, 5, 8]
+        );
+        // Union is exactly the single-cell set 0..10, each template drawn by ordinal
+        // parity (the same template a 1-cell run assigns that global ordinal).
+        let mut all: Vec<String> = owned.into_iter().flatten().collect();
+        for id in &all {
+            let (template, _) = id.split_once("::instance-").unwrap();
+            let expected = if instance_ordinal(id) % 2 == 0 {
+                "a"
+            } else {
+                "b"
+            };
+            assert_eq!(template, expected, "template drift at {id}");
+        }
+        all.sort_by_key(|id| instance_ordinal(id));
+        assert_eq!(
+            all.iter()
+                .map(|id| instance_ordinal(id))
+                .collect::<Vec<_>>(),
+            (0..10).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn single_cell_partition_matches_the_cycling_source() {
+        let handle = sample_handle();
+        let part =
+            PartitionedGraphTraceSource::new(vec![one_node_plan("a", handle)], Some(3), 0, 1)
+                .unwrap();
+        let cyc = CyclingGraphTraceSource::new(vec![one_node_plan("a", handle)], Some(3)).unwrap();
+        for _ in 0..3 {
+            assert_eq!(
+                part.next_trace().unwrap().unwrap().trace.id,
+                cyc.next_trace().unwrap().unwrap().trace.id
+            );
+        }
+        assert!(part.next_trace().unwrap().is_none());
+        assert!(cyc.next_trace().unwrap().is_none());
+    }
+
+    #[test]
+    fn unbounded_partition_owns_only_its_interleave() {
+        let handle = sample_handle();
+        // cell 1 of 3, no session cap (duration-driven): owns 1, 4, 7, 10, …
+        let source =
+            PartitionedGraphTraceSource::new(vec![one_node_plan("a", handle)], None, 1, 3).unwrap();
+        for expected in [1u64, 4, 7, 10] {
+            assert_eq!(
+                instance_ordinal(&source.next_trace().unwrap().unwrap().trace.id),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn partitioned_source_rejects_bad_partitions() {
+        let handle = sample_handle();
+        assert!(
+            PartitionedGraphTraceSource::new(vec![one_node_plan("a", handle)], Some(4), 4, 4)
+                .is_err(),
+            "cell_id must be < cell_count"
+        );
+        assert!(
+            PartitionedGraphTraceSource::new(vec![one_node_plan("a", handle)], None, 0, 0).is_err(),
+            "cell_count must be >= 1"
+        );
+        assert!(
+            PartitionedGraphTraceSource::new(Vec::new(), None, 0, 1).is_err(),
+            "at least one template required"
+        );
     }
 
     #[test]
