@@ -52,6 +52,12 @@ pub enum FieldValue {
     Segment(Handle),
     /// An ordered array of message segments, comma-joined inside `[` `]`.
     Segments(SmallVec<[Handle; 1]>),
+    /// An ordered array of already-serialized message wires that are not (yet)
+    /// interned in the frozen store — dynamic/live-continuation content
+    /// (segment-unification §5) or a transitional per-dispatch assembly. Spliced
+    /// identically to [`Segments`](FieldValue::Segments); the materializer needs
+    /// no store lookup. Serialized exactly once by the producer, never here.
+    Wires(SmallVec<[Bytes; 1]>),
 }
 
 /// A declarative, wire-agnostic description of a request body.
@@ -93,9 +99,15 @@ impl BodyPlan {
         self
     }
 
-    /// Declare an ordered message array (`"name":[seg,seg,…]`).
+    /// Declare an ordered message array of stored segments (`"name":[seg,…]`).
     pub fn array(self, name: FieldName, handles: impl IntoIterator<Item = Handle>) -> Self {
         self.push(name, FieldValue::Segments(handles.into_iter().collect()))
+    }
+
+    /// Declare an ordered message array of already-serialized wires — dynamic or
+    /// live-continuation content not interned in the frozen store.
+    pub fn wire_array(self, name: FieldName, wires: impl IntoIterator<Item = Bytes>) -> Self {
+        self.push(name, FieldValue::Wires(wires.into_iter().collect()))
     }
 
     /// Declare a single content segment field (`"name":<segment wire>`).
@@ -195,10 +207,17 @@ fn materialize_fields<S: SegmentStore + ?Sized>(
                         body.put_u8(b',');
                     }
                     let wire = message_wire(store, *handle)?;
-                    validate_object_slice(&wire).map_err(|error| {
-                        DatasetError::InvalidWire(format!("message at index {element}: {error}"))
-                    })?;
-                    body.put_slice(&wire);
+                    push_message(&mut body, &wire, element)?;
+                }
+                body.put_u8(b']');
+            }
+            FieldValue::Wires(wires) => {
+                body.put_u8(b'[');
+                for (element, wire) in wires.iter().enumerate() {
+                    if element > 0 {
+                        body.put_u8(b',');
+                    }
+                    push_message(&mut body, wire, element)?;
                 }
                 body.put_u8(b']');
             }
@@ -212,6 +231,14 @@ fn materialize_fields<S: SegmentStore + ?Sized>(
     }
     body.put_u8(b'}');
     Ok(body.freeze())
+}
+
+/// Append one validated message-object wire as an array element.
+fn push_message(body: &mut BytesMut, wire: &[u8], index: usize) -> Result<()> {
+    validate_object_slice(wire)
+        .map_err(|error| DatasetError::InvalidWire(format!("message at index {index}: {error}")))?;
+    body.put_slice(wire);
+    Ok(())
 }
 
 /// Resolve one non-array content segment to its exact wire bytes. Message and
@@ -274,6 +301,30 @@ mod tests {
                 br#"{"messages":[{"role":"system","content":"S"},{"content":"hi","role":"user","x":1}],"model":"m","stream":true}"#
             )
         );
+    }
+
+    #[test]
+    fn wire_array_splices_identically_to_stored_segments() {
+        let mut pool = SegmentPool::new();
+        let a = message(&mut pool, None, br#"{"role":"user","content":"one"}"#);
+        let b = message(&mut pool, Some(a), br#"{"role":"assistant","content":"two"}"#);
+        let store = pool.freeze();
+        let mut overrides = Overrides::new();
+        overrides.set_model("m");
+
+        let wire_a = message_wire(&store, a).unwrap();
+        let wire_b = message_wire(&store, b).unwrap();
+
+        let segment_plan = BodyPlan::new().array("messages", [a, b]);
+        let wire_plan = BodyPlan::new().wire_array("messages", [wire_a.clone(), wire_b.clone()]);
+
+        let from_segments =
+            JsonBodyMaterializer::materialize(&segment_plan, &store, &overrides).unwrap();
+        let from_wires = JsonBodyMaterializer::materialize(&wire_plan, &store, &overrides).unwrap();
+        let legacy = build_message_body_from_wires(&[wire_a, wire_b], &overrides).unwrap();
+
+        assert_eq!(from_wires, from_segments);
+        assert_eq!(from_wires, legacy);
     }
 
     #[test]
