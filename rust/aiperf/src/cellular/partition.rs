@@ -99,6 +99,13 @@ impl ModuloCellPartition {
     }
 }
 
+impl Default for ModuloCellPartition {
+    /// The identity `(0, 1)` partition — the single-process cell of one.
+    fn default() -> Self {
+        Self::direct()
+    }
+}
+
 impl CellPartition for ModuloCellPartition {
     fn cell_id(&self) -> u32 {
         self.cell_id

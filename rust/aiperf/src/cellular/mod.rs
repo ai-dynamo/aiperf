@@ -35,9 +35,11 @@
 //! Everything here is object-safe where it crosses a `dyn` boundary and generic
 //! where it is hot-path monomorphized, per the crate's extensibility discipline.
 
+pub mod issuance;
 pub mod partition;
 pub mod shard;
 
+pub use issuance::{CellularAutonomousIssuer, DirectIssuanceAuthority, IssuanceAuthority};
 pub use partition::{CellPartition, CellPartitionError, ModuloCellPartition};
 pub use shard::{
     ColumnStorePartition, DirectRecordsShard, PartitionCodecError, RecordsShard,

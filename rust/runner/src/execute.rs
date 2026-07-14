@@ -25,6 +25,7 @@ use aiperf::adaptive_core::{
     AdaptiveScale, CorrelationContext, SharedWindowSampler, SlaFilter, UserTarget,
 };
 use aiperf::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
+use aiperf::cellular::{DirectIssuanceAuthority, IssuanceAuthority};
 use aiperf::clock::{Clock, RealClock, RealClockAnchor};
 use aiperf::content_server::{
     ContentServerConfig, ContentServerFactory, ContentServerRuntime, NativeContentServerFactory,
@@ -3277,6 +3278,11 @@ struct RunCapture {
     wants_live_sink_record: bool,
     /// Whether an adaptive phase consumes each completed record.
     wants_adaptive_record: bool,
+    /// The dispatch-ordinal authority (roadmap S1). Direct/identity for the
+    /// single-process cell of one, so it changes no output today; a cellular
+    /// controller injects a per-cell autonomous issuer that stamps global ordinals
+    /// spanning every cell's partition.
+    issuance: Rc<dyn IssuanceAuthority>,
 }
 
 impl RunCapture {
@@ -3304,6 +3310,7 @@ impl RunCapture {
             adaptive_records: RefCell::new(HashMap::new()),
             wants_live_sink_record,
             wants_adaptive_record,
+            issuance: Rc::new(DirectIssuanceAuthority::new()),
         }
     }
 
@@ -3597,7 +3604,11 @@ impl RunCapture {
                         identity.uuid
                     )
                 })?;
-                ingest.request_index = Some(ordinal);
+                // The enumerate index is this cell's local dispatch ordinal; the
+                // issuance authority maps it to the dense global ordinal (identity
+                // for the cell of one). This is the single central assignment point
+                // the records-first re-ingest orders by.
+                ingest.request_index = Some(self.issuance.global_ordinal(ordinal));
                 let has_credit_timestamp = labels
                     .get(&identity.uuid)
                     .map(|label| label.has_credit_timestamp)
