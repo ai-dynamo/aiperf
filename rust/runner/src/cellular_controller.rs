@@ -56,6 +56,7 @@ pub fn run_cellular(
     metrics_config: MetricsConfig,
 ) -> Result<CellularRunOutcome> {
     ensure!(cell_count >= 1, "cell_count must be at least 1");
+    validate_cellular_phase_budgets(envelope)?;
     let total_requests = profiling_request_budget(envelope)?;
     ensure!(
         total_requests >= cell_count as u64,
@@ -147,7 +148,36 @@ pub fn run_cellular(
         let summary = merged.export_results(&ExportContext::phase(
             aiperf::metrics_core::Phase::Profiling,
         ));
-        let report = NativeReport::new(&summary, None);
+        // Assemble the report so its metric data matches a 1-cell run: the profiling
+        // metrics, the warmup section (carried only when a warmup phase actually ran,
+        // so a profiling-only run stays byte-identical to the plain builder), plus the
+        // run mode/model and configured endpoints. `was_cancelled` is left false — the
+        // controller has no cross-cell cancellation.
+        //
+        // Two blocks a 1-cell report carries are intentionally NOT reproduced here:
+        // (1) the coordinator's finalize_run provenance (distribution_id / workload /
+        //     alias-resolved endpoint_profiles / extensions) — the controller carries
+        //     transport/workload/cells/record_count in its terminal envelope instead
+        //     of replaying the coordinator's alias resolution; and
+        // (2) the grouped per-error detail — cells ship metric records (with the
+        //     error/cancel flags, so error COUNTS are in the metrics) but not the
+        //     messages group_record_errors needs, and a cross-cell regroup could not
+        //     reproduce the single-cell error-list order.
+        let warmup =
+            merged.export_results(&ExportContext::phase(aiperf::metrics_core::Phase::Warmup));
+        let outcome = aiperf::metrics_core::report::RunOutcome {
+            run: aiperf::metrics_core::report::ReportRunInfo {
+                mode: Some("online".to_owned()),
+                model: cellular_model_name(envelope),
+            },
+            summary: aiperf::metrics_core::report::ReportSummary {
+                endpoints_configured: cellular_endpoint_urls(envelope),
+                ..Default::default()
+            },
+            warmup: (!warmup.result_map().is_empty()).then_some(warmup),
+            ..Default::default()
+        };
+        let report = NativeReport::from_outcome(&summary, &outcome);
         let json = serde_json::to_string_pretty(&report).context("serializing merged report")?;
         std::fs::write(report_path, json)
             .with_context(|| format!("writing merged report to {}", report_path.display()))?;
@@ -275,6 +305,36 @@ fn build_cell_envelope(
     Ok(cell)
 }
 
+/// Rejects a cellular run whose phases are not exactly request-bounded. The
+/// dense-ordinal tiling requires every phase's actual dispatch count to equal its
+/// sliced `requests` budget, so a phase that lacks `requests`, or carries a
+/// `duration`/`sessions` bound that can stop it early, would mis-partition (run
+/// unpartitioned and abort the merge). Fail closed rather than silently corrupt.
+fn validate_cellular_phase_budgets(envelope: &serde_json::Value) -> Result<()> {
+    let phases = envelope
+        .pointer("/run/cfg/phases")
+        .and_then(serde_json::Value::as_array)
+        .context("run cfg has no phases array")?;
+    for phase in phases {
+        let name = phase
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("<unnamed>");
+        ensure!(
+            phase
+                .get("requests")
+                .and_then(serde_json::Value::as_u64)
+                .is_some(),
+            "cellular runs require every phase to be request-bounded; phase {name:?} has no `requests` budget"
+        );
+        ensure!(
+            phase.get("duration").is_none() && phase.get("sessions").is_none(),
+            "cellular runs do not support a phase with a `duration`/`sessions` bound that can stop before its request budget; phase {name:?}"
+        );
+    }
+    Ok(())
+}
+
 /// The number of dispatch-stream positions in `[0, total)` that cell `k` owns under
 /// round-robin ownership (`position % cell_count == cell_id`) — `ceil((total-k)/C)`.
 /// A phase's per-cell slice is the difference of this over the phase's `[base,
@@ -308,6 +368,29 @@ fn profiling_request_budget(envelope: &serde_json::Value) -> Result<u64> {
         }
     }
     bail!("cellular runs require a profiling phase with a request budget")
+}
+
+/// The primary model name from the v2 envelope's model list, for the merged
+/// report's run info (matching the single-process report).
+fn cellular_model_name(envelope: &serde_json::Value) -> Option<String> {
+    envelope
+        .pointer("/run/cfg/models/items/0/name")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+}
+
+/// The configured endpoint URLs from the v2 envelope, for the merged report's
+/// summary (matching the single-process report).
+fn cellular_endpoint_urls(envelope: &serde_json::Value) -> Vec<String> {
+    envelope
+        .pointer("/run/cfg/endpoint/urls")
+        .and_then(serde_json::Value::as_array)
+        .map(|urls| {
+            urls.iter()
+                .filter_map(|url| url.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Reads `cfg.runtime.cells` from a v2 envelope, defaulting to 1 (single process).
@@ -353,6 +436,31 @@ fn write_heartbeat_sidecar(report_path: &Path, heartbeat: &MetricsHeartbeat) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_non_request_bounded_phases() {
+        // Request-bounded phases pass.
+        let ok = serde_json::json!({"run": {"cfg": {"phases": [
+            {"name": "warmup", "requests": 10},
+            {"name": "profiling", "requests": 100},
+        ]}}});
+        assert!(validate_cellular_phase_budgets(&ok).is_ok());
+        // A phase lacking `requests`, or carrying a duration/sessions bound, fails closed.
+        for bad in [
+            serde_json::json!({"run": {"cfg": {"phases": [{"name": "profiling"}]}}}),
+            serde_json::json!({"run": {"cfg": {"phases": [
+                {"name": "profiling", "requests": 100, "duration": 5.0},
+            ]}}}),
+            serde_json::json!({"run": {"cfg": {"phases": [
+                {"name": "profiling", "requests": 100, "sessions": 3},
+            ]}}}),
+        ] {
+            assert!(
+                validate_cellular_phase_budgets(&bad).is_err(),
+                "should reject {bad}"
+            );
+        }
+    }
 
     #[test]
     fn owned_positions_sum_to_total_and_tile() {
