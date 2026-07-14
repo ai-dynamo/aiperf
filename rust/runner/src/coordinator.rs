@@ -397,7 +397,20 @@ fn persist_prepared_report(
     // Native post-report export plane. Best-effort: the native-v2 report above is
     // the committed authority; genai-perf compat / OTLP / MLflow side outputs log
     // and never fail the run (see `aiperf::export`).
-    aiperf::export::run_exporters(&finalized, &run.artifact_target, &run.export);
+    //
+    // `AIPERF_EXPORT_SUBDIR` (parity-proof only) redirects the native sink outputs
+    // into `<artifact_dir>/<subdir>/` so they coexist with the legacy Python
+    // exporter files under `<artifact_dir>/`, enabling a same-`native-v2.json`
+    // byte-diff. Unset in normal runs (sinks write to the artifact root).
+    let export_dir = match std::env::var("AIPERF_EXPORT_SUBDIR") {
+        Ok(subdir) if !subdir.is_empty() => {
+            let dir = run.artifact_target.join(subdir);
+            let _ = std::fs::create_dir_all(&dir);
+            dir
+        }
+        _ => run.artifact_target.clone(),
+    };
+    aiperf::export::run_exporters(&finalized, &export_dir, &run.export);
     if let Some(report_commit) = report_commit {
         report_commit
             .commit()
