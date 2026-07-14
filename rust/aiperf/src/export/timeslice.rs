@@ -7,15 +7,58 @@
 //! native-v2 report already embeds per-series timeslices
 //! (`MetricSeries.timeslices`, each `{start_ns,end_ns,complete,stats}`); this
 //! sink regroups them into the legacy per-slice metric map and serializes to the
-//! two files byte-for-byte. Only emitted when `slice_duration` was set. Parity
-//! oracle: the current Python timeslice JSON/CSV output.
+//! two files byte-for-byte. Only emitted when the run produced timeslices.
 //!
-//! STATUS: registered-but-inert stub (Worker E fills the body).
+//! # Parity oracle (byte-exact source of truth)
+//! - Regrouping: `orchestrator/native_report.py::_project_native_timeslices`
+//!   (~L195) — per-metric native slices are aligned into one legacy slice record
+//!   keyed by `(start_ns, end_ns, complete)`, sorted by that tuple. Each metric's
+//!   summary series is selected exactly as `_summary_series` (~L791): the single
+//!   series when there is one, otherwise the unique unlabeled aggregate series,
+//!   else the metric contributes no slices. Per-slice stats are lowered by
+//!   `_legacy_stats` (~L809).
+//! - JSON: `timeslice_metrics_json_exporter.py::_generate_content` (~L57) →
+//!   `TimesliceData` (`export_models.py` L125) with dynamic per-metric fields,
+//!   `orjson.dumps(..., OPT_INDENT_2)`. `is_complete` is emitted only for partial
+//!   slices (`false`); complete slices omit it. Each metric object is a
+//!   `JsonMetricResult` (`export_models.py` L24) whose field order is
+//!   `unit, avg, p1, p5, p10, p25, p50, p75, p90, p95, p99, min, max, std, count,
+//!   sum`, absent fields dropped. `count` is suppressed for AGGREGATE/DERIVED
+//!   (scalar) metrics (`record_models.py::to_json_result` L99).
+//! - CSV: `timeslice_metrics_csv_exporter.py::_generate_content` (~L52) — tidy
+//!   long format `Timeslice,Start_NS,End_NS,Metric,Unit,Stat,Value`, metrics
+//!   sorted by tag, one row per present stat in `STAT_KEYS` order
+//!   (`constants.py` L23: `avg,min,max,sum,p1,p5,p10,p25,p50,p75,p90,p95,p99,std`;
+//!   note `count` is intentionally absent from CSV), CRLF line terminators,
+//!   values `f"{float:.2f}"` (`_format_number` L96).
+//!
+//! # Known deviation from the Python output
+//! The Python JSON collection wraps the slice array in
+//! `TimesliceCollectionExportData` with an additional `input_config` object
+//! projected from the full `BenchmarkConfig`. The native report carries no such
+//! config, so this sink emits only `{"timeslices": [...]}`. If byte-identical
+//! `input_config` is required downstream, the Python frontend must project it
+//! into `cfg.export.timeslice` for the runner to re-serialize.
+//!
+//! Non-finite tails (`ReportValue::NonFinite`) are treated as structurally
+//! absent, matching the Python projection where a native `null` reaches
+//! `_optional_number` as `None` and is dropped from both files.
 
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::path::{Component, Path};
+
+use anyhow::{Context, bail, ensure};
+use serde_json::{Map, Value};
 
 use crate::export::{ExportConfig, Exporter};
-use crate::metrics_core::NativeReport;
+use crate::metrics_core::catalog::{CATALOG, MetricFlags, MetricSpec, MetricType};
+use crate::metrics_core::report::{MetricSeries, NativeReport, ReportStats, ReportValue};
+
+/// Canonical percentile field order shared by the JSON `JsonMetricResult`
+/// declaration and the CSV `STAT_KEYS` list. A `BTreeMap` key sort is *not*
+/// usable here: lexical ordering places `p10` before `p5`, so the fixed numeric
+/// order must be applied explicitly.
+const PERCENTILE_ORDER: [&str; 9] = ["p1", "p5", "p10", "p25", "p50", "p75", "p90", "p95", "p99"];
 
 /// Timeslice export policy. Enabled when the run produced timeslices.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
@@ -27,6 +70,43 @@ pub struct TimesliceExportConfig {
     pub csv: bool,
     /// Filename stem (before the `_timeslices` suffix); default `profile_export_aiperf`.
     pub stem: Option<String>,
+}
+
+/// Legacy per-slice, per-metric statistics lowered to the outer-orchestrator
+/// contract. Every numeric field is either finite or structurally absent.
+#[derive(Debug, Clone, Default)]
+struct LegacyStats {
+    avg: Option<f64>,
+    min: Option<f64>,
+    max: Option<f64>,
+    sum: Option<f64>,
+    std: Option<f64>,
+    /// Record-distribution observation count; suppressed for scalar metrics.
+    count: Option<i64>,
+    /// Percentiles retained in canonical numeric order.
+    percentiles: Vec<(&'static str, f64)>,
+}
+
+/// One metric within one regrouped slice.
+#[derive(Debug, Clone)]
+struct SliceMetric {
+    /// Stable metric tag (report key); drives CSV metric-sort and JSON field key.
+    tag: String,
+    /// Display header (catalog `header`, falling back to the tag) for the CSV.
+    header: String,
+    /// Metric display unit copied from the report metric entry.
+    unit: String,
+    stats: LegacyStats,
+}
+
+/// One regrouped legacy slice keyed by `(start_ns, end_ns, complete)`.
+#[derive(Debug, Clone)]
+struct SliceGroup {
+    start_ns: i64,
+    end_ns: i64,
+    complete: bool,
+    /// Metrics in tag-sorted order (report `metrics` is a `BTreeMap`).
+    metrics: Vec<SliceMetric>,
 }
 
 /// The timeslice [`Exporter`] (JSON + CSV).
@@ -43,10 +123,341 @@ impl Exporter for TimesliceExporter {
 
     fn export(
         &self,
-        _report: &NativeReport,
-        _artifact_dir: &Path,
-        _cfg: &ExportConfig,
+        report: &NativeReport,
+        artifact_dir: &Path,
+        cfg: &ExportConfig,
     ) -> anyhow::Result<()> {
-        anyhow::bail!("native timeslice json/csv sink not yet implemented");
+        let slices = regroup_timeslices(report)?;
+        // Python raises `DataExporterDisabled` when no timeslices exist, so the
+        // legacy files are never created. Mirror that: emit nothing.
+        if slices.is_empty() {
+            return Ok(());
+        }
+
+        let base = cfg
+            .timeslice
+            .stem
+            .as_deref()
+            .unwrap_or("profile_export_aiperf");
+
+        if cfg.timeslice.json {
+            let content = render_json(&slices)?;
+            write_artifact(artifact_dir, &format!("{base}_timeslices.json"), &content)?;
+        }
+        if cfg.timeslice.csv {
+            let content = render_csv(&slices)?;
+            write_artifact(artifact_dir, &format!("{base}_timeslices.csv"), &content)?;
+        }
+        Ok(())
     }
 }
+
+/// Look up a catalog spec by its stable report spelling. Tags outside the
+/// catalog (dynamically injected, e.g. `adj_*`) return `None`, matching
+/// `MetricRegistry.get_class_or_none`.
+fn spec_by_tag(tag: &str) -> Option<&'static MetricSpec> {
+    CATALOG.iter().find(|spec| spec.tag.as_str() == tag)
+}
+
+/// Regroup the report's per-series timeslices into legacy per-slice records.
+///
+/// Mirrors `_project_native_timeslices`: iterate metrics in report (`BTreeMap`)
+/// order, drop INTERNAL/EXPERIMENTAL metrics (`_prepare_metrics`), select the
+/// summary series (`_summary_series`), and fold each series timeslice into the
+/// `(start_ns, end_ns, complete)` group. The result is sorted by that key.
+fn regroup_timeslices(report: &NativeReport) -> anyhow::Result<Vec<SliceGroup>> {
+    let mut groups: BTreeMap<(i64, i64, bool), Vec<SliceMetric>> = BTreeMap::new();
+
+    for (tag, entry) in &report.metrics {
+        let spec = spec_by_tag(tag);
+        // INTERNAL/EXPERIMENTAL metrics are computed but excluded from file
+        // exports (dev-mode show flags default to off in the product path).
+        if let Some(spec) = spec
+            && spec
+                .flags
+                .intersects(MetricFlags::INTERNAL | MetricFlags::EXPERIMENTAL)
+        {
+            continue;
+        }
+
+        let series = match summary_series(tag, &entry.series)? {
+            Some(series) => series,
+            None => continue,
+        };
+
+        let header = spec.map_or_else(|| tag.clone(), |spec| spec.header.to_string());
+        // Scalar (AGGREGATE/DERIVED) metrics suppress `count` in JSON.
+        let is_scalar = spec
+            .is_some_and(|spec| matches!(spec.kind, MetricType::Aggregate | MetricType::Derived));
+
+        for slice in &series.timeslices {
+            let stats = lower_stats(&slice.stats, is_scalar);
+            groups
+                .entry((slice.start_ns, slice.end_ns, slice.complete))
+                .or_default()
+                .push(SliceMetric {
+                    tag: tag.clone(),
+                    header: header.clone(),
+                    unit: entry.unit.clone(),
+                    stats,
+                });
+        }
+    }
+
+    Ok(groups
+        .into_iter()
+        .map(|((start_ns, end_ns, complete), metrics)| SliceGroup {
+            start_ns,
+            end_ns,
+            complete,
+            metrics,
+        })
+        .collect())
+}
+
+/// Select a metric's summary series exactly as `_summary_series`: the single
+/// series when there is one, otherwise the unique unlabeled aggregate series.
+/// Zero unlabeled series among many yields `None` (metric contributes no
+/// slices); more than one unlabeled aggregate is a hard report error.
+fn summary_series<'a>(
+    tag: &str,
+    series: &'a [MetricSeries],
+) -> anyhow::Result<Option<&'a MetricSeries>> {
+    match series {
+        [] => bail!("metric {tag:?} must contain at least one series"),
+        [single] => Ok(Some(single)),
+        many => {
+            let mut unlabeled = many.iter().filter(|series| series.labels.is_none());
+            let first = unlabeled.next();
+            if unlabeled.next().is_some() {
+                bail!("metric {tag:?} contains multiple unlabeled aggregate series");
+            }
+            Ok(first)
+        }
+    }
+}
+
+/// Present, finite value of an optional [`ReportValue`]; non-finite/absent both
+/// lower to `None`.
+fn finite_opt(value: Option<ReportValue>) -> Option<f64> {
+    match value {
+        Some(ReportValue::Finite(value)) => Some(value),
+        _ => None,
+    }
+}
+
+/// Present, finite value of a required [`ReportValue`]; non-finite lowers to
+/// `None` (the Python projection drops it rather than serializing a sentinel).
+fn finite(value: ReportValue) -> Option<f64> {
+    match value {
+        ReportValue::Finite(value) => Some(value),
+        ReportValue::NonFinite => None,
+    }
+}
+
+/// Percentiles retained in canonical numeric order, non-finite entries dropped.
+fn ordered_percentiles(percentiles: &BTreeMap<String, ReportValue>) -> Vec<(&'static str, f64)> {
+    PERCENTILE_ORDER
+        .iter()
+        .filter_map(|&key| match percentiles.get(key) {
+            Some(ReportValue::Finite(value)) => Some((key, *value)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Lower one type-specific report stats block to the legacy stat set, matching
+/// `_legacy_stats`. `is_scalar` controls `count` suppression.
+fn lower_stats(stats: &ReportStats, is_scalar: bool) -> LegacyStats {
+    match stats {
+        ReportStats::Distribution(dist) => LegacyStats {
+            avg: finite_opt(dist.avg),
+            min: finite_opt(dist.min),
+            max: finite_opt(dist.max),
+            sum: None,
+            std: finite_opt(dist.std),
+            count: if is_scalar {
+                None
+            } else {
+                dist.count.map(|count| count as i64)
+            },
+            percentiles: ordered_percentiles(&dist.percentiles),
+        },
+        ReportStats::Scalar(scalar) => {
+            let value = finite(scalar.value);
+            LegacyStats {
+                avg: value,
+                min: value,
+                max: value,
+                ..LegacyStats::default()
+            }
+        }
+        ReportStats::Counter(counter) => {
+            let total = finite(counter.total);
+            LegacyStats {
+                avg: total,
+                min: total,
+                max: total,
+                sum: total,
+                ..LegacyStats::default()
+            }
+        }
+        ReportStats::Histogram(hist) => LegacyStats {
+            avg: finite_opt(hist.avg),
+            sum: finite(hist.sum),
+            count: if is_scalar {
+                None
+            } else {
+                Some(hist.count as i64)
+            },
+            percentiles: ordered_percentiles(&hist.percentiles),
+            ..LegacyStats::default()
+        },
+    }
+}
+
+/// Serialize the regrouped slices to the legacy JSON shape. Insertion order is
+/// preserved by `serde_json`'s `preserve_order` feature; `to_string_pretty`
+/// matches orjson's two-space indent byte-for-byte.
+fn render_json(slices: &[SliceGroup]) -> anyhow::Result<String> {
+    let mut array = Vec::with_capacity(slices.len());
+    for slice in slices {
+        let mut object = Map::new();
+        object.insert("start_ns".to_string(), Value::from(slice.start_ns));
+        object.insert("end_ns".to_string(), Value::from(slice.end_ns));
+        // `is_complete` is emitted only for partial slices; complete slices omit
+        // it (`is_complete=None` under `exclude_none`).
+        if !slice.complete {
+            object.insert("is_complete".to_string(), Value::Bool(false));
+        }
+        for metric in &slice.metrics {
+            object.insert(metric.tag.clone(), metric_json(metric));
+        }
+        array.push(Value::Object(object));
+    }
+
+    let mut root = Map::new();
+    root.insert("timeslices".to_string(), Value::Array(array));
+    serde_json::to_string_pretty(&Value::Object(root)).context("serializing timeslice JSON export")
+}
+
+/// Build one metric object in `JsonMetricResult` field order.
+fn metric_json(metric: &SliceMetric) -> Value {
+    let stats = &metric.stats;
+    let mut object = Map::new();
+    object.insert("unit".to_string(), Value::from(metric.unit.clone()));
+    insert_number(&mut object, "avg", stats.avg);
+    for (key, value) in &stats.percentiles {
+        object.insert((*key).to_string(), number_value(*value));
+    }
+    insert_number(&mut object, "min", stats.min);
+    insert_number(&mut object, "max", stats.max);
+    insert_number(&mut object, "std", stats.std);
+    if let Some(count) = stats.count {
+        object.insert("count".to_string(), Value::from(count));
+    }
+    insert_number(&mut object, "sum", stats.sum);
+    Value::Object(object)
+}
+
+/// Insert a present finite value; absent values leave the key out entirely.
+fn insert_number(object: &mut Map<String, Value>, key: &str, value: Option<f64>) {
+    if let Some(value) = value {
+        object.insert(key.to_string(), number_value(value));
+    }
+}
+
+/// Wrap a finite f64 as a JSON number. Report values are always finite here, so
+/// the fallback to null is defensive only.
+fn number_value(value: f64) -> Value {
+    serde_json::Number::from_f64(value).map_or(Value::Null, Value::Number)
+}
+
+/// Serialize the regrouped slices to the tidy/long CSV, matching the Python
+/// `csv.writer` output: CRLF terminators, minimal quoting, `.2f` values.
+fn render_csv(slices: &[SliceGroup]) -> anyhow::Result<String> {
+    let mut writer = csv::WriterBuilder::new()
+        .terminator(csv::Terminator::CRLF)
+        .from_writer(Vec::new());
+
+    writer
+        .write_record([
+            "Timeslice",
+            "Start_NS",
+            "End_NS",
+            "Metric",
+            "Unit",
+            "Stat",
+            "Value",
+        ])
+        .context("writing timeslice CSV header")?;
+
+    for (index, slice) in slices.iter().enumerate() {
+        let timeslice_index = index.to_string();
+        let start = slice.start_ns.to_string();
+        let end = slice.end_ns.to_string();
+        for metric in &slice.metrics {
+            for (stat, value) in csv_stat_rows(&metric.stats) {
+                writer
+                    .write_record([
+                        timeslice_index.as_str(),
+                        start.as_str(),
+                        end.as_str(),
+                        metric.header.as_str(),
+                        metric.unit.as_str(),
+                        stat,
+                        &format!("{value:.2}"),
+                    ])
+                    .context("writing timeslice CSV row")?;
+            }
+        }
+    }
+
+    let bytes = writer
+        .into_inner()
+        .context("flushing timeslice CSV writer")?;
+    String::from_utf8(bytes).context("timeslice CSV is not valid UTF-8")
+}
+
+/// Present stats in `STAT_KEYS` order (`count` is intentionally excluded from
+/// the CSV). Percentiles are interleaved between `sum` and `std`, in canonical
+/// numeric order.
+fn csv_stat_rows(stats: &LegacyStats) -> Vec<(&'static str, f64)> {
+    let mut rows = Vec::new();
+    if let Some(value) = stats.avg {
+        rows.push(("avg", value));
+    }
+    if let Some(value) = stats.min {
+        rows.push(("min", value));
+    }
+    if let Some(value) = stats.max {
+        rows.push(("max", value));
+    }
+    if let Some(value) = stats.sum {
+        rows.push(("sum", value));
+    }
+    rows.extend(stats.percentiles.iter().copied());
+    if let Some(value) = stats.std {
+        rows.push(("std", value));
+    }
+    rows
+}
+
+/// Join `name` onto the run's artifact directory, rejecting any stem that would
+/// escape it, then write `content` verbatim (no trailing newline, matching the
+/// Python exporters).
+fn write_artifact(artifact_dir: &Path, name: &str, content: &str) -> anyhow::Result<()> {
+    let mut components = Path::new(name).components();
+    ensure!(
+        matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none(),
+        "refusing to write timeslice artifact with unsafe name {name:?}"
+    );
+    std::fs::create_dir_all(artifact_dir)
+        .with_context(|| format!("creating artifact directory {}", artifact_dir.display()))?;
+    let path = artifact_dir.join(name);
+    std::fs::write(&path, content)
+        .with_context(|| format!("writing timeslice artifact {}", path.display()))
+}
+
+#[cfg(test)]
+mod tests;
