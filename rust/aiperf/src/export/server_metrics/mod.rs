@@ -74,6 +74,14 @@ pub struct ServerMetricsExportConfig {
     pub json: bool,
     /// Emit `server_metrics_export.csv`.
     pub csv: bool,
+    /// AIPerf package version (`aiperf.__version__`) that generated the export,
+    /// projected by the frontend. The native report carries only the Rust crate
+    /// version (`0.0.0` in dev), so the frontend supplies the authoritative
+    /// package version; when absent the sink falls back to the report's field.
+    /// Rendered into the JSON `aiperf_version` field and the CSV `# aiperf_version:`
+    /// comment header, matching `ServerMetricsExportData.aiperf_version`.
+    #[serde(default)]
+    pub aiperf_version: Option<String>,
     /// Benchmark run identity (UUID) shared across export formats. Rendered into
     /// the JSON `benchmark_id` field and the CSV `# benchmark_id:` header; absent
     /// when the frontend does not supply one.
@@ -270,12 +278,18 @@ fn build_json(
         "schema_version".into(),
         Value::String(JSON_SCHEMA_VERSION.into()),
     );
-    // `aiperf_version` is the native report's authority (Rust crate version,
-    // kept in lockstep with the Python package for a release). `None` would be
-    // dropped, but the report always carries a version string.
+    // `aiperf_version` is the frontend-projected package version; the report's
+    // own field (the Rust crate version) is a fallback only when the projection
+    // is absent (e.g. unit tests). `None` would be dropped, but one of the two
+    // always carries a version string.
     root.insert(
         "aiperf_version".into(),
-        Value::String(report.aiperf_version.clone()),
+        Value::String(
+            policy
+                .aiperf_version
+                .clone()
+                .unwrap_or_else(|| report.aiperf_version.clone()),
+        ),
     );
     if let Some(benchmark_id) = &policy.benchmark_id {
         root.insert("benchmark_id".into(), Value::String(benchmark_id.clone()));
@@ -775,7 +789,13 @@ fn build_csv(report: &NativeReport, policy: &ServerMetricsExportConfig) -> Strin
     // Comment header lines use `\n`; the CSV body below uses `\r\n`.
     let mut content = String::new();
     content.push_str("# AIPerf Server Metrics Export (CSV)\n");
-    content.push_str(&format!("# aiperf_version: {}\n", report.aiperf_version));
+    content.push_str(&format!(
+        "# aiperf_version: {}\n",
+        policy
+            .aiperf_version
+            .as_deref()
+            .unwrap_or(report.aiperf_version.as_str())
+    ));
     content.push_str(&format!("# schema_version: {CSV_SCHEMA_VERSION}\n"));
     content.push_str(&format!(
         "# benchmark_id: {}\n",

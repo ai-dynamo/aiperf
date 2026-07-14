@@ -303,13 +303,38 @@ fn scratch(name: &str) -> std::path::PathBuf {
     dir
 }
 
+/// The frontend registry projection reproducing the two-slice report's expected
+/// filtering and headers: `credit_drop_latency` is the registered INTERNAL tag
+/// dropped from both files; the retained metrics carry their `MetricRegistry`
+/// Title-Case headers; no metric is scalar-tier. This is the exact shape
+/// `_timeslice_frontend_projection` supplies on the product path.
+fn registry_timeslice(json: bool, csv: bool, stem: Option<String>) -> TimesliceExportConfig {
+    let header_map = [
+        ("output_sequence_length", "Output Sequence Length"),
+        ("request_count", "Request Count"),
+        ("request_latency", "Request Latency"),
+    ]
+    .iter()
+    .map(|(tag, header)| ((*tag).to_string(), (*header).to_string()))
+    .collect();
+    let filtered_tags = ["credit_drop_latency"]
+        .iter()
+        .map(|tag| (*tag).to_string())
+        .collect();
+    TimesliceExportConfig {
+        json,
+        csv,
+        stem,
+        input_config: Value::Null,
+        header_map,
+        filtered_tags,
+        scalar_tags: Default::default(),
+    }
+}
+
 fn config(json: bool, csv: bool) -> ExportConfig {
     ExportConfig {
-        timeslice: TimesliceExportConfig {
-            json,
-            csv,
-            stem: None,
-        },
+        timeslice: registry_timeslice(json, csv, None),
         ..ExportConfig::default()
     }
 }
@@ -351,11 +376,7 @@ fn json_only_gating_skips_csv() {
 fn custom_stem_names_both_files() {
     let dir = scratch("stem");
     let cfg = ExportConfig {
-        timeslice: TimesliceExportConfig {
-            json: true,
-            csv: true,
-            stem: Some("run_0001".to_string()),
-        },
+        timeslice: registry_timeslice(true, true, Some("run_0001".to_string())),
         ..ExportConfig::default()
     };
     TimesliceExporter
@@ -413,6 +434,35 @@ fn partial_only_slice_emits_is_complete_false() {
     let json = std::fs::read_to_string(dir.join("profile_export_aiperf_timeslices.json")).unwrap();
     let expected = "{\n  \"timeslices\": [\n    {\n      \"start_ns\": 5000,\n      \"end_ns\": 6000,\n      \"is_complete\": false,\n      \"request_count\": {\n        \"unit\": \"requests\",\n        \"avg\": 4.0,\n        \"min\": 4.0,\n        \"max\": 4.0,\n        \"sum\": 4.0\n      }\n    }\n  ]\n}";
     assert_eq!(json, expected);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn frontend_input_config_is_wrapped_after_timeslices() {
+    // A non-null `input_config` projection is spliced verbatim after the
+    // `timeslices` array, in `TimesliceCollectionExportData` field order; the CSV
+    // is unaffected.
+    let dir = scratch("input_config");
+    let cfg = ExportConfig {
+        timeslice: TimesliceExportConfig {
+            input_config: serde_json::json!({"endpoint": {"model_names": ["m"]}}),
+            ..registry_timeslice(true, true, None)
+        },
+        ..ExportConfig::default()
+    };
+    TimesliceExporter
+        .export(&two_slice_report(), &dir, &cfg)
+        .unwrap();
+
+    let json = std::fs::read_to_string(dir.join("profile_export_aiperf_timeslices.json")).unwrap();
+    assert!(
+        json.ends_with("  ],\n  \"input_config\": {\n    \"endpoint\": {\n      \"model_names\": [\n        \"m\"\n      ]\n    }\n  }\n}"),
+        "input_config must be wrapped after the timeslices array:\n{json}"
+    );
+    // The CSV never carries input_config.
+    let csv = std::fs::read_to_string(dir.join("profile_export_aiperf_timeslices.csv")).unwrap();
+    assert!(!csv.contains("input_config"));
+
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

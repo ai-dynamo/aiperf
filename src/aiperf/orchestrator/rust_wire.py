@@ -662,6 +662,13 @@ def _export(run: BenchmarkRun) -> dict[str, Any]:
     byte-for-byte. The sink still owns all assembly and serialization; Python
     only supplies the metric-registry-derived headers/filters and the exact
     envelope JSON values (see :func:`_genai_perf_frontend_projection`).
+
+    The timeslice and server-metrics sinks follow the same discipline: their
+    metric VALUES come from the native report, but the frontend-owned envelope
+    (`input_config` for both, plus `benchmark_id` for server metrics) is projected
+    here so the two native artifacts reproduce their Python exporters byte-for-byte
+    (see :func:`_timeslice_frontend_projection` /
+    :func:`_server_metrics_frontend_projection`).
     """
     config = run.cfg
     summary = config.artifacts.summary
@@ -669,7 +676,181 @@ def _export(run: BenchmarkRun) -> dict[str, Any]:
     genai_perf: dict[str, Any] = {"enabled": genai_perf_enabled}
     if genai_perf_enabled:
         genai_perf.update(_genai_perf_frontend_projection(run))
-    return {"genai_perf": genai_perf}
+    result: dict[str, Any] = {"genai_perf": genai_perf}
+
+    timeslice = _timeslice_frontend_projection(run)
+    if timeslice is not None:
+        result["timeslice"] = timeslice
+    server_metrics = _server_metrics_frontend_projection(run)
+    if server_metrics is not None:
+        result["server_metrics"] = server_metrics
+    return result
+
+
+def _timeslice_frontend_projection(run: BenchmarkRun) -> dict[str, Any] | None:
+    """Project the frontend-owned timeslice export policy onto ``cfg.export``.
+
+    The native runner emits per-slice timeslices only when the run configures a
+    ``slice_duration``; mirror that gate. Both JSON and CSV timeslice files are
+    always produced by the Python exporter suite (each gated only on the presence
+    of timeslices), so the native sink emits both here too.
+
+    Like the genai-perf v1 sink, the timeslice files also need the registry-derived
+    metric identity the native report cannot reconstruct — ``header_map`` (CSV
+    display names), ``filtered_tags`` (registered INTERNAL/EXPERIMENTAL drop set),
+    and ``scalar_tags`` (AGGREGATE/DERIVED ``count``-drop set). These are projected
+    via :func:`_metric_registry_projection` so the native sink names, filters, and
+    scalar-suppresses exactly as the Python exporters do (native-runtime metrics
+    Python never registered — ``active_*``/``effective_*``/``credit_*`` — are kept
+    and named by their snake tag).
+
+    The JSON ``input_config`` object is projected as the exact value
+    :class:`TimesliceCollectionExportData` emits — ``model_dump(mode="json",
+    exclude_unset=True, exclude_none=True)`` then ``scrub_non_finite`` — so the
+    native sink wraps it verbatim after the ``timeslices`` array. This is the same
+    ``input_config`` value the genai-perf envelope carries (identical field type,
+    identical dump options); it is recomputed here through the timeslice model so
+    the parity oracle is exact.
+    """
+    if run.cfg.artifacts.slice_duration is None:
+        return None
+
+    from aiperf.common.finite import scrub_non_finite
+    from aiperf.common.models.export_models import TimesliceCollectionExportData
+
+    collection = TimesliceCollectionExportData(timeslices=[], input_config=run.cfg)
+    dumped = scrub_non_finite(
+        collection.model_dump(mode="json", exclude_unset=True, exclude_none=True)
+    )
+    projection: dict[str, Any] = {
+        "json": True,
+        "csv": True,
+        "input_config": dumped["input_config"],
+    }
+    projection.update(_metric_registry_projection())
+    return projection
+
+
+def _metric_registry_projection() -> dict[str, Any]:
+    """Project the registry-derived metric identity shared by the file exporters.
+
+    Returns ``header_map`` / ``filtered_tags`` / ``scalar_tags`` computed exactly
+    as :func:`_genai_perf_frontend_projection` derives them (see that function for
+    the ``native_report._metric_result`` / ``_prepare_metrics`` /
+    ``to_json_result`` grounding). Factored out so the timeslice sink reproduces
+    the genai-perf sink's naming/filtering byte-for-byte without re-deriving the
+    catalog.
+    """
+    from aiperf.common.enums import MetricFlags, MetricType
+    from aiperf.metrics.metric_registry import MetricRegistry
+
+    show_internal = Environment.DEV.SHOW_INTERNAL_METRICS
+    show_experimental = Environment.DEV.SHOW_EXPERIMENTAL_METRICS
+
+    header_map: dict[str, str] = {}
+    filtered_tags: list[str] = []
+    scalar_tags: list[str] = []
+    for metric_class in MetricRegistry.all_classes():
+        tag = str(metric_class.tag)
+        header_map[tag] = metric_class.header
+        if (metric_class.has_flags(MetricFlags.INTERNAL) and not show_internal) or (
+            metric_class.has_flags(MetricFlags.EXPERIMENTAL) and not show_experimental
+        ):
+            filtered_tags.append(tag)
+        if metric_class.type in {MetricType.AGGREGATE, MetricType.DERIVED}:
+            scalar_tags.append(tag)
+
+    return {
+        "header_map": header_map,
+        "filtered_tags": sorted(filtered_tags),
+        "scalar_tags": sorted(scalar_tags),
+    }
+
+
+def _server_metrics_frontend_projection(run: BenchmarkRun) -> dict[str, Any] | None:
+    """Project the frontend-owned server-metrics export policy onto ``cfg.export``.
+
+    Enabled when server-metrics collection is enabled and the JSON and/or CSV
+    format is selected (``cfg.server_metrics.formats``); the ``jsonl`` / ``parquet``
+    formats are handled by :func:`_server_metrics`, not this summary sink. The
+    per-format toggles mirror the Python exporters' ``ServerMetricsFormat`` gate.
+
+    Three frontend-owned envelope values are projected because the native report
+    cannot reconstruct them:
+
+    * ``aiperf_version`` — the AIPerf package version (``aiperf.__version__``); the
+      native report carries only the Rust crate version, so the frontend supplies
+      the authoritative value emitted in the JSON ``aiperf_version`` field and the
+      CSV ``# aiperf_version:`` comment header.
+    * ``benchmark_id`` — the run identity string; the Python exporters emit it in
+      both the JSON ``benchmark_id`` field and the CSV ``# benchmark_id:`` comment
+      header (``None`` when absent).
+    * ``input_config`` — projected as the exact value
+      :class:`ServerMetricsExportData` emits for its ``input_config`` field:
+      ``cfg.model_dump(mode="json", exclude_unset=True)`` placed into the export
+      model, then ``model_dump(mode="json", exclude_none=True)`` and
+      ``scrub_non_finite``. It is reconstructed here through the real export model
+      (with a throwaway minimal summary) so the outer ``exclude_none`` recursion is
+      byte-exact regardless of Pydantic's dict-field semantics. Only the JSON file
+      carries ``input_config``; the CSV does not.
+    """
+    server_metrics = run.cfg.server_metrics
+    if not server_metrics.enabled:
+        return None
+
+    formats = {str(fmt) for fmt in server_metrics.formats}
+    json_enabled = "json" in formats
+    csv_enabled = "csv" in formats
+    if not (json_enabled or csv_enabled):
+        return None
+
+    from aiperf import __version__ as aiperf_version
+
+    projection: dict[str, Any] = {
+        "json": json_enabled,
+        "csv": csv_enabled,
+        "aiperf_version": aiperf_version,
+    }
+    if run.benchmark_id is not None:
+        projection["benchmark_id"] = run.benchmark_id
+    if json_enabled:
+        projection["input_config"] = _server_metrics_input_config(run)
+    return projection
+
+
+def _server_metrics_input_config(run: BenchmarkRun) -> Any:
+    """Compute the exact ``input_config`` value the server-metrics JSON emits.
+
+    Reproduces ``ServerMetricsJsonExporter._generate_content`` for the
+    ``input_config`` field alone: dump the config with ``exclude_unset=True`` (no
+    ``exclude_none``), place it into :class:`ServerMetricsExportData`, then apply
+    the model's ``model_dump(mode="json", exclude_none=True)`` and
+    ``scrub_non_finite``. Serialization of the ``input_config`` field is
+    independent of the ``summary`` / ``metrics`` payloads, so a throwaway minimal
+    summary yields the byte-exact value.
+    """
+    from datetime import datetime
+
+    from aiperf.common.finite import scrub_non_finite
+    from aiperf.common.models.server_metrics_models import (
+        ServerMetricsExportData,
+        ServerMetricsSummary,
+    )
+
+    input_config = run.cfg.model_dump(mode="json", exclude_unset=True)
+    export_data = ServerMetricsExportData(
+        aiperf_version=None,
+        benchmark_id=None,
+        summary=ServerMetricsSummary(
+            endpoints_configured=[],
+            endpoints_successful=[],
+            start_time=datetime.fromtimestamp(0),
+            end_time=datetime.fromtimestamp(0),
+        ),
+        input_config=input_config,
+    )
+    dumped = scrub_non_finite(export_data.model_dump(mode="json", exclude_none=True))
+    return dumped["input_config"]
 
 
 def _genai_perf_frontend_projection(run: BenchmarkRun) -> dict[str, Any]:

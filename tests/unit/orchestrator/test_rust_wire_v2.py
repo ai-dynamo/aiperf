@@ -123,6 +123,71 @@ def test_export_genai_perf_projects_frontend_metadata(tmp_path: Path) -> None:
     assert "start_time" not in envelope and "end_time" not in envelope
 
 
+def test_export_timeslice_absent_without_slice_duration(tmp_path: Path) -> None:
+    run = _run(tmp_path / "artifacts")
+    export = dump_benchmark_run(run)["cfg"]["export"]
+    assert "timeslice" not in export
+
+
+def test_export_timeslice_projects_input_config_and_registry(tmp_path: Path) -> None:
+    run = _run(tmp_path / "artifacts")
+    run.cfg.artifacts.slice_duration = 1.0
+
+    timeslice = dump_benchmark_run(run)["cfg"]["export"]["timeslice"]
+
+    # Both files are produced whenever the run configures a slice duration.
+    assert timeslice["json"] is True
+    assert timeslice["csv"] is True
+    # input_config is the exact BenchmarkConfig dump the Python timeslice
+    # exporter wraps after the timeslices array.
+    assert isinstance(timeslice["input_config"], dict)
+    assert timeslice["input_config"]["endpoint"]["type"] == "chat"
+    # The registry-derived metric identity mirrors the genai-perf v1 sink.
+    assert timeslice["header_map"]["request_latency"] == "Request Latency"
+    assert timeslice["filtered_tags"] == sorted(timeslice["filtered_tags"])
+    assert "request_throughput" in timeslice["scalar_tags"]
+
+
+def test_export_server_metrics_absent_when_disabled(tmp_path: Path) -> None:
+    run = _run(tmp_path / "artifacts")
+    export = dump_benchmark_run(run)["cfg"]["export"]
+    assert "server_metrics" not in export
+
+
+def test_export_server_metrics_projects_envelope(tmp_path: Path) -> None:
+    run = _run(tmp_path / "artifacts")
+    run.cfg.server_metrics.enabled = True
+    run.cfg.server_metrics.urls = ["http://127.0.0.1:8000/vllm/metrics"]
+
+    server_metrics = dump_benchmark_run(run)["cfg"]["export"]["server_metrics"]
+
+    # json/csv are the default server-metrics formats.
+    assert server_metrics["json"] is True
+    assert server_metrics["csv"] is True
+    # Envelope: package version, run identity, and the exact input_config dump.
+    assert server_metrics["aiperf_version"]
+    assert server_metrics["benchmark_id"] == "authored-v2"
+    assert isinstance(server_metrics["input_config"], dict)
+    assert server_metrics["input_config"]["endpoint"]["type"] == "chat"
+
+
+def test_export_server_metrics_omits_input_config_when_csv_only(tmp_path: Path) -> None:
+    run = _run(tmp_path / "artifacts")
+    from aiperf.common.enums import ServerMetricsFormat
+
+    run.cfg.server_metrics.enabled = True
+    run.cfg.server_metrics.urls = ["http://127.0.0.1:8000/vllm/metrics"]
+    run.cfg.server_metrics.formats = [ServerMetricsFormat.CSV]
+
+    server_metrics = dump_benchmark_run(run)["cfg"]["export"]["server_metrics"]
+
+    assert server_metrics["json"] is False
+    assert server_metrics["csv"] is True
+    # input_config is only needed by the JSON exporter.
+    assert "input_config" not in server_metrics
+    assert server_metrics["benchmark_id"] == "authored-v2"
+
+
 def test_dump_strips_python_only_cfg_sections(tmp_path: Path) -> None:
     run = _run(tmp_path / "artifacts")
     dumped = dump_benchmark_run(run)

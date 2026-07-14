@@ -241,6 +241,10 @@ fn full_policy() -> ServerMetricsExportConfig {
     ServerMetricsExportConfig {
         json: true,
         csv: true,
+        // `None` exercises the fallback to the report's own version string, the
+        // value pinned in the golden bytes; the frontend-projected package version
+        // is covered by the real-run parity diff.
+        aiperf_version: None,
         benchmark_id: Some("bench-123".to_string()),
         input_config: json!({"model": "llama", "concurrency": 4}),
     }
