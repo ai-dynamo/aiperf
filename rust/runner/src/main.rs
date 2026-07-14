@@ -114,8 +114,11 @@ fn run_cell(input: Vec<u8>) -> ! {
             std::process::exit(2);
         }
     };
-    // SAFETY: single process thread, before any runtime is built or the benchmark
-    // allocates — the same window `configure_dynosim_process_defaults` mutates env in.
+    // SAFETY: the process is still single-threaded here. The only code that ran
+    // before this is `init_tracing`, whose synchronous stderr subscriber spawns no
+    // background writer thread, and no runtime exists yet — so no other thread can
+    // read the environment concurrently. This is the same pre-runtime window
+    // `configure_dynosim_process_defaults` mutates env in.
     unsafe {
         std::env::set_var(
             aiperf::cellular::partition::CELL_ID_ENV,

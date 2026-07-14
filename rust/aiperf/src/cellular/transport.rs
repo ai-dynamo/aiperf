@@ -59,14 +59,12 @@ pub enum CellMessage {
     /// The cell's final records-shard partition, sent once at phase end. The
     /// partition carries its own `cell_id`.
     Partition(RecordsShardPartition),
-    /// The cell's terminal status.
+    /// The cell's clean end-of-stream marker, sent once after its partition. Its
+    /// absence before a socket close signals an unclean cell exit; a cell failure is
+    /// authoritatively reported to the controller by the child's non-zero exit code.
     Done {
         /// The finishing cell's identifier.
         cell_id: u32,
-        /// Whether the cell completed its slice successfully.
-        ok: bool,
-        /// A failure description when `ok` is false.
-        error: Option<String>,
     },
 }
 
@@ -295,11 +293,7 @@ mod tests {
                 heartbeat: Box::new(sample_heartbeat()),
             },
             CellMessage::Partition(sample_partition(2)),
-            CellMessage::Done {
-                cell_id: 0,
-                ok: true,
-                error: None,
-            },
+            CellMessage::Done { cell_id: 0 },
         ] {
             let frame = encode_frame(&message).expect("encode");
             // The 4-byte prefix equals the body length.
@@ -327,13 +321,7 @@ mod tests {
                 client
                     .send(&CellMessage::Partition(sample_partition(cell_id)))
                     .unwrap();
-                client
-                    .send(&CellMessage::Done {
-                        cell_id,
-                        ok: true,
-                        error: None,
-                    })
-                    .unwrap();
+                client.send(&CellMessage::Done { cell_id }).unwrap();
             }));
         }
 
@@ -347,10 +335,7 @@ mod tests {
                     assert_eq!(partition.len(), 1);
                     partitions += 1;
                 }
-                CellMessage::Done { ok, .. } => {
-                    assert!(ok);
-                    dones += 1;
-                }
+                CellMessage::Done { .. } => dones += 1,
                 CellMessage::Heartbeat { .. } => {}
             }
         }

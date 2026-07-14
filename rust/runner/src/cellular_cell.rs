@@ -107,22 +107,8 @@ impl CellRecordsShipper {
         client
             .send(&CellMessage::Done {
                 cell_id: self.cell_id,
-                ok: true,
-                error: None,
             })
             .context("cell sending done")?;
         Ok(())
-    }
-
-    /// Best-effort report of a cell failure to the controller, so the controller
-    /// can fail the run promptly rather than only on the child exit code.
-    pub fn report_failure(&self, error: &str) {
-        if let Ok(mut client) = TcpCellClient::connect(&self.controller_addr) {
-            let _ = client.send(&CellMessage::Done {
-                cell_id: self.cell_id,
-                ok: false,
-                error: Some(error.to_owned()),
-            });
-        }
     }
 }

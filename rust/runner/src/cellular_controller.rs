@@ -73,8 +73,7 @@ pub fn run_cellular(
             let cell_dir = temp_root.join(format!("cell-{cell_id}"));
             std::fs::create_dir_all(&cell_dir)
                 .with_context(|| format!("creating cell {cell_id} artifact dir"))?;
-            let cell_envelope =
-                build_cell_envelope(envelope, cell_id, cell_count, total_requests, &cell_dir)?;
+            let cell_envelope = build_cell_envelope(envelope, cell_id, cell_count, &cell_dir)?;
             let spec = CellLaunchSpec {
                 cell_id,
                 cell_count,
@@ -84,43 +83,47 @@ pub fn run_cellular(
             children.push(spawn_cell(&spec).await?);
         }
 
-        // Collect each cell's partition + latest heartbeat; a cell reporting failure
-        // aborts the run. The stream ends once every cell has closed its connection.
+        // Watch each cell in a background task and forward the first hard failure, so
+        // a cell that dies BEFORE connecting aborts the run rather than hanging the
+        // transport's accept loop (which awaits `expected_cells` connections).
+        let (failure_tx, mut failure_rx) =
+            tokio::sync::mpsc::channel::<String>(cell_count as usize);
+        for (cell_id, mut child) in children.into_iter().enumerate() {
+            let failure_tx = failure_tx.clone();
+            tokio::spawn(async move {
+                let report = match child.wait().await {
+                    Ok(status) if status.success() => None,
+                    Ok(status) => Some(format!("cell {cell_id} exited with {status}")),
+                    Err(error) => Some(format!("cell {cell_id} could not be waited on: {error}")),
+                };
+                if let Some(report) = report {
+                    let _ = failure_tx.send(report).await;
+                }
+            });
+        }
+        drop(failure_tx);
+
+        // Collect exactly one partition per cell (plus the latest heartbeat). A cell
+        // failure or an early transport close aborts; a cell that shipped its records
+        // and then failed post-ship does not — its records are already authoritative.
         let mut partitions: Vec<RecordsShardPartition> = Vec::with_capacity(cell_count as usize);
         let mut heartbeats: BTreeMap<u32, MetricsHeartbeat> = BTreeMap::new();
-        while let Some(message) = transport.recv().await.context("receiving from cell")? {
-            match message {
-                CellMessage::Hello { .. } => {}
-                CellMessage::Heartbeat { cell_id, heartbeat } => {
-                    heartbeats.insert(cell_id, *heartbeat);
-                }
-                CellMessage::Partition(partition) => partitions.push(partition),
-                CellMessage::Done {
-                    cell_id,
-                    ok: false,
-                    error,
-                } => bail!(
-                    "cell {cell_id} reported failure: {}",
-                    error.unwrap_or_else(|| "unknown".to_owned())
-                ),
-                CellMessage::Done { ok: true, .. } => {}
+        while partitions.len() < cell_count as usize {
+            tokio::select! {
+                message = transport.recv() => match message.context("receiving from cell")? {
+                    Some(CellMessage::Partition(partition)) => partitions.push(partition),
+                    Some(CellMessage::Heartbeat { cell_id, heartbeat }) => {
+                        heartbeats.insert(cell_id, *heartbeat);
+                    }
+                    Some(CellMessage::Hello { .. } | CellMessage::Done { .. }) => {}
+                    None => bail!(
+                        "transport closed with {} of {cell_count} cell partitions",
+                        partitions.len()
+                    ),
+                },
+                Some(failure) = failure_rx.recv() => bail!("{failure}"),
             }
         }
-
-        // Every cell process must exit successfully.
-        for (cell_id, mut child) in children.into_iter().enumerate() {
-            let status = child
-                .wait()
-                .await
-                .with_context(|| format!("waiting on cell {cell_id}"))?;
-            ensure!(status.success(), "cell {cell_id} exited with {status}");
-        }
-
-        ensure!(
-            partitions.len() == cell_count as usize,
-            "expected {cell_count} cell partitions, received {}",
-            partitions.len()
-        );
 
         // Records-first merge in global dispatch-ordinal order → the single report.
         let merged = merge_records_in_global_order(metrics_config, partitions)
@@ -187,7 +190,6 @@ fn build_cell_envelope(
     envelope: &serde_json::Value,
     cell_id: u32,
     cell_count: u32,
-    total_requests: u64,
     cell_dir: &Path,
 ) -> Result<serde_json::Value> {
     let mut cell = envelope.clone();
@@ -221,15 +223,18 @@ fn build_cell_envelope(
             let owned = owned_share(requests, cell_id, cell_count);
             phase.insert("requests".to_owned(), serde_json::Value::from(owned));
         }
+        // Split the global concurrency cap by the same round-robin share as the
+        // request budget so the cells' caps sum to the requested aggregate in-flight.
+        // `.max(1)` keeps every cell able to make progress when `concurrency <
+        // cell_count`, a small bounded over-subscription of the aggregate cap.
         if let Some(concurrency) = phase.get("concurrency").and_then(serde_json::Value::as_u64) {
-            let cell_concurrency = (concurrency / cell_count as u64).max(1);
+            let cell_concurrency = owned_share(concurrency, cell_id, cell_count).max(1);
             phase.insert(
                 "concurrency".to_owned(),
                 serde_json::Value::from(cell_concurrency),
             );
         }
     }
-    let _ = total_requests;
     Ok(cell)
 }
 
