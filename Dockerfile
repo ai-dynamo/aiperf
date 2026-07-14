@@ -79,10 +79,14 @@ RUN apt-get update -y \
         ca-certificates \
         curl \
         git \
+        protobuf-compiler \
     && rm -rf /var/lib/apt/lists/* \
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --profile minimal --default-toolchain stable
-ENV PATH="/root/.cargo/bin:${PATH}"
+# dynosim's dynamo dependency chain (etcd-client → prost-build) compiles proto
+# files at build time; expose protoc explicitly, matching ai-dynamo's builder.
+ENV PATH="/root/.cargo/bin:${PATH}" \
+    PROTOC=/usr/bin/protoc
 RUN uv pip install --python "${VIRTUAL_ENV}/bin/python" "maturin[patchelf]"
 
 # The runner's default `dynosim` feature path-depends on the external
