@@ -280,9 +280,13 @@ a trace-driven `fixed_schedule`/`user_centric` phase sets `enforce_stop=false` a
 builds its schedule from the *full, unpartitioned* conversation list, so every cell
 would replay the whole trace — or if any phase lacks `requests` or carries a
 `duration` / `sessions` / `adaptive_scale` bound whose real count can diverge (e.g.
-`ramp_until_fail` stopping on an SLA breach). Pacing-only knobs (concurrency/rate ramps) and post-send
-cancellation are allowed — they change *when* turns are sent or mark them cancelled
-after dispatch, not *how many*. The merged report reproduces a 1-cell run's metric
+`ramp_until_fail` stopping on an SLA breach), or drives a concurrency/prefill/rate
+**ramp** (which the controller cannot slice per cell, so every cell would ramp to the
+full target and N× the aggregate). The static `concurrency`/`prefill_concurrency`/
+`rate` caps ARE sliced per cell (`rate → rate/cell_count`, caps by round-robin share)
+so the cells' aggregate offered load matches the 1-cell run; post-send cancellation
+stays allowed (it marks turns cancelled after dispatch, not *how many* are sent). The
+merged report reproduces a 1-cell run's metric
 data (profiling + warmup sections byte-identical, run mode/model, configured
 endpoints); two 1-cell blocks are intentionally **not** reproduced — the coordinator's
 `finalize_run` provenance (`distribution_id` / alias-resolved `endpoint_profiles`,
