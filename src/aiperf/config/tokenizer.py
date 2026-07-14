@@ -22,6 +22,7 @@ class TokenizerDefaults:
     NAME = None
     REVISION = "main"
     TRUST_REMOTE_CODE = False
+    APPLY_CHAT_TEMPLATE = False
 
 
 class TokenizerConfig(BaseConfig):
@@ -64,6 +65,20 @@ class TokenizerConfig(BaseConfig):
             description="Allow execution of custom tokenizer code from the repository. "
             "Required for some models but poses security risk. "
             "Only enable for trusted sources.",
+        ),
+    ]
+
+    apply_chat_template: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Apply the HuggingFace tokenizer's chat template when counting input tokens. "
+            "When enabled: synthetic ISL is compensated for chat-template wrapping (BOS, role headers, "
+            "EOT, generation-prompt suffix) and the record processor reports ISL using "
+            "`apply_chat_template(tokenize=True, add_generation_prompt=True)` for chat-shape payloads. "
+            "When disabled (default), both paths use bare-text encoding, so reported ISL matches the "
+            "prompt content the user asked for and ignores template overhead. Requires an HF tokenizer "
+            "with a chat template configured; no-ops on tiktoken / un-templated models.",
         ),
     ]
 

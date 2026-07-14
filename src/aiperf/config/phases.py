@@ -60,7 +60,7 @@ __all__ = [
 # =============================================================================
 
 
-class BasePhaseConfig(BaseConfig):
+class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
     """Base configuration shared by all phase types.
 
     Not instantiated directly -- use a concrete type via the
@@ -277,7 +277,7 @@ class BasePhaseConfig(BaseConfig):
 # =============================================================================
 
 
-class ConcurrencyPhase(AdaptiveScalePhaseMixin, BasePhaseConfig):
+class ConcurrencyPhase(BasePhaseConfig):
     """Concurrency-controlled load: dispatch immediately when a slot opens.
 
     Primary control is ``concurrency`` (defaults to 1).

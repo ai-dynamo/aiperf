@@ -13,6 +13,21 @@
     ],
     [
       "keyword-only-args",
+      "src/aiperf/analysis/sweepline_kv_cache.py",
+      "throughput_sweep_line_icl"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/analysis/sweepline_kv_cache.py",
+      "tokens_in_flight_sweep_line_icl"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/analysis/sweepline_stats.py",
+      "compute_active_weighted_stats"
+    ],
+    [
+      "keyword-only-args",
       "src/aiperf/common/mixins/task_manager_mixin.py",
       "TaskManagerMixin._background_task_loop"
     ],

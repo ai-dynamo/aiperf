@@ -88,6 +88,10 @@ class CreditContext(
         error: The error message if the request failed (None on success).
         request_latency_ns: Request latency in nanoseconds using records-pipeline
             semantics.
+        inter_token_latency_ns: Inter-token latency in nanoseconds using
+            adaptive records-pipeline semantics.
+        output_sequence_length: Output sequence length in tokens from usage
+            data, when available.
     """
 
     credit: Credit
@@ -97,6 +101,8 @@ class CreditContext(
     first_token_sent: bool = False
     error: str | None = None
     request_latency_ns: int | None = None
+    inter_token_latency_ns: float | None = None
+    output_sequence_length: int | None = None
 
 
 # =============================================================================

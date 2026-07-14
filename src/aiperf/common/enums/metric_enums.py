@@ -430,6 +430,23 @@ class MetricType(CaseInsensitiveStrEnum):
     Examples: request throughput, output token throughput, etc."""
 
 
+class AggregationKind(CaseInsensitiveStrEnum):
+    """Defines how an aggregate metric combines per-record values.
+
+    Used by MetricsAccumulator for vectorized windowed aggregation
+    instead of replaying records through metric instances.
+    """
+
+    SUM = "sum"
+    """Sum all values. Used by counter metrics (request count, error count, etc.)."""
+
+    MAX = "max"
+    """Take the maximum value. Used by max timestamp metrics."""
+
+    MIN = "min"
+    """Take the minimum value. Used by min timestamp metrics."""
+
+
 class PlotMetricDirection(CaseInsensitiveStrEnum):
     """Direction indicating whether higher or lower metric values are better for plotting purposes."""
 
@@ -667,6 +684,14 @@ class MetricConsoleGroup(CaseInsensitiveStrEnum):
     REASONING = "reasoning"
     """Reasoning token metrics."""
 
+    EFFECTIVE = "effective"
+    """Full-window time-weighted analyzer outputs (sweep-line throughput, concurrency,
+    tokens-in-flight, plus the coordinated-omission-aware effective_latency)."""
+
+    ACTIVE = "active"
+    """Phase-active-only time-weighted analyzer outputs — throughput restricted to
+    intervals where the relevant phase has at least one request in flight."""
+
 
 class MetricFlags(Flag):
     """Defines the possible flags for metrics that are used to determine how they are processed or grouped.
@@ -756,7 +781,13 @@ class MetricFlags(Flag):
     PRODUCES_VIDEO_ONLY = 1 << 16
     """Metrics that are only applicable when profiling an endpoint that produces video output."""
 
-    FIXED_SCHEDULE_ONLY = 1 << 17
+    PERCENTILE_INCLUDES_FAILED_REQUESTS = 1 << 17
+    """Record metrics for which percentile rollups should also produce
+    ``adj_*`` percentiles that treat each failed request as ``+inf`` latency.
+    Surfaces honest tail latency under non-trivial error rates — see
+    https://github.com/ai-dynamo/aiperf/issues/688."""
+
+    FIXED_SCHEDULE_ONLY = 1 << 18
     """Metrics that are only applicable when the profiling phase replays a fixed schedule of
     absolute timestamps. Turn timestamps also reach records under other timing modes (e.g. a
     timestamped trace run with --no-fixed-schedule), where schedule-fidelity metrics would be
