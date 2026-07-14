@@ -96,10 +96,29 @@ Every input format lowers to segments **once, at load**, producing one frozen
 | media | `media` segments |
 | tools / system / extras | their own segments |
 
-`content` — the last inline field — dies here: endpoint-agnostic groups lower to a
+`content` — the last inline field — dies here: content groups lower to a
 `message` segment at load, exactly like everything else. `dag_jsonl` / `weka_trace`
 / `dynamo_trace` already enter one compiler → one store; this extends the same
 discipline to the linear/authored path so there is **one lowering surface**.
+
+### 3a. The endpoint formatter runs at **lowering**, not dispatch (perf-critical)
+
+A run targets **one endpoint** (known at config time), so the endpoint formatter —
+`format_payload → BodyPlan` (see `2026-07-13-endpoint-body-construction-design.md`)
+— runs **at lowering, once per turn**, producing the endpoint-shaped plan: static
+message/tensor segments + `Splice` slots for live continuation + the param-tail
+shape. **Dispatch never calls `format_payload`** — it only materializes (splice
+static + live segments, stamp the small param tail).
+
+This is not a style choice; it is the whole "not slow" result. The gRPC audit
+(2026-07-13) found the *dispatch-time* formatter is the slow path: today
+`format_payload → Value → serde_json::to_vec` (`request.rs:341`) → JSON bytes →
+`from_slice` back to `Value` (`grpc.rs:370`) → per-element tensor walk
+(`codec.rs:241-267`) → `encode_to_vec` → re-serialize to JSON (`grpc.rs:507`),
+**per request**. Building the plan once at lowering eliminates the per-request
+`Value`, the JSON round-trip, and the per-element walk. **Multi-endpoint** (a graph
+node selecting an endpoint at runtime) is the only exception — it lowers **per
+node/per endpoint**, still at load, never per dispatch.
 
 ## 4. Dispatch — materialize one `Full<Bytes>`, never re-serialize
 
@@ -111,13 +130,18 @@ rule):
 - **`raw`** → `store.bytes(handle).clone()` — a `Bytes` refcount bump (**~12 ns**,
   size-independent). This *is* the old `raw_payload` fast path; it needs no special
   field, just a `raw`-domain segment.
-- **`message`** → write the JSON envelope + params, concat the message-segment
-  bytes into the array, close. One memcpy of the body (**~40–500 ns** by size);
-  params (`model`/`max_tokens`/`stream`) are **stamped**, not re-derived.
-- **`token-ids`** → the token-native body from the token segment.
+- **`message`** → concat the message-segment bytes into the **pre-built envelope**
+  (baked at lowering, §3a), close. One memcpy of the body (**~40–500 ns** by size);
+  only the small param tail (`model`/`max_tokens`/`stream`) is **stamped**.
+- **`token-ids` / tensor** → the token-native body; for gRPC the **packed segment
+  bytes go straight into `raw_input_contents`** (`contents=None`), never a
+  `Value::Array` walk — see `2026-07-13-endpoint-body-construction-design.md`.
 
-No `serde_json::Value` round-trip on the content path (that path is **9–13× slower**;
-§7). `format_payload` wraps pre-serialized bytes and stamps params.
+**No `serde_json::Value` on the dispatch content path** (that path is **9–13× slower**;
+§7), and — per §3a — **`format_payload` does not run here.** Dispatch splices static +
+live segments and stamps the param tail. A per-request `format_payload → Value →
+serialize` is exactly the slow path the gRPC audit found; it is prohibited on the
+hot path.
 
 ## 5. Live continuation — runtime segments
 
@@ -198,10 +222,11 @@ tests are the guard.
 1. Can a `body` ever legitimately mix domains (e.g. a `message` array *plus* a `raw`
    suffix)? Current precedence says no — enforce "one domain per `body`" as an
    invariant, or model a `Mixed` case explicitly.
-2. Where does per-endpoint formatting live once `content` is pre-lowered — a single
-   canonical `message` segment formatted at dispatch, or per-endpoint lowering when a
-   trace targets multiple endpoints? (Lean: canonical message segment + dispatch-time
-   envelope/param stamping.)
+2. ~~Where does per-endpoint formatting live?~~ **Resolved (§3a): at lowering.** The
+   formatter runs once per turn at load (endpoint known at run config), producing the
+   endpoint-shaped plan; dispatch never formats. Dispatch-time formatting is the slow
+   path the gRPC audit measured. Multi-endpoint (graph per-node endpoint selection)
+   lowers per node — still at load.
 3. Runtime-segment lifetime: the live-reply pool must stay writable per run without
    contending the frozen store — reuse the graph channel-store mechanism.
 

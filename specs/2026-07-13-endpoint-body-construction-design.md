@@ -53,7 +53,11 @@ exists. The formatter contract should name it, not paper over it.
 ## 3. The contract — `format_payload → BodyPlan`
 
 `format_payload` stops returning a `Value` and returns a **`BodyPlan`**: an ordered
-list of named fields whose value is a literal *or* a segment reference.
+list of named fields whose value is a literal *or* a segment reference. It runs **at
+lowering** — once per turn, the run's endpoint known at config (segment-unification
+§3a) — **never per dispatch.** Dispatch only *materializes* the plan (splice static +
+live segments, stamp the param tail). A per-request `format_payload → Value →
+serialize` is the slow path the gRPC audit measured and is prohibited on the hot path.
 
 ```rust
 struct BodyPlan { fields: SmallVec<[(FieldName, FieldValue); 8]> }
@@ -73,9 +77,18 @@ the plan; the endpoint picks neither:
   literal bytes + segment bytes from the store into the single `Full<Bytes>`
   (§6). This is `build_message_body_from_wires` generalized from "message array +
   overrides" to "arbitrary named fields." **Zero content re-serialize.**
-- **Protobuf (`transport_grpc`)** — the existing codec walks the same plan but
-  reads each field *structurally* (decoding the content segments it understands:
-  token-ids, media, text) to set proto fields. No splice; unchanged in spirit.
+- **Protobuf (`transport_grpc`)** — the codec sets proto fields from the plan, and
+  for token/tensor fields it must take the **packed segment bytes straight into
+  `raw_input_contents`** (`contents = None`) — a single length-delimited field, zero
+  per-element work. It must **not** build a `serde_json::Value` and walk it
+  element-by-element. (The current codec is the anti-pattern this replaces: it
+  hardcodes `raw_input_contents: Vec::new()` at `codec.rs:88`, walks every tensor
+  element out of a `Value::Array` at `codec.rs:241-267`, and round-trips the body
+  through JSON per request — `request.rs:341` → `grpc.rs:370` → `grpc.rs:507` — with
+  the typed `raw_token_ids: Vec<u32>` dropped at `http.rs:276`. Python PR #664 makes
+  the same choice — per-element `int64_contents.extend(int(v) …)`, dict round-trip,
+  fresh proto per request. **That is the "what not to port" reference.**) The decode
+  side already proves the packed path (`codec.rs:401-444`).
 
 A builder keeps authoring declarative and safe (no manual JSON punctuation):
 
@@ -107,7 +120,10 @@ request is `Segment(token_ids_handle)` the gRPC/token path reads.
 Loaders lower **content** → segments (`message`/`raw`/`token-ids`/`media`),
 endpoint-agnostic. A `BodyPlan` *references* those handles; the loader never knows
 which endpoint consumes them, and the same segments feed both materializers. That
-is the dataset-loading work of the segment-unification spec, not this one.
+is the dataset-loading work of the segment-unification spec, not this one. The
+endpoint formatter is then a **separate lowering step** (run once the run's endpoint
+is known — §3) that declares the `BodyPlan` over those content segments; it is *not*
+part of the loader and *not* per-dispatch.
 
 ## 6. Constraints honored
 
@@ -123,14 +139,21 @@ is the dataset-loading work of the segment-unification spec, not this one.
 1. Introduce `BodyPlan` + a shared `JsonBodyMaterializer` that reproduces
    `build_message_body_from_wires` + `Overrides` behavior byte-for-byte over a
    plan.
-2. Change `format_payload -> BodyPlan`; JSON endpoints declare fields with segment
-   slots; route `request.rs:341/428` through the materializer instead of
-   `serde_json::to_vec`. Byte-parity against the old value-then-serialize path is
-   the gate.
-3. Adapt `transport_grpc` `encode_request` to consume `BodyPlan` (read structural
-   fields); Riva/KServe behavior unchanged.
-4. Delete the `format_payload → Value → to_vec` HTTP path once all JSON endpoints
-   emit plans.
+2. Change `format_payload -> BodyPlan`, called **at lowering** (once per turn; §3a of
+   the segment spec), not per dispatch. JSON endpoints declare fields with segment
+   slots; dispatch (`request.rs:341/428`) routes through the materializer instead of
+   `serde_json::to_vec`. Byte-parity against the old value-then-serialize path is the
+   gate.
+3. **gRPC fast path (the audit's fix — not "unchanged").** Add a **non-`Value` encode
+   entry** to `GrpcEndpointBinding` (`binding.rs:56` is `&Value`-only today) that
+   consumes the `BodyPlan`, and pack token/tensor segments **straight into
+   `raw_input_contents`** (`codec.rs:88` hardcodes it empty; kill the per-element
+   `Value::Array` walk at `codec.rs:241-267`). Thread the typed/packed segment through
+   `TurnToSend → PreparedHttpTurn → HttpRequest → GrpcTransportSink` (dropped today at
+   `http.rs:276`) so the transport never re-parses JSON (`grpc.rs:370`) nor re-emits
+   it for the artifact (`grpc.rs:507`). This is the "not slow" requirement.
+4. Delete the `format_payload → Value → to_vec` HTTP path **and** the per-request JSON
+   round-trip once all endpoints emit plans.
 
 ## 8. Non-goals
 

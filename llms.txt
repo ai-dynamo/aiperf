@@ -597,15 +597,17 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   lowering = the single compiler; dispatch materializes one `Full<Bytes>` by
   concat-not-reserialize with the segment **domain as discriminant** (`raw` = 12 ns
   clone, `message` = splice). Live continuation = runtime segments (O(depth²) but
-  cheap). Honors the single-`Full`-buffer + `SendCompletion` constraint (no
+  cheap). Endpoint formatter runs at **lowering, not dispatch** (not-slow
+  requirement). Honors the single-`Full`-buffer + `SendCompletion` constraint (no
   scatter-gather). Grounded in segment.rs/request.rs/model.rs/connection.rs + microbench.
 - `specs/2026-07-13-endpoint-body-construction-design.md` — **endpoint formatter
   split** (design): `format_payload → BodyPlan` (named fields; value = literal or
   segment `Handle`). JSON endpoints (`transport_http`) **splice** segment bytes into
   one `Full<Bytes>` (generalizes `build_message_body_from_wires`+`Overrides`; zero
-  content re-serialize); protobuf endpoints (`transport_grpc`) **encode from
-  structure** (can't splice JSON into proto). Endpoints declare shape; splicing is
-  one shared impl. Dispatch-side companion to segment-unification.
+  content re-serialize); protobuf endpoints (`transport_grpc`) pack token/tensor
+  segments into `raw_input_contents` — **no per-request `Value`/per-element walk**
+  (Python PR #664 = what-not-to-port). Formatter runs at lowering; endpoints declare
+  shape; splicing is one shared impl. Dispatch-side companion to segment-unification.
 - `specs/2026-07-09-dynamo-aiperf-{shared-core,request-rate-tokenizer}-design.md`
   — historical precursors (built on dynamo's `lib/mocker`; superseded by the
   standalone workspace).
