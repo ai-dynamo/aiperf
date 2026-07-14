@@ -21,7 +21,7 @@ use aiperf::cellular::{
     TcpControllerTransport, merge_records_by_concatenation, merge_records_in_global_order,
 };
 use aiperf::metrics_core::report::NativeReport;
-use aiperf::metrics_core::{ExportContext, MetricsConfig, PERCENTILES};
+use aiperf::metrics_core::{ExportContext, MetricsAccumulator, MetricsConfig, PERCENTILES};
 use anyhow::{Context, Result, bail, ensure};
 
 use crate::cellular_cell::CellLaunchSpec;
@@ -64,6 +64,66 @@ fn is_graph_dataset(envelope: &serde_json::Value) -> bool {
         })
 }
 
+/// Which execution path a cellular run drives. The scheduled arrival-paced executor and
+/// the graph trace executor differ in exactly three ways — how the phases are validated,
+/// whether a per-phase global ordinal base applies, and how the cells' records merge — so
+/// each kind answers those three. A future kind (e.g. gRPC) is one variant plus three arms.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CellularRunKind {
+    /// Synthetic scheduled runs: request-bounded phases, pre-tiled global dispatch ordinals.
+    Scheduled,
+    /// Graph programs (dag_jsonl/weka_trace/dynamo_trace): trace-partitioned, concatenation-merged.
+    Graph,
+}
+
+impl CellularRunKind {
+    /// A graph-format dataset selects the graph path; anything else is scheduled.
+    fn detect(envelope: &serde_json::Value) -> Self {
+        if is_graph_dataset(envelope) {
+            Self::Graph
+        } else {
+            Self::Scheduled
+        }
+    }
+
+    /// Validate the phases for this kind (scheduled: request-bounded budgets + a profiling
+    /// budget; graph: no static `requests` budget, caps >= cell_count).
+    fn validate_phases(&self, envelope: &serde_json::Value, cell_count: u32) -> Result<()> {
+        match self {
+            Self::Scheduled => {
+                validate_cellular_phase_budgets(envelope, cell_count)?;
+                profiling_request_budget(envelope)?;
+                Ok(())
+            }
+            Self::Graph => validate_graph_cellular_phases(envelope, cell_count),
+        }
+    }
+
+    /// Each phase's global ordinal base — scheduled cells add it to stamp the single-cell
+    /// absolute slot; graph cells partition by trace and never read it (empty).
+    fn phase_ordinal_bases(&self, envelope: &serde_json::Value) -> Result<BTreeMap<String, u64>> {
+        match self {
+            Self::Scheduled => phase_ordinal_bases(envelope),
+            Self::Graph => Ok(BTreeMap::new()),
+        }
+    }
+
+    /// Merge the cells' record partitions into one accumulator (scheduled: pre-tiled global
+    /// order; graph: concatenate by cell_id + re-number local indices densely).
+    fn merge(
+        &self,
+        config: MetricsConfig,
+        partitions: Vec<RecordsShardPartition>,
+    ) -> Result<MetricsAccumulator> {
+        match self {
+            Self::Scheduled => {
+                merge_records_in_global_order(config, partitions).context("merging cell partitions")
+            }
+            Self::Graph => Ok(merge_records_by_concatenation(config, partitions)),
+        }
+    }
+}
+
 /// Runs one benchmark across `cell_count` cell subprocesses and writes the merged
 /// report to `report_path`. Blocks until every cell finishes.
 pub fn run_cellular(
@@ -73,24 +133,17 @@ pub fn run_cellular(
 ) -> Result<CellularRunOutcome> {
     ensure!(cell_count >= 1, "cell_count must be at least 1");
     validate_cellular_run_shape(envelope)?;
-    let is_graph = is_graph_dataset(envelope);
-    if is_graph {
-        validate_graph_cellular_phases(envelope, cell_count)?;
-    } else {
-        validate_cellular_phase_budgets(envelope, cell_count)?;
-    }
+    // The dataset-shape gate above runs before the kind is known; the kind then names
+    // the scheduled-vs-graph run once and owns its three differing behaviours (phase
+    // validation, ordinal bases, record merge). The scheduled path folds the profiling
+    // budget check in — graph phases carry sessions/duration, not a `requests` budget.
+    let kind = CellularRunKind::detect(envelope);
+    kind.validate_phases(envelope, cell_count)?;
     warn_dropped_sidecar_telemetry(envelope);
     warn_cellular_approximations(envelope);
     // One shared seed for every cell when the author gave none (else `None` and each
     // cell inherits the authored `run.random_seed` verbatim).
     let injected_seed = resolve_cellular_seed(envelope);
-    // Ensure a profiling phase exists; every phase's `requests >= cell_count` (so no
-    // cell owns zero) is already checked by validate_cellular_phase_budgets. Graph
-    // phases carry sessions/duration, not a `requests` budget, so this scheduled-only
-    // check must not run for graph (PartitionedGraphTraceSource partitions by trace).
-    if !is_graph {
-        profiling_request_budget(envelope)?;
-    }
     // Derive the metrics policy from the envelope so the merge reproduces the
     // authored SLOs / timeslices, exactly as the single-process path does.
     let metrics_config = cellular_metrics_config(envelope)?;
@@ -121,12 +174,9 @@ pub fn run_cellular(
         let _scratch = ScratchTreeGuard(temp_root.clone());
         // Each phase's global dispatch base (turns dispatched by prior phases): a
         // cell's sampler restarts each phase, so the cell adds this to its phase-local
-        // slot to stamp the single-cell absolute slot. Same for every cell.
-        let phase_ordinal_bases = if is_graph {
-            std::collections::BTreeMap::new()
-        } else {
-            phase_ordinal_bases(envelope)?
-        };
+        // slot to stamp the single-cell absolute slot. Same for every cell. Graph cells
+        // partition by trace and never read it, so the graph kind returns an empty map.
+        let phase_ordinal_bases = kind.phase_ordinal_bases(envelope)?;
         let mut children = Vec::with_capacity(cell_count as usize);
         for cell_id in 0..cell_count {
             let cell_dir = temp_root.join(format!("cell-{cell_id}"));
@@ -200,15 +250,11 @@ pub fn run_cellular(
             }
         }
 
-        // Records-first merge in global dispatch-ordinal order → the single report.
-        let merged = if is_graph {
-            // Graph records carry LOCAL per-cell request_index (wall-clock start order);
-            // concatenate by cell_id and re-number densely — deterministic-per-topology.
-            merge_records_by_concatenation(metrics_config, partitions)
-        } else {
-            merge_records_in_global_order(metrics_config, partitions)
-                .context("merging cell partitions")?
-        };
+        // Records-first merge → the single report. Scheduled cells pre-tile a global
+        // dispatch ordinal (merged in that order); graph records carry a LOCAL per-cell
+        // request_index (wall-clock start order), concatenated by cell_id and re-numbered
+        // densely — deterministic-per-topology. The kind selects between the two.
+        let merged = kind.merge(metrics_config, partitions)?;
         let record_count = merged.record_count();
         let summary = merged.export_results(&ExportContext::phase(
             aiperf::metrics_core::Phase::Profiling,
@@ -963,6 +1009,55 @@ mod tests {
         assert!(
             !is_graph_dataset(&synthetic),
             "synthetic is not a graph dataset"
+        );
+    }
+
+    #[test]
+    fn run_kind_detects_and_dispatches() {
+        // detect: a graph-format dataset is the Graph kind; anything else is Scheduled.
+        let graph_env = serde_json::json!(
+            {"run": {"cfg": {"datasets": [{"type": "file", "format": "dag_jsonl"}]}}}
+        );
+        let synthetic_env =
+            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "synthetic"}]}}});
+        assert_eq!(CellularRunKind::detect(&graph_env), CellularRunKind::Graph);
+        assert_eq!(
+            CellularRunKind::detect(&synthetic_env),
+            CellularRunKind::Scheduled
+        );
+
+        // validate_phases (graph): a sessions-bounded phase with a concurrency cap
+        // >= cell_count and no `requests` passes; a phase carrying `requests` is rejected.
+        let graph_ok = serde_json::json!({"run": {"cfg": {"phases": [
+            {"type": "concurrency", "name": "profiling", "sessions": 100, "concurrency": 8},
+        ]}}});
+        assert!(CellularRunKind::Graph.validate_phases(&graph_ok, 4).is_ok());
+        let graph_requests = serde_json::json!({"run": {"cfg": {"phases": [
+            {"type": "concurrency", "name": "profiling", "requests": 100, "concurrency": 8},
+        ]}}});
+        assert!(
+            CellularRunKind::Graph
+                .validate_phases(&graph_requests, 4)
+                .is_err()
+        );
+
+        // phase_ordinal_bases: the scheduled kind computes a per-phase base map from a
+        // request-bounded envelope; the graph kind always returns an empty map.
+        let two_phase = serde_json::json!({"run": {"cfg": {"phases": [
+            {"name": "warmup", "requests": 10},
+            {"name": "profiling", "requests": 100},
+        ]}}});
+        assert!(
+            !CellularRunKind::Scheduled
+                .phase_ordinal_bases(&two_phase)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            CellularRunKind::Graph
+                .phase_ordinal_bases(&two_phase)
+                .unwrap()
+                .is_empty()
         );
     }
 
