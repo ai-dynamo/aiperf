@@ -10,7 +10,7 @@
 //! basic ("Direct", single-process, in-process-sharded) concrete impl, so the
 //! distributed runtime is a **drop-in behind the seam**, not a rearchitecture.
 //!
-//! Design record: `specs/2026-07-12-cellular-ready-seams-and-roadmap.md`. Three of
+//! Design record: `specs/2026-07-12-cellular-ready-seams-and-roadmap.md`. Four of
 //! the five seams are built here today, each with its Direct impl:
 //!
 //! - **S1 [`issuance`]** — [`issuance::IssuanceAuthority`]: assign the dense global
@@ -22,16 +22,20 @@
 //!   (summary): local per-record capture with a mergeable, wire-serializable
 //!   partition ([`shard::DirectRecordsShard`] today; a per-cell records-shard moved
 //!   across a transport later).
+//! - **S3 [`heartbeat`] + [`sketch`]** — [`heartbeat::MetricsHeartbeat`]: a
+//!   bounded-cadence live snapshot of counters + associatively-mergeable
+//!   [`sketch::TDigest`] sketches (TTFT / ITL / latency), aggregated across shards
+//!   ([`heartbeat::HeartbeatAccumulator`]). Report percentiles stay exact from S2;
+//!   the sketch is live-only. The single-process live lane is built in the runner;
+//!   cross-cell heartbeat aggregation rides the transport later.
 //! - **S4 [`partition`]** — [`partition::CellPartition`]: the deterministic
 //!   `(cell_id, cell_count)` work partition ([`partition::ModuloCellPartition`],
 //!   identity `(0, 1)` today).
 //!
-//! The remaining two seams are **designed, not yet built** (see the roadmap): an
-//! S3 `MetricsHeartbeat` (a bounded-cadence snapshot of counters plus
-//! associatively-mergeable t-digest sketches, aggregated across shards; report
-//! percentiles stay exact from S2, the sketch is live-only) and a `CellTransport`
-//! (the abstracted cross-node seam carrying heartbeats and partitions from a cell
-//! to the controller). Both land in later phases.
+//! The remaining seam is **designed, not yet built** (see the roadmap): a
+//! `CellTransport` — the abstracted cross-node seam carrying heartbeats and
+//! partitions from a cell to the controller — which lands with the Phase-2
+//! controller/cell topology.
 //!
 //! Everything here is object-safe where it crosses a `dyn` boundary and generic
 //! where it is hot-path monomorphized, per the crate's extensibility discipline.

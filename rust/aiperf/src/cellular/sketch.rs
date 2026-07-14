@@ -144,24 +144,41 @@ impl TDigest {
 
     /// Estimates the value at quantile `q` (clamped to `[0, 1]`), or `None` when
     /// empty. `q = 0` returns the exact min and `q = 1` the exact max; interior
-    /// quantiles linearly interpolate centroid means by cumulative quantile.
+    /// quantiles linearly interpolate centroid means by cumulative quantile. For
+    /// several quantiles of one snapshot prefer [`quantiles`](Self::quantiles),
+    /// which clusters once instead of per call.
     pub fn quantile(&self, q: f64) -> Option<f64> {
         if self.is_empty() {
             return None;
         }
-        // `self` is `&`, so operate on a compressed copy without mutating the caller.
-        let compressed = self.compressed_view();
-        let centroids = &compressed;
+        Some(self.quantile_from(&self.clustered(), q))
+    }
+
+    /// Estimates several quantiles from one clustering, returning `None` per entry
+    /// when empty. Clusters once rather than per quantile — the projection path a
+    /// heartbeat snapshot takes over the fixed percentile band.
+    pub fn quantiles(&self, quantiles: &[f64]) -> Vec<Option<f64>> {
+        if self.is_empty() {
+            return vec![None; quantiles.len()];
+        }
+        let centroids = self.clustered();
+        quantiles
+            .iter()
+            .map(|&q| Some(self.quantile_from(&centroids, q)))
+            .collect()
+    }
+
+    /// Interpolates one quantile over already-clustered centroids. Anchor points in
+    /// (quantile, value) space are `(0, min)`, each centroid at its center quantile,
+    /// and `(1, max)`; the value interpolates linearly between the bracketing pair.
+    fn quantile_from(&self, centroids: &[Centroid], q: f64) -> f64 {
         let q = q.clamp(0.0, 1.0);
         if q <= 0.0 {
-            return Some(self.min);
+            return self.min;
         }
         if q >= 1.0 {
-            return Some(self.max);
+            return self.max;
         }
-
-        // Anchor points in (quantile, value) space: (0, min), each centroid at its
-        // center quantile, (1, max). Interpolate linearly between the brackets.
         let total = self.total_weight;
         let mut cumulative = 0.0;
         let mut prev_q = 0.0;
@@ -169,24 +186,19 @@ impl TDigest {
         for centroid in centroids {
             let center_q = (cumulative + centroid.weight / 2.0) / total;
             if q < center_q {
-                return Some(interpolate(prev_q, prev_value, center_q, centroid.mean, q));
+                return interpolate(prev_q, prev_value, center_q, centroid.mean, q);
             }
             prev_q = center_q;
             prev_value = centroid.mean;
             cumulative += centroid.weight;
         }
-        Some(interpolate(prev_q, prev_value, 1.0, self.max, q))
+        interpolate(prev_q, prev_value, 1.0, self.max, q)
     }
 
     /// Compacts centroids in place: sort by mean, then greedily cluster adjacent
     /// centroids while each cluster spans at most one K1-scale unit.
     pub fn compress(&mut self) {
         self.centroids = self.clustered();
-    }
-
-    /// A compressed copy of the centroids for read-only quantile queries.
-    fn compressed_view(&self) -> Vec<Centroid> {
-        self.clustered()
     }
 
     fn clustered(&self) -> Vec<Centroid> {

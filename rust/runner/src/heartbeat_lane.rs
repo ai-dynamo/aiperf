@@ -47,14 +47,13 @@ struct SketchProjection {
 
 impl SketchProjection {
     fn from_sketch(sketch: &TDigest) -> Self {
-        let mut percentiles = BTreeMap::new();
-        if !sketch.is_empty() {
-            for percentile in PERCENTILES {
-                if let Some(value) = sketch.quantile(percentile as f64 / 100.0) {
-                    percentiles.insert(percentile, value);
-                }
-            }
-        }
+        // One clustering for the whole band, not one per percentile.
+        let quantiles: Vec<f64> = PERCENTILES.iter().map(|&p| p as f64 / 100.0).collect();
+        let percentiles = PERCENTILES
+            .iter()
+            .zip(sketch.quantiles(&quantiles))
+            .filter_map(|(&percentile, value)| value.map(|value| (percentile, value)))
+            .collect();
         Self {
             count: sketch.count(),
             min: sketch.min(),
@@ -107,22 +106,36 @@ impl HeartbeatLane {
         })))
     }
 
-    /// Feeds one completed record's latency facts into the live sketches. TTFT is
-    /// the first-token gap and latency the whole request. ITL is the request's mean
-    /// inter-token latency — one value per request, `sum(gaps)/n == (last−first)/n`
-    /// — matching the report's per-request `inter_token_latency` distribution, so
-    /// the live sketch converges to the exact report rather than a per-token
-    /// distribution. All milliseconds.
+    /// Feeds one completed record's latency facts into the live sketches, matching
+    /// the report's exact record-metric definitions (`metrics_core::accumulator`) so
+    /// the live sketch converges to the exact report. Valid (non-errored,
+    /// non-cancelled) records only. TTFT is the non-negative first-token gap, latency
+    /// the whole request, and ITL `(latency − ttft)/(osl − 1)` with authoritative
+    /// `osl = usage.completion_tokens` (else observed output+reasoning) for `osl ≥ 2`
+    /// — one value per request, matching the report's `inter_token_latency`
+    /// distribution rather than a per-token one. All milliseconds.
     pub(crate) fn observe_record(&self, ingest: &RecordIngest) {
+        if ingest.errored || ingest.canceled {
+            return;
+        }
         let ttft_ms = ingest
             .first_token_ns
-            .map(|first| (first - ingest.start_ns) as f64 / 1e6);
-        let latency_ms = Some((ingest.end_ns - ingest.start_ns) as f64 / 1e6);
-        let arrivals = &ingest.token_arrival_ns;
-        let gap_count = arrivals.len().saturating_sub(1);
+            .map(|first| first - ingest.start_ns)
+            .filter(|delta| *delta >= 0)
+            .map(|delta| delta as f64 / 1e6);
+        let latency_ms = (ingest.end_ns >= ingest.start_ns)
+            .then(|| (ingest.end_ns - ingest.start_ns) as f64 / 1e6);
+        let osl = ingest
+            .usage
+            .completion_tokens
+            .or_else(|| ingest.tokens.output_sequence_length());
         // `Option<f64>` yields 0 or 1 value: one mean-ITL sample per request.
-        let inter_token_ms = (gap_count > 0)
-            .then(|| (arrivals[arrivals.len() - 1] - arrivals[0]) as f64 / 1e6 / gap_count as f64);
+        let inter_token_ms = match (ttft_ms, latency_ms, osl) {
+            (Some(ttft), Some(latency), Some(osl)) if osl >= 2 => {
+                Some((latency - ttft) / (osl - 1) as f64)
+            }
+            _ => None,
+        };
         self.accumulator
             .borrow_mut()
             .observe(ttft_ms, inter_token_ms, latency_ms);

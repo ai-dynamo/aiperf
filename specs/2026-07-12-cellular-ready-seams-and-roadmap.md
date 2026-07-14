@@ -194,3 +194,23 @@ framing is unaffected — S3 remains the live-only sketch. **Still designed, not
 built:** S3 `MetricsHeartbeat` (t-digest live lane) and the `CellTransport` +
 controller/cell multi-process topology (Phase 2). Section 124's "What ships today
 (Phase 0)" is superseded for S1/S2/S4 by this addendum; the hot path is unchanged.
+
+## Addendum — 2026-07-14 — S3 heartbeat + t-digest live lane built
+
+S3 is **built** (supersedes the "still designed, not built: S3" note in the prior
+addendum): `aiperf::cellular::sketch::TDigest` (a deterministic, serde-serializable,
+associatively-mergeable merging t-digest — the frozen sketch type), and
+`aiperf::cellular::heartbeat::{MetricsHeartbeat, HeartbeatAccumulator}` (counters +
+saturation + TTFT/ITL/latency sketches; `MetricsHeartbeat::merge` folds cells by
+sum + t-digest-merge). The single-process **live lane** is built in the runner
+(`heartbeat_lane.rs`): env-gated `AIPERF_CELLULAR_HEARTBEAT_LOG` feeds the
+accumulator per record and writes a percentile-projected heartbeat NDJSON line on
+the phase-progress cadence, composed alongside the Python live sink. An end-to-end
+mock run confirms the live sketch percentiles converge to the exact `native-v2.json`
+report (TTFT/latency to ~0.01%, ITL to sub-percent at p50). Report percentiles stay
+exact from S2; the sketch is live-only.
+
+**Still designed, not built:** the `CellTransport` cross-node seam + the Phase-2
+controller/cell multi-process topology (cross-cell heartbeat aggregation and
+records-shard partition transfer). The heartbeat/partition types are already
+serde-wire-ready for it.
