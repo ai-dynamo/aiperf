@@ -78,6 +78,7 @@ dependencies = [
  "loadgen-core",
  "minijinja",
  "num-bigint",
+ "opentelemetry-proto",
  "parking_lot",
  "parquet 58.3.0",
  "percent-encoding",
