@@ -240,7 +240,7 @@ def _authored_dataset_v2(run: BenchmarkRun, dataset: Any) -> dict[str, Any]:
         return _public_dataset(run, dataset)
 
     if isinstance(dataset, FileDataset):
-        native_format, options = _native_file_format(str(dataset.format))
+        native_format, options = _native_file_format(_resolved_file_format(dataset))
         if native_format == "mooncake_trace":
             options.setdefault("block_size", 512)
         elif native_format == "bailian_trace":
@@ -547,7 +547,7 @@ def _gpu_telemetry(
             "GPU reachability timeout",
         ),
         "records_path": _artifact_relative_path(
-            run.artifact_dir,
+            run.cfg.artifacts.dir,
             run.cfg.artifacts.profile_export_gpu_telemetry_jsonl_file,
         ),
         "sources": sources,
@@ -598,7 +598,7 @@ def _network_latency(run: BenchmarkRun) -> dict[str, Any] | None:
             ),
             "min_successful_samples": Environment.NETWORK_LATENCY.MIN_SAMPLES,
             "records_path": _artifact_relative_path(
-                run.artifact_dir,
+                run.cfg.artifacts.dir,
                 run.cfg.artifacts.network_latency_export_jsonl_file,
             ),
         }
@@ -635,7 +635,7 @@ def _server_metrics(run: BenchmarkRun) -> dict[str, Any] | None:
     }
     if "jsonl" in formats:
         result["jsonl_path"] = _artifact_relative_path(
-            run.artifact_dir,
+            run.cfg.artifacts.dir,
             run.cfg.artifacts.server_metrics_export_jsonl_file,
         )
     if "parquet" in formats:
@@ -859,6 +859,33 @@ def _public_max_conversations(
     return dataset.entries
 
 
+def _resolved_file_format(dataset: FileDataset) -> str:
+    """Return the loader-format name to ship for a file dataset.
+
+    Pydantic defaults ``format`` to SINGLE_TURN, so a config that never set
+    ``--custom-dataset-type`` still carries that value. Shipping it verbatim
+    would send the wrong loader to the runner and make it JSON-parse a
+    non-JSONL file (e.g. a BurstGPT CSV, whose header fails ``expected value
+    at line 1 column 1``). When the user did not explicitly select a format
+    and the source is a real file, run the same structural ``can_load``
+    detection the composer would, and ship the detected format instead. An
+    explicit format, inline records, or an undetected file all fall through
+    to the authored value unchanged, so this is a no-op for every path that
+    already worked.
+    """
+    if "format" in dataset.model_fields_set or dataset.path is None:
+        return str(dataset.format)
+    path = dataset.path.expanduser()
+    if not path.is_absolute():
+        path = (Path.cwd() / path).absolute()
+    if not path.is_file():
+        return str(dataset.format)
+    from aiperf.config.dataset.resolver import DatasetResolver
+
+    detected, _ = DatasetResolver._detect_type(str(path))
+    return str(detected) if detected is not None else str(dataset.format)
+
+
 def _native_file_format(format_name: str) -> tuple[str, dict[str, Any]]:
     if format_name == "burst_gpt_trace":
         return "burst_gpt", {}
@@ -1045,5 +1072,5 @@ def _artifact_relative_path(root: Path, output: Path) -> str:
         return str(output_path.relative_to(root_path))
     except ValueError as error:
         raise RustWireError(
-            f"native artifact path {output_path} is outside run directory {root_path}"
+            f"native artifact path {output_path} is outside artifact directory {root_path}"
         ) from error

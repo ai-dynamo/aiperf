@@ -66,9 +66,7 @@ def _run(
 
 
 @pytest.mark.parametrize("operation", ["validate", "execute"])
-def test_v2_envelope_is_benchmark_run_shaped(
-    tmp_path: Path, operation: str
-) -> None:
+def test_v2_envelope_is_benchmark_run_shaped(tmp_path: Path, operation: str) -> None:
     run = _run(tmp_path / "artifacts")
 
     request = build_authored_run_request(run, operation=operation)
@@ -140,3 +138,61 @@ def test_dynosim_transport_inline(tmp_path: Path) -> None:
     assert transport["type"] == "dynosim_offline"
     assert "config" not in transport
     assert transport["topology"] == "single"
+
+
+def _write_burst_gpt_csv(path: Path) -> Path:
+    import csv
+
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f, fieldnames=["Timestamp", "Model", "Request tokens", "Response tokens"]
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "Timestamp": 0.0,
+                "Model": "ChatGPT",
+                "Request tokens": 472,
+                "Response tokens": 18,
+            }
+        )
+    return path
+
+
+def test_unset_file_format_is_structurally_detected(tmp_path: Path) -> None:
+    """A BurstGPT CSV without ``--custom-dataset-type`` ships the detected loader.
+
+    Regresses the auto-detect projection bug: the FileDataset default of
+    ``single_turn`` was shipped verbatim, so the runner tried to JSON-parse the
+    CSV header and failed with "expected value at line 1 column 1". The
+    projection now runs structural ``can_load`` detection when the user did not
+    set a format, and ships ``burst_gpt`` (the runner-native alias) instead.
+    """
+    csv_path = _write_burst_gpt_csv(tmp_path / "burst_gpt.csv")
+    run = _run(
+        tmp_path / "artifacts",
+        dataset={"type": "file", "path": str(csv_path)},
+    )
+    authored = build_authored_run_request(run, operation="execute")["run"]
+    assert authored["cfg"]["datasets"][0]["format"] == "burst_gpt"
+
+
+def test_explicit_file_format_bypasses_detection(tmp_path: Path) -> None:
+    """An explicit ``format`` is shipped unchanged, without structural probing.
+
+    The projection must not second-guess an author who selected the format:
+    even though this JSONL content would structurally detect as ``single_turn``,
+    the explicit selection is preserved verbatim.
+    """
+    jsonl_path = tmp_path / "prompts.jsonl"
+    jsonl_path.write_text('{"text": "hi"}\n', encoding="utf-8")
+    run = _run(
+        tmp_path / "artifacts",
+        dataset={
+            "type": "file",
+            "path": str(jsonl_path),
+            "format": "single_turn",
+        },
+    )
+    authored = build_authored_run_request(run, operation="execute")["run"]
+    assert authored["cfg"]["datasets"][0]["format"] == "single_turn"

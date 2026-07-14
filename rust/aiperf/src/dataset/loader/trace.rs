@@ -1499,6 +1499,45 @@ mod tests {
         );
     }
 
+    #[test]
+    fn burst_gpt_can_load_detects_csv_header_not_json() {
+        // Structural detection must key on the CSV header columns, never on
+        // JSON-parsing the first line (the CSV header is not JSON). A canonical
+        // BurstGPT header with extra columns is recognized; a JSONL file, a CSV
+        // missing a required column, and a value-less probe are all rejected.
+        let directory = tempfile::tempdir().unwrap();
+        let burst = directory.path().join("burst_gpt.csv");
+        std::fs::write(
+            &burst,
+            "Timestamp,Model,Request tokens,Response tokens,Total tokens,Log Type\n0.0,ChatGPT,472,18,490,Conversation log\n",
+        )
+        .unwrap();
+        let probe = DatasetProbe {
+            value: None,
+            path: Some(burst.clone()),
+        };
+        assert!(BurstGptTraceDatasetLoader.can_load(&probe));
+
+        let missing_column = directory.path().join("partial.csv");
+        std::fs::write(&missing_column, "Timestamp,Request tokens\n0.0,472\n").unwrap();
+        assert!(!BurstGptTraceDatasetLoader.can_load(&DatasetProbe {
+            value: None,
+            path: Some(missing_column),
+        }));
+
+        let jsonl = directory.path().join("prompts.jsonl");
+        std::fs::write(&jsonl, "{\"text\":\"hi\"}\n").unwrap();
+        assert!(!BurstGptTraceDatasetLoader.can_load(&DatasetProbe {
+            value: None,
+            path: Some(jsonl),
+        }));
+
+        assert!(!BurstGptTraceDatasetLoader.can_load(&DatasetProbe {
+            value: Some(json!({"timestamp": 1.0})),
+            path: None,
+        }));
+    }
+
     #[tokio::test]
     async fn burst_gpt_parses_csv_skips_invalid_rows_and_converts_seconds() {
         let directory = tempfile::tempdir().unwrap();
