@@ -295,9 +295,34 @@ An independent fresh-context reviewer verified the below against the code and
   `raw_payload`+`raw_token_ids` coexistence keeps both handles in `body` so the
   token-count validation is preserved.
 
-**Deliberately not built (perf/architecture goals; byte-parity is unaffected):**
-§3a formatter-at-lowering — `format_payload` still runs per dispatch (parity met,
-the "build the plan once at load" perf thesis is unrealized); §5 live continuation
-uses `Wires` from the multiturn render path rather than pool-interned runtime
-segments; the `Turn`/`EndpointTurn` reconciliation (§9 stage 4). These are
-follow-ups that do not affect wire output.
+- **§3a formatter-at-lowering — built** (`Dataset::precompute_body_plans`,
+  invoked at the bind seam alongside lowering): each eligible turn's `BodyPlan`
+  is built once at endpoint-bind and cached (`Dataset.body_plans`, dense
+  `[conv][turn]`); dispatch clones the cached plan (`materialize_prepared`)
+  instead of calling `format_payload` per request, so no `format_payload`/`Value`
+  construction on the hot path for eligible turns. Eligibility is gated
+  (`precomputable_body()` trait method; message-array shape; static context modes
+  `MessageArrayWithResponses`/`DeltasWithResponses`; profiling phase; default
+  endpoint; non-raw/non-token-native; graph excluded). **Byte-identical by
+  construction** — the cache only relocates the identical `format_payload` call
+  in time and re-folds overrides on a clone — guarded by a differential test that
+  materializes each body cache-on vs cache-off and asserts byte-equality across an
+  endpoint × context-mode × overrides matrix.
+- **§5 live continuation — built (lean form)** (`multiturn.rs` `build_next_turn`):
+  each captured live reply is lowered **once at capture** under the default shape
+  (`ShapeLowerer::lower_turn`) and spliced via `Turn.lowered` on subsequent
+  dispatches, instead of re-serializing it every turn. Byte-identical for
+  shape-homogeneous conversations (the regime static lowering already supports);
+  guarded by a two-dispatch idempotence test.
+
+**Deliberately not built (documented exclusions):**
+- **§9 full field deletion — `content` + `raw_messages` retention is a proven
+  WONTFIX**, not a shortcut. Adversarial verification confirmed both are
+  load-bearing at dispatch: `content` has three dispatch consumers with no `body`
+  equivalent (completions/embeddings/rerank `turn.texts`, per-turn-override turns,
+  warmup first-turn re-render); `raw_messages` **coexists with `content`** on the
+  accuracy dual-view turn (`loader/public.rs`), and folding either into `body`
+  flips `resolve_turn`'s `lowered_content` discriminator and breaks warmup
+  byte-parity. The field split *is* the discriminator. Pinned by a dispatch-level
+  coexistence parity test.
+- `Turn`/`EndpointTurn` reconciliation (§9 stage 4) — naming, no wire effect.

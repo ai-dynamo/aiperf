@@ -255,15 +255,24 @@ gates are green.
   deleted** (`structured_plan` removed); the shared `JsonBodyMaterializer` produces
   every HTTP body. `FieldValue::Wires` was added for pre-serialized message arrays
   (dynamic/live content) not interned in the frozen store.
-- **§7 stage 3 (gRPC packed `raw_input_contents`) — deliberately deferred, and the
-  deferral is technically correct.** Verified: every in-tree KServe endpoint is
-  `requires_raw_token_ids: false` and sends a **BYTES text tensor**
-  (`endpoints/kserve.rs`), not token IDs; no gRPC endpoint is token-native. Packing
-  token IDs into `raw_input_contents` therefore has **no valid activation target**
-  and would break BYTES-tensor wire parity. `codec.rs` retains the typed per-tensor
-  encode path (legacy byte-parity anchor). This lands only when a genuinely
-  token-native gRPC endpoint exists.
+- **§7 stage 3 (gRPC packed `raw_input_contents`) — a proven EXCLUSION, not
+  pending work.** Adversarial verification established two unmet activation
+  preconditions: (a) no gRPC endpoint is token-native — every in-tree KServe
+  endpoint is `requires_raw_token_ids: false` and sends a **BYTES text tensor**
+  (`endpoints/kserve.rs`); (b) encode still consumes a `serde_json::Value`
+  (`binding.rs` `encode_request(&Value)`), so it must walk `Value::Array`
+  regardless. The golden test `transport_grpc_codec.rs` pins the wire bytes to the
+  Python KServeV2 serializer's **typed `InferTensorContents`**; switching encode to
+  `raw_input_contents` (proto tag 7) produces different bytes → fails the HARD
+  parity gate for **zero** perf gain. `codec.rs` keeping typed contents
+  (`raw_input_contents: Vec::new()`) is therefore the **parity-correct steady
+  state**. This lands only if/when both preconditions hold (a token-native gRPC
+  endpoint + a threaded pre-packed segment).
 
-**Caveat (perf, not parity):** endpoints still build a `Value` per dispatch via the
-`from_object` bridge for non-lowered/structured turns, so the "zero `Value` on the
-dispatch path" goal is partial; the byte-parity contract is fully met.
+**§3a formatter-at-lowering built (segment spec companion):** the per-endpoint
+`BodyPlan` is now precomputed and cached at endpoint-bind for eligible turns
+(`Dataset::precompute_body_plans`), so `format_payload` — and the `from_object`
+`Value` bridge — no longer runs per dispatch on the hot path for those turns. The
+remaining per-dispatch `Value` construction is confined to the ineligible fallback
+set (dynamic-context / template / graph); the byte-parity contract is fully met
+throughout.
