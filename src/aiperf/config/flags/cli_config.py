@@ -3735,6 +3735,29 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    cells: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            description=(
+                "Number of native execution cells to partition the run across "
+                "(cellular mode). 1 (default) runs the ordinary single-process native "
+                "path, byte-for-byte unchanged. With cells > 1 the launched "
+                "aiperf-runner becomes a controller that spawns that many "
+                "`aiperf-runner --cell` subprocesses over a (cell_id, cell_count) "
+                "partition of the request budget and merges their records in global "
+                "dispatch order into one report. Supported only for the scheduled HTTP "
+                "transport over seeded, single-turn synthetic datasets against a single "
+                "endpoint URL with request-bounded phases; the run fails closed on any "
+                "other shape."
+            ),
+        ),
+        CLIParameter(
+            name=("--cells",),
+            group=Groups.WORKERS,
+        ),
+    ] = None
+
     ##############################################################################
     # ZMQ Communication
     ##############################################################################

@@ -345,13 +345,21 @@ fn build_cell_envelope(
     Ok(cell)
 }
 
-/// Whitelists a cellular run to the exact shape the partition/issuance seam is sound
-/// for: the scheduled HTTP transport over **synthetic, single-turn** datasets. Two
-/// invariants underpin the byte-parity contract and each fails closed here:
+/// Whitelists a cellular run to the shape the cell topology is currently *wired* for:
+/// the shared online-scheduled executor over the `http` transport, on **synthetic,
+/// single-turn** datasets. There is no bespoke HTTP layer — a cell runs the same
+/// `execute.rs` path as any single-process run, differing only by an injected
+/// [`IssuanceAuthority`] and an env-gated records sink (`CellRecordsShipper`). The
+/// partition/issuance seam is transport-neutral; this whitelist reflects wiring
+/// coverage, not an HTTP special case. Two invariants underpin byte parity and each
+/// fails closed here:
 ///
-/// - **Records ship only from the scheduled HTTP executor.** A gRPC/dynosim transport
-///   or a non-synthetic (`file`/`public`, incl. graph-program) dataset runs a
-///   different executor that never ships a partition, so the controller would hang.
+/// - **Only the online-scheduled executor ships a partition today.** The gRPC, graph,
+///   and offline executors are separate paths that do not yet inject the cell issuer
+///   or ship records, so a `grpc`/`dynosim` transport or a non-synthetic
+///   (`file`/`public`, incl. graph-program) dataset would run an unwired executor and
+///   hang the controller. Threading the same seam through those executors is the
+///   natural extension; until then they are rejected, not silently divergent.
 /// - **One sampler draw must equal one dispatched turn.** [`PartitionedSampler`]
 ///   partitions by conversation *draw*, but the issuer stamps a per-*turn* ordinal
 ///   ([`CellularAutonomousIssuer`]); a multi-turn conversation makes the two diverge,
@@ -367,7 +375,10 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
     {
         ensure!(
             transport == "http",
-            "cellular runs support only the scheduled HTTP transport; got transport.type={transport:?}"
+            "cellular is currently wired only for transport.type=\"http\"; got {transport:?}. \
+             A cell reuses the shared online-scheduled executor + hyper transport (not a \
+             bespoke HTTP layer); the partition/issuance seam is transport-neutral, but \
+             records-shipping is only threaded through the HTTP path so far"
         );
     }
     let datasets = envelope

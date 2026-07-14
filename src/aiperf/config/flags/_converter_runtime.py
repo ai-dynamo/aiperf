@@ -85,6 +85,8 @@ def _apply_runtime_basics(runtime_dict: dict[str, Any], cli: CLIConfig) -> None:
         runtime_dict["ui"] = cli.ui_type
     if "workers_max" in cli_set and cli.workers_max is not None:
         runtime_dict["workers"] = cli.workers_max
+    if "cells" in cli_set and cli.cells is not None:
+        runtime_dict["cells"] = cli.cells
     if (
         "record_processor_service_count" in cli_set
         and cli.record_processor_service_count is not None
