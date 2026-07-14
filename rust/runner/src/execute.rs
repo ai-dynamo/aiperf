@@ -1634,6 +1634,18 @@ async fn execute_native_inner(
             if !phase_sidecars.is_empty() {
                 plan = plan.with_sidecars(phase_sidecars);
             }
+            // The coordinator's per-run `CollectorObserver`/`NativeMetricsObserver`
+            // retention is dead work on the runner path: the native-v2 report is
+            // rebuilt from the drained per-worker records, and the only value the
+            // coordinator report supplies is per-turn `issued_offset_ns`, which
+            // comes from the runtime's own `DetailedSchedule` (gated separately by
+            // timing-record capture), not from these observers. Drop the discarded
+            // full-record retention and keep the coordinator native metrics
+            // aggregate-only so we do not accumulate a per-request record graph
+            // that is never read.
+            plan = plan
+                .with_performance_record_capture(false)
+                .with_native_metric_record_dimensions(false);
             plans.push(plan);
         }
 
