@@ -56,6 +56,7 @@ pub fn run_cellular(
     metrics_config: MetricsConfig,
 ) -> Result<CellularRunOutcome> {
     ensure!(cell_count >= 1, "cell_count must be at least 1");
+    validate_cellular_run_shape(envelope)?;
     validate_cellular_phase_budgets(envelope)?;
     let total_requests = profiling_request_budget(envelope)?;
     ensure!(
@@ -122,12 +123,15 @@ pub fn run_cellular(
         }
         drop(failure_tx);
 
-        // Collect exactly one partition per cell (plus the latest heartbeat). A cell
-        // failure or an early transport close aborts; a cell that shipped its records
-        // and then failed post-ship does not — its records are already authoritative.
-        // A cell that connects but hangs indefinitely without shipping is NOT covered
-        // (no per-cell deadline yet — the failure watcher only fires on a cell exit);
-        // that bound belongs with the cross-host transport work.
+        // Collect exactly one partition per cell (plus the latest heartbeat). ANY
+        // non-zero cell exit aborts the whole run — including the unusual case of a
+        // cell that shipped its partition and then crashed while other cells are still
+        // pending (the `select!` is unbiased, so the queued failure wins a later
+        // iteration): a crashed cell means a failed run, so discarding the partial
+        // merge is correct. A cell that connects but hangs indefinitely without
+        // shipping or exiting is NOT covered (no per-cell deadline yet — the failure
+        // watcher only fires on a cell exit); that bound belongs with the cross-host
+        // transport work.
         let mut partitions: Vec<RecordsShardPartition> = Vec::with_capacity(cell_count as usize);
         let mut heartbeats: BTreeMap<u32, MetricsHeartbeat> = BTreeMap::new();
         while partitions.len() < cell_count as usize {
@@ -304,6 +308,41 @@ fn build_cell_envelope(
     Ok(cell)
 }
 
+/// Rejects a cellular run whose executor never ships a records-shard partition. The
+/// cell ship hook lives only in the scheduled HTTP execution path; a gRPC or dynosim
+/// transport, or a graph-program dataset (`dag_jsonl`/`weka_trace`/`dynamo_trace`),
+/// runs a different executor that never ships, so the controller would wait forever.
+/// Fail closed with a clear error instead. (Cellular is designed for the scheduled
+/// online path; other modes are out of scope for the roadmap's Phase 2.)
+fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
+    if let Some(transport) = envelope
+        .pointer("/run/cfg/transport/type")
+        .and_then(serde_json::Value::as_str)
+    {
+        ensure!(
+            transport == "http",
+            "cellular runs support only the scheduled HTTP transport; got transport.type={transport:?}"
+        );
+    }
+    if let Some(datasets) = envelope
+        .pointer("/run/cfg/datasets")
+        .and_then(serde_json::Value::as_array)
+    {
+        for dataset in datasets {
+            for key in ["type", "format"] {
+                if let Some(kind) = dataset.get(key).and_then(serde_json::Value::as_str)
+                    && matches!(kind, "dag_jsonl" | "weka_trace" | "dynamo_trace")
+                {
+                    bail!(
+                        "cellular runs do not support graph-program datasets ({kind}); they run a non-shipping executor"
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Rejects a cellular run whose phases are not exactly request-bounded. The
 /// dense-ordinal tiling requires every phase's *actual* dispatch count to equal its
 /// sliced `requests` budget. Any phase whose real count can diverge from `requests`
@@ -472,6 +511,29 @@ fn write_heartbeat_sidecar(report_path: &Path, heartbeat: &MetricsHeartbeat) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_non_shipping_run_shapes() {
+        // The scheduled HTTP path (default/http transport, non-graph dataset) passes.
+        let ok = serde_json::json!({"run": {"cfg": {
+            "transport": {"type": "http"},
+            "datasets": [{"type": "synthetic"}],
+        }}});
+        assert!(validate_cellular_run_shape(&ok).is_ok());
+        assert!(validate_cellular_run_shape(&serde_json::json!({"run": {"cfg": {}}})).is_ok());
+        // A non-HTTP transport or a graph-program dataset never ships → fail closed.
+        for bad in [
+            serde_json::json!({"run": {"cfg": {"transport": {"type": "dynosim_offline"}}}}),
+            serde_json::json!({"run": {"cfg": {"transport": {"type": "grpc"}}}}),
+            serde_json::json!({"run": {"cfg": {"datasets": [{"format": "dag_jsonl"}]}}}),
+            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "weka_trace"}]}}}),
+        ] {
+            assert!(
+                validate_cellular_run_shape(&bad).is_err(),
+                "should reject {bad}"
+            );
+        }
+    }
 
     #[test]
     fn rejects_non_request_bounded_phases() {
