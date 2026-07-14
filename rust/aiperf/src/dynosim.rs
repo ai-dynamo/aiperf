@@ -51,7 +51,7 @@ use crate::timing::{ArrivalPattern, Phase, PhaseStats, SlotPool, StopConfig};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
-use dynamo_mocker::common::protocols::{DirectRequest, MockEngineArgs, WorkerType};
+use dynamo_mocker::common::protocols::{DirectRequest, EngineType, MockEngineArgs, WorkerType};
 use dynamo_mocker::loadgen::{
     AgenticTrace, DynamoRequestTrace, EngineEvent, SteppableAgg, SteppableDisagg, SteppableEngine,
     SteppableReplay, Trace, TraceFileFormat, TurnTrace, WorkloadDriver,
@@ -579,6 +579,18 @@ impl OfflineEngineConfig {
             // deadline, which rate/fixed/DAG co-simulation requires.
             OfflineTopology::Single => {
                 let (args, estimator) = Self::configure_aic(self.engine_args()?)?;
+                // Mirror `dynamo.replay`'s offline validation (lib/mocker
+                // replay::validate): KV routing needs more than one worker, and
+                // the single topology provisions exactly one.
+                anyhow::ensure!(
+                    self.router_mode != OfflineRouterMode::Kv,
+                    "offline replay only supports router_mode=kv with more than one worker; topology=single provisions exactly one"
+                );
+                anyhow::ensure!(
+                    args.dp_size == 1,
+                    "offline replay only supports data_parallel_size=1, got {}",
+                    args.dp_size
+                );
                 let estimator =
                     self.validate_prefill_load_estimator(router_config.as_ref(), estimator)?;
                 if self.single_pass_engine && router_config.is_none() && estimator.is_none() {
@@ -602,6 +614,21 @@ impl OfflineEngineConfig {
                     "offline aggregate workers must be positive"
                 );
                 let (args, estimator) = Self::configure_aic(self.engine_args()?)?;
+                // Mirror `dynamo.replay`'s offline validation
+                // (lib/mocker replay::validate_offline_router_mode /
+                // validate_replay_args).
+                if self.router_mode == OfflineRouterMode::Kv {
+                    anyhow::ensure!(
+                        self.workers > 1,
+                        "offline replay only supports router_mode=kv when workers > 1, got {}",
+                        self.workers
+                    );
+                }
+                anyhow::ensure!(
+                    args.dp_size == 1,
+                    "offline replay only supports data_parallel_size=1, got {}",
+                    args.dp_size
+                );
                 let estimator =
                     self.validate_prefill_load_estimator(router_config.as_ref(), estimator)?;
                 if self.single_pass_engine
@@ -633,6 +660,33 @@ impl OfflineEngineConfig {
                 let (prefill_args, decode_args) = self.disaggregated_engine_args()?;
                 let (prefill_args, estimator) = Self::configure_aic(prefill_args)?;
                 let (decode_args, _) = Self::configure_aic(decode_args)?;
+                // Mirror `dynamo.replay`'s disaggregation validation
+                // (lib/mocker replay::validate_disagg_args). The worker-type
+                // guards are omitted: aiperf's topology selection is
+                // authoritative and the runtime assigns prefill/decode roles.
+                anyhow::ensure!(
+                    prefill_args.engine_type != EngineType::Trtllm
+                        && decode_args.engine_type != EngineType::Trtllm,
+                    "disaggregation does not support TRT-LLM"
+                );
+                anyhow::ensure!(
+                    prefill_args.engine_type == decode_args.engine_type,
+                    "disaggregation requires matching prefill/decode engine_type, got {:?} and {:?}",
+                    prefill_args.engine_type,
+                    decode_args.engine_type
+                );
+                anyhow::ensure!(
+                    prefill_args.dp_size == 1 && decode_args.dp_size == 1,
+                    "disaggregation only supports data_parallel_size=1, got prefill={} decode={}",
+                    prefill_args.dp_size,
+                    decode_args.dp_size
+                );
+                anyhow::ensure!(
+                    prefill_args.block_size == decode_args.block_size,
+                    "disaggregation requires matching prefill/decode block_size, got {} and {}",
+                    prefill_args.block_size,
+                    decode_args.block_size
+                );
                 let estimator =
                     self.validate_prefill_load_estimator(router_config.as_ref(), estimator)?;
                 Box::new(SteppableDisagg::new_with_router_config(
