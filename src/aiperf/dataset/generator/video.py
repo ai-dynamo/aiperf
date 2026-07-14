@@ -429,7 +429,7 @@ class VideoGenerator(BaseGenerator):
             pipeline = self._build_ffmpeg_output(
                 video_stream, output_dest, output_options, temp_dir
             )
-            pipeline.run(input=all_data, capture_stdout=True, capture_stderr=True)
+            pipeline.run(input=all_data, capture_stderr=True)
 
             video_data = Path(output_dest).read_bytes()
 
@@ -484,7 +484,7 @@ class VideoGenerator(BaseGenerator):
             pipeline = self._build_ffmpeg_output(
                 video_stream, str(output_path), output_options, temp_dir
             )
-            pipeline.run(capture_stdout=True, capture_stderr=True)
+            pipeline.run(capture_stderr=True)
 
             # Read the output file
             video_data = output_path.read_bytes()
