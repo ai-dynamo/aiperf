@@ -232,18 +232,14 @@ pub struct Turn {
     /// Source-trace cache identities, when the loader received `hash_ids`.
     #[serde(default)]
     pub trace_hash_ids: Option<Handle>,
-    /// Ordered pre-serialized message handles for message-array inputs.
-    pub messages: SmallVec<[Handle; 1]>,
     /// Named text and multimodal groups for endpoint formatting.
-    pub content: SmallVec<[ContentGroup; 1]>,
-    /// Complete prebuilt request body sent through the raw fast path.
-    pub raw_payload: Option<Handle>,
-    /// Exact validated input token IDs for token-native endpoint/backends.
     ///
-    /// The IDs remain in the shared segment arena; this handle is the native
-    /// replacement for the deprecated Python mmap-serialized list.
-    #[serde(default)]
-    pub raw_token_ids: Option<Handle>,
+    /// Content is the endpoint-independent source rendered into a `Message`
+    /// segment (recorded on [`body`](Turn::body)) at endpoint-bind lowering; it
+    /// is retained because the lowering render is endpoint-specific and cannot
+    /// run at load, and because carve-out turns (per-turn endpoint override,
+    /// shapes that cannot render at load) still render it at dispatch.
+    pub content: SmallVec<[ContentGroup; 1]>,
     /// Complete preformatted messages array.
     pub raw_messages: Option<Handle>,
     /// Preformatted tool definitions.
@@ -264,16 +260,18 @@ pub struct Turn {
     pub branch_ids: SmallVec<[BranchId; 0]>,
     /// Audio duration used by ASR metrics such as RTFx.
     pub audio_duration_seconds: Option<f64>,
-    /// Unified ordered body handles derived at load from the representation
-    /// fields above (segment-unification design §2/§9 stage 1). Populated once
-    /// by [`Turn::populate_body`] when the [`Dataset`](crate::dataset::Dataset)
-    /// freezes, so the disjoint segment [`domain`](crate::dataset::SegmentStore::domain)
-    /// of `body[0]` is the discriminant that will replace the five-field
-    /// precedence: all `message` handles format as an array, one `raw` handle
-    /// is a complete body (endpoint bypass), one `token-ids` handle is the
-    /// token-native path. The legacy fields remain the authoritative source
-    /// until dispatch is routed through `body`; this stage adds the field and
-    /// keeps behavior unchanged.
+    /// Unified ordered dispatch body handles — the authoritative storage for the
+    /// prebuilt-body, token-native, and message-array representations
+    /// (segment-unification design §2/§9 stage 3). Loaders and endpoint-bind
+    /// lowering write it directly through [`Turn::dispatch_body`]; the disjoint
+    /// segment [`domain`](crate::dataset::SegmentStore::domain) of each handle is
+    /// the discriminant that replaced the former five-field precedence: `message`
+    /// handles format as an array, a leading `raw` handle is a complete body
+    /// (endpoint bypass), a `token-ids` handle is the token-native path. A raw
+    /// body may coexist with its token-ids handle (`[raw, token]`); the raw body
+    /// wins dispatch and the token handle stays reachable for validation and
+    /// token-native backends. Content and preformatted `raw_messages` are not
+    /// per-handle body segments and stay in their own fields until lowered.
     #[serde(default, skip_serializing_if = "SmallVec::is_empty")]
     pub body: SmallVec<[Handle; 1]>,
 }
@@ -291,10 +289,7 @@ impl Default for Turn {
             timestamp_ms: None,
             delay_ms: None,
             trace_hash_ids: None,
-            messages: SmallVec::new(),
             content: SmallVec::new(),
-            raw_payload: None,
-            raw_token_ids: None,
             raw_messages: None,
             tools: None,
             raw_system: None,
@@ -311,21 +306,34 @@ impl Default for Turn {
 }
 
 impl Turn {
-    /// Derive the unified [`body`](Turn::body) handles from the legacy
-    /// representation fields, mirroring the current dispatch precedence
-    /// (segment-unification design §2): a complete `raw_payload` wins outright,
-    /// else token-native `raw_token_ids`, else the ordered `messages` handles.
-    /// Content groups and `raw_messages` arrays are not per-message handles and
-    /// remain formatter-driven until content→segment lowering lands, so a
-    /// content-only turn derives an empty `body` and keeps its existing path.
-    pub fn populate_body(&mut self) {
-        self.body = if let Some(raw) = self.raw_payload {
-            SmallVec::from_elem(raw, 1)
-        } else if let Some(token_ids) = self.raw_token_ids {
-            SmallVec::from_elem(token_ids, 1)
-        } else {
-            self.messages.clone()
-        };
+    /// Build the ordered unified [`body`](Turn::body) handles from a turn's
+    /// prebuilt-body, token-native, and message representations
+    /// (segment-unification design §2/§9 stage 3). Loaders and endpoint-bind
+    /// lowering call this to write `body` directly.
+    ///
+    /// Ordering encodes dispatch precedence and keeps every handle reachable: a
+    /// complete `raw_payload` leads (endpoint bypass), a `raw_token_ids` handle
+    /// follows so it survives the raw+token coexistence case (`[raw, token]`)
+    /// for token-count validation and native backends, and the ordered message
+    /// handles are used only when there is neither a raw body nor token IDs.
+    /// Content groups and `raw_messages` arrays are not per-handle body segments
+    /// and are not represented here.
+    pub fn dispatch_body(
+        raw_payload: Option<Handle>,
+        raw_token_ids: Option<Handle>,
+        messages: &[Handle],
+    ) -> SmallVec<[Handle; 1]> {
+        let mut body = SmallVec::new();
+        if let Some(raw) = raw_payload {
+            body.push(raw);
+        }
+        if let Some(token_ids) = raw_token_ids {
+            body.push(token_ids);
+        }
+        if raw_payload.is_none() && raw_token_ids.is_none() {
+            body.extend_from_slice(messages);
+        }
+        body
     }
 }
 
@@ -455,43 +463,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn populate_body_mirrors_the_five_field_dispatch_precedence() {
+    fn dispatch_body_orders_the_representations_and_keeps_coexisting_tokens() {
         let raw = Handle::new(1);
         let token = Handle::new(2);
         let msg_a = Handle::new(3);
         let msg_b = Handle::new(4);
 
-        // raw_payload wins outright.
-        let mut turn = Turn {
-            raw_payload: Some(raw),
-            raw_token_ids: Some(token),
-            messages: smallvec::smallvec![msg_a, msg_b],
-            ..Turn::default()
-        };
-        turn.populate_body();
-        assert_eq!(turn.body.as_slice(), &[raw]);
+        // A raw body wins dispatch but the coexisting token handle stays
+        // reachable at `[raw, token]` for token-count validation.
+        assert_eq!(
+            Turn::dispatch_body(Some(raw), Some(token), &[msg_a, msg_b]).as_slice(),
+            &[raw, token]
+        );
 
-        // else token-native.
-        let mut turn = Turn {
-            raw_token_ids: Some(token),
-            messages: smallvec::smallvec![msg_a],
-            ..Turn::default()
-        };
-        turn.populate_body();
-        assert_eq!(turn.body.as_slice(), &[token]);
+        // Raw only.
+        assert_eq!(
+            Turn::dispatch_body(Some(raw), None, &[]).as_slice(),
+            &[raw]
+        );
 
-        // else the ordered message handles.
-        let mut turn = Turn {
-            messages: smallvec::smallvec![msg_a, msg_b],
-            ..Turn::default()
-        };
-        turn.populate_body();
-        assert_eq!(turn.body.as_slice(), &[msg_a, msg_b]);
+        // Token-native only.
+        assert_eq!(
+            Turn::dispatch_body(None, Some(token), &[]).as_slice(),
+            &[token]
+        );
 
-        // content-only / raw_messages-only turns stay formatter-driven (empty).
-        let mut turn = Turn::default();
-        turn.populate_body();
-        assert!(turn.body.is_empty());
+        // Ordered message handles when there is neither a raw body nor tokens.
+        assert_eq!(
+            Turn::dispatch_body(None, None, &[msg_a, msg_b]).as_slice(),
+            &[msg_a, msg_b]
+        );
+
+        // Content-only / raw_messages-only turns keep an empty body.
+        assert!(Turn::dispatch_body(None, None, &[]).is_empty());
     }
 
     #[test]

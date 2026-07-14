@@ -188,6 +188,14 @@ pub trait TurnDispatcher {
             "selected turn dispatcher does not support true response streaming"
         ))
     }
+
+    /// Warm the dispatch path with one discarded round-trip before timed
+    /// issuance, so the first authored request is not delayed relative to its
+    /// schedule by one-time setup. The default is a no-op; real dispatchers warm
+    /// their execution backend without recording the warmup in the metrics.
+    async fn prewarm(&self, _turn: TurnToSend) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Post-dispatch record-processing seam shared by ordinary workloads.
@@ -638,6 +646,12 @@ impl ScheduledRuntime {
     /// Run start on the injected clock timeline.
     pub fn start_ns(&self) -> i64 {
         self.start_ns
+    }
+
+    /// Warm the dispatch path with one discarded round-trip before timed
+    /// issuance begins (see [`TurnDispatcher::prewarm`]).
+    pub async fn prewarm(&self, turn: TurnToSend) -> Result<()> {
+        self.dispatcher.prewarm(turn).await
     }
 
     /// Current clock time.

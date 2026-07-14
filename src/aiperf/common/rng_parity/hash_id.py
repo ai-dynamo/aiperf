@@ -22,7 +22,9 @@ class HashIdRandomGenerator:
 
     __slots__ = ("_base_seed", "_trace_id", "_generator")
 
-    def __init__(self, base_seed: int, trace_id: str, generator: ParityRandomGenerator) -> None:
+    def __init__(
+        self, base_seed: int, trace_id: str, generator: ParityRandomGenerator
+    ) -> None:
         self._base_seed = base_seed
         self._trace_id = trace_id
         self._generator = generator
@@ -55,7 +57,9 @@ class HashIdRandomGenerator:
         """Set the instance trace scope used when no override is passed."""
         self._trace_id = trace_id
 
-    def reseed_for_hash_id(self, hash_id: int, trace_id_override: str | None = None) -> None:
+    def reseed_for_hash_id(
+        self, hash_id: int, trace_id_override: str | None = None
+    ) -> None:
         """Reseed the inner generator for ``hash_id`` in the selected trace scope.
 
         ``trace_id_override`` applies only to this call; ``None`` uses the instance scope

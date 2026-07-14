@@ -24,7 +24,7 @@ use crate::dataset::{
 };
 use crate::endpoints::{
     CreditPhase, Endpoint, EndpointId, EndpointKey, Media as EndpointMedia, PreparedEndpoint,
-    PreparedEndpointTable, Turn as EndpointTurn,
+    PreparedEndpointTable, ShapeLowerer, Turn as EndpointTurn, TurnMessageLowerer,
 };
 use crate::graph::wire::OpenAiChatMessage;
 use crate::rng::RngRoot;
@@ -513,6 +513,33 @@ fn normalize_endpoint_name(name: &str) -> String {
     name.trim().to_ascii_lowercase().replace(['-', '/'], "_")
 }
 
+/// Lower every static content turn to a pre-serialized `Message` segment for the
+/// run's default prepared endpoint (segment spec §5), so dispatch splices the
+/// stored wire instead of re-rendering. Endpoints whose body is not a per-turn
+/// message array (embeddings, completions, media, …) have no lowerer and are
+/// left on the live render path; per-turn endpoint overrides are skipped inside
+/// the lowering pass itself.
+fn lower_static_messages(
+    dataset: &mut NativeDataset,
+    endpoint_resolver: &dyn PreparedTurnEndpointResolver,
+    primary_model_name: &str,
+) -> Result<()> {
+    let resolved = endpoint_resolver.resolve(None)?;
+    if let Some(lowerer) = ShapeLowerer::for_descriptor_id(resolved.endpoint.descriptor().id) {
+        dataset
+            .lower_messages_for_endpoint(&lowerer)
+            .map_err(|error| anyhow!("failed to lower static messages: {error}"))?;
+    }
+    // Segment spec §3a: after lowering, precompute and cache each eligible static
+    // turn's BodyPlan against the default prepared endpoint so dispatch clones it
+    // instead of reformatting. Runs on the same (lowered) segment store dispatch
+    // sees, so a cache hit is byte-identical to the live formatter output.
+    dataset
+        .precompute_body_plans(resolved.endpoint, primary_model_name)
+        .map_err(|error| anyhow!("failed to precompute body plans: {error}"))?;
+    Ok(())
+}
+
 /// Endpoint selection retained by one schedulable turn.
 ///
 /// This is an enum rather than a bare [`PreparedEndpointReference`] to keep the
@@ -830,6 +857,23 @@ impl RuntimeSessionBackend for NativeSessionBackend {
         response: TurnResponse,
     ) -> Result<TurnToSend> {
         if response.terminal == ReplayTerminalStatus::Completed {
+            // Lower the captured live reply once, here at capture (segment spec §5),
+            // so every later multi-turn dispatch splices the stored wire instead of
+            // re-serializing the reply body through `RenderedMessage::Value` on each
+            // request. The shape is bound to the run's DEFAULT prepared endpoint —
+            // the same commit `lower_static_messages` makes at load — never the
+            // per-turn override. Non-message-array dialects (completions, embeddings,
+            // …) have no lowerer; there the reply stays on the live render path
+            // (today's behavior). Resolving the shape does not touch the session, so
+            // it happens before the mutable borrow below.
+            let lowerer = match &self.endpoint {
+                NativeSessionEndpoint::Prepared {
+                    endpoint_resolver, ..
+                } => {
+                    let resolved = endpoint_resolver.resolve(None)?;
+                    ShapeLowerer::for_descriptor_id(resolved.endpoint.descriptor().id)
+                }
+            };
             let mut session = self.session.borrow_mut();
             if session.should_capture_response() {
                 let tokens = match response.completion_tokens {
@@ -837,20 +881,21 @@ impl RuntimeSessionBackend for NativeSessionBackend {
                     None => u64::try_from(self.response_tokenizer.count(&response.text)?)
                         .map_err(|_| anyhow!("assistant token count exceeds u64"))?,
                 };
-                session.capture_response(
-                    response.assistant_message.map_or_else(
-                        || EndpointTurn {
-                            role: Some("assistant".into()),
-                            texts: vec![EndpointMedia::new(vec![response.text])],
-                            ..EndpointTurn::default()
-                        },
-                        |message| EndpointTurn {
-                            raw_messages: Some(vec![message]),
-                            ..EndpointTurn::default()
-                        },
-                    ),
-                    tokens,
-                )?;
+                let mut reply = response.assistant_message.map_or_else(
+                    || EndpointTurn {
+                        role: Some("assistant".into()),
+                        texts: vec![EndpointMedia::new(vec![response.text])],
+                        ..EndpointTurn::default()
+                    },
+                    |message| EndpointTurn {
+                        raw_messages: Some(vec![message]),
+                        ..EndpointTurn::default()
+                    },
+                );
+                if let Some(lowerer) = &lowerer {
+                    reply.lowered = Some(lowerer.lower_turn(&reply)?);
+                }
+                session.capture_response(reply, tokens)?;
             }
         }
         self.materialize(owner, current.turn_index + 1, current.num_turns)
@@ -1019,6 +1064,9 @@ impl NativeDatasetConversationSource {
         samplers: &SamplerRegistry,
         endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
     ) -> Result<Self> {
+        let mut dataset = dataset;
+        let primary_model_name = model.into();
+        lower_static_messages(&mut dataset, endpoint_resolver.as_ref(), &primary_model_name)?;
         let dataset = Arc::new(dataset);
         let sampler = samplers.create(
             &dataset.metadata().sampling_strategy,
@@ -1029,7 +1077,7 @@ impl NativeDatasetConversationSource {
             dataset,
             sampler,
             NativeSessionEndpoint::Prepared {
-                primary_model_name: model.into(),
+                primary_model_name,
                 endpoint_resolver,
             },
             Arc::new(EndpointRequestMaterializer),
@@ -1064,13 +1112,16 @@ impl NativeDatasetConversationSource {
         default_output_tokens: usize,
         endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
     ) -> Result<Self> {
+        let mut dataset = dataset;
+        let primary_model_name = model.into();
+        lower_static_messages(&mut dataset, endpoint_resolver.as_ref(), &primary_model_name)?;
         let dataset = Arc::new(dataset);
         let sampler = SequentialSampler::from_metadata(&dataset.metadata().conversations)?;
         Self::new_with_endpoint(
             dataset,
             Box::new(sampler),
             NativeSessionEndpoint::Prepared {
-                primary_model_name: model.into(),
+                primary_model_name,
                 endpoint_resolver,
             },
             Arc::new(EndpointRequestMaterializer),
@@ -1551,6 +1602,78 @@ mod tests {
         assert_eq!(next_body["messages"][1]["content"], "live answer");
         assert_eq!(next.input_length, first.input_length + 2 + 2);
         assert_eq!(next.delay_ms, Some(5.0));
+    }
+
+    #[tokio::test]
+    async fn captured_reply_is_lowered_once_and_spliced_identically_each_dispatch() {
+        // Segment spec §5: a live reply captured after turn 0 is lowered once at
+        // capture and its stored wire is spliced verbatim into the context of every
+        // later dispatch. A 3-turn conversation surfaces reply-0 in both the turn-1
+        // and turn-2 request bodies, so byte-drift between dispatches would show up.
+        let registry = LoaderRegistry::with_builtin_formats().unwrap();
+        let source = DatasetSource::Inline(json!([{
+            "session_id": "native",
+            "turns": [
+                {"text": "q0", "timestamp": 0, "output_length": 2},
+                {"text": "q1", "delay": 0, "output_length": 2},
+                {"text": "q2", "delay": 0, "output_length": 2}
+            ]
+        }]));
+        let dataset = registry
+            .build_dataset(
+                Some("multi_turn"),
+                &LoadConfig::new(source),
+                &ComposeConfig::new("model", RngRoot::new(Some(7))),
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+        let mut source = prepared_chat_source(dataset, "model", 8);
+        let first = source
+            .next(Some("runtime-session".into()))
+            .unwrap()
+            .build_first_turn(None)
+            .unwrap();
+        let turn1 = source
+            .next_turn(
+                &IssuedCredit::from_turn(0, 0, &first),
+                TurnResponse {
+                    text: "reply-0".into(),
+                    assistant_message: None,
+                    completion_tokens: Some(2),
+                    terminal: ReplayTerminalStatus::Completed,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let turn2 = source
+            .next_turn(
+                &IssuedCredit::from_turn(1, 1, &turn1),
+                TurnResponse {
+                    text: "reply-1".into(),
+                    assistant_message: None,
+                    completion_tokens: Some(2),
+                    terminal: ReplayTerminalStatus::Completed,
+                },
+            )
+            .unwrap()
+            .unwrap();
+
+        let body1: Value = serde_json::from_slice(turn1.request_body.as_ref().unwrap()).unwrap();
+        let body2: Value = serde_json::from_slice(turn2.request_body.as_ref().unwrap()).unwrap();
+        // reply-0 is message[1] in both dispatch bodies and must be identical.
+        assert_eq!(body1["messages"][1], body2["messages"][1]);
+        assert_eq!(body1["messages"][1]["content"], "reply-0");
+        assert_eq!(body2["messages"][3]["content"], "reply-1");
+
+        // The spliced reply equals the pre-change re-rendered body: a single-text
+        // assistant turn renders to `{"role":"assistant","content":"reply-0"}`
+        // (byte-parity of `lower_turn` vs that render is pinned in the endpoints
+        // `reply_constructors_lower_to_value_dispatch_wire_all_shapes` test).
+        assert_eq!(
+            body1["messages"][1],
+            json!({"role": "assistant", "content": "reply-0"})
+        );
     }
 
     #[tokio::test]

@@ -146,6 +146,7 @@ aiperf profile --config dynosim_offline_replay.yaml
 Content server: `AIPERF_CONTENT_SERVER_ENABLED=true` + non-empty `AIPERF_CONTENT_SERVER_CONTENT_DIR`. See `docs/tutorials/content-server.md`.
 
 Execution-engine off switch: `AIPERF_RUNTIME_ENGINE=python` (default `rust`) routes a single `aiperf profile` run through the legacy pure-Python service mesh (`SystemController` + Worker/TimingManager/RecordsManager children) instead of the native `aiperf-runner`, for A/B benchmarking the old hot path against the Rust core on an identical `BenchmarkRun`. Enum field `Environment.RUNTIME.ENGINE` in `src/aiperf/common/environment.py`; `rust` (default) rejects unknown values.
+RNG backend switch: `AIPERF_RNG_BACKEND=rust_parity` (default `legacy`) swaps the seeded random substrate from Python`\s Mersenne Twister + NumPy (SHA-256 seed derivation) to a pure-Python byte-exact port of the Rust `aiperf::rng` `Pcg64` + BLAKE3 substrate (`src/aiperf/common/rng_parity/`), so seeded Python and Rust produce identical streams in tests. Enum field `Environment.RNG.BACKEND` in `src/aiperf/common/environment.py`; `legacy` (default) is unchanged. Parity is proved against committed Rust golden vectors (`rust/aiperf/examples/rng_parity_vectors.rs` -> `rust/aiperf/tests/data/rng_parity_vectors.json`, replayed by `tests/unit/common/test_rng_parity.py`).
 
 Unit tests use in-process axum endpoints. `tests/scheduled_real_mock.rs` retains real wall-clock library coverage; runner product coverage lives in `aiperf-runner/tests/`.
 

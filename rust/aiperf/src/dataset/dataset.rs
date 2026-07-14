@@ -9,14 +9,18 @@ use std::sync::Arc;
 
 use crate::endpoints::EndpointDescriptor;
 
+use crate::body_plan::BodyPlan;
 use crate::dataset::error::{DatasetError, Result};
 use crate::dataset::model::{
     Conversation, ConversationBranchMode, ConversationContextMode, ConversationMetadata,
     DispatchTiming, MediaKind, PrerequisiteKind, SessionId, Turn,
 };
-use crate::dataset::request::resolve_turn;
-use crate::dataset::segment::{Handle, Payload, Role, SegmentPool, SegmentStore};
-use crate::endpoints::TurnMessageLowerer;
+use crate::dataset::request::{raw_body_handle, resolve_prompt, resolve_turn, token_ids_handle};
+use crate::dataset::segment::{Handle, Payload, Role, SegmentDomain, SegmentPool, SegmentStore};
+use crate::endpoints::{
+    CreditPhase, PreparedEndpoint, PreparedRequest, ShapeLowerer, Turn as EndpointTurn,
+    TurnMessageLowerer,
+};
 use smallvec::SmallVec;
 
 /// Media-free structural metadata for one frozen dataset.
@@ -43,6 +47,13 @@ pub struct Dataset {
     index: HashMap<SessionId, usize>,
     segments: Arc<dyn SegmentStore>,
     metadata: DatasetMetadata,
+    /// Precomputed profiling-phase [`BodyPlan`] per `[conversation position][turn
+    /// index]` for eligible static message-array turns (segment spec §3a). Empty
+    /// until [`precompute_body_plans`](Dataset::precompute_body_plans) runs after
+    /// endpoint-bind lowering; a `None` slot (or an empty outer vector) means the
+    /// turn falls back to per-dispatch formatting. Keyed by dense position so the
+    /// hot-path lookup is two indexed reads, never a hash.
+    body_plans: Vec<Vec<Option<BodyPlan>>>,
 }
 
 impl fmt::Debug for Dataset {
@@ -58,20 +69,14 @@ impl fmt::Debug for Dataset {
 impl Dataset {
     /// Validate and freeze conversations while preserving insertion order.
     pub fn new(
-        mut conversations: Vec<Conversation>,
+        conversations: Vec<Conversation>,
         segments: Arc<dyn SegmentStore>,
         sampling_strategy: impl Into<String>,
         default_context_mode: ConversationContextMode,
     ) -> Result<Self> {
-        // Segment-unification stage 1: derive each turn's unified `body` handles
-        // from its legacy representation fields once, at freeze, so downstream
-        // dispatch can migrate to the domain-driven lookup without touching the
-        // loader construction sites. Behavior is unchanged this stage.
-        for conversation in &mut conversations {
-            for turn in &mut conversation.turns {
-                turn.populate_body();
-            }
-        }
+        // Segment-unification §9 stage 3: each turn's unified `body` handles are
+        // now written directly by the loaders and endpoint-bind lowering, so
+        // there is no derive-from-legacy-fields pass here.
         let mut index = HashMap::with_capacity(conversations.len());
         for (position, conversation) in conversations.iter().enumerate() {
             if conversation.session_id.as_str().is_empty() {
@@ -121,6 +126,7 @@ impl Dataset {
             index,
             segments,
             metadata,
+            body_plans: Vec::new(),
         })
     }
 
@@ -222,8 +228,7 @@ impl Dataset {
                     parent = Some(handle);
                     handles.push(handle);
                 }
-                turn.messages = handles;
-                turn.populate_body();
+                turn.body = handles;
                 changed = true;
             }
         }
@@ -232,6 +237,117 @@ impl Dataset {
             self.conversations = conversations.into();
         }
         Ok(())
+    }
+
+    /// Build and cache the profiling-phase [`BodyPlan`] for every eligible static
+    /// message-array turn against the run's default prepared endpoint (segment
+    /// spec §3a), so dispatch clones the cached plan instead of calling the
+    /// endpoint formatter (and building a fresh `serde_json::Value`) per request.
+    ///
+    /// Run once at load, immediately after
+    /// [`lower_messages_for_endpoint`](Dataset::lower_messages_for_endpoint) and
+    /// before the dataset is shared, so the cached plan splices the same lowered
+    /// wires dispatch would. The cached plan is byte-identical to the per-dispatch
+    /// formatter output *by construction*: dispatch clones it, folds the same
+    /// dispatch [`Overrides`](crate::dataset::materialize::Overrides), applies the
+    /// same effective-field pass, and materializes with an empty override set —
+    /// exactly what it does today from a freshly formatted plan.
+    ///
+    /// A turn is cached only when every reuse invariant holds:
+    /// - the endpoint's body is [`precomputable`](PreparedEndpoint::precomputable_body)
+    ///   (excludes template, raw passthrough, and token-native dialects), and it
+    ///   is a per-turn message-array shape (`chat`/`responses`/`messages`/…),
+    ///   which excludes completions, embeddings, rankings, and media endpoints;
+    /// - the conversation uses a static context mode (`MessageArrayWithResponses`
+    ///   or `DeltasWithResponses`), where the assembled turns do not depend on
+    ///   live replies, and is not a graph/DAG conversation;
+    /// - the turn carries no per-turn `endpoint` override, no complete raw body,
+    ///   and no token-native `raw_token_ids`.
+    ///
+    /// Only the profiling phase is cached; warmup folds the system prompt into the
+    /// first message inside the formatter and always takes the live path. Formatter
+    /// failures are non-fatal — the slot stays `None` and the identical error
+    /// resurfaces on the live dispatch path. Idempotent: it rebuilds the whole
+    /// cache from the current conversations each call.
+    pub fn precompute_body_plans(
+        &mut self,
+        endpoint: &dyn PreparedEndpoint,
+        primary_model_name: &str,
+    ) -> Result<()> {
+        // Endpoint-level gate: only precomputable message-array dialects qualify.
+        // A dialect that is not a per-turn message array has no shape lowerer and
+        // is left entirely on the live path.
+        if !endpoint.precomputable_body()
+            || ShapeLowerer::for_descriptor_id(endpoint.descriptor().id).is_none()
+        {
+            self.body_plans = Vec::new();
+            return Ok(());
+        }
+        let plans = {
+            let store = self.segments.as_ref();
+            let mut plans: Vec<Vec<Option<BodyPlan>>> =
+                Vec::with_capacity(self.conversations.len());
+            for conversation in self.conversations.iter() {
+                let mut turn_plans: Vec<Option<BodyPlan>> = vec![None; conversation.turns.len()];
+                let mode = self.context_mode(conversation);
+                let static_mode = matches!(
+                    mode,
+                    ConversationContextMode::MessageArrayWithResponses
+                        | ConversationContextMode::DeltasWithResponses
+                );
+                // Graph/DAG conversations dispatch through a separate execution
+                // path; never cache their turns here.
+                if static_mode && conversation.dag.is_none() {
+                    let system = resolve_prompt(store, conversation.system)?;
+                    let user_context = resolve_prompt(store, conversation.user_context)?;
+                    let conversation_id = conversation.session_id.as_str().to_string();
+                    for (turn_index, (turn, slot)) in conversation
+                        .turns
+                        .iter()
+                        .zip(turn_plans.iter_mut())
+                        .enumerate()
+                    {
+                        // Per-turn override, raw body, and token-native turns take
+                        // the live path (mirrors the dispatch fallback branches).
+                        if turn.endpoint.is_some()
+                            || raw_body_handle(turn, store)?.is_some()
+                            || token_ids_handle(turn, store)?.is_some()
+                        {
+                            continue;
+                        }
+                        let turns =
+                            static_endpoint_turns(store, conversation, turn_index, mode)?;
+                        let request = PreparedRequest::new(
+                            primary_model_name,
+                            &turns,
+                            system.as_deref(),
+                            user_context.as_deref(),
+                            CreditPhase::Profiling,
+                            None,
+                            None,
+                            Some(&conversation_id),
+                        );
+                        // Non-fatal: an unrenderable turn simply stays uncached and
+                        // surfaces its identical error at dispatch.
+                        if let Ok(plan) = endpoint.format_payload(&request) {
+                            *slot = Some(plan);
+                        }
+                    }
+                }
+                plans.push(turn_plans);
+            }
+            plans
+        };
+        self.body_plans = plans;
+        Ok(())
+    }
+
+    /// Borrow the cached profiling-phase [`BodyPlan`] for one conversation turn, if
+    /// [`precompute_body_plans`](Dataset::precompute_body_plans) cached it. Dispatch
+    /// clones the returned plan instead of reformatting; a `None` means fall back.
+    pub(crate) fn cached_body_plan(&self, id: &SessionId, turn_index: usize) -> Option<&BodyPlan> {
+        let position = *self.index.get(id)?;
+        self.body_plans.get(position)?.get(turn_index)?.as_ref()
     }
 
     /// Borrow media-free structural metadata.
@@ -275,14 +391,14 @@ impl Dataset {
                 )));
             }
             for (turn_index, turn) in conversation.turns.iter().enumerate() {
-                if turn.raw_token_ids.is_none() {
+                if token_ids_handle(turn, self.segments.as_ref())?.is_none() {
                     return Err(DatasetError::Validation(format!(
                         "endpoint {:?} requires raw_token_ids, but conversation {:?} turn {turn_index} has none",
                         descriptor.id,
                         conversation.session_id.as_str()
                     )));
                 }
-                if turn.raw_payload.is_some() {
+                if raw_body_handle(turn, self.segments.as_ref())?.is_some() {
                     return Err(DatasetError::Validation(format!(
                         "endpoint {:?} requires token-native composition, but conversation {:?} turn {turn_index} retained raw payload bytes",
                         descriptor.id,
@@ -439,35 +555,41 @@ fn validate_turn(
             context()
         )));
     }
-    if turn.raw_payload.is_some()
-        && (!turn.messages.is_empty() || !turn.content.is_empty() || turn.raw_messages.is_some())
-    {
+    // The unified dispatch body (segment-unification §9 stage 3) carries at most
+    // a leading raw body, a token-native handle, and message handles; classify
+    // them by segment domain and reject any other domain leaking into the body.
+    let mut body_has_raw = false;
+    let mut body_token_ids: Option<Handle> = None;
+    let mut body_has_messages = false;
+    for &handle in &turn.body {
+        let payload = segments.get(handle)?;
+        match payload.domain() {
+            SegmentDomain::Raw => body_has_raw = true,
+            SegmentDomain::TokenIds => body_token_ids = Some(handle),
+            SegmentDomain::Message => body_has_messages = true,
+            _ => return payload_error(handle, "raw, token-ids, or message", payload),
+        }
+    }
+    let formatted = !turn.content.is_empty() || turn.raw_messages.is_some() || body_has_messages;
+    if body_has_raw && formatted {
         return Err(DatasetError::Validation(format!(
             "{} combines raw_payload with formatted content",
             context()
         )));
     }
-    if turn.raw_token_ids.is_some()
-        && (!turn.messages.is_empty() || !turn.content.is_empty() || turn.raw_messages.is_some())
-    {
+    if body_token_ids.is_some() && formatted {
         return Err(DatasetError::Validation(format!(
             "{} combines raw_token_ids with formatted content",
             context()
         )));
     }
-    if turn.raw_messages.is_some() && !turn.messages.is_empty() {
+    if turn.raw_messages.is_some() && body_has_messages {
         return Err(DatasetError::Validation(format!(
             "{} combines raw_messages with message handles",
             context()
         )));
     }
 
-    for handle in &turn.messages {
-        let payload = segments.get(*handle)?;
-        if !matches!(payload, Payload::Message { .. }) {
-            return payload_error(*handle, "message", payload);
-        }
-    }
     for group in &turn.content {
         if group.handles.is_empty() {
             return Err(DatasetError::Validation(format!(
@@ -488,7 +610,6 @@ fn validate_turn(
         }
     }
     for handle in [
-        turn.raw_payload,
         turn.raw_messages,
         turn.tools,
         turn.raw_system,
@@ -504,7 +625,7 @@ fn validate_turn(
             return payload_error(handle, "raw", payload);
         }
     }
-    if let Some(handle) = turn.raw_token_ids {
+    if let Some(handle) = body_token_ids {
         let payload = segments.get(handle)?;
         if !matches!(payload, Payload::TokenIds { token_ids } if !token_ids.is_empty()) {
             return payload_error(handle, "non-empty token-ids", payload);
@@ -579,12 +700,41 @@ fn validate_turn(
 /// carve-outs). A content turn with no per-turn endpoint override, no complete
 /// raw body, no token-native IDs, no preformatted `raw_messages`, and no
 /// already-set `messages` is the lowerable case.
+/// Assemble the endpoint turns for one static-context turn exactly as
+/// `ConversationSession::endpoint_turns` does for these two modes, so a plan
+/// precomputed from them is byte-identical to the dispatch-time plan. Restricted
+/// to the static modes (the only modes `precompute_body_plans` caches), where the
+/// turn sequence is a pure function of the frozen conversation.
+fn static_endpoint_turns(
+    store: &dyn SegmentStore,
+    conversation: &Conversation,
+    current: usize,
+    mode: ConversationContextMode,
+) -> Result<Vec<EndpointTurn>> {
+    match mode {
+        ConversationContextMode::MessageArrayWithResponses => {
+            Ok(vec![resolve_turn(store, &conversation.turns[current])?])
+        }
+        ConversationContextMode::DeltasWithResponses => conversation.turns[..=current]
+            .iter()
+            .map(|turn| resolve_turn(store, turn))
+            .collect(),
+        // The dynamic modes interleave live replies and are never precomputed.
+        ConversationContextMode::DeltasWithoutResponses
+        | ConversationContextMode::MessageArrayWithoutResponses => Err(DatasetError::Validation(
+            "static_endpoint_turns called for a dynamic context mode".into(),
+        )),
+    }
+}
+
 fn turn_is_lowerable(turn: &Turn) -> bool {
+    // An empty `body` means the turn carries no prebuilt raw body, token-native
+    // IDs, or already-lowered/authored message handles — the only representations
+    // recorded on `body`. Combined with a non-empty `content` and no preformatted
+    // `raw_messages` or per-turn endpoint override, this is the lowerable case.
     !turn.content.is_empty()
-        && turn.messages.is_empty()
+        && turn.body.is_empty()
         && turn.raw_messages.is_none()
-        && turn.raw_payload.is_none()
-        && turn.raw_token_ids.is_none()
         && turn.endpoint.is_none()
 }
 
@@ -822,14 +972,14 @@ mod tests {
 
     use super::*;
     use crate::dataset::model::{
-        BranchId, ConversationBranch, DagMetadata, DispatchTiming, SessionId,
+        BranchId, ContentGroup, ConversationBranch, DagMetadata, DispatchTiming, SessionId,
     };
     use crate::dataset::segment::SegmentPool;
 
     fn one_turn(id: &str, handle: Handle) -> Conversation {
         let mut conversation = Conversation::new(id);
         conversation.turns.push(Turn {
-            messages: smallvec::smallvec![handle],
+            body: smallvec::smallvec![handle],
             ..Turn::default()
         });
         conversation
@@ -912,5 +1062,111 @@ mod tests {
             ConversationContextMode::DeltasWithoutResponses,
         )
         .unwrap();
+    }
+
+    // Segment-unification §9 stage 3 decision (must-fix #1): a raw body may
+    // coexist with its token-ids handle. `dispatch_body` records `[raw, token]`
+    // so the raw body wins dispatch while the token handle stays reachable, and
+    // the load-time token-count validation still fires in the coexistence case.
+    #[test]
+    fn coexisting_raw_body_and_token_ids_keep_the_token_count_validation() {
+        let mut pool = SegmentPool::new();
+        let raw = pool
+            .intern_raw(None, Bytes::from_static(br#"{"messages":[],"token_ids":[1,2,3]}"#))
+            .unwrap();
+        let token = pool.intern_token_ids(Some(raw), [1_u32, 2, 3]).unwrap();
+        let store: Arc<dyn SegmentStore> = Arc::new(pool.freeze());
+
+        let mut ok = Conversation::new("ok");
+        ok.turns.push(Turn {
+            input_tokens: 3,
+            body: Turn::dispatch_body(Some(raw), Some(token), &[]),
+            ..Turn::default()
+        });
+        let dataset = Dataset::new(
+            vec![ok],
+            store.clone(),
+            "sequential",
+            ConversationContextMode::DeltasWithoutResponses,
+        )
+        .unwrap();
+        // Raw leads (dispatch bypass) with the token handle retained after it.
+        assert_eq!(dataset.conversations()[0].turns[0].body.as_slice(), &[raw, token]);
+
+        let mut bad = Conversation::new("bad");
+        bad.turns.push(Turn {
+            input_tokens: 99,
+            body: Turn::dispatch_body(Some(raw), Some(token), &[]),
+            ..Turn::default()
+        });
+        let error = Dataset::new(
+            vec![bad],
+            store,
+            "sequential",
+            ConversationContextMode::DeltasWithoutResponses,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("raw_token_ids contains 3 IDs"),
+            "unexpected error: {error}"
+        );
+    }
+
+    // One-domain-per-body invariant: only raw, token-ids, and message segments
+    // are valid dispatch-body handles, and a raw body cannot coexist with the
+    // formatter-driven content/raw_messages representations.
+    #[test]
+    fn body_rejects_non_dispatch_domains_and_mixed_representations() {
+        let mut pool = SegmentPool::new();
+        let media = pool
+            .intern_media(None, MediaKind::Image, Bytes::from_static(b"http://x"))
+            .unwrap();
+        let raw = pool.intern_raw(None, Bytes::from_static(b"{}")).unwrap();
+        let text = pool
+            .intern_text(None, "user", Bytes::from_static(b"hi"), vec![1_u32])
+            .unwrap();
+        let store: Arc<dyn SegmentStore> = Arc::new(pool.freeze());
+
+        let mut media_body = Conversation::new("media");
+        media_body.turns.push(Turn {
+            body: smallvec::smallvec![media],
+            ..Turn::default()
+        });
+        let error = Dataset::new(
+            vec![media_body],
+            store.clone(),
+            "sequential",
+            ConversationContextMode::DeltasWithoutResponses,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("raw, token-ids, or message"),
+            "unexpected error: {error}"
+        );
+
+        let mut mixed = Conversation::new("mixed");
+        mixed.turns.push(Turn {
+            body: Turn::dispatch_body(Some(raw), None, &[]),
+            content: smallvec::smallvec![ContentGroup {
+                kind: MediaKind::Text,
+                name: "text".into(),
+                handles: smallvec::smallvec![text],
+            }],
+            ..Turn::default()
+        });
+        let error = Dataset::new(
+            vec![mixed],
+            store,
+            "sequential",
+            ConversationContextMode::DeltasWithoutResponses,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("combines raw_payload with formatted content"),
+            "unexpected error: {error}"
+        );
     }
 }

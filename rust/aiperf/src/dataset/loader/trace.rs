@@ -282,11 +282,12 @@ impl Composer for MooncakeTraceComposer {
                     let payload = parsed.payload.expect("mode proves payload");
                     let value: Value = serde_json::from_str(payload.get())?;
                     turn.input_tokens = input_tokens(&value, tokenizer)?;
-                    turn.raw_payload = Some(segments.intern_raw(
+                    let handle = segments.intern_raw(
                         parents[position],
                         Bytes::copy_from_slice(payload.get().as_bytes()),
-                    )?);
-                    parents[position] = turn.raw_payload;
+                    )?;
+                    turn.body = Turn::dispatch_body(Some(handle), None, &[]);
+                    parents[position] = Some(handle);
                 }
                 MooncakeMode::Messages => {
                     let messages = parsed.messages.expect("mode proves messages");

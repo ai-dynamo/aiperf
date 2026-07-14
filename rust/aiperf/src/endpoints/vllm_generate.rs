@@ -108,6 +108,12 @@ impl PreparedEndpoint for PreparedVllmGenerate {
         &self.config
     }
 
+    fn precomputable_body(&self) -> bool {
+        // Token-native composition dispatches exact per-turn raw token IDs; there
+        // is no reusable message-array body plan to cache.
+        false
+    }
+
     fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<BodyPlan> {
         let [turn] = request.turns() else {
             return Err(EndpointError::InvalidRequest(

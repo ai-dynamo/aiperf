@@ -266,7 +266,9 @@ class ParityRandomGenerator:
             if weights is None:
                 return [self.weighted_choice(values, None) for _ in range(size)]
             cumulative = _cumulative_weights(weights)
-            return [values[self._weighted_index_cached(cumulative)] for _ in range(size)]
+            return [
+                values[self._weighted_index_cached(cumulative)] for _ in range(size)
+            ]
         if weights is None:
             return self.sample(values, size)
 
@@ -362,7 +364,9 @@ class ParityRandomGenerator:
         )
 
     # ------------------------------------------------------------------ batch
-    def integers(self, low: int, high: int | None = None, size: int | None = None, dtype=None):
+    def integers(
+        self, low: int, high: int | None = None, size: int | None = None, dtype=None
+    ):
         """Generate integers with NumPy's ``[low, high)`` convention (``integers``).
 
         Legacy-compatible: ``high=None`` means ``[0, low)``, ``size=None`` returns a single
