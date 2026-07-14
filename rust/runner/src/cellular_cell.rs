@@ -11,11 +11,13 @@
 //! writing a report. The controller re-ingests every cell's records in global
 //! ordinal order for the single authoritative `native-v2.json`.
 //!
-//! Cell behaviour is injected through three environment variables so the ordinary
-//! execute path is reused unchanged: [`CELL_ID_ENV`] / [`CELL_COUNT_ENV`] select
-//! the issuer's partition (read by `RunCapture`), and [`CELL_CONTROLLER_ADDR_ENV`]
-//! points the records shipper at the controller. They are set once, before any
-//! runtime exists, from the [`CellLaunchSpec`] the controller pipes in.
+//! Cell behaviour is injected through four environment variables so the ordinary
+//! execute path is reused unchanged: [`CELL_ID_ENV`] / [`CELL_COUNT_ENV`] select the
+//! issuer's partition (read by `RunCapture`), [`CELL_CONTROLLER_ADDR_ENV`] points the
+//! records shipper at the controller, and [`CELL_PHASE_ORDINAL_BASES_ENV`] carries
+//! each phase's global ordinal base so the issuer stamps single-cell-equivalent
+//! absolute slots. They are set once, before any runtime exists, from the
+//! [`CellLaunchSpec`] the controller pipes in.
 
 use std::collections::{BTreeMap, HashMap};
 

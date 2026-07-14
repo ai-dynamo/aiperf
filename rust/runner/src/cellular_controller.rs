@@ -80,8 +80,13 @@ pub fn run_cellular(
 
         let temp_root =
             std::env::temp_dir().join(format!("aiperf-cellular-{}", std::process::id()));
-        // Cleans the scratch tree on every exit path, including a bail; the
-        // kill_on_drop cells stop before this runs when the runtime unwinds.
+        // Cleans the scratch tree on every exit path, including a bail. On a bail this
+        // guard drops (removing `temp_root`) as the async block returns, a moment
+        // BEFORE `runtime` drops and kill_on_drop SIGKILLs the cells; a surviving cell
+        // could briefly recreate part of its `cell_dir` in that window. That is benign
+        // — a cell's artifacts are discarded, and its records were already shipped if
+        // it got far enough to matter — leaving at worst a small orphaned `/tmp` subtree
+        // the OS reclaims. (A crashed run's data is not trusted regardless.)
         let _scratch = ScratchTreeGuard(temp_root.clone());
         // Each phase's global dispatch base (turns dispatched by prior phases): a
         // cell's sampler restarts each phase, so the cell adds this to its phase-local
@@ -123,19 +128,21 @@ pub fn run_cellular(
         }
         drop(failure_tx);
 
-        // Collect exactly one partition per cell (plus the latest heartbeat). ANY
-        // non-zero cell exit aborts the whole run — including the unusual case of a
-        // cell that shipped its partition and then crashed while other cells are still
-        // pending (the `select!` is unbiased, so the queued failure wins a later
-        // iteration): a crashed cell means a failed run, so discarding the partial
-        // merge is correct. A cell that connects but hangs indefinitely without
-        // shipping or exiting is NOT covered (no per-cell deadline yet — the failure
-        // watcher only fires on a cell exit); that bound belongs with the cross-host
-        // transport work.
+        // Collect exactly one partition per cell (plus the latest heartbeat). The
+        // `select!` is `biased`, so a ready cell message is always taken before a
+        // cell-exit failure: a cell that shipped its partition and then crashed is not
+        // aborted (its records are already collected and authoritative), while a cell
+        // that fails WITHOUT shipping leaves the transport with nothing pending, so the
+        // failure branch fires and aborts — the crash-before-connecting case that would
+        // otherwise hang the accept loop. A cell that connects but hangs indefinitely
+        // without shipping or exiting is NOT covered (no per-cell deadline yet — the
+        // failure watcher only fires on a cell exit); that bound belongs with the
+        // cross-host transport work.
         let mut partitions: Vec<RecordsShardPartition> = Vec::with_capacity(cell_count as usize);
         let mut heartbeats: BTreeMap<u32, MetricsHeartbeat> = BTreeMap::new();
         while partitions.len() < cell_count as usize {
             tokio::select! {
+                biased;
                 message = transport.recv() => match message.context("receiving from cell")? {
                     Some(CellMessage::Partition(partition)) => partitions.push(partition),
                     Some(CellMessage::Heartbeat { cell_id, heartbeat }) => {
@@ -343,18 +350,28 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
+/// Phase `type`s whose dispatch count is exactly the `requests` budget and whose
+/// turns are drawn one at a time through the (partitionable) sampler — the only
+/// shapes cellular can partition. The trace-driven types (`fixed_schedule`,
+/// `user_centric`) build their schedule from the *full* conversation list and set
+/// `enforce_stop = false`, so every cell would replay the entire trace (N× load and
+/// N× records) — a merge the completeness check would accept silently.
+const CELLULAR_REQUEST_BOUNDED_PHASE_TYPES: [&str; 4] =
+    ["concurrency", "poisson", "gamma", "constant"];
+
 /// Rejects a cellular run whose phases are not exactly request-bounded. The
 /// dense-ordinal tiling requires every phase's *actual* dispatch count to equal its
-/// sliced `requests` budget. Any phase whose real count can diverge from `requests`
-/// — one that lacks `requests`, carries a `duration`/`sessions` bound that can stop
-/// it early, or drives an `adaptive_scale` controller (e.g. `ramp_until_fail`, which
-/// stops the issuer on an SLA breach before the budget) — would mis-partition (run
-/// unpartitioned and/or leave gaps that abort the merge). Fail closed rather than
-/// silently corrupt. Pacing-only knobs (concurrency/rate ramps) and post-send
-/// cancellation stay allowed: they change *when* turns are sent or mark them
-/// cancelled after dispatch, not *how many* are dispatched, so the count still tiles.
-/// (`adaptive_scale` is also transitively rejected today via its `duration` sustain
-/// bound; the explicit check is defense-in-depth against a future requests-only form.)
+/// sliced `requests` budget. A phase mis-partitions — running unpartitioned and/or
+/// leaving gaps, or silently N×-ing the load and record count — if it:
+/// - has a `type` outside [`CELLULAR_REQUEST_BOUNDED_PHASE_TYPES`] (a trace-driven
+///   `fixed_schedule`/`user_centric` phase ignores `requests` and replays the full
+///   trace per cell);
+/// - lacks a `requests` budget; or
+/// - carries a `duration`/`sessions`/`adaptive_scale` bound that can stop it early.
+///
+/// Fail closed rather than silently corrupt. Pacing-only knobs (concurrency/rate
+/// ramps) and post-send cancellation stay allowed: they change *when* turns are sent
+/// or mark them cancelled after dispatch, not *how many* are dispatched.
 fn validate_cellular_phase_budgets(envelope: &serde_json::Value) -> Result<()> {
     let phases = envelope
         .pointer("/run/cfg/phases")
@@ -365,6 +382,12 @@ fn validate_cellular_phase_budgets(envelope: &serde_json::Value) -> Result<()> {
             .get("name")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("<unnamed>");
+        let phase_type = phase.get("type").and_then(serde_json::Value::as_str);
+        ensure!(
+            phase_type.is_some_and(|t| CELLULAR_REQUEST_BOUNDED_PHASE_TYPES.contains(&t)),
+            "cellular runs support only request-bounded phase types ({}); phase {name:?} has type {phase_type:?}, whose dispatch count is trace-driven and would replay the full trace per cell",
+            CELLULAR_REQUEST_BOUNDED_PHASE_TYPES.join("/")
+        );
         ensure!(
             phase
                 .get("requests")
@@ -537,24 +560,34 @@ mod tests {
 
     #[test]
     fn rejects_non_request_bounded_phases() {
-        // Request-bounded phases pass.
+        // Request-bounded (arrival-pattern) phase types with a `requests` budget pass.
         let ok = serde_json::json!({"run": {"cfg": {"phases": [
-            {"name": "warmup", "requests": 10},
-            {"name": "profiling", "requests": 100},
+            {"type": "concurrency", "name": "warmup", "requests": 10},
+            {"type": "constant", "name": "profiling", "requests": 100},
         ]}}});
         assert!(validate_cellular_phase_budgets(&ok).is_ok());
-        // A phase lacking `requests`, or carrying a duration/sessions/adaptive_scale
-        // bound whose actual count can diverge from `requests`, fails closed.
+        // Fail closed on: a trace-driven phase type (`fixed_schedule`/`user_centric`)
+        // or a missing type; a phase lacking `requests`; or a
+        // duration/sessions/adaptive_scale bound whose count can diverge.
         for bad in [
-            serde_json::json!({"run": {"cfg": {"phases": [{"name": "profiling"}]}}}),
             serde_json::json!({"run": {"cfg": {"phases": [
-                {"name": "profiling", "requests": 100, "duration": 5.0},
+                {"type": "fixed_schedule", "name": "profiling", "requests": 100},
             ]}}}),
             serde_json::json!({"run": {"cfg": {"phases": [
-                {"name": "profiling", "requests": 100, "sessions": 3},
+                {"type": "user_centric", "name": "profiling", "requests": 100},
             ]}}}),
             serde_json::json!({"run": {"cfg": {"phases": [
-                {"name": "profiling", "requests": 100, "adaptive_scale": {"controller": "ramp_until_fail"}},
+                {"name": "profiling", "requests": 100},
+            ]}}}),
+            serde_json::json!({"run": {"cfg": {"phases": [{"type": "concurrency", "name": "profiling"}]}}}),
+            serde_json::json!({"run": {"cfg": {"phases": [
+                {"type": "concurrency", "name": "profiling", "requests": 100, "duration": 5.0},
+            ]}}}),
+            serde_json::json!({"run": {"cfg": {"phases": [
+                {"type": "concurrency", "name": "profiling", "requests": 100, "sessions": 3},
+            ]}}}),
+            serde_json::json!({"run": {"cfg": {"phases": [
+                {"type": "concurrency", "name": "profiling", "requests": 100, "adaptive_scale": {"controller": "ramp_until_fail"}},
             ]}}}),
         ] {
             assert!(
