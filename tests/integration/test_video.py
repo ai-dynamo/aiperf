@@ -7,6 +7,7 @@ import shutil
 import pytest
 from pytest import approx, param
 
+from aiperf.common import random_generator as rng
 from aiperf.common.enums import VideoFormat, VideoSynthType
 from aiperf.config.dataset.video import VideoConfig
 from aiperf.dataset.generator.video import VideoGenerator
@@ -180,6 +181,19 @@ class TestVideoContainerMetadata:
     frame count and crashed in ``torch.arange`` on every request.
     """
 
+    @pytest.fixture(autouse=True)
+    def _seeded_rng(self):
+        """Seed the shared RNG deterministically, restoring it afterwards.
+
+        The generator needs the module-level RNG initialized, and integration
+        tests have no autouse RNG reset (unlike unit tests), so this also keeps
+        the seed from leaking into later tests.
+        """
+        rng.reset()
+        rng.init(42)
+        yield
+        rng.reset()
+
     @pytest.mark.parametrize(
         "video_format,video_codec",
         [
@@ -191,11 +205,6 @@ class TestVideoContainerMetadata:
         self, video_format: VideoFormat, video_codec: str
     ):
         """Generated clip reports a valid duration without a full-decode fallback."""
-        from aiperf.common import random_generator as rng
-
-        rng.reset()
-        rng.init(42)
-
         width, height, fps, duration = 640, 480, 4, 5.0
         config = VideoConfig(
             width=width,
