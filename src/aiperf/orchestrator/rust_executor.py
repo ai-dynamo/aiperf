@@ -32,6 +32,9 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["RunnerInstallation", "RustSubprocessExecutor"]
 
+# The runner writes exactly this authoritative report into ``run.artifact_dir``.
+_NATIVE_REPORT_NAME = "native-v2.json"
+
 
 class RustSubprocessExecutor(RunExecutor):
     """Execute each fully planned run through ``aiperf-runner`` over stdio."""
@@ -67,6 +70,7 @@ class RustSubprocessExecutor(RunExecutor):
         """Execute one run and return its orchestrator-facing metric projection."""
         try:
             request = self._request_for_run(run)
+            _clear_prior_report(run.artifact_dir)
             completed = self.installation.execute(request)
             terminal = _parse_terminal(
                 completed.stdout,
@@ -104,6 +108,25 @@ class RustSubprocessExecutor(RunExecutor):
         )
         self.installation.preflight_request(authored)
         return authored
+
+
+def _clear_prior_report(artifact_dir: Path) -> None:
+    """Remove a prior run's authoritative report before launching a fresh child.
+
+    The runner is write-once by design: it refuses to overwrite
+    ``native-v2.json`` so a failed execution can never replace a good report
+    mid-run (see ``crates/runner/src/coordinator.rs`` and
+    ``crates/aiperf/src/report.rs``). That guard is correct for a single child
+    process, but re-running ``aiperf profile`` into the same artifact dir is a
+    legitimate user action, and the orchestrator - not the runner - owns
+    artifact-dir lifecycle. We therefore clear the prior authoritative report
+    here, immediately before launching the fresh child the user asked for. The
+    runner keeps its "I never overwrite my own output" guarantee intact; a
+    failed re-run still leaves no report because the child never writes one on
+    failure.
+    """
+    report_path = artifact_dir / _NATIVE_REPORT_NAME
+    report_path.unlink(missing_ok=True)
 
 
 def _parse_terminal(
@@ -152,7 +175,7 @@ def _validated_report_path(terminal: dict[str, Any], artifact_dir: Path) -> Path
         raise ValueError("successful native terminal response omitted report_path")
     report = Path(authored).resolve()
     root = artifact_dir.resolve()
-    if report.parent != root or report.name != "native-v2.json":
+    if report.parent != root or report.name != _NATIVE_REPORT_NAME:
         raise ValueError(
             f"native runner returned report outside its run contract: {report}"
         )
