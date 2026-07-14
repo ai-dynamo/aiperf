@@ -207,6 +207,14 @@ pub fn run_cellular(
         };
         let report = NativeReport::from_outcome(&summary, &outcome);
         let json = serde_json::to_string_pretty(&report).context("serializing merged report")?;
+        // Mirror the single-process path (execute.rs create_dir_all(&run.artifact_dir)):
+        // create the report's parent so a fresh artifact_dir the orchestrator has not
+        // pre-made does not fail the write. Cells write only to the throwaway scratch
+        // tree, so nothing else creates this directory on the cellular path.
+        if let Some(parent) = report_path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating report directory {}", parent.display()))?;
+        }
         std::fs::write(report_path, json)
             .with_context(|| format!("writing merged report to {}", report_path.display()))?;
 
