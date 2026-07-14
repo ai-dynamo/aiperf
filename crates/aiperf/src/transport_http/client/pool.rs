@@ -8,6 +8,13 @@
 //! preserves that policy without putting synchronization on the token path:
 //! state is local `Rc`/`RefCell`, a request acquires one RAII lease, HTTP/1
 //! leases are exclusive, and HTTP/2 leases clone one live multiplexed sender.
+//!
+//! Waiters queue FIFO on the per-origin `Notify`. Freeing one slot (an HTTP/1
+//! lease returning, or a connect reservation rolling back) wakes exactly one
+//! waiter with [`Notify::notify_one`]; only transitions that admit many at once
+//! — a first connect revealing multi-slot HTTP/1 or unbounded HTTP/2, and a
+//! session retire — broadcast with `notify_waiters`. A fresh request can still
+//! take a just-freed idle slot ahead of a woken waiter, which then re-queues.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
@@ -173,7 +180,9 @@ impl ConnectionPool {
     ) -> Result<Rc<PoolEntry>, ErrorDetails> {
         let origin = origin_key(url);
         match reuse {
-            ConnectionReuseStrategy::Never => unreachable!("never has no pool entry"),
+            ConnectionReuseStrategy::Never => {
+                Err(ErrorDetails::other("never strategy has no pool entry"))
+            }
             ConnectionReuseStrategy::Pooled => Ok(self
                 .inner
                 .origins
@@ -253,6 +262,7 @@ impl ConnectionPool {
                         }
                     }
                     ProtocolState::H2(shared) => {
+                        // invariant: state is H2 only after storing a multiplexed root, so the sender is always clonable.
                         let sender = shared
                             .sender
                             .clone_multiplex()
@@ -324,6 +334,7 @@ impl ConnectionPool {
 
                     let lease = match reservation {
                         ReservationKind::First if sender.is_multiplexed() => {
+                            // invariant: `is_multiplexed()` was just checked true, so the root sender is clonable.
                             let root = sender
                                 .clone_multiplex()
                                 .expect("multiplexed sender must be clonable");
@@ -369,6 +380,8 @@ impl ConnectionPool {
                         }
                     };
                     guard.disarm();
+                    // First connect can admit many waiters (multi-slot H1 / H2),
+                    // so broadcast, not a single-slot handoff.
                     entry.notify.notify_waiters();
                     return Ok(lease);
                 }
@@ -487,7 +500,8 @@ impl Drop for ReservationGuard {
             _ => {}
         }
         drop(state);
-        self.entry.notify.notify_waiters();
+        // Rollback frees one slot: FIFO-wake one waiter (see module docs).
+        self.entry.notify.notify_one();
     }
 }
 
@@ -609,7 +623,8 @@ impl Drop for ConnectionLease {
                     *state = ProtocolState::Unknown { connecting: false };
                 }
                 drop(state);
-                entry.notify.notify_waiters();
+                // One HTTP/1 slot freed: FIFO-wake one waiter (see module docs).
+                entry.notify.notify_one();
             }
             LeaseKind::H2 {
                 entry,
@@ -630,9 +645,12 @@ impl Drop for ConnectionLease {
                 }
                 if reset {
                     *state = ProtocolState::Unknown { connecting: false };
+                    drop(state);
+                    // Only a reset leaves a waiter to wake (to reconnect); an open
+                    // H2 sender never parks a request, so waking there would just
+                    // store an unused permit.
+                    entry.notify.notify_one();
                 }
-                drop(state);
-                entry.notify.notify_waiters();
             }
         }
     }

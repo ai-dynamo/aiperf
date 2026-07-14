@@ -62,7 +62,9 @@ impl SegmentId {
 
     /// Return the lowercase hexadecimal digest.
     pub fn to_hex(self) -> String {
-        self.0.iter().map(|byte| format!("{byte:02x}")).collect()
+        // Reuse the `Display` impl below (identical lowercase zero-padded hex)
+        // so the digest formats in a single allocation rather than one per byte.
+        self.to_string()
     }
 }
 

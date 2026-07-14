@@ -21,7 +21,7 @@ use aiperf::timing::{PhaseBranchStats, PhaseConfig, PhaseObserver, PhaseStats};
 use anyhow::{Context, Result, anyhow, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::process::{Child, ChildStdout, Command};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
@@ -408,10 +408,15 @@ impl PhaseObserver for LivePhaseObserver {
 }
 
 async fn pump_worker_stdin(
-    mut stdin: tokio::process::ChildStdin,
+    stdin: tokio::process::ChildStdin,
     queue: Rc<RefCell<QueueState>>,
     wake: Rc<Notify>,
 ) -> Result<u64> {
+    // Coalesce per-event writes: under bursts many queued events share a single
+    // syscall. Flushing whenever the queue drains keeps steady-state latency
+    // identical to the unbuffered path, and the auto-flush at buffer capacity
+    // bounds how long any event can sit unflushed.
+    let mut stdin = BufWriter::new(stdin);
     loop {
         let (next, closed) = {
             let mut state = queue.borrow_mut();
@@ -427,6 +432,10 @@ async fn pump_worker_stdin(
         if closed {
             break;
         }
+        stdin
+            .flush()
+            .await
+            .context("flushing live telemetry events")?;
         wake.notified().await;
     }
     let dropped_events = queue.borrow().dropped_events;
@@ -447,8 +456,8 @@ async fn pump_worker_stdin(
     Ok(dropped_events)
 }
 
-async fn write_json_line(
-    stdin: &mut tokio::process::ChildStdin,
+async fn write_json_line<W: AsyncWrite + Unpin>(
+    stdin: &mut W,
     value: &impl Serialize,
 ) -> Result<()> {
     let mut line = serde_json::to_vec(value).context("serializing worker protocol event")?;

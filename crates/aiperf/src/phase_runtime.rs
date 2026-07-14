@@ -1071,6 +1071,8 @@ struct PhaseDispatchTracker {
 
 impl TurnLifecycleObserver for PhaseDispatchTracker {
     fn on_issue(&self, turn: &TurnToSend) {
+        // The trait method returns `()`, so `start`'s `Result` cannot propagate;
+        // a duplicate UUID is an invariant violation rather than a recoverable error.
         self.start(turn)
             .expect("phase runtime must observe each accepted turn exactly once");
     }

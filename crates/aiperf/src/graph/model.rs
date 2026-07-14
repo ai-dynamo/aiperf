@@ -35,21 +35,15 @@ pub enum ReducerName {
 }
 
 /// A state-channel declaration (`ChannelSpec`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// The derived `Default` matches the field defaults exactly: `ChannelType`
+/// defaults to `Text` and `ReducerName` to `Overwrite`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChannelSpec {
     #[serde(rename = "type", default)]
     pub channel_type: ChannelType,
     #[serde(default)]
     pub reducer: ReducerName,
-}
-
-impl Default for ChannelSpec {
-    fn default() -> Self {
-        ChannelSpec {
-            channel_type: ChannelType::Text,
-            reducer: ReducerName::Overwrite,
-        }
-    }
 }
 
 /// Required arrival count on a channel input: `count: int` or `count: "all"`.
@@ -153,8 +147,11 @@ fn default_true() -> bool {
 
 impl LlmNode {
     /// Channels this node writes: `[output]`.
-    pub fn write_channels(&self) -> Vec<&str> {
-        vec![self.output.as_str()]
+    ///
+    /// Returns an iterator so per-fire callers (`finalize_node`) do not heap-
+    /// allocate a single-element `Vec` on the completion path.
+    pub fn write_channels(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.output.as_str())
     }
 
     /// Dynamic channel keys this node's prompt splices in (`PromptItem::Splice`).
@@ -235,7 +232,16 @@ impl ParsedGraph {
     pub fn resolve_trace_graph(&self, trace: &TraceRecord) -> &GraphRecord {
         match &trace.graph_ref {
             None => &self.graph,
-            Some(reference) => self.graphs.get(reference).unwrap_or(&self.graph),
+            Some(reference) => self.graphs.get(reference).unwrap_or_else(|| {
+                // A named graph_ref that resolves to nothing is a config error;
+                // the fallback keeps the trace runnable but must not do so
+                // silently, or a mistyped ref masquerades as the default graph.
+                tracing::warn!(
+                    graph_ref = %reference,
+                    "unknown graph_ref; falling back to top-level graph"
+                );
+                &self.graph
+            }),
         }
     }
 }
@@ -263,7 +269,7 @@ mod tests {
         let node = parsed.graph.nodes.get("n0").unwrap();
         assert_eq!(node.output, "out");
         assert!(node.streaming);
-        assert_eq!(node.write_channels(), vec!["out"]);
+        assert_eq!(node.write_channels().collect::<Vec<_>>(), vec!["out"]);
         assert_eq!(parsed.graph.edges.len(), 2);
     }
 

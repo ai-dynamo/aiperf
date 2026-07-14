@@ -199,6 +199,11 @@ fn message_pairs(
                 Ok((message.clone(), Bytes::from(wire)))
             })
             .collect(),
+        // Intentional asymmetry: a non-array *current* accumulator (writer_id
+        // None) is treated as an empty base, so a channel that held a scalar
+        // before its first add_messages write starts appending cleanly. A
+        // *writer* (writer_id Some) supplying a non-array is a hard error,
+        // because that is a malformed add_messages payload.
         ChanVal::Val(other) => match writer_id {
             None => Ok(Vec::new()),
             Some(writer_id) => Err(ReducerError::NonListMessages {
@@ -231,10 +236,16 @@ fn message_pairs(
 /// Canonical, hashable form of a message id: its compact JSON encoding.
 ///
 /// `Value` is not `Hash` (it can hold floats), so we key the index on the
-/// compact JSON string instead. Structurally-equal ids encode to the same
-/// string and distinct ids encode to distinct strings for the scalar/array/
-/// object ids that occur as message ids, so this reproduces `Value` equality
-/// (the linear-scan `k == id` test) exactly for those inputs.
+/// compact JSON string instead. For scalar and array ids this reproduces
+/// `Value` equality (the linear-scan `k == id` test) exactly: structurally-
+/// equal ids encode to the same string and distinct ids to distinct strings.
+///
+/// Object-valued ids are order-sensitive here: the crate builds `serde_json`
+/// with `preserve_order`, so two objects that are `Value`-equal but were
+/// parsed with different key insertion order encode to different strings and
+/// would key distinctly. Message ids in practice are scalars, so this does not
+/// bite; if object ids ever become load-bearing, canonicalize key order before
+/// hashing.
 fn id_key(id: &Value) -> String {
     id.to_string()
 }
