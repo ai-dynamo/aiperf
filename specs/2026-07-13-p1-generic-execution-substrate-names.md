@@ -90,7 +90,7 @@ Modest but real: the shared substrate becomes **visibly** shared (one vocabulary
 - `2026-07-12-scheduled-worker-local-accumulation.md` — Track A A1, which built the worker-local measured seam being renamed here.
 - `2026-07-13-scheduled-graph-convergence-implementation.md` — the change that carried these renames into the tree.
 
-## Addendum — 2026-07-14 (built: renames; deferred: consolidation)
+## Addendum — 2026-07-14 (built: renames; then fold, per the 2026-07-14b addendum below)
 
 The rename half of this pass landed. Group A DTOs (`PreparedHttpTurn`→`PreparedTurn`,
 `MeasuredTurnContext`→`MeasuredContext`, `MeasuredTurnOutcome`→`MeasuredOutcome`,
@@ -106,15 +106,23 @@ methods are renamed to the level-generic names (`dispatch_measured`,
 (692 aiperf lib + runner stdio/graph/parity) stays green unmodified — the §5 correctness
 argument.
 
-Two items in §2/§6 are **deferred, not built**, because they are structural refactors of
-the hot dispatch path (which was concurrently under a BodyPlan refactor), not renames:
-1. **The method-count fold.** `dispatch_collect_with_observer` remains a private primitive
-   that `dispatch_collect`/`dispatch_collect_streaming` wrap; it is not yet folded into
-   `dispatch_collect_streaming` (would change that method's signature to take
-   `Option<&dyn TurnResponseObserver>` and re-point callers). So the surface is renamed but
-   still ~3 collect methods, not the promised 2.
-2. **`inference_dimensions(&TurnToSend)`→`(&PreparedTurn)`** decoupling — a trait+impl+caller
-   signature change, left for the same reason.
+## Addendum — 2026-07-14b (fold built; the other two items resolved with rationale)
+
+1. **The method-count fold is now built.** `dispatch_collect_with_observer` was folded into a
+   single public `dispatch_collect_streaming` taking `Option<&dyn TurnResponseObserver>`
+   (`Some` = live frames, `None` = terminal-only); the previously-uncalled non-`Option`
+   `dispatch_collect_streaming` wrapper was deleted. The collect surface is the two primitives
+   §6 promised (`dispatch_collect` = the `None` convenience, `dispatch_collect_streaming` =
+   the `Option` primitive) plus `dispatch_measured`. No behavior change (72 http unit tests
+   green).
+2. **`inference_dimensions(&TurnToSend)`→`(&PreparedTurn)` is intentionally NOT done** — it is
+   net-negative, not a clean decouple. The caller (`ScheduledRuntime::issue_turn_internal`)
+   holds a `TurnToSend` and needs the dimensions *at issue time*, before `PreparedTurn` is
+   built at dispatch. Switching the backend seam to `&PreparedTurn` would force building a
+   `PreparedTurn` twice per request (once for dimensions, once for dispatch) on the hot path,
+   a real perf regression for zero functional gain. Keeping `&TurnToSend` is the correct
+   signature; the aesthetic "decouple from the scheduler type" is subsumed by the deferred v2
+   flow restructure (build `PreparedTurn` once at issue), not a standalone signature swap.
 
 Two placement traits remain two traits, as §3 intends. `LocalGraphTraceExecutionBackend`
 was intentionally **not** renamed: it owns the `TraceExecutor` and executes a trace locally;
