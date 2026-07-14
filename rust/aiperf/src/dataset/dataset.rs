@@ -63,7 +63,7 @@ impl Dataset {
         // Segment-unification stage 1: derive each turn's unified `body` handles
         // from its legacy representation fields once, at freeze, so downstream
         // dispatch can migrate to the domain-driven lookup without touching the
-        // fifteen loader construction sites. Behavior is unchanged this stage.
+        // loader construction sites. Behavior is unchanged this stage.
         for conversation in &mut conversations {
             for turn in &mut conversation.turns {
                 turn.populate_body();

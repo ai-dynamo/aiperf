@@ -159,17 +159,57 @@ pub enum Payload {
     },
 }
 
+/// The disjoint content domain of a segment — the discriminant the
+/// segment-unification design (§2) uses to replace the five-field body
+/// precedence with a single type-checked lookup: `Message` handles format as an
+/// array, one `Raw` handle is a complete body (endpoint bypass), one `TokenIds`
+/// handle is the token-native path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SegmentDomain {
+    /// A pre-serialized endpoint message object.
+    Message,
+    /// Plain text for non-message endpoint fields.
+    TextOnly,
+    /// A complete prebuilt request body.
+    Raw,
+    /// Exact pre-tokenized input IDs.
+    TokenIds,
+    /// Binary or encoded multimodal content.
+    Media,
+    /// Authored source-trace block identities.
+    TraceHashIds,
+}
+
+impl SegmentDomain {
+    /// The stable kind name used in validation errors and wire diagnostics.
+    pub const fn kind_name(self) -> &'static str {
+        match self {
+            Self::Message => "message",
+            Self::TextOnly => "text-only",
+            Self::Raw => "raw",
+            Self::TokenIds => "token-ids",
+            Self::Media => "media",
+            Self::TraceHashIds => "trace-hash-ids",
+        }
+    }
+}
+
 impl Payload {
+    /// The disjoint content domain of this payload.
+    pub const fn domain(&self) -> SegmentDomain {
+        match self {
+            Self::Message { .. } => SegmentDomain::Message,
+            Self::Text { .. } => SegmentDomain::TextOnly,
+            Self::Raw { .. } => SegmentDomain::Raw,
+            Self::TokenIds { .. } => SegmentDomain::TokenIds,
+            Self::Media { .. } => SegmentDomain::Media,
+            Self::TraceHashIds { .. } => SegmentDomain::TraceHashIds,
+        }
+    }
+
     /// Stable kind name used in validation errors.
     pub const fn kind_name(&self) -> &'static str {
-        match self {
-            Self::Message { .. } => "message",
-            Self::Text { .. } => "text-only",
-            Self::Raw { .. } => "raw",
-            Self::TokenIds { .. } => "token-ids",
-            Self::Media { .. } => "media",
-            Self::TraceHashIds { .. } => "trace-hash-ids",
-        }
+        self.domain().kind_name()
     }
 
     /// Number of authoritative input tokens carried by this payload, when tokenized.
@@ -220,17 +260,11 @@ pub trait SegmentStore: Send + Sync {
             .ok_or(DatasetError::UnknownHandle(handle))
     }
 
-    /// Resolve the disjoint content domain of a handle.
-    ///
-    /// This is the discriminant the segment-unification design
-    /// (`specs/2026-07-13-segment-unification-design.md` §2) uses to replace the
-    /// five-field `raw_payload`/`raw_token_ids`/`messages`/… precedence with a
-    /// single lookup: a `body` of `message` segments formats as an array, one
-    /// `raw` segment is a complete body (endpoint bypass), one `token-ids`
-    /// segment is the token-native path. Returns the stable [`Payload::kind_name`]
-    /// (`message` | `text-only` | `raw` | `token-ids` | `media` | `trace-hash-ids`).
-    fn domain(&self, handle: Handle) -> Result<&'static str> {
-        self.get(handle).map(Payload::kind_name)
+    /// Resolve the type-checked [`SegmentDomain`] of a handle — the discriminant
+    /// the segment-unification design (§2) uses in place of the five-field body
+    /// precedence.
+    fn domain(&self, handle: Handle) -> Result<SegmentDomain> {
+        self.get(handle).map(Payload::domain)
     }
 
     /// Assemble a JSON request body by concatenating stored wire slices and only
@@ -616,9 +650,9 @@ mod tests {
         let tokens = pool.intern_token_ids(None, [1_u32, 2]).unwrap();
         let store = pool.freeze();
 
-        assert_eq!(store.domain(message).unwrap(), "message");
-        assert_eq!(store.domain(raw).unwrap(), "raw");
-        assert_eq!(store.domain(tokens).unwrap(), "token-ids");
+        assert_eq!(store.domain(message).unwrap(), SegmentDomain::Message);
+        assert_eq!(store.domain(raw).unwrap(), SegmentDomain::Raw);
+        assert_eq!(store.domain(tokens).unwrap(), SegmentDomain::TokenIds);
         assert!(store.domain(Handle::new(99)).is_err());
     }
 

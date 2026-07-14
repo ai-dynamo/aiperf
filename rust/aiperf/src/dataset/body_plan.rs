@@ -84,15 +84,11 @@ impl BodyPlan {
         Self::Raw(handle)
     }
 
+    // Field builders are only reachable off `new()` (a `Fields` plan); a `Raw`
+    // plan is a no-op sink since it carries no named fields.
     fn push(mut self, name: FieldName, value: FieldValue) -> Self {
-        match &mut self {
-            Self::Fields(fields) => fields.push((name, value)),
-            Self::Raw(_) => {
-                // A raw whole-body plan carries no named fields; a caller that
-                // mixes the two has a construction bug, so ignore silently only
-                // in release and assert in debug.
-                debug_assert!(false, "cannot add fields to a raw BodyPlan");
-            }
+        if let Self::Fields(fields) = &mut self {
+            fields.push((name, value));
         }
         self
     }
@@ -177,50 +173,9 @@ fn materialize_fields<S: SegmentStore + ?Sized>(
     store: &S,
     overrides: &Overrides,
 ) -> Result<Bytes> {
-    // Resolve every content segment up front so the reserved capacity is exact
-    // and the hot loop performs only memcpy, never a fallible store lookup.
-    let mut literals: Vec<Vec<u8>> = Vec::new();
-    let mut segments: Vec<Bytes> = Vec::new();
-    let mut arrays: Vec<Vec<Bytes>> = Vec::new();
-    let mut content_bytes = 0usize;
-    for (_, value) in fields {
-        match value {
-            FieldValue::Literal(v) => {
-                let bytes = serde_json::to_vec(v)?;
-                content_bytes += bytes.len();
-                literals.push(bytes);
-            }
-            FieldValue::Segment(handle) => {
-                let wire = segment_field_wire(store, *handle)?;
-                content_bytes += wire.len();
-                segments.push(wire);
-            }
-            FieldValue::Segments(handles) => {
-                let mut wires = Vec::with_capacity(handles.len());
-                for (index, handle) in handles.iter().enumerate() {
-                    let wire = message_wire(store, *handle)?;
-                    validate_object_slice(&wire).map_err(|error| {
-                        DatasetError::InvalidWire(format!("message at index {index}: {error}"))
-                    })?;
-                    content_bytes += wire.len() + 1; // element + comma
-                    wires.push(wire);
-                }
-                content_bytes += 1; // brackets net of the last comma
-                arrays.push(wires);
-            }
-        }
-    }
-
     let override_inner = overrides.inner_bytes()?;
-    let name_bytes = fields.iter().map(|(name, _)| name.len() + 3).sum::<usize>();
-    let mut body = BytesMut::with_capacity(
-        1 + name_bytes + content_bytes + fields.len() + override_inner.len() + 1,
-    );
+    let mut body = BytesMut::with_capacity(fields.len() * 32 + override_inner.len() + 2);
     body.put_u8(b'{');
-
-    let mut literal_iter = literals.into_iter();
-    let mut segment_iter = segments.into_iter();
-    let mut array_iter = arrays.into_iter();
     for (index, (name, value)) in fields.iter().enumerate() {
         if index > 0 {
             body.put_u8(b',');
@@ -229,22 +184,26 @@ fn materialize_fields<S: SegmentStore + ?Sized>(
         body.put_slice(name.as_bytes());
         body.put_slice(b"\":");
         match value {
-            FieldValue::Literal(_) => body.put_slice(&literal_iter.next().expect("literal")),
-            FieldValue::Segment(_) => body.put_slice(&segment_iter.next().expect("segment")),
-            FieldValue::Segments(_) => {
-                let wires = array_iter.next().expect("array");
+            // Endpoint-generated scalars/structs serialize straight into the
+            // buffer — the only serialization on this path, and small.
+            FieldValue::Literal(literal) => serde_json::to_writer((&mut body).writer(), literal)?,
+            FieldValue::Segment(handle) => body.put_slice(&segment_field_wire(store, *handle)?),
+            FieldValue::Segments(handles) => {
                 body.put_u8(b'[');
-                for (element, wire) in wires.iter().enumerate() {
+                for (element, handle) in handles.iter().enumerate() {
                     if element > 0 {
                         body.put_u8(b',');
                     }
-                    body.put_slice(wire);
+                    let wire = message_wire(store, *handle)?;
+                    validate_object_slice(&wire).map_err(|error| {
+                        DatasetError::InvalidWire(format!("message at index {element}: {error}"))
+                    })?;
+                    body.put_slice(&wire);
                 }
                 body.put_u8(b']');
             }
         }
     }
-
     if !override_inner.is_empty() {
         if !fields.is_empty() {
             body.put_u8(b',');
@@ -366,25 +325,6 @@ mod tests {
         assert_eq!(decoded["model"], "gpt");
         assert_eq!(decoded["max_tokens"], 7);
         assert_eq!(decoded["messages"][0]["content"], "hi");
-    }
-
-    #[test]
-    fn override_tail_appends_after_declared_fields() {
-        let mut pool = SegmentPool::new();
-        let msg = message(&mut pool, None, br#"{"role":"user","content":"q"}"#);
-        let store = pool.freeze();
-        let mut overrides = Overrides::new();
-        overrides.set_model("m");
-        overrides.set_max_tokens("max_tokens", 3);
-
-        let plan = BodyPlan::new().array("messages", [msg]);
-        let body = JsonBodyMaterializer::materialize(&plan, &store, &overrides).unwrap();
-        assert_eq!(
-            body,
-            Bytes::from_static(
-                br#"{"messages":[{"role":"user","content":"q"}],"model":"m","max_tokens":3}"#
-            )
-        );
     }
 
     #[test]

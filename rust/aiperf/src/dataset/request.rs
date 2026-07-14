@@ -28,7 +28,7 @@ use crate::dataset::materialize::Overrides;
 use crate::dataset::model::{
     AccuracyAssociation, Conversation, ConversationContextMode, MediaKind, SessionId, Turn,
 };
-use crate::dataset::segment::{Handle, Payload, SegmentStore};
+use crate::dataset::segment::{Handle, Payload, SegmentDomain, SegmentStore};
 
 /// One fully built dispatch request and its media-free accounting metadata.
 #[derive(Debug, Clone, PartialEq)]
@@ -291,9 +291,7 @@ pub struct EndpointRequestMaterializer;
 /// `token-ids`-domain body falls through to the formatter / token-native path.
 fn raw_body_handle<S: SegmentStore + ?Sized>(current: &Turn, store: &S) -> Result<Option<Handle>> {
     match current.body.first() {
-        // "raw" is the stable `Payload::kind_name` for a complete prebuilt body
-        // (segment-unification §2); `domain` is documented to return it.
-        Some(&handle) if store.domain(handle)? == "raw" => Ok(Some(handle)),
+        Some(&handle) if store.domain(handle)? == SegmentDomain::Raw => Ok(Some(handle)),
         _ => Ok(None),
     }
 }
