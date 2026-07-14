@@ -25,7 +25,7 @@ use aiperf::adaptive_core::{
     AdaptiveScale, CorrelationContext, SharedWindowSampler, SlaFilter, UserTarget,
 };
 use aiperf::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
-use aiperf::cellular::{IssuanceAuthority, RecordsShardPartition};
+use aiperf::cellular::IssuanceAuthority;
 use aiperf::clock::{Clock, RealClock, RealClockAnchor};
 use aiperf::content_server::{
     ContentServerConfig, ContentServerFactory, ContentServerRuntime, NativeContentServerFactory,
@@ -1238,26 +1238,6 @@ async fn execute_graph_native(
             .iter()
             .map(|record| record.ingest.clone())
             .collect();
-        // Build this cell's terminal heartbeat from the same records: one end-of-run
-        // aggregate (not a per-tick snapshot), so the controller can fold the cells
-        // into one view (counters summed, sketches t-digest-merged). Saturation is
-        // zero — the run has drained, so there is no meaningful in-flight count.
-        let mut heartbeat = aiperf::cellular::HeartbeatAccumulator::new();
-        let mut completed = 0_u64;
-        let mut errored = 0_u64;
-        for record in &records {
-            crate::heartbeat_lane::observe_ingest(&mut heartbeat, record);
-            if record.errored || record.canceled {
-                errored += 1;
-            } else {
-                completed += 1;
-            }
-        }
-        let counters = aiperf::cellular::HeartbeatCounters {
-            issued: records.len() as u64,
-            completed,
-            errored,
-        };
         // No `capture`/wall clock is in scope on the graph path, so derive the run
         // span from the records themselves: last observed end minus first observed
         // start, matching the elapsed span the scheduled path passes.
@@ -1271,14 +1251,8 @@ async fn execute_graph_native(
             .map(|record| record.end_ns)
             .max()
             .unwrap_or(0);
-        let span_ns = last_end_ns.saturating_sub(first_start_ns).max(0);
-        let heartbeat = heartbeat.snapshot(
-            span_ns,
-            counters,
-            aiperf::cellular::HeartbeatSaturation::default(),
-        );
-        let partition = RecordsShardPartition::new(shipper.cell_id(), records);
-        shipper.ship(partition, heartbeat)?;
+        let epoch_ns: i64 = last_end_ns.saturating_sub(first_start_ns).max(0);
+        shipper.ship_records(records, epoch_ns)?;
     }
 
     let gpu_telemetry = sidecars.gpu_telemetry.as_ref();
@@ -1765,33 +1739,8 @@ async fn execute_native_inner(
             .iter()
             .map(|record| record.ingest.clone())
             .collect();
-        // Build this cell's terminal heartbeat from the same records: one end-of-run
-        // aggregate (not a per-tick snapshot), so the controller can fold the cells
-        // into one view (counters summed, sketches t-digest-merged). Saturation is
-        // zero — the run has drained, so there is no meaningful in-flight count.
-        let mut heartbeat = aiperf::cellular::HeartbeatAccumulator::new();
-        let mut completed = 0_u64;
-        let mut errored = 0_u64;
-        for record in &records {
-            crate::heartbeat_lane::observe_ingest(&mut heartbeat, record);
-            if record.errored || record.canceled {
-                errored += 1;
-            } else {
-                completed += 1;
-            }
-        }
-        let counters = aiperf::cellular::HeartbeatCounters {
-            issued: records.len() as u64,
-            completed,
-            errored,
-        };
-        let heartbeat = heartbeat.snapshot(
-            capture.clock.now_ns().saturating_sub(start_ns),
-            counters,
-            aiperf::cellular::HeartbeatSaturation::default(),
-        );
-        let partition = RecordsShardPartition::new(shipper.cell_id(), records);
-        shipper.ship(partition, heartbeat)?;
+        let epoch_ns: i64 = capture.clock.now_ns().saturating_sub(start_ns);
+        shipper.ship_records(records, epoch_ns)?;
     }
     let gpu_telemetry = sidecars.gpu_telemetry.as_ref();
     let network_latency = sidecars.network_latency.as_ref();

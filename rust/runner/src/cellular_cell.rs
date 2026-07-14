@@ -23,10 +23,11 @@ use std::collections::{BTreeMap, HashMap};
 
 use aiperf::cellular::partition::CellPartition;
 use aiperf::cellular::{
-    CellClient, CellMessage, CellularAutonomousIssuer, IssuanceAuthority, MetricsHeartbeat,
-    ModuloCellPartition, RecordsShardPartition, TcpCellClient,
+    CellClient, CellMessage, CellularAutonomousIssuer, HeartbeatAccumulator, HeartbeatCounters,
+    HeartbeatSaturation, IssuanceAuthority, MetricsHeartbeat, ModuloCellPartition,
+    RecordsShardPartition, TcpCellClient,
 };
-use aiperf::metrics_core::Phase;
+use aiperf::metrics_core::{Phase, RecordIngest};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
@@ -139,5 +140,34 @@ impl CellRecordsShipper {
             .send(&CellMessage::Partition(partition))
             .context("cell shipping partition")?;
         Ok(())
+    }
+
+    /// Builds this cell's terminal heartbeat from its final records and ships the
+    /// records-shard partition + heartbeat to the controller. Shared by the scheduled and
+    /// graph cell paths, which differ only in how they derive `records` and the run-span
+    /// `epoch_ns`. One end-of-run aggregate (not a per-tick snapshot); saturation is zero
+    /// (the run has drained).
+    pub fn ship_records(&self, records: Vec<RecordIngest>, epoch_ns: i64) -> Result<()> {
+        let mut heartbeat = HeartbeatAccumulator::new();
+        let mut completed = 0_u64;
+        let mut errored = 0_u64;
+        for record in &records {
+            crate::heartbeat_lane::observe_ingest(&mut heartbeat, record);
+            if record.errored || record.canceled {
+                errored += 1;
+            } else {
+                completed += 1;
+            }
+        }
+        let counters = HeartbeatCounters {
+            issued: records.len() as u64,
+            completed,
+            errored,
+        };
+        let heartbeat = heartbeat.snapshot(epoch_ns, counters, HeartbeatSaturation::default());
+        self.ship(
+            RecordsShardPartition::new(self.cell_id(), records),
+            heartbeat,
+        )
     }
 }
