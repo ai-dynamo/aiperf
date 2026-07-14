@@ -58,6 +58,10 @@ pub fn run_cellular(
     validate_cellular_run_shape(envelope)?;
     validate_cellular_phase_budgets(envelope, cell_count)?;
     warn_dropped_sidecar_telemetry(envelope);
+    warn_cellular_approximations(envelope);
+    // One shared seed for every cell when the author gave none (else `None` and each
+    // cell inherits the authored `run.random_seed` verbatim).
+    let injected_seed = resolve_cellular_seed(envelope);
     // Ensure a profiling phase exists; every phase's `requests >= cell_count` (so no
     // cell owns zero) is already checked by validate_cellular_phase_budgets.
     profiling_request_budget(envelope)?;
@@ -98,7 +102,8 @@ pub fn run_cellular(
             let cell_dir = temp_root.join(format!("cell-{cell_id}"));
             std::fs::create_dir_all(&cell_dir)
                 .with_context(|| format!("creating cell {cell_id} artifact dir"))?;
-            let cell_envelope = build_cell_envelope(envelope, cell_id, cell_count, &cell_dir)?;
+            let cell_envelope =
+                build_cell_envelope(envelope, cell_id, cell_count, &cell_dir, injected_seed)?;
             let spec = CellLaunchSpec {
                 cell_id,
                 cell_count,
@@ -300,6 +305,7 @@ fn build_cell_envelope(
     cell_id: u32,
     cell_count: u32,
     cell_dir: &Path,
+    injected_seed: Option<u64>,
 ) -> Result<serde_json::Value> {
     let mut cell = envelope.clone();
     let run = cell
@@ -310,6 +316,11 @@ fn build_cell_envelope(
         "artifact_dir".to_owned(),
         serde_json::Value::String(cell_dir.to_string_lossy().into_owned()),
     );
+    // Share the controller-derived seed with every cell when the author gave none, so
+    // all cells compose the identical dataset space (the same value goes to each cell).
+    if let Some(seed) = injected_seed {
+        run.insert("random_seed".to_owned(), serde_json::Value::from(seed));
+    }
     // The cell runs single-process (its slice); its autonomous behaviour comes from
     // the env vars the controller sets, not from re-entering the controller path.
     if let Some(runtime) = run
@@ -415,27 +426,17 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
             "cellular runs support only single-turn conversations (turns == 1); a multi-turn dataset diverges the sampler draw index from the issuer's per-turn ordinal and silently breaks byte parity"
         );
     }
-    // Byte-parity requires every cell to compose the SAME dataset space. Each cell is a
-    // separate process; without a concrete run seed it entropy-seeds an independent
-    // random dataset (different prompts / ISL-OSL draws), voiding the partition
-    // invariant. Require a run-level seed (the cell envelopes inherit it verbatim).
-    ensure!(
-        envelope
-            .pointer("/run/random_seed")
-            .and_then(serde_json::Value::as_u64)
-            .is_some(),
-        "cellular runs require a concrete run-level random_seed; without it each cell composes an independent random dataset and the merged report is not reproducible"
-    );
-    // A single request-per-turn URL selection is reproducible; multiple URLs round-robin
-    // in cell-local order, so a heterogeneous-backend run would diverge per cell.
-    let url_count = envelope
-        .pointer("/run/cfg/endpoint/urls")
-        .and_then(serde_json::Value::as_array)
-        .map_or(0, Vec::len);
-    ensure!(
-        url_count <= 1,
-        "cellular runs support a single endpoint URL; {url_count} URLs would round-robin differently per cell and diverge on heterogeneous backends"
-    );
+    // A run seed is no longer *required*: every cell must compose the SAME dataset
+    // space, but when the author gives no `run.random_seed` the controller derives one
+    // shared seed and injects it into every cell envelope (see [`resolve_cellular_seed`]
+    // / [`build_cell_envelope`]) — coherent partition without forcing the flag.
+    //
+    // Multiple endpoint URLs are likewise allowed, not rejected: cells round-robin the
+    // URL pool in cell-local order, so the exact per-request URL assignment differs from
+    // a 1-cell run, but the aggregate load across the pool matches — an intentional
+    // aggregate-equivalent approximation (see [`warn_cellular_approximations`]), in the
+    // same family as rate pacing and cancellation. Hitting a backend pool from N nodes
+    // is a first-class multi-node workload, so byte-parity does not gate it.
     Ok(())
 }
 
@@ -456,20 +457,22 @@ const CELLULAR_REQUEST_BOUNDED_PHASE_TYPES: [&str; 4] =
 ///   `fixed_schedule`/`user_centric` phase ignores `requests` and replays the full
 ///   trace per cell);
 /// - lacks a `requests` budget, or has one below `cell_count` (a cell would own zero);
-/// - carries a `duration`/`sessions`/`adaptive_scale` bound that can stop it early;
-/// - drives a concurrency/prefill/rate **ramp**, which the controller cannot slice
-///   per cell (each cell would ramp to the full authored target, N×-ing the aggregate); or
+/// - carries a `duration`/`sessions`/`adaptive_scale` bound that can stop it early (a
+///   duration bound needs the ragged-count merge that the graph-mode cellular path
+///   provides; `adaptive_scale` needs cross-cell scaling consensus — both future work); or
 /// - has a `concurrency`/`prefill_concurrency` cap below `cell_count` — the `.max(1)`
 ///   per-cell floor would then over-subscribe the aggregate in-flight to `cell_count`.
 ///
 /// Fail closed rather than silently corrupt. The static `concurrency`/
 /// `prefill_concurrency`/`rate` caps at or above `cell_count` ARE sliced per cell (see
-/// [`build_cell_envelope`]). Two supported knobs are only *statistically* equivalent to
-/// a 1-cell run, not byte-identical: rate-based phases match the aggregate offered rate
-/// but not the per-turn arrival sample path, and a post-send `cancellation` policy
-/// matches the aggregate cancellation rate but not the exact cancelled subset (its RNG
-/// runs in cell-local dispatch order). Byte-parity is exact for a seeded `concurrency`
-/// phase without cancellation; the other two are intentional approximations.
+/// [`build_cell_envelope`]). Several supported knobs are only *aggregate-equivalent* to a
+/// 1-cell run, not byte-identical (warned, not rejected — the cellular bargain trades
+/// exact reproducibility for multi-node scale): rate-based phases match the aggregate
+/// offered rate but not the per-turn arrival sample path; a post-send `cancellation`
+/// policy matches the aggregate rate but not the exact cancelled subset; and
+/// concurrency/prefill/rate **ramps** ramp each cell to its sliced target so the
+/// aggregate reaches the full authored target but starts near `cell_count` rather than 1.
+/// Byte-parity is exact only for a seeded `concurrency` phase with none of these.
 fn validate_cellular_phase_budgets(envelope: &serde_json::Value, cell_count: u32) -> Result<()> {
     let phases = envelope
         .pointer("/run/cfg/phases")
@@ -498,12 +501,12 @@ fn validate_cellular_phase_budgets(envelope: &serde_json::Value, cell_count: u32
                 && phase.get("adaptive_scale").is_none(),
             "cellular runs require a fixed per-phase request budget; phase {name:?} carries a `duration`/`sessions`/`adaptive_scale` bound whose actual dispatch count can diverge from `requests` and break the merge"
         );
-        ensure!(
-            phase.get("concurrency_ramp").is_none()
-                && phase.get("prefill_ramp").is_none()
-                && phase.get("rate_ramp").is_none(),
-            "cellular runs do not support concurrency/prefill/rate ramps; the controller cannot slice a ramp target per cell, so every cell would ramp to the full value and N× the aggregate load; phase {name:?}"
-        );
+        // Concurrency/prefill/rate ramps are allowed, not rejected. A `RampSpec` is only
+        // `{duration, strategy}`: it ramps *to* the phase's `concurrency`/`rate` target,
+        // which build_cell_envelope already slices per cell. So each cell ramps to its
+        // sliced target over the same duration and the aggregate ramps to the full
+        // authored target — aggregate-equivalent, not byte-identical (the aggregate
+        // starts near `cell_count` rather than 1, since every cell's ramp starts at 1).
         // A post-send `cancellation` policy is allowed: each cell applies the same
         // per-request probability, so the aggregate cancellation rate matches, though
         // the exact cancelled subset differs (cell-local RNG order) — an accepted
@@ -582,6 +585,75 @@ fn warn_dropped_sidecar_telemetry(envelope: &serde_json::Value) {
             "cellular mode does not aggregate side-channel telemetry across cells; \
              these sidecar metrics are omitted from the merged report (a single-process \
              run emits them). Run without --cells to collect them."
+        );
+    }
+}
+
+/// One shared run seed for every cell when the author gave none, or `None` when
+/// `run.random_seed` is already set (cells then inherit it verbatim). Derived
+/// deterministically from the run identity so every cell composes the *identical*
+/// dataset space (the coherence a shared seed provides), reproducible per `benchmark_id`
+/// — a strictly friendlier default than rejecting a seedless `--cells` run.
+fn resolve_cellular_seed(envelope: &serde_json::Value) -> Option<u64> {
+    use std::hash::{Hash, Hasher};
+    if envelope
+        .pointer("/run/random_seed")
+        .and_then(serde_json::Value::as_u64)
+        .is_some()
+    {
+        return None;
+    }
+    let identity = envelope
+        .pointer("/run/benchmark_id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("aiperf-cellular");
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    identity.hash(&mut hasher);
+    Some(hasher.finish())
+}
+
+/// Warns, once at controller startup, about the aggregate-equivalent (not
+/// byte-identical) knobs a cellular run carries, so divergence from a 1-cell run is
+/// loud rather than silent: multiple endpoint URLs (round-robined cell-locally),
+/// concurrency/prefill/rate ramps (each cell ramps to its sliced target, so the
+/// aggregate starts near `cell_count` not 1), and an auto-derived shared seed when the
+/// author gave none. These are allowed by design — the cellular bargain trades exact
+/// reproducibility for multi-node scale — but the operator should know.
+fn warn_cellular_approximations(envelope: &serde_json::Value) {
+    let url_count = envelope
+        .pointer("/run/cfg/endpoint/urls")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len);
+    if url_count > 1 {
+        tracing::warn!(
+            urls = url_count,
+            "cellular round-robins multiple endpoint URLs in cell-local order; aggregate \
+             load across the pool matches a 1-cell run but the exact per-request URL \
+             assignment differs (aggregate-equivalent, not byte-identical)"
+        );
+    }
+    let has_ramp = envelope
+        .pointer("/run/cfg/phases")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|phases| {
+            phases.iter().any(|phase| {
+                ["concurrency_ramp", "prefill_ramp", "rate_ramp"]
+                    .iter()
+                    .any(|key| phase.get(key).is_some_and(|value| !value.is_null()))
+            })
+        });
+    if has_ramp {
+        tracing::warn!(
+            "cellular slices ramp targets per cell; the aggregate ramps to the full \
+             authored target but starts near cell_count rather than 1 \
+             (aggregate-equivalent, not byte-identical)"
+        );
+    }
+    if resolve_cellular_seed(envelope).is_some() {
+        tracing::warn!(
+            "cellular run has no run.random_seed; the controller derived one shared seed \
+             from the run identity so all cells compose the same dataset space \
+             (reproducible per benchmark_id)"
         );
     }
 }
@@ -716,9 +788,15 @@ mod tests {
 
     #[test]
     fn rejects_non_shipping_run_shapes() {
-        // Supported: http (or default) transport, synthetic single-turn dataset, a run
-        // seed, and at most one endpoint URL.
+        // Supported: http (or default) transport, synthetic single-turn dataset. A run
+        // seed and a single endpoint URL are preferred but no longer required — a
+        // seedless run auto-derives one shared seed and multiple URLs round-robin
+        // cell-locally (both aggregate-equivalent, warned not rejected).
         for ok in [
+            // No run seed — allowed (controller derives a shared seed).
+            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "synthetic"}]}}}),
+            // Multiple endpoint URLs — allowed (cell-local round-robin).
+            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "synthetic"}], "endpoint": {"urls": ["http://a", "http://b"]}}}}),
             serde_json::json!({"run": {"random_seed": 42, "cfg": {
                 "transport": {"type": "http"},
                 "datasets": [{"type": "synthetic", "turns": {"value": 1}}],
@@ -741,10 +819,6 @@ mod tests {
             serde_json::json!({"run": {"random_seed": 42, "cfg": {}}}),
             serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "synthetic", "turns": {"value": 3}}]}}}),
             serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "synthetic", "turns": {"mean": 2.0, "stddev": 1.0}}]}}}),
-            // Missing run seed.
-            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "synthetic"}]}}}),
-            // Multiple endpoint URLs.
-            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "synthetic"}], "endpoint": {"urls": ["http://a", "http://b"]}}}}),
         ] {
             assert!(
                 validate_cellular_run_shape(&bad).is_err(),
@@ -784,15 +858,16 @@ mod tests {
     #[test]
     fn rejects_non_request_bounded_phases() {
         // Request-bounded (arrival-pattern) phase types with requests + caps >= cells
-        // pass; a post-send cancellation policy is allowed (approximate).
+        // pass; a post-send cancellation policy AND concurrency/rate ramps are allowed
+        // (aggregate-equivalent approximations, warned not rejected).
         let ok = serde_json::json!({"run": {"cfg": {"phases": [
             {"type": "concurrency", "name": "warmup", "requests": 10, "concurrency": 8},
-            {"type": "concurrency", "name": "profiling", "requests": 100, "concurrency": 8, "cancellation": {"rate": 25.0, "delay": 0.5}},
+            {"type": "concurrency", "name": "profiling", "requests": 100, "concurrency": 8, "cancellation": {"rate": 25.0, "delay": 0.5}, "concurrency_ramp": {"start": 1, "end": 100}},
         ]}}});
         assert!(validate_cellular_phase_budgets(&ok, 4).is_ok());
         // Fail closed (cell_count 4) on: a trace-driven or missing phase type; requests
-        // absent or below cell_count; a duration/sessions/adaptive_scale bound; a ramp;
-        // a post-send cancellation; or a concurrency/prefill cap below cell_count.
+        // absent or below cell_count; a duration/sessions/adaptive_scale bound; or a
+        // concurrency/prefill cap below cell_count. (Ramps and cancellation are allowed.)
         for bad in [
             serde_json::json!({"run": {"cfg": {"phases": [
                 {"type": "fixed_schedule", "name": "profiling", "requests": 100},
@@ -815,12 +890,6 @@ mod tests {
             ]}}}),
             serde_json::json!({"run": {"cfg": {"phases": [
                 {"type": "concurrency", "name": "profiling", "requests": 100, "adaptive_scale": {"controller": "ramp_until_fail"}},
-            ]}}}),
-            serde_json::json!({"run": {"cfg": {"phases": [
-                {"type": "concurrency", "name": "profiling", "requests": 100, "concurrency_ramp": {"start": 1, "end": 100}},
-            ]}}}),
-            serde_json::json!({"run": {"cfg": {"phases": [
-                {"type": "constant", "name": "profiling", "requests": 100, "rate_ramp": {"start": 1.0, "end": 50.0}},
             ]}}}),
             serde_json::json!({"run": {"cfg": {"phases": [
                 {"type": "concurrency", "name": "profiling", "requests": 100, "concurrency": 2},
@@ -862,7 +931,7 @@ mod tests {
                         {"name": "warmup", "requests": warmup},
                         {"name": "profiling", "requests": profiling},
                     ]}}});
-                    let cell = build_cell_envelope(&envelope, cell_id, count, dir).unwrap();
+                    let cell = build_cell_envelope(&envelope, cell_id, count, dir, None).unwrap();
                     let phases = cell
                         .pointer("/run/cfg/phases")
                         .and_then(serde_json::Value::as_array)
@@ -907,7 +976,7 @@ mod tests {
         let cell_count = 4u32;
         let mut rate_sum = 0.0;
         for cell_id in 0..cell_count {
-            let cell = build_cell_envelope(&envelope, cell_id, cell_count, dir).unwrap();
+            let cell = build_cell_envelope(&envelope, cell_id, cell_count, dir, None).unwrap();
             let phase = &cell
                 .pointer("/run/cfg/phases")
                 .and_then(serde_json::Value::as_array)

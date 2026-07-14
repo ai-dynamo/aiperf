@@ -426,3 +426,40 @@ Two robustness gaps a full-review pass surfaced against the product-reachable pa
   pointing at the non-`--cells` path. It is not fail-closed: `gpu_telemetry` and
   `server_metrics` default *on*, so rejecting any present sidecar would refuse nearly
   every cellular run. Cross-cell sidecar aggregation remains future wiring.
+
+## Addendum — 2026-07-14 — relax byte-parity-only guards to allow-with-warning
+
+Cellular mode's purpose is multi-node **scale with acknowledged precision loss**, so
+several guards that existed *only* to protect byte-parity were over-restrictions that
+contradicted that bargain. Following the cancellation precedent (allow the feature; warn;
+don't disable), these flip from fail-closed **reject** to **allow-with-warning**:
+
+- **Multiple endpoint URLs.** Cells round-robin the URL pool in cell-local order, so the
+  exact per-request URL assignment differs from a 1-cell run, but the aggregate load
+  across the pool matches. Hitting a backend pool from N nodes is a first-class multi-node
+  workload. `validate_cellular_run_shape` no longer rejects `urls.len() > 1`;
+  `warn_cellular_approximations` logs the aggregate-equivalence.
+- **No run seed.** Instead of requiring `run.random_seed`, `resolve_cellular_seed` derives
+  one shared seed from the run identity (hash of `benchmark_id`) and `build_cell_envelope`
+  injects the *same* value into every cell — coherent partition, reproducible per
+  `benchmark_id`, no flag required. A present authored seed is still inherited verbatim.
+- **Concurrency/prefill/rate ramps.** A `RampSpec` is only `{duration, strategy}`; it
+  ramps *to* the phase's `concurrency`/`rate` target, which `build_cell_envelope` already
+  slices per cell. So each cell ramps to its sliced target and the aggregate reaches the
+  full authored target — aggregate-equivalent (the aggregate starts near `cell_count`
+  rather than 1). `validate_cellular_phase_budgets` no longer rejects ramps.
+
+**Still fail-closed** (real requirements, not byte-parity): non-HTTP transport,
+non-synthetic / multi-turn datasets (scheduled path), `duration`/`sessions` bounds
+(need the ragged-count merge — see graph-mode cellular below), `adaptive_scale` (needs
+cross-cell scaling consensus), and caps below `cell_count`. Byte-parity remains *exact*
+for a seeded `concurrency` phase with none of the approximate knobs.
+
+**Next: graph-mode cellular.** The scheduled path's multi-turn / trace restrictions are
+artifacts of partitioning a shared linear sampler *by draw* while numbering *by turn*.
+The graph-IR path (`aiperf::graph::TraceExecutor` over `GraphSink`) already models a run
+as independent whole traces selected by a `RootPolicy::next_trace()` seam, each with a
+run-unique instance ordinal — so partitioning is `instance_ordinal % cell_count == cell_id`
+with no sampler surgery, and duration/trace/multi-turn distribution falls out cleanly.
+Wiring cellular through the graph path (partitioned `RootPolicy` + graph-records shipping)
+is the honest home for those, tracked as the next cellular effort.

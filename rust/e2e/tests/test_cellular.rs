@@ -56,6 +56,31 @@ async fn test_cellular_run_from_python_frontend() {
     );
 }
 
+/// A seedless `--cells N` run auto-derives one shared seed and still runs multi-cell.
+///
+/// Previously rejected (cellular required an explicit `--random-seed`). The controller
+/// now derives a single seed from the run identity and injects it into every cell, so
+/// all cells compose the same dataset space without the operator supplying one.
+#[tokio::test]
+async fn test_cellular_autoderives_seed_when_absent() {
+    let h = AIPerfHarness::new().await;
+    let r = h.run(&format!(
+        "--model {DEFAULT_MODEL} --url {} --endpoint-type chat \
+         --request-count 30 --concurrency 6 --cells 3 \
+         --synthetic-input-tokens-mean 64 --output-tokens-mean 4 --ui simple",
+        h.mock.url
+    ));
+    assert!(r.success(), "seedless cellular run failed: {}", r.stderr);
+    assert_eq!(r.artifacts.request_count() as u32, 30);
+    assert!(
+        r.artifacts
+            .find_file("**/cellular-heartbeat.json")
+            .is_some(),
+        "a seedless cellular run must still go multi-cell (auto-derived shared seed), \
+         not fall back to single-process"
+    );
+}
+
 /// A 3-cell run reproduces the 1-cell run's dataset-deterministic metrics exactly.
 ///
 /// Same seed → same instance space; the 3-cell run partitions it across cells and

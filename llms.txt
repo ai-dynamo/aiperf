@@ -154,9 +154,11 @@ AIPERF_CONTENT_SERVER_ENABLED=true \
 # Cellular (multi-process) mode: `--cells N` (or `runtime.cells: N`) makes the launched
 # runner a controller that spawns N `aiperf-runner --cell` children over a
 # (cell_id, cell_count) budget partition and merges their records into one report.
-# `--cells 1` (default) is the unchanged single-process path. Supported for seeded,
-# synthetic, single-turn HTTP runs with request-bounded phases and a single endpoint URL;
-# fails closed otherwise. E2e from the frontend: rust/e2e/tests/test_cellular.rs.
+# `--cells 1` (default) is the unchanged single-process path. Supported for synthetic,
+# single-turn HTTP runs with request-bounded phases; a run seed and single URL are NOT
+# required (seedless auto-derives a shared seed, multi-URL round-robins cell-locally,
+# ramps/rate/cancellation are aggregate-equivalent, warned). Fails closed on
+# non-HTTP/non-synthetic/multi-turn/duration/adaptive. E2e: rust/e2e/tests/test_cellular.rs.
 aiperf profile --config benchmark.yaml --cells 4
 
 # Developer-only runner protocol inventory; normal runs are launched by Python.
