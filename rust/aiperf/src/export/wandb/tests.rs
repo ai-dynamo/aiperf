@@ -52,6 +52,7 @@ fn sample_cfg() -> ExportConfig {
             run_name: None,
             tags: vec!["mytag".to_string()],
             benchmark_id: Some("abcd1234 effgh".to_string()),
+            aiperf_version: None,
             config_json: Some(r#"{"a":1,"nested":{"x":"y"}}"#.to_string()),
             cli_command: Some("aiperf profile --secret redacted".to_string()),
         },

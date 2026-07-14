@@ -130,6 +130,7 @@ fn sample_config(tracking_uri: &str) -> MlflowExportConfig {
         tags: BTreeMap::from([("team".to_string(), "perf".to_string())]),
         artifact_globs: Vec::new(),
         benchmark_id: Some("abcdef1234567".to_string()),
+        aiperf_version: None,
         params: BTreeMap::from([
             ("endpoint.type".to_string(), "chat".to_string()),
             ("endpoint.models".to_string(), "m".to_string()),

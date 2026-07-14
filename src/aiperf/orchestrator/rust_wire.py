@@ -730,21 +730,79 @@ def _export(run: BenchmarkRun) -> dict[str, Any]:
 def _console_txt_frontend_projection(run: BenchmarkRun) -> dict[str, Any]:
     """Project the fixed-width console-artifact policy onto ``cfg.export.console_txt``.
 
-    Toggle/config passthrough only — the runner's ``aiperf::export::console_txt``
-    sink owns the full render (grouped metric tables, error-summary table, and the
-    warning/insight panels). The frontend supplies only the three wire fields the
-    Rust decoder reads (``ConsoleTxtExportConfig``): ``enabled`` (the ``.txt``
-    artifact is always written, matching ``ExporterManager._write_console_txt``),
-    the fixed render ``width`` (``Environment.UI.CONSOLE_EXPORT_WIDTH``, the same
-    width the Python recording ``Console`` is pinned to), and ``dev`` (INTERNAL /
-    EXPERIMENTAL metric visibility — off for the standard end-of-run tables). No
-    metric values or message text cross the wire; the report alone drives them.
+    The runner's ``aiperf::export::console_txt`` sink owns the full render
+    (Rich box geometry, the error-summary table, and the warning/insight panels).
+    Metric VALUES come from the native report; but the grouped-metrics-table
+    CONTENT — which metric lands in which ``MetricConsoleGroup``, its display
+    header, its display order, the INTERNAL/EXPERIMENTAL filter, and the table
+    titles — is owned by the Python ``MetricRegistry`` and cannot be reconstructed
+    from the report. Projecting it here makes the native
+    ``profile_export_console.txt`` reproduce the Python ``ConsoleMetricsExporter``
+    byte-for-byte instead of grouping/naming from the divergent Rust
+    ``metrics_core`` catalog.
+
+    Wire fields (``ConsoleTxtExportConfig``):
+
+    * ``enabled`` — the ``.txt`` artifact is always written
+      (``ExporterManager._write_console_txt``).
+    * ``width`` — the fixed render width (``Environment.UI.CONSOLE_EXPORT_WIDTH``,
+      the width the Python recording ``Console`` is pinned to).
+    * ``dev`` — INTERNAL/EXPERIMENTAL visibility; off for the standard end-of-run
+      tables (the dev-only tables are not ported).
+    * ``title`` — the base metrics title (``ConsoleMetricsExporter._get_title``):
+      ``NVIDIA AIPerf | <endpoint metrics_title>``, degrading to ``NVIDIA AIPerf``
+      for a runner-only endpoint dialect with no Python metadata.
+    * ``metrics`` — per-registered-tag ``{header, group, display_order, internal,
+      experimental, error_only}`` from ``MetricRegistry.all_classes()``. An
+      unregistered (native-only) tag is deliberately omitted; the sink then
+      renders it in the DEFAULT group under its raw tag with no display order and
+      no flag filter, exactly as Python's ``MetricResult`` for an unregistered
+      tag does (``console_metrics_exporter._record_group`` / ``_should_show`` /
+      ``_display_order`` and ``native_report._metric_result``).
     """
+    from aiperf.common.enums import MetricFlags
+    from aiperf.metrics.metric_registry import MetricRegistry
+
+    metrics: dict[str, Any] = {}
+    for metric_class in MetricRegistry.all_classes():
+        meta: dict[str, Any] = {
+            "header": metric_class.header,
+            "group": metric_class.console_group.value,
+        }
+        if metric_class.display_order is not None:
+            meta["display_order"] = metric_class.display_order
+        if metric_class.has_flags(MetricFlags.INTERNAL):
+            meta["internal"] = True
+        if metric_class.has_flags(MetricFlags.EXPERIMENTAL):
+            meta["experimental"] = True
+        if metric_class.has_flags(MetricFlags.ERROR_ONLY):
+            meta["error_only"] = True
+        metrics[str(metric_class.tag)] = meta
+
     return {
         "enabled": True,
         "width": Environment.UI.CONSOLE_EXPORT_WIDTH,
         "dev": False,
+        "title": _console_metrics_title(run),
+        "metrics": metrics,
     }
+
+
+def _console_metrics_title(run: BenchmarkRun) -> str:
+    """Reproduce ``ConsoleMetricsExporter._get_title`` for the runner path.
+
+    The console title is ``NVIDIA AIPerf | <metrics_title>`` where the metrics
+    title comes from the endpoint plugin metadata; a runner-only endpoint dialect
+    (``dynosim``, ``vllm_generate``) has no Python metadata entry, so the title
+    degrades to the product default ``NVIDIA AIPerf`` rather than failing.
+    """
+    from aiperf.plugin import plugins
+
+    try:
+        metadata = plugins.get_endpoint_metadata(run.cfg.endpoint.type)
+    except Exception:
+        return "NVIDIA AIPerf"
+    return f"NVIDIA AIPerf | {metadata.metrics_title}"
 
 
 def _otel_frontend_projection(run: BenchmarkRun) -> dict[str, Any] | None:
@@ -791,15 +849,19 @@ def _mlflow_frontend_projection(run: BenchmarkRun) -> dict[str, Any] | None:
     Enabled iff a tracking URI is set (``MLflowConfig.enabled``). Reproduces the
     fields the Rust uploader decodes (``aiperf::export::mlflow::MlflowExportConfig``):
     the endpoint/experiment/run identity, the user ``tags``, the resolved
-    ``artifact_globs``, the ``benchmark_id``, and the pre-built ``params`` payload
-    (``MLflowDataExporter._build_param_payload``, ``mlflow_data_exporter.py:357``)
-    — pure frontend config the native report cannot reconstruct. Metric VALUES and
-    the ``metric.tag`` / ``metric.tag.<stat>`` key scheme are assembled by the Rust
-    sink from the report; only config-derived params/tags are projected here.
+    ``artifact_globs``, the ``benchmark_id``, the pre-built ``params`` payload
+    (``MLflowDataExporter._build_param_payload``, ``mlflow_data_exporter.py:357``),
+    and the AIPerf package ``aiperf_version`` (for the ``aiperf.version`` tag; the
+    native report carries only the Rust crate version) — pure frontend config the
+    native report cannot reconstruct. Metric VALUES and the ``metric.tag`` /
+    ``metric.tag.<stat>`` key scheme are assembled by the Rust sink from the
+    report; only config-derived params/tags are projected here.
     """
     mlflow_cfg = run.cfg.mlflow
     if mlflow_cfg.tracking_uri is None:
         return None
+
+    from aiperf import __version__ as aiperf_version
 
     projection: dict[str, Any] = {
         "enabled": True,
@@ -808,6 +870,7 @@ def _mlflow_frontend_projection(run: BenchmarkRun) -> dict[str, Any] | None:
         "tags": mlflow_cfg.tags_dict,
         "artifact_globs": mlflow_cfg.resolved_artifact_globs,
         "params": _mlflow_param_payload(run),
+        "aiperf_version": aiperf_version,
     }
     if mlflow_cfg.run_name is not None:
         projection["run_name"] = mlflow_cfg.run_name
@@ -883,13 +946,16 @@ def _wandb_frontend_projection(run: BenchmarkRun) -> dict[str, Any] | None:
     the Rust offline-``.wandb`` writer decodes
     (``aiperf::export::wandb::WandbExportConfig``): project/entity/run-name, the
     user ``tags`` (the ``aiperf-<version>`` / ``benchmark-<id8>`` tags are derived
-    by the sink), the ``benchmark_id``, the serialized redacted ``config_json``
+    by the sink from the projected ``aiperf_version`` — the AIPerf package version,
+    since the native report carries only the Rust crate version — and the
+    ``benchmark_id``), the ``benchmark_id``, the serialized redacted ``config_json``
     (``cfg.model_dump(mode="json", exclude_none=True)`` — the same object
     ``WandbDataExporter._build_config_payload`` logs, ``wandb_data_exporter.py:160``),
     and the redacted ``cli_command`` recorded under ``aiperf.cli_command``.
     """
     import orjson
 
+    from aiperf import __version__ as aiperf_version
     from aiperf.common.redact import redact_cli_command
 
     wandb_cfg = run.cfg.wandb
@@ -900,6 +966,7 @@ def _wandb_frontend_projection(run: BenchmarkRun) -> dict[str, Any] | None:
     projection: dict[str, Any] = {
         "project": wandb_cfg.project,
         "config_json": orjson.dumps(config_payload).decode("utf-8"),
+        "aiperf_version": aiperf_version,
     }
     if wandb_cfg.entity is not None:
         projection["entity"] = wandb_cfg.entity

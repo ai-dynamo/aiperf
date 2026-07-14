@@ -312,7 +312,7 @@ fn no_api_error_warnings_on_empty_report() {
 
 #[test]
 fn error_summary_table_absent_without_errors() {
-    assert!(error_summary_table(&empty_report()).is_none());
+    assert!(error_summary_table(&empty_report(), 140).is_none());
 }
 
 #[test]
@@ -322,7 +322,7 @@ fn error_summary_table_cell_values_are_exact() {
         error(Some(429), "RateLimit", "Too Many Requests", 1_234),
         error(None, "", "connection reset", 7),
     ];
-    let table = error_summary_table(&report).expect("error table");
+    let table = error_summary_table(&report, 140).expect("error table");
     // Byte-exact cell content: N/A for the missing code and type, grouped count.
     assert!(table.contains("429"));
     assert!(table.contains("RateLimit"));
@@ -338,7 +338,7 @@ fn error_summary_table_cell_values_are_exact() {
 fn error_code_zero_renders_na() {
     let mut report = empty_report();
     report.errors = vec![error(Some(0), "Type", "msg", 1)];
-    let table = error_summary_table(&report).expect("error table");
+    let table = error_summary_table(&report, 140).expect("error table");
     // Python treats a falsy code (0) as N/A.
     assert!(table.contains("N/A"));
 }
@@ -372,10 +372,27 @@ fn full_render_regression() {
         2,
     )];
 
+    // Project one registered metric (request_latency) exactly as the frontend
+    // would; osl_mismatch_* / request_count stay unregistered here (rendered as
+    // raw tags in the DEFAULT group, matching Python's unregistered-tag path).
+    let mut metrics = BTreeMap::new();
+    metrics.insert(
+        "request_latency".to_string(),
+        ConsoleMetricMeta {
+            header: "Request Latency".to_string(),
+            group: "default".to_string(),
+            display_order: Some(30),
+            internal: false,
+            experimental: false,
+            error_only: false,
+        },
+    );
     let cfg = ConsoleTxtExportConfig {
         enabled: true,
         width: 140,
         dev: false,
+        title: "NVIDIA AIPerf | LLM Metrics".to_string(),
+        metrics,
     };
     let text = render_console_txt(&report, &cfg);
     // Structural expectations that must hold regardless of box layout.

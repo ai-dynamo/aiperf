@@ -98,6 +98,11 @@ pub struct WandbExportConfig {
     pub tags: Vec<String>,
     /// Benchmark id used for the default run name and `benchmark-<id8>` tag.
     pub benchmark_id: Option<String>,
+    /// AIPerf package version (`aiperf.__version__`) projected by the frontend
+    /// for the `aiperf-<version>` tag. The native report carries only the Rust
+    /// crate version, so the authoritative package version is projected here and
+    /// used in preference to `report.aiperf_version` when present.
+    pub aiperf_version: Option<String>,
     /// Full redacted config object (`cfg.model_dump(mode="json",
     /// exclude_none=True)`), serialized as a JSON object string. Split into
     /// per-key `ConfigItem`s.
@@ -389,7 +394,11 @@ fn build_history_items(rows: &[MetricRow]) -> Vec<proto::HistoryItem> {
 
 /// Tags: `aiperf-<version>`, `benchmark-<id8>`, then user tags (`_build_tags`).
 fn build_tags(report: &NativeReport, cfg: &WandbExportConfig) -> Vec<String> {
-    let mut tags = vec![format!("aiperf-{}", report.aiperf_version)];
+    let aiperf_version = cfg
+        .aiperf_version
+        .clone()
+        .unwrap_or_else(|| report.aiperf_version.clone());
+    let mut tags = vec![format!("aiperf-{aiperf_version}")];
     if let Some(id) = &cfg.benchmark_id {
         let id8: String = id.chars().take(8).collect();
         if !id8.is_empty() {
