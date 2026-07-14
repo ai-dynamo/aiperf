@@ -273,9 +273,13 @@ S5 executor changes, and any Python orchestration of cells.
 **Phase constraint — request-bounded only.** The dense-ordinal tiling requires every
 phase's *actual* dispatch count to equal its sliced `requests` budget, so the
 controller fails a cellular run closed (a clear pre-spawn error, not a cryptic merge
-`OrdinalOutOfRange`) if any phase lacks `requests` or carries a `duration` / `sessions`
-/ `adaptive_scale` bound whose real count can diverge (e.g. `ramp_until_fail` stopping
-on an SLA breach). Pacing-only knobs (concurrency/rate ramps) and post-send
+`OrdinalOutOfRange` **or a silent N× replay**) if a phase's `type` is not one of the
+request-bounded arrival-pattern types (`concurrency`/`poisson`/`gamma`/`constant`) —
+a trace-driven `fixed_schedule`/`user_centric` phase sets `enforce_stop=false` and
+builds its schedule from the *full, unpartitioned* conversation list, so every cell
+would replay the whole trace — or if any phase lacks `requests` or carries a
+`duration` / `sessions` / `adaptive_scale` bound whose real count can diverge (e.g.
+`ramp_until_fail` stopping on an SLA breach). Pacing-only knobs (concurrency/rate ramps) and post-send
 cancellation are allowed — they change *when* turns are sent or mark them cancelled
 after dispatch, not *how many*. The merged report reproduces a 1-cell run's metric
 data (profiling + warmup sections byte-identical, run mode/model, configured
