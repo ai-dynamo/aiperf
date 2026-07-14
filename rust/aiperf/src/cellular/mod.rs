@@ -20,14 +20,15 @@
 //! - **S2 [`shard`]** — [`shard::RecordsShard`] + the serializable
 //!   [`shard::RecordsShardPartition`] (byte-exact) / [`shard::ColumnStorePartition`]
 //!   (summary): local per-record capture with a mergeable, wire-serializable
-//!   partition ([`shard::DirectRecordsShard`] today; a per-cell records-shard moved
-//!   across a transport later).
+//!   partition ([`shard::DirectRecordsShard`] in-process; the Phase-2 controller ships
+//!   each cell's partition across the transport and merges them in global order).
 //! - **S3 [`heartbeat`] + [`sketch`]** — [`heartbeat::MetricsHeartbeat`]: a
 //!   bounded-cadence live snapshot of counters + associatively-mergeable
 //!   [`sketch::TDigest`] sketches (TTFT / ITL / latency), aggregated across shards
 //!   ([`heartbeat::HeartbeatAccumulator`]). Report percentiles stay exact from S2;
-//!   the sketch is live-only. The single-process live lane is built in the runner;
-//!   cross-cell heartbeat aggregation rides the transport later.
+//!   the sketch is live-only. The single-process live lane is built in the runner, and
+//!   the Phase-2 controller aggregates every cell's shipped heartbeat over the transport
+//!   into one run-wide snapshot (counters summed, sketches t-digest-merged).
 //! - **S4 [`partition`]** — [`partition::CellPartition`]: the deterministic
 //!   `(cell_id, cell_count)` work partition ([`partition::ModuloCellPartition`],
 //!   identity `(0, 1)` today).

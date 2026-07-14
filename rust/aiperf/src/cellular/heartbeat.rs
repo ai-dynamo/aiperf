@@ -309,4 +309,27 @@ mod tests {
         let restored: MetricsHeartbeat = rmp_serde::from_slice(&bytes).expect("decode");
         assert_eq!(restored, heartbeat);
     }
+
+    #[test]
+    fn empty_sketch_heartbeat_round_trips_over_messagepack() {
+        // An osl==1 run observes no inter-token gaps, so a cell ships an all-empty
+        // itl_ms sketch whose min/max carry the +inf / -inf sentinels. MessagePack must
+        // round-trip those sentinels (JSON cannot); this pins the claim in the module
+        // and transport docs and guards against a future skip-serializing on min/max.
+        let heartbeat = HeartbeatAccumulator::new().snapshot(
+            0,
+            HeartbeatCounters::default(),
+            HeartbeatSaturation::default(),
+        );
+        assert_eq!(heartbeat.itl_ms.count(), 0);
+        assert_eq!(heartbeat.itl_ms.min(), None);
+        assert_eq!(heartbeat.itl_ms.max(), None);
+
+        let bytes = rmp_serde::to_vec(&heartbeat).expect("encode");
+        let restored: MetricsHeartbeat = rmp_serde::from_slice(&bytes).expect("decode");
+        assert_eq!(restored, heartbeat);
+        assert_eq!(restored.itl_ms.count(), 0);
+        assert_eq!(restored.itl_ms.min(), None);
+        assert_eq!(restored.itl_ms.max(), None);
+    }
 }

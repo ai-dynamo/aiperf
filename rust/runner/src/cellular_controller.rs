@@ -129,15 +129,22 @@ pub fn run_cellular(
         drop(failure_tx);
 
         // Collect exactly one partition per cell (plus the latest heartbeat). The
-        // `select!` is `biased`, so a ready cell message is always taken before a
-        // cell-exit failure: a cell that shipped its partition and then crashed is not
-        // aborted (its records are already collected and authoritative), while a cell
-        // that fails WITHOUT shipping leaves the transport with nothing pending, so the
-        // failure branch fires and aborts — the crash-before-connecting case that would
-        // otherwise hang the accept loop. A cell that connects but hangs indefinitely
-        // without shipping or exiting is NOT covered (no per-cell deadline yet — the
-        // failure watcher only fires on a cell exit); that bound belongs with the
-        // cross-host transport work.
+        // `select!` is `biased`, so within a single poll a ready cell message is taken
+        // before a cell-exit failure — the ship-then-exit race resolves in the cell's
+        // favour when both land together. This is NOT blanket immunity for a cell that
+        // already shipped: if a cell ships its partition and only LATER exits nonzero
+        // while sibling partitions are still outstanding, the failure branch fires and
+        // aborts the run even though that cell's records were already collected. For
+        // this off-product-path experimental feature that is accepted — a cell's only
+        // post-ship work is throwaway-temp-dir artifact writes (the controller, not the
+        // cell, assembles the authoritative report), so a post-ship nonzero exit is
+        // rare and the direction is fail-loud, never silent corruption or a parity
+        // break. A cell that fails WITHOUT shipping leaves the transport with nothing
+        // pending, so the failure branch fires and aborts — the crash-before-connecting
+        // case that would otherwise hang the accept loop. A cell that connects but hangs
+        // indefinitely without shipping or exiting is NOT covered (no per-cell deadline
+        // yet — the failure watcher only fires on a cell exit); that bound belongs with
+        // the cross-host transport work.
         let mut partitions: Vec<RecordsShardPartition> = Vec::with_capacity(cell_count as usize);
         let mut heartbeats: BTreeMap<u32, MetricsHeartbeat> = BTreeMap::new();
         while partitions.len() < cell_count as usize {
