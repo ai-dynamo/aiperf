@@ -39,39 +39,34 @@ use crate::cellular::shard::RecordsShardPartition;
 /// allocated — defense-in-depth against a bad length prefix.
 const MAX_FRAME_LEN: u32 = 512 * 1024 * 1024;
 
-/// One self-attributing message from a cell to the controller.
+/// One self-attributing message from a cell to the controller. A cell sends its
+/// final heartbeat then its partition, and closes; the controller counts partitions
+/// to termination and detects a cell failure by the child's non-zero exit code, so
+/// no explicit hello/goodbye framing is needed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CellMessage {
-    /// A cell announces itself immediately after connecting.
-    Hello {
-        /// The announcing cell's identifier.
-        cell_id: u32,
-    },
-    /// A live heartbeat snapshot on the cell's cadence. Boxed so a small message
-    /// (`Hello`, `Done`) does not carry the heartbeat's footprint through the
-    /// controller's channel buffer.
+    /// The cell's final counters + saturation + latency sketches. Boxed so it does
+    /// not inflate the smaller `Partition` variant's footprint in the channel buffer.
     Heartbeat {
         /// The reporting cell's identifier.
         cell_id: u32,
-        /// The cell's live counters + saturation + latency sketches.
+        /// The cell's counters + saturation + latency sketches.
         heartbeat: Box<MetricsHeartbeat>,
     },
-    /// The cell's final records-shard partition, sent once at phase end. The
-    /// partition carries its own `cell_id`.
+    /// The cell's records-shard partition, sent once at run end. The partition
+    /// carries its own `cell_id`.
     Partition(RecordsShardPartition),
-    /// The cell's clean end-of-stream marker, sent once after its partition. Its
-    /// absence before a socket close signals an unclean cell exit; a cell failure is
-    /// authoritatively reported to the controller by the child's non-zero exit code.
-    Done {
-        /// The finishing cell's identifier.
-        cell_id: u32,
-    },
 }
 
 /// Encodes a message as a length-prefixed MessagePack frame.
 pub fn encode_frame(message: &CellMessage) -> Result<Vec<u8>, CellTransportError> {
     let body = rmp_serde::to_vec(message)
         .map_err(|error| CellTransportError::Encode(error.to_string()))?;
+    // Enforce the same cap the reader applies, so an oversized partition fails on the
+    // cell before the transfer rather than being rejected after it on the controller.
+    if body.len() > MAX_FRAME_LEN as usize {
+        return Err(CellTransportError::FrameTooLarge(body.len()));
+    }
     let len =
         u32::try_from(body.len()).map_err(|_| CellTransportError::FrameTooLarge(body.len()))?;
     let mut frame = Vec::with_capacity(4 + body.len());
@@ -151,7 +146,16 @@ impl CellClient for TcpCellClient {
 pub struct TcpControllerTransport {
     receiver: mpsc::Receiver<Result<CellMessage, CellTransportError>>,
     local_addr: SocketAddr,
-    _accept: JoinHandle<()>,
+    accept: JoinHandle<()>,
+}
+
+impl Drop for TcpControllerTransport {
+    fn drop(&mut self) {
+        // Stop accepting/reading as soon as the controller drops the endpoint (e.g.
+        // on an aborted run), rather than leaving the accept task blocked on a
+        // connection that will never arrive.
+        self.accept.abort();
+    }
 }
 
 impl TcpControllerTransport {
@@ -193,7 +197,7 @@ impl TcpControllerTransport {
         Ok(Self {
             receiver,
             local_addr,
-            _accept: accept,
+            accept,
         })
     }
 
@@ -287,13 +291,11 @@ mod tests {
     #[test]
     fn frame_round_trips_every_message_variant() {
         for message in [
-            CellMessage::Hello { cell_id: 3 },
             CellMessage::Heartbeat {
                 cell_id: 1,
                 heartbeat: Box::new(sample_heartbeat()),
             },
             CellMessage::Partition(sample_partition(2)),
-            CellMessage::Done { cell_id: 0 },
         ] {
             let frame = encode_frame(&message).expect("encode");
             // The 4-byte prefix equals the body length.
@@ -312,39 +314,38 @@ mod tests {
             .expect("bind");
         let addr = controller.local_addr();
 
-        // Each "cell" connects on a blocking thread and ships Hello + Partition + Done.
+        // Each "cell" connects on a blocking thread and ships its heartbeat then its
+        // partition, matching the real cell's ship order, and closes.
         let mut handles = Vec::new();
         for cell_id in 0..cell_count as u32 {
             handles.push(std::thread::spawn(move || {
                 let mut client = TcpCellClient::connect(addr).expect("connect");
-                client.send(&CellMessage::Hello { cell_id }).unwrap();
+                client
+                    .send(&CellMessage::Heartbeat {
+                        cell_id,
+                        heartbeat: Box::new(sample_heartbeat()),
+                    })
+                    .unwrap();
                 client
                     .send(&CellMessage::Partition(sample_partition(cell_id)))
                     .unwrap();
-                client.send(&CellMessage::Done { cell_id }).unwrap();
             }));
         }
 
-        let mut hellos = 0;
+        let mut heartbeats = 0;
         let mut partitions = 0;
-        let mut dones = 0;
         while let Some(message) = controller.recv().await.expect("recv") {
             match message {
-                CellMessage::Hello { .. } => hellos += 1,
                 CellMessage::Partition(partition) => {
                     assert_eq!(partition.len(), 1);
                     partitions += 1;
                 }
-                CellMessage::Done { .. } => dones += 1,
-                CellMessage::Heartbeat { .. } => {}
+                CellMessage::Heartbeat { .. } => heartbeats += 1,
             }
         }
         for handle in handles {
             handle.join().unwrap();
         }
-        assert_eq!(
-            (hellos, partitions, dones),
-            (cell_count, cell_count, cell_count)
-        );
+        assert_eq!((heartbeats, partitions), (cell_count, cell_count));
     }
 }

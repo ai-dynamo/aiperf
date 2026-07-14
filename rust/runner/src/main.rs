@@ -176,6 +176,7 @@ fn run_controller(envelope: &Value) -> ! {
             );
             provenance.insert("workload".to_owned(), "scheduled".to_owned());
             provenance.insert("cells".to_owned(), outcome.cell_count.to_string());
+            provenance.insert("record_count".to_owned(), outcome.record_count.to_string());
             write_json_line(
                 &RunTerminalV2 {
                     protocol_version: RUNNER_PROTOCOL_V2,

@@ -37,6 +37,16 @@ pub struct CellularRunOutcome {
     pub record_count: usize,
 }
 
+/// Removes the controller's per-cell scratch tree on any exit path — a normal
+/// return or a bailed run — so a failed cellular run never leaks a `/tmp` tree.
+struct ScratchTreeGuard(PathBuf);
+
+impl Drop for ScratchTreeGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// Runs one benchmark across `cell_count` cell subprocesses and writes the merged
 /// report to `report_path`. Blocks until every cell finishes.
 pub fn run_cellular(
@@ -68,6 +78,9 @@ pub fn run_cellular(
 
         let temp_root =
             std::env::temp_dir().join(format!("aiperf-cellular-{}", std::process::id()));
+        // Cleans the scratch tree on every exit path, including a bail; the
+        // kill_on_drop cells stop before this runs when the runtime unwinds.
+        let _scratch = ScratchTreeGuard(temp_root.clone());
         let mut children = Vec::with_capacity(cell_count as usize);
         for cell_id in 0..cell_count {
             let cell_dir = temp_root.join(format!("cell-{cell_id}"));
@@ -106,6 +119,9 @@ pub fn run_cellular(
         // Collect exactly one partition per cell (plus the latest heartbeat). A cell
         // failure or an early transport close aborts; a cell that shipped its records
         // and then failed post-ship does not — its records are already authoritative.
+        // A cell that connects but hangs indefinitely without shipping is NOT covered
+        // (no per-cell deadline yet — the failure watcher only fires on a cell exit);
+        // that bound belongs with the cross-host transport work.
         let mut partitions: Vec<RecordsShardPartition> = Vec::with_capacity(cell_count as usize);
         let mut heartbeats: BTreeMap<u32, MetricsHeartbeat> = BTreeMap::new();
         while partitions.len() < cell_count as usize {
@@ -115,7 +131,6 @@ pub fn run_cellular(
                     Some(CellMessage::Heartbeat { cell_id, heartbeat }) => {
                         heartbeats.insert(cell_id, *heartbeat);
                     }
-                    Some(CellMessage::Hello { .. } | CellMessage::Done { .. }) => {}
                     None => bail!(
                         "transport closed with {} of {cell_count} cell partitions",
                         partitions.len()
@@ -137,9 +152,9 @@ pub fn run_cellular(
         std::fs::write(report_path, json)
             .with_context(|| format!("writing merged report to {}", report_path.display()))?;
 
-        // Aggregate the cells' live heartbeats (counters summed, sketches t-digest
+        // Aggregate the cells' final heartbeats (counters summed, sketches t-digest
         // merged) into one run-wide view written beside the report. The exact report
-        // stays authoritative from S2; this is the live cross-cell aggregate.
+        // stays authoritative from S2; this is the cross-cell live-lane aggregate.
         let mut aggregate = heartbeats.into_values();
         if let Some(mut merged_heartbeat) = aggregate.next() {
             for heartbeat in aggregate {
@@ -149,7 +164,7 @@ pub fn run_cellular(
                 .context("writing merged cellular heartbeat")?;
         }
 
-        let _ = std::fs::remove_dir_all(&temp_root);
+        // `_scratch` removes `temp_root` on drop.
         Ok(CellularRunOutcome {
             report_path: report_path.to_path_buf(),
             cell_count,
@@ -171,6 +186,10 @@ async fn spawn_cell(spec: &CellLaunchSpec) -> Result<tokio::process::Child> {
         // and drop stdout (its would-be terminal envelope is unused by the controller).
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
+        // On any controller abort the runtime is dropped, cancelling the watcher
+        // tasks that own these children; kill_on_drop then SIGKILLs each cell so a
+        // failed run never leaves cells generating load against the target.
+        .kill_on_drop(true)
         .spawn()
         .with_context(|| format!("spawning cell {}", spec.cell_id))?;
     let mut stdin = child.stdin.take().context("cell child stdin unavailable")?;
@@ -186,6 +205,18 @@ async fn spawn_cell(spec: &CellLaunchSpec) -> Result<tokio::process::Child> {
 /// budgets sliced to the cell's owned share and its own scratch artifact dir. The
 /// dataset and seed are unchanged — the cell's `PartitionedSampler` selects its
 /// owned instances from the shared space.
+///
+/// Each cell's j-th dispatched turn sits at global dispatch stream position
+/// `j*cell_count + cell_id` (the sampler yields owned positions `{k, k+C, …}` in
+/// order across *all* phases, and the issuer stamps that same value). The stream is
+/// the phases concatenated in execution order, so cell `k`'s slice of a phase
+/// covering `[base, base+total)` is the count of owned positions in that half-open
+/// window — `owned_positions(base+total) − owned_positions(base)` — NOT
+/// `owned_positions(total)`. Slicing each phase independently would make the
+/// per-cell counts over-count by the warmup phase's `base mod cell_count` remainder,
+/// pushing a profiling ordinal past `total` and failing the merge's permutation
+/// check. The running `base` keeps the per-cell phase counts telescoping to exactly
+/// `owned_positions(grand_total)`, so the global ordinals tile `0..grand_total`.
 fn build_cell_envelope(
     envelope: &serde_json::Value,
     cell_id: u32,
@@ -215,20 +246,26 @@ fn build_cell_envelope(
         .and_then(|cfg| cfg.get_mut("phases"))
         .and_then(serde_json::Value::as_array_mut)
         .context("run cfg has no phases array")?;
+    // Cumulative base of the current phase in the concatenated global dispatch
+    // stream (phases execute in array order: warmup, then profiling).
+    let mut base: u64 = 0;
     for phase in phases.iter_mut() {
         let Some(phase) = phase.as_object_mut() else {
             continue;
         };
         if let Some(requests) = phase.get("requests").and_then(serde_json::Value::as_u64) {
-            let owned = owned_share(requests, cell_id, cell_count);
+            let owned = owned_positions(base + requests, cell_id, cell_count)
+                - owned_positions(base, cell_id, cell_count);
             phase.insert("requests".to_owned(), serde_json::Value::from(owned));
+            base += requests;
         }
         // Split the global concurrency cap by the same round-robin share as the
         // request budget so the cells' caps sum to the requested aggregate in-flight.
-        // `.max(1)` keeps every cell able to make progress when `concurrency <
-        // cell_count`, a small bounded over-subscription of the aggregate cap.
+        // Concurrency is a per-phase saturation cap, not a budget that tiles the
+        // stream, so it needs no base offset. `.max(1)` keeps every cell able to make
+        // progress when `concurrency < cell_count`, a bounded over-subscription.
         if let Some(concurrency) = phase.get("concurrency").and_then(serde_json::Value::as_u64) {
-            let cell_concurrency = owned_share(concurrency, cell_id, cell_count).max(1);
+            let cell_concurrency = owned_positions(concurrency, cell_id, cell_count).max(1);
             phase.insert(
                 "concurrency".to_owned(),
                 serde_json::Value::from(cell_concurrency),
@@ -238,10 +275,12 @@ fn build_cell_envelope(
     Ok(cell)
 }
 
-/// The number of instances cell `k` owns of `total` under round-robin ownership —
-/// `ceil((total - k) / count)` — so the cells' shares sum to `total` and their
-/// global ordinals tile `0..total`.
-fn owned_share(total: u64, cell_id: u32, cell_count: u32) -> u64 {
+/// The number of dispatch-stream positions in `[0, total)` that cell `k` owns under
+/// round-robin ownership (`position % cell_count == cell_id`) — `ceil((total-k)/C)`.
+/// A phase's per-cell slice is the difference of this over the phase's `[base,
+/// base+len)` window (see [`build_cell_envelope`]); over a single phase (`base=0`)
+/// it is just each cell's share, summing to `total`.
+fn owned_positions(total: u64, cell_id: u32, cell_count: u32) -> u64 {
     let count = cell_count as u64;
     let k = cell_id as u64;
     if k >= total {
@@ -316,11 +355,55 @@ mod tests {
     use super::*;
 
     #[test]
-    fn owned_shares_sum_to_total_and_tile() {
+    fn owned_positions_sum_to_total_and_tile() {
         for total in [1_u64, 7, 100, 500, 501] {
             for count in 1..=8u32 {
-                let sum: u64 = (0..count).map(|k| owned_share(total, k, count)).sum();
+                let sum: u64 = (0..count).map(|k| owned_positions(total, k, count)).sum();
                 assert_eq!(sum, total, "total {total} count {count}");
+            }
+        }
+    }
+
+    #[test]
+    fn multi_phase_global_ordinals_tile_densely() {
+        // Regression for the multi-phase merge blocker: with warmup+profiling, each
+        // cell's dispatched turns must map under the issuer's `j*count + cell_id` to a
+        // dense permutation of `0..(warmup+profiling)`. Slicing each phase with an
+        // independent `owned_positions(len)` over-counts by warmup's `base%count`
+        // remainder and pushes a profiling ordinal past the total (the merge's
+        // `OrdinalOutOfRange`). (100,1000,3) is the exact case from the review.
+        let dir = Path::new("/tmp/aiperf-cellular-envelope-test");
+        for (warmup, profiling) in [(100u64, 1000u64), (3, 3), (1, 7), (50, 50), (7, 13)] {
+            for count in 1..=5u32 {
+                let grand_total = (warmup + profiling) as usize;
+                let mut seen = vec![false; grand_total];
+                for cell_id in 0..count {
+                    let envelope = serde_json::json!({"run": {"cfg": {"phases": [
+                        {"name": "warmup", "requests": warmup},
+                        {"name": "profiling", "requests": profiling},
+                    ]}}});
+                    let cell = build_cell_envelope(&envelope, cell_id, count, dir).unwrap();
+                    let local_count: u64 = cell
+                        .pointer("/run/cfg/phases")
+                        .and_then(serde_json::Value::as_array)
+                        .unwrap()
+                        .iter()
+                        .filter_map(|p| p.get("requests").and_then(serde_json::Value::as_u64))
+                        .sum();
+                    for j in 0..local_count {
+                        let ordinal = (j * count as u64 + cell_id as u64) as usize;
+                        assert!(
+                            ordinal < grand_total,
+                            "ordinal {ordinal} >= total {grand_total} (w{warmup} p{profiling} c{count} cell{cell_id})"
+                        );
+                        assert!(!seen[ordinal], "duplicate ordinal {ordinal}");
+                        seen[ordinal] = true;
+                    }
+                }
+                assert!(
+                    seen.iter().all(|&s| s),
+                    "ordinals did not cover 0..{grand_total} (w{warmup} p{profiling} c{count})"
+                );
             }
         }
     }

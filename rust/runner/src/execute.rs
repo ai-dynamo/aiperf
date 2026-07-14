@@ -1694,8 +1694,10 @@ async fn execute_native_inner(
             .iter()
             .map(|record| record.ingest.clone())
             .collect();
-        // Build this cell's final heartbeat from the same records so the controller
-        // can merge the cells' live views (counters summed, sketches t-digest-merged).
+        // Build this cell's terminal heartbeat from the same records: one end-of-run
+        // aggregate (not a per-tick snapshot), so the controller can fold the cells
+        // into one view (counters summed, sketches t-digest-merged). Saturation is
+        // zero — the run has drained, so there is no meaningful in-flight count.
         let mut heartbeat = aiperf::cellular::HeartbeatAccumulator::new();
         let mut completed = 0_u64;
         let mut errored = 0_u64;

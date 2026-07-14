@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 /// count live in [`aiperf::cellular::partition`]'s env vars).
 pub const CELL_CONTROLLER_ADDR_ENV: &str = "AIPERF_CELL_CONTROLLER_ADDR";
 
-/// The picklable launch descriptor the controller pipes to each cell child.
+/// The launch descriptor the controller serializes to each cell child's stdin.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CellLaunchSpec {
     /// This cell's zero-based identifier.
@@ -79,10 +79,11 @@ impl CellRecordsShipper {
         self.cell_id
     }
 
-    /// Connects to the controller and ships `Hello`, the partition, then `Done`.
-    /// Blocking, called once after the run completes — never on the hot path. The
-    /// controller merges the cells' heartbeats (counters by sum, sketches by
-    /// t-digest merge) into one run-wide live view.
+    /// Connects to the controller and ships this cell's final heartbeat then its
+    /// records-shard partition, and closes. Blocking, called once after the run
+    /// completes — never on the hot path. The controller merges the cells'
+    /// heartbeats (counters by sum, sketches by t-digest merge) into one run-wide
+    /// view and their partitions into the single report.
     pub fn ship(
         &self,
         partition: RecordsShardPartition,
@@ -90,11 +91,6 @@ impl CellRecordsShipper {
     ) -> Result<()> {
         let mut client = TcpCellClient::connect(&self.controller_addr)
             .with_context(|| format!("cell {} connecting to controller", self.cell_id))?;
-        client
-            .send(&CellMessage::Hello {
-                cell_id: self.cell_id,
-            })
-            .context("cell sending hello")?;
         client
             .send(&CellMessage::Heartbeat {
                 cell_id: self.cell_id,
@@ -104,11 +100,6 @@ impl CellRecordsShipper {
         client
             .send(&CellMessage::Partition(partition))
             .context("cell shipping partition")?;
-        client
-            .send(&CellMessage::Done {
-                cell_id: self.cell_id,
-            })
-            .context("cell sending done")?;
         Ok(())
     }
 }
