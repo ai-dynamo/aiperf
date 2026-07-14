@@ -4,7 +4,7 @@
 //! Whole-trace execution and placement boundaries.
 //!
 //! The coordinator submits one complete [`GraphTracePlan`] through
-//! [`GraphTraceExecutionBackend`]. A backend may execute locally, place traces
+//! [`TracePlacement`]. A backend may execute locally, place traces
 //! on thread-per-core workers, or serialize commands to remote workers. Node
 //! turns never cross this boundary: one selected worker owns every firing gate,
 //! branch, join, channel version, and dynamic reply splice for the trace.
@@ -33,7 +33,7 @@ use crate::graph::wire::WireMessage;
 /// terminal result without changing workload scheduling. Dense segment handles
 /// name an immutable catalog that the backend must provision before execution.
 #[async_trait(?Send)]
-pub trait GraphTraceExecutionBackend {
+pub trait TracePlacement {
     /// Execute one complete trace on one placement target.
     async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError>;
 
@@ -115,7 +115,7 @@ impl<M: WireMessage> LocalGraphTraceExecutionBackend<M> {
 }
 
 #[async_trait(?Send)]
-impl<M: WireMessage + 'static> GraphTraceExecutionBackend for LocalGraphTraceExecutionBackend<M> {
+impl<M: WireMessage + 'static> TracePlacement for LocalGraphTraceExecutionBackend<M> {
     async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError> {
         if self.cancelled.get() {
             return Err(local_cancellation(&plan.trace.id));

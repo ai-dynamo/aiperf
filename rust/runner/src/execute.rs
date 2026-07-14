@@ -47,7 +47,7 @@ use aiperf::fixed_schedule::{
 };
 use aiperf::graph::input::GraphInputBundle;
 use aiperf::http::{
-    HttpTurnExecutionBackend, MeasuredTurnContext, MeasuredTurnOutcome, PreparedHttpTurn,
+    RequestExecutor, MeasuredContext, MeasuredOutcome, PreparedTurn,
     TransportSinkConfig,
 };
 use aiperf::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
@@ -124,7 +124,7 @@ use crate::sidecar_input::{
     PreparedSidecarInputs, SERVER_METRICS_SIDECAR_ID, ServerMetricsSpec,
 };
 use crate::turn_execution::{
-    HttpExecutionBackendConfig, HttpExecutionBackendFactory, HttpPreparedEndpointTableFactory,
+    HttpExecutionBackendConfig, RequestExecutorFactory, HttpPreparedEndpointTableFactory,
 };
 
 type PhaseRuntimeParts = (
@@ -459,7 +459,7 @@ pub(crate) struct NativeGraphDatasetPlan {
 /// reinterpret the authored source a second time.
 pub(crate) fn execute_prepared_native_plan_uncommitted_with_factories(
     plan: NativeRunSpec,
-    transport_factory: &dyn HttpExecutionBackendFactory,
+    transport_factory: &dyn RequestExecutorFactory,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
@@ -496,7 +496,7 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_with_execution_factories(
 /// Execute one fully prepared plan with sidecar resource construction injected.
 pub(crate) fn execute_prepared_native_plan_uncommitted_with_all_factories(
     plan: NativeRunSpec,
-    transport_factory: &dyn HttpExecutionBackendFactory,
+    transport_factory: &dyn RequestExecutorFactory,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
     sidecar_factory: &dyn NativeSidecarResourceFactory,
@@ -513,7 +513,7 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_with_all_factories(
 
 fn execute_prepared_native_plan_uncommitted_with_runtime_factories(
     plan: NativeRunSpec,
-    transport_factory: &dyn HttpExecutionBackendFactory,
+    transport_factory: &dyn RequestExecutorFactory,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
     sidecar_factory: &dyn NativeSidecarResourceFactory,
@@ -956,7 +956,7 @@ impl PreparedNativeSidecarResources {
 
 async fn prepare_and_execute_native(
     request: NativeRunSpec,
-    transport_factory: &dyn HttpExecutionBackendFactory,
+    transport_factory: &dyn RequestExecutorFactory,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
     sidecar_factory: &dyn NativeSidecarResourceFactory,
@@ -1020,7 +1020,7 @@ async fn execute_native(
     request: NativeRunSpec,
     accuracy: Option<&mut PreparedAccuracy>,
     sidecars: &mut PreparedNativeSidecarResources,
-    transport_factory: &dyn HttpExecutionBackendFactory,
+    transport_factory: &dyn RequestExecutorFactory,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
@@ -1038,7 +1038,7 @@ async fn execute_scheduled_native(
     request: NativeRunSpec,
     accuracy: Option<&mut PreparedAccuracy>,
     sidecars: &mut PreparedNativeSidecarResources,
-    transport_factory: &dyn HttpExecutionBackendFactory,
+    transport_factory: &dyn RequestExecutorFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
     execute_native_inner(request, accuracy, sidecars, transport_factory, registry).await
@@ -1441,7 +1441,7 @@ async fn execute_native_inner(
     request: NativeRunSpec,
     mut accuracy: Option<&mut PreparedAccuracy>,
     sidecars: &mut PreparedNativeSidecarResources,
-    transport_factory: &dyn HttpExecutionBackendFactory,
+    transport_factory: &dyn RequestExecutorFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
     let live_sink = sidecars.live_sink();
@@ -3226,7 +3226,7 @@ struct CaptureIdentity {
     /// Coordinator-known arrival facts, retained so a pre-worker failure (an
     /// identity with no drained worker record) can be synthesized into a
     /// HEAD-identical fallback record at finish.
-    context: MeasuredTurnContext,
+    context: MeasuredContext,
 }
 
 /// Coordinator-owned finalization facts learned after dispatch.
@@ -3363,9 +3363,9 @@ impl RunCapture {
     /// registers arrival locally. The identity push order is the global dispatch
     /// ordinal used at finish; it runs on the coordinator thread before backend
     /// dispatch, so it is independent of worker count.
-    fn begin(&self, turn: &TurnToSend) -> MeasuredTurnContext {
+    fn begin(&self, turn: &TurnToSend) -> MeasuredContext {
         let arrival_ms = self.clock.now_ns().saturating_sub(self.origin_ns) as f64 / 1_000_000.0;
-        let context = MeasuredTurnContext {
+        let context = MeasuredContext {
             arrival_ms,
             input_length: turn.input_length,
             requested_output_length: turn.max_output_tokens,
@@ -3693,7 +3693,7 @@ impl TurnRecordProcessor for CapturePhaseProcessor {
 }
 
 struct ConfiguredDispatcher {
-    execution_backend: Rc<dyn HttpTurnExecutionBackend>,
+    execution_backend: Rc<dyn RequestExecutor>,
     model: String,
     capture: Rc<RunCapture>,
 }
@@ -3722,13 +3722,13 @@ impl TurnDispatcher for ConfiguredDispatcher {
         // records, not a single coordinator observer. The ScheduledRuntime's own
         // observer (`_observer`) is still computed and discarded by the runner.
         let context = self.capture.begin(&turn);
-        let turn = PreparedHttpTurn::from_turn(turn, &self.model);
+        let turn = PreparedTurn::from_turn(turn, &self.model);
         match self
             .execution_backend
             .execute_turn_measured(turn, context, on_first_token)
             .await
         {
-            Ok(MeasuredTurnOutcome {
+            Ok(MeasuredOutcome {
                 result: collected,
                 live_record,
             }) => {
@@ -4109,7 +4109,7 @@ mod tests {
         capture.identities.borrow_mut().push(CaptureIdentity {
             uuid: facts.uuid,
             x_correlation_id: x_correlation_id.to_string(),
-            context: MeasuredTurnContext {
+            context: MeasuredContext {
                 arrival_ms: facts.arrival_ms,
                 input_length: facts.prompt_tokens as usize,
                 requested_output_length: 8,

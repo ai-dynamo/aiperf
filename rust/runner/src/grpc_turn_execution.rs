@@ -17,8 +17,8 @@ use std::thread::JoinHandle;
 use aiperf::clock::{Clock, RealClock, RealClockAnchor};
 use aiperf::grpc::{GrpcTransportSink, GrpcTransportSinkConfig};
 use aiperf::http::{
-    HttpTurnDispatchResult, HttpTurnExecutionBackend, MeasuredTurnContext, MeasuredTurnOutcome,
-    PreparedHttpTurn,
+    DispatchResult, RequestExecutor, MeasuredContext, MeasuredOutcome,
+    PreparedTurn,
 };
 use aiperf::metrics::NativeMetricsObserver;
 use aiperf::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest};
@@ -34,7 +34,7 @@ use tokio::task::JoinSet;
 use uuid::Uuid;
 
 use crate::turn_execution::{
-    HttpExecutionBackendConfig, HttpExecutionBackendFactory, HttpPreparedEndpointTableFactory,
+    HttpExecutionBackendConfig, RequestExecutorFactory, HttpPreparedEndpointTableFactory,
 };
 
 const WORKER_QUEUE_CAPACITY: usize = 256;
@@ -61,11 +61,11 @@ impl NativeGrpcExecutionBackendFactory {
     }
 }
 
-impl HttpExecutionBackendFactory for NativeGrpcExecutionBackendFactory {
+impl RequestExecutorFactory for NativeGrpcExecutionBackendFactory {
     fn build(
         &self,
         config: HttpExecutionBackendConfig,
-    ) -> Result<Rc<dyn HttpTurnExecutionBackend>> {
+    ) -> Result<Rc<dyn RequestExecutor>> {
         ensure!(
             config.workers > 0,
             "gRPC execution workers must be positive"
@@ -102,15 +102,15 @@ impl HttpExecutionBackendFactory for NativeGrpcExecutionBackendFactory {
 }
 
 struct WorkerReply {
-    result: Result<HttpTurnDispatchResult>,
+    result: Result<DispatchResult>,
     /// Non-consuming cloned record for a live sink, when the measured command
     /// requested one; the authoritative record stays in the worker observer.
     live_record: Option<RecordIngest>,
 }
 
 struct WorkerCommand {
-    turn: PreparedHttpTurn,
-    context: MeasuredTurnContext,
+    turn: PreparedTurn,
+    context: MeasuredContext,
     first_token: oneshot::Sender<i64>,
     completed: oneshot::Sender<WorkerReply>,
 }
@@ -220,7 +220,7 @@ impl ThreadPerCoreGrpcExecutionBackend {
 }
 
 #[async_trait(?Send)]
-impl HttpTurnExecutionBackend for ThreadPerCoreGrpcExecutionBackend {
+impl RequestExecutor for ThreadPerCoreGrpcExecutionBackend {
     fn set_run_origin(&self, start_ns: i64) -> Result<()> {
         ensure!(
             self.run_origin_ns.replace(Some(start_ns)).is_none(),
@@ -230,7 +230,7 @@ impl HttpTurnExecutionBackend for ThreadPerCoreGrpcExecutionBackend {
     }
 
     fn inference_dimensions(&self, turn: &TurnToSend) -> InferenceDimensions {
-        <GrpcTransportSink as HttpTurnExecutionBackend>::inference_dimensions(
+        <GrpcTransportSink as RequestExecutor>::inference_dimensions(
             &self.dimension_sink,
             turn,
         )
@@ -254,12 +254,12 @@ impl HttpTurnExecutionBackend for ThreadPerCoreGrpcExecutionBackend {
 
     async fn execute_turn_measured(
         &self,
-        turn: PreparedHttpTurn,
-        context: MeasuredTurnContext,
+        turn: PreparedTurn,
+        context: MeasuredContext,
         on_first_token: &dyn Fn(i64),
-    ) -> Result<MeasuredTurnOutcome> {
+    ) -> Result<MeasuredOutcome> {
         let reply = self.execute_command(turn, context, on_first_token).await?;
-        Ok(MeasuredTurnOutcome {
+        Ok(MeasuredOutcome {
             result: reply.result?,
             live_record: reply.live_record,
         })
@@ -308,8 +308,8 @@ impl ThreadPerCoreGrpcExecutionBackend {
 
     async fn execute_command(
         &self,
-        turn: PreparedHttpTurn,
-        context: MeasuredTurnContext,
+        turn: PreparedTurn,
+        context: MeasuredContext,
         on_first_token: &dyn Fn(i64),
     ) -> Result<WorkerReply> {
         let _run_origin_ns = self.origin()?;

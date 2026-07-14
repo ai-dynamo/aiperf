@@ -21,7 +21,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::{JoinSet, LocalSet};
 
 use crate::graph::errors::TraceError;
-use crate::graph::execution::GraphTraceExecutionBackend;
+use crate::graph::execution::TracePlacement;
 use crate::graph::model::GraphTracePlan;
 
 /// Default number of complete trace commands buffered per placement worker.
@@ -31,16 +31,16 @@ pub const DEFAULT_GRAPH_WORKER_QUEUE_CAPACITY: usize = 256;
 ///
 /// Factory state must be shareable, but the returned backend deliberately need
 /// not be `Send` or `Sync`: it never leaves that worker's `LocalSet`.
-pub trait GraphTraceExecutionBackendFactory: Send + Sync {
+pub trait TracePlacementFactory: Send + Sync {
     /// Construct the backend owned by `worker_id`.
     fn create_backend(
         &self,
         worker_id: usize,
-    ) -> Result<Rc<dyn GraphTraceExecutionBackend>, GraphPlacementError>;
+    ) -> Result<Rc<dyn TracePlacement>, GraphPlacementError>;
 }
 
 /// Native thread-per-core whole-trace placement backend.
-pub struct ThreadPerCoreGraphTraceExecutionBackend {
+pub struct ThreadPerCoreTracePlacement {
     senders: Vec<mpsc::Sender<WorkerCommand>>,
     controls: Vec<mpsc::UnboundedSender<WorkerControl>>,
     next_worker: Cell<usize>,
@@ -49,11 +49,11 @@ pub struct ThreadPerCoreGraphTraceExecutionBackend {
     threads: RefCell<Vec<JoinHandle<()>>>,
 }
 
-impl ThreadPerCoreGraphTraceExecutionBackend {
+impl ThreadPerCoreTracePlacement {
     /// Start `worker_count` current-thread runtimes and build one backend each.
     pub fn new(
         worker_count: usize,
-        factory: Arc<dyn GraphTraceExecutionBackendFactory>,
+        factory: Arc<dyn TracePlacementFactory>,
     ) -> Result<Self, GraphPlacementError> {
         Self::new_with_queue_capacity(worker_count, DEFAULT_GRAPH_WORKER_QUEUE_CAPACITY, factory)
     }
@@ -62,7 +62,7 @@ impl ThreadPerCoreGraphTraceExecutionBackend {
     pub fn new_with_queue_capacity(
         worker_count: usize,
         queue_capacity: usize,
-        factory: Arc<dyn GraphTraceExecutionBackendFactory>,
+        factory: Arc<dyn TracePlacementFactory>,
     ) -> Result<Self, GraphPlacementError> {
         if worker_count == 0 {
             return Err(GraphPlacementError(
@@ -132,7 +132,7 @@ impl ThreadPerCoreGraphTraceExecutionBackend {
 }
 
 #[async_trait(?Send)]
-impl GraphTraceExecutionBackend for ThreadPerCoreGraphTraceExecutionBackend {
+impl TracePlacement for ThreadPerCoreTracePlacement {
     async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError> {
         if self.cancelled.get() {
             return Err(cancelled_trace(&plan.trace.id));
@@ -180,7 +180,7 @@ impl GraphTraceExecutionBackend for ThreadPerCoreGraphTraceExecutionBackend {
     }
 }
 
-impl ThreadPerCoreGraphTraceExecutionBackend {
+impl ThreadPerCoreTracePlacement {
     fn next_execution_worker(&self) -> Option<usize> {
         let worker_count = self.worker_count();
         let start = self.next_worker.get() % worker_count;
@@ -243,7 +243,7 @@ fn cancelled_trace(trace_id: &str) -> TraceError {
     ))
 }
 
-impl Drop for ThreadPerCoreGraphTraceExecutionBackend {
+impl Drop for ThreadPerCoreTracePlacement {
     fn drop(&mut self) {
         self.senders.clear();
         self.controls.clear();
@@ -272,7 +272,7 @@ enum WorkerControl {
 
 fn worker_thread(
     worker_id: usize,
-    factory: Arc<dyn GraphTraceExecutionBackendFactory>,
+    factory: Arc<dyn TracePlacementFactory>,
     commands: mpsc::Receiver<WorkerCommand>,
     controls: mpsc::UnboundedReceiver<WorkerControl>,
     ready: std::sync::mpsc::SyncSender<Result<(), String>>,
@@ -309,7 +309,7 @@ fn worker_thread(
 }
 
 async fn worker_loop(
-    backend: Rc<dyn GraphTraceExecutionBackend>,
+    backend: Rc<dyn TracePlacement>,
     mut commands: mpsc::Receiver<WorkerCommand>,
     mut controls: mpsc::UnboundedReceiver<WorkerControl>,
 ) {
@@ -403,11 +403,11 @@ mod tests {
         prefill_limits: Arc<Mutex<Vec<(usize, usize)>>>,
     }
 
-    impl GraphTraceExecutionBackendFactory for RecordingFactory {
+    impl TracePlacementFactory for RecordingFactory {
         fn create_backend(
             &self,
             worker_id: usize,
-        ) -> Result<Rc<dyn GraphTraceExecutionBackend>, GraphPlacementError> {
+        ) -> Result<Rc<dyn TracePlacement>, GraphPlacementError> {
             Ok(Rc::new(RecordingWorker {
                 worker_id,
                 placements: self.placements.clone(),
@@ -427,11 +427,11 @@ mod tests {
         failing_worker: usize,
     }
 
-    impl GraphTraceExecutionBackendFactory for FanoutFactory {
+    impl TracePlacementFactory for FanoutFactory {
         fn create_backend(
             &self,
             worker_id: usize,
-        ) -> Result<Rc<dyn GraphTraceExecutionBackend>, GraphPlacementError> {
+        ) -> Result<Rc<dyn TracePlacement>, GraphPlacementError> {
             Ok(Rc::new(FanoutWorker {
                 worker_id,
                 cancellations: self.cancellations.clone(),
@@ -447,7 +447,7 @@ mod tests {
     }
 
     #[async_trait(?Send)]
-    impl GraphTraceExecutionBackend for FanoutWorker {
+    impl TracePlacement for FanoutWorker {
         async fn execute_trace(&self, _plan: GraphTracePlan) -> Result<(), TraceError> {
             Ok(())
         }
@@ -477,11 +477,11 @@ mod tests {
         state: Arc<CancellableWorkerState>,
     }
 
-    impl GraphTraceExecutionBackendFactory for CancellableFactory {
+    impl TracePlacementFactory for CancellableFactory {
         fn create_backend(
             &self,
             _worker_id: usize,
-        ) -> Result<Rc<dyn GraphTraceExecutionBackend>, GraphPlacementError> {
+        ) -> Result<Rc<dyn TracePlacement>, GraphPlacementError> {
             Ok(Rc::new(CancellableWorker {
                 state: self.state.clone(),
             }))
@@ -493,7 +493,7 @@ mod tests {
     }
 
     #[async_trait(?Send)]
-    impl GraphTraceExecutionBackend for CancellableWorker {
+    impl TracePlacement for CancellableWorker {
         async fn execute_trace(&self, _plan: GraphTracePlan) -> Result<(), TraceError> {
             self.state.started.store(true, Ordering::SeqCst);
             self.state.wake.notify_waiters();
@@ -523,7 +523,7 @@ mod tests {
     }
 
     #[async_trait(?Send)]
-    impl GraphTraceExecutionBackend for QueueCancellationWorker {
+    impl TracePlacement for QueueCancellationWorker {
         async fn execute_trace(&self, _plan: GraphTracePlan) -> Result<(), TraceError> {
             panic!("a command arriving after cancellation must never execute")
         }
@@ -535,7 +535,7 @@ mod tests {
     }
 
     #[async_trait(?Send)]
-    impl GraphTraceExecutionBackend for RecordingWorker {
+    impl TracePlacement for RecordingWorker {
         async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError> {
             self.placements
                 .lock()
@@ -572,7 +572,7 @@ mod tests {
             placements: placements.clone(),
             prefill_limits: Arc::new(Mutex::new(Vec::new())),
         });
-        let backend = ThreadPerCoreGraphTraceExecutionBackend::new(2, factory).unwrap();
+        let backend = ThreadPerCoreTracePlacement::new(2, factory).unwrap();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -603,7 +603,7 @@ mod tests {
             placements: placements.clone(),
             prefill_limits: prefill_limits.clone(),
         });
-        let backend = ThreadPerCoreGraphTraceExecutionBackend::new(3, factory).unwrap();
+        let backend = ThreadPerCoreTracePlacement::new(3, factory).unwrap();
         backend.set_prefill_limit(2).unwrap();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -641,7 +641,7 @@ mod tests {
     #[test]
     fn public_placement_rejects_a_zero_global_prefill_limit() {
         let prefill_limits = Arc::new(Mutex::new(Vec::new()));
-        let backend = ThreadPerCoreGraphTraceExecutionBackend::new(
+        let backend = ThreadPerCoreTracePlacement::new(
             2,
             Arc::new(RecordingFactory {
                 placements: Arc::new(Mutex::new(Vec::new())),
@@ -663,7 +663,7 @@ mod tests {
     #[test]
     fn cancellation_fanout_reaches_all_workers_after_one_rejects_it() {
         let cancellations = Arc::new(Mutex::new(Vec::new()));
-        let backend = ThreadPerCoreGraphTraceExecutionBackend::new(
+        let backend = ThreadPerCoreTracePlacement::new(
             3,
             Arc::new(FanoutFactory {
                 cancellations: cancellations.clone(),
@@ -685,7 +685,7 @@ mod tests {
     fn active_trace_reaches_terminal_cleanup_after_graceful_cancellation() {
         let state = Arc::new(CancellableWorkerState::default());
         let backend = Rc::new(
-            ThreadPerCoreGraphTraceExecutionBackend::new(
+            ThreadPerCoreTracePlacement::new(
                 1,
                 Arc::new(CancellableFactory {
                     state: state.clone(),
@@ -725,7 +725,7 @@ mod tests {
             .unwrap();
         runtime.block_on(LocalSet::new().run_until(async {
             let cancellations = Rc::new(Cell::new(0));
-            let backend: Rc<dyn GraphTraceExecutionBackend> = Rc::new(QueueCancellationWorker {
+            let backend: Rc<dyn TracePlacement> = Rc::new(QueueCancellationWorker {
                 cancellations: cancellations.clone(),
             });
             let (command_tx, command_rx) = mpsc::channel(1);
@@ -775,7 +775,7 @@ mod tests {
             .unwrap();
         runtime.block_on(LocalSet::new().run_until(async {
             let cancellations = Rc::new(Cell::new(0));
-            let backend: Rc<dyn GraphTraceExecutionBackend> = Rc::new(QueueCancellationWorker {
+            let backend: Rc<dyn TracePlacement> = Rc::new(QueueCancellationWorker {
                 cancellations: cancellations.clone(),
             });
             let (command_tx, command_rx) = mpsc::channel(1);
@@ -812,7 +812,7 @@ mod tests {
             placements,
             prefill_limits: Arc::new(Mutex::new(Vec::new())),
         });
-        let error = ThreadPerCoreGraphTraceExecutionBackend::new_with_queue_capacity(1, 0, factory)
+        let error = ThreadPerCoreTracePlacement::new_with_queue_capacity(1, 0, factory)
             .err()
             .expect("zero capacity must fail closed");
         assert_eq!(

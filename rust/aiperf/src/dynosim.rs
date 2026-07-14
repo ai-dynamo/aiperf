@@ -28,7 +28,7 @@ use crate::clock::{Clock, SimClock};
 use crate::dataset::{Handle, TextTokenizer, TiktokenTokenizer};
 use crate::endpoints::chat_request_body;
 use crate::graph::bench::{BenchConfig, build_workload};
-use crate::graph::execution::{GraphTraceExecutionBackend, LocalGraphTraceExecutionBackend};
+use crate::graph::execution::{TracePlacement, LocalGraphTraceExecutionBackend};
 use crate::graph::executor::{ExecutorFlags, TraceExecutor};
 use crate::graph::materialize::SegmentItemsMaterializer;
 use crate::graph::model::{GraphTracePlan, TraceRecord};
@@ -857,7 +857,7 @@ pub trait OfflineGraphBackendFactory {
     fn create_backend(
         &self,
         config: OfflineGraphBackendConfig,
-    ) -> Result<Rc<dyn GraphTraceExecutionBackend>>;
+    ) -> Result<Rc<dyn TracePlacement>>;
 }
 
 /// Backend-neutral result returned by an injected multi-phase graph driver.
@@ -3480,7 +3480,7 @@ struct DynamoDirectGraphBackend {
 }
 
 #[async_trait(?Send)]
-impl GraphTraceExecutionBackend for DynamoDirectGraphBackend {
+impl TracePlacement for DynamoDirectGraphBackend {
     async fn execute_trace(
         &self,
         plan: GraphTracePlan,
@@ -3582,7 +3582,7 @@ impl OfflineGraphBackendFactory for DynosimGraphBackendFactory {
     fn create_backend(
         &self,
         config: OfflineGraphBackendConfig,
-    ) -> Result<Rc<dyn GraphTraceExecutionBackend>> {
+    ) -> Result<Rc<dyn TracePlacement>> {
         let prefill_slots = config
             .prefill_concurrency
             .map(|limit| {
@@ -3629,18 +3629,18 @@ pub trait OfflineGraphRunFactory {
     fn create(
         self: Box<Self>,
         clock: Rc<dyn Clock>,
-        backend: Rc<dyn GraphTraceExecutionBackend>,
+        backend: Rc<dyn TracePlacement>,
     ) -> Result<GraphWorkload>;
 }
 
 impl<F> OfflineGraphRunFactory for F
 where
-    F: FnOnce(Rc<dyn Clock>, Rc<dyn GraphTraceExecutionBackend>) -> Result<GraphWorkload>,
+    F: FnOnce(Rc<dyn Clock>, Rc<dyn TracePlacement>) -> Result<GraphWorkload>,
 {
     fn create(
         self: Box<Self>,
         clock: Rc<dyn Clock>,
-        backend: Rc<dyn GraphTraceExecutionBackend>,
+        backend: Rc<dyn TracePlacement>,
     ) -> Result<GraphWorkload> {
         (*self)(clock, backend)
     }

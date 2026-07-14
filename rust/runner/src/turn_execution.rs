@@ -21,8 +21,8 @@ use std::thread::JoinHandle;
 use aiperf::clock::{Clock, RealClock, RealClockAnchor};
 use aiperf::endpoints::{ParsedResponse, PreparedEndpointTable};
 use aiperf::http::{
-    HttpTurnDispatchResult, HttpTurnExecutionBackend, MeasuredTurnContext, MeasuredTurnOutcome,
-    PreparedHttpTurn, TransportSink, TransportSinkConfig,
+    DispatchResult, RequestExecutor, MeasuredContext, MeasuredOutcome,
+    PreparedTurn, TransportSink, TransportSinkConfig,
 };
 use aiperf::metrics::NativeMetricsObserver;
 use aiperf::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest};
@@ -70,10 +70,10 @@ pub trait HttpPreparedEndpointTableFactory: Send + Sync {
 }
 
 /// Composition seam for local, thread-per-core, or remote execution placement.
-pub trait HttpExecutionBackendFactory: Send + Sync {
+pub trait RequestExecutorFactory: Send + Sync {
     /// Construct the backend used below the run's single logical dispatcher.
     fn build(&self, config: HttpExecutionBackendConfig)
-    -> Result<Rc<dyn HttpTurnExecutionBackend>>;
+    -> Result<Rc<dyn RequestExecutor>>;
 }
 
 /// Native local execution factory.
@@ -82,13 +82,13 @@ pub trait HttpExecutionBackendFactory: Send + Sync {
 /// workers create one current-thread Tokio runtime and one transport stack per
 /// OS thread; no worker owns scheduling or benchmark policy.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct NativeHttpExecutionBackendFactory;
+pub struct NativeRequestExecutorFactory;
 
-impl HttpExecutionBackendFactory for NativeHttpExecutionBackendFactory {
+impl RequestExecutorFactory for NativeRequestExecutorFactory {
     fn build(
         &self,
         config: HttpExecutionBackendConfig,
-    ) -> Result<Rc<dyn HttpTurnExecutionBackend>> {
+    ) -> Result<Rc<dyn RequestExecutor>> {
         ensure!(
             config.workers > 0,
             "HTTP execution workers must be positive"
@@ -103,20 +103,20 @@ impl HttpExecutionBackendFactory for NativeHttpExecutionBackendFactory {
                 config.prepared_endpoints.as_deref(),
             )?));
         }
-        Ok(Rc::new(ThreadPerCoreHttpExecutionBackend::new(config)?))
+        Ok(Rc::new(ThreadPerCoreRequestExecutor::new(config)?))
     }
 }
 
 struct WorkerReply {
-    result: Result<HttpTurnDispatchResult>,
+    result: Result<DispatchResult>,
     /// Non-consuming cloned record for a live sink, when the measured command
     /// requested one; the authoritative record stays in the worker observer.
     live_record: Option<RecordIngest>,
 }
 
 struct WorkerCommand {
-    turn: PreparedHttpTurn,
-    context: MeasuredTurnContext,
+    turn: PreparedTurn,
+    context: MeasuredContext,
     first_token: oneshot::Sender<i64>,
     responses: Option<mpsc::Sender<ParsedResponse>>,
     completed: oneshot::Sender<WorkerReply>,
@@ -199,7 +199,7 @@ impl Drop for PlacementCancellationGuard {
 }
 
 /// Local thread-per-core placement behind the single dispatcher.
-struct ThreadPerCoreHttpExecutionBackend {
+struct ThreadPerCoreRequestExecutor {
     senders: RefCell<Option<Vec<mpsc::Sender<WorkerMessage>>>>,
     threads: RefCell<Vec<JoinHandle<Result<()>>>>,
     next_worker: Cell<usize>,
@@ -207,7 +207,7 @@ struct ThreadPerCoreHttpExecutionBackend {
     dimension_sink: TransportSink,
 }
 
-impl ThreadPerCoreHttpExecutionBackend {
+impl ThreadPerCoreRequestExecutor {
     fn new(config: HttpExecutionBackendConfig) -> Result<Self> {
         ensure!(
             config.workers > 1,
@@ -298,7 +298,7 @@ impl ThreadPerCoreHttpExecutionBackend {
 }
 
 #[async_trait(?Send)]
-impl HttpTurnExecutionBackend for ThreadPerCoreHttpExecutionBackend {
+impl RequestExecutor for ThreadPerCoreRequestExecutor {
     fn set_run_origin(&self, start_ns: i64) -> Result<()> {
         ensure!(
             self.run_origin_ns.replace(Some(start_ns)).is_none(),
@@ -336,14 +336,14 @@ impl HttpTurnExecutionBackend for ThreadPerCoreHttpExecutionBackend {
 
     async fn execute_turn_measured(
         &self,
-        turn: PreparedHttpTurn,
-        context: MeasuredTurnContext,
+        turn: PreparedTurn,
+        context: MeasuredContext,
         on_first_token: &dyn Fn(i64),
-    ) -> Result<MeasuredTurnOutcome> {
+    ) -> Result<MeasuredOutcome> {
         let reply = self
             .execute_command(turn, context, on_first_token, None)
             .await?;
-        Ok(MeasuredTurnOutcome {
+        Ok(MeasuredOutcome {
             result: reply.result?,
             live_record: reply.live_record,
         })
@@ -351,15 +351,15 @@ impl HttpTurnExecutionBackend for ThreadPerCoreHttpExecutionBackend {
 
     async fn execute_turn_measured_streaming(
         &self,
-        turn: PreparedHttpTurn,
-        context: MeasuredTurnContext,
+        turn: PreparedTurn,
+        context: MeasuredContext,
         on_first_token: &dyn Fn(i64),
         responses: &dyn TurnResponseObserver,
-    ) -> Result<MeasuredTurnOutcome> {
+    ) -> Result<MeasuredOutcome> {
         let reply = self
             .execute_command(turn, context, on_first_token, Some(responses))
             .await?;
-        Ok(MeasuredTurnOutcome {
+        Ok(MeasuredOutcome {
             result: reply.result?,
             live_record: reply.live_record,
         })
@@ -401,7 +401,7 @@ impl HttpTurnExecutionBackend for ThreadPerCoreHttpExecutionBackend {
     }
 }
 
-impl ThreadPerCoreHttpExecutionBackend {
+impl ThreadPerCoreRequestExecutor {
     fn origin(&self) -> Result<i64> {
         self.run_origin_ns
             .get()
@@ -410,8 +410,8 @@ impl ThreadPerCoreHttpExecutionBackend {
 
     async fn execute_command(
         &self,
-        turn: PreparedHttpTurn,
-        context: MeasuredTurnContext,
+        turn: PreparedTurn,
+        context: MeasuredContext,
         on_first_token: &dyn Fn(i64),
         responses: Option<&dyn TurnResponseObserver>,
     ) -> Result<WorkerReply> {
@@ -485,7 +485,7 @@ impl ThreadPerCoreHttpExecutionBackend {
     }
 }
 
-impl Drop for ThreadPerCoreHttpExecutionBackend {
+impl Drop for ThreadPerCoreRequestExecutor {
     fn drop(&mut self) {
         if let Err(error) = self.shutdown_workers() {
             tracing::error!(error = %error, "failed to shut down HTTP execution workers");
@@ -570,6 +570,15 @@ async fn run_worker(
             message = receiver.recv(), if accepting => {
                 match message {
                     Some(WorkerMessage::Configure { config, origin_ns }) => {
+                        // The worker sink was constructed with a placeholder
+                        // run origin of 0 (the true origin is not known until
+                        // after backend startup). Its `ms()` conversion for
+                        // token-arrival timestamps must share the observer's
+                        // `origin_ns`, or TTFT/ITL are offset by the setup
+                        // duration. The workers==1 path already anchors both to
+                        // the same origin via `set_run_origin`; do the same per
+                        // worker here.
+                        sink.set_run_origin(origin_ns);
                         observer = Some(Rc::new(NativeMetricsObserver::new(
                             clock.clone(),
                             origin_ns,
@@ -741,11 +750,11 @@ mod tests {
 
     use super::*;
 
-    /// Coordinator-known arrival facts for a fixture turn. `MeasuredTurnContext`
+    /// Coordinator-known arrival facts for a fixture turn. `MeasuredContext`
     /// has no `Default`, so the tests build the same all-neutral context the
     /// coordinator would forward for a one-turn fixture dispatch.
-    fn measured_context() -> MeasuredTurnContext {
-        MeasuredTurnContext {
+    fn measured_context() -> MeasuredContext {
+        MeasuredContext {
             arrival_ms: 0.0,
             input_length: 1,
             requested_output_length: 4,
@@ -797,7 +806,7 @@ mod tests {
         }
     }
 
-    fn streaming_backend(address: std::net::SocketAddr) -> Rc<dyn HttpTurnExecutionBackend> {
+    fn streaming_backend(address: std::net::SocketAddr) -> Rc<dyn RequestExecutor> {
         let anchor = RealClockAnchor::now();
         let clock: Rc<dyn Clock> = RealClock::from_anchor(anchor);
         let url = format!("http://{address}");
@@ -805,7 +814,7 @@ mod tests {
             registry: EndpointRegistry::builtin().unwrap(),
             url: url.clone(),
         });
-        let backend = NativeHttpExecutionBackendFactory
+        let backend = NativeRequestExecutorFactory
             .build(HttpExecutionBackendConfig {
                 workers: 2,
                 coordinator_clock: clock.clone(),
@@ -824,8 +833,8 @@ mod tests {
         backend
     }
 
-    fn streaming_turn() -> PreparedHttpTurn {
-        PreparedHttpTurn {
+    fn streaming_turn() -> PreparedTurn {
+        PreparedTurn {
             request: HttpRequest {
                 uuid: Uuid::new_v4(),
                 input_length: 1,

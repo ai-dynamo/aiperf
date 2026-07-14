@@ -38,8 +38,8 @@ use loadgen_core::sink::{
 use uuid::Uuid;
 
 use crate::http::{
-    HttpRequest, HttpTurnDispatchResult, HttpTurnExecutionBackend, MeasuredTurnContext,
-    MeasuredTurnOutcome, PreparedHttpEndpoint, PreparedHttpTurn,
+    HttpRequest, DispatchResult, RequestExecutor, MeasuredContext,
+    MeasuredOutcome, PreparedHttpEndpoint, PreparedTurn,
 };
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata};
 use crate::multiturn::TurnToSend;
@@ -58,23 +58,23 @@ pub struct GrpcTransportSinkConfig {
 
 /// Transport-native request retaining its protocol-v2 prepared endpoint.
 ///
-/// The richer runner placement seam uses [`PreparedHttpTurn`] directly until
+/// The richer runner placement seam uses [`PreparedTurn`] directly until
 /// its historical HTTP naming is generalized. This wrapper keeps the canonical
 /// [`RequestSink`] extension seam available without discarding the dense
 /// endpoint reference required by gRPC serialization.
 #[derive(Clone, Debug)]
 pub struct GrpcRequest {
-    turn: PreparedHttpTurn,
+    turn: PreparedTurn,
 }
 
 impl GrpcRequest {
     /// Wrap one worker-resolved protocol-v2 turn.
-    pub fn new(turn: PreparedHttpTurn) -> Self {
+    pub fn new(turn: PreparedTurn) -> Self {
         Self { turn }
     }
 
     /// Recover the richer prepared turn.
-    pub fn into_inner(self) -> PreparedHttpTurn {
+    pub fn into_inner(self) -> PreparedTurn {
         self.turn
     }
 }
@@ -225,10 +225,10 @@ impl GrpcTransportSink {
     pub async fn dispatch_prepared_turn_measured(
         &self,
         observer: &NativeMetricsObserver,
-        turn: PreparedHttpTurn,
-        context: &MeasuredTurnContext,
+        turn: PreparedTurn,
+        context: &MeasuredContext,
         on_first_token: &dyn Fn(i64),
-    ) -> Result<HttpTurnDispatchResult> {
+    ) -> Result<DispatchResult> {
         let uuid = turn.request.uuid;
         observer.register_metadata(uuid, context.metadata.clone());
         observer.on_arrival(
@@ -272,10 +272,10 @@ impl GrpcTransportSink {
 
     pub async fn dispatch_prepared_turn_collect_record(
         &self,
-        turn: PreparedHttpTurn,
+        turn: PreparedTurn,
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
-    ) -> Result<HttpTurnDispatchResult> {
+    ) -> Result<DispatchResult> {
         ensure!(
             turn.endpoint_aware,
             "native gRPC execution requires endpoint-aware protocol-v2 materialization"
@@ -325,7 +325,7 @@ impl GrpcTransportSink {
         binding: &dyn crate::transport_grpc::GrpcEndpointBinding,
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
-    ) -> Result<HttpTurnDispatchResult> {
+    ) -> Result<DispatchResult> {
         let HttpRequest {
             uuid,
             request_body,
@@ -506,7 +506,7 @@ impl GrpcTransportSink {
         };
         let request_payload = Bytes::from(serde_json::to_vec(&body)?);
         let compatibility_record = compatibility_http_record(&record);
-        Ok(HttpTurnDispatchResult {
+        Ok(DispatchResult {
             outcome,
             request_payload,
             record: compatibility_record,
@@ -515,7 +515,7 @@ impl GrpcTransportSink {
 }
 
 #[async_trait(?Send)]
-impl HttpTurnExecutionBackend for GrpcTransportSink {
+impl RequestExecutor for GrpcTransportSink {
     fn set_run_origin(&self, start_ns: i64) -> Result<()> {
         GrpcTransportSink::set_run_origin(self, start_ns);
         Ok(())
@@ -539,10 +539,10 @@ impl HttpTurnExecutionBackend for GrpcTransportSink {
 
     async fn execute_turn_measured(
         &self,
-        turn: PreparedHttpTurn,
-        context: MeasuredTurnContext,
+        turn: PreparedTurn,
+        context: MeasuredContext,
         on_first_token: &dyn Fn(i64),
-    ) -> Result<MeasuredTurnOutcome> {
+    ) -> Result<MeasuredOutcome> {
         let observer = self.measurement_observer()?;
         let uuid = turn.request.uuid;
         let result = self
@@ -552,7 +552,7 @@ impl HttpTurnExecutionBackend for GrpcTransportSink {
             .wants_live_record
             .then(|| observer.snapshot_record(uuid, 0))
             .flatten();
-        Ok(MeasuredTurnOutcome {
+        Ok(MeasuredOutcome {
             result,
             live_record,
         })

@@ -41,5 +41,5 @@ pub use execution_factories::{RunnerExecutionFactories, native_execution_factori
 pub use graph_execution::{NativeRunnerGraphPlacementFactory, RunnerGraphPlacementFactory};
 pub use grpc_turn_execution::NativeGrpcExecutionBackendFactory;
 pub use turn_execution::{
-    HttpExecutionBackendConfig, HttpExecutionBackendFactory, NativeHttpExecutionBackendFactory,
+    HttpExecutionBackendConfig, RequestExecutorFactory, NativeRequestExecutorFactory,
 };

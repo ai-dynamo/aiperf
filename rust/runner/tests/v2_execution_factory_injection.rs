@@ -14,10 +14,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use aiperf::extensions::BuiltinAiperfRegistryFactory;
 use aiperf::graph::errors::TraceError;
-use aiperf::graph::execution::GraphTraceExecutionBackend;
-use aiperf::graph::placement::{GraphPlacementError, GraphTraceExecutionBackendFactory};
+use aiperf::graph::execution::TracePlacement;
+use aiperf::graph::placement::{GraphPlacementError, TracePlacementFactory};
 use aiperf::http::{
-    HttpTurnExecutionBackend, MeasuredTurnContext, MeasuredTurnOutcome, PreparedHttpTurn,
+    RequestExecutor, MeasuredContext, MeasuredOutcome, PreparedTurn,
 };
 use aiperf::metrics_core::InferenceDimensions;
 use aiperf::multiturn::TurnToSend;
@@ -30,7 +30,7 @@ use aiperf_runner::readiness::{
 use aiperf_runner::registry::BuiltinRunnerRegistryFactory;
 use aiperf_runner::sidecar_input::BuiltinRunnerSidecarInputAdapterResolver;
 use aiperf_runner::{
-    HttpExecutionBackendConfig, HttpExecutionBackendFactory, NativeHttpExecutionBackendFactory,
+    HttpExecutionBackendConfig, RequestExecutorFactory, NativeRequestExecutorFactory,
     NativeRunnerGraphPlacementFactory, RunnerExecutionFactories, RunnerGraphPlacementFactory,
 };
 use anyhow::{Result, anyhow};
@@ -50,8 +50,8 @@ impl RunnerGraphPlacementFactory for RecordingGraphPlacement {
     fn build(
         &self,
         worker_count: usize,
-        _worker_factory: Arc<dyn GraphTraceExecutionBackendFactory>,
-    ) -> Result<Rc<dyn GraphTraceExecutionBackend>, GraphPlacementError> {
+        _worker_factory: Arc<dyn TracePlacementFactory>,
+    ) -> Result<Rc<dyn TracePlacement>, GraphPlacementError> {
         assert_eq!(worker_count, 3);
         assert!(
             self.artifact_target.exists(),
@@ -73,11 +73,11 @@ struct FailingOriginFactory {
     shutdowns: Arc<AtomicUsize>,
 }
 
-impl HttpExecutionBackendFactory for FailingOriginFactory {
+impl RequestExecutorFactory for FailingOriginFactory {
     fn build(
         &self,
         _config: HttpExecutionBackendConfig,
-    ) -> Result<Rc<dyn HttpTurnExecutionBackend>> {
+    ) -> Result<Rc<dyn RequestExecutor>> {
         assert!(!self.artifact_target.exists());
         Ok(Rc::new(FailingOriginBackend {
             shutdowns: self.shutdowns.clone(),
@@ -90,7 +90,7 @@ struct FailingOriginBackend {
 }
 
 #[async_trait(?Send)]
-impl HttpTurnExecutionBackend for FailingOriginBackend {
+impl RequestExecutor for FailingOriginBackend {
     fn set_run_origin(&self, _start_ns: i64) -> Result<()> {
         Err(anyhow!("intentional remote origin failure"))
     }
@@ -101,10 +101,10 @@ impl HttpTurnExecutionBackend for FailingOriginBackend {
 
     async fn execute_turn_measured(
         &self,
-        _turn: PreparedHttpTurn,
-        _context: MeasuredTurnContext,
+        _turn: PreparedTurn,
+        _context: MeasuredContext,
         _on_first_token: &dyn Fn(i64),
-    ) -> Result<MeasuredTurnOutcome> {
+    ) -> Result<MeasuredOutcome> {
         unreachable!("origin failure prevents dispatch")
     }
 
@@ -115,7 +115,7 @@ impl HttpTurnExecutionBackend for FailingOriginBackend {
 }
 
 #[async_trait(?Send)]
-impl GraphTraceExecutionBackend for RecordingGraphBackend {
+impl TracePlacement for RecordingGraphBackend {
     async fn execute_trace(
         &self,
         _plan: aiperf::graph::model::GraphTracePlan,
@@ -126,14 +126,14 @@ impl GraphTraceExecutionBackend for RecordingGraphBackend {
 }
 
 fn coordinator(
-    http: Arc<dyn HttpExecutionBackendFactory>,
+    http: Arc<dyn RequestExecutorFactory>,
     graph: Arc<dyn RunnerGraphPlacementFactory>,
 ) -> RunnerV2Coordinator {
     coordinator_with_readiness(http, graph, Arc::new(NativeHttpReadinessTransportFactory))
 }
 
 fn coordinator_with_readiness(
-    http: Arc<dyn HttpExecutionBackendFactory>,
+    http: Arc<dyn RequestExecutorFactory>,
     graph: Arc<dyn RunnerGraphPlacementFactory>,
     readiness_transport: Arc<dyn ReadinessTransportFactory>,
 ) -> RunnerV2Coordinator {
@@ -203,7 +203,7 @@ fn v2_graph_run_uses_injected_whole_trace_placement() {
     let builds = Arc::new(AtomicUsize::new(0));
     let traces = Arc::new(AtomicUsize::new(0));
     let coordinator = coordinator(
-        Arc::new(NativeHttpExecutionBackendFactory),
+        Arc::new(NativeRequestExecutorFactory),
         Arc::new(RecordingGraphPlacement {
             builds: builds.clone(),
             traces: traces.clone(),

@@ -21,13 +21,13 @@ use crate::readiness::{
     NativeHttpReadinessPlanFactory, NativeHttpReadinessTransportFactory,
     OnlineReadinessPlanFactory, ReadinessTransportFactory,
 };
-use crate::turn_execution::{HttpExecutionBackendFactory, NativeHttpExecutionBackendFactory};
+use crate::turn_execution::{RequestExecutorFactory, NativeRequestExecutorFactory};
 
 /// Exact execution-factory universe retained from coordinator construction.
 #[derive(Clone)]
 pub struct RunnerExecutionFactories {
-    http: Arc<dyn HttpExecutionBackendFactory>,
-    grpc: Arc<dyn HttpExecutionBackendFactory>,
+    http: Arc<dyn RequestExecutorFactory>,
+    grpc: Arc<dyn RequestExecutorFactory>,
     graph: Arc<dyn RunnerGraphPlacementFactory>,
     readiness_plans: Arc<dyn OnlineReadinessPlanFactory>,
     readiness_transport: Arc<dyn ReadinessTransportFactory>,
@@ -37,7 +37,7 @@ pub struct RunnerExecutionFactories {
 impl RunnerExecutionFactories {
     /// Compose one frozen set of independently replaceable execution seams.
     pub fn new(
-        http: Arc<dyn HttpExecutionBackendFactory>,
+        http: Arc<dyn RequestExecutorFactory>,
         graph: Arc<dyn RunnerGraphPlacementFactory>,
         readiness_plans: Arc<dyn OnlineReadinessPlanFactory>,
         readiness_transport: Arc<dyn ReadinessTransportFactory>,
@@ -58,7 +58,7 @@ impl RunnerExecutionFactories {
     /// The base constructor aliases both to the same generic turn-placement
     /// factory, which keeps remote implementations transport-neutral. Native
     /// composition installs the Tonic-specific factory explicitly.
-    pub fn with_grpc(mut self, grpc: Arc<dyn HttpExecutionBackendFactory>) -> Self {
+    pub fn with_grpc(mut self, grpc: Arc<dyn RequestExecutorFactory>) -> Self {
         self.grpc = grpc;
         self
     }
@@ -73,22 +73,22 @@ impl RunnerExecutionFactories {
     }
 
     /// Borrow the HTTP turn-placement factory used below the one dispatcher.
-    pub fn http(&self) -> &dyn HttpExecutionBackendFactory {
+    pub fn http(&self) -> &dyn RequestExecutorFactory {
         self.http.as_ref()
     }
 
     /// Retain the HTTP turn-placement factory in a prepared operation.
-    pub fn http_handle(&self) -> Arc<dyn HttpExecutionBackendFactory> {
+    pub fn http_handle(&self) -> Arc<dyn RequestExecutorFactory> {
         self.http.clone()
     }
 
     /// Borrow the gRPC turn-placement factory used below the same dispatcher.
-    pub fn grpc(&self) -> &dyn HttpExecutionBackendFactory {
+    pub fn grpc(&self) -> &dyn RequestExecutorFactory {
         self.grpc.as_ref()
     }
 
     /// Retain the gRPC turn-placement factory in a prepared operation.
-    pub fn grpc_handle(&self) -> Arc<dyn HttpExecutionBackendFactory> {
+    pub fn grpc_handle(&self) -> Arc<dyn RequestExecutorFactory> {
         self.grpc.clone()
     }
 
@@ -144,7 +144,7 @@ impl fmt::Debug for RunnerExecutionFactories {
 /// Compose the stock in-process HTTP, graph, and readiness implementations.
 pub fn native_execution_factories() -> RunnerExecutionFactories {
     RunnerExecutionFactories::new(
-        Arc::new(NativeHttpExecutionBackendFactory),
+        Arc::new(NativeRequestExecutorFactory),
         Arc::new(NativeRunnerGraphPlacementFactory),
         Arc::new(NativeHttpReadinessPlanFactory),
         Arc::new(NativeHttpReadinessTransportFactory),

@@ -23,7 +23,7 @@ use aiperf::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
 use aiperf::clock::Clock;
 use aiperf::failure::OnFailure;
 use aiperf::graph::errors::TraceError;
-use aiperf::graph::execution::GraphTraceExecutionBackend;
+use aiperf::graph::execution::TracePlacement;
 use aiperf::graph::input::GraphInputBundle;
 use aiperf::graph::policy::{ContinueRunFailurePolicy, FailFastRunFailurePolicy, RunFailurePolicy};
 use aiperf::graph::workload::{
@@ -68,7 +68,7 @@ pub(crate) struct GraphPhaseBackendConfig {
 
 /// One phase-local whole-trace backend returned by an injected implementation.
 pub(crate) struct PreparedGraphPhaseBackend {
-    pub(crate) placement: Rc<dyn GraphTraceExecutionBackend>,
+    pub(crate) placement: Rc<dyn TracePlacement>,
     pub(crate) requires_node_records: bool,
 }
 
@@ -198,7 +198,7 @@ fn validate_graph_ramp(phase_index: usize, name: &str, duration: f64) -> Result<
 
 struct PreparedGraphPhase {
     workload: GraphWorkload,
-    placement: Rc<dyn GraphTraceExecutionBackend>,
+    placement: Rc<dyn TracePlacement>,
     events: mpsc::UnboundedReceiver<RunnerGraphExecutionEvent>,
     intervals: Rc<RefCell<Box<dyn aiperf::timing::IntervalGenerator>>>,
     session_slots: Option<Rc<SlotPool>>,
@@ -516,7 +516,7 @@ struct GraphPhaseExecution {
     clock: Rc<dyn Clock>,
     context: PhaseContext,
     workload: Rc<GraphWorkload>,
-    placement: Rc<dyn GraphTraceExecutionBackend>,
+    placement: Rc<dyn TracePlacement>,
     session_slots: Option<Rc<SlotPool>>,
     prefill_initial: Option<usize>,
     adaptive_control_variable: Option<AdaptiveControlVariable>,
@@ -745,7 +745,7 @@ impl PhaseExecution for GraphPhaseExecution {
 struct GraphPhaseExecutionFactory {
     phases: RefCell<HashMap<String, PreparedGraphPhase>>,
     sidecars: RefCell<HashMap<String, Vec<Rc<dyn ScheduledPhaseSidecar>>>>,
-    placements: Vec<Rc<dyn GraphTraceExecutionBackend>>,
+    placements: Vec<Rc<dyn TracePlacement>>,
     captured: Rc<RefCell<Vec<CapturedRecord>>>,
     outcome: Rc<RefCell<GraphWorkloadReport>>,
 }
@@ -864,7 +864,7 @@ fn graph_adaptive_actuator(
     config: &AdaptiveRunConfig,
     session_slots: Option<Rc<SlotPool>>,
     intervals: Rc<RefCell<Box<dyn aiperf::timing::IntervalGenerator>>>,
-    placement: Rc<dyn GraphTraceExecutionBackend>,
+    placement: Rc<dyn TracePlacement>,
 ) -> Result<Rc<dyn ControlActuator>> {
     Ok(match config.control_variable {
         AdaptiveControlVariable::Concurrency => Rc::new(SessionConcurrencyActuator::new(
@@ -890,7 +890,7 @@ fn graph_adaptive_actuator(
 }
 
 struct GraphPrefillActuator {
-    placement: Rc<dyn GraphTraceExecutionBackend>,
+    placement: Rc<dyn TracePlacement>,
     minimum: usize,
     maximum: usize,
     current: Cell<usize>,
@@ -898,7 +898,7 @@ struct GraphPrefillActuator {
 
 impl GraphPrefillActuator {
     fn new(
-        placement: Rc<dyn GraphTraceExecutionBackend>,
+        placement: Rc<dyn TracePlacement>,
         minimum: usize,
         maximum: usize,
     ) -> Result<Self> {
@@ -1175,7 +1175,7 @@ fn prepare_graph_phase(
         cancellation,
         events: event_sink.clone(),
     })?;
-    let placement: Rc<dyn GraphTraceExecutionBackend> = Rc::new(ObservedRunnerGraphPlacement::new(
+    let placement: Rc<dyn TracePlacement> = Rc::new(ObservedRunnerGraphPlacement::new(
         backend.placement,
         event_sink,
         backend.requires_node_records,
@@ -1242,7 +1242,7 @@ fn graph_ramp_controller(
     clock: Rc<dyn Clock>,
     intervals: Rc<RefCell<Box<dyn aiperf::timing::IntervalGenerator>>>,
     session_slots: Option<Rc<SlotPool>>,
-    placement: Rc<dyn GraphTraceExecutionBackend>,
+    placement: Rc<dyn TracePlacement>,
     rng_root: RngRoot,
     failures: Rc<GraphPhaseFailures>,
 ) -> Result<Rc<dyn ScheduledPhaseController>> {

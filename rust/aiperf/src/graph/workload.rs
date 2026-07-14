@@ -19,7 +19,7 @@ use crate::timing::{IntervalGenerator, SlotGuard, SlotPool};
 use async_trait::async_trait;
 
 use crate::graph::errors::TraceError;
-use crate::graph::execution::GraphTraceExecutionBackend;
+use crate::graph::execution::TracePlacement;
 pub use crate::graph::model::GraphTracePlan;
 use crate::graph::policy::{ContinueRunFailurePolicy, RunFailurePolicy};
 
@@ -452,7 +452,7 @@ pub struct GraphWorkload {
     arrival: Rc<dyn GraphArrivalPolicy>,
     admission: Rc<dyn TraceAdmissionPolicy>,
     stop: Rc<dyn GraphStopPolicy>,
-    backend: Rc<dyn GraphTraceExecutionBackend>,
+    backend: Rc<dyn TracePlacement>,
     run_failure: Rc<dyn RunFailurePolicy>,
     observer: Rc<dyn GraphWorkloadObserver>,
     cancelled: Rc<Cell<bool>>,
@@ -463,7 +463,7 @@ impl GraphWorkload {
     pub fn new(
         clock: Rc<dyn Clock>,
         source: Rc<dyn GraphTraceSource>,
-        backend: Rc<dyn GraphTraceExecutionBackend>,
+        backend: Rc<dyn TracePlacement>,
     ) -> Self {
         Self {
             clock,
@@ -891,7 +891,7 @@ mod tests {
     }
 
     #[async_trait(?Send)]
-    impl crate::graph::execution::GraphTraceExecutionBackend for RecordingBackend {
+    impl crate::graph::execution::TracePlacement for RecordingBackend {
         async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError> {
             self.plans.borrow_mut().push(plan);
             Ok(())
@@ -940,7 +940,7 @@ mod tests {
                 arrival_offset_ns: Some(123),
             }]));
         let received = Rc::new(RefCell::new(Vec::new()));
-        let backend: Rc<dyn crate::graph::execution::GraphTraceExecutionBackend> =
+        let backend: Rc<dyn crate::graph::execution::TracePlacement> =
             Rc::new(RecordingBackend {
                 plans: received.clone(),
             });
@@ -970,7 +970,7 @@ mod tests {
     }
 
     #[async_trait(?Send)]
-    impl crate::graph::execution::GraphTraceExecutionBackend for SleepingBackend {
+    impl crate::graph::execution::TracePlacement for SleepingBackend {
         async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError> {
             self.clock.clone().sleep(20).await;
             self.completed.borrow_mut().push(plan.trace.id);
@@ -1003,7 +1003,7 @@ mod tests {
         ];
         let source: Rc<dyn GraphTraceSource> = Rc::new(VecGraphTraceSource::new(plans));
         let completed = Rc::new(RefCell::new(Vec::new()));
-        let backend: Rc<dyn crate::graph::execution::GraphTraceExecutionBackend> =
+        let backend: Rc<dyn crate::graph::execution::TracePlacement> =
             Rc::new(SleepingBackend {
                 clock: clock.clone(),
                 completed: completed.clone(),

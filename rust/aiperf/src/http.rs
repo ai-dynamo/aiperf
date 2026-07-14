@@ -187,7 +187,7 @@ fn enforce_turn_data_policy(
 /// must preserve HTTP wire facts; alternate backends do not inherit an HTTP
 /// dependency through the shared [`TurnDispatcher`] seam.
 #[derive(Clone, Debug)]
-pub struct HttpTurnDispatchResult {
+pub struct DispatchResult {
     /// Backend-neutral result consumed by scheduling and record processors.
     pub outcome: TurnDispatchOutcome,
     /// Canonical JSON payload before transport-specific body preparation.
@@ -206,7 +206,7 @@ pub struct HttpTurnDispatchResult {
 /// binding key in [`PreparedEndpointReference`]. Local backends retain the
 /// already-resolved prepared adapter allocation.
 #[derive(Clone)]
-pub struct PreparedHttpTurn {
+pub struct PreparedTurn {
     /// Transport-ready request fields.
     pub request: HttpRequest,
     /// Effective model selected for this turn.
@@ -219,10 +219,10 @@ pub struct PreparedHttpTurn {
     pub data_policy: TurnDataPolicy,
 }
 
-impl fmt::Debug for PreparedHttpTurn {
+impl fmt::Debug for PreparedTurn {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("PreparedHttpTurn")
+            .debug_struct("PreparedTurn")
             .field("request", &self.request)
             .field("model", &self.model)
             .field("endpoint", &self.endpoint)
@@ -253,7 +253,7 @@ impl fmt::Debug for PreparedHttpEndpoint {
     }
 }
 
-impl PreparedHttpTurn {
+impl PreparedTurn {
     /// Remove scheduler-local session state and build one owned HTTP command.
     pub fn from_turn(turn: TurnToSend, model: &str) -> Self {
         let is_final_turn = turn.is_final_turn();
@@ -303,7 +303,7 @@ impl PreparedHttpTurn {
 /// coordinator patches them onto the drained record at finish so all
 /// credit/phase logic stays exactly where the single-observer path had it.
 #[derive(Clone, Debug)]
-pub struct MeasuredTurnContext {
+pub struct MeasuredContext {
     /// Arrival timestamp in milliseconds relative to the run origin, computed
     /// coordinator-side at issue exactly as the single-observer path did.
     pub arrival_ms: f64,
@@ -323,12 +323,12 @@ pub struct MeasuredTurnContext {
 /// optional non-consuming cloned record for the live-results sink.
 ///
 /// The authoritative record stays inside the worker observer for the end-of-run
-/// drain; `live_record` (present only when [`MeasuredTurnContext::wants_live_record`]
+/// drain; `live_record` (present only when [`MeasuredContext::wants_live_record`]
 /// is set) is a clone so live emission never removes it from the final merge.
 #[derive(Debug)]
-pub struct MeasuredTurnOutcome {
+pub struct MeasuredOutcome {
     /// Backend-neutral dispatch result consumed by scheduling/record processors.
-    pub result: HttpTurnDispatchResult,
+    pub result: DispatchResult,
     /// Non-consuming cloned record for a live sink, when requested.
     pub live_record: Option<RecordIngest>,
 }
@@ -340,7 +340,7 @@ pub struct MeasuredTurnOutcome {
 /// admission, adaptive control, and record capture remain above this seam and
 /// therefore do not change when execution placement changes.
 #[async_trait(?Send)]
-pub trait HttpTurnExecutionBackend {
+pub trait RequestExecutor {
     /// Set the shared run origin after backend startup and before dispatch.
     fn set_run_origin(&self, start_ns: i64) -> Result<()>;
 
@@ -370,10 +370,10 @@ pub trait HttpTurnExecutionBackend {
     /// worker-local observer (no per-token replay across the coordinator).
     async fn execute_turn_measured(
         &self,
-        _turn: PreparedHttpTurn,
-        _context: MeasuredTurnContext,
+        _turn: PreparedTurn,
+        _context: MeasuredContext,
         _on_first_token: &dyn Fn(i64),
-    ) -> Result<MeasuredTurnOutcome> {
+    ) -> Result<MeasuredOutcome> {
         Err(anyhow!(
             "selected HTTP execution placement does not support worker-local measurement"
         ))
@@ -382,11 +382,11 @@ pub trait HttpTurnExecutionBackend {
     /// Worker-local measured execution with live response-frame forwarding.
     async fn execute_turn_measured_streaming(
         &self,
-        _turn: PreparedHttpTurn,
-        _context: MeasuredTurnContext,
+        _turn: PreparedTurn,
+        _context: MeasuredContext,
         _on_first_token: &dyn Fn(i64),
         _responses: &dyn TurnResponseObserver,
-    ) -> Result<MeasuredTurnOutcome> {
+    ) -> Result<MeasuredOutcome> {
         Err(anyhow!(
             "selected HTTP execution placement does not support worker-local measurement"
         ))
@@ -486,7 +486,7 @@ pub struct TransportSink {
     /// execution path. `None` until [`configure_measurement`] is called; the
     /// legacy `execute_turn(observer)` and `TurnDispatcher` paths never touch it.
     ///
-    /// [`configure_measurement`]: HttpTurnExecutionBackend::configure_measurement
+    /// [`configure_measurement`]: RequestExecutor::configure_measurement
     measurement: RefCell<Option<Rc<NativeMetricsObserver>>>,
 }
 
@@ -1129,7 +1129,7 @@ impl TurnDispatcher for TransportSink {
 }
 
 #[async_trait(?Send)]
-impl HttpTurnExecutionBackend for TransportSink {
+impl RequestExecutor for TransportSink {
     fn set_run_origin(&self, start_ns: i64) -> Result<()> {
         TransportSink::set_run_origin(self, start_ns);
         Ok(())
@@ -1154,10 +1154,10 @@ impl HttpTurnExecutionBackend for TransportSink {
 
     async fn execute_turn_measured(
         &self,
-        turn: PreparedHttpTurn,
-        context: MeasuredTurnContext,
+        turn: PreparedTurn,
+        context: MeasuredContext,
         on_first_token: &dyn Fn(i64),
-    ) -> Result<MeasuredTurnOutcome> {
+    ) -> Result<MeasuredOutcome> {
         let observer = self.measurement_observer()?;
         let uuid = turn.request.uuid;
         let result = self
@@ -1167,7 +1167,7 @@ impl HttpTurnExecutionBackend for TransportSink {
             .wants_live_record
             .then(|| observer.snapshot_record(uuid, 0))
             .flatten();
-        Ok(MeasuredTurnOutcome {
+        Ok(MeasuredOutcome {
             result,
             live_record,
         })
@@ -1175,11 +1175,11 @@ impl HttpTurnExecutionBackend for TransportSink {
 
     async fn execute_turn_measured_streaming(
         &self,
-        turn: PreparedHttpTurn,
-        context: MeasuredTurnContext,
+        turn: PreparedTurn,
+        context: MeasuredContext,
         on_first_token: &dyn Fn(i64),
         responses: &dyn TurnResponseObserver,
-    ) -> Result<MeasuredTurnOutcome> {
+    ) -> Result<MeasuredOutcome> {
         let observer = self.measurement_observer()?;
         let uuid = turn.request.uuid;
         let result = self
@@ -1195,7 +1195,7 @@ impl HttpTurnExecutionBackend for TransportSink {
             .wants_live_record
             .then(|| observer.snapshot_record(uuid, 0))
             .flatten();
-        Ok(MeasuredTurnOutcome {
+        Ok(MeasuredOutcome {
             result,
             live_record,
         })
@@ -1224,8 +1224,8 @@ impl TransportSink {
         turn: TurnToSend,
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
-    ) -> Result<HttpTurnDispatchResult> {
-        let turn = PreparedHttpTurn::from_turn(turn, &self.model);
+    ) -> Result<DispatchResult> {
+        let turn = PreparedTurn::from_turn(turn, &self.model);
         self.dispatch_prepared_turn_collect_record(turn, observer, on_first_token)
             .await
     }
@@ -1238,8 +1238,8 @@ impl TransportSink {
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
         responses: &dyn TurnResponseObserver,
-    ) -> Result<HttpTurnDispatchResult> {
-        let turn = PreparedHttpTurn::from_turn(turn, &self.model);
+    ) -> Result<DispatchResult> {
+        let turn = PreparedTurn::from_turn(turn, &self.model);
         self.dispatch_prepared_turn_collect_record_with_response_observer(
             turn,
             observer,
@@ -1254,10 +1254,10 @@ impl TransportSink {
     /// worker reactor while the ordinary direct path calls it in place.
     pub async fn dispatch_prepared_turn_collect_record(
         &self,
-        turn: PreparedHttpTurn,
+        turn: PreparedTurn,
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
-    ) -> Result<HttpTurnDispatchResult> {
+    ) -> Result<DispatchResult> {
         self.dispatch_prepared_turn_collect_record_with_response_observer(
             turn,
             observer,
@@ -1271,11 +1271,11 @@ impl TransportSink {
     /// endpoint-normalized response frames.
     pub async fn dispatch_prepared_turn_collect_record_streaming(
         &self,
-        turn: PreparedHttpTurn,
+        turn: PreparedTurn,
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
         responses: &dyn TurnResponseObserver,
-    ) -> Result<HttpTurnDispatchResult> {
+    ) -> Result<DispatchResult> {
         self.dispatch_prepared_turn_collect_record_with_response_observer(
             turn,
             observer,
@@ -1288,7 +1288,7 @@ impl TransportSink {
     /// Access the worker-local measurement observer, erroring if the measured
     /// execution path is used before [`configure_measurement`] runs.
     ///
-    /// [`configure_measurement`]: HttpTurnExecutionBackend::configure_measurement
+    /// [`configure_measurement`]: RequestExecutor::configure_measurement
     fn measurement_observer(&self) -> Result<Rc<NativeMetricsObserver>> {
         self.measurement
             .borrow()
@@ -1309,11 +1309,11 @@ impl TransportSink {
     pub async fn dispatch_prepared_turn_measured(
         &self,
         observer: &NativeMetricsObserver,
-        turn: PreparedHttpTurn,
-        context: &MeasuredTurnContext,
+        turn: PreparedTurn,
+        context: &MeasuredContext,
         on_first_token: &dyn Fn(i64),
         responses: Option<&dyn TurnResponseObserver>,
-    ) -> Result<HttpTurnDispatchResult> {
+    ) -> Result<DispatchResult> {
         let uuid = turn.request.uuid;
         observer.register_metadata(uuid, context.metadata.clone());
         observer.on_arrival(
@@ -1365,12 +1365,12 @@ impl TransportSink {
 
     async fn dispatch_prepared_turn_collect_record_with_response_observer(
         &self,
-        turn: PreparedHttpTurn,
+        turn: PreparedTurn,
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
         responses: Option<&dyn TurnResponseObserver>,
-    ) -> Result<HttpTurnDispatchResult> {
-        let PreparedHttpTurn {
+    ) -> Result<DispatchResult> {
+        let PreparedTurn {
             mut request,
             model,
             endpoint,
@@ -1446,7 +1446,7 @@ impl TransportSink {
             &mut record,
             &mut model_response,
         );
-        Ok(HttpTurnDispatchResult {
+        Ok(DispatchResult {
             outcome: TurnDispatchOutcome {
                 start_ns,
                 end_ns,
@@ -1581,7 +1581,7 @@ mod tests {
     #[test]
     fn prepared_turn_is_send_between_reactor_threads() {
         fn assert_send<T: Send>() {}
-        assert_send::<PreparedHttpTurn>();
+        assert_send::<PreparedTurn>();
     }
 
     #[test]

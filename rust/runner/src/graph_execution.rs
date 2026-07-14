@@ -22,11 +22,11 @@ use aiperf::endpoints::{
 };
 use aiperf::failure::OnFailure;
 use aiperf::graph::errors::TraceError;
-use aiperf::graph::execution::{GraphTraceExecutionBackend, LocalGraphTraceExecutionBackend};
+use aiperf::graph::execution::{TracePlacement, LocalGraphTraceExecutionBackend};
 use aiperf::graph::materialize::SegmentItemsMaterializer;
 use aiperf::graph::model::{GraphTracePlan, LlmNode};
 use aiperf::graph::placement::{
-    GraphPlacementError, GraphTraceExecutionBackendFactory, ThreadPerCoreGraphTraceExecutionBackend,
+    GraphPlacementError, TracePlacementFactory, ThreadPerCoreTracePlacement,
 };
 use aiperf::graph::policy::{
     AbortTraceNodeFailurePolicy, CancellationNodePolicy, CompositeNodeDispatchPolicy,
@@ -36,7 +36,7 @@ use aiperf::graph::sink::{GraphDispatchOptions, GraphReply, GraphSink};
 use aiperf::graph::wire::OpenAiChatMessage;
 use aiperf::http::{
     HttpRequest, HttpRequestDispatcher, PreparedEndpointReference, PreparedHttpEndpoint,
-    PreparedHttpTurn, TransportSink, TransportSinkConfig,
+    PreparedTurn, TransportSink, TransportSinkConfig,
 };
 use aiperf::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
 use aiperf::metrics_core::{InferenceDimensions, MetricsConfig, Phase};
@@ -67,8 +67,8 @@ pub trait RunnerGraphPlacementFactory: Send + Sync {
     fn build(
         &self,
         worker_count: usize,
-        worker_factory: Arc<dyn GraphTraceExecutionBackendFactory>,
-    ) -> Result<Rc<dyn GraphTraceExecutionBackend>, GraphPlacementError>;
+        worker_factory: Arc<dyn TracePlacementFactory>,
+    ) -> Result<Rc<dyn TracePlacement>, GraphPlacementError>;
 
     /// Whether successful traces must emit one native record per static node.
     ///
@@ -139,7 +139,7 @@ impl RunnerGraphExecutionEventSink for ChannelRunnerGraphExecutionEventSink {
 /// Keeping this outside worker implementations covers native queue rejection
 /// and future remote transports as well as traces that reached a worker.
 pub(crate) struct ObservedRunnerGraphPlacement {
-    delegate: Rc<dyn GraphTraceExecutionBackend>,
+    delegate: Rc<dyn TracePlacement>,
     events: Arc<dyn RunnerGraphExecutionEventSink>,
     requires_node_records: bool,
 }
@@ -147,7 +147,7 @@ pub(crate) struct ObservedRunnerGraphPlacement {
 impl ObservedRunnerGraphPlacement {
     /// Decorate one placement without changing its dispatch/control semantics.
     pub(crate) fn new(
-        delegate: Rc<dyn GraphTraceExecutionBackend>,
+        delegate: Rc<dyn TracePlacement>,
         events: Arc<dyn RunnerGraphExecutionEventSink>,
         requires_node_records: bool,
     ) -> Self {
@@ -160,7 +160,7 @@ impl ObservedRunnerGraphPlacement {
 }
 
 #[async_trait(?Send)]
-impl GraphTraceExecutionBackend for ObservedRunnerGraphPlacement {
+impl TracePlacement for ObservedRunnerGraphPlacement {
     async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError> {
         let trace_id = plan.trace.id.clone();
         let node_count = plan.graph.nodes.len();
@@ -191,9 +191,9 @@ impl RunnerGraphPlacementFactory for NativeRunnerGraphPlacementFactory {
     fn build(
         &self,
         worker_count: usize,
-        worker_factory: Arc<dyn GraphTraceExecutionBackendFactory>,
-    ) -> Result<Rc<dyn GraphTraceExecutionBackend>, GraphPlacementError> {
-        Ok(Rc::new(ThreadPerCoreGraphTraceExecutionBackend::new(
+        worker_factory: Arc<dyn TracePlacementFactory>,
+    ) -> Result<Rc<dyn TracePlacement>, GraphPlacementError> {
+        Ok(Rc::new(ThreadPerCoreTracePlacement::new(
             worker_count,
             worker_factory,
         )?))
@@ -208,7 +208,7 @@ impl RunnerGraphPlacementFactory for NativeRunnerGraphPlacementFactory {
 ///
 /// Native HTTP prepares local transports and endpoint bindings. A future
 /// remote placement can implement this contract with the same data-only
-/// [`PreparedHttpTurn`] identity without changing graph scheduling.
+/// [`PreparedTurn`] identity without changing graph scheduling.
 pub(crate) trait RunnerGraphEndpointRuntimeFactory: Send + Sync {
     /// Prepare one worker-local dispatcher before any trace is admitted.
     fn prepare_worker(
@@ -508,11 +508,11 @@ impl RunnerGraphBackendFactory {
     }
 }
 
-impl GraphTraceExecutionBackendFactory for RunnerGraphBackendFactory {
+impl TracePlacementFactory for RunnerGraphBackendFactory {
     fn create_backend(
         &self,
         worker_id: usize,
-    ) -> Result<Rc<dyn GraphTraceExecutionBackend>, GraphPlacementError> {
+    ) -> Result<Rc<dyn TracePlacement>, GraphPlacementError> {
         let clock: Rc<dyn Clock> = RealClock::from_anchor(self.config.real_clock_anchor);
         let endpoint_runtime = self
             .config
@@ -600,7 +600,7 @@ struct RunnerGraphWorkerBackend {
 }
 
 #[async_trait(?Send)]
-impl GraphTraceExecutionBackend for RunnerGraphWorkerBackend {
+impl TracePlacement for RunnerGraphWorkerBackend {
     async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError> {
         if self.cancelled.get() {
             return Err(TraceError::Cancelled(format!(
@@ -829,7 +829,7 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
         let first_token_error = RefCell::new(None);
         let collected = transport
             .dispatch_prepared_turn_collect_record(
-                PreparedHttpTurn {
+                PreparedTurn {
                     request,
                     model,
                     endpoint,
