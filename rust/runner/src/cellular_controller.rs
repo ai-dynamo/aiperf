@@ -57,6 +57,7 @@ pub fn run_cellular(
     ensure!(cell_count >= 1, "cell_count must be at least 1");
     validate_cellular_run_shape(envelope)?;
     validate_cellular_phase_budgets(envelope, cell_count)?;
+    warn_dropped_sidecar_telemetry(envelope);
     // Ensure a profiling phase exists; every phase's `requests >= cell_count` (so no
     // cell owns zero) is already checked by validate_cellular_phase_budgets.
     profiling_request_budget(envelope)?;
@@ -551,6 +552,38 @@ fn cellular_metrics_config(envelope: &serde_json::Value) -> Result<MetricsConfig
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
     crate::execute::metrics_config(&spec, use_server_token_count)
+}
+
+/// Warns, once at controller startup, when a cellular run carries side-channel
+/// telemetry sidecars (`server_metrics` / `gpu_telemetry` / `network_latency`). Each
+/// cell scrapes them into its own scratch tree, which the controller discards — so
+/// these metrics are omitted from the merged report (the documented report-fidelity
+/// gap), unlike a single-process run. This is surfaced as a loud runtime warning
+/// rather than a silent drop or a fail-closed rejection: `gpu_telemetry` and
+/// `server_metrics` default *on*, so rejecting any present sidecar would refuse nearly
+/// every cellular run. Cross-cell sidecar aggregation is future wiring.
+fn warn_dropped_sidecar_telemetry(envelope: &serde_json::Value) {
+    const SIDECARS: [&str; 3] = ["server_metrics", "gpu_telemetry", "network_latency"];
+    let is_active = |value: Option<&serde_json::Value>| match value {
+        None | Some(serde_json::Value::Null) => false,
+        Some(serde_json::Value::Object(map)) => !map.is_empty(),
+        Some(_) => true,
+    };
+    let present: Vec<&str> = SIDECARS
+        .into_iter()
+        .filter(|key| {
+            is_active(envelope.pointer(&format!("/run/cfg/sidecars/{key}")))
+                || is_active(envelope.pointer(&format!("/run/cfg/{key}")))
+        })
+        .collect();
+    if !present.is_empty() {
+        tracing::warn!(
+            sidecars = present.join(","),
+            "cellular mode does not aggregate side-channel telemetry across cells; \
+             these sidecar metrics are omitted from the merged report (a single-process \
+             run emits them). Run without --cells to collect them."
+        );
+    }
 }
 
 /// The native export policy for the merged report, parsed from the envelope's

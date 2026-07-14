@@ -406,3 +406,23 @@ gRPC/graph/offline executors are separate paths not yet threaded. The
 partition/issuance/transport seam is transport-neutral by design, so extending cellular to
 those executors is a wiring task, not new HTTP code. **Still out of scope:** cross-host
 transport (TCP loopback only) and the S5 executor change.
+
+## Addendum — 2026-07-14 — controller panic guard + loud sidecar-drop warning
+
+Two robustness gaps a full-review pass surfaced against the product-reachable path:
+
+- **Controller panic guard.** `run_controller` now wraps `run_cellular` in
+  `std::panic::catch_unwind` (mirroring `handle_v2`'s guard on the single-process path).
+  The controller runs the records merge, native-v2 serialization, and the newly-added
+  export plane inline; a panic in any of them previously aborted the controller
+  (exit 101) with no `run_terminal` envelope, so Python saw a crashed subprocess instead
+  of a typed execution failure. A caught panic (or a returned error) is now emitted as a
+  `success:false` execution-stage envelope carrying the message as a typed diagnostic.
+- **Loud sidecar-drop warning.** A cellular run scrapes any side-channel telemetry
+  sidecars (`server_metrics` / `gpu_telemetry` / `network_latency`) into each cell's
+  discarded scratch tree, so they are omitted from the merged report (the documented
+  report-fidelity gap) — whereas a single-process run emits them. This was a *silent*
+  divergence; the controller now logs a startup `WARN` naming the dropped sidecars and
+  pointing at the non-`--cells` path. It is not fail-closed: `gpu_telemetry` and
+  `server_metrics` default *on*, so rejecting any present sidecar would refuse nearly
+  every cellular run. Cross-cell sidecar aggregation remains future wiring.

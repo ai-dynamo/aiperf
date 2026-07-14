@@ -164,8 +164,16 @@ fn run_controller(envelope: &Value) -> ! {
         .unwrap_or_default();
     let report_path = std::path::Path::new(artifact_dir).join("native-v2.json");
     let cell_count = aiperf_runner::cellular_controller::cell_count_from_envelope(envelope);
-    match aiperf_runner::cellular_controller::run_cellular(envelope, cell_count, &report_path) {
-        Ok(outcome) => {
+    // Mirror run_v2's catch_unwind (see `handle_v2`): the controller runs the records
+    // merge, native-v2 serialization, and the best-effort export plane inline in
+    // run_cellular; a panic in any of them would otherwise unwind past this writer and
+    // abort the controller (exit 101) with no envelope, so Python would see a crashed
+    // subprocess instead of a typed execution failure.
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        aiperf_runner::cellular_controller::run_cellular(envelope, cell_count, &report_path)
+    }));
+    match outcome {
+        Ok(Ok(outcome)) => {
             let mut provenance = BTreeMap::new();
             provenance.insert(
                 "transport".to_owned(),
@@ -193,24 +201,38 @@ fn run_controller(envelope: &Value) -> ! {
                 0,
             );
         }
-        Err(error) => {
-            tracing::error!(error = format!("{error:#}"), "cellular run failed");
-            write_json_line(
-                &RunTerminalV2 {
-                    protocol_version: RUNNER_PROTOCOL_V2,
-                    event: "run_terminal",
-                    benchmark_id,
-                    success: false,
-                    report_path: None,
-                    stage: Some(RunnerFailureStageV2::Execution),
-                    errors: Vec::new(),
-                    diagnostic_artifacts: Vec::new(),
-                    provenance: BTreeMap::new(),
-                },
-                1,
+        Ok(Err(error)) => {
+            emit_cellular_failure(benchmark_id, "cellular_run_failed", format!("{error:#}"));
+        }
+        Err(payload) => {
+            emit_cellular_failure(
+                benchmark_id,
+                "internal_panic",
+                panic_payload_message(payload.as_ref()),
             );
         }
     }
+}
+
+/// Emit the cellular controller's execution-stage failure envelope, carrying the
+/// error/panic message as a typed diagnostic (so Python surfaces the reason rather
+/// than an empty failure), then exit non-zero.
+fn emit_cellular_failure(benchmark_id: Option<String>, code: &'static str, message: String) -> ! {
+    tracing::error!(error = %message, "cellular run failed");
+    write_json_line(
+        &RunTerminalV2 {
+            protocol_version: RUNNER_PROTOCOL_V2,
+            event: "run_terminal",
+            benchmark_id,
+            success: false,
+            report_path: None,
+            stage: Some(RunnerFailureStageV2::Execution),
+            errors: vec![diagnostic(code, message)],
+            diagnostic_artifacts: Vec::new(),
+            provenance: BTreeMap::new(),
+        },
+        1,
+    );
 }
 
 fn compose_stock_application() -> RunnerApplication {
