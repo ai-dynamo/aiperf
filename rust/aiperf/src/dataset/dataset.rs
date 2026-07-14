@@ -9,14 +9,18 @@ use std::sync::Arc;
 
 use crate::endpoints::EndpointDescriptor;
 
+use crate::body_plan::BodyPlan;
 use crate::dataset::error::{DatasetError, Result};
 use crate::dataset::model::{
     Conversation, ConversationBranchMode, ConversationContextMode, ConversationMetadata,
     DispatchTiming, MediaKind, PrerequisiteKind, SessionId, Turn,
 };
-use crate::dataset::request::{raw_body_handle, resolve_turn, token_ids_handle};
+use crate::dataset::request::{raw_body_handle, resolve_prompt, resolve_turn, token_ids_handle};
 use crate::dataset::segment::{Handle, Payload, Role, SegmentDomain, SegmentPool, SegmentStore};
-use crate::endpoints::TurnMessageLowerer;
+use crate::endpoints::{
+    CreditPhase, PreparedEndpoint, PreparedRequest, ShapeLowerer, Turn as EndpointTurn,
+    TurnMessageLowerer,
+};
 use smallvec::SmallVec;
 
 /// Media-free structural metadata for one frozen dataset.
@@ -43,6 +47,13 @@ pub struct Dataset {
     index: HashMap<SessionId, usize>,
     segments: Arc<dyn SegmentStore>,
     metadata: DatasetMetadata,
+    /// Precomputed profiling-phase [`BodyPlan`] per `[conversation position][turn
+    /// index]` for eligible static message-array turns (segment spec §3a). Empty
+    /// until [`precompute_body_plans`](Dataset::precompute_body_plans) runs after
+    /// endpoint-bind lowering; a `None` slot (or an empty outer vector) means the
+    /// turn falls back to per-dispatch formatting. Keyed by dense position so the
+    /// hot-path lookup is two indexed reads, never a hash.
+    body_plans: Vec<Vec<Option<BodyPlan>>>,
 }
 
 impl fmt::Debug for Dataset {
@@ -115,6 +126,7 @@ impl Dataset {
             index,
             segments,
             metadata,
+            body_plans: Vec::new(),
         })
     }
 
@@ -228,6 +240,117 @@ impl Dataset {
             self.conversations = conversations.into();
         }
         Ok(())
+    }
+
+    /// Build and cache the profiling-phase [`BodyPlan`] for every eligible static
+    /// message-array turn against the run's default prepared endpoint (segment
+    /// spec §3a), so dispatch clones the cached plan instead of calling the
+    /// endpoint formatter (and building a fresh `serde_json::Value`) per request.
+    ///
+    /// Run once at load, immediately after
+    /// [`lower_messages_for_endpoint`](Dataset::lower_messages_for_endpoint) and
+    /// before the dataset is shared, so the cached plan splices the same lowered
+    /// wires dispatch would. The cached plan is byte-identical to the per-dispatch
+    /// formatter output *by construction*: dispatch clones it, folds the same
+    /// dispatch [`Overrides`](crate::dataset::materialize::Overrides), applies the
+    /// same effective-field pass, and materializes with an empty override set —
+    /// exactly what it does today from a freshly formatted plan.
+    ///
+    /// A turn is cached only when every reuse invariant holds:
+    /// - the endpoint's body is [`precomputable`](PreparedEndpoint::precomputable_body)
+    ///   (excludes template, raw passthrough, and token-native dialects), and it
+    ///   is a per-turn message-array shape (`chat`/`responses`/`messages`/…),
+    ///   which excludes completions, embeddings, rankings, and media endpoints;
+    /// - the conversation uses a static context mode (`MessageArrayWithResponses`
+    ///   or `DeltasWithResponses`), where the assembled turns do not depend on
+    ///   live replies, and is not a graph/DAG conversation;
+    /// - the turn carries no per-turn `endpoint` override, no complete raw body,
+    ///   and no token-native `raw_token_ids`.
+    ///
+    /// Only the profiling phase is cached; warmup folds the system prompt into the
+    /// first message inside the formatter and always takes the live path. Formatter
+    /// failures are non-fatal — the slot stays `None` and the identical error
+    /// resurfaces on the live dispatch path. Idempotent: it rebuilds the whole
+    /// cache from the current conversations each call.
+    pub fn precompute_body_plans(
+        &mut self,
+        endpoint: &dyn PreparedEndpoint,
+        primary_model_name: &str,
+    ) -> Result<()> {
+        // Endpoint-level gate: only precomputable message-array dialects qualify.
+        // A dialect that is not a per-turn message array has no shape lowerer and
+        // is left entirely on the live path.
+        if !endpoint.precomputable_body()
+            || ShapeLowerer::for_descriptor_id(endpoint.descriptor().id).is_none()
+        {
+            self.body_plans = Vec::new();
+            return Ok(());
+        }
+        let plans = {
+            let store = self.segments.as_ref();
+            let mut plans: Vec<Vec<Option<BodyPlan>>> =
+                Vec::with_capacity(self.conversations.len());
+            for conversation in self.conversations.iter() {
+                let mut turn_plans: Vec<Option<BodyPlan>> = vec![None; conversation.turns.len()];
+                let mode = self.context_mode(conversation);
+                let static_mode = matches!(
+                    mode,
+                    ConversationContextMode::MessageArrayWithResponses
+                        | ConversationContextMode::DeltasWithResponses
+                );
+                // Graph/DAG conversations dispatch through a separate execution
+                // path; never cache their turns here.
+                if static_mode && conversation.dag.is_none() {
+                    let system = resolve_prompt(store, conversation.system)?;
+                    let user_context = resolve_prompt(store, conversation.user_context)?;
+                    let conversation_id = conversation.session_id.as_str().to_string();
+                    for (turn_index, (turn, slot)) in conversation
+                        .turns
+                        .iter()
+                        .zip(turn_plans.iter_mut())
+                        .enumerate()
+                    {
+                        // Per-turn override, raw body, and token-native turns take
+                        // the live path (mirrors the dispatch fallback branches).
+                        if turn.endpoint.is_some()
+                            || raw_body_handle(turn, store)?.is_some()
+                            || token_ids_handle(turn, store)?.is_some()
+                        {
+                            continue;
+                        }
+                        let turns =
+                            static_endpoint_turns(store, conversation, turn_index, mode)?;
+                        let request = PreparedRequest::new(
+                            primary_model_name,
+                            &turns,
+                            system.as_deref(),
+                            user_context.as_deref(),
+                            CreditPhase::Profiling,
+                            None,
+                            None,
+                            Some(&conversation_id),
+                        );
+                        // Non-fatal: an unrenderable turn simply stays uncached and
+                        // surfaces its identical error at dispatch.
+                        if let Ok(plan) = endpoint.format_payload(&request) {
+                            *slot = Some(plan);
+                        }
+                    }
+                }
+                plans.push(turn_plans);
+            }
+            plans
+        };
+        self.body_plans = plans;
+        Ok(())
+    }
+
+    /// Borrow the cached profiling-phase [`BodyPlan`] for one conversation turn, if
+    /// [`precompute_body_plans`](Dataset::precompute_body_plans) cached it. Dispatch
+    /// clones the returned plan instead of reformatting; a `None` means fall back.
+    pub(crate) fn cached_body_plan(&self, id: &SessionId, turn_index: usize) -> Option<&BodyPlan> {
+        let position = *self.index.get(id)?;
+        self.body_plans.get(position)?.get(turn_index)?.as_ref()
     }
 
     /// Borrow media-free structural metadata.
@@ -580,6 +703,33 @@ fn validate_turn(
 /// carve-outs). A content turn with no per-turn endpoint override, no complete
 /// raw body, no token-native IDs, no preformatted `raw_messages`, and no
 /// already-set `messages` is the lowerable case.
+/// Assemble the endpoint turns for one static-context turn exactly as
+/// `ConversationSession::endpoint_turns` does for these two modes, so a plan
+/// precomputed from them is byte-identical to the dispatch-time plan. Restricted
+/// to the static modes (the only modes `precompute_body_plans` caches), where the
+/// turn sequence is a pure function of the frozen conversation.
+fn static_endpoint_turns(
+    store: &dyn SegmentStore,
+    conversation: &Conversation,
+    current: usize,
+    mode: ConversationContextMode,
+) -> Result<Vec<EndpointTurn>> {
+    match mode {
+        ConversationContextMode::MessageArrayWithResponses => {
+            Ok(vec![resolve_turn(store, &conversation.turns[current])?])
+        }
+        ConversationContextMode::DeltasWithResponses => conversation.turns[..=current]
+            .iter()
+            .map(|turn| resolve_turn(store, turn))
+            .collect(),
+        // The dynamic modes interleave live replies and are never precomputed.
+        ConversationContextMode::DeltasWithoutResponses
+        | ConversationContextMode::MessageArrayWithoutResponses => Err(DatasetError::Validation(
+            "static_endpoint_turns called for a dynamic context mode".into(),
+        )),
+    }
+}
+
 fn turn_is_lowerable(turn: &Turn) -> bool {
     // An empty `body` means the turn carries no prebuilt raw body, token-native
     // IDs, or already-lowered/authored message handles — the only representations

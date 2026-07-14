@@ -522,6 +522,7 @@ fn normalize_endpoint_name(name: &str) -> String {
 fn lower_static_messages(
     dataset: &mut NativeDataset,
     endpoint_resolver: &dyn PreparedTurnEndpointResolver,
+    primary_model_name: &str,
 ) -> Result<()> {
     let resolved = endpoint_resolver.resolve(None)?;
     if let Some(lowerer) = ShapeLowerer::for_descriptor_id(resolved.endpoint.descriptor().id) {
@@ -529,6 +530,13 @@ fn lower_static_messages(
             .lower_messages_for_endpoint(&lowerer)
             .map_err(|error| anyhow!("failed to lower static messages: {error}"))?;
     }
+    // Segment spec §3a: after lowering, precompute and cache each eligible static
+    // turn's BodyPlan against the default prepared endpoint so dispatch clones it
+    // instead of reformatting. Runs on the same (lowered) segment store dispatch
+    // sees, so a cache hit is byte-identical to the live formatter output.
+    dataset
+        .precompute_body_plans(resolved.endpoint, primary_model_name)
+        .map_err(|error| anyhow!("failed to precompute body plans: {error}"))?;
     Ok(())
 }
 
@@ -1057,7 +1065,8 @@ impl NativeDatasetConversationSource {
         endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
     ) -> Result<Self> {
         let mut dataset = dataset;
-        lower_static_messages(&mut dataset, endpoint_resolver.as_ref())?;
+        let primary_model_name = model.into();
+        lower_static_messages(&mut dataset, endpoint_resolver.as_ref(), &primary_model_name)?;
         let dataset = Arc::new(dataset);
         let sampler = samplers.create(
             &dataset.metadata().sampling_strategy,
@@ -1068,7 +1077,7 @@ impl NativeDatasetConversationSource {
             dataset,
             sampler,
             NativeSessionEndpoint::Prepared {
-                primary_model_name: model.into(),
+                primary_model_name,
                 endpoint_resolver,
             },
             Arc::new(EndpointRequestMaterializer),
@@ -1104,14 +1113,15 @@ impl NativeDatasetConversationSource {
         endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
     ) -> Result<Self> {
         let mut dataset = dataset;
-        lower_static_messages(&mut dataset, endpoint_resolver.as_ref())?;
+        let primary_model_name = model.into();
+        lower_static_messages(&mut dataset, endpoint_resolver.as_ref(), &primary_model_name)?;
         let dataset = Arc::new(dataset);
         let sampler = SequentialSampler::from_metadata(&dataset.metadata().conversations)?;
         Self::new_with_endpoint(
             dataset,
             Box::new(sampler),
             NativeSessionEndpoint::Prepared {
-                primary_model_name: model.into(),
+                primary_model_name,
                 endpoint_resolver,
             },
             Arc::new(EndpointRequestMaterializer),

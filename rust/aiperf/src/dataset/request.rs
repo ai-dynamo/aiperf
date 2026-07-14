@@ -467,24 +467,43 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                 },
             )
         } else {
-            let turns = session.endpoint_turns(store)?;
-            let system_message = resolve_prompt(store, conversation.system)?;
-            let user_context_message = resolve_prompt(store, conversation.user_context)?;
-            let conversation_id = session.conversation_id().as_str().to_string();
-            let request = PreparedRequest::new(
-                primary_model_name,
-                &turns,
-                system_message.as_deref(),
-                user_context_message.as_deref(),
-                phase,
-                None,
-                None,
-                Some(&conversation_id),
-            );
-            // Endpoint-body-construction stage 2: dispatch operates on a BodyPlan
-            // (see the sibling materialize path). Byte-identical to the legacy
-            // merge-then-`to_vec` path.
-            let mut plan = endpoint.format_payload(&request)?;
+            // Segment spec §3a: reuse the cached profiling-phase plan when the
+            // dataset precomputed one for this exact `(conversation, turn)`. The
+            // cache is only populated for the default endpoint, static context
+            // modes, and eligible dialects, so a hit is byte-identical to a fresh
+            // `format_payload` here; anything else returns `None` and falls back.
+            // Warmup folds the system prompt inside the formatter, so it never
+            // reuses the profiling-phase plan.
+            let cached = (phase != CreditPhase::Warmup)
+                .then(|| {
+                    session
+                        .dataset
+                        .cached_body_plan(session.conversation_id(), turn_index)
+                })
+                .flatten();
+            let mut plan = match cached {
+                Some(cached) => cached.clone(),
+                None => {
+                    let turns = session.endpoint_turns(store)?;
+                    let system_message = resolve_prompt(store, conversation.system)?;
+                    let user_context_message = resolve_prompt(store, conversation.user_context)?;
+                    let conversation_id = session.conversation_id().as_str().to_string();
+                    let request = PreparedRequest::new(
+                        primary_model_name,
+                        &turns,
+                        system_message.as_deref(),
+                        user_context_message.as_deref(),
+                        phase,
+                        None,
+                        None,
+                        Some(&conversation_id),
+                    );
+                    // Endpoint-body-construction stage 2: dispatch operates on a
+                    // BodyPlan (see the sibling materialize path). Byte-identical
+                    // to the legacy merge-then-`to_vec` path.
+                    endpoint.format_payload(&request)?
+                }
+            };
             plan.merge_overrides(overrides);
             let effective = effective_from_plan(
                 &mut plan,
@@ -1185,7 +1204,10 @@ fn content_string(store: &dyn SegmentStore, handle: Handle, kind: MediaKind) -> 
         .map_err(|error| DatasetError::InvalidWire(format!("handle {handle}: {error}")))
 }
 
-fn resolve_prompt(store: &dyn SegmentStore, handle: Option<Handle>) -> Result<Option<String>> {
+pub(crate) fn resolve_prompt(
+    store: &dyn SegmentStore,
+    handle: Option<Handle>,
+) -> Result<Option<String>> {
     let Some(handle) = handle else {
         return Ok(None);
     };
@@ -2066,6 +2088,357 @@ mod tests {
         let turns = &dataset.conversations()[0].turns;
         // Identical rendered content dedups to a single shared segment handle.
         assert_eq!(turns[0].body[0], turns[1].body[0]);
+    }
+
+    // ---- Segment spec §3a: precompute+cache endpoint BodyPlan at bind ----
+
+    fn prepare_endpoint(id: &str) -> Box<dyn PreparedEndpoint> {
+        EndpointRegistry::builtin()
+            .unwrap()
+            .prepare(&EndpointId::new(id).unwrap(), RawEndpointConfig::default())
+            .unwrap()
+    }
+
+    fn text_turn(
+        pool: &mut SegmentPool,
+        text: &'static [u8],
+        with_max_tokens: bool,
+        with_extra_body: bool,
+    ) -> Turn {
+        // Text-segment identity keys on role + tokens (authoritative tokens), not
+        // bytes; derive distinct tokens per content so segments don't mis-dedup.
+        let tokens: Vec<u32> = text.iter().map(|&byte| byte as u32).collect();
+        let text_handle = pool
+            .intern_text(None, Role::from("user"), Bytes::from_static(text), tokens)
+            .unwrap();
+        let extra_body = with_extra_body.then(|| {
+            pool.intern_raw(None, Bytes::from_static(br#"{"temperature":0.5}"#))
+                .unwrap()
+        });
+        Turn {
+            role: Some(Role::from("user")),
+            content: smallvec![ContentGroup {
+                kind: MediaKind::Text,
+                name: String::new(),
+                handles: smallvec![text_handle],
+            }],
+            input_tokens: 2,
+            max_tokens: with_max_tokens.then_some(7),
+            extra_body,
+            ..Turn::default()
+        }
+    }
+
+    fn single_conversation_dataset(
+        mode: ConversationContextMode,
+        turns: Vec<Turn>,
+        pool: SegmentPool,
+    ) -> Dataset {
+        let mut conversation = Conversation::new("session");
+        conversation.context_mode = Some(mode);
+        conversation.turns = turns;
+        Dataset::new(
+            vec![conversation],
+            Arc::new(pool.freeze()),
+            "sequential",
+            mode,
+        )
+        .unwrap()
+    }
+
+    fn dispatch_turn(
+        dataset: Arc<Dataset>,
+        endpoint: &dyn PreparedEndpoint,
+        turn_index: usize,
+        overrides: &Overrides,
+    ) -> Bytes {
+        let mut session = ConversationSession::new(dataset, SessionId::from("session")).unwrap();
+        for index in 0..=turn_index {
+            session.advance_to(index).unwrap();
+        }
+        session
+            .materialize_prepared(
+                &EndpointRequestMaterializer,
+                endpoint,
+                "primary-model",
+                CreditPhase::Profiling,
+                overrides,
+            )
+            .unwrap()
+            .body
+    }
+
+    #[test]
+    fn cached_plan_is_byte_identical_to_per_dispatch_format_across_matrix() {
+        // The load-bearing oracle: for every (endpoint × context mode × overrides ×
+        // max_tokens × extra_body) combination, materializing with the cache
+        // populated must produce byte-for-byte the same body as the per-dispatch
+        // `format_payload` fallback on the identically-lowered store.
+        for endpoint_id in ["chat", "responses", "messages"] {
+            for mode in [
+                ConversationContextMode::MessageArrayWithResponses,
+                ConversationContextMode::DeltasWithResponses,
+            ] {
+                for with_max_tokens in [false, true] {
+                    for with_extra_body in [false, true] {
+                        for overrides_variant in 0..2 {
+                            let mut pool = SegmentPool::new();
+                            let turns = vec![
+                                text_turn(&mut pool, b"hello world", with_max_tokens, with_extra_body),
+                                text_turn(&mut pool, b"second turn", with_max_tokens, with_extra_body),
+                            ];
+                            let base = single_conversation_dataset(mode, turns, pool);
+                            let endpoint = prepare_endpoint(endpoint_id);
+                            let lowerer =
+                                ShapeLowerer::for_descriptor_id(endpoint.descriptor().id).unwrap();
+
+                            // Cache-enabled dataset: lower then precompute.
+                            let mut cached_ds = base.clone();
+                            cached_ds.lower_messages_for_endpoint(&lowerer).unwrap();
+                            cached_ds
+                                .precompute_body_plans(endpoint.as_ref(), "primary-model")
+                                .unwrap();
+
+                            // Cache-disabled dataset: lower only (empty cache → fallback).
+                            let mut uncached_ds = base;
+                            uncached_ds.lower_messages_for_endpoint(&lowerer).unwrap();
+
+                            let cached = Arc::new(cached_ds);
+                            let uncached = Arc::new(uncached_ds);
+
+                            let overrides = if overrides_variant == 0 {
+                                Overrides::new()
+                            } else {
+                                let mut overrides = Overrides::new();
+                                overrides.set_stream(true);
+                                overrides.set_model("override-model");
+                                overrides
+                            };
+
+                            for turn_index in 0..2 {
+                                // The cache must actually be engaged for this turn.
+                                assert!(
+                                    cached
+                                        .cached_body_plan(&SessionId::from("session"), turn_index)
+                                        .is_some(),
+                                    "expected cached plan: endpoint={endpoint_id} mode={mode:?} ti={turn_index}"
+                                );
+                                let from_cache = dispatch_turn(
+                                    cached.clone(),
+                                    endpoint.as_ref(),
+                                    turn_index,
+                                    &overrides,
+                                );
+                                let from_format = dispatch_turn(
+                                    uncached.clone(),
+                                    endpoint.as_ref(),
+                                    turn_index,
+                                    &overrides,
+                                );
+                                assert_eq!(
+                                    from_cache, from_format,
+                                    "byte divergence: endpoint={endpoint_id} mode={mode:?} max_tokens={with_max_tokens} extra_body={with_extra_body} overrides={overrides_variant} turn={turn_index}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn warmup_phase_falls_back_to_live_format_not_profiling_cache() {
+        // A system-role first turn makes warmup differ from profiling: warmup folds
+        // the conversation system prompt into that first message, while profiling
+        // drops it. The profiling-phase cache must therefore never serve warmup.
+        let mut pool = SegmentPool::new();
+        let system = pool
+            .intern_text(None, Role::from("system"), Bytes::from_static(b"be terse"), vec![1])
+            .unwrap();
+        let system_turn_text = pool
+            .intern_text(None, Role::from("system"), Bytes::from_static(b"base"), vec![2, 3])
+            .unwrap();
+        let system_turn = Turn {
+            role: Some(Role::from("system")),
+            content: smallvec![ContentGroup {
+                kind: MediaKind::Text,
+                name: String::new(),
+                handles: smallvec![system_turn_text],
+            }],
+            input_tokens: 1,
+            ..Turn::default()
+        };
+        let mut conversation = Conversation::new("session");
+        conversation.context_mode = Some(ConversationContextMode::MessageArrayWithResponses);
+        conversation.system = Some(system);
+        conversation.turns = vec![system_turn];
+        let mut dataset = Dataset::new(
+            vec![conversation],
+            Arc::new(pool.freeze()),
+            "sequential",
+            ConversationContextMode::MessageArrayWithResponses,
+        )
+        .unwrap();
+        let endpoint = prepare_endpoint("chat");
+        let lowerer = ShapeLowerer::for_descriptor_id("chat").unwrap();
+        dataset.lower_messages_for_endpoint(&lowerer).unwrap();
+        dataset
+            .precompute_body_plans(endpoint.as_ref(), "primary-model")
+            .unwrap();
+        // A profiling plan was cached for turn 0.
+        assert!(
+            dataset
+                .cached_body_plan(&SessionId::from("session"), 0)
+                .is_some()
+        );
+        let dataset = Arc::new(dataset);
+
+        let mut warmup_session =
+            ConversationSession::new(dataset.clone(), SessionId::from("session")).unwrap();
+        warmup_session.advance_to(0).unwrap();
+        let warmup_body = warmup_session
+            .materialize_prepared(
+                &EndpointRequestMaterializer,
+                endpoint.as_ref(),
+                "primary-model",
+                CreditPhase::Warmup,
+                &Overrides::new(),
+            )
+            .unwrap()
+            .body;
+        let profiling_body = dispatch_turn(dataset, endpoint.as_ref(), 0, &Overrides::new());
+        // Warmup folds the conversation system prompt into the first message;
+        // profiling (the cached plan) does not — the two must diverge.
+        assert_ne!(warmup_body, profiling_body);
+        let warmup: Value = serde_json::from_slice(&warmup_body).unwrap();
+        assert_eq!(warmup["messages"][0]["content"], "be terse\nbase");
+    }
+
+    #[test]
+    fn ineligible_turns_and_endpoints_are_never_cached() {
+        // Dynamic context modes are never precomputed (live replies interleave).
+        for mode in [
+            ConversationContextMode::MessageArrayWithoutResponses,
+            ConversationContextMode::DeltasWithoutResponses,
+        ] {
+            let mut pool = SegmentPool::new();
+            let turn = text_turn(&mut pool, b"dyn", true, false);
+            let mut dataset = single_conversation_dataset(mode, vec![turn], pool);
+            let endpoint = prepare_endpoint("chat");
+            let lowerer = ShapeLowerer::for_descriptor_id("chat").unwrap();
+            dataset.lower_messages_for_endpoint(&lowerer).unwrap();
+            dataset
+                .precompute_body_plans(endpoint.as_ref(), "primary-model")
+                .unwrap();
+            assert!(
+                dataset
+                    .cached_body_plan(&SessionId::from("session"), 0)
+                    .is_none(),
+                "dynamic mode {mode:?} must not be cached"
+            );
+        }
+
+        // Non-message-array / non-precomputable endpoints cache nothing at all.
+        // (`template`/`raw` are additionally gated by `precomputable_body()`.)
+        for endpoint_id in ["vllm_generate", "completions", "embeddings", "raw"] {
+            let mut pool = SegmentPool::new();
+            let turn = text_turn(&mut pool, b"x", true, false);
+            let mut dataset = single_conversation_dataset(
+                ConversationContextMode::MessageArrayWithResponses,
+                vec![turn],
+                pool,
+            );
+            let endpoint = prepare_endpoint(endpoint_id);
+            dataset
+                .precompute_body_plans(endpoint.as_ref(), "primary-model")
+                .unwrap();
+            assert!(
+                dataset
+                    .cached_body_plan(&SessionId::from("session"), 0)
+                    .is_none(),
+                "endpoint {endpoint_id} must not be cached"
+            );
+        }
+
+        // Per-turn endpoint override, raw body, and graph/DAG conversations fall back.
+        let mut pool = SegmentPool::new();
+        let raw = pool
+            .intern_raw(None, Bytes::from_static(br#"{"messages":[]}"#))
+            .unwrap();
+        let override_turn = Turn {
+            endpoint: Some("responses".into()),
+            content: smallvec![ContentGroup {
+                kind: MediaKind::Text,
+                name: String::new(),
+                handles: smallvec![pool
+                    .intern_text(None, Role::from("user"), Bytes::from_static(b"ov"), vec![1])
+                    .unwrap()],
+            }],
+            input_tokens: 1,
+            ..Turn::default()
+        };
+        let raw_turn = Turn {
+            body: Turn::dispatch_body(Some(raw), None, &[]),
+            input_tokens: 1,
+            ..Turn::default()
+        };
+        let mut dataset = single_conversation_dataset(
+            ConversationContextMode::MessageArrayWithResponses,
+            vec![override_turn, raw_turn],
+            pool,
+        );
+        let endpoint = prepare_endpoint("chat");
+        let lowerer = ShapeLowerer::for_descriptor_id("chat").unwrap();
+        dataset.lower_messages_for_endpoint(&lowerer).unwrap();
+        dataset
+            .precompute_body_plans(endpoint.as_ref(), "primary-model")
+            .unwrap();
+        assert!(
+            dataset
+                .cached_body_plan(&SessionId::from("session"), 0)
+                .is_none(),
+            "per-turn endpoint override must not be cached"
+        );
+        assert!(
+            dataset
+                .cached_body_plan(&SessionId::from("session"), 1)
+                .is_none(),
+            "raw body turn must not be cached"
+        );
+
+        // Graph/DAG conversation is excluded wholesale.
+        let mut pool = SegmentPool::new();
+        let dag_turn = text_turn(&mut pool, b"graph", false, false);
+        let mut conversation = Conversation::new("session");
+        conversation.context_mode = Some(ConversationContextMode::MessageArrayWithResponses);
+        conversation.turns = vec![dag_turn];
+        conversation.dag = Some(crate::dataset::model::DagMetadata {
+            branches: Default::default(),
+            is_root: true,
+            agent_depth: 0,
+            parent_conversation_id: None,
+            root_conversation_id: SessionId::from("session"),
+        });
+        let mut dataset = Dataset::new(
+            vec![conversation],
+            Arc::new(pool.freeze()),
+            "sequential",
+            ConversationContextMode::MessageArrayWithResponses,
+        )
+        .unwrap();
+        let endpoint = prepare_endpoint("chat");
+        let lowerer = ShapeLowerer::for_descriptor_id("chat").unwrap();
+        dataset.lower_messages_for_endpoint(&lowerer).unwrap();
+        dataset
+            .precompute_body_plans(endpoint.as_ref(), "primary-model")
+            .unwrap();
+        assert!(
+            dataset
+                .cached_body_plan(&SessionId::from("session"), 0)
+                .is_none(),
+            "graph/DAG conversation must not be cached"
+        );
     }
 
     #[test]
