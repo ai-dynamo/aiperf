@@ -209,10 +209,7 @@ impl Dataset {
                 let Ok(wires) = lowerer.lower_turn(&endpoint_turn) else {
                     continue;
                 };
-                let role = turn
-                    .role
-                    .clone()
-                    .unwrap_or_else(|| Role::new("user"));
+                let role = turn.role.clone().unwrap_or_else(|| Role::new("user"));
                 let mut handles: SmallVec<[Handle; 1]> = SmallVec::new();
                 let mut parent = None;
                 for wire in wires {

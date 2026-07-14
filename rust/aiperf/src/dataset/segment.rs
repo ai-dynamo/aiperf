@@ -332,8 +332,10 @@ impl SegmentPool {
             // wire, never a different-media wire that merely shares text tokens.
             debug_assert!(
                 match (&self.arena[handle.as_usize()].payload, &payload) {
-                    (Payload::Message { wire: stored, .. }, Payload::Message { wire: fresh, .. }) =>
-                        stored == fresh,
+                    (
+                        Payload::Message { wire: stored, .. },
+                        Payload::Message { wire: fresh, .. },
+                    ) => stored == fresh,
                     _ => true,
                 },
                 "segment id collision returned a message with a different wire"
@@ -754,7 +756,9 @@ mod tests {
     #[test]
     fn thaw_preserves_handles_and_ids_and_appends_new_segments() {
         let mut pool = SegmentPool::new();
-        let a = pool.intern_raw(None, Bytes::from_static(b"{\"a\":1}")).unwrap();
+        let a = pool
+            .intern_raw(None, Bytes::from_static(b"{\"a\":1}"))
+            .unwrap();
         let b = pool
             .intern_message(Some(a), "user", Bytes::from_static(b"{}"), vec![1_u32])
             .unwrap();

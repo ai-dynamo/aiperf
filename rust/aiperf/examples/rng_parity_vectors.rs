@@ -31,7 +31,11 @@ fn main() {
     for id in namespace::ALL {
         derive.insert(
             id.to_string(),
-            json!(RngRoot::new(Some(42)).derive_seed(id).map(|s| s.to_string())),
+            json!(
+                RngRoot::new(Some(42))
+                    .derive_seed(id)
+                    .map(|s| s.to_string())
+            ),
         );
     }
     derive.insert(
@@ -173,5 +177,8 @@ fn main() {
         json!(buf.iter().map(|b| format!("{b:02x}")).collect::<String>()),
     );
 
-    println!("{}", serde_json::to_string_pretty(&Value::Object(out)).unwrap());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&Value::Object(out)).unwrap()
+    );
 }
