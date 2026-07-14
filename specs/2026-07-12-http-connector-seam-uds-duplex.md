@@ -12,7 +12,7 @@
 ### The mode-branch smell (real code)
 
 Connection establishment lives in
-`rust/aiperf-transport-http/src/client/connection.rs`. The un-timed body is
+`rust/aiperf/src/transport_http/client/connection.rs`. The un-timed body is
 `establish_inner` (`connection.rs:419-509`). Its first act is a mode branch on a
 config flag:
 
@@ -344,7 +344,7 @@ handler; the exact HTTP client stack runs with no loopback socket.**
   route URL distinct from the `unix:` connect URL, mirroring today's
   `transport_bench` split of `uds_path` vs `http://localhost/...`). Dropping
   `uds_path` removes the *connect-selector flag*, not the route/Host source.
-- **BLOCKING PREREQUISITE — migrate `aiperf-graph/src/transport_bench.rs` in the
+- **BLOCKING PREREQUISITE — migrate `rust/aiperf/src/graph/transport_bench.rs` in the
   same change:** it is the only live non-`None` writer of `uds_path`
   (`transport_bench.rs:462–474` parse, `:502–506` `ClientConfig { … uds_path … }`,
   `:516` `establish(&url, &cfg, …)`). Removing the field or the UDS branch of
@@ -417,7 +417,7 @@ product-reachable mode.
 
 **UDS-win throughput harness needs an unbudgeted `rps_bench` rewire.** The
 regression plan's UDS-vs-TCP win driver (Harness C) uses
-`aiperf-transport-http/examples/rps_bench.rs`, which calls `establish` directly
+`aiperf/examples/rps_bench.rs`, which calls `establish` directly
 and is **not** wired to a `unix:`-scheme client (regression plan §1.4). Measuring
 the headline UDS win requires rewiring `rps_bench` to select a `UdsConnector`
 (or `fast_sse`'s `UDS_PATH` server plus a `unix:` client), which is additional
@@ -461,7 +461,7 @@ path above the transport. The seam is strictly *below the `Sender`*.
   `unix:` paths → two entries; same path twice → one shared entry.
 - **`establish`/`establish_with_resolver` public API:** these `pub` fns
   (`connection.rs:382,397`) are used by the pool, tests, **and
-  `aiperf-graph/src/transport_bench.rs:516` (a live out-of-crate caller)**. They
+  `rust/aiperf/src/graph/transport_bench.rs:516` (a live out-of-crate caller)**. They
   MUST be kept as shims over `TcpConnector::connect` (or `transport_bench`
   rewired to the connector) — a bare removal breaks the graph bench compile.
   Grep found `transport_bench` because it calls `establish(` even though it sets
@@ -486,7 +486,8 @@ path above the transport. The seam is strictly *below the `Sender`*.
 Scratch project: `~/tmp/connector-spec/` (throwaway; the target repo was not
 modified). Deps pinned to workspace majors: `hyper 1.10` (client+server+http1+http2),
 `hyper-util 0.1` (TokioIo), `tokio 1`, `http-body-util 0.1`, `async-trait 0.1`,
-`url 2`, `bytes 1` — matching `rust/aiperf-transport-http/Cargo.toml` and
+`url 2`, `bytes 1` — matching `rust/aiperf/Cargo.toml` (the transport is now a
+module of the `aiperf` crate; its deps live in that manifest, not a per-crate one) and
 `Cargo.lock` (hyper 1.10.1, hyper-util 0.1.20, tokio 1.48, async-trait 0.1.89).
 
 ### 7.1 Trait + impls compile
@@ -568,7 +569,7 @@ cargo test       # all_three_connectors_round_trip ... ok
   connector field), `:309-315` & `:400-407` (establish → `connector.connect`),
   `:28-35` (`origin_key` keys UDS/Duplex by path/name); `http_client.rs:276` &
   `:330` (establish → connector), add `connector` field; `config/defaults.rs:199-202,220`
-  (drop `uds_path`); **`aiperf-graph/src/transport_bench.rs:462-506,516`**
+  (drop `uds_path`); **`rust/aiperf/src/graph/transport_bench.rs:462-506,516`**
   (migrate the live `uds_path` writer to `unix:`-scheme connector selection — same
   change, or aiperf-graph fails to compile); **`src/aiperf/config/endpoint.py`
   ~460-475** (relax netloc/hostname + whitelist `unix` + skip port parse, three

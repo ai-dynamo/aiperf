@@ -81,7 +81,7 @@ Repo-relative to `/home/anthony/nvidia/projects/aiperf/ajc/rust`:
   `trace_models.py` (`BaseTraceData`, `AioHttpTraceData`, `*Export`),
   `error_models.py` (`ErrorDetails`).
 
-Local Rust reference: `rust/aiperf-clock` (the `Clock` contract) and
+Local Rust reference: `rust/aiperf/src/clock` (the `Clock` contract) and
 `rust/aiperf` (existing `dynamo-aiperf` — HttpSink/SSE prior art, and the
 `graph::runtime` `drive_real`/`drive_sim` execution model we mirror).
 

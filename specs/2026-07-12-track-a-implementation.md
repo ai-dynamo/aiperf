@@ -214,7 +214,7 @@ The one load-bearing refactor, isolated so it can land and bake before A1.
   (`establish_with_resolver` → `connector.connect`), **`pool.rs:28-35` `origin_key`
   must key UDS/Duplex by path/name, not the synthetic host — highest-risk item**,
   `http_client.rs:276/330`, `config/defaults.rs:199-202` (drop `uds_path`), and
-  **`aiperf-graph/src/transport_bench.rs:462-506,516` — the ONE live non-`None` writer
+  **`rust/aiperf/src/graph/transport_bench.rs:462-506,516` — the ONE live non-`None` writer
   of `uds_path` (NOT dead code, correcting the earlier claim; it sets `uds_path` via
   struct-shorthand which a `grep "uds_path:"` misses). Migrate it to `unix:`-scheme
   connector selection in this SAME PR or aiperf-graph fails to compile (field drop) /

@@ -24,7 +24,7 @@ top of), `2026-07-10-aiperf-rust-metrics-accumulator-sweepline-design.md` +
 `…-telemetry-accumulators-design.md` (the measured-metrics seam the window sampler
 reads — referenced, not re-designed), `2026-07-11-aiperf-rust-exporters-overhaul-design.md`
 (where the JSONL/summary artifacts land). `aiperf-timing` built primitives verified in
-`rust/aiperf-timing/src/{intervals,slots,stop}.rs`.
+`rust/aiperf/src/timing/{intervals,slots,stop}.rs`.
 
 ---
 

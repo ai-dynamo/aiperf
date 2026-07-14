@@ -495,7 +495,7 @@ handshake, or credit-router wire type was reintroduced.
 
 ### Built symbols and ownership
 
-- `aiperf-timing/src/phase/config.rs` owns validated `PhaseConfig`, `PhaseKind`, and an
+- `rust/aiperf/src/timing/phase/config.rs` owns validated `PhaseConfig`, `PhaseKind`, and an
   explicit `GracePeriod::{Disabled, Finite, Infinite}`. The enum removes the ambiguous
   `None`/zero/infinity encoding while preserving warmup's infinite-drain default.
 - `lifecycle.rs` implements the validated CREATED → STARTED → SENDING_COMPLETE → COMPLETE

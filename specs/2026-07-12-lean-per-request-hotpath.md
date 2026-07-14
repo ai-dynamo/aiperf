@@ -36,12 +36,12 @@ One scheduled request flows through:
    `obs.on_classified_token(uuid, self.ms(msg.perf_ns), kind)` (`http.rs:978`).
 3. `obs` is an `ObserverTee` (`rust/aiperf/src/metrics.rs:688`, built at
    `scheduled.rs:486`) fanning **every** token callback to
-   `CollectorObserver` (`rust/aiperf-core/src/observer.rs:49`) **and**
+   `CollectorObserver` (`rust/loadgen-core/src/observer.rs:49`) **and**
    `NativeMetricsObserver` (`rust/aiperf/src/metrics.rs:546`).
 
 Key structural fact: **the transport does not parse while streaming.** The
 streaming callback only runs the first-token filter until the first meaningful
-token is seen (`rust/aiperf-transport-http/src/client/http_client.rs:701-709`,
+token is seen (`rust/aiperf/src/transport_http/client/http_client.rs:701-709`,
 gated by `!first_seen`); all SSE messages are buffered into `record.responses`
 (`http_client.rs:709`) and the real parse happens later in the `http.rs:948`
 loop. This changes the true shape of Finding #2 (see below).
@@ -115,7 +115,7 @@ a **local `Vec`** during the stream, hand off once.
 defaulted method** — backward compatible, object-safe (proven in the scratch
 crate via `&dyn RequestObserver`). It requires editing `ObserverTee`
 (`metrics.rs`), `NativeMetricsObserver`, `CollectorObserver`, and the
-`aiperf-adaptive` tee (`rust/aiperf-adaptive/src/observer.rs:91`) to override
+`aiperf-adaptive` tee (`rust/aiperf/src/adaptive_core/observer.rs:91`) to override
 for full benefit, but nothing breaks if they don't. Option A is a deeper
 cross-crate seam change.
 
@@ -161,7 +161,7 @@ transport buffers **all** SSE messages into `record.responses`
 pass** (`http.rs:948-1006`), instead of parsing inline during the stream. The
 graph lane already does the lean thing — parse `ChatChunk` inside the streaming
 `on_msg` callback and never accumulate `Response` objects
-(`rust/aiperf-graph/src/transport_bench.rs:206-232`). The redundant generic
+(`rust/aiperf/src/graph/transport_bench.rs:206-232`). The redundant generic
 `serde_json::Value` parse was already gated behind `capture_wire_responses`
 (`http.rs:956`, default set to skip for perf runs per `http.rs:670-680`), so
 that half is done.
@@ -331,7 +331,7 @@ scalars (`store.rs:1000-1021`); OSL/ITL/TPOT come from usage
 vector is droppable **iff InterChunkLatency is not being reported**. But ICL is
 currently **always** computed for the online path — there is no
 `MetricsConfig` flag to disable it (`MetricsConfig`,
-`rust/aiperf-metrics/src/accumulator.rs:109-127`, has no ICL toggle), and the
+`rust/aiperf/src/metrics_core/accumulator.rs:109-127`, has no ICL toggle), and the
 online metrics test asserts ICL is present (`metrics.rs:1108-1112`).
 
 **Proposed change.** Add an explicit `retain_token_arrivals` / "ICL enabled"
@@ -361,7 +361,7 @@ the per-request batch buffer entirely in aggregate mode.
 > correct, in addition to the ICL-enabled test.
 
 **Seam impact.** Localized to `rust/aiperf/src/metrics.rs` +
-`rust/aiperf-metrics` (a `MetricsConfig` bool and a store guard). **Not** a
+`rust/aiperf/src/metrics_core` (a `MetricsConfig` bool and a store guard). **Not** a
 `loadgen-core` change. **Expected impact.** Medium — removes the largest
 per-request allocation (a `Vec<i64>` sized to output length) for aggregate-only
 / no-ICL runs. **Blast radius.** Small-medium (config plumb + store guard +

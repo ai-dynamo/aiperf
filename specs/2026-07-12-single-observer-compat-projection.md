@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-12
 **Status:** Proposed (verified against code; compile-checked projection skeleton attached)
-**Scope:** `rust/aiperf` (scheduled/run/phase_runtime/metrics), `rust/loadgen-core` (collector), `rust/aiperf-metrics` (accumulator/report), `rust/aiperf-core` (observer). Repo is READ-ONLY for this spec; no repo files were modified.
+**Scope:** `rust/aiperf` (scheduled/run/phase_runtime/metrics), `rust/loadgen-core` (collector), `rust/aiperf/src/metrics_core` (accumulator/report), `rust/loadgen-core` (observer). Repo is READ-ONLY for this spec; no repo files were modified.
 **Verification artifact:** `~/tmp/a2-spec/` — a throwaway Cargo crate with path deps on `loadgen-core` + `aiperf-metrics` that compiles `fn project_trace_report(summary: &AccumulatorSummary, records: &[RecordIngest], wall_ms) -> TraceSimulationReport`. `cargo build` is green (see "Verification evidence").
 
 ---
@@ -14,7 +14,7 @@ On the paths where the dispatcher forwards the runtime's observer, **every reque
 - `rust/aiperf/src/scheduled.rs:482-486` builds
   `ObserverTee::new(vec![CollectorObserver, NativeMetricsObserver])` and stores it as the runtime `observer`.
 - `rust/aiperf/src/metrics.rs:688-736` (`ObserverTee`) fans **every** callback (`on_arrival`/`on_admit`/`on_token`/`on_classified_token`/`on_output_tokens`/`on_usage`/`on_terminal`) to **both** delegates in order.
-- Delegate 1 — `CollectorObserver` (`rust/aiperf-core/src/observer.rs:19-68`) → `TraceCollector` (`rust/loadgen-core/src/collector.rs:466-746`): a `FxHashMap<Uuid, TraceRequestStats>`; `on_token` does one map lookup + one `Vec::push` per token (`collector.rs:740-746`).
+- Delegate 1 — `CollectorObserver` (`rust/loadgen-core/src/observer.rs:19-68`) → `TraceCollector` (`rust/loadgen-core/src/collector.rs:466-746`): a `FxHashMap<Uuid, TraceRequestStats>`; `on_token` does one map lookup + one `Vec::push` per token (`collector.rs:740-746`).
 - Delegate 2 — `NativeMetricsObserver` (`rust/aiperf/src/metrics.rs:190-673`): a second `FxHashMap<Uuid, usize>` slot lookup + `Vec<i64>` push per token (`metrics.rs:599-635`).
 
 So each token pays **two hashmap lookups + two vec pushes**, and each request pays **two per-request allocations** that are reduced by two independent finalizers at `finish_at` (`scheduled.rs:1115-1127`: `collector.finish()` **and** `native_metrics.finish()`, optionally in `rayon::join`).
@@ -139,8 +139,8 @@ Drop `CollectorObserver` from the delegate list / stop feeding it, then project 
 - `rust/aiperf/src/phase_runtime.rs:762-786` — already conditional on `plan.collect_performance_summary`; default it `false` for the online/offline plans (`phase_runtime.rs:324`) and route `finish` through the projection. The single-delegate collapse (`phase_runtime.rs:782-786`) already removes the `ObserverTee` allocation when only native remains.
 - `rust/aiperf/src/run.rs:434-441`, `run.rs:897-904`, `run.rs:1151-1158` — three online entry points build the tee; switch to native-only + projection at `run.rs:667` (`performance: collector.finish(wall_ms)` → `project_trace_report(...)`).
 - `rust/aiperf/src/dynosim.rs:2878-2885`, `dynosim.rs:3265-3266`, `dynosim.rs:3647-3648`, `dynosim.rs:3791-3792` — offline tees; native-only, and keep `compatibility_report_from_dynamo` (`dynosim.rs:986-1050`) for the SimClock byte gate. The `independently_accumulated` branch (`dynosim.rs:924-932`) already handles an unfed collector.
-- `rust/aiperf-runner/src/execute.rs:3067-3080,3262-3311` — already single-observer for tokens; the win here is removing the idle runtime collector+native allocation and their discarded finalization (or setting `collect_performance_summary=false` on the runner plan at `execute.rs:1963`).
-- After no caller feeds it: `CollectorObserver` (`rust/aiperf-core/src/observer.rs`) and `ObserverTee` (`rust/aiperf/src/metrics.rs:677-736`) lose their online/offline users; `TraceCollector` (`rust/loadgen-core/src/collector.rs`) survives only as the projection **target type** + the Dynamo parity path.
+- `rust/runner/src/execute.rs:3067-3080,3262-3311` — already single-observer for tokens; the win here is removing the idle runtime collector+native allocation and their discarded finalization (or setting `collect_performance_summary=false` on the runner plan at `execute.rs:1963`).
+- After no caller feeds it: `CollectorObserver` (`rust/loadgen-core/src/observer.rs`) and `ObserverTee` (`rust/aiperf/src/metrics.rs:677-736`) lose their online/offline users; `TraceCollector` (`rust/loadgen-core/src/collector.rs`) survives only as the projection **target type** + the Dynamo parity path.
 
 ---
 

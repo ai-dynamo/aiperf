@@ -96,7 +96,7 @@ Today Python constructs `EndpointType` from Python plugin registrations at impor
   capabilities.
 
 This ordering is already observably wrong. The Rust runner advertises `messages` in
-`rust/aiperf-runner/src/protocol.rs:49-68`, while the Python endpoint block in
+`rust/runner/src/protocol.rs:49-68`, while the Python endpoint block in
 `src/aiperf/plugin/plugins.yaml:184-421` and its checked-in Config-v2 schema do not contain
 `messages`. A valid endpoint compiled into the selected runner is consequently rejected before
 the selected runner can see it.
@@ -119,7 +119,7 @@ Endpoint metadata currently drives Python behavior in at least these paths:
 | `common/readiness_probe.py:45-63,189-218` | hardcoded endpoint paths and payloads | Rust endpoint formatter/header/transport path |
 
 The corresponding streaming, form-data, template, URL, and endpoint-metadata validation already
-exists in `rust/aiperf-endpoints/src/config.rs:100-182`. Feeding Rust metadata into the existing
+exists in `rust/aiperf/src/endpoints/config.rs:100-182`. Feeding Rust metadata into the existing
 Python validators would remove one data-copy but leave two executable rule engines. That is not
 the target architecture.
 
@@ -127,12 +127,12 @@ the target architecture.
 
 The native implementation also needs consolidation:
 
-1. `rust/aiperf-endpoints/src/metadata.rs:8-48` defines a closed `EndpointType` enum.
+1. `rust/aiperf/src/endpoints/metadata.rs:8-48` defines a closed `EndpointType` enum.
 2. The same file stores a separate metadata table selected by that enum.
-3. `rust/aiperf-dataset/src/request.rs:97-226` manually registers endpoint names and keeps a
+3. `rust/aiperf/src/dataset/request.rs:97-226` manually registers endpoint names and keeps a
    second enum-indexed map.
-4. `rust/aiperf-runner/src/protocol.rs:49-68` hardcodes the capability list independently.
-5. `rust/aiperf-runner/src/execute.rs:351` constructs `AiperfRegistry::builtin()` inside
+4. `rust/runner/src/protocol.rs:49-68` hardcodes the capability list independently.
+5. `rust/runner/src/execute.rs:351` constructs `AiperfRegistry::builtin()` inside
    execution rather than accepting the runner's composed registry.
 
 As a result, the current compile-time endpoint extension proof is not a proof of a new dialect. It

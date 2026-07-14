@@ -70,7 +70,7 @@ enabled it authors `resources.sidecars.content_server` with host, port, and
 record capacity, plus `content_dir` only when the environment value is
 non-empty. This projection does not create, canonicalize, or read the directory.
 
-`aiperf-runner/src/sidecar_input.rs` owns the single strict decode into
+`runner/src/sidecar_input.rs` owns the single strict decode into
 `ContentServerSpec`. Unknown fields, whitespace-padded or invalid hosts,
 non-origin URL shapes, invalid bounds, empty authored paths, and relative paths
 fail during validation. A missing absolute directory remains valid at this
@@ -206,16 +206,16 @@ away from inline form.
 
 The implementation is complete only when these remain green:
 
-- `cargo test -p aiperf-dataset --lib`: publisher injection sees raw final
+- `cargo test -p aiperf --lib`: publisher injection sees raw final
   bytes, the returned endpoint value is interned, and inline defaults retain
   their existing wire form.
-- `cargo test -p aiperf-content-server`: naming, file bytes, audio fallback,
+- `cargo test -p aiperf`: naming, file bytes, audio fallback,
   model/header parity, bounded tracking, health, MIME, range, 404, traversal,
   serving and publication symlink confinement, atomic final replacement,
   startup failure, temporary-root ownership, transfer telemetry, and shutdown.
 - runner sidecar tests: strict decode, bounds, default HTTP port, unknown-field
   rejection, and missing-path validation without creation.
-- `aiperf-runner/tests/online_v2_stdio.rs`: a real runner child generates a PNG
+- `runner/tests/online_v2_stdio.rs`: a real runner child generates a PNG
   URL, a mock inference server fetches it from the child content server and
   verifies the PNG signature, the run succeeds, the file persists in the
   authored directory, and the listener port is released at child exit.
@@ -242,11 +242,11 @@ The implementation is complete only when these remain green:
 
 - Public settings: `src/aiperf/common/environment.py`
 - Config-v2 projection: `src/aiperf/orchestrator/rust_wire.py`
-- Strict sidecar adapter: `rust/aiperf-runner/src/sidecar_input.rs`
-- Wire field: `rust/aiperf-runner/src/protocol_v2.rs`
-- Dataset adapter injection: `rust/aiperf-runner/src/dataset_input.rs`
-- Pair preparation: `rust/aiperf-runner/src/online_execution.rs`
-- Lifecycle ownership: `rust/aiperf-runner/src/execute.rs`
-- Publication seam/generators: `rust/aiperf-dataset/src/generator/`
-- Server/runtime/tracking: `rust/aiperf-content-server/src/`
-- Product subprocess proof: `rust/aiperf-runner/tests/online_v2_stdio.rs`
+- Strict sidecar adapter: `rust/runner/src/sidecar_input.rs`
+- Wire field: `rust/runner/src/protocol_v2.rs`
+- Dataset adapter injection: `rust/runner/src/dataset_input.rs`
+- Pair preparation: `rust/runner/src/online_execution.rs`
+- Lifecycle ownership: `rust/runner/src/execute.rs`
+- Publication seam/generators: `rust/aiperf/src/dataset/generator/`
+- Server/runtime/tracking: `rust/aiperf/src/content_server/`
+- Product subprocess proof: `rust/runner/tests/online_v2_stdio.rs`

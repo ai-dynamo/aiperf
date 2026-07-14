@@ -63,7 +63,7 @@ buys all three modes for free.
   `RequestSink` / `RequestObserver` (`on_arrival/on_admit/on_token/on_terminal`).
   Real HTTP, mock HTTP, and in-process co-sim are three `RequestSink` impls behind
   one observer. This is the second half of "three modes for free."
-- **Gap:** `aiperf-graph/src/lib.rs:14-15` explicitly says the offline
+- **Gap:** `rust/aiperf/src/graph/mod.rs:14-15` explicitly says the offline
   virtual-clock co-sim path is **not** wired yet. The seam exists; the
   OFFLINE-MOCK sink is the missing third leg. Design it in now.
 

@@ -25,7 +25,7 @@ observer.
 
 ### 1.1 The buffer-and-replay machinery
 
-`rust/aiperf-runner/src/turn_execution.rs`:
+`rust/runner/src/turn_execution.rs`:
 
 - `BufferedObserver` (lines 164–223): a `RequestObserver` whose `on_admit` /
   `on_token` / `on_classified_token` / `on_usage` / `on_endpoint_metrics` /
@@ -76,13 +76,13 @@ profiling for a request-bound vs token-bound ceiling, run **both** a long-output
 and a short-output/usage-only workload — a single ratio floor at N=4 cannot tell
 them apart.
 
-The gRPC path has an identical twin: `rust/aiperf-runner/src/grpc_turn_execution.rs`
+The gRPC path has an identical twin: `rust/runner/src/grpc_turn_execution.rs`
 `BufferedObserver` (lines 156–204) and replay loop (lines 376–378).
 
 ### 1.2 Who the single coordinator observer actually is (runner product path)
 
 The runner product path does **not** use the `ScheduledRuntime` observer. In
-`rust/aiperf-runner/src/execute.rs`, `ConfiguredDispatcher::dispatch_turn`
+`rust/runner/src/execute.rs`, `ConfiguredDispatcher::dispatch_turn`
 (lines 3268–3287) **ignores** the `ScheduledRuntime`-supplied `_observer`
 (line 3271) and feeds the backend `self.capture.observer` instead. The comment
 at lines 3276–3282 is explicit:
@@ -101,7 +101,7 @@ replayed onto this one observer. **This single observer is the runner ceiling.**
 
 ### 1.3 The reference design that already scales — graph bench
 
-`rust/aiperf-graph/src/transport_bench.rs` keeps a **per-worker**
+`rust/aiperf/src/graph/transport_bench.rs` keeps a **per-worker**
 `MetricsAccumulator` and merges once at the thread join (lines 385–395):
 
 ```rust
@@ -114,7 +114,7 @@ for worker in workers {
 let native_metrics = merged.native.summarize();
 ```
 
-`rust/aiperf-runner/src/graph_execution.rs` builds one `NativeMetricsObserver`
+`rust/runner/src/graph_execution.rs` builds one `NativeMetricsObserver`
 per graph worker and registers metadata worker-locally
 (`RunnerGraphSink`, lines 787–805). **The scheduled path is the last consumer
 still routing every token through a single coordinator observer.**
@@ -254,7 +254,7 @@ the regression matrix must add a gRPC parity row (currently absent).
 
 ### 3.1 Worker command / reply — an additive measured seam (built)
 
-`rust/aiperf-runner/src/turn_execution.rs`:
+`rust/runner/src/turn_execution.rs`:
 
 - **`BufferedObserver` / `execute_turn(observer)` are RETAINED, not deleted.**
   `ThreadPerCoreHttpExecutionBackend` and `ThreadPerCoreGrpcExecutionBackend` are
@@ -294,7 +294,7 @@ the regression matrix must add a gRPC parity row (currently absent).
 
 ### 3.2 gRPC twin — mirrors the change (built)
 
-`rust/aiperf-runner/src/grpc_turn_execution.rs`: the `GrpcTransportSink` and
+`rust/runner/src/grpc_turn_execution.rs`: the `GrpcTransportSink` and
 `ThreadPerCoreGrpcExecutionBackend` implement the same additive measured seam
 (worker-local observer + `drain_records`); the buffered `ObserverEvent` /
 `BufferedObserver` / replay loop are retained for the agentic/evaluation gRPC
@@ -302,7 +302,7 @@ consumers, exactly as on the HTTP side.
 
 ### 3.3 Runner capture — the real product surface
 
-`rust/aiperf-runner/src/execute.rs`:
+`rust/runner/src/execute.rs`:
 
 - `RunCapture` no longer owns a single measurement `NativeMetricsObserver` for
   the scheduled path. Its responsibilities split:
@@ -435,9 +435,9 @@ consumers, exactly as on the HTTP side.
 
 ### 3.5 Merge primitives (already built — reused as-is)
 
-- `MetricsAccumulator::merge` — `rust/aiperf-metrics/src/accumulator.rs:485–514`.
+- `MetricsAccumulator::merge` — `rust/aiperf/src/metrics_core/accumulator.rs:485–514`.
 - `MetricsMergeError` — same file, 54–79.
-- `ColumnStore::append_store` — `rust/aiperf-metrics/src/store.rs:569–656`
+- `ColumnStore::append_store` — `rust/aiperf/src/metrics_core/store.rs:569–656`
   (dense precondition asserted at 575–578).
 - `NativeMetricsFinalizer` (Send, plain data) — `rust/aiperf/src/metrics.rs:214–223`;
   `take_finalizer_at` 356–363; `finish`/`finish_with_records` 404–442.
@@ -842,7 +842,7 @@ Library path — **gated on A2** (planned):
 
 Proof (built):
 
-5. `aiperf-runner/tests/worker_local_accumulation_parity.rs` drives the real
+5. `runner/tests/worker_local_accumulation_parity.rs` drives the real
    runner subprocess at `worker_count` 1 vs 4 over a fixed mock and asserts the
    count/token report fields are **byte-identical** (rate/throughput excluded —
    the faster four-worker run is the expected win). Unit tests cover the
