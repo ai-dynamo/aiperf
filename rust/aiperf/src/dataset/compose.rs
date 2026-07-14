@@ -342,7 +342,10 @@ fn rebase_conversation_handles(
     remapped: &mut HashMap<Handle, Handle>,
 ) -> Result<()> {
     for turn in &mut conversation.turns {
-        for handle in &mut turn.messages {
+        // The unified dispatch body holds the prebuilt raw body, token-native
+        // handle, and message handles (segment-unification §9 stage 3); rebase
+        // each onto the newly injected context root.
+        for handle in &mut turn.body {
             *handle = rebase_handle(*handle, root, segments, remapped)?;
         }
         for group in &mut turn.content {
@@ -351,8 +354,6 @@ fn rebase_conversation_handles(
             }
         }
         for handle in [
-            &mut turn.raw_payload,
-            &mut turn.raw_token_ids,
             &mut turn.raw_messages,
             &mut turn.tools,
             &mut turn.raw_system,

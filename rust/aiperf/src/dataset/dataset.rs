@@ -14,8 +14,8 @@ use crate::dataset::model::{
     Conversation, ConversationBranchMode, ConversationContextMode, ConversationMetadata,
     DispatchTiming, MediaKind, PrerequisiteKind, SessionId, Turn,
 };
-use crate::dataset::request::resolve_turn;
-use crate::dataset::segment::{Handle, Payload, Role, SegmentPool, SegmentStore};
+use crate::dataset::request::{raw_body_handle, resolve_turn, token_ids_handle};
+use crate::dataset::segment::{Handle, Payload, Role, SegmentDomain, SegmentPool, SegmentStore};
 use crate::endpoints::TurnMessageLowerer;
 use smallvec::SmallVec;
 
@@ -58,20 +58,14 @@ impl fmt::Debug for Dataset {
 impl Dataset {
     /// Validate and freeze conversations while preserving insertion order.
     pub fn new(
-        mut conversations: Vec<Conversation>,
+        conversations: Vec<Conversation>,
         segments: Arc<dyn SegmentStore>,
         sampling_strategy: impl Into<String>,
         default_context_mode: ConversationContextMode,
     ) -> Result<Self> {
-        // Segment-unification stage 1: derive each turn's unified `body` handles
-        // from its legacy representation fields once, at freeze, so downstream
-        // dispatch can migrate to the domain-driven lookup without touching the
-        // loader construction sites. Behavior is unchanged this stage.
-        for conversation in &mut conversations {
-            for turn in &mut conversation.turns {
-                turn.populate_body();
-            }
-        }
+        // Segment-unification §9 stage 3: each turn's unified `body` handles are
+        // now written directly by the loaders and endpoint-bind lowering, so
+        // there is no derive-from-legacy-fields pass here.
         let mut index = HashMap::with_capacity(conversations.len());
         for (position, conversation) in conversations.iter().enumerate() {
             if conversation.session_id.as_str().is_empty() {
@@ -225,8 +219,7 @@ impl Dataset {
                     parent = Some(handle);
                     handles.push(handle);
                 }
-                turn.messages = handles;
-                turn.populate_body();
+                turn.body = handles;
                 changed = true;
             }
         }
@@ -278,14 +271,14 @@ impl Dataset {
                 )));
             }
             for (turn_index, turn) in conversation.turns.iter().enumerate() {
-                if turn.raw_token_ids.is_none() {
+                if token_ids_handle(turn, self.segments.as_ref())?.is_none() {
                     return Err(DatasetError::Validation(format!(
                         "endpoint {:?} requires raw_token_ids, but conversation {:?} turn {turn_index} has none",
                         descriptor.id,
                         conversation.session_id.as_str()
                     )));
                 }
-                if turn.raw_payload.is_some() {
+                if raw_body_handle(turn, self.segments.as_ref())?.is_some() {
                     return Err(DatasetError::Validation(format!(
                         "endpoint {:?} requires token-native composition, but conversation {:?} turn {turn_index} retained raw payload bytes",
                         descriptor.id,
@@ -442,35 +435,41 @@ fn validate_turn(
             context()
         )));
     }
-    if turn.raw_payload.is_some()
-        && (!turn.messages.is_empty() || !turn.content.is_empty() || turn.raw_messages.is_some())
-    {
+    // The unified dispatch body (segment-unification §9 stage 3) carries at most
+    // a leading raw body, a token-native handle, and message handles; classify
+    // them by segment domain and reject any other domain leaking into the body.
+    let mut body_has_raw = false;
+    let mut body_token_ids: Option<Handle> = None;
+    let mut body_has_messages = false;
+    for &handle in &turn.body {
+        let payload = segments.get(handle)?;
+        match payload.domain() {
+            SegmentDomain::Raw => body_has_raw = true,
+            SegmentDomain::TokenIds => body_token_ids = Some(handle),
+            SegmentDomain::Message => body_has_messages = true,
+            _ => return payload_error(handle, "raw, token-ids, or message", payload),
+        }
+    }
+    let formatted = !turn.content.is_empty() || turn.raw_messages.is_some() || body_has_messages;
+    if body_has_raw && formatted {
         return Err(DatasetError::Validation(format!(
             "{} combines raw_payload with formatted content",
             context()
         )));
     }
-    if turn.raw_token_ids.is_some()
-        && (!turn.messages.is_empty() || !turn.content.is_empty() || turn.raw_messages.is_some())
-    {
+    if body_token_ids.is_some() && formatted {
         return Err(DatasetError::Validation(format!(
             "{} combines raw_token_ids with formatted content",
             context()
         )));
     }
-    if turn.raw_messages.is_some() && !turn.messages.is_empty() {
+    if turn.raw_messages.is_some() && body_has_messages {
         return Err(DatasetError::Validation(format!(
             "{} combines raw_messages with message handles",
             context()
         )));
     }
 
-    for handle in &turn.messages {
-        let payload = segments.get(*handle)?;
-        if !matches!(payload, Payload::Message { .. }) {
-            return payload_error(*handle, "message", payload);
-        }
-    }
     for group in &turn.content {
         if group.handles.is_empty() {
             return Err(DatasetError::Validation(format!(
@@ -491,7 +490,6 @@ fn validate_turn(
         }
     }
     for handle in [
-        turn.raw_payload,
         turn.raw_messages,
         turn.tools,
         turn.raw_system,
@@ -507,7 +505,7 @@ fn validate_turn(
             return payload_error(handle, "raw", payload);
         }
     }
-    if let Some(handle) = turn.raw_token_ids {
+    if let Some(handle) = body_token_ids {
         let payload = segments.get(handle)?;
         if !matches!(payload, Payload::TokenIds { token_ids } if !token_ids.is_empty()) {
             return payload_error(handle, "non-empty token-ids", payload);
@@ -583,11 +581,13 @@ fn validate_turn(
 /// raw body, no token-native IDs, no preformatted `raw_messages`, and no
 /// already-set `messages` is the lowerable case.
 fn turn_is_lowerable(turn: &Turn) -> bool {
+    // An empty `body` means the turn carries no prebuilt raw body, token-native
+    // IDs, or already-lowered/authored message handles — the only representations
+    // recorded on `body`. Combined with a non-empty `content` and no preformatted
+    // `raw_messages` or per-turn endpoint override, this is the lowerable case.
     !turn.content.is_empty()
-        && turn.messages.is_empty()
+        && turn.body.is_empty()
         && turn.raw_messages.is_none()
-        && turn.raw_payload.is_none()
-        && turn.raw_token_ids.is_none()
         && turn.endpoint.is_none()
 }
 
@@ -825,14 +825,14 @@ mod tests {
 
     use super::*;
     use crate::dataset::model::{
-        BranchId, ConversationBranch, DagMetadata, DispatchTiming, SessionId,
+        BranchId, ContentGroup, ConversationBranch, DagMetadata, DispatchTiming, SessionId,
     };
     use crate::dataset::segment::SegmentPool;
 
     fn one_turn(id: &str, handle: Handle) -> Conversation {
         let mut conversation = Conversation::new(id);
         conversation.turns.push(Turn {
-            messages: smallvec::smallvec![handle],
+            body: smallvec::smallvec![handle],
             ..Turn::default()
         });
         conversation
@@ -915,5 +915,111 @@ mod tests {
             ConversationContextMode::DeltasWithoutResponses,
         )
         .unwrap();
+    }
+
+    // Segment-unification §9 stage 3 decision (must-fix #1): a raw body may
+    // coexist with its token-ids handle. `dispatch_body` records `[raw, token]`
+    // so the raw body wins dispatch while the token handle stays reachable, and
+    // the load-time token-count validation still fires in the coexistence case.
+    #[test]
+    fn coexisting_raw_body_and_token_ids_keep_the_token_count_validation() {
+        let mut pool = SegmentPool::new();
+        let raw = pool
+            .intern_raw(None, Bytes::from_static(br#"{"messages":[],"token_ids":[1,2,3]}"#))
+            .unwrap();
+        let token = pool.intern_token_ids(Some(raw), [1_u32, 2, 3]).unwrap();
+        let store: Arc<dyn SegmentStore> = Arc::new(pool.freeze());
+
+        let mut ok = Conversation::new("ok");
+        ok.turns.push(Turn {
+            input_tokens: 3,
+            body: Turn::dispatch_body(Some(raw), Some(token), &[]),
+            ..Turn::default()
+        });
+        let dataset = Dataset::new(
+            vec![ok],
+            store.clone(),
+            "sequential",
+            ConversationContextMode::DeltasWithoutResponses,
+        )
+        .unwrap();
+        // Raw leads (dispatch bypass) with the token handle retained after it.
+        assert_eq!(dataset.conversations()[0].turns[0].body.as_slice(), &[raw, token]);
+
+        let mut bad = Conversation::new("bad");
+        bad.turns.push(Turn {
+            input_tokens: 99,
+            body: Turn::dispatch_body(Some(raw), Some(token), &[]),
+            ..Turn::default()
+        });
+        let error = Dataset::new(
+            vec![bad],
+            store,
+            "sequential",
+            ConversationContextMode::DeltasWithoutResponses,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("raw_token_ids contains 3 IDs"),
+            "unexpected error: {error}"
+        );
+    }
+
+    // One-domain-per-body invariant: only raw, token-ids, and message segments
+    // are valid dispatch-body handles, and a raw body cannot coexist with the
+    // formatter-driven content/raw_messages representations.
+    #[test]
+    fn body_rejects_non_dispatch_domains_and_mixed_representations() {
+        let mut pool = SegmentPool::new();
+        let media = pool
+            .intern_media(None, MediaKind::Image, Bytes::from_static(b"http://x"))
+            .unwrap();
+        let raw = pool.intern_raw(None, Bytes::from_static(b"{}")).unwrap();
+        let text = pool
+            .intern_text(None, "user", Bytes::from_static(b"hi"), vec![1_u32])
+            .unwrap();
+        let store: Arc<dyn SegmentStore> = Arc::new(pool.freeze());
+
+        let mut media_body = Conversation::new("media");
+        media_body.turns.push(Turn {
+            body: smallvec::smallvec![media],
+            ..Turn::default()
+        });
+        let error = Dataset::new(
+            vec![media_body],
+            store.clone(),
+            "sequential",
+            ConversationContextMode::DeltasWithoutResponses,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("raw, token-ids, or message"),
+            "unexpected error: {error}"
+        );
+
+        let mut mixed = Conversation::new("mixed");
+        mixed.turns.push(Turn {
+            body: Turn::dispatch_body(Some(raw), None, &[]),
+            content: smallvec::smallvec![ContentGroup {
+                kind: MediaKind::Text,
+                name: "text".into(),
+                handles: smallvec::smallvec![text],
+            }],
+            ..Turn::default()
+        });
+        let error = Dataset::new(
+            vec![mixed],
+            store,
+            "sequential",
+            ConversationContextMode::DeltasWithoutResponses,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("combines raw_payload with formatted content"),
+            "unexpected error: {error}"
+        );
     }
 }

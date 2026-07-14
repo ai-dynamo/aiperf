@@ -555,7 +555,7 @@ fn compose_simple_turn(
             .segments
             .intern_token_ids(*parent, token_ids.into_boxed_slice())?;
         *parent = Some(handle);
-        turn.raw_token_ids = Some(handle);
+        turn.body = Turn::dispatch_body(None, Some(handle), &[]);
     }
     let request_parent = *parent;
     if let Some(extra) = row.extra {
@@ -950,11 +950,8 @@ mod tests {
         let turn = &dataset.conversations()[0].turns[0];
         assert_eq!(turn.input_tokens, 3);
         assert_eq!(turn.max_tokens, Some(9));
-        let Payload::TokenIds { token_ids } = dataset
-            .segments()
-            .get(turn.raw_token_ids.expect("token handle"))
-            .unwrap()
-        else {
+        let token_handle = *turn.body.first().expect("token handle");
+        let Payload::TokenIds { token_ids } = dataset.segments().get(token_handle).unwrap() else {
             panic!("promoted token IDs must use the token segment domain")
         };
         assert_eq!(&**token_ids, &[1, 2, 3]);

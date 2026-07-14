@@ -290,11 +290,47 @@ pub struct EndpointRequestMaterializer;
 /// full body dispatched byte-for-byte without endpoint formatting. This is the
 /// domain lookup that replaces the `raw_payload`-wins branch; a `message`- or
 /// `token-ids`-domain body falls through to the formatter / token-native path.
-fn raw_body_handle<S: SegmentStore + ?Sized>(current: &Turn, store: &S) -> Result<Option<Handle>> {
+pub(crate) fn raw_body_handle<S: SegmentStore + ?Sized>(
+    current: &Turn,
+    store: &S,
+) -> Result<Option<Handle>> {
     match current.body.first() {
         Some(&handle) if store.domain(handle)? == SegmentDomain::Raw => Ok(Some(handle)),
         _ => Ok(None),
     }
+}
+
+/// The token-native handle carried in [`Turn::body`], if any
+/// (segment-unification §2/§9 stage 3). A turn holds at most one `TokenIds`
+/// segment; when a raw body coexists (`[raw, token]`) the raw body wins
+/// dispatch and this handle stays reachable for token-count validation and
+/// token-native backends.
+pub(crate) fn token_ids_handle<S: SegmentStore + ?Sized>(
+    current: &Turn,
+    store: &S,
+) -> Result<Option<Handle>> {
+    for &handle in &current.body {
+        if store.domain(handle)? == SegmentDomain::TokenIds {
+            return Ok(Some(handle));
+        }
+    }
+    Ok(None)
+}
+
+/// The ordered message handles carried in [`Turn::body`]
+/// (segment-unification §2/§9 stage 3), i.e. the `Message`-domain body segments
+/// a lowered content turn or authored message-array turn formats as an array.
+pub(crate) fn body_message_handles<S: SegmentStore + ?Sized>(
+    current: &Turn,
+    store: &S,
+) -> Result<SmallVec<[Handle; 1]>> {
+    let mut handles = SmallVec::new();
+    for &handle in &current.body {
+        if store.domain(handle)? == SegmentDomain::Message {
+            handles.push(handle);
+        }
+    }
+    Ok(handles)
 }
 
 impl RequestMaterializer for EndpointRequestMaterializer {
@@ -486,11 +522,11 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             max_tokens: effective.max_tokens,
             streaming: effective.streaming,
             input_tokens: session.input_tokens(store)?,
-            raw_token_ids: endpoint
-                .descriptor()
-                .requires_raw_token_ids
-                .then_some(current.raw_token_ids)
-                .flatten(),
+            raw_token_ids: if endpoint.descriptor().requires_raw_token_ids {
+                token_ids_handle(current, store)?
+            } else {
+                None
+            },
             audio_duration_seconds: current.audio_duration_seconds,
             accuracy: conversation.accuracy.clone(),
             turn_index,
@@ -583,8 +619,9 @@ impl RequestMaterializer for TraceHashAwareRequestMaterializer {
         overrides: &Overrides,
     ) -> Result<MaterializedRequest> {
         let (conversation, current, turn_index) = session.current()?;
-        let has_native_raw_tokens =
-            endpoint.descriptor().requires_raw_token_ids && current.raw_token_ids.is_some();
+        let store = session.dataset.segments().as_ref();
+        let has_native_raw_tokens = endpoint.descriptor().requires_raw_token_ids
+            && token_ids_handle(current, store)?.is_some();
         if current.trace_hash_ids.is_none() && !has_native_raw_tokens {
             return EndpointRequestMaterializer.materialize_prepared(
                 session,
@@ -594,7 +631,6 @@ impl RequestMaterializer for TraceHashAwareRequestMaterializer {
                 overrides,
             );
         }
-        let store = session.dataset.segments().as_ref();
         let effective = EffectiveRequest {
             model: effective_model(current, primary_model_name, overrides)?,
             max_tokens: effective_max_tokens(current, overrides)?,
@@ -630,11 +666,11 @@ impl RequestMaterializer for TraceHashAwareRequestMaterializer {
             max_tokens: effective.max_tokens,
             streaming: effective.streaming,
             input_tokens: session.input_tokens(store)?,
-            raw_token_ids: endpoint
-                .descriptor()
-                .requires_raw_token_ids
-                .then_some(current.raw_token_ids)
-                .flatten(),
+            raw_token_ids: if endpoint.descriptor().requires_raw_token_ids {
+                token_ids_handle(current, store)?
+            } else {
+                None
+            },
             audio_duration_seconds: current.audio_duration_seconds,
             accuracy: conversation.accuracy.clone(),
             turn_index,
@@ -972,7 +1008,9 @@ impl ConversationSession {
 
     fn input_tokens(&self, store: &dyn SegmentStore) -> Result<u64> {
         let (conversation, current_turn, current) = self.current()?;
-        if current_turn.raw_payload.is_some() || current_turn.raw_token_ids.is_some() {
+        if raw_body_handle(current_turn, store)?.is_some()
+            || token_ids_handle(current_turn, store)?.is_some()
+        {
             return Ok(current_turn.input_tokens);
         }
         let mut count = match self.context_mode {
@@ -1058,17 +1096,18 @@ pub(crate) fn resolve_turn(store: &dyn SegmentStore, turn: &Turn) -> Result<Endp
     // authored `messages` turn (no content) keeps the raw_messages render path
     // unchanged, and `raw_messages` and lowering never coexist (validation +
     // load-time carve-out).
-    let lowered_content = !turn.content.is_empty() && !turn.messages.is_empty();
+    let message_handles = body_message_handles(turn, store)?;
+    let lowered_content = !turn.content.is_empty() && !message_handles.is_empty();
     let mut raw_messages = Vec::new();
     let mut lowered: Option<SmallVec<[Bytes; 1]>> = None;
     if lowered_content {
-        let mut wires: SmallVec<[Bytes; 1]> = SmallVec::with_capacity(turn.messages.len());
-        for handle in &turn.messages {
+        let mut wires: SmallVec<[Bytes; 1]> = SmallVec::with_capacity(message_handles.len());
+        for handle in &message_handles {
             wires.push(message_wire(store, *handle)?);
         }
         lowered = Some(wires);
     } else {
-        for handle in &turn.messages {
+        for handle in &message_handles {
             raw_messages.push(raw_value(store, *handle, "message")?);
         }
     }
@@ -1091,7 +1130,7 @@ pub(crate) fn resolve_turn(store: &dyn SegmentStore, turn: &Turn) -> Result<Endp
         raw_tools: raw_array(store, turn.tools, "tools")?,
         raw_system: raw_array(store, turn.raw_system, "raw_system")?,
         extra_body: raw_object(store, turn.extra_body, "extra_body")?,
-        raw_token_ids: raw_token_ids(store, turn.raw_token_ids)?,
+        raw_token_ids: raw_token_ids(store, token_ids_handle(turn, store)?)?,
         lowered,
         ..EndpointTurn::default()
     };
@@ -1355,7 +1394,7 @@ mod tests {
         let data = dataset(
             ConversationContextMode::MessageArrayWithResponses,
             vec![Turn {
-                raw_payload: Some(raw),
+                body: Turn::dispatch_body(Some(raw), None, &[]),
                 model: Some(ModelId::from("metadata-only")),
                 input_tokens: 7,
                 ..Turn::default()
@@ -1445,7 +1484,7 @@ mod tests {
                 model: Some(ModelId::from("token-model")),
                 max_tokens: Some(9),
                 input_tokens: 3,
-                raw_token_ids: Some(raw_token_ids),
+                body: Turn::dispatch_body(None, Some(raw_token_ids), &[]),
                 ..Turn::default()
             }],
             pool,
@@ -1495,8 +1534,7 @@ mod tests {
             ConversationContextMode::MessageArrayWithResponses,
             vec![Turn {
                 input_tokens: 3,
-                raw_payload: Some(raw_payload),
-                raw_token_ids: Some(raw_token_ids),
+                body: Turn::dispatch_body(Some(raw_payload), Some(raw_token_ids), &[]),
                 ..Turn::default()
             }],
             pool,
@@ -1598,13 +1636,13 @@ mod tests {
             ConversationContextMode::DeltasWithoutResponses,
             vec![
                 Turn {
-                    messages: smallvec![q0],
+                    body: smallvec![q0],
                     input_tokens: 2,
                     max_tokens: Some(4),
                     ..Turn::default()
                 },
                 Turn {
-                    messages: smallvec![q1],
+                    body: smallvec![q1],
                     input_tokens: 3,
                     max_tokens: Some(5),
                     audio_duration_seconds: Some(2.5),
@@ -1654,12 +1692,12 @@ mod tests {
             ConversationContextMode::MessageArrayWithoutResponses,
             vec![
                 Turn {
-                    messages: smallvec![q0],
+                    body: smallvec![q0],
                     input_tokens: 2,
                     ..Turn::default()
                 },
                 Turn {
-                    messages: smallvec![q0, q1],
+                    body: smallvec![q0, q1],
                     input_tokens: 5,
                     ..Turn::default()
                 },
@@ -2003,7 +2041,7 @@ mod tests {
         let after = dispatch_body(lowered.clone(), endpoint.as_ref());
         assert_eq!(before, after);
         // The lowered turn actually carries a message handle now.
-        assert_eq!(lowered.conversations()[0].turns[0].messages.len(), 1);
+        assert_eq!(lowered.conversations()[0].turns[0].body.len(), 1);
     }
 
     #[test]
@@ -2027,7 +2065,7 @@ mod tests {
 
         let turns = &dataset.conversations()[0].turns;
         // Identical rendered content dedups to a single shared segment handle.
-        assert_eq!(turns[0].messages[0], turns[1].messages[0]);
+        assert_eq!(turns[0].body[0], turns[1].body[0]);
     }
 
     #[test]
@@ -2060,6 +2098,6 @@ mod tests {
 
         let turns = &dataset.conversations()[0].turns;
         // Same text, different media must not mis-dedup to one wire.
-        assert_ne!(turns[0].messages[0], turns[1].messages[0]);
+        assert_ne!(turns[0].body[0], turns[1].body[0]);
     }
 }
