@@ -269,3 +269,18 @@ multi-process topology is reachable only by an authored `cfg.runtime.cells` enve
 — a developer/experimental capability, not yet a product surface. **Out of scope
 still:** cross-host deployment (the seam is ready; only TCP-loopback impls exist),
 S5 executor changes, and any Python orchestration of cells.
+
+**Phase constraint — request-bounded only.** The dense-ordinal tiling requires every
+phase's *actual* dispatch count to equal its sliced `requests` budget, so the
+controller fails a cellular run closed (a clear pre-spawn error, not a cryptic merge
+`OrdinalOutOfRange`) if any phase lacks `requests` or carries a `duration` / `sessions`
+/ `adaptive_scale` bound whose real count can diverge (e.g. `ramp_until_fail` stopping
+on an SLA breach). Pacing-only knobs (concurrency/rate ramps) and post-send
+cancellation are allowed — they change *when* turns are sent or mark them cancelled
+after dispatch, not *how many*. The merged report reproduces a 1-cell run's metric
+data (profiling + warmup sections byte-identical, run mode/model, configured
+endpoints); two 1-cell blocks are intentionally **not** reproduced — the coordinator's
+`finalize_run` provenance (`distribution_id` / alias-resolved `endpoint_profiles`,
+carried in the terminal envelope instead) and the grouped per-error message list
+(cells ship metric records with error/cancel flags, so error *counts* are in the
+metrics, but not the messages a cross-cell regroup would need).
