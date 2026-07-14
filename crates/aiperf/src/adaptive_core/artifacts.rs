@@ -28,6 +28,21 @@ use crate::adaptive_core::step::StepPolicySnapshot;
 /// Adaptive event and summary schema version.
 pub const ADAPTIVE_SCHEMA_VERSION: u32 = 2;
 
+/// Render a nanosecond instant carried on an adaptive event as an ISO-8601 UTC
+/// string with microsecond precision and a trailing `Z`
+/// (e.g. `2026-07-13T17:02:30.123456Z`).
+///
+/// The value is derived from the same `timestamp_ns` already recorded on the
+/// event — never from an ambient `SystemTime::now()`/`Utc::now()` read — so the
+/// rendered string and the raw nanosecond field stay on one timeline. Returns
+/// `None` only when the instant falls outside the representable calendar range.
+pub(crate) fn format_epoch_ns_utc(epoch_ns: i64) -> Option<String> {
+    let secs = epoch_ns.div_euclid(1_000_000_000);
+    let nanos = epoch_ns.rem_euclid(1_000_000_000) as u32;
+    chrono::DateTime::<chrono::Utc>::from_timestamp(secs, nanos)
+        .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string())
+}
+
 /// Artifact-safe numeric value; non-finite observations serialize as JSON
 /// `null` instead of leaking NaN/Infinity across a report boundary.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -78,7 +93,8 @@ pub struct AdaptiveEvent {
     pub timestamp: i64,
     /// Clock timestamp in nanoseconds.
     pub timestamp_ns: i64,
-    /// Optional UTC rendering; absent for monotonic and virtual clocks.
+    /// ISO-8601 UTC rendering (microsecond precision, trailing `Z`) derived
+    /// from `timestamp_ns`; `None` only when that instant is uncalendarable.
     pub timestamp_utc: Option<String>,
     /// Event type.
     pub event: ControllerEventKind,
@@ -174,7 +190,7 @@ impl AdaptiveEvent {
             schema_version: ADAPTIVE_SCHEMA_VERSION,
             timestamp: timestamp_ns,
             timestamp_ns,
-            timestamp_utc: None,
+            timestamp_utc: format_epoch_ns_utc(timestamp_ns),
             event: event.kind,
             phase: event.phase,
             control_variable,
@@ -587,6 +603,44 @@ fn sorted_json_value(value: serde_json::Value) -> serde_json::Value {
 mod tests {
     use super::*;
     use crate::adaptive_core::window::{RequestSample, WindowStats};
+
+    #[test]
+    fn epoch_ns_renders_iso8601_microsecond_utc_with_trailing_z() {
+        // A fixed Unix-epoch nanosecond instant; the render truncates to
+        // microsecond precision and appends `Z`.
+        let epoch_ns: i64 = 1_784_048_550_123_456_789;
+        let rendered = format_epoch_ns_utc(epoch_ns).expect("representable instant");
+        assert!(
+            regex_like_iso8601_micros(&rendered),
+            "unexpected render: {rendered}"
+        );
+        assert_eq!(rendered, "2026-07-14T17:02:30.123456Z");
+    }
+
+    /// Minimal pure check matching the integration contract's
+    /// `\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z` shape without a regex dep.
+    fn regex_like_iso8601_micros(s: &str) -> bool {
+        let bytes = s.as_bytes();
+        if bytes.len() != 27 {
+            return false;
+        }
+        let digit = |i: usize| bytes[i].is_ascii_digit();
+        let sep = |i: usize, c: u8| bytes[i] == c;
+        (0..4).all(digit)
+            && sep(4, b'-')
+            && (5..7).all(digit)
+            && sep(7, b'-')
+            && (8..10).all(digit)
+            && sep(10, b'T')
+            && (11..13).all(digit)
+            && sep(13, b':')
+            && (14..16).all(digit)
+            && sep(16, b':')
+            && (17..19).all(digit)
+            && sep(19, b'.')
+            && (20..26).all(digit)
+            && sep(26, b'Z')
+    }
 
     #[test]
     fn artifact_value_scrubs_non_finite_numbers_to_null() {
