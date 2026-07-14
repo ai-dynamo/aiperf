@@ -17,18 +17,26 @@
 //! `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.token.type`), and the
 //! same explicit histogram bucket boundaries.
 //!
-//! # Fidelity: aggregate (approach a), not per-record histograms
+//! # Fidelity: populated per-record histograms (approach a)
 //! The Python plane records **one histogram observation per request during the
 //! run** (`MetricResultsStrategy.process` → `instrument.record`), so its exported
-//! histograms carry exact per-bucket counts. This sink runs **post-report** over
-//! the finalized, already-aggregated [`NativeReport`]: it has percentiles/avg/
-//! min/max/count per metric, not the raw samples. It therefore emits OTLP
-//! `Histogram` data points that reproduce the exact **metric names, attributes,
-//! and explicit bucket boundaries** Python emits, and carry the aggregate
-//! `count`/`sum`/`min`/`max`, but leave the per-bucket `bucket_counts` at zero
-//! (the aggregate cannot reconstruct the distribution across buckets). Exact
-//! per-bucket parity requires the per-record hook described in the design as
-//! approach (b) — see the module tests and the crate report for the precise gap.
+//! histograms carry exact per-bucket counts. This sink reproduces that: the
+//! runner feeds each captured record's projected per-request metrics into an
+//! [`OtelRecordAccumulator`] (the same projection the live-streaming sink
+//! forwards to Python), which buckets every observation into the semconv
+//! explicit histograms and is merged at run end. The finalized accumulator rides
+//! on the report as a transient, non-serialized side channel
+//! ([`NativeReport::otel_per_record`]); this sink then emits OTLP `Histogram`
+//! data points with **populated `bucket_counts`** (+ `count`/`sum`/`min`/`max`)
+//! that a collector aggregating Python's per-record stream would compute, under
+//! the exact **metric names, attributes, and explicit bucket boundaries** Python
+//! emits.
+//!
+//! When the accumulator is absent (e.g. an execution path that does not yet feed
+//! it, or a synthetic report in a test), the sink falls back to the aggregate
+//! [`NativeReport`]: it carries the aggregate `count`/`sum`/`min`/`max` but
+//! leaves `bucket_counts` at zero (the aggregate cannot reconstruct the
+//! distribution across buckets).
 //!
 //! # Wire format
 //! Encodes the OTLP `ExportMetricsServiceRequest` protobuf ([`proto`], a minimal
@@ -61,6 +69,11 @@ use crate::metrics_core::NativeReport;
 use crate::metrics_core::report::{
     MetricSeries, ReportDistributionStats, ReportStats, ReportValue,
 };
+
+mod accumulator;
+
+use accumulator::{BucketHistogram, DurationKind, TokenKind};
+pub use accumulator::{OtelRecordAccumulator, classify_spec_error_type};
 
 /// OTLP/HTTP metrics export policy. Disabled unless the frontend provides an
 /// OTLP endpoint. Fields mirror the `cfg.otel` surface the emitter needs; every
@@ -158,13 +171,33 @@ fn build_request(
     };
 
     let mut metrics = Vec::new();
-    for spec in DURATION_METRICS {
-        if let Some(metric) = duration_metric(report, spec, &ctx) {
-            metrics.push(metric);
+    match report
+        .otel_per_record
+        .as_ref()
+        .filter(|records| !records.is_empty())
+    {
+        // Per-record path: populated `bucket_counts` from the merged accumulator.
+        Some(records) => {
+            for spec in DURATION_METRICS {
+                if let Some(metric) = duration_metric_from_records(records, spec, &ctx) {
+                    metrics.push(metric);
+                }
+            }
+            if let Some(metric) = token_usage_metric_from_records(records, &ctx) {
+                metrics.push(metric);
+            }
         }
-    }
-    if let Some(metric) = token_usage_metric(report, &ctx) {
-        metrics.push(metric);
+        // Aggregate fallback: exact bounds/count/sum but zero `bucket_counts`.
+        None => {
+            for spec in DURATION_METRICS {
+                if let Some(metric) = duration_metric(report, spec, &ctx) {
+                    metrics.push(metric);
+                }
+            }
+            if let Some(metric) = token_usage_metric(report, &ctx) {
+                metrics.push(metric);
+            }
+        }
     }
 
     proto::ExportMetricsServiceRequest {
@@ -202,6 +235,7 @@ struct DurationSpec {
     report_key: &'static str,
     spec_name: &'static str,
     bounds: &'static [f64],
+    kind: DurationKind,
 }
 
 /// `genai_semconv.py:92-107` — `_DURATION_BUCKET_BOUNDARIES`.
@@ -233,16 +267,19 @@ const DURATION_METRICS: &[DurationSpec] = &[
         report_key: "request_latency",
         spec_name: "gen_ai.client.operation.duration",
         bounds: DURATION_BOUNDS,
+        kind: DurationKind::RequestLatency,
     },
     DurationSpec {
         report_key: "time_to_first_token",
         spec_name: "gen_ai.client.operation.time_to_first_chunk",
         bounds: TTFT_BOUNDS,
+        kind: DurationKind::TimeToFirstToken,
     },
     DurationSpec {
         report_key: "inter_token_latency",
         spec_name: "gen_ai.client.operation.time_per_output_chunk",
         bounds: TIME_PER_OUTPUT_CHUNK_BOUNDS,
+        kind: DurationKind::InterTokenLatency,
     },
 ];
 
@@ -322,6 +359,93 @@ fn token_points(
             histogram_point(dist, TOKEN_USAGE_BOUNDS, 1.0, attrs, ctx)
         })
         .collect()
+}
+
+/// Build one duration histogram metric from the per-record accumulator, one data
+/// point per observed spec `error.type` (absent on the success path). Populated
+/// `bucket_counts` are carried through from the merged per-record observations.
+fn duration_metric_from_records(
+    records: &OtelRecordAccumulator,
+    spec: &DurationSpec,
+    ctx: &EmitContext,
+) -> Option<proto::Metric> {
+    let points: Vec<proto::HistogramDataPoint> = records
+        .duration_series(spec.kind)
+        .map(|(error_type, histogram)| {
+            let mut attributes = base_attributes(ctx);
+            if let Some(error_type) = error_type {
+                attributes.push(key_value("error.type", error_type));
+            }
+            populated_histogram_point(histogram, attributes, ctx)
+        })
+        .collect();
+    if points.is_empty() {
+        return None;
+    }
+    Some(histogram_metric(spec.spec_name, "s", points))
+}
+
+/// Build the merged `gen_ai.client.token.usage` histogram from the per-record
+/// accumulator, one data point per `gen_ai.token.type`. Token usage carries no
+/// `error.type` attribute (mirroring `_build_token_usage_attributes`).
+fn token_usage_metric_from_records(
+    records: &OtelRecordAccumulator,
+    ctx: &EmitContext,
+) -> Option<proto::Metric> {
+    let mut points = Vec::new();
+    for (kind, token_type) in [(TokenKind::Input, "input"), (TokenKind::Output, "output")] {
+        if let Some(histogram) = records.token_series(kind) {
+            let mut attributes = base_attributes(ctx);
+            attributes.push(key_value("gen_ai.token.type", token_type));
+            points.push(populated_histogram_point(histogram, attributes, ctx));
+        }
+    }
+    if points.is_empty() {
+        return None;
+    }
+    Some(histogram_metric(
+        "gen_ai.client.token.usage",
+        "{token}",
+        points,
+    ))
+}
+
+/// The run-level GenAI attribute set (`gen_ai.operation.name`,
+/// `gen_ai.provider.name`, `gen_ai.request.model`) shared by every per-record
+/// data point. Mirrors `_build_duration_attributes` (`genai_semconv.py:303-316`)
+/// minus the per-record `error.type`, which the caller appends. The model comes
+/// from run config (`cfg.get_model_names()[0]`), constant across records.
+fn base_attributes(ctx: &EmitContext) -> Vec<proto::KeyValue> {
+    let mut attrs = vec![
+        key_value("gen_ai.operation.name", &ctx.operation_name),
+        key_value("gen_ai.provider.name", &ctx.provider),
+    ];
+    if let Some(model) = ctx.model.as_ref() {
+        attrs.push(key_value("gen_ai.request.model", model));
+    }
+    attrs
+}
+
+/// Build one populated histogram data point from a merged per-record histogram.
+/// Carries the real `count`/`sum`/`min`/`max` and the per-bucket counts (whose
+/// sum equals `count`, the OTLP invariant).
+fn populated_histogram_point(
+    histogram: &BucketHistogram,
+    attributes: Vec<proto::KeyValue>,
+    ctx: &EmitContext,
+) -> proto::HistogramDataPoint {
+    proto::HistogramDataPoint {
+        attributes,
+        start_time_unix_nano: ctx.start_ns,
+        time_unix_nano: ctx.end_ns,
+        count: histogram.count(),
+        sum: Some(histogram.sum()),
+        bucket_counts: histogram.bucket_counts().to_vec(),
+        explicit_bounds: histogram.bounds().to_vec(),
+        flags: 0,
+        min: histogram.min(),
+        max: histogram.max(),
+    }
 }
 
 /// Build the GenAI per-datapoint attribute set common to every metric:

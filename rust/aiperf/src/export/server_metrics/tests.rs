@@ -234,6 +234,7 @@ fn synthetic_report() -> NativeReport {
         accuracy_records: Vec::new(),
         evaluator: None,
         errors: Vec::new(),
+        otel_per_record: None,
     }
 }
 

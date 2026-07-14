@@ -13,6 +13,7 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
+use aiperf::export::otel::{OtelRecordAccumulator, classify_spec_error_type};
 use aiperf::metrics_core::{
     CATALOG, MetricFlags, MetricType, MetricsAccumulator, MetricsConfig, Phase, RecordIngest,
     ReportError,
@@ -652,6 +653,33 @@ fn native_error_value(record: &RecordIngest) -> Option<Value> {
             },
         })
     })
+}
+
+/// Feed one record's projected per-request metrics into the per-record OTLP
+/// histogram accumulator (the native analogue of Python's
+/// `MetricResultsStrategy.process`).
+///
+/// The projection is the exact same [`record_metrics`] shape the live-streaming
+/// sink forwards to the Python OTel processor, so the bucketed distribution
+/// matches what a collector aggregating Python's per-record stream would
+/// compute. The record's terminal error (if any) is classified into the spec
+/// `error.type` attribute; successful records contribute no `error.type` and
+/// only successful records carry the semconv-mapped metrics, so errored requests
+/// never reach a mapped histogram.
+pub(crate) fn observe_otel_record(
+    accumulator: &mut OtelRecordAccumulator,
+    captured: &CapturedRecord,
+    config: &MetricsConfig,
+) {
+    let projected = record_metrics(captured, config);
+    let lookup: BTreeMap<&str, (f64, &str)> = projected
+        .iter()
+        .map(|(name, metric)| (name.as_str(), (metric.value, metric.unit.as_str())))
+        .collect();
+    let error_type = classify_record_error(captured).map(|classified| {
+        classify_spec_error_type(classified.code, classified.error_type, &classified.message)
+    });
+    accumulator.observe_record(&lookup, error_type.as_deref());
 }
 
 fn record_metrics(
