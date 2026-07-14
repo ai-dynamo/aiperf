@@ -306,10 +306,17 @@ fn build_cell_envelope(
 }
 
 /// Rejects a cellular run whose phases are not exactly request-bounded. The
-/// dense-ordinal tiling requires every phase's actual dispatch count to equal its
-/// sliced `requests` budget, so a phase that lacks `requests`, or carries a
-/// `duration`/`sessions` bound that can stop it early, would mis-partition (run
-/// unpartitioned and abort the merge). Fail closed rather than silently corrupt.
+/// dense-ordinal tiling requires every phase's *actual* dispatch count to equal its
+/// sliced `requests` budget. Any phase whose real count can diverge from `requests`
+/// — one that lacks `requests`, carries a `duration`/`sessions` bound that can stop
+/// it early, or drives an `adaptive_scale` controller (e.g. `ramp_until_fail`, which
+/// stops the issuer on an SLA breach before the budget) — would mis-partition (run
+/// unpartitioned and/or leave gaps that abort the merge). Fail closed rather than
+/// silently corrupt. Pacing-only knobs (concurrency/rate ramps) and post-send
+/// cancellation stay allowed: they change *when* turns are sent or mark them
+/// cancelled after dispatch, not *how many* are dispatched, so the count still tiles.
+/// (`adaptive_scale` is also transitively rejected today via its `duration` sustain
+/// bound; the explicit check is defense-in-depth against a future requests-only form.)
 fn validate_cellular_phase_budgets(envelope: &serde_json::Value) -> Result<()> {
     let phases = envelope
         .pointer("/run/cfg/phases")
@@ -328,8 +335,10 @@ fn validate_cellular_phase_budgets(envelope: &serde_json::Value) -> Result<()> {
             "cellular runs require every phase to be request-bounded; phase {name:?} has no `requests` budget"
         );
         ensure!(
-            phase.get("duration").is_none() && phase.get("sessions").is_none(),
-            "cellular runs do not support a phase with a `duration`/`sessions` bound that can stop before its request budget; phase {name:?}"
+            phase.get("duration").is_none()
+                && phase.get("sessions").is_none()
+                && phase.get("adaptive_scale").is_none(),
+            "cellular runs require a fixed per-phase request budget; phase {name:?} carries a `duration`/`sessions`/`adaptive_scale` bound whose actual dispatch count can diverge from `requests` and break the merge"
         );
     }
     Ok(())
@@ -445,7 +454,8 @@ mod tests {
             {"name": "profiling", "requests": 100},
         ]}}});
         assert!(validate_cellular_phase_budgets(&ok).is_ok());
-        // A phase lacking `requests`, or carrying a duration/sessions bound, fails closed.
+        // A phase lacking `requests`, or carrying a duration/sessions/adaptive_scale
+        // bound whose actual count can diverge from `requests`, fails closed.
         for bad in [
             serde_json::json!({"run": {"cfg": {"phases": [{"name": "profiling"}]}}}),
             serde_json::json!({"run": {"cfg": {"phases": [
@@ -453,6 +463,9 @@ mod tests {
             ]}}}),
             serde_json::json!({"run": {"cfg": {"phases": [
                 {"name": "profiling", "requests": 100, "sessions": 3},
+            ]}}}),
+            serde_json::json!({"run": {"cfg": {"phases": [
+                {"name": "profiling", "requests": 100, "adaptive_scale": {"controller": "ramp_until_fail"}},
             ]}}}),
         ] {
             assert!(
