@@ -55,11 +55,20 @@ impl fmt::Debug for Dataset {
 impl Dataset {
     /// Validate and freeze conversations while preserving insertion order.
     pub fn new(
-        conversations: Vec<Conversation>,
+        mut conversations: Vec<Conversation>,
         segments: Arc<dyn SegmentStore>,
         sampling_strategy: impl Into<String>,
         default_context_mode: ConversationContextMode,
     ) -> Result<Self> {
+        // Segment-unification stage 1: derive each turn's unified `body` handles
+        // from its legacy representation fields once, at freeze, so downstream
+        // dispatch can migrate to the domain-driven lookup without touching the
+        // fifteen loader construction sites. Behavior is unchanged this stage.
+        for conversation in &mut conversations {
+            for turn in &mut conversation.turns {
+                turn.populate_body();
+            }
+        }
         let mut index = HashMap::with_capacity(conversations.len());
         for (position, conversation) in conversations.iter().enumerate() {
             if conversation.session_id.as_str().is_empty() {
