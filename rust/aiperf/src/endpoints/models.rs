@@ -22,6 +22,10 @@ pub enum EndpointError {
     InvalidConfig(String),
     /// A response shape is hard-invalid for this endpoint.
     InvalidResponse(String),
+    /// Serializing a formatted request body failed. Held as a rendered string so
+    /// `EndpointError` stays `Clone`/`PartialEq` (a `serde_json::Error` is
+    /// neither); the source `serde_json::Error` is folded in via `From`.
+    Serialization(String),
 }
 
 impl Display for EndpointError {
@@ -30,11 +34,20 @@ impl Display for EndpointError {
             Self::InvalidRequest(message) => write!(f, "invalid endpoint request: {message}"),
             Self::InvalidConfig(message) => write!(f, "invalid endpoint config: {message}"),
             Self::InvalidResponse(message) => write!(f, "invalid endpoint response: {message}"),
+            Self::Serialization(message) => {
+                write!(f, "endpoint body serialization error: {message}")
+            }
         }
     }
 }
 
 impl std::error::Error for EndpointError {}
+
+impl From<serde_json::Error> for EndpointError {
+    fn from(value: serde_json::Error) -> Self {
+        Self::Serialization(value.to_string())
+    }
+}
 
 /// The selected endpoint and primary model for a request.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

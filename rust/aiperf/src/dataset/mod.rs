@@ -9,7 +9,6 @@
 //! [`SegmentPool`]. [`Conversation`] and [`Turn`] contain only dense [`Handle`]s,
 //! so sharing a [`Dataset`] across worker threads shares the payload bytes too.
 
-pub mod body_plan;
 pub mod compose;
 pub mod dataset;
 pub mod error;
@@ -24,6 +23,11 @@ pub mod segment;
 pub mod synthesis;
 pub mod tokenizer;
 
+// `BodyPlan` and its materializer moved to the top-level `crate::body_plan`
+// module so endpoint formatters (which sit *above* `dataset`) can build a plan
+// without a `dataset -> endpoints` cycle. Re-exported here so existing
+// `crate::dataset::body_plan::*` callers keep resolving.
+pub use crate::body_plan::{BodyPlan, FieldName, FieldValue, JsonBodyMaterializer};
 pub use dataset::{Dataset, DatasetMetadata};
 pub use error::{DatasetError, Result};
 pub use fetch::{DatasetFetcher, HttpDatasetFetcher};

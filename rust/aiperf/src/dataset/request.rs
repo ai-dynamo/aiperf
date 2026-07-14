@@ -21,7 +21,7 @@ use crate::endpoints::{
 use bytes::Bytes;
 use serde_json::{Map, Value};
 
-use crate::dataset::body_plan::{BodyPlan, JsonBodyMaterializer};
+use crate::body_plan::{BodyPlan, JsonBodyMaterializer};
 use crate::dataset::dataset::Dataset;
 use crate::dataset::error::{DatasetError, Result};
 use crate::dataset::materialize::Overrides;
@@ -651,12 +651,12 @@ struct EffectiveRequest {
 /// Decompose an endpoint formatter's body object into a [`BodyPlan`], rejecting
 /// a non-object body with the same error the legacy path produced.
 fn structured_plan(value: Value) -> Result<BodyPlan> {
-    value
-        .as_object()
-        .ok_or_else(|| {
-            DatasetError::Validation("endpoint formatter returned a non-object body".into())
-        })
-        .and_then(BodyPlan::from_object)
+    let object = value.as_object().ok_or_else(|| {
+        DatasetError::Validation("endpoint formatter returned a non-object body".into())
+    })?;
+    // `from_object` now yields a neutral `serde_json::Error`; lift it back into
+    // the dataset error domain this dispatch-side path speaks.
+    BodyPlan::from_object(object).map_err(DatasetError::from)
 }
 
 /// Read effective model/max-tokens/streaming from a merged [`BodyPlan`]'s

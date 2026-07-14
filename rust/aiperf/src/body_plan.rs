@@ -164,8 +164,16 @@ impl BodyPlan {
     /// transitional adapter from a `Value`-building formatter to the plan model;
     /// a formatter that authors the plan directly skips it.
     ///
+    /// The only failure mode is `serde_json::to_vec` on a message element, so it
+    /// returns a neutral [`serde_json::Error`] rather than a `dataset`-scoped
+    /// error — this lets endpoint formatters `?` it into their `EndpointError`
+    /// without a `dataset -> endpoints` dependency (the two crates are layered
+    /// the other way around).
+    ///
     /// [`Literal`]: FieldValue::Literal
-    pub fn from_object(object: &serde_json::Map<String, Value>) -> Result<Self> {
+    pub fn from_object(
+        object: &serde_json::Map<String, Value>,
+    ) -> std::result::Result<Self, serde_json::Error> {
         let mut plan = Self::new();
         for (key, value) in object {
             let name = Cow::Owned(key.clone());
