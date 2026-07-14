@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.4",
+  "aiperf_version": "0.0.0-test",
+  "request_latency": {
+    "unit": "ms",
+    "p50": 150.0,
+    "min": 100.0,
+    "count": 2
+  },
+  "input_config": {
+    "streaming": false,
+    "goodput": false
+  },
+  "was_cancelled": false
+}
