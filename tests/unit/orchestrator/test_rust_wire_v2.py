@@ -94,16 +94,26 @@ def test_v2_envelope_is_benchmark_run_shaped(tmp_path: Path, operation: str) -> 
     assert "resolved" in authored
 
 
-def test_export_genai_perf_disabled_without_summary(tmp_path: Path) -> None:
+def test_export_genai_perf_enabled_by_default_json_summary(tmp_path: Path) -> None:
+    # Default summary is ["json"]; the native v1 summary sink is the sole emitter
+    # of profile_export_aiperf.{json,csv} and enables on that signal.
     run = _run(tmp_path / "artifacts")
+    genai_perf = dump_benchmark_run(run)["cfg"]["export"]["genai_perf"]
+    assert genai_perf["enabled"] is True
+
+
+def test_export_genai_perf_disabled_without_json_summary(tmp_path: Path) -> None:
+    run = _run(tmp_path / "artifacts")
+    run.cfg.artifacts.summary = False
     export = dump_benchmark_run(run)["cfg"]["export"]
     assert export["genai_perf"] == {"enabled": False}
 
 
 def test_export_genai_perf_projects_frontend_metadata(tmp_path: Path) -> None:
     run = _run(tmp_path / "artifacts")
-    # Enable the native v1 summary sink so the frontend projection is included.
-    run.cfg.artifacts.summary = ["json", "genai_perf"]
+    # The native v1 summary sink is enabled by the default "json" summary; the
+    # frontend projection is then included.
+    run.cfg.artifacts.summary = ["json"]
 
     genai_perf = dump_benchmark_run(run)["cfg"]["export"]["genai_perf"]
 
@@ -204,25 +214,25 @@ def _network_run(artifact_target: Path) -> BenchmarkRun:
     return run
 
 
-def test_network_export_omitted_without_gate(
+def test_native_export_disabled_returns_python_to_all_sinks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from aiperf.common.environment import Environment
     from aiperf.orchestrator.rust_wire import _export, _live_streaming
 
-    monkeypatch.setattr(Environment, "NATIVE_NETWORK_EXPORT", False)
+    monkeypatch.setattr(Environment.RUNTIME, "NATIVE_EXPORT", False)
     run = _network_run(tmp_path / "artifacts")
 
     export = _export(run)
-    # Absent the gate the Rust network sinks are not driven; the legacy Python
-    # streaming sidecar stays active (single emitter).
-    assert "otel" not in export
-    assert "mlflow" not in export
-    assert "wandb" not in export
+    # With the native plane disabled the runner drives no export sinks (an empty
+    # block decodes to all-disabled defaults) so it writes only native-v2.json;
+    # the legacy Python ExporterManager + streaming sidecar are the single
+    # emitter for every artifact including the network destinations.
+    assert export == {}
     assert _live_streaming(run) is not None
 
 
-def test_network_export_projected_and_python_gated_with_gate(
+def test_network_export_projected_and_python_suppressed_by_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import json
@@ -230,7 +240,7 @@ def test_network_export_projected_and_python_gated_with_gate(
     from aiperf.common.environment import Environment
     from aiperf.orchestrator.rust_wire import _export, _live_streaming
 
-    monkeypatch.setattr(Environment, "NATIVE_NETWORK_EXPORT", True)
+    monkeypatch.setattr(Environment.RUNTIME, "NATIVE_EXPORT", True)
     run = _network_run(tmp_path / "artifacts")
 
     export = _export(run)
@@ -264,7 +274,7 @@ def test_network_export_projected_and_python_gated_with_gate(
     parsed = json.loads(wandb["config_json"])
     assert parsed["endpoint"]["type"] == "chat"
 
-    # With the gate on the Python streaming sidecar is suppressed (single emitter).
+    # By default the Python streaming sidecar is suppressed (single emitter).
     assert _live_streaming(run) is None
 
 

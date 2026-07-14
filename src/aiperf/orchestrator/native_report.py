@@ -111,17 +111,31 @@ def export_python_compatibility_reports(
 ) -> None:
     """Run the canonical Python JSON/CSV generators over native results.
 
-    Rust remains authoritative for request facts and aggregate values. Python
-    only serializes those values into the established Config-v2 report files so
-    plotters and upload extensions keep working during the native transition.
+    On the default native path this is a no-op: the Rust ``aiperf::export`` sink
+    plane already wrote every compatibility artifact (profile_export_aiperf.
+    {json,csv}, timeslices, server_metrics.{json,csv,parquet}, accuracy_results.csv,
+    profile_export_console.txt) and the network sinks, so re-running the Python
+    ExporterManager here would double-emit. The legacy Python emitters run only
+    when the native plane is disabled for A/B verification via
+    ``AIPERF_RUNTIME_NATIVE_EXPORT=0``, in which case Rust still remains
+    authoritative for request facts and aggregate values while Python serializes
+    them into the established Config-v2 report files.
     """
     import asyncio
 
     from rich.console import Console
 
+    from aiperf.common.environment import Environment
     from aiperf.common.models import ProfileResults
     from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
     from aiperf.exporters.exporter_manager import ExporterManager
+
+    if Environment.RUNTIME.NATIVE_EXPORT:
+        # Native sinks are the sole emitter; the runner already wrote every
+        # artifact via cfg.export projections (see rust_wire._export). Skip the
+        # Python ExporterManager + post-run uploaders entirely. Legacy Python
+        # emission is available for A/B via AIPERF_RUNTIME_NATIVE_EXPORT=0.
+        return
 
     native_summary = _mapping(payload.get("summary"), "native report summary")
     warmup_authored = payload.get("warmup_metrics")

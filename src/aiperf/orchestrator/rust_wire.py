@@ -670,9 +670,25 @@ def _export(run: BenchmarkRun) -> dict[str, Any]:
     (see :func:`_timeslice_frontend_projection` /
     :func:`_server_metrics_frontend_projection`).
     """
+    # Legacy escape hatch: when the native export plane is disabled
+    # (AIPERF_RUNTIME_NATIVE_EXPORT=0) the runner drives no export sinks — an
+    # empty block decodes to all-disabled defaults (see
+    # ``rust/aiperf/src/export/mod.rs``) so it writes only the authoritative
+    # native-v2 report, and the Python ExporterManager + live-streaming sidecar
+    # become the single emitter for every artifact (see
+    # :func:`_live_streaming` and
+    # ``native_report.export_python_compatibility_reports``).
+    if not Environment.RUNTIME.NATIVE_EXPORT:
+        return {}
+
     config = run.cfg
     summary = config.artifacts.summary
-    genai_perf_enabled = isinstance(summary, list) and "genai_perf" in summary
+    # The native v1 summary sink writes profile_export_aiperf.{json,csv} — the
+    # exact files the legacy MetricsJsonExporter (gated on ``"json" in summary``,
+    # see metrics_json_exporter.py) + MetricsCsvExporter produced. It is the sole
+    # emitter of those artifacts on the native path, so it enables on the same
+    # ``"json"`` signal the Python JSON exporter used (default ``["json"]``).
+    genai_perf_enabled = isinstance(summary, list) and "json" in summary
     genai_perf: dict[str, Any] = {"enabled": genai_perf_enabled}
     if genai_perf_enabled:
         genai_perf.update(_genai_perf_frontend_projection(run))
@@ -692,24 +708,22 @@ def _export(run: BenchmarkRun) -> dict[str, Any]:
         result["accuracy_csv"] = accuracy_csv
     result["console_txt"] = _console_txt_frontend_projection(run)
 
-    # Network sinks (OTLP/HTTP, MLflow, W&B) are only projected onto the native
-    # export plane when the operator opts in via AIPERF_NATIVE_NETWORK_EXPORT.
-    # Absent the gate these blocks are omitted, so the Rust sinks stay disabled
-    # (enabled=false / no tracking_uri / no project) and the legacy Python
-    # streaming sidecar + post-run exporters remain the single emitter. With the
-    # gate on, these blocks drive the Rust sinks and the Python paths are gated
-    # off (see :func:`_live_streaming` and ``ExporterManager.export_data``), so
-    # each network destination receives exactly one emission.
-    if Environment.NATIVE_NETWORK_EXPORT:
-        otel = _otel_frontend_projection(run)
-        if otel is not None:
-            result["otel"] = otel
-        mlflow = _mlflow_frontend_projection(run)
-        if mlflow is not None:
-            result["mlflow"] = mlflow
-        wandb = _wandb_frontend_projection(run)
-        if wandb is not None:
-            result["wandb"] = wandb
+    # Network sinks (OTLP/HTTP, MLflow, W&B) are driven by the native export
+    # plane by default. Each block is projected only when its config signal is
+    # present (collector/tracking_uri/project); the native Rust sink is then the
+    # single emitter and the Python streaming sidecar + post-run uploaders are
+    # skipped (see :func:`_live_streaming` and
+    # ``native_report.export_python_compatibility_reports``). The legacy Python
+    # paths return under AIPERF_RUNTIME_NATIVE_EXPORT=0 above.
+    otel = _otel_frontend_projection(run)
+    if otel is not None:
+        result["otel"] = otel
+    mlflow = _mlflow_frontend_projection(run)
+    if mlflow is not None:
+        result["mlflow"] = mlflow
+    wandb = _wandb_frontend_projection(run)
+    if wandb is not None:
+        result["wandb"] = wandb
     return result
 
 
@@ -1179,11 +1193,11 @@ def _genai_perf_frontend_projection(run: BenchmarkRun) -> dict[str, Any]:
 def _live_streaming(run: BenchmarkRun) -> dict[str, Any] | None:
     """Lower OTel/live-MLflow into the supervised Python extension ABI."""
     config = run.cfg
-    # When the native network-export gate is on, the Rust OTel/MLflow sinks are
-    # the single emitter (see :func:`_export`); suppress the Python streaming
-    # sidecar so those destinations are not written twice. Reversible: clearing
-    # AIPERF_NATIVE_NETWORK_EXPORT restores the legacy live-streaming path.
-    if Environment.NATIVE_NETWORK_EXPORT:
+    # By default the native Rust OTel/MLflow sinks are the single network emitter
+    # (see :func:`_export`); suppress the Python streaming sidecar so those
+    # destinations are not written twice. Reversible: AIPERF_RUNTIME_NATIVE_EXPORT=0
+    # restores the legacy live-streaming path.
+    if Environment.RUNTIME.NATIVE_EXPORT:
         return None
     if not config.otel.collector_enabled and not config.mlflow.enabled:
         return None

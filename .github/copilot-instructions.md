@@ -142,6 +142,8 @@ Content server: `AIPERF_CONTENT_SERVER_ENABLED=true` + non-empty `AIPERF_CONTENT
 
 Execution-engine off switch: `AIPERF_RUNTIME_ENGINE=python` (default `rust`) routes a single `aiperf profile` run through the legacy pure-Python service mesh (`SystemController` + Worker/TimingManager/RecordsManager children) instead of the native `aiperf-runner`, for A/B benchmarking the old hot path against the Rust core on an identical `BenchmarkRun`. Enum field `Environment.RUNTIME.ENGINE` in `src/aiperf/common/environment.py`; `rust` (default) rejects unknown values.
 
+Export-plane off switch: `AIPERF_RUNTIME_NATIVE_EXPORT=0` (default `1`) restores the legacy Python emitters (the `ExporterManager` data/console exporters, the mlflow/wandb post-run uploaders, and the OTel live-streaming sidecar) instead of the native `aiperf::export` sink plane, for A/B verification (mirrors `AIPERF_RUNTIME_ENGINE=python`). By default the native Rust sinks are the sole emitter of `profile_export_aiperf.{json,csv}`, timeslices, `server_metrics.{json,csv,parquet}`, `accuracy_results.csv`, `profile_export_console.txt`, and the OTel/MLflow/W&B network sinks: the frontend projects `cfg.export` (`rust_wire._export`) whenever the config signal is present, suppresses the live-streaming sidecar (`rust_wire._live_streaming`), and skips `native_report.export_python_compatibility_reports`. Bool field `Environment.RUNTIME.NATIVE_EXPORT` in `src/aiperf/common/environment.py`.
+
 Unit tests use in-process axum endpoints. `tests/scheduled_real_mock.rs` retains real wall-clock library coverage; runner product coverage lives in `aiperf-runner/tests/`.
 
 ## Design specs (`specs/`)
