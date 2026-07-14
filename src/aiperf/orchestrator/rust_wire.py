@@ -657,7 +657,13 @@ def _export(run: BenchmarkRun) -> dict[str, Any]:
     """
     config = run.cfg
     summary = config.artifacts.summary
-    genai_perf_enabled = isinstance(summary, list) and "genai_perf" in summary
+    # The native aiperf-v1 sink emits profile_export_aiperf.{json,csv}. It fires
+    # whenever the JSON summary is requested (the legacy default) or explicitly
+    # via "genai_perf", so it can run alongside the Python exporter for parity
+    # diffing (see AIPERF_EXPORT_SUBDIR in the runner).
+    genai_perf_enabled = isinstance(summary, list) and (
+        "json" in summary or "genai_perf" in summary
+    )
     return {
         "genai_perf": {
             "enabled": genai_perf_enabled,
