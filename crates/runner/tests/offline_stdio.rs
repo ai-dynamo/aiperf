@@ -28,100 +28,86 @@ fn capabilities() -> Value {
     one_line(&output)
 }
 
-fn request(operation: &str, distribution_id: &str, artifact_target: &Path) -> Value {
+fn request(operation: &str, artifact_dir: &Path) -> Value {
     json!({
         "protocol_version": 2,
         "operation": operation,
-        "expected_distribution_id": distribution_id,
         "run": {
-            "identity": {
-                "benchmark_id": "offline-v2-process",
-                "random_seed": 17
-            },
-            "artifact_target": artifact_target,
-            "transport": {
-                "type": "dynosim_offline",
-                "config": {
+            "benchmark_id": "offline-v2-process",
+            "random_seed": 17,
+            "artifact_dir": artifact_dir,
+            "cfg": {
+                "models": {"items": [{"name": "mock-model"}]},
+                "endpoint": {
+                    "type": "chat",
+                    "urls": ["http://127.0.0.1:9"]
+                },
+                "datasets": [{
+                    "name": "default",
+                    "type": "file",
+                    "format": "dag_jsonl",
+                    "sampling": "sequential",
+                    "records": [
+                        {
+                            "session_id": "root",
+                            "turns": [
+                                {
+                                    "messages": [{"role": "user", "content": "root"}],
+                                    "forks": [{"child": "child", "background": true}],
+                                    "max_tokens": 2
+                                },
+                                {
+                                    "messages": [{"role": "user", "content": "joined"}],
+                                    "max_tokens": 2
+                                }
+                            ]
+                        },
+                        {
+                            "session_id": "child",
+                            "turns": [{
+                                "messages": [{"role": "user", "content": "child"}],
+                                "max_tokens": 2
+                            }]
+                        }
+                    ]
+                }],
+                "tokenizer": {
+                    "name": "builtin",
+                    "revision": "main",
+                    "trust_remote_code": false,
+                    "apply_chat_template": false
+                },
+                "phases": [
+                    {
+                        "name": "warmup",
+                        "type": "concurrency",
+                        "exclude_from_results": true,
+                        "requests": 3,
+                        "concurrency": 1
+                    },
+                    {
+                        "name": "profiling",
+                        "type": "constant",
+                        "exclude_from_results": false,
+                        "requests": 3,
+                        "duration": 1.0,
+                        "rate": 100.0,
+                        "concurrency": 2,
+                        "prefill_concurrency": 2,
+                        "seamless": true,
+                        "grace_period": 0.01,
+                        "rate_ramp": {"duration": 0.001, "strategy": "linear"},
+                        "cancellation": {"rate": 0.0, "delay": 0.001}
+                    }
+                ],
+                "transport": {
+                    "type": "dynosim_offline",
                     "artifacts": {
                         "report_json": "dynamo/report.json",
                         "per_request_jsonl": "dynamo/requests.jsonl"
                     }
-                }
-            },
-            "workload": {
-                "type": "graph",
-                "config": {
-                    "worker_count": 1,
-                    "dataset": {
-                        "name": "default",
-                        "type": "file",
-                        "format": "dag_jsonl",
-                        "sampling": "sequential",
-                        "records": [
-                            {
-                                "session_id": "root",
-                                "turns": [
-                                    {
-                                        "messages": [{"role": "user", "content": "root"}],
-                                        "forks": [{"child": "child", "background": true}],
-                                        "max_tokens": 2
-                                    },
-                                    {
-                                        "messages": [{"role": "user", "content": "joined"}],
-                                        "max_tokens": 2
-                                    }
-                                ]
-                            },
-                            {
-                                "session_id": "child",
-                                "turns": [{
-                                    "messages": [{"role": "user", "content": "child"}],
-                                    "max_tokens": 2
-                                }]
-                            }
-                        ]
-                    },
-                    "tokenizer": {
-                        "name": "builtin",
-                        "revision": "main",
-                        "trust_remote_code": false,
-                        "apply_chat_template": false
-                    },
-                    "phases": [
-                        {
-                            "name": "warmup",
-                            "type": "concurrency",
-                            "exclude_from_results": true,
-                            "requests": 3,
-                            "concurrency": 1
-                        },
-                        {
-                            "name": "profiling",
-                            "type": "constant",
-                            "exclude_from_results": false,
-                            "requests": 3,
-                            "duration": 1.0,
-                            "rate": 100.0,
-                            "concurrency": 2,
-                            "prefill_concurrency": 2,
-                            "seamless": true,
-                            "grace_period": 0.01,
-                            "rate_ramp": {"duration": 0.001, "strategy": "linear"},
-                            "cancellation": {"rate": 0.0, "delay": 0.001}
-                        }
-                    ]
-                }
-            },
-            "resources": {
-                "models": {"items": [{"name": "mock-model"}]},
-                "endpoints": {"profiles": [{
-                    "id": "default",
-                    "type": "chat_completions",
-                    "urls": ["http://127.0.0.1:9"]
-                }]},
-                "metrics": {},
-                "artifacts": {},
-                "sidecars": {}
+                },
+                "runtime": {"workers": 1}
             }
         }
     })
@@ -191,21 +177,18 @@ fn capabilities_advertise_both_executable_offline_pairs() {
 }
 
 #[test]
-#[ignore = "product wire no longer projects this mode; modules remain linked for later deletion"]
 fn validate_is_side_effect_free_and_execute_commits_native_and_dynamo_reports() {
-    let capabilities = capabilities();
-    let distribution_id = capabilities["distribution_id"].as_str().unwrap();
     let target = target("execute");
     let _ = std::fs::remove_dir_all(&target);
 
-    let validation = run(&request("validate", distribution_id, &target));
+    let validation = run(&request("validate", &target));
     let validation_response = one_line(&validation);
     assert!(validation.status.success(), "{validation_response}");
     assert_eq!(validation_response["event"], "run_validation");
     assert_eq!(validation_response["success"], true);
     assert!(!target.exists(), "validate created the artifact target");
 
-    let execution = run(&request("execute", distribution_id, &target));
+    let execution = run(&request("execute", &target));
     let terminal = one_line(&execution);
     assert!(
         execution.status.success(),
@@ -224,7 +207,12 @@ fn validate_is_side_effect_free_and_execute_commits_native_and_dynamo_reports() 
     assert!(report_path.is_file());
     let native: Value = serde_json::from_slice(&std::fs::read(&report_path).unwrap()).unwrap();
     assert_eq!(native["schema_version"], "2.0");
-    assert_eq!(native["run"]["distribution_id"], distribution_id);
+    assert!(
+        native["run"]["distribution_id"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty()),
+        "native report is missing a distribution_id"
+    );
     assert_eq!(native["run"]["transport"], "dynosim_offline");
     assert_eq!(native["run"]["workload"], "graph");
     assert_eq!(native["run"]["extensions"], json!([]));
@@ -275,15 +263,10 @@ fn uncompiled_optional_feature_fails_before_artifacts_or_engine_execution() {
     if cfg!(feature = "dynamo-kvbm-offload") {
         return;
     }
-    let capabilities = capabilities();
     let target = target("missing-feature");
     let _ = std::fs::remove_dir_all(&target);
-    let mut authored = request(
-        "execute",
-        capabilities["distribution_id"].as_str().unwrap(),
-        &target,
-    );
-    authored["run"]["transport"]["config"]["engine"] = json!({"num_g2_blocks": 8});
+    let mut authored = request("execute", &target);
+    authored["run"]["cfg"]["transport"]["engine"] = json!({"num_g2_blocks": 8});
     let output = run(&authored);
     let terminal = one_line(&output);
 

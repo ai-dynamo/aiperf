@@ -114,6 +114,21 @@ def dump_benchmark_run(run: BenchmarkRun) -> dict[str, Any]:
     return payload
 
 
+_DYNOSIM_TRANSPORTS = frozenset({"dynosim_offline", "dynosim_online"})
+
+
+def _is_dynosim(run: BenchmarkRun) -> bool:
+    """Whether this run targets an in-process Dynamo co-simulation transport.
+
+    The dynosim transports open no sockets and hard-reject online sidecars and
+    common request/raw/output/user-file artifacts (they emit backend Dynamo
+    artifacts instead). Callers use this to force those inputs off so a plain
+    ``aiperf profile --config dynosim_*`` run validates without the author
+    having to disable gpu/server telemetry and the per-record export by hand.
+    """
+    return str(run.cfg.transport.type) in _DYNOSIM_TRANSPORTS
+
+
 def _inline_transport(transport: Any) -> dict[str, Any]:
     """Keep Config's inline discriminated transport object on the wire."""
     config = transport.model_dump(
@@ -367,6 +382,16 @@ def _authored_artifacts(run: BenchmarkRun) -> dict[str, Any]:
             }
             for user_file in render_user_files(cfg.artifacts.user_files, context)
         ]
+    if _is_dynosim(run):
+        # DynoSim emits backend Dynamo artifacts (report/per-request JSONL on the
+        # transport block) and hard-rejects the common request/raw/output/
+        # user-file projection. Force those off — the ``--export-level`` default
+        # re-enables the per-record file even when the YAML disables it, so the
+        # only reliable place to drop them is here at the wire choke point. The
+        # runner permits ``inputs_path``, so introspection still works.
+        for key in ("records_path", "raw_path", "outputs_path", "user_files"):
+            result.pop(key, None)
+        result["trace"] = False
     return result
 
 
@@ -378,6 +403,11 @@ def _authored_sidecars(run: BenchmarkRun) -> dict[str, Any]:
     reachability, cadence, and worker startup remain owned by the selected
     Rust sidecar adapters during pair preparation.
     """
+    # DynoSim opens no sockets: force every online sidecar off (gpu telemetry
+    # and server metrics both default on and would otherwise hard-fail native
+    # validation). The co-simulation carries no live resources to scrape.
+    if _is_dynosim(run):
+        return {}
     result: dict[str, Any] = {}
     content_server = _content_server()
     if content_server is not None:
