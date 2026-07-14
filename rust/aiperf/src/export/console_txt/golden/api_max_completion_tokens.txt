@@ -1,0 +1,14 @@
+The backend rejected 'max_completion_tokens'. This backend only supports 'max_tokens'.
+
+Possible Causes:
+  • AIPerf generated 'max_completion_tokens' due to --output-tokens-mean.
+  • The backend rejects 'max_completion_tokens' because it only supports 'max_tokens'.
+
+Investigation Steps:
+  1. Inspect request payloads in profile_export.jsonl.
+  1. Check the backend's supported parameters.
+
+Suggested Fixes:
+  • Remove --output-tokens-mean.
+  • Or use --extra-inputs "max_tokens:<value>".
+  • Or run AIPerf with '--use-legacy-max-tokens' to force use of the legacy 'max_tokens' field instead of 'max_completion_tokens'.

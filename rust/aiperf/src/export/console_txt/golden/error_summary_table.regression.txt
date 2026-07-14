@@ -1,0 +1,7 @@
+         NVIDIA AIPerf | Error Summary          
+┏━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Code ┃      Type ┃ Message           ┃ Count ┃
+┡━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│  429 │ RateLimit │ Too Many Requests │ 1,234 │
+│  N/A │       N/A │ connection reset  │     7 │
+└──────┴───────────┴───────────────────┴───────┘
