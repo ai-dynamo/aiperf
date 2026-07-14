@@ -40,20 +40,37 @@
 //! Python sees the override in the live terminal render but the compiled default
 //! in this artifact.
 //!
-//! # Rich box-drawing is APPROXIMATE (documented divergence)
-//! Reproducing `rich`'s `Table` (`box.HEAVY_HEAD`) and `Panel` (`box.ROUNDED`)
-//! glyph layout — its content-fit column solver, per-cell padding, title
-//! centering, and word-wrap at the export width — byte-for-byte is out of scope.
-//! The renderers here draw the same box glyphs and the same cell *content*,
-//! sized to content, but do NOT guarantee identical column widths or wrapping.
-//! Concretely the following diverge from Rich and are asserted only as
-//! *regression* goldens (this module's own output), never as Python parity:
-//!   * long cells / panel lines are NOT wrapped to the export width;
-//!   * a metric header longer than 30 chars keeps a single-space `(unit)`
-//!     delimiter instead of Python's newline-in-cell;
-//!   * the metrics-table title degrades to `NVIDIA AIPerf` (the runner has no
-//!     Python endpoint `metrics_title` metadata — the same degrade path Python
-//!     takes for runner-only dialects);
+//! # Rich box-drawing LAYOUT is a faithful port (with documented residuals)
+//! The `Table` (`box.HEAVY_HEAD`) and `Panel` (`box.ROUNDED`) renderers here
+//! reproduce Rich's geometry byte-for-byte for the content the native report
+//! carries: the content-fit column solver (`expand=False`), one-cell cell
+//! padding, `HEAVY_HEAD`/`ROUNDED` glyphs, centered space-padded titles, the
+//! `header\n(unit)` two-line cell for headers longer than 30 columns
+//! (`console_metrics_exporter._format_row`), the `expand=False` panel width
+//! solver (content-fit, title-widened, export-width-capped), and the panel-body
+//! word-wrap (`Text.wrap`, fold overflow — ports of `rich._wrap.divide_line` /
+//! `cells.chop_cells`). Verified equal to `rich==14.1.0` at width 140.
+//!
+//! The following residuals remain and are driven by inputs OUTSIDE this sink
+//! (the native metric CATALOG and the runner's missing Python endpoint
+//! metadata), so they cannot be closed from the renderer; the regression
+//! goldens below pin this module's own output, not Python parity:
+//!   * **Grouping / headers / title.** The native `metrics_core` catalog carries
+//!     richer console-group and display-header metadata than Python's
+//!     `MetricRegistry`, and native-only metrics (`effective_*`, `active_*`,
+//!     `tokens_in_flight`, …) are unregistered in Python. So Python renders one
+//!     `NVIDIA AIPerf | LLM Metrics` DEFAULT-group table using raw tag names for
+//!     those metrics, while the native sink renders several `NVIDIA AIPerf: <Group>`
+//!     tables with proper headers. The catalog also flags some native-only
+//!     metrics `INTERNAL`/`EXPERIMENTAL` (e.g. `credit_to_start_latency`,
+//!     `effective_latency`), so the native primary tables hide them while Python
+//!     — lacking that flag metadata — surfaces them as raw-tag rows. The base
+//!     title likewise degrades to `NVIDIA AIPerf` (the runner has no endpoint
+//!     `metrics_title`). Closing these needs catalog / registry changes in
+//!     `metrics_core`, not this sink.
+//!   * a metrics/error table whose fitted width would EXCEED the export width is
+//!     not collapsed/re-wrapped (Rich shrinks its flexible columns); the product
+//!     metric tables fit within 140, so this is unreached in practice;
 //!   * multi-model runs render the FIRST series' value per metric (Python
 //!     pre-aggregates one `MetricResult` per metric);
 //!   * the cache-reporting hint line and the dev-only internal / experimental /
@@ -149,30 +166,40 @@ impl Exporter for ConsoleTxtExporter {
 /// usage-discrepancy panel, then the OSL-mismatch panel.
 pub(crate) fn render_console_txt(report: &NativeReport, cfg: &ConsoleTxtExportConfig) -> String {
     let width = cfg.width as usize;
-    let mut blocks: Vec<String> = Vec::new();
+    // Each block carries the count of leading blank lines Rich emits before its
+    // renderable, which is set by the originating Python exporter's own
+    // `console.print(...)` prefix (recorded verbatim into the export):
+    //   * panel exporters call `console.print()` — one blank line;
+    //   * the table exporters call `console.print("\n")` — the literal `"\n"`
+    //     renderable plus the trailing end newline yield two blank lines.
+    // The metrics exporter emits its N grouped tables as a single `Group`, so
+    // the whole `metrics_tables` block takes one two-blank prefix (the tables
+    // inside the group abut with no separator — see `metrics_tables`).
+    let mut blocks: Vec<(usize, String)> = Vec::new();
 
     for warning in detect_api_errors(report) {
-        blocks.push(warning_panel(&warning, width));
+        blocks.push((1, warning_panel(&warning, width)));
     }
     if let Some(table) = error_summary_table(report) {
-        blocks.push(table);
+        blocks.push((2, table));
     }
     if let Some(tables) = metrics_tables(report) {
-        blocks.push(tables);
+        blocks.push((2, tables));
     }
     if let Some(warning) = detect_usage_discrepancy(report) {
-        blocks.push(warning_panel(&warning, width));
+        blocks.push((1, warning_panel(&warning, width)));
     }
     if let Some(warning) = detect_osl_mismatch(report) {
-        blocks.push(warning_panel(&warning, width));
+        blocks.push((1, warning_panel(&warning, width)));
     }
 
-    // Rich prints a leading blank line before each renderable; joining the
-    // blocks with a blank separator and terminating with a newline is the
-    // structural equivalent of the recorded console's plain-text export.
+    // Reproduce the recorded console byte stream: the per-block leading blank
+    // lines, the block content, then the block's own trailing line terminator.
     let mut out = String::new();
-    for block in &blocks {
-        out.push('\n');
+    for (lead, block) in &blocks {
+        for _ in 0..*lead {
+            out.push('\n');
+        }
         out.push_str(block);
         out.push('\n');
     }
@@ -566,7 +593,15 @@ pub(crate) fn metrics_tables(report: &NativeReport) -> Option<String> {
             continue; // group None (hidden) or otherwise not rendered.
         };
         let mut cells = Vec::with_capacity(1 + STAT_KEYS.len());
-        cells.push(format!("{} ({})", spec.header, entry.unit));
+        // Python `_format_row`: a header longer than 30 columns pushes the
+        // `(unit)` suffix onto a second physical line within the cell; the
+        // table renderer honors the embedded newline as a two-line-tall row.
+        let delimiter = if spec.header.chars().count() > 30 {
+            "\n"
+        } else {
+            " "
+        };
+        cells.push(format!("{}{delimiter}({})", spec.header, entry.unit));
         for key in STAT_KEYS {
             cells.push(stat_cell(entry, key));
         }
@@ -616,6 +651,14 @@ fn group_title(group: MetricConsoleGroup) -> String {
 
 /// Format one stat cell from a metric's first series (`_format_row`): present
 /// numbers as `{v:,.2f}`, absent stats as `N/A`.
+///
+/// The per-type stat projection mirrors the canonical Python
+/// `native_report._legacy_stats` exactly (that is the projection the Python
+/// console exporter consumes for the same native-v2 report): a **scalar**
+/// mirrors its single `value` into `avg`/`min`/`max` (`std` and percentiles are
+/// absent → `N/A`); a **counter** mirrors its `total` into `avg`/`min`/`max`; a
+/// **histogram** exposes `avg` plus its percentiles (`min`/`max`/`std` absent);
+/// a **distribution** carries the full stat set.
 fn stat_cell(entry: &MetricEntry, key: &str) -> String {
     let Some(series) = entry.series.first() else {
         return "N/A".to_string();
@@ -629,11 +672,11 @@ fn stat_cell(entry: &MetricEntry, key: &str) -> String {
             other => dist.percentiles.get(other).and_then(value_f64),
         },
         ReportStats::Scalar(scalar) => match key {
-            "avg" => value_f64(&scalar.value),
+            "avg" | "min" | "max" => value_f64(&scalar.value),
             _ => None,
         },
         ReportStats::Counter(counter) => match key {
-            "avg" => value_f64(&counter.total),
+            "avg" | "min" | "max" => value_f64(&counter.total),
             _ => None,
         },
         ReportStats::Histogram(hist) => match key {
@@ -682,8 +725,17 @@ fn center(text: &str, width: usize) -> String {
     format!("{}{text}{}", " ".repeat(left), " ".repeat(remaining - left))
 }
 
-/// Render an approximate Rich `box.HEAVY_HEAD` table with a centered title.
-/// Column widths fit content; padding is one space each side (Rich default).
+/// Render a Rich `box.HEAVY_HEAD` table with a centered title.
+///
+/// Column widths fit content (Rich's `expand=False` default): each column is as
+/// wide as its widest cell *line*, with one space of padding each side. A cell
+/// may contain embedded newlines (Python's `_format_row` `header\n(unit)` split);
+/// such a row is rendered as many physical lines tall as its tallest cell, with
+/// shorter cells padded out with blank lines (Rich's default top vertical
+/// alignment). This matches Rich byte-for-byte while the table's total width
+/// stays within the export width; a table whose fitted width would exceed the
+/// export width is a documented divergence (Rich collapses/word-wraps its
+/// flexible columns; this renderer does not — see the module header).
 fn render_table(
     title: &str,
     headers: &[&str],
@@ -694,7 +746,8 @@ fn render_table(
     let mut widths: Vec<usize> = headers.iter().map(|h| cell_width(h)).collect();
     for row in rows {
         for (index, cell) in row.iter().enumerate().take(columns) {
-            widths[index] = widths[index].max(cell_width(cell));
+            let cell_max = cell.split('\n').map(cell_width).max().unwrap_or(0);
+            widths[index] = widths[index].max(cell_max);
         }
     }
 
@@ -706,18 +759,31 @@ fn render_table(
         format!("{left}{}{right}", parts.join(&mid.to_string()))
     };
     let render_row = |cells: &[String], vbar: char| -> String {
-        let mut line = String::new();
-        line.push(vbar);
-        for (index, &width) in widths.iter().enumerate().take(columns) {
-            let default = String::new();
-            let cell = cells.get(index).unwrap_or(&default);
-            let just = justify.get(index).copied().unwrap_or(Justify::Left);
-            line.push(' ');
-            line.push_str(&pad(cell, width, just));
-            line.push(' ');
+        // Split each cell into physical lines; the row is as tall as the
+        // tallest cell. Missing cells / short cells emit blank (padded) lines.
+        let split: Vec<Vec<&str>> = (0..columns)
+            .map(|index| {
+                cells
+                    .get(index)
+                    .map_or_else(|| vec![""], |cell| cell.split('\n').collect())
+            })
+            .collect();
+        let height = split.iter().map(Vec::len).max().unwrap_or(1);
+        let mut out_lines: Vec<String> = Vec::with_capacity(height);
+        for line_index in 0..height {
+            let mut line = String::new();
             line.push(vbar);
+            for (index, &width) in widths.iter().enumerate().take(columns) {
+                let text = split[index].get(line_index).copied().unwrap_or("");
+                let just = justify.get(index).copied().unwrap_or(Justify::Left);
+                line.push(' ');
+                line.push_str(&pad(text, width, just));
+                line.push(' ');
+                line.push(vbar);
+            }
+            out_lines.push(line);
         }
-        line
+        out_lines.join("\n")
     };
 
     let table_width: usize = widths.iter().map(|w| w + 2).sum::<usize>() + columns + 1;
@@ -739,18 +805,150 @@ fn render_table(
     out
 }
 
-/// Render an approximate Rich `Panel` (`box.ROUNDED`, `padding=(0, 2)`) with the
-/// title centered in the top border. Body lines are NOT wrapped to the export
-/// width (a documented divergence from Rich).
-pub(crate) fn warning_panel(warning: &Warning, _width: usize) -> String {
-    const PAD: usize = 2;
-    let lines: Vec<&str> = warning.body.split('\n').collect();
-    let content_width = lines.iter().map(|l| cell_width(l)).max().unwrap_or(0);
-    let title_slug = format!(" {} ", warning.title);
-    let inner = (content_width + PAD * 2).max(cell_width(&title_slug));
+/// Split a long word into cell-width-bounded chunks. Port of Rich
+/// `cells.chop_cells` (each glyph rendered here is single-width, so cell width
+/// equals the character count).
+fn chop_cells(word: &[char], width: usize) -> Vec<Vec<char>> {
+    let mut lines: Vec<Vec<char>> = vec![Vec::new()];
+    let mut total = 0usize;
+    for &character in word {
+        if total + 1 > width {
+            lines.push(vec![character]);
+            total = 1;
+        } else {
+            lines.last_mut().expect("at least one line").push(character);
+            total += 1;
+        }
+    }
+    lines
+}
+
+/// Tokenize `text` into `\s*\S+\s*` spans (leading whitespace is folded into the
+/// following word; trailing-only whitespace yields no span). Port of Rich
+/// `_wrap.words`, returning `(start, end)` character offsets.
+fn word_spans(text: &[char]) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let len = text.len();
+    let mut pos = 0;
+    while pos < len {
+        let start = pos;
+        while pos < len && text[pos].is_whitespace() {
+            pos += 1;
+        }
+        if pos >= len {
+            break; // only whitespace remained: `\S+` cannot match.
+        }
+        while pos < len && !text[pos].is_whitespace() {
+            pos += 1;
+        }
+        while pos < len && text[pos].is_whitespace() {
+            pos += 1;
+        }
+        spans.push((start, pos));
+    }
+    spans
+}
+
+/// Compute the break offsets (character indices) at which `text` must be split
+/// to fit `width` cells per line, folding over-long words. Port of Rich
+/// `_wrap.divide_line` with `fold=True`.
+fn divide_line(text: &[char], width: usize) -> Vec<usize> {
+    let mut breaks: Vec<usize> = Vec::new();
+    let mut cell_offset: isize = 0;
+    let width_i = width as isize;
+    for (start, end) in word_spans(text) {
+        let word = &text[start..end];
+        let mut stripped = word.len();
+        while stripped > 0 && word[stripped - 1].is_whitespace() {
+            stripped -= 1;
+        }
+        let word_length = stripped as isize;
+        let remaining_space = width_i - cell_offset;
+        if remaining_space >= word_length {
+            cell_offset += word.len() as isize;
+        } else if word_length > width_i {
+            let folded = chop_cells(word, width.max(1));
+            let last_index = folded.len().saturating_sub(1);
+            let mut folded_start = start;
+            for (index, line) in folded.iter().enumerate() {
+                if folded_start != 0 {
+                    breaks.push(folded_start);
+                }
+                if index == last_index {
+                    cell_offset = line.len() as isize;
+                } else {
+                    folded_start += line.len();
+                }
+            }
+        } else if cell_offset != 0 && start != 0 {
+            breaks.push(start);
+            cell_offset = word.len() as isize;
+        }
+    }
+    breaks
+}
+
+/// Word-wrap a single logical line to `width` cells, returning each physical
+/// line with trailing whitespace removed (the panel body pads it back out, so
+/// the byte result matches Rich's justify-default padding).
+fn wrap_line(line: &str, width: usize) -> Vec<String> {
+    let chars: Vec<char> = line.chars().collect();
+    let breaks = divide_line(&chars, width);
+    let mut pieces: Vec<String> = Vec::with_capacity(breaks.len() + 1);
+    let mut prev = 0;
+    for &offset in &breaks {
+        pieces.push(
+            chars[prev..offset]
+                .iter()
+                .collect::<String>()
+                .trim_end()
+                .to_string(),
+        );
+        prev = offset;
+    }
+    pieces.push(
+        chars[prev..]
+            .iter()
+            .collect::<String>()
+            .trim_end()
+            .to_string(),
+    );
+    pieces
+}
+
+/// Render a Rich `Panel` (`box.ROUNDED`, `padding=(0, 2)`, `expand=False`) with
+/// the title centered in the top border.
+///
+/// Reproduces Rich's `Panel.__rich_console__` sizing byte-for-byte: the panel
+/// fits its content but is capped at the export `width`; the title (space-padded
+/// one cell each side, then centered) can widen a panel narrower than its title;
+/// and body lines wider than the inner text region are word-wrapped exactly as
+/// Rich's `Text.wrap` (fold overflow) would. All box glyphs are single-width.
+pub(crate) fn warning_panel(warning: &Warning, width: usize) -> String {
+    const PAD: usize = 2; // padding=(0, 2): two cells left and right.
+    let max_width = width.max(2 * PAD + 3);
+    // Rich: child_width = measure(Padding(text), max_width-2).maximum, then
+    // widened to fit the padded title, clamped to max_width-2. The measured
+    // content width is min(longest_line, available_text) + padding.
+    let available_text = max_width - 2 - 2 * PAD;
+    let body_lines: Vec<&str> = warning.body.split('\n').collect();
+    let longest = body_lines.iter().map(|l| cell_width(l)).max().unwrap_or(0);
+    let content_child = longest.min(available_text) + 2 * PAD;
+    // Rich pads the title with one space on each side, then requires the panel
+    // to be at least `padded_title + 2` wide (the two border corners).
+    let title_min = warning.title.chars().count() + 2 + 2;
+    let child_width = (max_width - 2).min(content_child.max(title_min));
+    let inner_text = child_width - 2 * PAD;
+
+    // Word-wrap the body to the inner text region (Rich Text.wrap, fold).
+    let mut wrapped: Vec<String> = Vec::new();
+    for line in &body_lines {
+        wrapped.extend(wrap_line(line, inner_text));
+    }
 
     let mut out = String::new();
-    let remaining = inner - cell_width(&title_slug);
+    let title_slug = format!(" {} ", warning.title);
+    let remaining = child_width - cell_width(&title_slug);
     let left = remaining / 2;
     out.push('\u{256D}'); // ╭
     out.push_str(&"\u{2500}".repeat(left));
@@ -758,16 +956,16 @@ pub(crate) fn warning_panel(warning: &Warning, _width: usize) -> String {
     out.push_str(&"\u{2500}".repeat(remaining - left));
     out.push('\u{256E}'); // ╮
     out.push('\n');
-    for line in &lines {
+    for line in &wrapped {
         out.push('\u{2502}'); // │
         out.push_str(&" ".repeat(PAD));
-        out.push_str(&pad(line, inner - PAD * 2, Justify::Left));
+        out.push_str(&pad(line, inner_text, Justify::Left));
         out.push_str(&" ".repeat(PAD));
         out.push('\u{2502}');
         out.push('\n');
     }
     out.push('\u{2570}'); // ╰
-    out.push_str(&"\u{2500}".repeat(inner));
+    out.push_str(&"\u{2500}".repeat(child_width));
     out.push('\u{256F}'); // ╯
     out
 }

@@ -690,6 +690,7 @@ def _export(run: BenchmarkRun) -> dict[str, Any]:
     accuracy_csv = _accuracy_csv_frontend_projection(run)
     if accuracy_csv is not None:
         result["accuracy_csv"] = accuracy_csv
+    result["console_txt"] = _console_txt_frontend_projection(run)
 
     # Network sinks (OTLP/HTTP, MLflow, W&B) are only projected onto the native
     # export plane when the operator opts in via AIPERF_NATIVE_NETWORK_EXPORT.
@@ -710,6 +711,26 @@ def _export(run: BenchmarkRun) -> dict[str, Any]:
         if wandb is not None:
             result["wandb"] = wandb
     return result
+
+
+def _console_txt_frontend_projection(run: BenchmarkRun) -> dict[str, Any]:
+    """Project the fixed-width console-artifact policy onto ``cfg.export.console_txt``.
+
+    Toggle/config passthrough only — the runner's ``aiperf::export::console_txt``
+    sink owns the full render (grouped metric tables, error-summary table, and the
+    warning/insight panels). The frontend supplies only the three wire fields the
+    Rust decoder reads (``ConsoleTxtExportConfig``): ``enabled`` (the ``.txt``
+    artifact is always written, matching ``ExporterManager._write_console_txt``),
+    the fixed render ``width`` (``Environment.UI.CONSOLE_EXPORT_WIDTH``, the same
+    width the Python recording ``Console`` is pinned to), and ``dev`` (INTERNAL /
+    EXPERIMENTAL metric visibility — off for the standard end-of-run tables). No
+    metric values or message text cross the wire; the report alone drives them.
+    """
+    return {
+        "enabled": True,
+        "width": Environment.UI.CONSOLE_EXPORT_WIDTH,
+        "dev": False,
+    }
 
 
 def _otel_frontend_projection(run: BenchmarkRun) -> dict[str, Any] | None:
