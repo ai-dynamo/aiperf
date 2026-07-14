@@ -26,18 +26,17 @@ async fn test_raw_payload_replays_authored_body_verbatim() {
         &format!("{}\n", serde_json::to_string(&payload).unwrap()),
     );
 
-    let r = h
-        .run_timeout(
-            &format!(
-                "--model {DEFAULT_MODEL} --url {} --endpoint-type chat \
+    let r = h.run_timeout(
+        &format!(
+            "--model {DEFAULT_MODEL} --url {} --endpoint-type chat \
                  --custom-dataset-type raw_payload --input-file {} \
                  --concurrency 1 --num-conversations 1 --workers-max 1 \
                  --export-level raw --ui simple",
-                h.mock.url,
-                input_file.display()
-            ),
-            120,
-        );
+            h.mock.url,
+            input_file.display()
+        ),
+        120,
+    );
 
     assert!(r.success(), "run failed: {}", r.stderr);
     let raw = r.artifacts.raw_records();
@@ -73,18 +72,17 @@ async fn test_inputs_json_replays_stored_payload_verbatim() {
         &serde_json::to_string(&inputs).unwrap(),
     );
 
-    let r = h
-        .run_timeout(
-            &format!(
-                "--model {DEFAULT_MODEL} --url {} --endpoint-type chat \
+    let r = h.run_timeout(
+        &format!(
+            "--model {DEFAULT_MODEL} --url {} --endpoint-type chat \
                  --custom-dataset-type inputs_json --input-file {} \
                  --concurrency 1 --num-conversations 1 --workers-max 1 \
                  --export-level raw --ui simple",
-                h.mock.url,
-                input_file.display()
-            ),
-            120,
-        );
+            h.mock.url,
+            input_file.display()
+        ),
+        120,
+    );
 
     assert!(r.success(), "run failed: {}", r.stderr);
     let raw = r.artifacts.raw_records();

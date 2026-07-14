@@ -82,7 +82,11 @@ async fn test_concurrency_ramp_detects_degradation_knee() {
     // steps, so any positive int >= 8 is plausible.
     assert!(!knee["knee_concurrency"].is_null(), "{knee}");
     assert!(knee["knee_concurrency"].as_f64().unwrap() >= 8.0, "{knee}");
-    assert_eq!(knee["baseline_concurrency"].as_f64().unwrap(), 1.0, "{knee}");
+    assert_eq!(
+        knee["baseline_concurrency"].as_f64().unwrap(),
+        1.0,
+        "{knee}"
+    );
     assert_eq!(knee["stat"], "p99");
     assert_eq!(knee["swept_metric"], "request_latency");
     assert!(knee["all_points"].as_array().unwrap().len() >= 2, "{knee}");
@@ -141,17 +145,21 @@ async fn test_prefill_ttft_curve_fits_linear_with_isl_penalty() {
     // r^2 should be >= 0.5 with a clean linear ISL penalty even when only a
     // subset of the 8 default ISL points completed.
     let fit_form = curve["fit_form"].as_str().unwrap();
+    assert!(fit_form == "linear" || fit_form == "quadratic", "{curve}");
     assert!(
-        fit_form == "linear" || fit_form == "quadratic",
+        curve["raw_points"].as_array().unwrap().len() >= 2,
         "{curve}"
     );
-    assert!(curve["raw_points"].as_array().unwrap().len() >= 2, "{curve}");
     if fit_form == "linear" {
         assert!(curve["r_squared"].as_f64().unwrap() >= 0.5, "{curve}");
     } else {
         // Quadratic fallback fired (linear r^2 < floor); accept it as long as
         // the points it fitted are ours.
-        assert_eq!(curve["coefficients"].as_array().unwrap().len(), 3, "{curve}");
+        assert_eq!(
+            curve["coefficients"].as_array().unwrap().len(),
+            3,
+            "{curve}"
+        );
     }
 }
 
@@ -220,7 +228,10 @@ async fn test_decode_itl_curve_emits_2d_surface() {
     // ITL floor: scheduler_step_ms = 5ms; allow some jitter slack.
     let min_measured = measured.iter().cloned().fold(f64::INFINITY, f64::min);
     assert!(min_measured >= 4.0, "({min_measured}, {surface})");
-    assert!(surface["raw_points"].as_array().unwrap().len() >= 1, "{surface}");
+    assert!(
+        surface["raw_points"].as_array().unwrap().len() >= 1,
+        "{surface}"
+    );
 }
 
 /// max-concurrency-under-sla --search-style monotonic finds a finite boundary.
@@ -272,7 +283,10 @@ async fn test_max_concurrency_under_sla_finds_boundary() {
     );
     let history = read_artifact_json(dir, "search_history.json");
 
-    let iterations = history["iterations"].as_array().cloned().unwrap_or_default();
+    let iterations = history["iterations"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert!(
         iterations.len() >= 3,
         "monotonic planner ran {} iters; expected >= 3",
@@ -352,7 +366,10 @@ async fn test_max_goodput_under_slo_lands_near_collapse_point() {
     );
     let history = read_artifact_json(dir, "search_history.json");
 
-    let iterations = history["iterations"].as_array().cloned().unwrap_or_default();
+    let iterations = history["iterations"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert!(
         iterations.len() >= 3,
         "BO planner ran {} iters; expected >= 3",
@@ -372,12 +389,7 @@ async fn test_max_goodput_under_slo_lands_near_collapse_point() {
         variation.is_object() && !variation.as_object().unwrap().is_empty(),
         "{history}"
     );
-    let concurrency = variation
-        .as_object()
-        .unwrap()
-        .values()
-        .next()
-        .unwrap();
+    let concurrency = variation.as_object().unwrap().values().next().unwrap();
     assert!(concurrency.is_number(), "{variation}");
     assert!(concurrency.as_f64().unwrap() >= 1.0, "{variation}");
 }

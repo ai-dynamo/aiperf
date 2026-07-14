@@ -102,16 +102,13 @@ impl RequestCtx {
         // because in a saturated queue-bound regime TTFT is contention-bound and
         // empirically independent of cache hits.
         let cached_tokens = match &state.prefix_cache {
-            Some(pc) => {
-                pc.cached_tokens(&tokenized.text, usage.prompt_tokens, req_gen.priority())
-            }
+            Some(pc) => pc.cached_tokens(&tokenized.text, usage.prompt_tokens, req_gen.priority()),
             None => 0,
         };
         // Always emit prompt_tokens_details so callers can observe cache-read
         // counts even when the prefix cache is disabled (cached_tokens == 0).
         // The Python mock server always includes this field.
-        usage.prompt_tokens_details =
-            Some(crate::models::PromptTokensDetails { cached_tokens });
+        usage.prompt_tokens_details = Some(crate::models::PromptTokensDetails { cached_tokens });
         let latency_cached = if state.config.prefix_cache_latency_aware {
             cached_tokens
         } else {
@@ -2043,13 +2040,9 @@ pub async fn image_edit(
     });
     body["usage"] = serde_json::to_value(&ctx.usage).unwrap();
 
-    state.recorder.record_llm_success(
-        endpoint,
-        &model,
-        latency.as_secs_f64(),
-        &ctx.usage,
-        &info,
-    );
+    state
+        .recorder
+        .record_llm_success(endpoint, &model, latency.as_secs_f64(), &ctx.usage, &info);
     state.recorder.record_llm_inflight_end(&model);
     state.recorder.record_request_end(endpoint);
 

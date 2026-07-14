@@ -11,11 +11,17 @@ const CONCURRENCY: u32 = 2;
 const REQUEST_COUNT: u32 = 10;
 const UI: &str = "simple";
 
-const USAGE_METRIC_TAGS: [&str; 3] =
-    ["usage_prompt_tokens", "usage_completion_tokens", "usage_total_tokens"];
+const USAGE_METRIC_TAGS: [&str; 3] = [
+    "usage_prompt_tokens",
+    "usage_completion_tokens",
+    "usage_total_tokens",
+];
 
-const USAGE_METRIC_CSV_NAMES: [&str; 3] =
-    ["Usage Prompt Tokens", "Usage Completion Tokens", "Usage Total Tokens"];
+const USAGE_METRIC_CSV_NAMES: [&str; 3] = [
+    "Usage Prompt Tokens",
+    "Usage Completion Tokens",
+    "Usage Total Tokens",
+];
 
 /// Return the keys of a jsonl record's `metrics` object.
 fn record_metric_keys(record: &serde_json::Value) -> Vec<String> {
@@ -44,7 +50,9 @@ async fn usage_metrics_in_exports(endpoint_type: &str, model: &str) {
         let found_metrics: Vec<&str> = USAGE_METRIC_TAGS
             .iter()
             .filter(|m| {
-                obj.get(**m).map(|v| !v.is_null() && !is_falsy(v)).unwrap_or(false)
+                obj.get(**m)
+                    .map(|v| !v.is_null() && !is_falsy(v))
+                    .unwrap_or(false)
             })
             .copied()
             .collect();
@@ -66,7 +74,9 @@ async fn usage_metrics_in_exports(endpoint_type: &str, model: &str) {
         let records_with_usage: Vec<&serde_json::Value> = jsonl
             .iter()
             .filter(|record| {
-                record_metric_keys(record).iter().any(|k| k.starts_with("usage_"))
+                record_metric_keys(record)
+                    .iter()
+                    .any(|k| k.starts_with("usage_"))
             })
             .collect();
         assert!(!records_with_usage.is_empty());
@@ -98,9 +108,14 @@ async fn test_usage_metrics_in_exports_completions() {
 /// Mirror of `RunResult.has_streaming_metrics`: all streaming metric keys present.
 fn has_streaming_metrics(r: &RunResult) -> bool {
     let json = r.artifacts.json();
-    ["time_to_first_token", "inter_token_latency", "inter_chunk_latency", "time_to_second_token"]
-        .iter()
-        .all(|k| json.get(k).map(|v| !v.is_null()).unwrap_or(false))
+    [
+        "time_to_first_token",
+        "inter_token_latency",
+        "inter_chunk_latency",
+        "time_to_second_token",
+    ]
+    .iter()
+    .all(|k| json.get(k).map(|v| !v.is_null()).unwrap_or(false))
 }
 
 /// Test that streaming responses preserve cumulative usage values.

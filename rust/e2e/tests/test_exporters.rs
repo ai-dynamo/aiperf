@@ -51,11 +51,17 @@ async fn test_json_export() {
     let json = r.artifacts.json();
     assert!(!json.is_null(), "json should exist");
     assert!(
-        !json.get("request_count").unwrap_or(&serde_json::Value::Null).is_null(),
+        !json
+            .get("request_count")
+            .unwrap_or(&serde_json::Value::Null)
+            .is_null(),
         "json.request_count should exist"
     );
     assert!(
-        !json.get("request_latency").unwrap_or(&serde_json::Value::Null).is_null(),
+        !json
+            .get("request_latency")
+            .unwrap_or(&serde_json::Value::Null)
+            .is_null(),
         "json.request_latency should exist"
     );
 }
@@ -97,7 +103,10 @@ async fn test_raw_export_level() {
         let metadata = record.get("metadata").expect("metadata should exist");
         assert!(!metadata.is_null(), "metadata should not be null");
         assert!(
-            metadata.get("turn_index").and_then(|v| v.as_i64()).is_some(),
+            metadata
+                .get("turn_index")
+                .and_then(|v| v.as_i64())
+                .is_some(),
             "turn_index should be an int"
         );
         assert!(
@@ -131,14 +140,19 @@ async fn test_raw_export_level() {
 
         // Verify raw record fields exist.
         assert!(
-            record.get("start_perf_ns").and_then(|v| v.as_i64()).is_some(),
+            record
+                .get("start_perf_ns")
+                .and_then(|v| v.as_i64())
+                .is_some(),
             "start_perf_ns should be an int"
         );
         let payload = record.get("payload").expect("payload should exist");
         assert!(payload.is_object(), "payload should be a dict");
 
         // Verify payload has expected structure for chat endpoint.
-        let messages = payload.get("messages").expect("payload.messages should exist");
+        let messages = payload
+            .get("messages")
+            .expect("payload.messages should exist");
         assert!(messages.is_array(), "messages should be a list");
         assert!(
             !messages.as_array().unwrap().is_empty(),
@@ -169,7 +183,10 @@ async fn test_raw_export_level() {
         let request_headers = record
             .get("request_headers")
             .expect("request_headers should exist");
-        assert!(request_headers.is_object(), "request_headers should be a dict");
+        assert!(
+            request_headers.is_object(),
+            "request_headers should be a dict"
+        );
     }
 
     // Verify standard exports still exist.

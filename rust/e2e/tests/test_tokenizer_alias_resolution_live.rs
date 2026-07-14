@@ -31,7 +31,10 @@ const LLM_SPECIFIC_NAMES: &[(&str, &str)] = &[
     ("Llama-2-7b-hf", "meta-llama/Llama-2-7b-hf"),
     ("Llama-3.1-8B", "meta-llama/Llama-3.1-8B"),
     ("CodeLlama-7b-hf", "codellama/CodeLlama-7b-hf"),
-    ("Mistral-7B-Instruct-v0.2", "mistralai/Mistral-7B-Instruct-v0.2"),
+    (
+        "Mistral-7B-Instruct-v0.2",
+        "mistralai/Mistral-7B-Instruct-v0.2",
+    ),
     ("Qwen2.5-7B-Instruct", "Qwen/Qwen2.5-7B-Instruct"),
     ("gemma-2b", "google/gemma-2b"),
     ("phi-2", "microsoft/phi-2"),
@@ -56,7 +59,10 @@ const ENCODER_MODELS: &[(&str, &str)] = &[
     ("bert-base-cased", "google-bert/bert-base-cased"),
     ("roberta-base", "FacebookAI/roberta-base"),
     ("roberta-large", "FacebookAI/roberta-large"),
-    ("distilbert-base-uncased", "distilbert/distilbert-base-uncased"),
+    (
+        "distilbert-base-uncased",
+        "distilbert/distilbert-base-uncased",
+    ),
     ("albert-base-v2", "albert/albert-base-v2"),
     ("t5-small", "google-t5/t5-small"),
     ("t5-base", "google-t5/t5-base"),
@@ -75,8 +81,12 @@ const FULL_REPOSITORY_IDS: &[&str] = &[
 ];
 
 const EDGE_CASE_PATHS: &[&str] = &["../etc/passwd", "./local/path", "/absolute/path"];
-const EDGE_CASE_INVALID: &[&str] =
-    &["", "a", "this-model-does-not-exist-xyz-123", "https://evil.com"];
+const EDGE_CASE_INVALID: &[&str] = &[
+    "",
+    "a",
+    "this-model-does-not-exist-xyz-123",
+    "https://evil.com",
+];
 
 // =============================================================================
 // Helper Functions

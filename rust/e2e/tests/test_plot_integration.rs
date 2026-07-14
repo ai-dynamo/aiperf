@@ -35,9 +35,12 @@ fn validate_png_ihdr_chunk(path: &Path) -> Option<(u32, u32)> {
     }
     let mut cursor = 8usize; // skip PNG signature
 
-    let chunk_length =
-        u32::from_be_bytes([bytes[cursor], bytes[cursor + 1], bytes[cursor + 2], bytes[cursor + 3]])
-            as usize;
+    let chunk_length = u32::from_be_bytes([
+        bytes[cursor],
+        bytes[cursor + 1],
+        bytes[cursor + 2],
+        bytes[cursor + 3],
+    ]) as usize;
     cursor += 4;
 
     let chunk_type = &bytes[cursor..cursor + 4];
@@ -81,7 +84,10 @@ async fn test_profile_then_plot_single_run() {
         h.mock.url
     ));
     assert_eq!(profile_result.exit_code, 0);
-    assert_eq!(profile_result.artifacts.request_count() as u32, DEFAULT_REQUEST_COUNT);
+    assert_eq!(
+        profile_result.artifacts.request_count() as u32,
+        DEFAULT_REQUEST_COUNT
+    );
 
     let artifacts_dir = h.artifact_path().to_path_buf();
 
@@ -91,7 +97,10 @@ async fn test_profile_then_plot_single_run() {
 
     // Step 3: Validate PNG files were created.
     let plot_dir = artifacts_dir.join("plots");
-    assert!(plot_dir.exists(), "Plot directory not created at {plot_dir:?}");
+    assert!(
+        plot_dir.exists(),
+        "Plot directory not created at {plot_dir:?}"
+    );
 
     let pngs = png_files(&plot_dir);
     assert!(!pngs.is_empty(), "No PNG files were generated");

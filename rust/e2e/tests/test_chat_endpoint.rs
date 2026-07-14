@@ -14,9 +14,14 @@ const UI: &str = "simple";
 /// Mirror of `RunResult.has_streaming_metrics`: all streaming metric keys present.
 fn has_streaming_metrics(r: &RunResult) -> bool {
     let json = r.artifacts.json();
-    ["time_to_first_token", "inter_token_latency", "inter_chunk_latency", "time_to_second_token"]
-        .iter()
-        .all(|k| json.get(k).map(|v| !v.is_null()).unwrap_or(false))
+    [
+        "time_to_first_token",
+        "inter_token_latency",
+        "inter_chunk_latency",
+        "time_to_second_token",
+    ]
+    .iter()
+    .all(|k| json.get(k).map(|v| !v.is_null()).unwrap_or(false))
 }
 
 /// Basic non-streaming chat completion.

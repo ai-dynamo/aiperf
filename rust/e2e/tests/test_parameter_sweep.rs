@@ -14,16 +14,13 @@ const UI: &str = "simple";
 
 /// Read and parse a JSON file, panicking with a helpful message on failure.
 fn jload(path: &Path) -> Value {
-    let bytes =
-        fs::read(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    serde_json::from_slice(&bytes)
-        .unwrap_or_else(|e| panic!("parse {}: {e}", path.display()))
+    let bytes = fs::read(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    serde_json::from_slice(&bytes).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()))
 }
 
 /// Read a text file, panicking with a helpful message on failure.
 fn read_text(path: &Path) -> String {
-    fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+    fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
 /// Directories directly under `dir` whose file name begins with `prefix`, sorted.
@@ -104,7 +101,10 @@ async fn test_sweep_with_confidence_repeated_mode() {
 
     // Hierarchical structure for repeated mode.
     let profile_runs_dir = root.join("profile_runs");
-    assert!(profile_runs_dir.exists(), "profile_runs directory should exist");
+    assert!(
+        profile_runs_dir.exists(),
+        "profile_runs directory should exist"
+    );
 
     let trial_dirs = sorted_dirs(&profile_runs_dir, "trial_");
     assert_eq!(trial_dirs.len(), 3, "Should have 3 trial directories");
@@ -116,7 +116,11 @@ async fn test_sweep_with_confidence_repeated_mode() {
     for trial_dir in &trial_dirs {
         for c in concurrency_values {
             let cdir = trial_dir.join(format!("concurrency_{c}"));
-            assert!(cdir.exists(), "{} should have concurrency_{c}", name_of(trial_dir));
+            assert!(
+                cdir.exists(),
+                "{} should have concurrency_{c}",
+                name_of(trial_dir)
+            );
             let json_file = cdir.join("profile_export_aiperf.json");
             let csv_file = cdir.join("profile_export_aiperf.csv");
             assert!(json_file.exists(), "should have JSON");
@@ -145,7 +149,10 @@ async fn test_sweep_with_confidence_repeated_mode() {
         assert_eq!(agg["metadata"]["confidence_level"], json!(0.95));
 
         let metrics = &agg["metrics"];
-        assert!(!metrics.as_object().unwrap().is_empty(), "Should have metrics");
+        assert!(
+            !metrics.as_object().unwrap().is_empty(),
+            "Should have metrics"
+        );
         let throughput = metric_keys_with(metrics, "throughput");
         assert!(!throughput.is_empty(), "Should have throughput metrics");
         assert_fields(&metrics[&throughput[0]], CONFIDENCE_METRIC_FIELDS, "metric");
@@ -153,7 +160,10 @@ async fn test_sweep_with_confidence_repeated_mode() {
 
     // Sweep aggregate directory.
     let sweep_agg_dir = aggregate_dir.join("sweep_aggregate");
-    assert!(sweep_agg_dir.exists(), "sweep_aggregate directory should exist");
+    assert!(
+        sweep_agg_dir.exists(),
+        "sweep_aggregate directory should exist"
+    );
     let sweep_json = sweep_agg_dir.join("profile_export_aiperf_sweep.json");
     let sweep_csv = sweep_agg_dir.join("profile_export_aiperf_sweep.csv");
     assert!(sweep_json.exists(), "Sweep aggregate JSON should exist");
@@ -183,7 +193,10 @@ async fn test_sweep_with_confidence_independent_mode() {
         assert!(cdir.exists(), "concurrency_{c} directory should exist");
 
         let profile_runs_dir = cdir.join("profile_runs");
-        assert!(profile_runs_dir.exists(), "concurrency_{c}/profile_runs should exist");
+        assert!(
+            profile_runs_dir.exists(),
+            "concurrency_{c}/profile_runs should exist"
+        );
 
         let trial_dirs = sorted_dirs(&profile_runs_dir, "trial_");
         assert_eq!(trial_dirs.len(), 3, "concurrency_{c} should have 3 trials");
@@ -200,7 +213,10 @@ async fn test_sweep_with_confidence_independent_mode() {
         }
 
         let aggregate_dir = cdir.join("aggregate");
-        assert!(aggregate_dir.exists(), "concurrency_{c}/aggregate should exist");
+        assert!(
+            aggregate_dir.exists(),
+            "concurrency_{c}/aggregate should exist"
+        );
         let agg_json = aggregate_dir.join("profile_export_aiperf_aggregate.json");
         let agg_csv = aggregate_dir.join("profile_export_aiperf_aggregate.csv");
         assert!(agg_json.exists(), "aggregate JSON should exist");
@@ -214,14 +230,20 @@ async fn test_sweep_with_confidence_independent_mode() {
         assert_eq!(agg["metadata"]["confidence_level"], json!(0.95));
 
         let metrics = &agg["metrics"];
-        assert!(!metrics.as_object().unwrap().is_empty(), "Should have metrics");
+        assert!(
+            !metrics.as_object().unwrap().is_empty(),
+            "Should have metrics"
+        );
         let throughput = metric_keys_with(metrics, "throughput");
         assert!(!throughput.is_empty(), "Should have throughput metrics");
         assert_fields(&metrics[&throughput[0]], CONFIDENCE_METRIC_FIELDS, "metric");
     }
 
     let sweep_agg_dir = root.join("sweep_aggregate");
-    assert!(sweep_agg_dir.exists(), "sweep_aggregate directory should exist");
+    assert!(
+        sweep_agg_dir.exists(),
+        "sweep_aggregate directory should exist"
+    );
     let sweep_json = sweep_agg_dir.join("profile_export_aiperf_sweep.json");
     let sweep_csv = sweep_agg_dir.join("profile_export_aiperf_sweep.csv");
     assert!(sweep_json.exists(), "Sweep aggregate JSON should exist");
@@ -245,10 +267,17 @@ async fn test_artifact_directory_structure_repeated_mode() {
     assert_eq!(r.exit_code, 0);
 
     let profile_runs_dir = root.join("profile_runs");
-    assert!(profile_runs_dir.exists(), "profile_runs directory must exist");
+    assert!(
+        profile_runs_dir.exists(),
+        "profile_runs directory must exist"
+    );
 
     let trial_dirs = sorted_dirs(&profile_runs_dir, "trial_");
-    assert_eq!(trial_dirs.len(), 2, "Should have exactly 2 trial directories");
+    assert_eq!(
+        trial_dirs.len(),
+        2,
+        "Should have exactly 2 trial directories"
+    );
     assert_eq!(name_of(&trial_dirs[0]), "trial_0001");
     assert_eq!(name_of(&trial_dirs[1]), "trial_0002");
 
@@ -258,14 +287,21 @@ async fn test_artifact_directory_structure_repeated_mode() {
         s.sort();
         s
     };
-    assert_eq!(trial_names, sorted_names, "Zero-padded names should sort correctly");
+    assert_eq!(
+        trial_names, sorted_names,
+        "Zero-padded names should sort correctly"
+    );
     trial_names.clear();
 
     let concurrency_values = [2, 4];
     for trial_dir in &trial_dirs {
         for c in concurrency_values {
             let cdir = trial_dir.join(format!("concurrency_{c}"));
-            assert!(cdir.exists(), "{} must contain concurrency_{c}", name_of(trial_dir));
+            assert!(
+                cdir.exists(),
+                "{} must contain concurrency_{c}",
+                name_of(trial_dir)
+            );
             assert!(cdir.join("profile_export_aiperf.json").exists());
             assert!(cdir.join("profile_export_aiperf.csv").exists());
         }
@@ -281,9 +317,20 @@ async fn test_artifact_directory_structure_repeated_mode() {
     }
 
     let sweep_agg_dir = aggregate_dir.join("sweep_aggregate");
-    assert!(sweep_agg_dir.exists(), "sweep_aggregate directory must exist");
-    assert!(sweep_agg_dir.join("profile_export_aiperf_sweep.json").exists());
-    assert!(sweep_agg_dir.join("profile_export_aiperf_sweep.csv").exists());
+    assert!(
+        sweep_agg_dir.exists(),
+        "sweep_aggregate directory must exist"
+    );
+    assert!(
+        sweep_agg_dir
+            .join("profile_export_aiperf_sweep.json")
+            .exists()
+    );
+    assert!(
+        sweep_agg_dir
+            .join("profile_export_aiperf_sweep.csv")
+            .exists()
+    );
 
     // Structure integrity.
     for d in sorted_dirs(&profile_runs_dir, "") {
@@ -315,10 +362,16 @@ async fn test_artifact_directory_structure_independent_mode() {
     let concurrency_values = [2, 4];
     for c in concurrency_values {
         let cdir = root.join(format!("concurrency_{c}"));
-        assert!(cdir.exists(), "concurrency_{c} directory must exist at top level");
+        assert!(
+            cdir.exists(),
+            "concurrency_{c} directory must exist at top level"
+        );
 
         let profile_runs_dir = cdir.join("profile_runs");
-        assert!(profile_runs_dir.exists(), "concurrency_{c}/profile_runs must exist");
+        assert!(
+            profile_runs_dir.exists(),
+            "concurrency_{c}/profile_runs must exist"
+        );
 
         let trial_dirs = sorted_dirs(&profile_runs_dir, "trial_");
         assert_eq!(trial_dirs.len(), 2, "concurrency_{c} should have 2 trials");
@@ -338,19 +391,45 @@ async fn test_artifact_directory_structure_independent_mode() {
         }
 
         let aggregate_dir = cdir.join("aggregate");
-        assert!(aggregate_dir.exists(), "concurrency_{c}/aggregate must exist");
-        assert!(aggregate_dir.join("profile_export_aiperf_aggregate.json").exists());
-        assert!(aggregate_dir.join("profile_export_aiperf_aggregate.csv").exists());
+        assert!(
+            aggregate_dir.exists(),
+            "concurrency_{c}/aggregate must exist"
+        );
+        assert!(
+            aggregate_dir
+                .join("profile_export_aiperf_aggregate.json")
+                .exists()
+        );
+        assert!(
+            aggregate_dir
+                .join("profile_export_aiperf_aggregate.csv")
+                .exists()
+        );
     }
 
     let sweep_agg_dir = root.join("sweep_aggregate");
-    assert!(sweep_agg_dir.exists(), "sweep_aggregate must exist at top level");
-    assert!(sweep_agg_dir.join("profile_export_aiperf_sweep.json").exists());
-    assert!(sweep_agg_dir.join("profile_export_aiperf_sweep.csv").exists());
+    assert!(
+        sweep_agg_dir.exists(),
+        "sweep_aggregate must exist at top level"
+    );
+    assert!(
+        sweep_agg_dir
+            .join("profile_export_aiperf_sweep.json")
+            .exists()
+    );
+    assert!(
+        sweep_agg_dir
+            .join("profile_export_aiperf_sweep.csv")
+            .exists()
+    );
 
     // Structure integrity.
     let concurrency_dirs = sorted_dirs(&root, "concurrency_");
-    assert_eq!(concurrency_dirs.len(), 2, "Should have exactly 2 concurrency dirs");
+    assert_eq!(
+        concurrency_dirs.len(),
+        2,
+        "Should have exactly 2 concurrency dirs"
+    );
     let cnames: Vec<String> = concurrency_dirs.iter().map(|p| name_of(p)).collect();
     assert_eq!(cnames, vec!["concurrency_2", "concurrency_4"]);
 
@@ -387,7 +466,10 @@ async fn test_partial_failure_scenarios() {
     assert_eq!(r.exit_code, 0, "Sweep should complete successfully");
 
     let profile_runs_dir = root.join("profile_runs");
-    assert!(profile_runs_dir.exists(), "profile_runs directory should exist");
+    assert!(
+        profile_runs_dir.exists(),
+        "profile_runs directory should exist"
+    );
     let trial_dirs = sorted_dirs(&profile_runs_dir, "trial_");
     assert_eq!(trial_dirs.len(), 2, "Should have 2 trial directories");
 
@@ -422,8 +504,9 @@ async fn test_partial_failure_scenarios() {
         assert_eq!(num_failed, 0);
     }
 
-    let sweep_json =
-        aggregate_dir.join("sweep_aggregate").join("profile_export_aiperf_sweep.json");
+    let sweep_json = aggregate_dir
+        .join("sweep_aggregate")
+        .join("profile_export_aiperf_sweep.json");
     assert!(sweep_json.exists(), "Sweep aggregate JSON should exist");
     let sweep_data = jload(&sweep_json);
     assert!(sweep_data.get("metadata").is_some());
@@ -483,7 +566,10 @@ async fn test_backward_compatibility_single_concurrency() {
          --workers-max {WORKERS_MAX} --ui {UI}",
         h.mock.url
     ));
-    assert_eq!(r.exit_code, 0, "Single concurrency with confidence should succeed");
+    assert_eq!(
+        r.exit_code, 0,
+        "Single concurrency with confidence should succeed"
+    );
 
     let profile_runs_dir = root.join("profile_runs");
     assert!(profile_runs_dir.exists());
@@ -509,7 +595,11 @@ async fn test_backward_compatibility_single_concurrency() {
     assert!(aggregate_dir.exists());
     let agg_json = aggregate_dir.join("profile_export_aiperf_aggregate.json");
     assert!(agg_json.exists());
-    assert!(aggregate_dir.join("profile_export_aiperf_aggregate.csv").exists());
+    assert!(
+        aggregate_dir
+            .join("profile_export_aiperf_aggregate.csv")
+            .exists()
+    );
     assert!(sorted_dirs(&aggregate_dir, "concurrency_").is_empty());
     assert!(!aggregate_dir.join("sweep_aggregate").exists());
     assert!(!root.join("sweep_aggregate").exists());
@@ -551,8 +641,17 @@ async fn test_aggregate_file_generation() {
     assert!(aggregate_dir.exists(), "aggregate directory must exist");
 
     let required_csv_columns = [
-        "metric", "mean", "std", "min", "max", "cv", "se", "ci_low", "ci_high",
-        "t_critical", "unit",
+        "metric",
+        "mean",
+        "std",
+        "min",
+        "max",
+        "cv",
+        "se",
+        "ci_low",
+        "ci_high",
+        "t_critical",
+        "unit",
     ];
 
     for c in concurrency_values {
@@ -568,10 +667,16 @@ async fn test_aggregate_file_generation() {
         assert!(agg.get("metrics").is_some());
         let metadata = &agg["metadata"];
         for f in [
-            "aggregation_type", "num_profile_runs", "num_successful_runs",
-            "failed_runs", "confidence_level",
+            "aggregation_type",
+            "num_profile_runs",
+            "num_successful_runs",
+            "failed_runs",
+            "confidence_level",
         ] {
-            assert!(metadata.get(f).is_some(), "aggregate metadata must have {f}");
+            assert!(
+                metadata.get(f).is_some(),
+                "aggregate metadata must have {f}"
+            );
         }
         assert_eq!(metadata["aggregation_type"], json!("confidence"));
         assert_eq!(metadata["num_profile_runs"], json!(3));
@@ -734,7 +839,10 @@ async fn test_per_value_confidence_statistics() {
             let ci_low = m["ci_low"].as_f64().unwrap();
             let ci_high = m["ci_high"].as_f64().unwrap();
             let t_critical = m["t_critical"].as_f64().unwrap();
-            assert!(m["cv"].is_null() || m["cv"].is_number(), "cv numeric or None");
+            assert!(
+                m["cv"].is_null() || m["cv"].is_number(),
+                "cv numeric or None"
+            );
             assert!(m["unit"].is_string());
 
             let eps = 1e-9;
@@ -764,8 +872,9 @@ async fn test_per_value_confidence_statistics() {
     }
 
     // Sweep aggregate per-combination confidence stats.
-    let sweep_json =
-        aggregate_dir.join("sweep_aggregate").join("profile_export_aiperf_sweep.json");
+    let sweep_json = aggregate_dir
+        .join("sweep_aggregate")
+        .join("profile_export_aiperf_sweep.json");
     assert!(sweep_json.exists());
     let sweep_data = jload(&sweep_json);
     let metadata = &sweep_data["metadata"];
@@ -779,7 +888,10 @@ async fn test_per_value_confidence_statistics() {
         .map(|c| c["parameters"]["concurrency"].as_i64().unwrap())
         .collect();
     for v in [2, 4, 6] {
-        assert!(found.contains(&v), "Should have metrics for concurrency {v}");
+        assert!(
+            found.contains(&v),
+            "Should have metrics for concurrency {v}"
+        );
     }
 
     let sweep_fields = ["mean", "std", "min", "max", "ci_low", "ci_high", "unit"];
@@ -841,7 +953,9 @@ async fn test_per_value_confidence_statistics() {
         }
     }
 
-    let sweep_json = root.join("sweep_aggregate").join("profile_export_aiperf_sweep.json");
+    let sweep_json = root
+        .join("sweep_aggregate")
+        .join("profile_export_aiperf_sweep.json");
     assert!(sweep_json.exists());
     let sweep_data = jload(&sweep_json);
     let metadata = &sweep_data["metadata"];
@@ -924,7 +1038,9 @@ async fn test_sweep_level_statistics() {
     assert!(best_throughput.get("metric").is_some());
     assert!(best_throughput.get("unit").is_some());
     assert!(best_throughput["parameters"]["concurrency"].is_number());
-    let bt_c = best_throughput["parameters"]["concurrency"].as_i64().unwrap();
+    let bt_c = best_throughput["parameters"]["concurrency"]
+        .as_i64()
+        .unwrap();
     assert!([2, 4, 6, 8].contains(&bt_c));
     assert!(best_throughput["metric"].as_f64().unwrap() > 0.0);
     let bt_unit = best_throughput["unit"].as_str().unwrap().to_lowercase();
@@ -981,7 +1097,10 @@ async fn test_sweep_level_statistics() {
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
             .unwrap()
             .0;
-        assert_eq!(bt_c, max_c, "best_throughput should be max-throughput concurrency");
+        assert_eq!(
+            bt_c, max_c,
+            "best_throughput should be max-throughput concurrency"
+        );
     }
     if !latency_values.is_empty() {
         let min_c = *latency_values
@@ -989,19 +1108,30 @@ async fn test_sweep_level_statistics() {
             .min_by(|a, b| a.1.partial_cmp(b.1).unwrap())
             .unwrap()
             .0;
-        assert_eq!(bl_c, min_c, "best_latency should be min-latency concurrency");
+        assert_eq!(
+            bl_c, min_c,
+            "best_latency should be min-latency concurrency"
+        );
     }
 
     let pareto = sweep_data["pareto_optimal"].as_array().unwrap();
-    assert!(!pareto.is_empty(), "Must have at least one Pareto optimal point");
-    let pareto_c: Vec<i64> =
-        pareto.iter().map(|p| p["concurrency"].as_i64().unwrap()).collect();
+    assert!(
+        !pareto.is_empty(),
+        "Must have at least one Pareto optimal point"
+    );
+    let pareto_c: Vec<i64> = pareto
+        .iter()
+        .map(|p| p["concurrency"].as_i64().unwrap())
+        .collect();
     for v in &pareto_c {
         assert!([2, 4, 6, 8].contains(v));
     }
     let mut sorted_pc = pareto_c.clone();
     sorted_pc.sort();
-    assert_eq!(pareto_c, sorted_pc, "Pareto optimal points should be sorted");
+    assert_eq!(
+        pareto_c, sorted_pc,
+        "Pareto optimal points should be sorted"
+    );
 
     if !throughput_values.is_empty() && !latency_values.is_empty() {
         for &pv in &pareto_c {
@@ -1019,7 +1149,11 @@ async fn test_sweep_level_statistics() {
     }
     if pareto_c.len() > 1 {
         let unique: std::collections::HashSet<i64> = pareto_c.iter().copied().collect();
-        assert_eq!(pareto_c.len(), unique.len(), "Pareto points should be distinct");
+        assert_eq!(
+            pareto_c.len(),
+            unique.len(),
+            "Pareto points should be distinct"
+        );
     }
 
     // Test 2: independent mode.
@@ -1032,7 +1166,9 @@ async fn test_sweep_level_statistics() {
     ));
     assert_eq!(r.exit_code, 0, "Independent mode sweep should succeed");
 
-    let sweep_json = root.join("sweep_aggregate").join("profile_export_aiperf_sweep.json");
+    let sweep_json = root
+        .join("sweep_aggregate")
+        .join("profile_export_aiperf_sweep.json");
     assert!(sweep_json.exists());
     let sweep_data = jload(&sweep_json);
     let metadata = &sweep_data["metadata"];
@@ -1060,8 +1196,10 @@ async fn test_sweep_level_statistics() {
 
     let pareto = sweep_data["pareto_optimal"].as_array().unwrap();
     assert!(!pareto.is_empty());
-    let pareto_c: Vec<i64> =
-        pareto.iter().map(|p| p["concurrency"].as_i64().unwrap()).collect();
+    let pareto_c: Vec<i64> = pareto
+        .iter()
+        .map(|p| p["concurrency"].as_i64().unwrap())
+        .collect();
     for v in &pareto_c {
         assert!([2, 4, 6, 8].contains(v));
     }
@@ -1116,7 +1254,10 @@ async fn test_sweep_directory_structure_consumable_by_plot() {
          --workers-max {WORKERS_MAX} --ui {UI}",
         h.mock.url
     ));
-    assert_eq!(profile_result.exit_code, 0, "Profile command should succeed");
+    assert_eq!(
+        profile_result.exit_code, 0,
+        "Profile command should succeed"
+    );
 
     let profile_runs_dir = root.join("profile_runs");
     assert!(profile_runs_dir.exists());
@@ -1131,8 +1272,7 @@ async fn test_sweep_directory_structure_consumable_by_plot() {
         }
     }
 
-    let plot_result =
-        h.run_no_server(&format!("plot --paths {}", root.display()));
+    let plot_result = h.run_no_server(&format!("plot --paths {}", root.display()));
     assert_eq!(plot_result.exit_code, 0, "Plot command should succeed");
 
     let plot_dir = root.join("plots");
@@ -1219,9 +1359,13 @@ async fn test_sweep_with_cooldown_flag_succeeds() {
     assert_eq!(r.exit_code, 0);
 
     for val in [2, 4] {
-        let json_file =
-            root.join(format!("concurrency_{val}")).join("profile_export_aiperf.json");
-        assert!(json_file.exists(), "concurrency_{val} should have artifacts");
+        let json_file = root
+            .join(format!("concurrency_{val}"))
+            .join("profile_export_aiperf.json");
+        assert!(
+            json_file.exists(),
+            "concurrency_{val} should have artifacts"
+        );
     }
 }
 
@@ -1239,9 +1383,13 @@ async fn test_sweep_with_same_seed_flag_succeeds() {
     assert_eq!(r.exit_code, 0);
 
     for val in [2, 4] {
-        let json_file =
-            root.join(format!("concurrency_{val}")).join("profile_export_aiperf.json");
-        assert!(json_file.exists(), "concurrency_{val} should have artifacts");
+        let json_file = root
+            .join(format!("concurrency_{val}"))
+            .join("profile_export_aiperf.json");
+        assert!(
+            json_file.exists(),
+            "concurrency_{val} should have artifacts"
+        );
     }
 }
 
@@ -1277,7 +1425,10 @@ fn assert_sweep_json_shape(sweep_json: &Path, mode: &str, values: &[i64]) {
         let tkeys = metric_keys_with(metrics, "throughput");
         assert!(!tkeys.is_empty());
         for f in ["mean", "std", "ci_low", "ci_high"] {
-            assert!(metrics[&tkeys[0]].get(f).is_some(), "combo metric should have {f}");
+            assert!(
+                metrics[&tkeys[0]].get(f).is_some(),
+                "combo metric should have {f}"
+            );
         }
     }
     found.sort();
@@ -1319,9 +1470,15 @@ fn assert_sweep_json_full(sweep_json: &Path, mode: &str, values: &[i64]) {
         "pareto_optimal",
     ];
     for key in required_top_level {
-        assert!(sweep_data.get(key).is_some(), "Sweep JSON must have {key} key");
+        assert!(
+            sweep_data.get(key).is_some(),
+            "Sweep JSON must have {key} key"
+        );
     }
-    assert!(sweep_data.get("trends").is_none(), "Sweep aggregate should NOT have trends");
+    assert!(
+        sweep_data.get("trends").is_none(),
+        "Sweep aggregate should NOT have trends"
+    );
 
     assert_sweep_json_shape(sweep_json, mode, values);
 
@@ -1343,7 +1500,10 @@ fn assert_sweep_csv_shape(sweep_csv: &Path, values: &[i64]) {
     let lines: Vec<&str> = csv.trim().split('\n').collect();
     assert!(lines.len() > 1, "Sweep CSV should have data rows");
     let header = lines[0];
-    assert!(header.contains("concurrency"), "Sweep CSV should have concurrency column");
+    assert!(
+        header.contains("concurrency"),
+        "Sweep CSV should have concurrency column"
+    );
     let suffixes = ["_mean", "_std", "_min", "_max", "_cv"];
     assert!(
         suffixes.iter().any(|s| header.contains(s)),
@@ -1351,6 +1511,9 @@ fn assert_sweep_csv_shape(sweep_csv: &Path, values: &[i64]) {
     );
     let full = lines.join("\n");
     for c in values {
-        assert!(full.contains(&c.to_string()), "Sweep CSV must have data for {c}");
+        assert!(
+            full.contains(&c.to_string()),
+            "Sweep CSV must have data for {c}"
+        );
     }
 }

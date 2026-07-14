@@ -142,7 +142,9 @@ fn assert_messages(rec: &Value, expected: &[(&str, Option<&str>)], label: &str) 
 }
 
 fn ns(meta: &Value, key: &str) -> i64 {
-    meta[key].as_i64().unwrap_or_else(|| panic!("metadata.{key} missing/non-int: {meta:?}"))
+    meta[key]
+        .as_i64()
+        .unwrap_or_else(|| panic!("metadata.{key} missing/non-int: {meta:?}"))
 }
 
 #[tokio::test]
@@ -170,12 +172,7 @@ async fn test_full_dag_payload_merge_and_stats() {
     // A. Count + session identity
     // -------------------------------------------------------------------
     let raw = r.artifacts.raw_records();
-    assert_eq!(
-        raw.len(),
-        5,
-        "Expected 5 raw records, got {}",
-        raw.len()
-    );
+    assert_eq!(raw.len(), 5, "Expected 5 raw records, got {}", raw.len());
 
     let mut by_kind: std::collections::HashMap<String, Vec<&Value>> =
         std::collections::HashMap::new();

@@ -62,10 +62,7 @@ async fn test_calibration_writes_jsonl_and_adjusted_metrics() {
 
     let export = r.artifacts.json();
     for key in ADJUSTED_KEYS {
-        assert!(
-            export.get(key).is_some(),
-            "{key} missing from JSON export"
-        );
+        assert!(export.get(key).is_some(), "{key} missing from JSON export");
     }
 }
 
@@ -135,11 +132,16 @@ async fn test_rtt_override_adjusts_without_probing() {
     // A fixed 5 ms mean is deterministic, so lock in the core correctness
     // property end-to-end: each adjusted latency is shifted down by exactly the
     // RTT and its standard deviation is unchanged (display units are ms).
-    let rtt_avg = export["network_rtt"]["avg"].as_f64().expect("network_rtt.avg");
+    let rtt_avg = export["network_rtt"]["avg"]
+        .as_f64()
+        .expect("network_rtt.avg");
     assert!((rtt_avg - 5.0).abs() <= 1e-3, "network_rtt.avg={rtt_avg}");
 
     for (raw_tag, adjusted_tag) in [
-        ("time_to_first_token", "network_adjusted_time_to_first_token"),
+        (
+            "time_to_first_token",
+            "network_adjusted_time_to_first_token",
+        ),
         ("request_latency", "network_adjusted_request_latency"),
     ] {
         let raw_avg = export[raw_tag]["avg"].as_f64().expect("raw avg");

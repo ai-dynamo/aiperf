@@ -44,9 +44,7 @@ fn ffprobe_available() -> bool {
 /// in the header region.
 fn check_mp4_fragmentation(video_bytes: &[u8]) -> bool {
     let header_size = video_bytes.len().min(10240);
-    video_bytes[..header_size]
-        .windows(4)
-        .any(|w| w == b"moof")
+    video_bytes[..header_size].windows(4).any(|w| w == b"moof")
 }
 
 /// Parse a floating-point frame rate expressed as `num/den` (ffprobe format).
@@ -228,7 +226,11 @@ fn approx_eq(a: f64, b: f64) -> bool {
 }
 
 /// Verify video generation respects configured dimensions, fps, and duration.
-async fn video_generation_parameters(video_format: &str, video_codec: &str, check_fragmentation: bool) {
+async fn video_generation_parameters(
+    video_format: &str,
+    video_codec: &str,
+    check_fragmentation: bool,
+) {
     if cfg!(target_os = "windows") || !ffprobe_available() {
         return;
     }
@@ -361,6 +363,9 @@ async fn test_video_without_audio_has_no_audio_stream() {
     let videos = iter_video_details(&inputs);
     assert!(!videos.is_empty(), "No video content found in payloads");
     for details in &videos {
-        assert!(!details.has_audio, "Video should not have audio when disabled");
+        assert!(
+            !details.has_audio,
+            "Video should not have audio when disabled"
+        );
     }
 }

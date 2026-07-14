@@ -113,7 +113,11 @@ async fn grid_recipe_locates_sla_breach_knee(num_profile_runs: u32) {
     );
 
     // Knee assertion: boundary resolves as max_passing=7, first_failing=19.
-    assert_eq!(breach["max_passing_concurrency"].as_i64(), Some(7), "{breach:?}");
+    assert_eq!(
+        breach["max_passing_concurrency"].as_i64(),
+        Some(7),
+        "{breach:?}"
+    );
     assert_eq!(
         breach["first_failing_concurrency"].as_i64(),
         Some(19),
@@ -121,7 +125,11 @@ async fn grid_recipe_locates_sla_breach_knee(num_profile_runs: u32) {
     );
 
     // Feasibility must be strictly monotone in concurrency.
-    assert_eq!(breach["monotonicity_check"].as_bool(), Some(true), "{breach:?}");
+    assert_eq!(
+        breach["monotonicity_check"].as_bool(),
+        Some(true),
+        "{breach:?}"
+    );
 
     // Per-point sanity: all sub-knee feasible, all super-knee infeasible.
     let feasibility: std::collections::HashMap<i64, bool> = all_points

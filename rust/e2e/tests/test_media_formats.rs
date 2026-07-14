@@ -13,7 +13,11 @@ fn has_openai_media(payload: &serde_json::Value, content_type: &str) -> bool {
     for message in messages {
         if let Some(content) = message.get("content").and_then(|c| c.as_array()) {
             for item in content {
-                if item.get(content_type).map(|v| !v.is_null()).unwrap_or(false) {
+                if item
+                    .get(content_type)
+                    .map(|v| !v.is_null())
+                    .unwrap_or(false)
+                {
                     return true;
                 }
             }

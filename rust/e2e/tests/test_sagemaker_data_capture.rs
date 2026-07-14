@@ -120,7 +120,8 @@ async fn test_basic_capture_replay() {
             "JSON",
         ),
     ];
-    let capture_file = create_sagemaker_capture_file(h.artifact_dir.path(), &records, "capture.jsonl");
+    let capture_file =
+        create_sagemaker_capture_file(h.artifact_dir.path(), &records, "capture.jsonl");
     let request_count = records.len();
 
     let r = h.run(&format!(
@@ -162,7 +163,8 @@ async fn test_capture_with_system_message() {
             "JSON",
         ),
     ];
-    let capture_file = create_sagemaker_capture_file(h.artifact_dir.path(), &records, "capture.jsonl");
+    let capture_file =
+        create_sagemaker_capture_file(h.artifact_dir.path(), &records, "capture.jsonl");
     let request_count = records.len();
 
     let r = h.run(&format!(
@@ -235,7 +237,8 @@ async fn test_capture_auto_detection() {
         "2026-04-29T00:00:00Z",
         "JSON",
     )];
-    let capture_file = create_sagemaker_capture_file(h.artifact_dir.path(), &records, "capture.jsonl");
+    let capture_file =
+        create_sagemaker_capture_file(h.artifact_dir.path(), &records, "capture.jsonl");
 
     // No --custom-dataset-type flag — should auto-detect
     let r = h.run(&format!(
@@ -269,7 +272,8 @@ async fn test_capture_with_base64_encoding() {
             "BASE64",
         ),
     ];
-    let capture_file = create_sagemaker_capture_file(h.artifact_dir.path(), &records, "capture.jsonl");
+    let capture_file =
+        create_sagemaker_capture_file(h.artifact_dir.path(), &records, "capture.jsonl");
     let request_count = records.len();
 
     let r = h.run(&format!(

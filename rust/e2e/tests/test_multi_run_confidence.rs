@@ -103,13 +103,21 @@ async fn test_multi_run_basic() {
     let agg_data = read_json(&agg_json);
 
     assert_eq!(agg_data["metadata"]["aggregation_type"], "confidence");
-    assert_eq!(agg_data["metadata"]["num_profile_runs"].as_i64().unwrap(), 3);
     assert_eq!(
-        agg_data["metadata"]["num_successful_runs"].as_i64().unwrap(),
+        agg_data["metadata"]["num_profile_runs"].as_i64().unwrap(),
         3
     );
     assert_eq!(
-        agg_data["metadata"]["failed_runs"].as_array().unwrap().len(),
+        agg_data["metadata"]["num_successful_runs"]
+            .as_i64()
+            .unwrap(),
+        3
+    );
+    assert_eq!(
+        agg_data["metadata"]["failed_runs"]
+            .as_array()
+            .unwrap()
+            .len(),
         0
     );
     assert_eq!(
@@ -355,7 +363,10 @@ async fn test_multi_run_with_partial_failures() {
     let profile_runs_dir = dir.join("profile_runs");
     if profile_runs_dir.exists() {
         let dirs = run_dirs(dir);
-        assert!(!dirs.is_empty(), "Should have at least some run directories");
+        assert!(
+            !dirs.is_empty(),
+            "Should have at least some run directories"
+        );
 
         let aggregate_dir = dir.join("aggregate");
         if aggregate_dir.exists() {
@@ -366,8 +377,9 @@ async fn test_multi_run_with_partial_failures() {
                 assert!(agg_data["metadata"].get("num_successful_runs").is_some());
                 assert!(agg_data["metadata"].get("failed_runs").is_some());
 
-                let num_successful =
-                    agg_data["metadata"]["num_successful_runs"].as_i64().unwrap();
+                let num_successful = agg_data["metadata"]["num_successful_runs"]
+                    .as_i64()
+                    .unwrap();
                 let failed = agg_data["metadata"]["failed_runs"].as_array().unwrap();
                 let num_failed = failed.len() as i64;
 
@@ -377,12 +389,7 @@ async fn test_multi_run_with_partial_failures() {
                     for failed_run in failed {
                         assert!(failed_run.get("label").is_some());
                         assert!(failed_run.get("error").is_some());
-                        assert!(
-                            failed_run["label"]
-                                .as_str()
-                                .unwrap()
-                                .starts_with("run_")
-                        );
+                        assert!(failed_run["label"].as_str().unwrap().starts_with("run_"));
                     }
                 }
             }
@@ -459,8 +466,9 @@ async fn test_multi_run_single_failure_still_aggregates() {
         if agg_json.exists() {
             let agg_data = read_json(&agg_json);
 
-            let num_successful =
-                agg_data["metadata"]["num_successful_runs"].as_i64().unwrap();
+            let num_successful = agg_data["metadata"]["num_successful_runs"]
+                .as_i64()
+                .unwrap();
             assert!(
                 num_successful >= 2,
                 "Aggregate requires at least 2 successful runs"

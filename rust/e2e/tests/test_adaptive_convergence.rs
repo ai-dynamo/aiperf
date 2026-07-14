@@ -82,13 +82,21 @@ async fn test_adaptive_ci_width_stops_early() {
     let agg_data: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&agg_json).unwrap()).unwrap();
     assert_eq!(agg_data["metadata"]["aggregation_type"], "confidence");
-    assert!(agg_data["metadata"]["num_successful_runs"].as_u64().unwrap() >= 2);
+    assert!(
+        agg_data["metadata"]["num_successful_runs"]
+            .as_u64()
+            .unwrap()
+            >= 2
+    );
     assert!(agg_data.get("metrics").is_some());
     assert!(agg_data["metrics"].as_object().unwrap().len() > 0);
 
     // Verify detailed aggregate JSON
     let detailed_json = aggregate_dir.join("profile_export_aiperf_collated.json");
-    assert!(detailed_json.exists(), "Collated aggregate JSON should exist");
+    assert!(
+        detailed_json.exists(),
+        "Collated aggregate JSON should exist"
+    );
 
     let detailed_data: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&detailed_json).unwrap()).unwrap();
@@ -138,7 +146,11 @@ async fn test_backward_compat_no_convergence_flags() {
     let profile_runs_dir = h.artifact_path().join("profile_runs");
     assert!(profile_runs_dir.exists());
     let dirs = run_dirs(&profile_runs_dir);
-    assert_eq!(dirs.len(), 3, "FixedTrialsStrategy should run exactly 3 times");
+    assert_eq!(
+        dirs.len(),
+        3,
+        "FixedTrialsStrategy should run exactly 3 times"
+    );
 
     // Verify only confidence aggregate exists (no detailed)
     let aggregate_dir = h.artifact_path().join("aggregate");
@@ -179,12 +191,16 @@ async fn test_adaptive_cv_mode() {
 
     // Verify both aggregation outputs
     let aggregate_dir = h.artifact_path().join("aggregate");
-    assert!(aggregate_dir
-        .join("profile_export_aiperf_aggregate.json")
-        .exists());
-    assert!(aggregate_dir
-        .join("profile_export_aiperf_collated.json")
-        .exists());
+    assert!(
+        aggregate_dir
+            .join("profile_export_aiperf_aggregate.json")
+            .exists()
+    );
+    assert!(
+        aggregate_dir
+            .join("profile_export_aiperf_collated.json")
+            .exists()
+    );
 }
 
 /// Test adaptive convergence works with request-rate benchmarking mode.

@@ -108,10 +108,8 @@ benchmark:
     let events = load_jsonl(&event_path);
     assert!(!events.is_empty());
 
-    let event_names: std::collections::HashSet<&str> = events
-        .iter()
-        .filter_map(|e| e["event"].as_str())
-        .collect();
+    let event_names: std::collections::HashSet<&str> =
+        events.iter().filter_map(|e| e["event"].as_str()).collect();
     assert!(event_names.contains("adaptive_phase_started"));
     assert!(event_names.contains("adaptive_window"));
     assert!(event_names.contains("adaptive_decision"));
@@ -134,8 +132,7 @@ benchmark:
     let ts_utc = discover_windows[0]["timestamp_utc"]
         .as_str()
         .expect("timestamp_utc string");
-    let ts_re =
-        regex::Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$").unwrap();
+    let ts_re = regex::Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$").unwrap();
     assert!(ts_re.is_match(ts_utc), "timestamp_utc: {ts_utc}");
 
     let discover_decisions: Vec<&Value> = events
@@ -143,7 +140,12 @@ benchmark:
         .filter(|e| e["event"] == "adaptive_decision" && e["phase"] == "discover")
         .collect();
     assert!(!discover_decisions.is_empty());
-    assert!(discover_decisions[0]["control_value_after"].as_f64().unwrap() > 1.0);
+    assert!(
+        discover_decisions[0]["control_value_after"]
+            .as_f64()
+            .unwrap()
+            > 1.0
+    );
     assert!(
         discover_decisions
             .iter()
@@ -165,9 +167,7 @@ benchmark:
     assert_eq!(boundary["sla_stat"], "p95");
     assert_eq!(boundary["sla_op"], "le");
     assert_eq!(boundary["sla_bound"].as_f64(), Some(100.0));
-    assert!(
-        boundary["sla_value"].as_f64().unwrap() > boundary["sla_bound"].as_f64().unwrap()
-    );
+    assert!(boundary["sla_value"].as_f64().unwrap() > boundary["sla_bound"].as_f64().unwrap());
 
     let sustain_windows: Vec<&Value> = events
         .iter()
@@ -205,7 +205,10 @@ benchmark:
         summary["result"]["first_failing_value"],
         boundary["first_failing_value"]
     );
-    assert_eq!(summary["result"]["boundary_value"], boundary["boundary_value"]);
+    assert_eq!(
+        summary["result"]["boundary_value"],
+        boundary["boundary_value"]
+    );
     assert!(
         summary["totals"]["sent"].as_f64().unwrap()
             >= summary["totals"]["completed"].as_f64().unwrap()

@@ -37,7 +37,8 @@ fn assert_inputs_match(reference: &Value, current: &Value) {
         cur_sessions.len()
     );
 
-    for (i, (ref_session, cur_session)) in ref_sessions.iter().zip(cur_sessions.iter()).enumerate() {
+    for (i, (ref_session, cur_session)) in ref_sessions.iter().zip(cur_sessions.iter()).enumerate()
+    {
         assert_eq!(
             ref_session["payloads"], cur_session["payloads"],
             "Session {i}: Payloads don't match!\n\

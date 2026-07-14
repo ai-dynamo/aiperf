@@ -17,8 +17,7 @@ const REDACTED_VALUE: &str = "<redacted>";
 
 /// Common CLI flags used by all tests: `--extra-verbose` enables TRACE logging.
 /// Mirrors `IntegrationTestDefaults`: concurrency=2, workers_max=1.
-const COMMON_FLAGS: &str =
-    "--endpoint-type chat --streaming --request-count 5 --concurrency 2 \
+const COMMON_FLAGS: &str = "--endpoint-type chat --streaming --request-count 5 --concurrency 2 \
      --workers-max 1 --extra-verbose";
 
 /// Scan all `.log` files in the artifact directory for the API key.

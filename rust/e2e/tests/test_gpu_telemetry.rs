@@ -38,7 +38,10 @@ async fn test_gpu_telemetry() {
     assert_eq!(r.artifacts.request_count() as u32, 100);
 
     let json = r.artifacts.json();
-    assert!(has_gpu_telemetry(&json), "GPU telemetry should be collected");
+    assert!(
+        has_gpu_telemetry(&json),
+        "GPU telemetry should be collected"
+    );
 
     let endpoints = json["telemetry_data"]["endpoints"]
         .as_object()
@@ -98,7 +101,10 @@ async fn test_gpu_telemetry_export() {
         .expect("GPU telemetry export file should exist");
     let content = std::fs::read_to_string(&export).expect("read export file");
     let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
-    assert!(!lines.is_empty(), "Export file should contain telemetry records");
+    assert!(
+        !lines.is_empty(),
+        "Export file should contain telemetry records"
+    );
 
     let mut gpu_uuids = std::collections::HashSet::new();
 
@@ -144,7 +150,10 @@ async fn test_gpu_telemetry_export_with_custom_prefix() {
     if let Some(export) = r.artifacts.find_file("**/custom_test_gpu_telemetry.jsonl") {
         let content = std::fs::read_to_string(&export).expect("read export file");
         let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
-        assert!(!lines.is_empty(), "Export file should contain telemetry records");
+        assert!(
+            !lines.is_empty(),
+            "Export file should contain telemetry records"
+        );
 
         let first: Value = serde_json::from_str(lines[0]).expect("valid first record JSON");
         assert!(first["timestamp_ns"].as_i64().expect("timestamp_ns") > 0);

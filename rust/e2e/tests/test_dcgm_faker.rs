@@ -22,7 +22,9 @@ use aiperf_mock_server::dcgm::{DcgmFaker, lookup_gpu};
 
 /// GPU config keys the faker recognizes (mirrors Python `GPU_CONFIGS.keys()`).
 /// Every key here has a dedicated parametrized test below.
-const GPU_CONFIGS: &[&str] = &["rtx6000", "a100", "h100", "h100-sxm", "h200", "b200", "gb200"];
+const GPU_CONFIGS: &[&str] = &[
+    "rtx6000", "a100", "h100", "h100-sxm", "h200", "b200", "gb200",
+];
 
 #[test]
 fn all_gpu_configs_have_a_parametrized_test() {

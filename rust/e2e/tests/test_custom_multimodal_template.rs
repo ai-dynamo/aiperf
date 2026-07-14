@@ -66,8 +66,5 @@ async fn test_custom_multimodal_with_images_and_audio() {
         r.artifacts.find_file("*aiperf.csv").is_some(),
         "missing aiperf.csv"
     );
-    assert!(
-        !r.artifacts.inputs().is_null(),
-        "missing inputs.json"
-    );
+    assert!(!r.artifacts.inputs().is_null(), "missing inputs.json");
 }

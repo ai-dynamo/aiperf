@@ -82,12 +82,7 @@ async fn test_spawn_child_has_fresh_context_and_is_not_sticky_pinned() {
 
     let raw = r.artifacts.raw_records();
     // Exactly 2 wire requests: root + one spawn-mode child.
-    assert_eq!(
-        raw.len(),
-        2,
-        "Expected 2 raw records, got {}",
-        raw.len()
-    );
+    assert_eq!(raw.len(), 2, "Expected 2 raw records, got {}", raw.len());
 
     // Classify by distinguishing system prompt.
     let mut root_rec: Option<&Value> = None;

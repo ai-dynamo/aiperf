@@ -103,7 +103,10 @@ async fn test_server_metrics_auto_collected() {
     // Verify we collected AIPerf mock server metrics (default endpoint).
     assert!(has_server_metric(&r, "aiperf_mock_requests"));
     assert!(has_server_metric(&r, "aiperf_mock_request_latency_seconds"));
-    assert!(has_server_metric(&r, "aiperf_mock_time_to_first_token_seconds"));
+    assert!(has_server_metric(
+        &r,
+        "aiperf_mock_time_to_first_token_seconds"
+    ));
     assert!(has_server_metric(&r, "aiperf_mock_tokens_streamed"));
 
     // Verify the auto-collected endpoint is correct.
@@ -220,15 +223,27 @@ async fn test_server_metrics_all_endpoints() {
     // Verify TRT-LLM metrics.
     assert!(has_server_metric(&r, "trtllm:e2e_request_latency_seconds"));
     assert!(has_server_metric(&r, "trtllm:time_to_first_token_seconds"));
-    assert!(has_server_metric(&r, "trtllm:time_per_output_token_seconds"));
+    assert!(has_server_metric(
+        &r,
+        "trtllm:time_per_output_token_seconds"
+    ));
 
     // Verify Dynamo frontend metrics. `dynamo_frontend_request_duration_seconds`
     // intentionally not asserted (histogram emits no rows until first .observe()).
-    assert!(has_server_metric(&r, "dynamo_frontend_time_to_first_token_seconds"));
-    assert!(has_server_metric(&r, "dynamo_frontend_inter_token_latency_seconds"));
+    assert!(has_server_metric(
+        &r,
+        "dynamo_frontend_time_to_first_token_seconds"
+    ));
+    assert!(has_server_metric(
+        &r,
+        "dynamo_frontend_inter_token_latency_seconds"
+    ));
 
     // Verify Dynamo component metrics.
-    assert!(has_server_metric(&r, "dynamo_component_request_duration_seconds"));
+    assert!(has_server_metric(
+        &r,
+        "dynamo_component_request_duration_seconds"
+    ));
     assert!(has_server_metric(&r, "dynamo_component_requests"));
 }
 
@@ -279,7 +294,11 @@ async fn test_server_metrics_export_files() {
         assert!(record["endpoint_url"].is_string());
         assert!(record["timestamp_ns"].as_i64().unwrap_or(0) > 0);
         assert!(record["endpoint_latency_ns"].as_i64().unwrap_or(-1) >= 0);
-        assert!(record["metrics"].as_object().map_or(false, |mm| !mm.is_empty()));
+        assert!(
+            record["metrics"]
+                .as_object()
+                .map_or(false, |mm| !mm.is_empty())
+        );
     }
 
     // Verify CSV content.
@@ -384,7 +403,11 @@ async fn test_server_metrics_jsonl_records() {
         timestamps.push(record["timestamp_ns"].as_i64().unwrap_or(0));
 
         // Verify record has metrics.
-        assert!(record["metrics"].as_object().map_or(false, |mm| !mm.is_empty()));
+        assert!(
+            record["metrics"]
+                .as_object()
+                .map_or(false, |mm| !mm.is_empty())
+        );
 
         // Check for expected vLLM metrics in at least some records.
         if let Some(samples) = record["metrics"].get("vllm:kv_cache_usage_perc") {

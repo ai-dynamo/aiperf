@@ -196,10 +196,7 @@ async fn test_ctrl_c_graceful_cancel_writes_results() {
     assert!(!r.artifacts.json().is_null(), "JSON export should exist");
     assert!(!r.artifacts.csv().is_empty(), "CSV export should exist");
     let jsonl = r.artifacts.jsonl();
-    assert!(
-        !r.artifacts.inputs().is_null(),
-        "Inputs file should exist"
-    );
+    assert!(!r.artifacts.inputs().is_null(), "Inputs file should exist");
 
     // was_cancelled flag should be True.
     assert!(

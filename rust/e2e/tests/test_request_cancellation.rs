@@ -7,7 +7,11 @@ use common::*;
 #[tokio::test]
 async fn test_request_cancellation() {
     let h = AIPerfHarness::new().await;
-    let timeout = if cfg!(target_os = "windows") { 300 } else { 120 };
+    let timeout = if cfg!(target_os = "windows") {
+        300
+    } else {
+        120
+    };
     let r = h.run_timeout(
         &format!(
             "--model {DEFAULT_MODEL} --url {} --endpoint-type chat --streaming \
@@ -21,7 +25,9 @@ async fn test_request_cancellation() {
     );
 
     for request in r.artifacts.jsonl() {
-        let was_cancelled = request["metadata"]["was_cancelled"].as_bool().unwrap_or(false);
+        let was_cancelled = request["metadata"]["was_cancelled"]
+            .as_bool()
+            .unwrap_or(false);
         if was_cancelled {
             assert!(!request["error"].is_null());
             assert_eq!(request["error"]["code"].as_i64().unwrap(), 499);

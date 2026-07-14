@@ -155,7 +155,10 @@ async fn test_custom_metrics_csv_loading_basic() {
                     "Metric {metric_name} has None value"
                 );
                 assert!(
-                    !metric_value.get("unit").map(|u| u.is_null()).unwrap_or(true),
+                    !metric_value
+                        .get("unit")
+                        .map(|u| u.is_null())
+                        .unwrap_or(true),
                     "Metric {metric_name} has None unit"
                 );
             }
