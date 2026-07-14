@@ -3389,6 +3389,42 @@ impl RunCapture {
         wants_live_sink_record: bool,
         wants_adaptive_record: bool,
     ) -> Self {
+        // Cell processes select the autonomous issuer from the environment
+        // (`AIPERF_CELL_ID`/`_COUNT`); the single-process default is Direct
+        // (identity), so non-cell output is byte-unchanged.
+        Self::new_with_issuance(
+            clock,
+            origin_ns,
+            config,
+            raw_enabled,
+            inputs_enabled,
+            wants_live_sink_record,
+            wants_adaptive_record,
+            crate::cellular_cell::issuance_authority_from_env(),
+        )
+    }
+
+    /// Same as [`Self::new`] but with an explicitly injected dispatch-ordinal
+    /// issuer instead of the process-environment default. A future single-process
+    /// thread-per-core scheduled run builds one `RunCapture` per sub-cell thread,
+    /// each with a per-thread issuer (see
+    /// [`issuance_authority_for`](crate::cellular_cell::issuance_authority_for))
+    /// whose `(cell_id, cell_count)` partition the process-global env vars cannot
+    /// express. [`Self::new`] delegates here with the env default
+    /// ([`issuance_authority_from_env`](crate::cellular_cell::issuance_authority_from_env))
+    /// so every current call site is byte-unchanged. The per-phase ordinal bases
+    /// still come from the environment — they carry no partition — matching `new`.
+    #[allow(clippy::too_many_arguments)]
+    fn new_with_issuance(
+        clock: Rc<dyn Clock>,
+        origin_ns: i64,
+        config: MetricsConfig,
+        raw_enabled: bool,
+        inputs_enabled: bool,
+        wants_live_sink_record: bool,
+        wants_adaptive_record: bool,
+        issuance: Rc<dyn IssuanceAuthority>,
+    ) -> Self {
         Self {
             clock,
             origin_ns,
@@ -3404,10 +3440,7 @@ impl RunCapture {
             adaptive_records: RefCell::new(HashMap::new()),
             wants_live_sink_record,
             wants_adaptive_record,
-            // Cell processes select the autonomous issuer from the environment
-            // (`AIPERF_CELL_ID`/`_COUNT`); the single-process default is Direct
-            // (identity), so non-cell output is byte-unchanged.
-            issuance: crate::cellular_cell::issuance_authority_from_env(),
+            issuance,
             phase_ordinal_bases: crate::cellular_cell::phase_ordinal_bases_from_env(),
         }
     }
