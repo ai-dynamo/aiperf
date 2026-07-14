@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
-use aiperf::dataset::body_plan::{BodyPlan, JsonBodyMaterializer};
+use aiperf::body_plan::{BodyPlan, JsonBodyMaterializer};
 use aiperf::dataset::materialize::Overrides;
 use aiperf::dataset::segment::SegmentPool;
 use aiperf::fixed_schedule::FixedScheduleConfig;
