@@ -284,3 +284,37 @@ endpoints); two 1-cell blocks are intentionally **not** reproduced — the coord
 carried in the terminal envelope instead) and the grouped per-error message list
 (cells ship metric records with error/cancel flags, so error *counts* are in the
 metrics, but not the messages a cross-cell regroup would need).
+
+## Addendum — 2026-07-14 — multi-phase absolute-slot issuance (content parity)
+
+A full-review workflow caught a multi-phase byte-parity defect an earlier
+uniform-metric e2e had masked (fixed hidden in a uniform ISL/OSL dataset: a *wrong
+instance set* yields identical metrics). The runner rebuilds each cell's sampler
+fresh per phase — the dataset RNG re-seeds as `runner.phase.{i}.dataset` — so a cell
+draws its owned instances of **each phase from position 0**. The issuer, however,
+stamped a cumulative ordinal; the first fix made a *base-aware per-phase count* so the
+ordinals still tiled `0..total`, which meant the merge never failed — but each cell
+drew a *different instance set* than a 1-cell run whenever a warmup phase's length was
+not a multiple of `cell_count` (e.g. w=3/p=3/c=2 → `{inst0,inst1,inst3}` vs
+`{inst0,inst1,inst2}`). The report was silently wrong.
+
+**Fix — the cell stamps the single-cell absolute slot directly.** `IssuanceAuthority`
+now maps `(flat_local, phase_ordinal_base, within_phase_local)`: the identity issuer
+returns `flat_local` (non-cell path byte-unchanged); the cellular issuer returns
+`phase_ordinal_base + within_phase_local*cell_count + cell_id`, where `phase_ordinal_base`
+is the turns the run's prior phases dispatched globally (0 for warmup, `W` for
+profiling). That equals the slot a 1-cell run assigns the same instance, so the
+cumulative `0..total` merge reproduces it byte-for-byte. `build_cell_envelope` slices
+each phase by its own `owned_positions` (base 0), matching the per-phase-reset sampler;
+`RunCapture::finish` tracks a per-phase dispatch counter and looks the base up from a
+phase→base map; the controller computes the bases and threads them to each cell via
+`AIPERF_CELL_PHASE_ORDINAL_BASES`.
+
+**Verified at the content level:** a warmup=10/profiling=500/cells=3 run over a
+*varying*-ISL dataset (`isl ~ N(256, 64)`, std ≈ 61.5) is byte-identical to the 1-cell
+run on the **full** ISL distribution (avg/std/min/max/all percentiles) and every
+dataset-deterministic metric, for both the profiling and warmup sections. A cell's own
+(discarded) report accumulator holds sparse global slots — bounded by the 1-cell row
+count, transient, and never serialized — the merged report is the authoritative one.
+Also fail-closed now: a non-HTTP transport (gRPC/dynosim) or a graph-program dataset
+with `cells>1` is rejected up front (its executor never ships a partition).
