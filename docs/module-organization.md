@@ -7,6 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 
 Sixteen former `aiperf-*` library crates are now `aiperf::<module>::` namespaces. All inter-module imports use `crate::<module>::` within `aiperf`; runner and mock-rs use `aiperf::<module>::`. The five modules with name conflicts with pre-existing thin adapter files use a `_core` or `transport_` prefix (`metrics_core`, `adaptive_core`, `accuracy_core`, `transport_http`, `transport_grpc`).
 
+> See also [`timing-execution-types.md`](timing-execution-types.md) — a code-extracted catalog of every major public type across the timing + execution layers (clock, arrival/admission/stop policy, phase orchestration, scheduled & graph execution, dispatch/measurement seams), with a recommended-renames addendum.
+
 | Module (`aiperf::<m>`) | Former crate | Purpose | Key files |
 |---|---|---|---|
 | `clock` | `aiperf-clock` | The `{clock}` seam. `Clock` trait (`now_ns` / `sleep` / `is_virtual`; the virtual-time controls `next_event_time`/`advance_to` are inherent methods on `SimClock`, not the trait, so real clocks carry no no-op stubs); `SimClock` = integer-ns discrete-event `BinaryHeap` keyed `(at_ns, seq_no)` (deterministic same-instant tie-break); `RealClock` = monotonic `Instant` + Linux `timerfd`/`AsyncFd` ns sleeps (tokio fallback off-Linux and on syscall failure). | `clock.rs`, `sim_clock.rs`, `real_clock.rs` |
