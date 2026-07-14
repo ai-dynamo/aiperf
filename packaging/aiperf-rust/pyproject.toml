@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Source-built companion wheel for AIPerf's native runner.
+#
+# Unlike `packaging/aiperf-runner` (which ingests an already-compiled binary and
+# a signed build manifest), this distribution compiles the `aiperf-runner`
+# executable from source with maturin at wheel-build time. `maturin build` /
+# `pip wheel` invoke cargo directly, so a working Rust toolchain is required on
+# the build host. The resulting wheel is platform-specific and installs the
+# single native binary into the environment's scripts directory — no Python
+# package, extension module, or launcher is included.
+
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "aiperf-rust"
+version = "0.11.0"
+description = "Source-built native AIPerf single-run executor (aiperf-runner)"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11,<3.14"
+authors = [
+    { name = "NVIDIA Inc.", email = "sw-dl-dynamo@nvidia.com" },
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Rust",
+]
+
+[tool.maturin]
+# Compile the workspace's `aiperf-runner` binary crate and place its executable
+# in the wheel's scripts scheme. There is no Python module to import.
+bindings = "bin"
+manifest-path = "../../rust/runner/Cargo.toml"
+# Build the optimized image; per-request allocation churn dominates the hot path.
+profile = "release"
+strip = true
+# The runner's default `dynosim` feature ships the offline/online Dynamo
+# transports and requires the sibling `dynamo-aiperf-native/lib/mocker`
+# checkout at build time (see rust/runner/Cargo.toml). To build the online-only
+# base runner without that checkout, either pass `--no-default-features` on the
+# maturin/pip command line or uncomment the following line:
+# no-default-features = true
