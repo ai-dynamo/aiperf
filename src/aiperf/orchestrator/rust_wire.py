@@ -684,6 +684,12 @@ def _export(run: BenchmarkRun) -> dict[str, Any]:
     server_metrics = _server_metrics_frontend_projection(run)
     if server_metrics is not None:
         result["server_metrics"] = server_metrics
+    parquet = _parquet_frontend_projection(run)
+    if parquet is not None:
+        result["parquet"] = parquet
+    accuracy_csv = _accuracy_csv_frontend_projection(run)
+    if accuracy_csv is not None:
+        result["accuracy_csv"] = accuracy_csv
 
     # Network sinks (OTLP/HTTP, MLflow, W&B) are only projected onto the native
     # export plane when the operator opts in via AIPERF_NATIVE_NETWORK_EXPORT.
@@ -1037,6 +1043,53 @@ def _server_metrics_input_config(run: BenchmarkRun) -> Any:
     )
     dumped = scrub_non_finite(export_data.model_dump(mode="json", exclude_none=True))
     return dumped["input_config"]
+
+
+def _parquet_frontend_projection(run: BenchmarkRun) -> dict[str, Any] | None:
+    """Project the server-metrics Parquet sink toggle onto ``cfg.export.parquet``.
+
+    Config-only passthrough: the native ``aiperf::export::parquet`` sink owns all
+    assembly and serialization. It reads the runner-emitted
+    ``.aiperf-server-metrics-parquet-wire.jsonl`` wire file (whose path is lowered
+    by :func:`_server_metrics` when ``parquet`` is in ``cfg.server_metrics.formats``)
+    and the profiling boundary carried on the native report
+    (``report.summary.server_metrics.profiling``); nothing else is frontend-owned,
+    so ``enabled`` is the sole projected field
+    (``aiperf::export::parquet::ParquetExportConfig``).
+
+    Enabled iff server-metrics collection is on and the ``parquet`` format is
+    selected — the same gate under which :func:`_server_metrics` writes the
+    ``parquet_wire_path`` the sink consumes. Absent either, the block is omitted
+    and the sink stays disabled.
+    """
+    server_metrics = run.cfg.server_metrics
+    if not server_metrics.enabled:
+        return None
+    formats = {str(fmt) for fmt in server_metrics.formats}
+    if "parquet" not in formats:
+        return None
+    return {"enabled": True}
+
+
+def _accuracy_csv_frontend_projection(run: BenchmarkRun) -> dict[str, Any] | None:
+    """Project the accuracy CSV sink toggle onto ``cfg.export.accuracy_csv``.
+
+    Config-only passthrough: the native ``aiperf::export::accuracy_csv`` sink reads
+    ``report.accuracy.summary`` (the overall + per-task rollups) directly and writes
+    ``accuracy_results.csv`` byte-for-byte against the Python
+    ``AccuracyDataExporter``; there is no frontend-owned envelope value, so
+    ``enabled`` is the sole projected field
+    (``aiperf::export::accuracy_csv::AccuracyCsvExportConfig``).
+
+    Enabled iff accuracy benchmarking mode is on (``cfg.accuracy.enabled``), the
+    same gate that selects the ``static_accuracy`` workload (see
+    :func:`_workload_type`). The sink additionally self-skips when the report carries
+    no accuracy analysis or an empty population, matching the Python exporter.
+    """
+    accuracy = run.cfg.accuracy
+    if accuracy is None or not accuracy.enabled:
+        return None
+    return {"enabled": True}
 
 
 def _genai_perf_frontend_projection(run: BenchmarkRun) -> dict[str, Any]:

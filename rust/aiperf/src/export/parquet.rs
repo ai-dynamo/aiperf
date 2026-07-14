@@ -111,7 +111,7 @@ impl Exporter for ParquetExporter {
         _cfg: &ExportConfig,
     ) -> anyhow::Result<()> {
         let (start_ns, end_ns) = profiling_boundary(report)?;
-        let wire_path = artifact_dir.join(WIRE_FILENAME);
+        let wire_path = resolve_wire_path(artifact_dir);
         let hierarchy = Hierarchy::from_wire_file(&wire_path)?;
         let rows = hierarchy.collect_rows(start_ns, end_ns);
 
@@ -130,6 +130,29 @@ impl Exporter for ParquetExporter {
             .with_context(|| format!("writing {}", output_path.display()))?;
         Ok(())
     }
+}
+
+/// Resolve the runner-emitted parquet wire file for a given export directory.
+///
+/// The wire JSONL is an **input** the runner writes into the run's artifact root
+/// (`rust/runner/src/execute.rs`), whereas the export directory handed to a sink
+/// may be an OUTPUT redirect (the `AIPERF_EXPORT_SUBDIR` parity harness points
+/// sinks at `<artifact_root>/<subdir>/` so Rust outputs coexist with the Python
+/// files). The wire file is never redirected, so resolve it in `artifact_dir`
+/// first and fall back to the parent directory when the subdir redirect is in
+/// effect. Normal runs (no redirect) match on the first probe.
+fn resolve_wire_path(artifact_dir: &Path) -> std::path::PathBuf {
+    let direct = artifact_dir.join(WIRE_FILENAME);
+    if direct.exists() {
+        return direct;
+    }
+    if let Some(parent) = artifact_dir.parent() {
+        let fallback = parent.join(WIRE_FILENAME);
+        if fallback.exists() {
+            return fallback;
+        }
+    }
+    direct
 }
 
 /// Resolve the profiling `[start_ns, end_ns]` filter. Mirrors the Python
@@ -182,18 +205,75 @@ struct WireFamily {
 }
 
 /// One sample: scalar (`value`) or histogram (`buckets` + `sum` + `count`).
+///
+/// All numeric fields decode through [`de_opt_f64`] / [`de_bucket_map`] rather
+/// than serde_json's built-in number deserializer. serde_json's default float
+/// parser is not always correctly rounded — for some decimals it lands 1 ULP off
+/// the IEEE-754 nearest value that Rust's `f64::from_str` and Python's `float()`
+/// both produce (e.g. `0.36366626900000004` decodes to `…da8a` via serde_json but
+/// `…da8b` via `f64::from_str`). The runner writes this wire and Python's exporter
+/// reads it with `float()`, so decoding the same bytes to a different f64 here
+/// perturbs the cumulative-sum/count/bucket deltas by ~1 ULP away from the Python
+/// output. Recovering the exact number text (the enabled `raw_value` feature) and
+/// parsing it with `f64::from_str` restores byte-for-value parity.
 #[derive(Debug, serde::Deserialize)]
 struct WireSample {
     #[serde(default)]
     labels: Option<BTreeMap<String, String>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_opt_f64")]
     value: Option<f64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_bucket_map")]
     buckets: Option<BTreeMap<String, f64>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_opt_f64")]
     sum: Option<f64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_opt_f64")]
     count: Option<f64>,
+}
+
+/// Parse a JSON number token to the correctly-rounded nearest f64 via
+/// `f64::from_str`, matching Python's `float()`. See [`WireSample`] for why the
+/// default serde_json number path is unsuitable.
+fn parse_exact_f64<E: serde::de::Error>(raw: &serde_json::value::RawValue) -> Result<f64, E> {
+    let text = raw.get().trim();
+    text.parse::<f64>().map_err(|error| {
+        serde::de::Error::custom(format!("invalid wire number {text:?}: {error}"))
+    })
+}
+
+/// Correctly-rounded `Option<f64>` decoder. Absent (`#[serde(default)]`) and JSON
+/// `null` both yield `None`.
+fn de_opt_f64<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    let raw: Option<Box<serde_json::value::RawValue>> = Option::deserialize(deserializer)?;
+    match raw {
+        None => Ok(None),
+        Some(raw) if raw.get().trim() == "null" => Ok(None),
+        Some(raw) => parse_exact_f64(&raw).map(Some),
+    }
+}
+
+/// Correctly-rounded histogram bucket map decoder (`le` string -> cumulative
+/// count). Absent yields `None`.
+fn de_bucket_map<'de, D>(deserializer: D) -> Result<Option<BTreeMap<String, f64>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    let raw: Option<BTreeMap<String, Box<serde_json::value::RawValue>>> =
+        Option::deserialize(deserializer)?;
+    match raw {
+        None => Ok(None),
+        Some(entries) => {
+            let mut out = BTreeMap::new();
+            for (le, value) in entries {
+                out.insert(le, parse_exact_f64(&value)?);
+            }
+            Ok(Some(out))
+        }
+    }
 }
 
 // =============================================================================
