@@ -32,10 +32,12 @@
 //!   `(cell_id, cell_count)` work partition ([`partition::ModuloCellPartition`],
 //!   identity `(0, 1)` today).
 //!
-//! The remaining seam is **designed, not yet built** (see the roadmap): a
-//! `CellTransport` — the abstracted cross-node seam carrying heartbeats and
-//! partitions from a cell to the controller — which lands with the Phase-2
-//! controller/cell topology.
+//! - **Transport [`transport`]** — [`transport::ControllerTransport`] /
+//!   [`transport::CellClient`]: the abstracted cross-node seam carrying
+//!   [`transport::CellMessage`]s (heartbeats, partitions) from a cell to the
+//!   controller, with a real framed-MessagePack [`transport::TcpControllerTransport`]
+//!   / [`transport::TcpCellClient`] pair. The multi-process controller/cell topology
+//!   that drives it lives in `aiperf-runner` (Phase 2).
 //!
 //! Everything here is object-safe where it crosses a `dyn` boundary and generic
 //! where it is hot-path monomorphized, per the crate's extensibility discipline.
@@ -45,6 +47,7 @@ pub mod issuance;
 pub mod partition;
 pub mod shard;
 pub mod sketch;
+pub mod transport;
 
 pub use heartbeat::{
     HeartbeatAccumulator, HeartbeatCounters, HeartbeatSaturation, MetricsHeartbeat,
@@ -56,3 +59,7 @@ pub use shard::{
     RecordsShardPartition, merge_records_in_global_order, merge_store_partitions,
 };
 pub use sketch::TDigest;
+pub use transport::{
+    CellClient, CellMessage, CellTransportError, ControllerTransport, TcpCellClient,
+    TcpControllerTransport,
+};
