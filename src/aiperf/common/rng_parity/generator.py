@@ -163,8 +163,21 @@ class ParityRandomGenerator:
             return self._rng.next_u64()
         return self._sample_single_u64(0, n)
 
-    def randrange(self, start: int, stop: int, step: int = 1) -> int:
-        """Uniform integer from ``range(start, stop, step)`` semantics (``randrange``)."""
+    def randrange(self, *args: int) -> int:
+        """Uniform integer from ``range(...)`` semantics (``randrange``).
+
+        Accepts Python's ``random.randrange`` calling convention as a drop-in:
+        ``randrange(stop)``, ``randrange(start, stop)``, or ``randrange(start, stop, step)``.
+        The underlying draw matches the Rust ``generator.rs`` ``randrange(start, stop, step)``.
+        """
+        if len(args) == 1:
+            start, stop, step = 0, args[0], 1
+        elif len(args) == 2:
+            start, stop, step = args[0], args[1], 1
+        elif len(args) == 3:
+            start, stop, step = args
+        else:
+            raise TypeError(f"randrange expected 1 to 3 arguments, got {len(args)}")
         if step == 0:
             raise RngError.empty_range("randrange step=0")
         width = stop - start
