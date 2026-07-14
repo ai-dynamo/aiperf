@@ -9,7 +9,12 @@ license.workspace = true
 description = "Versioned single-benchmark subprocess runner for the Python AIPerf orchestrator."
 
 [features]
-default = []
+# DynoSim ships in the default runner: the product wire (`aiperf profile
+# --config dynosim_*`) needs the runner to advertise the dynosim transports, and
+# a plain `cargo build -p aiperf-runner` producing a non-dynosim binary was a
+# recurring footgun (a stale default build silently drops the transport). This
+# requires the sibling `dynamo-aiperf-native/lib/mocker` checkout at build time.
+default = ["dynosim"]
 # The runner is the only native executable, so every optional AIPerf/Dynamo
 # composition feature must terminate here rather than requiring another binary.
 dynosim = ["aiperf/dynosim"]
