@@ -7,6 +7,12 @@ use aiperf::endpoints::{
 };
 use serde_json::{Value, json};
 
+/// Materialize a prepared endpoint's [`BodyPlan`] into a decoded JSON value so
+/// the structural assertions below keep comparing against `json!` objects.
+fn plan_body(plan: aiperf::body_plan::BodyPlan) -> Value {
+    serde_json::from_slice(&plan.materialize_standalone().unwrap()).unwrap()
+}
+
 fn prepared() -> Box<dyn aiperf::endpoints::PreparedEndpoint> {
     EndpointRegistry::builtin()
         .unwrap()
@@ -54,7 +60,7 @@ fn descriptor_and_payload_are_token_native() {
     );
 
     assert_eq!(
-        endpoint.format_payload(&request).unwrap(),
+        plan_body(endpoint.format_payload(&request).unwrap()),
         json!({
             "model": "turn-model",
             "token_ids": [1, 2, 3],

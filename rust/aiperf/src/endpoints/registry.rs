@@ -19,6 +19,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
+use crate::body_plan::BodyPlan;
 use crate::endpoints::DynosimEndpointFactory;
 use crate::endpoints::MessagesEndpoint;
 use crate::endpoints::VllmGenerateFactory;
@@ -388,10 +389,13 @@ pub trait PreparedEndpointBehavior: Endpoint {
         &self,
         request: &PreparedRequest<'_>,
         config: &RawEndpointConfig,
-    ) -> EndpointResult<Value>;
+    ) -> EndpointResult<BodyPlan>;
 }
 
-pub(crate) fn format_legacy_payload<E>(endpoint: &E, request: &RequestInfo) -> EndpointResult<Value>
+pub(crate) fn format_legacy_payload<E>(
+    endpoint: &E,
+    request: &RequestInfo,
+) -> EndpointResult<BodyPlan>
 where
     E: PreparedEndpointBehavior + ?Sized,
 {
@@ -456,8 +460,8 @@ pub trait PreparedEndpoint: fmt::Debug {
     /// Validated immutable effective configuration.
     fn config(&self) -> &EffectiveEndpointConfig;
 
-    /// Format a decoded JSON request body.
-    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<Value>;
+    /// Build a request-body plan the shared materializer splices into wire bytes.
+    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<BodyPlan>;
 
     /// Borrow endpoint-owned request headers prepared once per worker/profile.
     fn headers(&self) -> &BTreeMap<String, String>;
@@ -549,7 +553,7 @@ where
         &self.config
     }
 
-    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<Value> {
+    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<BodyPlan> {
         self.endpoint
             .format_prepared_payload(request, self.config.as_raw())
     }

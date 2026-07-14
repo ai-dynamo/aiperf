@@ -32,13 +32,25 @@ use std::path::Path;
 
 use crate::metrics_core::NativeReport;
 
+pub mod accuracy_csv;
+pub mod console_txt;
 pub mod genai_perf;
 pub mod mlflow;
 pub mod otel;
+pub mod parquet;
+pub mod server_metrics;
+pub mod timeslice;
+pub mod wandb;
 
+pub use accuracy_csv::AccuracyCsvExportConfig;
+pub use console_txt::ConsoleTxtExportConfig;
 pub use genai_perf::GenaiPerfExportConfig;
 pub use mlflow::MlflowExportConfig;
 pub use otel::OtelExportConfig;
+pub use parquet::ParquetExportConfig;
+pub use server_metrics::ServerMetricsExportConfig;
+pub use timeslice::TimesliceExportConfig;
+pub use wandb::WandbExportConfig;
 
 /// Typed export policy projected by the Python frontend onto the wire `cfg.export`
 /// block and decoded once by the runner. Each sub-config is independently gated;
@@ -47,12 +59,25 @@ pub use otel::OtelExportConfig;
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ExportConfig {
-    /// genai-perf v1 byte-exact compatibility sink (`--export-genai-perf`).
+    /// aiperf v1 summary sink (`profile_export_aiperf.{json,csv}`).
     pub genai_perf: GenaiPerfExportConfig,
     /// OpenTelemetry OTLP/HTTP metrics emitter.
     pub otel: OtelExportConfig,
     /// MLflow run tracker (REST uploader).
     pub mlflow: MlflowExportConfig,
+    /// Server-metrics summary sink (`server_metrics_export.{json,csv}`).
+    pub server_metrics: ServerMetricsExportConfig,
+    /// Timeslice sink (`profile_export_aiperf_timeslices.{json,csv}`).
+    pub timeslice: TimesliceExportConfig,
+    /// Accuracy sink (`accuracy_results.csv`).
+    pub accuracy_csv: AccuracyCsvExportConfig,
+    /// Fixed-width console artifact + warning/insight sink
+    /// (`profile_export_console.txt`).
+    pub console_txt: ConsoleTxtExportConfig,
+    /// Weights & Biases sink (offline `.wandb`).
+    pub wandb: WandbExportConfig,
+    /// Server-metrics Parquet sink (`server_metrics_export.parquet`).
+    pub parquet: ParquetExportConfig,
 }
 
 /// One output format or destination for the finalized native-v2 report.
@@ -86,9 +111,17 @@ pub trait Exporter {
 /// bundles observe the on-disk files). Registering a sink is one line here.
 fn registry() -> Vec<Box<dyn Exporter>> {
     vec![
+        // Local-file writers first (so uploaders below see the on-disk files).
         Box::new(genai_perf::GenaiPerfV1Exporter),
+        Box::new(server_metrics::ServerMetricsExporter),
+        Box::new(timeslice::TimesliceExporter),
+        Box::new(accuracy_csv::AccuracyCsvExporter),
+        Box::new(parquet::ParquetExporter),
+        Box::new(console_txt::ConsoleTxtExporter),
+        // Network / deferred uploaders.
         Box::new(otel::OtelExporter),
         Box::new(mlflow::MlflowExporter),
+        Box::new(wandb::WandbExporter),
     ]
 }
 
@@ -125,9 +158,13 @@ mod tests {
     #[test]
     fn absent_export_block_decodes_to_all_disabled() {
         let cfg = ExportConfig::default();
-        assert!(!genai_perf::GenaiPerfV1Exporter.enabled(&cfg));
-        assert!(!otel::OtelExporter.enabled(&cfg));
-        assert!(!mlflow::MlflowExporter.enabled(&cfg));
+        for exporter in registry() {
+            assert!(
+                !exporter.enabled(&cfg),
+                "{} should be disabled by default",
+                exporter.name()
+            );
+        }
     }
 
     #[test]

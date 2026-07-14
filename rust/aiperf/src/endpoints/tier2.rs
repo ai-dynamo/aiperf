@@ -12,6 +12,7 @@ mod flexible;
 
 use serde_json::{Map, Value, json};
 
+use crate::body_plan::BodyPlan;
 use crate::endpoints::config::{EndpointConfig, RawEndpointConfig};
 use crate::endpoints::endpoints::{Endpoint, merge_extra, parse_embeddings_response, turn_texts};
 use crate::endpoints::metadata::{EndpointDescriptor, Modality};
@@ -260,7 +261,7 @@ impl Endpoint for NimEmbeddingsEndpoint {
         &NIM_EMBEDDINGS_DESCRIPTOR
     }
 
-    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
         format_legacy_payload(self, request_info)
     }
 
@@ -274,7 +275,7 @@ impl PreparedEndpointBehavior for NimEmbeddingsEndpoint {
         &self,
         request: &PreparedRequest<'_>,
         config: &RawEndpointConfig,
-    ) -> EndpointResult<Value> {
+    ) -> EndpointResult<BodyPlan> {
         let turn = prepared_single_turn(request, "Embeddings endpoint only supports one turn")?;
         let texts = turn_texts(turn);
         let images = turn
@@ -312,7 +313,7 @@ impl PreparedEndpointBehavior for NimEmbeddingsEndpoint {
             Value::Array(inputs.into_iter().map(Value::String).collect()),
         );
         merge_prepared_endpoint_and_turn_extra(&mut payload, request, config);
-        Ok(Value::Object(payload))
+        Ok(BodyPlan::from_object(&payload)?)
     }
 }
 
@@ -327,7 +328,7 @@ fn format_rankings(
     flavor: RankingFlavor,
     request: &PreparedRequest<'_>,
     config: &RawEndpointConfig,
-) -> EndpointResult<Value> {
+) -> EndpointResult<BodyPlan> {
     let turn = prepared_single_turn(request, "Rankings endpoint only supports one turn")?;
     let mut queries = Vec::new();
     let mut passages = Vec::new();
@@ -359,7 +360,7 @@ fn format_rankings(
     .expect("ranking payload is an object")
     .clone();
     merge_prepared_endpoint_and_turn_extra(&mut payload, request, config);
-    Ok(Value::Object(payload))
+    Ok(BodyPlan::from_object(&payload)?)
 }
 
 fn parse_rankings(
@@ -453,7 +454,7 @@ macro_rules! ranking_endpoint {
                 &$descriptor
             }
 
-            fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
+            fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
                 format_legacy_payload(self, request_info)
             }
 
@@ -474,7 +475,7 @@ macro_rules! ranking_endpoint {
                 &self,
                 request: &PreparedRequest<'_>,
                 config: &RawEndpointConfig,
-            ) -> EndpointResult<Value> {
+            ) -> EndpointResult<BodyPlan> {
                 format_rankings(RankingFlavor::$flavor, request, config)
             }
         }
@@ -490,7 +491,7 @@ impl Endpoint for HuggingFaceGenerateEndpoint {
         &HUGGINGFACE_GENERATE_DESCRIPTOR
     }
 
-    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
         format_legacy_payload(self, request_info)
     }
 
@@ -512,7 +513,7 @@ impl PreparedEndpointBehavior for HuggingFaceGenerateEndpoint {
         &self,
         request: &PreparedRequest<'_>,
         config: &RawEndpointConfig,
-    ) -> EndpointResult<Value> {
+    ) -> EndpointResult<BodyPlan> {
         let turn =
             prepared_single_turn(request, "TGI endpoint supports a single turn per request")?;
         let inputs = turn_texts(turn).join(" ");
@@ -525,7 +526,7 @@ impl PreparedEndpointBehavior for HuggingFaceGenerateEndpoint {
         payload.insert("inputs".into(), Value::String(inputs));
         payload.insert("parameters".into(), Value::Object(parameters));
         merge_extra(&mut payload, turn.extra_body.as_ref());
-        Ok(Value::Object(payload))
+        Ok(BodyPlan::from_object(&payload)?)
     }
 }
 
@@ -576,7 +577,7 @@ impl Endpoint for ImageGenerationEndpoint {
         &IMAGE_GENERATION_DESCRIPTOR
     }
 
-    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
         format_legacy_payload(self, request_info)
     }
 
@@ -590,7 +591,7 @@ impl PreparedEndpointBehavior for ImageGenerationEndpoint {
         &self,
         request: &PreparedRequest<'_>,
         config: &RawEndpointConfig,
-    ) -> EndpointResult<Value> {
+    ) -> EndpointResult<BodyPlan> {
         let turns = prepared_require_turns(
             request,
             "Image generation endpoint requires at least one turn",
@@ -614,7 +615,7 @@ impl PreparedEndpointBehavior for ImageGenerationEndpoint {
             payload.insert("stream".into(), Value::Bool(true));
         }
         merge_prepared_endpoint_and_turn_extra(&mut payload, request, config);
-        Ok(Value::Object(payload))
+        Ok(BodyPlan::from_object(&payload)?)
     }
 }
 
@@ -623,7 +624,7 @@ impl Endpoint for ImageEditEndpoint {
         &IMAGE_EDIT_DESCRIPTOR
     }
 
-    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
         format_legacy_payload(self, request_info)
     }
 
@@ -637,7 +638,7 @@ impl PreparedEndpointBehavior for ImageEditEndpoint {
         &self,
         request: &PreparedRequest<'_>,
         config: &RawEndpointConfig,
-    ) -> EndpointResult<Value> {
+    ) -> EndpointResult<BodyPlan> {
         let turns =
             prepared_require_turns(request, "Image edit endpoint requires at least one turn")?;
         let turn = turns
@@ -678,7 +679,7 @@ impl PreparedEndpointBehavior for ImageEditEndpoint {
         }
         merge_image_edit_extra(&mut payload, config.extra.as_ref());
         merge_image_edit_extra(&mut payload, turn.extra_body.as_ref());
-        Ok(Value::Object(payload))
+        Ok(BodyPlan::from_object(&payload)?)
     }
 }
 
@@ -800,7 +801,7 @@ impl Endpoint for VideoGenerationEndpoint {
         &VIDEO_GENERATION_DESCRIPTOR
     }
 
-    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
         format_legacy_payload(self, request_info)
     }
 
@@ -859,7 +860,7 @@ impl PreparedEndpointBehavior for VideoGenerationEndpoint {
         &self,
         request: &PreparedRequest<'_>,
         config: &RawEndpointConfig,
-    ) -> EndpointResult<Value> {
+    ) -> EndpointResult<BodyPlan> {
         let turns = prepared_require_turns(
             request,
             "Video generation endpoint requires at least one turn",
@@ -878,7 +879,7 @@ impl PreparedEndpointBehavior for VideoGenerationEndpoint {
         .expect("video payload is an object")
         .clone();
         merge_prepared_endpoint_and_turn_extra(&mut payload, request, config);
-        Ok(Value::Object(payload))
+        Ok(BodyPlan::from_object(&payload)?)
     }
 }
 
@@ -887,7 +888,7 @@ impl Endpoint for ImageRetrievalEndpoint {
         &IMAGE_RETRIEVAL_DESCRIPTOR
     }
 
-    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
         format_legacy_payload(self, request_info)
     }
 
@@ -932,7 +933,7 @@ impl PreparedEndpointBehavior for ImageRetrievalEndpoint {
         &self,
         request: &PreparedRequest<'_>,
         config: &RawEndpointConfig,
-    ) -> EndpointResult<Value> {
+    ) -> EndpointResult<BodyPlan> {
         let turn =
             prepared_single_turn(request, "Image Retrieval endpoint only supports one turn")?;
         if turn.images.is_empty() {
@@ -955,7 +956,7 @@ impl PreparedEndpointBehavior for ImageRetrievalEndpoint {
         let mut payload = Map::new();
         payload.insert("input".into(), Value::Array(input));
         merge_prepared_endpoint_and_turn_extra(&mut payload, request, config);
-        Ok(Value::Object(payload))
+        Ok(BodyPlan::from_object(&payload)?)
     }
 }
 
@@ -964,7 +965,7 @@ impl Endpoint for SolidoRagEndpoint {
         &SOLIDO_RAG_DESCRIPTOR
     }
 
-    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
         format_legacy_payload(self, request_info)
     }
 
@@ -1004,7 +1005,7 @@ impl PreparedEndpointBehavior for SolidoRagEndpoint {
         &self,
         request: &PreparedRequest<'_>,
         config: &RawEndpointConfig,
-    ) -> EndpointResult<Value> {
+    ) -> EndpointResult<BodyPlan> {
         let turns = prepared_require_turns(request, "SOLIDO endpoint requires at least one turn")?;
         let turn = turns
             .last()
@@ -1018,7 +1019,7 @@ impl PreparedEndpointBehavior for SolidoRagEndpoint {
         .expect("SOLIDO payload is an object")
         .clone();
         merge_prepared_endpoint_and_turn_extra(&mut payload, request, config);
-        Ok(Value::Object(payload))
+        Ok(BodyPlan::from_object(&payload)?)
     }
 }
 

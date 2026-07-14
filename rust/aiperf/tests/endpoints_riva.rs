@@ -14,6 +14,12 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use serde_json::{Map, Value, json};
 
+/// Materialize a prepared endpoint's [`BodyPlan`] into a decoded JSON value so
+/// the structural assertions below keep comparing against `json!` objects.
+fn plan_body(plan: aiperf::body_plan::BodyPlan) -> Value {
+    serde_json::from_slice(&plan.materialize_standalone().unwrap()).unwrap()
+}
+
 fn prepared(
     id: &str,
     streaming: bool,
@@ -120,7 +126,7 @@ fn asr_formats_unary_and_configured_chunked_audio_and_parses_transcripts() {
     }];
     let unary = prepared("riva_asr", false, None);
     assert_eq!(
-        unary.format_payload(&request("asr", &turns)).unwrap(),
+        plan_body(unary.format_payload(&request("asr", &turns)).unwrap()),
         json!({
             "audio": STANDARD.encode(audio),
             "language_code": "en-US",
@@ -151,7 +157,7 @@ fn asr_formats_unary_and_configured_chunked_audio_and_parses_transcripts() {
         ),
     );
     assert_eq!(
-        streaming.format_payload(&request("asr", &turns)).unwrap(),
+        plan_body(streaming.format_payload(&request("asr", &turns)).unwrap()),
         json!({
             "language_code": "de-DE",
             "sample_rate_hertz": 8000,
@@ -231,9 +237,11 @@ fn tts_joins_first_turn_text_and_preserves_audio_geometry() {
         ],
         ..Turn::default()
     }];
-    let payload = endpoint
-        .format_payload(&request("unused-by-riva-tts", &turns))
-        .unwrap();
+    let payload = plan_body(
+        endpoint
+            .format_payload(&request("unused-by-riva-tts", &turns))
+            .unwrap(),
+    );
     assert_eq!(
         payload,
         json!({
@@ -243,6 +251,24 @@ fn tts_joins_first_turn_text_and_preserves_audio_geometry() {
             "encoding": "LINEAR_PCM",
             "sample_rate_hz": 8000,
         })
+    );
+    // Golden-byte gate (stage B): materialized Riva plan bytes are identical to
+    // `to_vec` of the equivalent hand-built object.
+    let expected = json!({
+        "text": "hello world",
+        "voice_name": "English-US.Female-1",
+        "language_code": "en-US",
+        "encoding": "LINEAR_PCM",
+        "sample_rate_hz": 8000,
+    });
+    let bytes = endpoint
+        .format_payload(&request("unused-by-riva-tts", &turns))
+        .unwrap()
+        .materialize_standalone()
+        .unwrap();
+    assert_eq!(
+        &bytes[..],
+        serde_json::to_vec(&expected).unwrap().as_slice()
     );
     assert_eq!(
         endpoint.extract_payload_inputs(&payload).texts,
@@ -283,7 +309,7 @@ fn nlp_endpoints_match_text_list_query_and_response_rules() {
             json!({"language_code": "es-ES"}).as_object().cloned(),
         );
         assert_eq!(
-            endpoint.format_payload(&request("nlp", &turns)).unwrap(),
+            plan_body(endpoint.format_payload(&request("nlp", &turns)).unwrap()),
             json!({"texts": ["hello", "world"], "language_code": "es-ES"})
         );
     }
@@ -327,7 +353,7 @@ fn nlp_endpoints_match_text_list_query_and_response_rules() {
             .cloned(),
     );
     assert_eq!(
-        natural.format_payload(&request("qa", &turns)).unwrap(),
+        plan_body(natural.format_payload(&request("qa", &turns)).unwrap()),
         json!({"query": "hello world", "context": "reference document", "top_n": 2})
     );
     assert_eq!(
@@ -360,12 +386,12 @@ fn nlp_endpoints_match_text_list_query_and_response_rules() {
         json!({"domain": "weather"}).as_object().cloned(),
     );
     assert_eq!(
-        intent.format_payload(&request("intent", &turns)).unwrap(),
+        plan_body(intent.format_payload(&request("intent", &turns)).unwrap()),
         json!({"query": "hello world", "domain": "weather"})
     );
     let entities = prepared("riva_analyze_entities", false, None);
     assert_eq!(
-        entities.format_payload(&request("ner", &turns)).unwrap(),
+        plan_body(entities.format_payload(&request("ner", &turns)).unwrap()),
         json!({"query": "hello world"})
     );
 }
@@ -381,7 +407,7 @@ fn natural_query_accepts_protobuf_zero_top_n_but_rejects_negative_values() {
     );
     let turns = [text_turn(&["question"])];
     assert_eq!(
-        endpoint.format_payload(&request("qa", &turns)).unwrap(),
+        plan_body(endpoint.format_payload(&request("qa", &turns)).unwrap()),
         json!({"query": "question", "context": "document", "top_n": 0})
     );
 

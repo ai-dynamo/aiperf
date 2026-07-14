@@ -352,7 +352,7 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             // literals); dispatch overrides fold into the plan's literal fields
             // and effective metadata is read from them. Byte-identical to the
             // legacy merge-then-`to_vec` path (guarded by the endpoints_* suite).
-            let mut plan = structured_plan(endpoint.format_payload(&request_info)?)?;
+            let mut plan = endpoint.format_payload(&request_info)?;
             plan.merge_overrides(overrides);
             let effective = effective_from_plan(
                 &mut plan,
@@ -447,7 +447,7 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             // Endpoint-body-construction stage 2: dispatch operates on a BodyPlan
             // (see the sibling materialize path). Byte-identical to the legacy
             // merge-then-`to_vec` path.
-            let mut plan = structured_plan(endpoint.format_payload(&request)?)?;
+            let mut plan = endpoint.format_payload(&request)?;
             plan.merge_overrides(overrides);
             let effective = effective_from_plan(
                 &mut plan,
@@ -646,17 +646,6 @@ struct EffectiveRequest {
     model: String,
     max_tokens: Option<u32>,
     streaming: bool,
-}
-
-/// Decompose an endpoint formatter's body object into a [`BodyPlan`], rejecting
-/// a non-object body with the same error the legacy path produced.
-fn structured_plan(value: Value) -> Result<BodyPlan> {
-    let object = value.as_object().ok_or_else(|| {
-        DatasetError::Validation("endpoint formatter returned a non-object body".into())
-    })?;
-    // `from_object` now yields a neutral `serde_json::Error`; lift it back into
-    // the dataset error domain this dispatch-side path speaks.
-    BodyPlan::from_object(object).map_err(DatasetError::from)
 }
 
 /// Read effective model/max-tokens/streaming from a merged [`BodyPlan`]'s

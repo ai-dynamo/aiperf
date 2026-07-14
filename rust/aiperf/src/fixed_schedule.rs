@@ -185,9 +185,18 @@ impl Workload for FixedScheduleWorkload {
     }
 
     async fn execute(&self, runtime: Rc<ScheduledRuntime>) -> Result<()> {
+        // Anchor the replay to the moment issuance actually begins, not the run
+        // origin (`start_ns`) captured before per-phase dataset/schedule setup.
+        // The setup gap is tens of milliseconds; anchoring to `start_ns` makes
+        // the earliest authored targets already overdue when the scheduler
+        // starts draining, so they fire in a startup burst instead of adhering
+        // to the authored inter-arrival schedule. The Python engine anchors to
+        // first send, so this keeps per-request send times byte-for-byte on the
+        // authored grid (verified by Python<->Rust send-schedule parity).
+        let anchor_ns = runtime.now_ns();
         for entry in &self.schedule.entries {
             let target_ns = self.schedule_source.timestamp_to_ns(
-                runtime.start_ns(),
+                anchor_ns,
                 self.schedule.schedule_zero_ms,
                 entry.timestamp_ms,
             )?;
@@ -198,6 +207,7 @@ impl Workload for FixedScheduleWorkload {
                 self.schedule.schedule_zero_ms,
                 entry.turn.clone(),
                 target_ns,
+                anchor_ns,
             );
         }
         Ok(())
@@ -211,6 +221,7 @@ fn schedule_fixed_turn(
     schedule_zero_ms: f64,
     turn: TurnToSend,
     target_ns: i64,
+    anchor_ns: i64,
 ) {
     let scheduler = runtime.scheduler();
     scheduler.schedule_at_ns(
@@ -270,7 +281,7 @@ fn schedule_fixed_turn(
 
                         let next_target = if let Some(timestamp_ms) = next_metadata.timestamp_ms {
                             match schedule_source_for_completion.timestamp_to_ns(
-                                runtime_for_completion.start_ns(),
+                                anchor_ns,
                                 schedule_zero_ms,
                                 timestamp_ms,
                             ) {
@@ -299,6 +310,7 @@ fn schedule_fixed_turn(
                             schedule_zero_ms,
                             next_turn,
                             next_target,
+                            anchor_ns,
                         );
                     })
                 }),

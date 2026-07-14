@@ -13,6 +13,12 @@ use aiperf::endpoints::{
 };
 use serde_json::{Value, json};
 
+/// Materialize a prepared endpoint's [`BodyPlan`] into a decoded JSON value so
+/// the structural assertions below keep inspecting fields as before stage B.
+fn plan_body(plan: aiperf::body_plan::BodyPlan) -> Value {
+    serde_json::from_slice(&plan.materialize_standalone().unwrap()).unwrap()
+}
+
 #[derive(Debug, Clone, Copy)]
 struct RegistrationOnlyFactory(&'static EndpointDescriptor);
 
@@ -203,7 +209,7 @@ fn prepared_dispatch_uses_only_its_bound_config_and_dense_key() {
         ..Turn::default()
     }];
     let request = prepared_request(&turns);
-    let payload = prepared.format_payload(&request).unwrap();
+    let payload = plan_body(prepared.format_payload(&request).unwrap());
     assert_eq!(payload["stream"], Value::Bool(true));
     assert_eq!(
         payload["stream_options"]["include_usage"],
@@ -258,7 +264,7 @@ fn flexible_endpoints_compile_and_reuse_profile_state_during_preparation() {
     let request = prepared_request(&turns);
     for _ in 0..2 {
         assert_eq!(
-            prepared_template.format_payload(&request).unwrap(),
+            plan_body(prepared_template.format_payload(&request).unwrap()),
             json!({"model":"model-a","text":"hello"})
         );
     }

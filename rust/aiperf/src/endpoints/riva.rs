@@ -13,6 +13,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use serde_json::{Map, Value, json};
 
+use crate::body_plan::BodyPlan;
 use crate::endpoints::config::{EffectiveEndpointConfig, RawEndpointConfig};
 use crate::endpoints::metadata::{EndpointDescriptor, Modality};
 use crate::endpoints::models::{
@@ -261,8 +262,14 @@ impl PreparedEndpoint for PreparedRivaEndpoint {
         &self.config
     }
 
-    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<Value> {
-        self.behavior.format_payload(request)
+    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<BodyPlan> {
+        // Riva behaviors author a complete JSON object; wrap it once into a plan
+        // here so the internal behavior trait stays Value-shaped for the gRPC codec.
+        let value = self.behavior.format_payload(request)?;
+        let object = value.as_object().ok_or_else(|| {
+            EndpointError::InvalidRequest("Riva endpoint body must be a JSON object".into())
+        })?;
+        Ok(BodyPlan::from_object(object)?)
     }
 
     fn headers(&self) -> &BTreeMap<String, String> {

@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{Map, Value, json};
 
+use crate::body_plan::BodyPlan;
 use crate::endpoints::config::{EndpointConfig, RawEndpointConfig};
 use crate::endpoints::extraction::{PartTypes, extract_inputs};
 use crate::endpoints::metadata::{EndpointDescriptor, Modality};
@@ -27,8 +28,8 @@ pub const WARMUP_SYSTEM_MESSAGE_PREFIX: &str =
 pub trait Endpoint: std::fmt::Debug + Send + Sync {
     /// Return the canonical open-ID descriptor registered with the runner.
     fn descriptor(&self) -> &'static EndpointDescriptor;
-    /// Build a decoded JSON request body.
-    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value>;
+    /// Build a request-body plan the shared materializer splices into wire bytes.
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan>;
     /// Build endpoint-owned request headers before per-turn overrides.
     ///
     /// Authentication is a dialect property: OpenAI-compatible endpoints use
@@ -229,7 +230,7 @@ impl Endpoint for ChatEndpoint {
         &CHAT_DESCRIPTOR
     }
 
-    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
         format_legacy_payload(self, request_info)
     }
 
@@ -340,7 +341,7 @@ impl PreparedEndpointBehavior for ChatEndpoint {
         &self,
         request: &PreparedRequest<'_>,
         endpoint: &RawEndpointConfig,
-    ) -> EndpointResult<Value> {
+    ) -> EndpointResult<BodyPlan> {
         let turns = require_prepared_turns(request, "Chat endpoint requires at least one turn")?;
         let mut messages = format_chat_messages(request, build_messages(turns, PartShape::Chat)?);
         let last = turns.last().expect("non-empty turns");
@@ -377,7 +378,7 @@ impl PreparedEndpointBehavior for ChatEndpoint {
         if endpoint.streaming && endpoint.use_server_token_count {
             ensure_include_usage(&mut payload);
         }
-        Ok(Value::Object(payload))
+        Ok(BodyPlan::from_object(&payload)?)
     }
 }
 
@@ -386,7 +387,7 @@ impl Endpoint for ResponsesEndpoint {
         &RESPONSES_DESCRIPTOR
     }
 
-    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
         format_legacy_payload(self, request_info)
     }
 
@@ -491,7 +492,7 @@ impl PreparedEndpointBehavior for ResponsesEndpoint {
         &self,
         request: &PreparedRequest<'_>,
         endpoint: &RawEndpointConfig,
-    ) -> EndpointResult<Value> {
+    ) -> EndpointResult<BodyPlan> {
         let turns =
             require_prepared_turns(request, "Responses endpoint requires at least one turn")?;
         let last = turns.last().expect("non-empty turns");
@@ -528,7 +529,7 @@ impl PreparedEndpointBehavior for ResponsesEndpoint {
         if endpoint.streaming && endpoint.use_server_token_count {
             ensure_include_usage(&mut payload);
         }
-        Ok(Value::Object(payload))
+        Ok(BodyPlan::from_object(&payload)?)
     }
 }
 
@@ -537,7 +538,7 @@ impl Endpoint for CompletionsEndpoint {
         &COMPLETIONS_DESCRIPTOR
     }
 
-    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
         format_legacy_payload(self, request_info)
     }
 
@@ -572,7 +573,7 @@ impl PreparedEndpointBehavior for CompletionsEndpoint {
         &self,
         request: &PreparedRequest<'_>,
         endpoint: &RawEndpointConfig,
-    ) -> EndpointResult<Value> {
+    ) -> EndpointResult<BodyPlan> {
         if request.turns().len() != 1 {
             return Err(EndpointError::InvalidRequest(
                 "Completions endpoint only supports one turn".into(),
@@ -608,7 +609,7 @@ impl PreparedEndpointBehavior for CompletionsEndpoint {
         if endpoint.streaming && endpoint.use_server_token_count {
             ensure_include_usage(&mut payload);
         }
-        Ok(Value::Object(payload))
+        Ok(BodyPlan::from_object(&payload)?)
     }
 }
 
@@ -617,7 +618,7 @@ impl Endpoint for EmbeddingsEndpoint {
         &EMBEDDINGS_DESCRIPTOR
     }
 
-    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
         format_legacy_payload(self, request_info)
     }
 
@@ -631,7 +632,7 @@ impl PreparedEndpointBehavior for EmbeddingsEndpoint {
         &self,
         request: &PreparedRequest<'_>,
         endpoint: &RawEndpointConfig,
-    ) -> EndpointResult<Value> {
+    ) -> EndpointResult<BodyPlan> {
         if request.turns().len() != 1 {
             return Err(EndpointError::InvalidRequest(
                 "Embeddings endpoint only supports one turn".into(),
@@ -653,7 +654,7 @@ impl PreparedEndpointBehavior for EmbeddingsEndpoint {
         );
         merge_extra(&mut payload, endpoint.extra.as_ref());
         merge_extra(&mut payload, turn.extra_body.as_ref());
-        Ok(Value::Object(payload))
+        Ok(BodyPlan::from_object(&payload)?)
     }
 }
 
@@ -662,7 +663,7 @@ impl Endpoint for ChatEmbeddingsEndpoint {
         &CHAT_EMBEDDINGS_DESCRIPTOR
     }
 
-    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
         format_legacy_payload(self, request_info)
     }
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -675,7 +676,7 @@ impl PreparedEndpointBehavior for ChatEmbeddingsEndpoint {
         &self,
         request: &PreparedRequest<'_>,
         config: &RawEndpointConfig,
-    ) -> EndpointResult<Value> {
+    ) -> EndpointResult<BodyPlan> {
         ChatEndpoint.format_prepared_payload(request, config)
     }
 }
