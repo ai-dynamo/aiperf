@@ -63,9 +63,9 @@ added it is its own dialect, never derived from Codex.
 
 | Concern | WS realization |
 |---|---|
-| **Transport** | `transport_ws`: Clock-injected, TLS via `connect_async_tls_with_config` over the shared `Connector` (`http-connector-seam`); one persistent socket per worker/thread, `.split()` into independent send/recv halves, `!Send` on the worker's `LocalSet`. |
-| **HTTPS/SSE fallback** | **First-class.** On WS-upgrade failure (or capability unavailability), the transport degrades to the dialect's **same event stream over HTTP SSE**, reusing the existing `transport_http` streaming decoder. One shared event decoder feeds both WS and SSE; only framing differs (WS frame vs SSE `data:` line). |
-| **Body construction** | Endpoint declares a `BodyPlan`; the **WS materializer** emits text/binary frames — a turn-request frame (+ `session.update`/input frames for Realtime) — by splicing pre-serialized segment bytes into each event envelope. A **sequence of frames**, not one body; §6's one-`Full<Bytes>` rule is HTTP-local and does not apply. |
+| **Transport** | `transport_ws`: Clock-injected, TLS via `connect_async_tls_with_config` over the shared `Connector` (`http-connector-seam`); one persistent socket per worker/thread driven by a **single `!Send` task** (unsplit `WebSocketStream` + `stream::unfold` owning both send and read — `.split()` full-duplex suits a *relay*, not a per-turn client) on the worker's `LocalSet`. |
+| **HTTPS/SSE fallback** | **First-class.** On WS-upgrade/connect failure (or capability unavailability), the transport **latches WS off for the rest of the run** (a one-shot atomic latch) and degrades to the dialect's **same event stream over HTTP SSE**, reusing the existing `transport_http` streaming decoder — **not** a mid-stream resume. One shared event decoder feeds both WS and SSE; only framing differs (WS frame vs SSE `data:` line). |
+| **Body construction** | Endpoint declares a `BodyPlan`; the **WS materializer** emits **text** frames (these dialects are text-JSON — a binary frame is a protocol violation, §5) — a turn-request frame (+ `session.update`/input frames for Realtime) — by splicing pre-serialized segment bytes into each event envelope. A **sequence of frames**, not one body; §6's one-`Full<Bytes>` rule is HTTP-local and does not apply. |
 | **Content / segments** | Reused unchanged. `message`/`text`/`token-ids` segments splice into event JSON; **audio** (Realtime) is a `media` segment **base64-encoded once at lowering** and spliced by reference. |
 | **Stateful thread** | A WS connection is a **thread**; turns chain by server-side continuation. Maps to a `Trace`/multi-turn `Session` whose node dispatches share one socket — no per-turn history resend. |
 | **Dispatch** | A WS request is a **turn on a session**. Streaming dispatch (bidi precedent): one turn-request = one `Request`; the session = a `Trace`. Deltas push into the observer. |
@@ -75,12 +75,13 @@ added it is its own dialect, never derived from Codex.
 
 ## 4. Library and the "not slow" bar
 
-- **`tokio-tungstenite`** is the transport (strict RFC framing, `MaybeTlsStream` TLS via
-  `connect_async_tls_with_config`, `WebSocketConfig`, split-duplex, hyper-upgrade-capable,
-  battle-tested). This supersedes an earlier "lean fastwebsockets" note — `fastwebsockets`
-  is worth a look only if a **frame-size microbench** proves it faster for our envelopes;
-  its non-strict/thread-safety caveats matter little only because aiperf is
-  thread-per-core `!Send`. Default to `tokio-tungstenite`.
+- **`tokio-tungstenite`** (the **upstream** crate) is the transport (strict RFC framing,
+  `MaybeTlsStream` TLS via `connect_async_tls_with_config`, `WebSocketConfig`, single-task
+  drive, hyper-upgrade-capable, battle-tested). This supersedes an earlier "lean
+  fastwebsockets" note — `fastwebsockets` is worth a look only if a **frame-size
+  microbench** proves it faster for our envelopes; its non-strict/thread-safety caveats
+  matter little only because aiperf is thread-per-core `!Send`. Default to
+  `tokio-tungstenite`.
 - **Frames are spliced, not serialized.** The `BodyPlan → WS-frame` materializer (the
   third, after JSON-splice and proto-encode) concatenates pre-serialized segment bytes
   into each event envelope; base64 audio is pre-encoded at lowering. **No per-frame
@@ -89,6 +90,9 @@ added it is its own dialect, never derived from Codex.
   the socket and chain server-side.
 - **Clock injection** on frame read/write timestamps (like the HTTP `timerfd` path), so a
   `SimClock` drives offline WS replay — preserving the three-modes property.
+- **`permessage-deflate` is a measured knob, not an assumption.** Real deployments
+  negotiate it; it trades wire bytes for CPU. Whether it helps our envelope sizes is part
+  of the not-slow microbench, not a default we guess at.
 
 ## 5. WS lifecycle & stream correctness (the earned-in-blood part)
 
@@ -107,6 +111,14 @@ added it is its own dialect, never derived from Codex.
   fall back to HTTPS/SSE (§3).
 - **Idle timeout.** Ping-keepalive detects a silent stall; classify as a distinct
   nonfatal, not a generic failure.
+- **Text frames only.** These dialects are text-JSON; a **binary** (or unexpected
+  continuation) frame is a protocol violation — surface it as an error, never feed it to
+  the decoder.
+- **Reuse is fragile — reconnect-and-retry.** A pooled socket the peer dirty-closes while
+  idle makes the *next* turn's send fail; an outer layer must transparently
+  reconnect-and-retry so the first post-idle turn doesn't surface a spurious error. And a
+  keepalive Ping must **not** assume the next frame is its Pong — read-and-classify, or it
+  swallows a real backend event.
 
 These are transport-owned; nothing leaks up to the endpoint/observer seams.
 
@@ -125,9 +137,9 @@ These are transport-owned; nothing leaks up to the endpoint/observer seams.
 
 ## 7. Open questions
 
-1. **Fallback trigger scope:** upgrade-failure only, or also mid-stream (a truncated
-   close) → resume on HTTPS/SSE? (Lean: upgrade-failure only for v1; mid-stream failures
-   retry on WS.)
+1. **Fallback trigger scope — resolved (§3).** A connect/upgrade failure **latches WS off
+   for the run** (one-shot) and continues on HTTPS/SSE; a mid-stream truncation retries on
+   WS first (§5) — it does **not** resume mid-turn on SSE.
 2. **Session ↔ Request granularity:** one turn-request = one `Request`, whole thread = a
    `Trace` chained server-side. (Lean: yes.)
 3. **Streaming `Dispatcher` signature:** push into the existing `RequestObserver`
