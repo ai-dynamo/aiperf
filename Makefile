@@ -16,7 +16,7 @@
 
 
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
-		test coverage clean install install-app docker docker-run first-time-setup \
+		test coverage clean install install-app install-runtime rust-wheel docker docker-run first-time-setup \
 		ci-install check-mock-server-install \
 		test-verbose setup-venv install-mock-server test-ci test-all \
 		integration-tests integration-tests-ci integration-tests-verbose integration-tests-ci-macos \
@@ -152,6 +152,14 @@ install: install-app install-mock-server #? install the project and mock server 
 
 install-app: #? install the project in editable mode.
 	$(activate_venv) && uv pip install -e ".[dev]"
+
+install-runtime: #? build and install the native aiperf-runner into the venv (maturin, online-only).
+	$(activate_venv) && uv pip install "maturin[patchelf]" \
+		&& cd rust/runner && maturin develop --release
+
+rust-wheel: #? build the release aiperf-runner wheel (online-only manylinux) into dist/.
+	$(activate_venv) && uv pip install "maturin[patchelf]" \
+		&& cd rust/runner && maturin build --release --out ../../dist
 
 docker: #? build the docker image.
 	docker build -t $(DOCKER_IMAGE_NAME):$(DOCKER_IMAGE_TAG) $(args) .

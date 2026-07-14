@@ -47,4 +47,7 @@ docker-compose*.yml
 archive/
 artifacts/
 dist/
+# Cargo build output: the runner wheel is compiled fresh inside the image, so a
+# host target/ dir would only bloat the build context.
+target/
 *.jsonl

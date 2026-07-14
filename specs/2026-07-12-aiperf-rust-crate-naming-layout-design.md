@@ -371,3 +371,29 @@ The §8 identity-vs-path split is otherwise intact. Everything listed as
 
 Spec bodies above are preserved verbatim per the repository's append-only spec
 policy; this addendum is the authoritative status where paths conflict.
+
+## Addendum — 2026-07-13 (native runner wheel: prebuilt companion → co-located maturin build)
+
+The native runner is now packaged as a source-built maturin wheel co-located with
+its crate, adopting ai-dynamo's layout (`lib/bindings/python/` holds `Cargo.toml`
++ `pyproject.toml` together). Concretely: `rust/runner/pyproject.toml`
+(`build-backend = "maturin"`, `bindings = "bin"`, `manifest-path = "Cargo.toml"`)
+compiles the `aiperf-runner` binary from source and installs it into the wheel's
+scripts scheme. The distribution is still named `aiperf-runner` so the frontend's
+`metadata.distribution("aiperf-runner")` discovery
+(`src/aiperf/orchestrator/runner_installation.py`) is unchanged.
+
+This supersedes the earlier prebuilt-binary companion pipeline: the
+`packaging/aiperf-runner/` hatch hook, the `native-runner.yml` workflow, and the
+`tools/{runner_release_input,verify_runner_companion,stage_stock_evaluator_roots,generate_stock_evaluator_manifest}.py`
+staging tools (plus `tools/stock_evaluators/`) are deleted. Where the 3rd addendum
+above names the `native-runner` CI path filter, that workflow no longer exists;
+`rust-docs-guard` still watches `rust/**`. The published wheel is online-only by
+default (`[tool.maturin] no-default-features = true`) because the crate's default
+`dynosim` feature needs the external `dynamo-aiperf-native` checkout absent in CI;
+build the offline-capable runner with `--features dynosim` where that repo exists.
+The container build (`Dockerfile` wheel-builder) compiles it with a Rust toolchain
+and `maturin build --release` (manylinux auditwheel repair), matching ai-dynamo.
+
+Spec bodies and prior addenda above are preserved verbatim per the append-only
+policy; this addendum is authoritative where the packaging mechanism conflicts.

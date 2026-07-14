@@ -38,7 +38,7 @@ runs:
 
         paths = [
             "pyproject.toml",
-            "packaging/aiperf-runner/pyproject.toml",
+            "rust/runner/pyproject.toml",
         ]
         for path in paths:
             text = open(path).read()

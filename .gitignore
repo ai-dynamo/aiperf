@@ -38,9 +38,6 @@ src/aiperf/plugin/enums.pyi
 # Generated at wheel-build time by the nightly CI pipeline; never committed.
 src/aiperf/_build_info.py
 
-# Exact stock-evaluator source roots staged into the native companion wheel.
-packaging/aiperf-runner/evaluator-roots/
-
 # Agent Skills (open standard, agentskills.io)
 .agents/*
 !.agents/skills/

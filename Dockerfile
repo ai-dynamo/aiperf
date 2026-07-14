@@ -70,16 +70,34 @@ FROM base AS wheel-builder
 
 WORKDIR /workspace
 
-# Copy the entire application
-COPY pyproject.toml README.md LICENSE ATTRIBUTIONS.md ./src/ /workspace/
-COPY packaging/aiperf-runner /workspace/packaging/aiperf-runner
+# The native runner is compiled from source with maturin (ai-dynamo's model),
+# so the wheel-builder needs a Rust toolchain, a C toolchain for linking, and
+# maturin[patchelf] for the manylinux auditwheel repair.
+RUN apt-get update -y \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --profile minimal --default-toolchain stable
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN uv pip install --python "${VIRTUAL_ENV}/bin/python" "maturin[patchelf]"
 
-# Build the Python frontend and the platform companion from the trusted native
-# binary + provenance manifest staged in packaging/aiperf-runner/bin. The
-# companion hook verifies the expected distribution_id against the executable
-# bytes and fails closed when either release input is absent.
+# Copy the frontend sources plus the Rust workspace the runner wheel compiles.
+# The runner wheel's pyproject.toml is co-located with its crate in rust/runner.
+COPY pyproject.toml README.md LICENSE ATTRIBUTIONS.md ./src/ /workspace/
+COPY Cargo.toml Cargo.lock /workspace/
+COPY rust /workspace/rust
+
+# Build the Python frontend wheel, then compile the native runner wheel with
+# maturin directly (ai-dynamo's model): the pyproject defaults to the online-only
+# feature set, and a direct `maturin build` runs its built-in auditwheel repair to
+# emit a manylinux-tagged, self-contained wheel. `uv build` is not used for the
+# runner because it forces `--auditwheel skip`, producing a bare linux_x86_64 tag.
 RUN uv build --wheel --out-dir /dist \
-    && uv build --wheel --out-dir /dist /workspace/packaging/aiperf-runner
+    && cd /workspace/rust/runner \
+    && maturin build --release --out /dist
 
 # Export-only stage: scratch-based so `docker buildx build --target
 # wheel-artifact --output type=local,dest=<dir>` writes only the wheel file
@@ -93,11 +111,6 @@ COPY --from=wheel-builder /dist/ /
 FROM base AS env-builder
 
 WORKDIR /workspace
-
-# Release containers are offline-capable by contract. The argument remains
-# explicit so a stock-online companion can be exercised in a dedicated image
-# gate without weakening the default release profile.
-ARG AIPERF_RUNNER_PROFILE=offline
 
 # Install build dependencies. The dpkg-installed.txt snapshot was dropped:
 # nothing downstream consumes it, and shipping it alongside runtime-pkgs.txt
@@ -184,18 +197,8 @@ RUN uv sync --active --no-install-project --no-default-groups
 
 # Copy the rest of the application
 COPY --from=wheel-builder /dist /dist
-RUN uv pip install /dist/aiperf-*.whl /dist/aiperf_runner-*.whl \
+RUN uv pip install /dist/aiperf-*.whl /dist/aiperf_rust-*.whl \
     && rm -rf /dist /workspace/pyproject.toml
-
-# Capability negotiation recomputes executable content identity. The verifier
-# clears PATH to prove wheel-metadata discovery, runs Python -> runner -> a
-# loopback SSE mock, and either executes offline in process or proves a stock
-# online image rejects it before artifact creation.
-COPY tools/verify_runner_companion.py /tmp/verify_runner_companion.py
-RUN /opt/aiperf/venv/bin/python /tmp/verify_runner_companion.py \
-        --profile "${AIPERF_RUNNER_PROFILE}" \
-    && /opt/aiperf/venv/bin/python -c \
-        'from pathlib import Path; Path("/tmp/verify_runner_companion.py").unlink()'
 
 # Remove setuptools as it is not needed for the runtime image
 RUN uv pip uninstall setuptools
@@ -281,8 +284,6 @@ ENTRYPOINT ["/bin/bash", "-c"]
 ############################################
 FROM nvcr.io/nvidia/distroless/python:3.13-v4.0.8-dev AS runtime
 
-ARG AIPERF_RUNNER_PROFILE=offline
-
 # Include project license and asset attributions
 COPY LICENSE ATTRIBUTIONS.md /legal/
 
@@ -312,16 +313,6 @@ COPY --from=env-builder --chown=1000:1000 /opt/tiktoken_cache /opt/tiktoken_cach
 ENV VIRTUAL_ENV=/opt/aiperf/venv \
     PATH="/opt/aiperf/venv/bin:${PATH}" \
     TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache
-
-# Re-run the complete installed-product gate from the final distroless
-# filesystem rather than assuming the copied venv preserved executable/runtime
-# dependencies. The offline profile exercises both loopback HTTP and in-process
-# Dynamo; the online profile proves offline fails without fallback.
-COPY tools/verify_runner_companion.py /tmp/verify_runner_companion.py
-RUN /opt/aiperf/venv/bin/python /tmp/verify_runner_companion.py \
-        --profile "${AIPERF_RUNNER_PROFILE}" \
-    && /opt/aiperf/venv/bin/python -c \
-        'from pathlib import Path; Path("/tmp/verify_runner_companion.py").unlink()'
 
 # Set bash as entrypoint
 ENTRYPOINT ["/bin/bash", "-c"]
