@@ -150,11 +150,6 @@ class RunnerInstallation:
         """Build a v2 BenchmarkRun envelope without executing it."""
         return build_authored_run_request(run, operation=operation)
 
-    def supports_pair(self, transport_id: str, workload_id: str) -> bool:
-        """Unused legacy pair check; catalog preflight replaced supported_pairs."""
-        del transport_id, workload_id
-        return False
-
     def preflight_plan(self, plan: BenchmarkPlan) -> None:
         """Validate every distinct fixed-plan endpoint before its first run."""
         endpoint_ids = {str(config.endpoint.type) for config in plan.configs}
@@ -645,20 +640,8 @@ def _load_capabilities(
         ) from error
     if not isinstance(capabilities, dict):
         raise ValueError("aiperf-runner capabilities must be an object")
-    if _is_legacy_capabilities(capabilities) and not _is_catalog_shape(capabilities):
-        raise ValueError(
-            "aiperf-runner returned legacy runner_capabilities; expected a "
-            "plugins.yaml-shaped catalog with schema_version, endpoint, and transport"
-        )
     _validate_v2_capabilities(capabilities)
     return capabilities
-
-
-def _is_legacy_capabilities(capabilities: dict[str, Any]) -> bool:
-    return (
-        capabilities.get("event") == "runner_capabilities"
-        or "supported_pairs" in capabilities
-    )
 
 
 def _is_catalog_shape(capabilities: dict[str, Any]) -> bool:

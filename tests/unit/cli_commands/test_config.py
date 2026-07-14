@@ -61,10 +61,6 @@ class _RecordingRunnerInstallation:
         if not self.accept_preflight:
             raise RuntimeError("catalog does not advertise requested ids")
 
-    def supports_pair(self, backend_id: str, workload_id: str) -> bool:
-        del backend_id, workload_id
-        return False
-
     def validate_authored_run(self, run):
         self.validated_runs.append(run)
         if self.validation_error is not None:

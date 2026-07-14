@@ -2,8 +2,8 @@
 
 **Date:** 2026-07-12
 **Scope:** constant-factor allocation / lookup / round-trip reductions on AIPerf's
-**online scheduled HTTP** dispatch path (`crates/aiperf/src/scheduled.rs` →
-`crates/aiperf/src/http.rs` → observer chain `ObserverTee` →
+**online scheduled HTTP** dispatch path (`rust/aiperf/src/scheduled.rs` →
+`rust/aiperf/src/http.rs` → observer chain `ObserverTee` →
 `{CollectorObserver, NativeMetricsObserver}`). No algorithmic or metric-value
 change is proposed; every item preserves the current report bytes.
 **Status:** design / not implemented. Repo was read-only for this analysis.
@@ -21,7 +21,7 @@ safe) and slot-handle threading into a moved dispatch task.
 One scheduled request flows through:
 
 1. `ScheduledRuntime::issue_turn_internal`
-   (`crates/aiperf/src/scheduled.rs:808`) — per request: computes
+   (`rust/aiperf/src/scheduled.rs:808`) — per request: computes
    `dimensions = self.dispatcher.inference_dimensions(&turn)`
    (`scheduled.rs:892`), `recorder.borrow_mut().begin(&turn, …)`
    (`scheduled.rs:868`, clones at `scheduled.rs:358-359`),
@@ -30,18 +30,18 @@ One scheduled request flows through:
    (`scheduled.rs:905`) with `turn.clone()` inside
    (`scheduled.rs:924` / `:933`).
 2. `TransportSink::dispatch_collect_record_with_hooks`
-   (`crates/aiperf/src/http.rs:871`) — streams via the transport, then a
+   (`rust/aiperf/src/http.rs:871`) — streams via the transport, then a
    **post-hoc loop over `rec.responses`** (`http.rs:948-1006`) that, per SSE
    chunk, parses `ChatChunk` (`http.rs:961`) and calls
    `obs.on_classified_token(uuid, self.ms(msg.perf_ns), kind)` (`http.rs:978`).
-3. `obs` is an `ObserverTee` (`crates/aiperf/src/metrics.rs:688`, built at
+3. `obs` is an `ObserverTee` (`rust/aiperf/src/metrics.rs:688`, built at
    `scheduled.rs:486`) fanning **every** token callback to
-   `CollectorObserver` (`crates/aiperf-core/src/observer.rs:49`) **and**
-   `NativeMetricsObserver` (`crates/aiperf/src/metrics.rs:546`).
+   `CollectorObserver` (`rust/aiperf-core/src/observer.rs:49`) **and**
+   `NativeMetricsObserver` (`rust/aiperf/src/metrics.rs:546`).
 
 Key structural fact: **the transport does not parse while streaming.** The
 streaming callback only runs the first-token filter until the first meaningful
-token is seen (`crates/aiperf-transport-http/src/client/http_client.rs:701-709`,
+token is seen (`rust/aiperf-transport-http/src/client/http_client.rs:701-709`,
 gated by `!first_seen`); all SSE messages are buffered into `record.responses`
 (`http_client.rs:709`) and the real parse happens later in the `http.rs:948`
 loop. This changes the true shape of Finding #2 (see below).
@@ -52,7 +52,7 @@ Per-token lookups happen in **both** observers:
   (`metrics.rs:603-614`, helper at `metrics.rs:176-179`).
 - `CollectorObserver::on_token` → `TraceCollector::on_token` →
   `self.requests.get_mut(&uuid)` (FxHashMap)
-  (`observer.rs:56` → `crates/loadgen-core/src/collector.rs:740-746`).
+  (`observer.rs:56` → `rust/loadgen-core/src/collector.rs:740-746`).
 
 So "one UUID hashmap lookup per token" is really **two** (tee → both maps),
 each on the tight post-hoc loop.
@@ -62,7 +62,7 @@ each on the tight post-hoc loop.
 ## Finding #1 — per-token UUID map lookup in the observers
 
 **Confirmed cost.** `NativeMetricsObserver::request_mut`
-(`crates/aiperf/src/metrics.rs:176-179`) does `request_slots.get(&uuid)?`
+(`rust/aiperf/src/metrics.rs:176-179`) does `request_slots.get(&uuid)?`
 (FxHashMap<Uuid,usize>) + `requests.get_mut(slot)`. Called for every token at
 `metrics.rs:603-614` (`on_classified_token`) and `metrics.rs:605`. The
 `ObserverTee` (`metrics.rs:707-711`) also drives `CollectorObserver::on_token`
@@ -75,10 +75,10 @@ observer's dense slot at `metrics.rs:559` (`request_index.get_or_insert`).
 
 **Precedent for the cheap fix already in-tree.** The batched hook
 `RequestObserver::on_output_tokens(uuid, &[f64])` exists
-(`crates/loadgen-core/src/sink.rs:112`) and is already used by the gRPC path
-(`crates/aiperf/src/grpc.rs:388`), the endpoint-aware HTTP path
-(`crates/aiperf/src/http/endpoint_dispatch.rs:416`), and dynosim
-(`crates/aiperf/src/dynosim.rs:2099`). `NativeMetricsObserver::on_output_tokens`
+(`rust/loadgen-core/src/sink.rs:112`) and is already used by the gRPC path
+(`rust/aiperf/src/grpc.rs:388`), the endpoint-aware HTTP path
+(`rust/aiperf/src/http/endpoint_dispatch.rs:416`), and dynosim
+(`rust/aiperf/src/dynosim.rs:2099`). `NativeMetricsObserver::on_output_tokens`
 (`metrics.rs:617-635`) already does **one** lookup for the whole batch.
 `transport_bench.rs:191,219` is the graph-lane exemplar: accumulate arrivals in
 a **local `Vec`** during the stream, hand off once.
@@ -115,7 +115,7 @@ a **local `Vec`** during the stream, hand off once.
 defaulted method** — backward compatible, object-safe (proven in the scratch
 crate via `&dyn RequestObserver`). It requires editing `ObserverTee`
 (`metrics.rs`), `NativeMetricsObserver`, `CollectorObserver`, and the
-`aiperf-adaptive` tee (`crates/aiperf-adaptive/src/observer.rs:91`) to override
+`aiperf-adaptive` tee (`rust/aiperf-adaptive/src/observer.rs:91`) to override
 for full benefit, but nothing breaks if they don't. Option A is a deeper
 cross-crate seam change.
 
@@ -161,7 +161,7 @@ transport buffers **all** SSE messages into `record.responses`
 pass** (`http.rs:948-1006`), instead of parsing inline during the stream. The
 graph lane already does the lean thing — parse `ChatChunk` inside the streaming
 `on_msg` callback and never accumulate `Response` objects
-(`crates/aiperf-graph/src/transport_bench.rs:206-232`). The redundant generic
+(`rust/aiperf-graph/src/transport_bench.rs:206-232`). The redundant generic
 `serde_json::Value` parse was already gated behind `capture_wire_responses`
 (`http.rs:956`, default set to skip for perf runs per `http.rs:670-680`), so
 that half is done.
@@ -174,7 +174,7 @@ runs. Combine with Finding #1 Option B so inline parsing feeds one batched
 observer handoff.
 
 **Seam impact.** This is **not** a `loadgen-core` change — it is a **transport
-restructure** in `aiperf-transport-http` + `crates/aiperf/src/http.rs`. The
+restructure** in `aiperf-transport-http` + `rust/aiperf/src/http.rs`. The
 transport currently returns `RequestRecord { responses: Vec<Response>, … }`
 consumed by many callers (evaluation/agentic read `wire_responses`; endpoint
 dispatch decodes `record.responses` at `endpoint_dispatch.rs:368`). A streaming
@@ -227,7 +227,7 @@ The conversation/correlation clones are genuinely per-request (unique per
 turn/session) and cannot be interned; leave them (they are already elided in
 aggregate-only mode).
 
-**Seam impact.** Localized to `crates/aiperf/src/http.rs` if done as a sink-side
+**Seam impact.** Localized to `rust/aiperf/src/http.rs` if done as a sink-side
 cache returning cloned interned strings. If `InferenceDimensions` is changed to
 `Rc<str>`, it touches `aiperf-metrics` (not `loadgen-core`).
 **Expected impact.** Medium — removes 2 `String` allocs/request on the steady
@@ -263,7 +263,7 @@ cheap `Rc` bump (method is `self: &Rc<Self>`), **not** a concern.
   restructure** (a long-lived per-lane task pulling from a queue, like
   `transport_bench.rs:561-603`), not a local edit.
 
-**Seam impact.** `turn` ownership is localized to `crates/aiperf/src/{scheduled,
+**Seam impact.** `turn` ownership is localized to `rust/aiperf/src/{scheduled,
 http}.rs`. The `Box::pin` removal is **not** localized — it is the A1 lane
 restructure. **Expected impact.** Medium for the clone removal (one deep clone
 of a multi-String/BTreeMap struct per request); the `Box::pin` itself is a
@@ -283,7 +283,7 @@ signatures `dispatch_turn`/`dispatch_turn_streaming` → `&turn` or `Rc<turn>`).
 (`metrics.rs:392-397`, called `metrics.rs:604`). So each token does a divide +
 multiply + round it would not need if the seam carried integer ns. The
 `RequestObserver` timestamp type is `f64` ms across the whole seam
-(`crates/loadgen-core/src/sink.rs:87-116`).
+(`rust/loadgen-core/src/sink.rs:87-116`).
 
 **Proposed change.** Add integer-ns observer entry points (proven in scratch:
 `on_classified_token_ns(uuid, at_ns, kind)` with a default that divides to
@@ -331,7 +331,7 @@ scalars (`store.rs:1000-1021`); OSL/ITL/TPOT come from usage
 vector is droppable **iff InterChunkLatency is not being reported**. But ICL is
 currently **always** computed for the online path — there is no
 `MetricsConfig` flag to disable it (`MetricsConfig`,
-`crates/aiperf-metrics/src/accumulator.rs:109-127`, has no ICL toggle), and the
+`rust/aiperf-metrics/src/accumulator.rs:109-127`, has no ICL toggle), and the
 online metrics test asserts ICL is present (`metrics.rs:1108-1112`).
 
 **Proposed change.** Add an explicit `retain_token_arrivals` / "ICL enabled"
@@ -360,8 +360,8 @@ the per-request batch buffer entirely in aggregate mode.
 > that. Guard with a `records:false`/no-ICL test asserting TTST is present and
 > correct, in addition to the ICL-enabled test.
 
-**Seam impact.** Localized to `crates/aiperf/src/metrics.rs` +
-`crates/aiperf-metrics` (a `MetricsConfig` bool and a store guard). **Not** a
+**Seam impact.** Localized to `rust/aiperf/src/metrics.rs` +
+`rust/aiperf-metrics` (a `MetricsConfig` bool and a store guard). **Not** a
 `loadgen-core` change. **Expected impact.** Medium — removes the largest
 per-request allocation (a `Vec<i64>` sized to output length) for aggregate-only
 / no-ICL runs. **Blast radius.** Small-medium (config plumb + store guard +

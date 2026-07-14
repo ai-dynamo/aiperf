@@ -230,7 +230,7 @@ hash impl + `rand`/`rand_distr`; **nothing in the workspace depends the other wa
 Consumers (`dataset`, the scheduler in `run.rs`, graph synthesis) depend on it.
 
 ```
-crates/aiperf-rng/
+rust/aiperf-rng/
   Cargo.toml            # blake3 (workspace dep); rand; rand_distr; rand_pcg; getrandom
   src/
     lib.rs
@@ -545,7 +545,7 @@ not Python bytes.
 
 ## Addendum — 2026-07-11
 
-The RNG substrate is now built as the leaf crate `crates/aiperf-rng`.
+The RNG substrate is now built as the leaf crate `rust/aiperf-rng`.
 
 Built surfaces:
 

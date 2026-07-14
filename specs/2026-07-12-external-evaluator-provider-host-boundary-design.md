@@ -112,9 +112,9 @@ prerequisite and cannot be a correctness dependency.
 
 `aiperf-accuracy` currently exposes a one-shot `AccuracyEvaluator` (`load`, page problems,
 `grade_batch`) and an inherited `AgenticEvaluator` (`load_agentic`, page/start/poll/submit/cancel/
-finish) in `crates/aiperf-accuracy/src/worker.rs:137-241`. The static DTO publishes model-safe
-prompts and later receives response text in `crates/aiperf-accuracy/src/protocol.rs:166-230`; the
-agentic DTO publishes chat-shaped calls in `crates/aiperf-accuracy/src/protocol.rs:438-473`.
+finish) in `rust/aiperf-accuracy/src/worker.rs:137-241`. The static DTO publishes model-safe
+prompts and later receives response text in `rust/aiperf-accuracy/src/protocol.rs:166-230`; the
+agentic DTO publishes chat-shaped calls in `rust/aiperf-accuracy/src/protocol.rs:438-473`.
 
 The stateful path is closer to the correct general contract. It already has opaque cases, bounded
 polling, correlated calls, cancellation, finalization, and exact outstanding-call validation.
@@ -122,8 +122,8 @@ The static path is the one-call specialization of that lifecycle, not a reason t
 second protocol.
 
 The local working tree also proves that stateful execution is no longer merely a library concept:
-`crates/aiperf-runner/src/registry.rs:581-588` registers the `agentic` workload and
-`online_http + agentic` pair, and `crates/aiperf-runner/tests/agentic_process.rs:569-666` exercises
+`rust/aiperf-runner/src/registry.rs:581-588` registers the `agentic` workload and
+`online_http + agentic` pair, and `rust/aiperf-runner/tests/agentic_process.rs:569-666` exercises
 the runner subprocess. Any migration must preserve that working behavior even where older docs
 still call the pair pending.
 
@@ -133,11 +133,11 @@ Primary AIPerf agent calls already use the useful pattern: Python's `ModelCallBr
 and never opens a socket (`src/aiperf/accuracy/model_broker.py:4-10`), while Rust dispatches it
 through the ordinary scheduled path.
 
-Environment and verifier calls take another route. `crates/aiperf/src/agentic_gateway.rs:131-186`
-binds an HTTP server, and `crates/aiperf-accuracy/src/protocol.rs:352-364` sends its URL and bearer
+Environment and verifier calls take another route. `rust/aiperf/src/agentic_gateway.rs:131-186`
+binds an HTTP server, and `rust/aiperf-accuracy/src/protocol.rs:352-364` sends its URL and bearer
 credential to Python. Harbor then installs those values as model-client configuration
 (`src/aiperf/accuracy/harbor.py:307-332`). The gateway's streaming response is a buffered,
-synthetic SSE projection (`crates/aiperf/src/agentic_gateway.rs:514-587`).
+synthetic SSE projection (`rust/aiperf/src/agentic_gateway.rs:514-587`).
 
 Rust already hosts that server, so it is useful compatibility evidence. Its current split is still
 not the target: primary calls use pipes while auxiliary calls use a chat-only callback; routing is
@@ -968,7 +968,7 @@ host-operation combination only when an executable adapter and subprocess proof 
 
 ### 6.3 `EvaluationWorkload`
 
-`crates/aiperf/src/evaluation.rs` is extracted from the reusable parts of current `agentic.rs` and
+`rust/aiperf/src/evaluation.rs` is extracted from the reusable parts of current `agentic.rs` and
 `accuracy.rs`. It owns:
 
 - separate unit/environment concurrency and inference-route concurrency;
@@ -1380,7 +1380,7 @@ by this RFC.
 
 ### 13.2 `aiperf` runtime
 
-- Add `crates/aiperf/src/evaluation.rs` from reusable `agentic.rs`/`accuracy.rs` scheduling,
+- Add `rust/aiperf/src/evaluation.rs` from reusable `agentic.rs`/`accuracy.rs` scheduling,
   dispatch, ledger, cancellation, and report-join behavior.
 - Add trait-backed Rust host executor composition and bounded fair arbitration.
 - Add `TransportRetryPolicy`/`InferenceAttemptExecutor` over the one-attempt transport.
@@ -1388,7 +1388,7 @@ by this RFC.
   prepared endpoint profiles.
 - Route pipe and local-proxy ingress through one host-operation ledger, admission graph, transport,
   cancellation path, and reporter.
-- Replace `crates/aiperf/src/agentic_gateway.rs`, its auxiliary queues, single-endpoint
+- Replace `rust/aiperf/src/agentic_gateway.rs`, its auxiliary queues, single-endpoint
   configuration, and buffered SSE with a trait-backed `EvaluatorCompatibilityProxy` after provider
   parity; do not retain the current gateway as a second authority.
 - Retire the old `agentic.rs` and static `accuracy.rs` paths only after their deletion gates.
@@ -1686,20 +1686,20 @@ OpenBench/Inspect task support and replacement of the legacy static/stateful pro
 
 ### Built neutral protocol and runtime
 
-- `crates/aiperf-accuracy/src/{provider,provider_protocol,supervisor,lifecycle}.rs` implements the
+- `rust/aiperf-accuracy/src/{provider,provider_protocol,supervisor,lifecycle}.rs` implements the
   object-safe `EvaluationProvider` / `EvaluationProviderFactory` / launcher seams, deterministic
   availability-filtered registry, strict evaluator-worker protocol v2 DTOs, bounded correlated
   JSONL control over dedicated inherited descriptors 3/4, factory-owned side-effect-free authored
   validators, pre-exec launch-closure attestation, negotiated/final identity checks, cancellation,
   and the complete lifecycle through deferred report commit. Ordinary stdout is not a protocol
   channel, and provider stderr bytes remain restricted.
-- `crates/aiperf/src/evaluation/{host,arbiter,ledger,retry,inference,workload}.rs` implements open
+- `rust/aiperf/src/evaluation/{host,arbiter,ledger,retry,inference,workload}.rs` implements open
   typed host-executor registries, logical Rust-owned routes, bounded fair unit/operation admission,
   exact logical-operation and transport-attempt accounting, Clock-driven retry/backoff,
   cancellation, prepared-endpoint inference lowering, provider event draining, and the generic
   evaluation workload. Provider code still owns prompts, solvers, scorers, semantic outcomes, and
   canonical aggregates.
-- `crates/aiperf-runner/src/evaluation_execution.rs` supplies the protocol-v2
+- `rust/aiperf-runner/src/evaluation_execution.rs` supplies the protocol-v2
   `online_http + evaluation` adapter, immutable GSM8K asset resolver, prepared HTTP route
   composition, native metrics join, and runner report commit. Python authors only a registered
   provider/distribution, opaque provider configuration, logical routes, and bounded concurrency;
@@ -1711,8 +1711,8 @@ either legacy workload.
 
 ### Built launch isolation and process-tree proof
 
-`crates/aiperf-accuracy/src/isolation.rs` and
-`crates/aiperf-runner/src/stock_evaluation.rs` implement the stock
+`rust/aiperf-accuracy/src/isolation.rs` and
+`rust/aiperf-runner/src/stock_evaluation.rs` implement the stock
 `linux-bubblewrap-rootfs-process-tree-v4` profile. Rust independently resolves and hashes the exact
 registered CPython, provider package/source-overlay/dependency-lock, system-library, task-manifest,
 and asset closure; materializes a fresh single-link worker root; mounts it read-only at `/`; and
@@ -1728,7 +1728,7 @@ that distribution unavailable rather than weakening isolation.
 
 ### Built scoped compatibility proxy
 
-`crates/aiperf/src/evaluation/proxy.rs` implements a per-run Unix-domain HTTP/SSE proxy. It accepts
+`rust/aiperf/src/evaluation/proxy.rs` implements a per-run Unix-domain HTTP/SSE proxy. It accepts
 only registered local dialect paths and schema-validated operation payloads; it has no caller-
 selected upstream URL, forwarding method/header surface, real credential, or raw upstream SSE.
 Rust mints the grant, narrows it after provider planning to the exact cases/routes/purposes/
@@ -1743,9 +1743,9 @@ Internet proxy is present.
 
 ### Built artifact and report foundation
 
-`crates/aiperf-accuracy/src/artifacts.rs`,
-`crates/aiperf/src/evaluation/{workload,report}.rs`, and the generic evaluation types in
-`crates/aiperf-metrics/src/report.rs` enforce the terminal order
+`rust/aiperf-accuracy/src/artifacts.rs`,
+`rust/aiperf/src/evaluation/{workload,report}.rs`, and the generic evaluation types in
+`rust/aiperf-metrics/src/report.rs` enforce the terminal order
 drain/finalize → worker process-tree quiescence → proxy shutdown and socket removal →
 FD-relative no-follow artifact verification/promotion → atomic native-v2 report commit.
 Symlinks, hard links, devices, traversal, undeclared files, size/digest drift, and mutation during
@@ -1782,7 +1782,7 @@ The coverage manifest deliberately records a one-executed-case parity proof for 
 not full GSM8K migration. Provider-level parity tests cover standalone preservation, deterministic
 NeMo selection/seed behavior, public Inspect execution/fail-closed policies, and absence of
 private-Inspect mutation or provider-owned HTTP. The ignored real-root runner subprocess proof in
-`crates/aiperf-runner/tests/evaluation_process.rs` exercises both distributions through Rust-owned
+`rust/aiperf-runner/tests/evaluation_process.rs` exercises both distributions through Rust-owned
 HTTP/SSE, verifies public redaction and artifact cleanup, and checks the exact capability surface.
 
 ### Product registration is deployment-root conditioned

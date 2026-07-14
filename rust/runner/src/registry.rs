@@ -511,19 +511,10 @@ impl RunnerRegistryBuilder {
             );
             validate_descriptor_compatibility(transport.descriptor(), workload.descriptor())?;
         }
-        let mut statically_compatible_pairs = BTreeSet::new();
-        for (transport_id, transport) in &self.transports {
-            for (workload_id, workload) in &self.workloads {
-                if descriptors_are_compatible(transport.descriptor(), workload.descriptor()) {
-                    statically_compatible_pairs.insert((transport_id.clone(), workload_id.clone()));
-                }
-            }
-        }
         Ok(RunnerRegistry {
             transports: self.transports,
             workloads: self.workloads,
             pairs: self.pairs,
-            statically_compatible_pairs,
         })
     }
 }
@@ -533,7 +524,6 @@ pub struct RunnerRegistry {
     transports: BTreeMap<String, Arc<dyn RunnerTransportFactory>>,
     workloads: BTreeMap<String, Arc<dyn RunnerWorkloadFactory>>,
     pairs: BTreeMap<(String, String), Arc<dyn RunnerPairFactory>>,
-    statically_compatible_pairs: BTreeSet<(String, String)>,
 }
 
 impl RunnerRegistry {
@@ -557,20 +547,6 @@ impl RunnerRegistry {
     pub fn supported_pairs(&self) -> Vec<(&str, &str)> {
         self.pairs
             .keys()
-            .map(|(transport, workload)| (transport.as_str(), workload.as_str()))
-            .collect()
-    }
-
-    /// Return descriptor-compatible pairs whether or not protocol-v2 execution
-    /// has a registered pair adapter.
-    ///
-    /// Capability consumers must use [`Self::supported_pairs`] to decide what
-    /// this exact binary can execute. This separate inventory makes recognized
-    /// design compatibility visible without claiming product reachability for
-    /// library-only or protocol-v1-only implementations.
-    pub fn statically_compatible_pairs(&self) -> Vec<(&str, &str)> {
-        self.statically_compatible_pairs
-            .iter()
             .map(|(transport, workload)| (transport.as_str(), workload.as_str()))
             .collect()
     }
@@ -717,17 +693,6 @@ fn validate_descriptor_compatibility(
     Ok(())
 }
 
-fn descriptors_are_compatible(
-    transport: &RunnerTransportDescriptor,
-    workload: &RunnerWorkloadDescriptor,
-) -> bool {
-    workload.clock_kinds.contains(&transport.clock)
-        && (!workload.requires_semantic_responses || transport.semantic_responses)
-        && workload
-            .required_transport_features
-            .iter()
-            .all(|feature| transport.features.contains(feature))
-}
 
 fn validate_requirements(
     transport: &RunnerTransportDescriptor,
@@ -2060,26 +2025,7 @@ mod tests {
             ("http", "graph"),
             ("http", "scheduled"),
         ];
-        #[cfg(feature = "dynosim")]
-        let expected_static = vec![
-            ("dynosim_offline", "graph"),
-            ("dynosim_offline", "scheduled"),
-            ("dynosim_online", "graph"),
-            ("dynosim_online", "scheduled"),
-            ("grpc", "graph"),
-            ("grpc", "scheduled"),
-            ("http", "graph"),
-            ("http", "scheduled"),
-        ];
-        #[cfg(not(feature = "dynosim"))]
-        let expected_static = vec![
-            ("grpc", "graph"),
-            ("grpc", "scheduled"),
-            ("http", "graph"),
-            ("http", "scheduled"),
-        ];
         assert_eq!(registry.supported_pairs(), expected_supported);
-        assert_eq!(registry.statically_compatible_pairs(), expected_static);
     }
 
     #[test]

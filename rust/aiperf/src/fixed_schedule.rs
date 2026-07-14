@@ -309,31 +309,20 @@ fn schedule_fixed_turn(
 
 #[cfg(test)]
 mod tests {
-    use crate::multiturn::{
-        ConversationDataset, DatasetConversationSource, SyntheticConversationSource,
-    };
-    use crate::workload::SkeletonWorkload;
+    use crate::test_util::{synthetic_prepared_source, timestamped_prepared_source};
 
     use super::*;
 
-    fn source(input: &str) -> Box<dyn ConversationSource> {
-        let dataset = ConversationDataset::from_json_or_jsonl(input, 2, 1).unwrap();
-        Box::new(DatasetConversationSource::new(dataset))
-    }
-
-    #[test]
-    fn setup_sorts_stably_and_resolves_all_zero_modes() {
-        let input = concat!(
-            "{\"session_id\":\"late\",\"timestamp\":1200}\n",
-            "{\"session_id\":\"first\",\"timestamp\":1000}\n",
-            "{\"session_id\":\"tie\",\"timestamp\":1000}\n"
-        );
+    #[tokio::test]
+    async fn setup_sorts_stably_and_resolves_all_zero_modes() {
         let auto = DatasetFixedScheduleSource::new(FixedScheduleConfig {
             auto_offset_timestamps: true,
             start_offset_ms: None,
         })
         .unwrap();
-        let source = source(input);
+        let source =
+            timestamped_prepared_source(&[("late", 1200.0), ("first", 1000.0), ("tie", 1000.0)], "m")
+                .await;
         let schedule = auto.build_schedule(source.as_ref()).unwrap();
         assert_eq!(schedule.schedule_zero_ms, 1000.0);
         assert_eq!(
@@ -366,26 +355,19 @@ mod tests {
         );
     }
 
-    #[test]
-    fn setup_rejects_missing_first_timestamp_and_empty_dataset() {
-        let source = SyntheticConversationSource::new(SkeletonWorkload {
-            num_requests: 0,
-            input_tokens: 2,
-            output_tokens: 1,
-            turns: 2,
-            think_time_ms: None,
-        })
-        .unwrap();
+    #[tokio::test]
+    async fn setup_rejects_missing_first_timestamp_and_empty_dataset() {
+        let source = synthetic_prepared_source(2, 2, 1, None, "m").await;
         let fixed = DatasetFixedScheduleSource::new(FixedScheduleConfig::default()).unwrap();
         assert!(
             fixed
-                .build_schedule(&source)
+                .build_schedule(source.as_ref())
                 .unwrap_err()
                 .to_string()
                 .contains("missing timestamp_ms")
         );
 
-        let empty = DatasetConversationSource::new(ConversationDataset::new(vec![]).unwrap());
+        let empty = EmptyConversationSource;
         assert!(
             fixed
                 .build_schedule(&empty)
@@ -393,6 +375,31 @@ mod tests {
                 .to_string()
                 .contains("no conversations")
         );
+    }
+
+    /// A source with no conversations, exercising the empty-dataset guard
+    /// without the removed synthetic loader.
+    struct EmptyConversationSource;
+
+    impl ConversationSource for EmptyConversationSource {
+        fn conversations(&self) -> &[crate::multiturn::ConversationMetadata] {
+            &[]
+        }
+
+        fn next(
+            &mut self,
+            _x_correlation_id: Option<String>,
+        ) -> anyhow::Result<crate::multiturn::SampledSession> {
+            anyhow::bail!("empty conversation source")
+        }
+
+        fn session_for(
+            &self,
+            _conversation_id: &str,
+            _x_correlation_id: String,
+        ) -> anyhow::Result<crate::multiturn::SampledSession> {
+            anyhow::bail!("empty conversation source")
+        }
     }
 
     #[test]

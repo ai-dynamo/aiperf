@@ -21,7 +21,7 @@ use serde::Serialize;
 use crate::dataset_input::RunnerDatasetInputAdapterResolver;
 use crate::execution_factories::RunnerExecutionFactories;
 use crate::graph_input::RunnerGraphInputAdapterResolver;
-use crate::protocol::{RunnerCapabilities, RunnerCatalog};
+use crate::protocol::RunnerCatalog;
 use crate::protocol_v2::{
     DeferredCheckV2, RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2,
     RunnerEnvelopeV2, RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
@@ -109,24 +109,9 @@ impl RunnerV2Coordinator {
         })
     }
 
-    /// Advertise capabilities from this coordinator's exact frozen registries.
-    ///
-    /// Custom distributions use this method for `--capabilities` so discovery,
-    /// validation, and execution observe one implementation universe. No
-    /// registry factory is invoked a second time.
-    pub fn capabilities(&self) -> RunnerCapabilities {
-        RunnerCapabilities::from_registries(&self.runner_registry, self.product_registry.as_ref())
-    }
-
     /// Return the plugins.yaml-shaped catalog from this process's frozen registries.
     pub fn catalog(&self) -> RunnerCatalog {
         RunnerCatalog::from_registries(&self.runner_registry, self.product_registry.as_ref())
-    }
-
-    /// Borrow the single authored graph-input resolver shared by protocol-v2
-    /// preparation and protocol-v1 compatibility execution.
-    pub fn graph_inputs(&self) -> &dyn RunnerGraphInputAdapterResolver {
-        self.graph_inputs.as_ref()
     }
 
     /// Validate or execute one strict authored envelope through the frozen registries.

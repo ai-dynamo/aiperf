@@ -72,7 +72,9 @@ def split_header_body(path: Path) -> tuple[str, str]:
     for idx, line in enumerate(lines):
         if line.startswith(BODY_ANCHOR):
             return "".join(lines[:idx]), "".join(lines[idx:])
-    raise SystemExit(f"{path}: could not find '{BODY_ANCHOR}' H1 — header detection failed.")
+    raise SystemExit(
+        f"{path}: could not find '{BODY_ANCHOR}' H1 — header detection failed."
+    )
 
 
 def main() -> int:

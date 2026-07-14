@@ -242,11 +242,11 @@ The implementation is complete only when these remain green:
 
 - Public settings: `src/aiperf/common/environment.py`
 - Config-v2 projection: `src/aiperf/orchestrator/rust_wire.py`
-- Strict sidecar adapter: `crates/aiperf-runner/src/sidecar_input.rs`
-- Wire field: `crates/aiperf-runner/src/protocol_v2.rs`
-- Dataset adapter injection: `crates/aiperf-runner/src/dataset_input.rs`
-- Pair preparation: `crates/aiperf-runner/src/online_execution.rs`
-- Lifecycle ownership: `crates/aiperf-runner/src/execute.rs`
-- Publication seam/generators: `crates/aiperf-dataset/src/generator/`
-- Server/runtime/tracking: `crates/aiperf-content-server/src/`
-- Product subprocess proof: `crates/aiperf-runner/tests/online_v2_stdio.rs`
+- Strict sidecar adapter: `rust/aiperf-runner/src/sidecar_input.rs`
+- Wire field: `rust/aiperf-runner/src/protocol_v2.rs`
+- Dataset adapter injection: `rust/aiperf-runner/src/dataset_input.rs`
+- Pair preparation: `rust/aiperf-runner/src/online_execution.rs`
+- Lifecycle ownership: `rust/aiperf-runner/src/execute.rs`
+- Publication seam/generators: `rust/aiperf-dataset/src/generator/`
+- Server/runtime/tracking: `rust/aiperf-content-server/src/`
+- Product subprocess proof: `rust/aiperf-runner/tests/online_v2_stdio.rs`

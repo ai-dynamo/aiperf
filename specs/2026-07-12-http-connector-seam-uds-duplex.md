@@ -12,7 +12,7 @@
 ### The mode-branch smell (real code)
 
 Connection establishment lives in
-`crates/aiperf-transport-http/src/client/connection.rs`. The un-timed body is
+`rust/aiperf-transport-http/src/client/connection.rs`. The un-timed body is
 `establish_inner` (`connection.rs:419-509`). Its first act is a mode branch on a
 config flag:
 
@@ -486,7 +486,7 @@ path above the transport. The seam is strictly *below the `Sender`*.
 Scratch project: `~/tmp/connector-spec/` (throwaway; the target repo was not
 modified). Deps pinned to workspace majors: `hyper 1.10` (client+server+http1+http2),
 `hyper-util 0.1` (TokioIo), `tokio 1`, `http-body-util 0.1`, `async-trait 0.1`,
-`url 2`, `bytes 1` — matching `crates/aiperf-transport-http/Cargo.toml` and
+`url 2`, `bytes 1` — matching `rust/aiperf-transport-http/Cargo.toml` and
 `Cargo.lock` (hyper 1.10.1, hyper-util 0.1.20, tokio 1.48, async-trait 0.1.89).
 
 ### 7.1 Trait + impls compile

@@ -53,7 +53,7 @@ are not alternate implementations of this design.
 projection. It writes every accepted field explicitly; it does not serialize a
 raw Pydantic object as an opaque implementation request.
 
-`crates/aiperf-runner/src/protocol.rs` is the matching Rust DTO. Every object
+`rust/aiperf-runner/src/protocol.rs` is the matching Rust DTO. Every object
 uses `deny_unknown_fields`. Before launching a run, Python calls
 `aiperf-runner --capabilities` and verifies:
 
@@ -129,7 +129,7 @@ split where `--otel-url host:4318` worked but equivalent YAML posted to `/`.
 
 The architecture is pinned at three levels:
 
-- `crates/aiperf-runner/tests/stdio_e2e.rs`: real child process, HTTP/SSE,
+- `rust/aiperf-runner/tests/stdio_e2e.rs`: real child process, HTTP/SSE,
   native report, records/raw outputs, Python accuracy, telemetry and adaptive
   actuators.
 - `tests/integration/test_rust_executor_e2e.py`: Config v2 through a fresh Rust
@@ -281,7 +281,7 @@ pairs. Unadvertised pairs now fail closed; they do not select another protocol.
 
 The runner's protocol-v1 support has now been deleted, not merely left dormant.
 `aiperf-runner` advertises `protocol_versions: [2]` only and rejects any non-v2
-request as a protocol-v2 failure envelope. Removed from `crates/aiperf-runner`:
+request as a protocol-v2 failure envelope. Removed from `rust/aiperf-runner`:
 the v1 request `dispatch` entry, `execute_v1` and the `execute_run*` chain, the
 `RunRequest` / `RunSpec` / `RunTerminal` / `EndpointSpec` / `DatasetSpec` /
 `AccuracySpec` wire DTOs, the `load_protocol_v1` graph-input adapters, and the

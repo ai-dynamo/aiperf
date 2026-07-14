@@ -1,4 +1,4 @@
-// crates/transport-http/tests/mock_smoke.rs
+// rust/transport-http/tests/mock_smoke.rs
 mod common;
 use common::{MockServer, run_local};
 

@@ -83,7 +83,7 @@ Today Python constructs `EndpointType` from Python plugin registrations at impor
   capabilities.
 
 This ordering is already observably wrong. The Rust runner advertises `messages` in
-`crates/aiperf-runner/src/protocol.rs:49-68`, while the Python endpoint block in
+`rust/aiperf-runner/src/protocol.rs:49-68`, while the Python endpoint block in
 `src/aiperf/plugin/plugins.yaml:184-421` and its checked-in Config-v2 schema do not contain
 `messages`. A valid endpoint compiled into the selected runner is consequently rejected before
 the selected runner can see it.
@@ -106,7 +106,7 @@ Endpoint metadata currently drives Python behavior in at least these paths:
 | `common/readiness_probe.py:45-63,189-218` | hardcoded endpoint paths and payloads | Rust endpoint formatter/header/transport path |
 
 The corresponding streaming, form-data, template, URL, and endpoint-metadata validation already
-exists in `crates/aiperf-endpoints/src/config.rs:100-182`. Feeding Rust metadata into the existing
+exists in `rust/aiperf-endpoints/src/config.rs:100-182`. Feeding Rust metadata into the existing
 Python validators would remove one data-copy but leave two executable rule engines. That is not
 the target architecture.
 
@@ -114,12 +114,12 @@ the target architecture.
 
 The native implementation also needs consolidation:
 
-1. `crates/aiperf-endpoints/src/metadata.rs:8-48` defines a closed `EndpointType` enum.
+1. `rust/aiperf-endpoints/src/metadata.rs:8-48` defines a closed `EndpointType` enum.
 2. The same file stores a separate metadata table selected by that enum.
-3. `crates/aiperf-dataset/src/request.rs:97-226` manually registers endpoint names and keeps a
+3. `rust/aiperf-dataset/src/request.rs:97-226` manually registers endpoint names and keeps a
    second enum-indexed map.
-4. `crates/aiperf-runner/src/protocol.rs:49-68` hardcodes the capability list independently.
-5. `crates/aiperf-runner/src/execute.rs:351` constructs `AiperfRegistry::builtin()` inside
+4. `rust/aiperf-runner/src/protocol.rs:49-68` hardcodes the capability list independently.
+5. `rust/aiperf-runner/src/execute.rs:351` constructs `AiperfRegistry::builtin()` inside
    execution rather than accepting the runner's composed registry.
 
 As a result, the current compile-time endpoint extension proof is not a proof of a new dialect. It
@@ -130,10 +130,10 @@ uses for capabilities or execution.
 
 ### 1.4 Per-turn selection can produce an invalid adapter/config pair
 
-`crates/aiperf/src/multiturn.rs:1017-1038` resolves an authored per-turn endpoint, clones the
+`rust/aiperf/src/multiturn.rs:1017-1038` resolves an authored per-turn endpoint, clones the
 default configuration, overwrites its enum identity, and clamps streaming. It does not fully
 revalidate that configuration for the selected dialect. A form-data mismatch can therefore
-survive until the dispatch invariant in `crates/aiperf/src/http/endpoint_dispatch.rs:297-327`.
+survive until the dispatch invariant in `rust/aiperf/src/http/endpoint_dispatch.rs:297-327`.
 
 The final model MUST make the selected adapter and its validated effective configuration
 inseparable and MUST bind every distinct endpoint/profile before request scheduling.
@@ -1181,7 +1181,7 @@ workload/lifecycle combinations still remain.
 
 The runner's protocol-v1 support has been deleted. `aiperf-runner` now
 advertises `protocol_versions: [2]` only and rejects any non-v2 request as a
-protocol-v2 failure envelope. Removed from `crates/aiperf-runner`: the v1
+protocol-v2 failure envelope. Removed from `rust/aiperf-runner`: the v1
 request `dispatch` entry, `execute_v1` and the `execute_run*` chain, the
 `RunRequest` / `RunSpec` / `RunTerminal` / `EndpointSpec` / `DatasetSpec` /
 `AccuracySpec` wire DTOs, the `load_protocol_v1` graph-input adapters, and the

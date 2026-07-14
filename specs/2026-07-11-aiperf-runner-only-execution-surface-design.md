@@ -77,7 +77,7 @@ lower the versioned request into today's real seams—`Clock`, `RequestSink<R>`,
 
 ### 1.1 Product-reachable through runner v1
 
-The current `crates/aiperf-runner` protocol and executor expose:
+The current `rust/aiperf-runner` protocol and executor expose:
 
 - scheduled online HTTP phases: concurrency, Poisson, Gamma, constant/request-rate,
   user-centric, and fixed schedule;
@@ -879,7 +879,7 @@ closed; capability truth remains exact-image-specific.
 
 Protocol-v1 support has been deleted from `aiperf-runner` entirely. The runner
 now advertises `protocol_versions: [2]` only and rejects any non-v2 request as a
-protocol-v2 failure envelope. Removed from `crates/aiperf-runner`: the v1
+protocol-v2 failure envelope. Removed from `rust/aiperf-runner`: the v1
 request `dispatch` entry, `execute_v1` and the `execute_run*` execution chain,
 the `RunRequest` / `RunSpec` / `RunTerminal` / `EndpointSpec` / `DatasetSpec` /
 `AccuracySpec` wire DTOs, the `load_protocol_v1` graph-input adapters, and the

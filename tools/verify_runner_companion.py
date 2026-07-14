@@ -80,10 +80,11 @@ def _installed_manifest(installation: RunnerInstallation) -> dict[str, Any]:
             f"companion runner resolved to {installation.binary}, expected scripts "
             f"directory {scripts}"
         )
-    if installation.capabilities.get("event") != "runner_capabilities":
-        raise RuntimeError("companion runner did not return runner_capabilities")
-    if installation.distribution_id is None:
-        raise RuntimeError("companion runner omitted exact distribution_id")
+    if not _is_catalog_shape(installation.capabilities):
+        raise RuntimeError(
+            "companion runner did not return a plugins.yaml-shaped catalog with "
+            "schema_version, endpoint, and transport maps"
+        )
 
     distribution = metadata.distribution("aiperf-runner")
     manifest_text = distribution.read_text("extra_metadata/runner-build.json")
@@ -92,11 +93,19 @@ def _installed_manifest(installation: RunnerInstallation) -> dict[str, Any]:
     manifest = orjson.loads(manifest_text)
     if not isinstance(manifest, dict):
         raise RuntimeError("companion runner-build.json must contain an object")
-    if manifest.get("distribution_id") != installation.distribution_id:
-        raise RuntimeError(
-            "companion build manifest distribution_id disagrees with the installed binary"
-        )
     return manifest
+
+
+def _is_catalog_shape(capabilities: dict[str, Any]) -> bool:
+    """Confirm the runner published a non-empty plugins.yaml-shaped catalog."""
+    return (
+        isinstance(capabilities.get("schema_version"), str)
+        and bool(capabilities["schema_version"])
+        and isinstance(capabilities.get("endpoint"), dict)
+        and bool(capabilities["endpoint"])
+        and isinstance(capabilities.get("transport"), dict)
+        and bool(capabilities["transport"])
+    )
 
 
 def _verify_profile(
@@ -112,17 +121,17 @@ def _verify_profile(
     dependencies = manifest.get("dependency_revisions")
     if not isinstance(dependencies, dict):
         raise RuntimeError("companion manifest omitted dependency revisions")
+    transports = installation.capabilities.get("transport")
+    transports = transports if isinstance(transports, dict) else {}
     if profile == "offline":
         if "dynamo-offline" not in features:
             raise RuntimeError("offline companion omitted the dynamo-offline feature")
         if "dynamo-aiperf-native" not in dependencies:
             raise RuntimeError("offline companion omitted the Dynamo source revision")
-        for workload in ("scheduled", "graph"):
-            if not installation.supports_pair("dynamo_offline", workload):
-                raise RuntimeError(
-                    "offline companion omitted executable pair "
-                    f"('dynamo_offline', {workload!r})"
-                )
+        if "dynosim_offline" not in transports:
+            raise RuntimeError(
+                "offline companion omitted the dynosim_offline transport"
+            )
         return
     if any(feature.startswith("dynamo-") for feature in features):
         raise RuntimeError("online companion unexpectedly contains a Dynamo feature")
@@ -130,11 +139,10 @@ def _verify_profile(
         raise RuntimeError(
             "online companion unexpectedly contains external dependency revisions"
         )
-    supported = installation.capabilities.get("supported_pairs", [])
-    if any(
-        isinstance(pair, list) and pair[:1] == ["dynamo_offline"] for pair in supported
-    ):
-        raise RuntimeError("online companion unexpectedly advertises an offline pair")
+    if "dynosim_offline" in transports:
+        raise RuntimeError(
+            "online companion unexpectedly advertises an offline transport"
+        )
 
 
 def _probe_malformed_stdin(installation: RunnerInstallation) -> int:
@@ -357,7 +365,6 @@ def main(argv: list[str] | None = None) -> int:
             {
                 "binary": os.fspath(installation.binary),
                 "profile": profile,
-                "distribution_id": installation.distribution_id,
                 "protocol_versions": installation.capabilities.get("protocol_versions"),
                 "source_revision": manifest.get("source_revision"),
                 "cargo_lock_sha256": manifest.get("cargo_lock_sha256"),

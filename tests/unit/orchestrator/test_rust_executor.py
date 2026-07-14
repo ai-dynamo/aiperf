@@ -109,13 +109,6 @@ def test_resolve_accepts_independent_explicit_provider_roots(
     ("payload", "match"),
     [
         (
-            {
-                "event": "runner_capabilities",
-                "supported_pairs": [["http", "scheduled"]],
-            },
-            "legacy runner_capabilities",
-        ),
-        (
             {"schema_version": "1.0", "endpoint": {}, "transport": {"http": {}}},
             "endpoint must contain at least one",
         ),

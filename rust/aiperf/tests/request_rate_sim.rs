@@ -9,19 +9,17 @@ use std::rc::Rc;
 use aiperf::clock::Clock;
 use aiperf::clock::sim_clock::SimClock;
 use aiperf::graph::runtime::drive_sim;
-use aiperf::multiturn::{
-    ConversationDataset, ConversationSource, DatasetConversationSource,
-    SyntheticConversationSource, TurnToSend,
-};
+use aiperf::multiturn::{ConversationSource, TurnToSend};
 use aiperf::request_rate::{RequestRateConfig, RequestRateWorkload};
 use aiperf::scheduled::{
     ScheduledRunReport, TurnDispatchOutcome, TurnDispatcher, Workload, run_scheduled_workload,
 };
 use aiperf::timing::{ArrivalPattern, StopConfig};
-use aiperf::workload::SkeletonWorkload;
 use async_trait::async_trait;
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::RequestObserver;
+
+mod common;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct SeenTurn {
@@ -75,11 +73,28 @@ impl TurnDispatcher for SimDispatcher {
         self.seen.borrow_mut().push(SeenTurn {
             conversation_id: turn.conversation_id.clone(),
             turn_index: turn.turn_index,
+            // Native prepared turns carry their message history in the
+            // materialized `request_body`, not the legacy `messages` vec.
             roles: turn
-                .messages
-                .iter()
-                .map(|message| message.role.clone())
-                .collect(),
+                .request_body
+                .as_ref()
+                .and_then(|body| serde_json::from_slice::<serde_json::Value>(body).ok())
+                .and_then(|body| {
+                    body.get("messages").and_then(|messages| {
+                        messages.as_array().map(|messages| {
+                            messages
+                                .iter()
+                                .filter_map(|message| {
+                                    message
+                                        .get("role")
+                                        .and_then(|role| role.as_str())
+                                        .map(String::from)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                    })
+                })
+                .unwrap_or_default(),
             issued_ns: start_ns,
         });
         observer.on_admit(
@@ -140,16 +155,17 @@ fn rate_config(
 }
 
 fn synthetic(turns: usize, think_time_ms: Option<u64>) -> Box<dyn ConversationSource> {
-    Box::new(
-        SyntheticConversationSource::new(SkeletonWorkload {
-            num_requests: 0,
-            input_tokens: 2,
-            output_tokens: 1,
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(common::synthetic_prepared_source(
             turns,
+            2,
+            1,
             think_time_ms,
-        })
-        .unwrap(),
-    )
+            "model",
+        ))
 }
 
 fn run_sim(
@@ -175,31 +191,31 @@ fn run_sim(
 
 #[test]
 fn ready_continuations_win_each_rate_tick_and_materialize_live_replies() {
-    let dataset = ConversationDataset::from_json_or_jsonl(
-        r#"{
-          "conversations": [
-            {"conversation_id":"a","turns":[
-              {"prompt_text":"a0","input_length":1,"max_output_tokens":1},
-              {"prompt_text":"a1","input_length":1,"max_output_tokens":1},
-              {"prompt_text":"a2","input_length":1,"max_output_tokens":1}
-            ]},
-            {"conversation_id":"b","turns":[
-              {"prompt_text":"b0","input_length":1,"max_output_tokens":1},
-              {"prompt_text":"b1","input_length":1,"max_output_tokens":1},
-              {"prompt_text":"b2","input_length":1,"max_output_tokens":1}
-            ]},
-            {"conversation_id":"c","turns":[
-              {"prompt_text":"c0","input_length":1,"max_output_tokens":1},
-              {"prompt_text":"c1","input_length":1,"max_output_tokens":1},
-              {"prompt_text":"c2","input_length":1,"max_output_tokens":1}
-            ]}
-          ]
-        }"#,
-        1,
-        1,
-    )
-    .unwrap();
-    let source: Box<dyn ConversationSource> = Box::new(DatasetConversationSource::new(dataset));
+    let source = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(common::prepared_source_from_conversations(
+            serde_json::json!([
+                {"session_id":"a","turns":[
+                    {"text":"a0","input_length":1,"output_length":1},
+                    {"text":"a1","input_length":1,"output_length":1},
+                    {"text":"a2","input_length":1,"output_length":1}
+                ]},
+                {"session_id":"b","turns":[
+                    {"text":"b0","input_length":1,"output_length":1},
+                    {"text":"b1","input_length":1,"output_length":1},
+                    {"text":"b2","input_length":1,"output_length":1}
+                ]},
+                {"session_id":"c","turns":[
+                    {"text":"c0","input_length":1,"output_length":1},
+                    {"text":"c1","input_length":1,"output_length":1},
+                    {"text":"c2","input_length":1,"output_length":1}
+                ]}
+            ]),
+            "model",
+            1,
+        ));
     let workload = Rc::new(RequestRateWorkload::new(rate_config(Some(3), None), source).unwrap());
     let slots = workload.session_slots().unwrap();
     let clock = Rc::new(SimClock::new());
@@ -381,25 +397,21 @@ fn think_time_defers_queue_insertion_and_session_stop_drains_the_chain() {
 
 #[test]
 fn skipped_session_ticks_retry_the_cached_sampler_draw() {
-    let dataset = ConversationDataset::from_json_or_jsonl(
-        r#"{
-          "conversations": [
-            {"conversation_id":"a","turns":[{"input_length":1,"max_output_tokens":1}]},
-            {"conversation_id":"b","turns":[{"input_length":1,"max_output_tokens":1}]},
-            {"conversation_id":"c","turns":[{"input_length":1,"max_output_tokens":1}]}
-          ]
-        }"#,
-        1,
-        1,
-    )
-    .unwrap();
-    let workload = Rc::new(
-        RequestRateWorkload::new(
-            rate_config(Some(1), None),
-            Box::new(DatasetConversationSource::new(dataset)),
-        )
-        .unwrap(),
-    );
+    let source = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(common::prepared_source_from_conversations(
+            serde_json::json!([
+                {"session_id":"a","turns":[{"text":"a0","input_length":1,"output_length":1}]},
+                {"session_id":"b","turns":[{"text":"b0","input_length":1,"output_length":1}]},
+                {"session_id":"c","turns":[{"text":"c0","input_length":1,"output_length":1}]}
+            ]),
+            "model",
+            1,
+        ));
+    let workload =
+        Rc::new(RequestRateWorkload::new(rate_config(Some(1), None), source).unwrap());
     let clock = Rc::new(SimClock::new());
     let dispatcher = SimDispatcher::new(clock.clone(), Some(250_000_000), 0);
     let report = run_sim(

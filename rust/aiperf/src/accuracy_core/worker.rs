@@ -31,13 +31,12 @@ const REQUIRED_CAPABILITIES: &[&str] = &["load", "next_problems", "grade_batch",
 
 /// Exact parent-environment keys forwarded to the evaluator subprocess.
 ///
-/// The hardened [`SupervisedEvaluationProvider::spawn`](crate::accuracy_core::SupervisedEvaluationProvider)
-/// path in `supervisor.rs` calls `env_clear()` before installing a curated
-/// allowlist. This legacy stdio path shares the same threat surface: passing the
-/// full parent environment leaks unrelated host secrets (cloud credentials,
-/// database URLs, foreign API tokens) into a third-party Python evaluator. Only
-/// the interpreter/runtime essentials below survive `env_clear()`; callers add
-/// anything else explicitly through [`WorkerProcessConfig::env`].
+/// [`PythonEvaluator::spawn`] calls `env_clear()` before installing a curated
+/// allowlist: passing the full parent environment leaks unrelated host secrets
+/// (cloud credentials, database URLs, foreign API tokens) into a third-party
+/// Python evaluator. Only the interpreter/runtime essentials below survive
+/// `env_clear()`; callers add anything else explicitly through
+/// [`WorkerProcessConfig::env`].
 const FORWARDED_ENVIRONMENT_KEYS: &[&str] = &[
     // Executable lookup for a bare `python` program name plus any subprocess the
     // interpreter spawns; clearing this without restoring it breaks program
@@ -242,9 +241,9 @@ fn is_forwarded_environment_key(key: &OsStr) -> bool {
 ///
 /// The launching-process environment is filtered to interpreter/runtime
 /// essentials and evaluator-owned namespaces; caller-provided entries are
-/// layered last so explicit values win. Applied under `env_clear()`, this keeps
-/// the legacy stdio evaluator at parity with the hardened supervised path
-/// (`supervisor.rs`) rather than inheriting the full parent environment.
+/// layered last so explicit values win. Applied under `env_clear()`, this stops
+/// the [`PythonEvaluator`] subprocess from inheriting the full parent
+/// environment.
 fn allowlisted_child_environment(
     explicit: &BTreeMap<OsString, OsString>,
 ) -> BTreeMap<OsString, OsString> {
@@ -260,9 +259,8 @@ fn allowlisted_child_environment(
 impl PythonEvaluator {
     /// Spawn the worker, drain stderr, and negotiate protocol version 1.
     pub async fn spawn(config: WorkerProcessConfig) -> Result<Self, EvaluatorWorkerError> {
-        // Parity with the hardened `SupervisedEvaluationProvider::spawn`
-        // (`supervisor.rs`): clear the inherited environment and forward only a
-        // curated allowlist so host secrets never reach the Python evaluator.
+        // Clear the inherited environment and forward only a curated allowlist
+        // so host secrets never reach the Python evaluator.
         let child_environment = allowlisted_child_environment(&config.environment);
         let mut command = Command::new(&config.program);
         command

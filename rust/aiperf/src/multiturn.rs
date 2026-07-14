@@ -14,34 +14,28 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
-use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::dataset::{
-    BuiltinEndpointResolver, ConversationSession as NativeConversationSession,
-    Dataset as NativeDataset, EndpointRequestMaterializer, EndpointResolver, Handle, Overrides,
-    Payload, RequestMaterializer, Sampler, SamplerRegistry, SegmentPool, SegmentStore,
-    SequentialSampler, TextTokenizer, TiktokenTokenizer,
+    ConversationSession as NativeConversationSession, Dataset as NativeDataset,
+    EndpointRequestMaterializer, Handle, Overrides, Payload, RequestMaterializer, Sampler,
+    SamplerRegistry, SegmentStore, SequentialSampler, TextTokenizer, TiktokenTokenizer,
 };
 use crate::endpoints::{
-    ChatEndpoint, CreditPhase, Endpoint, EndpointConfig, EndpointId, EndpointKey, EndpointType,
-    Media as EndpointMedia, ModelEndpoint, PreparedEndpoint, PreparedEndpointTable,
-    Turn as EndpointTurn,
+    CreditPhase, Endpoint, EndpointId, EndpointKey, Media as EndpointMedia, PreparedEndpoint,
+    PreparedEndpointTable, Turn as EndpointTurn,
 };
-use crate::graph::segment::intern_message;
 use crate::graph::wire::OpenAiChatMessage;
 use crate::rng::RngRoot;
 use crate::timing::{RunState, StopConfig};
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use bytes::Bytes;
 use loadgen_core::collector::ReplayTerminalStatus;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::Value;
 use uuid::Uuid;
-
-use crate::workload::SkeletonWorkload;
 
 /// Policy for deriving the input length attached to one materialized request.
 ///
@@ -240,22 +234,6 @@ impl TurnMetadata {
             max_output_tokens,
         }
     }
-
-    fn validate(&self, conversation_id: &str, turn_index: usize) -> Result<()> {
-        if self.timestamp_ms.is_some_and(|v| !v.is_finite()) {
-            bail!("turn {turn_index} of {conversation_id} has non-finite timestamp_ms");
-        }
-        if self.delay_ms.is_some_and(|v| !v.is_finite() || v < 0.0) {
-            bail!("turn {turn_index} of {conversation_id} has invalid delay_ms");
-        }
-        if self.input_length == 0 {
-            bail!("turn {turn_index} of {conversation_id} has zero input_length");
-        }
-        if self.max_output_tokens == 0 {
-            bail!("turn {turn_index} of {conversation_id} has zero max_output_tokens");
-        }
-        Ok(())
-    }
 }
 
 /// Reusable conversation template loaded from a dataset.
@@ -265,327 +243,6 @@ pub struct ConversationMetadata {
     pub conversation_id: String,
     /// Ordered turns in this conversation.
     pub turns: Vec<TurnMetadata>,
-}
-
-/// A validated dataset plus its content-addressed static-message store.
-#[derive(Clone)]
-pub struct ConversationDataset {
-    conversations: Vec<ConversationMetadata>,
-    by_id: HashMap<String, usize>,
-    segment_ids: HashMap<String, Vec<Handle>>,
-    segments: Rc<SegmentPool>,
-}
-
-impl fmt::Debug for ConversationDataset {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ConversationDataset")
-            .field("conversations", &self.conversations)
-            .field("segments", &self.segments.len())
-            .finish()
-    }
-}
-
-impl ConversationDataset {
-    /// Validate `conversations` and build their prefix-dependent segment pool.
-    /// Empty datasets are retained so fixed-schedule setup can produce its
-    /// strategy-specific “no valid conversations” error.
-    pub fn new(conversations: Vec<ConversationMetadata>) -> Result<Self> {
-        let mut by_id = HashMap::with_capacity(conversations.len());
-        let mut segment_ids = HashMap::with_capacity(conversations.len());
-        let mut segments = SegmentPool::new();
-        let tokenizer = TiktokenTokenizer::builtin();
-
-        for (conversation_index, conversation) in conversations.iter().enumerate() {
-            if conversation.conversation_id.is_empty() {
-                bail!("conversation id cannot be empty");
-            }
-            if by_id
-                .insert(conversation.conversation_id.clone(), conversation_index)
-                .is_some()
-            {
-                bail!("duplicate conversation id {}", conversation.conversation_id);
-            }
-
-            let mut parent: Option<Handle> = None;
-            let mut ids = Vec::with_capacity(conversation.turns.len());
-            for (turn_index, turn) in conversation.turns.iter().enumerate() {
-                turn.validate(&conversation.conversation_id, turn_index)?;
-                let message = OpenAiChatMessage::new("user", turn.prompt_text.clone());
-                let id = intern_message(&mut segments, &message, parent, &tokenizer)?;
-                parent = Some(id);
-                ids.push(id);
-            }
-            segment_ids.insert(conversation.conversation_id.clone(), ids);
-        }
-
-        Ok(Self {
-            conversations,
-            by_id,
-            segment_ids,
-            segments: Rc::new(segments),
-        })
-    }
-
-    /// Load native JSON/JSONL trace data from `path`.
-    ///
-    /// Supported row aliases intentionally cover the inherited Mooncake-style
-    /// examples: `session_id|conversation_id`, `timestamp|timestamp_ms`,
-    /// `delay|delay_ms`, `text_input|input_text|prompt|prompt_text`, and
-    /// `output_length|max_tokens|max_output_tokens`. Rows sharing a session id
-    /// become ordered turns; rows without one become independent conversations.
-    /// A native object with `{conversation_id, turns:[...]}` or a top-level
-    /// `{conversations:[...]}` is accepted as well.
-    pub fn from_path(
-        path: impl AsRef<Path>,
-        default_input_length: usize,
-        default_output_tokens: usize,
-    ) -> Result<Self> {
-        let path = path.as_ref();
-        let input = std::fs::read_to_string(path)
-            .with_context(|| format!("reading conversation dataset {}", path.display()))?;
-        Self::from_json_or_jsonl(&input, default_input_length, default_output_tokens)
-            .with_context(|| format!("parsing conversation dataset {}", path.display()))
-    }
-
-    /// Parse native JSON or JSONL conversation data.
-    pub fn from_json_or_jsonl(
-        input: &str,
-        default_input_length: usize,
-        default_output_tokens: usize,
-    ) -> Result<Self> {
-        if default_input_length == 0 || default_output_tokens == 0 {
-            bail!("dataset token defaults must be positive");
-        }
-        let trimmed = input.trim();
-        if trimmed.is_empty() {
-            return Self::new(Vec::new());
-        }
-
-        let values = if trimmed.starts_with('[') {
-            serde_json::from_str::<Vec<Value>>(trimmed).context("parsing JSON array")?
-        } else if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
-            match value {
-                Value::Object(ref object) if object.contains_key("conversations") => object
-                    .get("conversations")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .ok_or_else(|| anyhow!("conversations must be an array"))?,
-                value => vec![value],
-            }
-        } else {
-            input
-                .lines()
-                .enumerate()
-                .filter(|(_, line)| !line.trim().is_empty())
-                .map(|(index, line)| {
-                    serde_json::from_str::<Value>(line)
-                        .with_context(|| format!("parsing JSONL line {}", index + 1))
-                })
-                .collect::<Result<Vec<_>>>()?
-        };
-
-        let mut conversations: Vec<ConversationMetadata> = Vec::new();
-        let mut row_groups: HashMap<String, usize> = HashMap::new();
-        for (row_index, value) in values.into_iter().enumerate() {
-            let object = value
-                .as_object()
-                .ok_or_else(|| anyhow!("dataset entry {} must be an object", row_index + 1))?;
-            if let Some(turn_values) = object.get("turns") {
-                let conversation_id = string_field(object, &["conversation_id", "session_id"])
-                    .unwrap_or_else(|| format!("conversation-{row_index}"));
-                let turns = turn_values
-                    .as_array()
-                    .ok_or_else(|| anyhow!("turns for {conversation_id} must be an array"))?
-                    .iter()
-                    .enumerate()
-                    .map(|(turn_index, value)| {
-                        let object = value.as_object().ok_or_else(|| {
-                            anyhow!("turn {turn_index} of {conversation_id} must be an object")
-                        })?;
-                        parse_turn(object, default_input_length, default_output_tokens)
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                conversations.push(ConversationMetadata {
-                    conversation_id,
-                    turns,
-                });
-                continue;
-            }
-
-            let supplied_id = string_field(object, &["conversation_id", "session_id"]);
-            let conversation_id = supplied_id
-                .clone()
-                .unwrap_or_else(|| format!("trace-row-{row_index}"));
-            let turn = parse_turn(object, default_input_length, default_output_tokens)?;
-            if supplied_id.is_none() {
-                conversations.push(ConversationMetadata {
-                    conversation_id,
-                    turns: vec![turn],
-                });
-            } else if let Some(index) = row_groups.get(&conversation_id).copied() {
-                conversations[index].turns.push(turn);
-            } else {
-                row_groups.insert(conversation_id.clone(), conversations.len());
-                conversations.push(ConversationMetadata {
-                    conversation_id,
-                    turns: vec![turn],
-                });
-            }
-        }
-
-        Self::new(conversations)
-    }
-
-    /// Dataset conversations in stable loader order.
-    pub fn conversations(&self) -> &[ConversationMetadata] {
-        &self.conversations
-    }
-
-    /// Average turn count across all conversations, or `0.0` when empty.
-    pub fn average_turn_count(&self) -> f64 {
-        if self.conversations.is_empty() {
-            return 0.0;
-        }
-        self.conversations
-            .iter()
-            .map(|conversation| conversation.turns.len())
-            .sum::<usize>() as f64
-            / self.conversations.len() as f64
-    }
-
-    /// Return a rebuilt dataset containing only conversations whose first-turn
-    /// timestamp lies inside the inclusive `[start_ms, end_ms]` window.
-    /// Empty conversations are excluded because they have no replay timestamp.
-    pub fn filter_first_turn_window(
-        &self,
-        start_ms: Option<f64>,
-        end_ms: Option<f64>,
-    ) -> Result<Self> {
-        if start_ms.is_some_and(|v| !v.is_finite() || v < 0.0)
-            || end_ms.is_some_and(|v| !v.is_finite() || v < 0.0)
-        {
-            bail!("fixed-schedule offsets must be finite and non-negative");
-        }
-        if let (Some(start), Some(end)) = (start_ms, end_ms)
-            && start > end
-        {
-            bail!("fixed-schedule start offset must be <= end offset");
-        }
-
-        let conversations = self
-            .conversations
-            .iter()
-            .filter(|conversation| {
-                let Some(timestamp) = conversation
-                    .turns
-                    .first()
-                    .and_then(|turn| turn.timestamp_ms)
-                else {
-                    return false;
-                };
-                start_ms.is_none_or(|start| timestamp >= start)
-                    && end_ms.is_none_or(|end| timestamp <= end)
-            })
-            .cloned()
-            .collect();
-        Self::new(conversations)
-    }
-
-    fn session(&self, conversation_id: &str, x_correlation_id: String) -> Result<SampledSession> {
-        let index = self
-            .by_id
-            .get(conversation_id)
-            .copied()
-            .ok_or_else(|| anyhow!("no metadata for conversation {conversation_id}"))?;
-        let metadata = self.conversations[index].clone();
-        let segment_ids = self
-            .segment_ids
-            .get(conversation_id)
-            .cloned()
-            .expect("validated dataset has segment ids for every conversation");
-        let segments: Rc<dyn SegmentStore> = self.segments.clone();
-        Ok(SampledSession {
-            conversation_id: conversation_id.to_string(),
-            x_correlation_id,
-            backend: Rc::new(LegacySessionBackend {
-                metadata,
-                segment_ids,
-                segments,
-            }),
-        })
-    }
-}
-
-fn string_field(object: &Map<String, Value>, names: &[&str]) -> Option<String> {
-    names
-        .iter()
-        .find_map(|name| object.get(*name).and_then(Value::as_str))
-        .map(ToString::to_string)
-}
-
-fn number_field(object: &Map<String, Value>, names: &[&str]) -> Option<f64> {
-    names
-        .iter()
-        .find_map(|name| object.get(*name).and_then(Value::as_f64))
-}
-
-fn usize_field(object: &Map<String, Value>, names: &[&str]) -> Option<usize> {
-    names
-        .iter()
-        .find_map(|name| object.get(*name).and_then(Value::as_u64))
-        .and_then(|value| usize::try_from(value).ok())
-}
-
-fn parse_turn(
-    object: &Map<String, Value>,
-    default_input_length: usize,
-    default_output_tokens: usize,
-) -> Result<TurnMetadata> {
-    let explicit_prompt = string_field(
-        object,
-        &["prompt_text", "text_input", "input_text", "prompt"],
-    );
-    let input_length =
-        usize_field(object, &["input_length", "input_tokens"]).unwrap_or_else(|| {
-            explicit_prompt
-                .as_deref()
-                .map(|prompt| prompt.split_whitespace().count().max(1))
-                .unwrap_or(default_input_length)
-        });
-    let prompt_text = explicit_prompt.unwrap_or_else(|| vec!["lorem"; input_length].join(" "));
-    let max_output_tokens = usize_field(
-        object,
-        &["max_output_tokens", "output_length", "max_tokens"],
-    )
-    .unwrap_or(default_output_tokens);
-    Ok(TurnMetadata {
-        timestamp_ms: number_field(object, &["timestamp_ms", "timestamp"]),
-        delay_ms: number_field(object, &["delay_ms", "delay"]),
-        trace_hash_ids: None,
-        prompt_text,
-        input_length,
-        max_output_tokens,
-    })
-}
-
-fn materialize_messages(store: &dyn SegmentStore, leaf: Handle) -> Result<Vec<OpenAiChatMessage>> {
-    let segment = store
-        .segment(leaf)
-        .ok_or_else(|| anyhow!("unknown conversation segment {leaf}"))?;
-    let message = match &segment.payload {
-        Payload::Message { wire, .. } => serde_json::from_slice(wire)
-            .with_context(|| format!("decoding conversation segment {leaf}"))?,
-        Payload::Text { role, bytes, .. } => OpenAiChatMessage::new(
-            role.as_str(),
-            std::str::from_utf8(bytes)
-                .with_context(|| format!("decoding conversation text {leaf}"))?,
-        ),
-        payload => bail!(
-            "conversation segment {leaf} has unsupported {} payload",
-            payload.kind_name()
-        ),
-    };
-    Ok(vec![message])
 }
 
 /// Terminal response data needed to construct a continuation request.
@@ -615,138 +272,6 @@ trait RuntimeSessionBackend: fmt::Debug {
         current: &TurnToSend,
         response: TurnResponse,
     ) -> Result<TurnToSend>;
-}
-
-#[derive(Clone)]
-struct LegacySessionBackend {
-    metadata: ConversationMetadata,
-    segment_ids: Vec<Handle>,
-    segments: Rc<dyn SegmentStore>,
-}
-
-impl fmt::Debug for LegacySessionBackend {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("LegacySessionBackend")
-            .field("turns", &self.metadata.turns.len())
-            .finish()
-    }
-}
-
-impl RuntimeSessionBackend for LegacySessionBackend {
-    fn available_turns(&self) -> usize {
-        self.metadata.turns.len()
-    }
-
-    fn build_first_turn(
-        &self,
-        owner: &SampledSession,
-        max_turns: Option<usize>,
-    ) -> Result<TurnToSend> {
-        if self.metadata.turns.is_empty() {
-            bail!("conversation {} has no turns", owner.conversation_id);
-        }
-        let num_turns = max_turns
-            .unwrap_or(self.metadata.turns.len())
-            .min(self.metadata.turns.len())
-            .max(1);
-        self.build_turn(owner, 0, num_turns, Vec::new(), None)
-    }
-
-    fn next_metadata(&self, turn_index: usize) -> Result<TurnMetadata> {
-        let next_index = turn_index + 1;
-        self.metadata.turns.get(next_index).cloned().ok_or_else(|| {
-            anyhow!(
-                "no turn {next_index} in conversation {} (only {} turns exist)",
-                self.metadata.conversation_id,
-                self.metadata.turns.len()
-            )
-        })
-    }
-
-    fn build_next_turn(
-        &self,
-        owner: &SampledSession,
-        current: &TurnToSend,
-        response: TurnResponse,
-    ) -> Result<TurnToSend> {
-        self.build_turn(
-            owner,
-            current.turn_index + 1,
-            current.num_turns,
-            current.messages.clone(),
-            Some(response.text),
-        )
-    }
-}
-
-impl LegacySessionBackend {
-    fn build_turn(
-        &self,
-        owner: &SampledSession,
-        turn_index: usize,
-        num_turns: usize,
-        mut messages: Vec<OpenAiChatMessage>,
-        prior_reply: Option<String>,
-    ) -> Result<TurnToSend> {
-        let metadata = self
-            .metadata
-            .turns
-            .get(turn_index)
-            .ok_or_else(|| anyhow!("missing turn {turn_index} in {}", owner.conversation_id))?;
-        if let Some(reply) = prior_reply.filter(|reply| !reply.is_empty()) {
-            messages.push(OpenAiChatMessage::new("assistant", reply));
-        }
-        let segment_id = self
-            .segment_ids
-            .get(turn_index)
-            .ok_or_else(|| anyhow!("missing segment for turn {turn_index}"))?;
-        messages.extend(materialize_messages(self.segments.as_ref(), *segment_id)?);
-
-        let assistant_tokens = messages
-            .iter()
-            .filter(|message| message.role == "assistant")
-            .map(|message| message.content.split_whitespace().count().max(1))
-            .sum::<usize>();
-        let static_input_tokens = self.metadata.turns[..=turn_index]
-            .iter()
-            .map(|turn| turn.input_length)
-            .sum::<usize>();
-
-        Ok(TurnToSend {
-            uuid: Uuid::new_v4(),
-            effective_model: None,
-            conversation_id: owner.conversation_id.clone(),
-            x_correlation_id: owner.x_correlation_id.clone(),
-            request_correlation_id: owner.x_correlation_id.clone(),
-            turn_index,
-            num_turns,
-            input_length: static_input_tokens + assistant_tokens,
-            max_output_tokens: metadata.max_output_tokens,
-            messages,
-            request_body: None,
-            request_headers: BTreeMap::new(),
-            request_parameters: BTreeMap::new(),
-            endpoint_path: None,
-            endpoint: TurnEndpoint::Legacy(Arc::new(LegacyTurnEndpointBinding {
-                endpoint: Arc::new(ChatEndpoint),
-                config: EndpointConfig {
-                    streaming: true,
-                    use_server_token_count: true,
-                    ..EndpointConfig::default()
-                },
-            })),
-            streaming: true,
-            audio_duration_seconds: None,
-            timestamp_ms: metadata.timestamp_ms,
-            delay_ms: metadata.delay_ms,
-            trace_hash_ids: None,
-            raw_token_ids: None,
-            data_policy: TurnDataPolicy::ordinary(),
-            cancel_after_ns: None,
-            url_index: None,
-            session: owner.clone(),
-        })
-    }
 }
 
 /// A sampled runtime session for one reusable conversation template.
@@ -989,39 +514,19 @@ fn normalize_endpoint_name(name: &str) -> String {
 }
 
 /// Endpoint selection retained by one schedulable turn.
+///
+/// This is an enum rather than a bare [`PreparedEndpointReference`] to keep the
+/// seam open: a future non-prepared execution binding can be added as a new
+/// variant without touching every turn consumer.
 #[derive(Clone)]
 pub enum TurnEndpoint {
-    /// Protocol-v1 compatibility adapter and closed configuration.
-    Legacy(Arc<LegacyTurnEndpointBinding>),
     /// Protocol-v2 open prepared binding selected only by stable key and ID.
     Prepared(PreparedEndpointReference),
-}
-
-/// Shared legacy adapter/configuration retained by compatibility turns.
-///
-/// Indirection keeps [`TurnEndpoint`] cheap to clone without boxing or copying
-/// the comparatively large closed [`EndpointConfig`] on the scheduler path.
-pub struct LegacyTurnEndpointBinding {
-    /// Stateless legacy endpoint implementation.
-    pub endpoint: Arc<dyn Endpoint>,
-    /// Effective closed compatibility configuration.
-    pub config: EndpointConfig,
-}
-
-impl fmt::Debug for LegacyTurnEndpointBinding {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("LegacyTurnEndpointBinding")
-            .field("endpoint", &self.endpoint.descriptor().id)
-            .field("config", &self.config)
-            .finish()
-    }
 }
 
 impl fmt::Debug for TurnEndpoint {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Legacy(binding) => fmt::Debug::fmt(binding, formatter),
             Self::Prepared(reference) => formatter
                 .debug_tuple("PreparedEndpoint")
                 .field(reference)
@@ -1228,84 +733,16 @@ pub trait ConversationSource {
     }
 }
 
-/// Sequential dataset-backed [`ConversationSource`]. Sampling wraps at the end
-/// in stable loader order, matching Python's `SequentialSampler`.
-pub struct DatasetConversationSource {
-    dataset: Rc<ConversationDataset>,
-    next_index: usize,
-}
-
-impl DatasetConversationSource {
-    /// Create a source over `dataset`.
-    pub fn new(dataset: ConversationDataset) -> Self {
-        Self {
-            dataset: Rc::new(dataset),
-            next_index: 0,
-        }
-    }
-
-    /// Create a source sharing an existing dataset allocation.
-    pub fn from_shared(dataset: Rc<ConversationDataset>) -> Self {
-        Self {
-            dataset,
-            next_index: 0,
-        }
-    }
-
-    /// Shared dataset handle for constructing additional source views.
-    pub fn dataset(&self) -> Rc<ConversationDataset> {
-        self.dataset.clone()
-    }
-}
-
-impl ConversationSource for DatasetConversationSource {
-    fn conversations(&self) -> &[ConversationMetadata] {
-        self.dataset.conversations()
-    }
-
-    fn next(&mut self, x_correlation_id: Option<String>) -> Result<SampledSession> {
-        if self.dataset.conversations.is_empty() {
-            bail!("conversation dataset cannot be empty");
-        }
-        if self.next_index >= self.dataset.conversations.len() {
-            self.next_index = 0;
-        }
-        let conversation_id = self.dataset.conversations[self.next_index]
-            .conversation_id
-            .clone();
-        self.next_index += 1;
-        self.dataset.session(
-            &conversation_id,
-            x_correlation_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
-        )
-    }
-
-    fn session_for(
-        &self,
-        conversation_id: &str,
-        x_correlation_id: String,
-    ) -> Result<SampledSession> {
-        self.dataset.session(conversation_id, x_correlation_id)
-    }
-}
-
 #[derive(Clone)]
 enum NativeSessionEndpoint {
-    Legacy(Arc<LegacyNativeSessionEndpoint>),
     Prepared {
         primary_model_name: String,
         endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
     },
 }
 
-struct LegacyNativeSessionEndpoint {
-    model_endpoint: ModelEndpoint,
-    endpoint_resolver: Arc<dyn EndpointResolver>,
-}
-
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum StaticInputCountEndpoint {
-    Legacy(EndpointType),
     Prepared(EndpointKey),
 }
 
@@ -1320,13 +757,6 @@ type StaticInputCountCache = Rc<RefCell<FxHashMap<StaticInputCountKey, u64>>>;
 impl fmt::Debug for NativeSessionEndpoint {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Legacy(legacy) => formatter
-                .debug_struct("LegacySessionEndpoint")
-                .field(
-                    "endpoint_type",
-                    &legacy.model_endpoint.endpoint.endpoint_type,
-                )
-                .finish_non_exhaustive(),
             Self::Prepared {
                 primary_model_name,
                 endpoint_resolver,
@@ -1438,31 +868,6 @@ impl NativeSessionBackend {
         session.advance_to(turn_index)?;
         let endpoint_name = session.endpoint_override()?.map(str::to_string);
         let (materialized, turn_endpoint, prepared_endpoint) = match &self.endpoint {
-            NativeSessionEndpoint::Legacy(legacy) => {
-                let endpoint = match endpoint_name.as_deref() {
-                    Some(name) => legacy.endpoint_resolver.resolve(Some(name))?,
-                    None => legacy
-                        .endpoint_resolver
-                        .resolve_type(legacy.model_endpoint.endpoint.endpoint_type)?,
-                };
-                let mut effective_model_endpoint = legacy.model_endpoint.clone();
-                let descriptor = endpoint.descriptor();
-                effective_model_endpoint.endpoint.endpoint_type =
-                    descriptor.legacy_type().expect("legacy endpoint type");
-                effective_model_endpoint.endpoint.streaming &= descriptor.supports_streaming;
-                let materialized = self.materializer.materialize(
-                    &session,
-                    endpoint.as_ref(),
-                    &effective_model_endpoint,
-                    CreditPhase::Profiling,
-                    &Overrides::new(),
-                )?;
-                let turn_endpoint = TurnEndpoint::Legacy(Arc::new(LegacyTurnEndpointBinding {
-                    endpoint,
-                    config: effective_model_endpoint.endpoint,
-                }));
-                (materialized, turn_endpoint, None)
-            }
             NativeSessionEndpoint::Prepared {
                 primary_model_name,
                 endpoint_resolver,
@@ -1479,7 +884,7 @@ impl NativeSessionBackend {
                 (
                     materialized,
                     TurnEndpoint::Prepared(selected.reference),
-                    Some((reference, selected.endpoint)),
+                    (reference, selected.endpoint),
                 )
             }
         };
@@ -1493,13 +898,6 @@ impl NativeSessionBackend {
         .then(|| StaticInputCountKey {
             template_index: self.template_index,
             endpoint: match &turn_endpoint {
-                TurnEndpoint::Legacy(binding) => StaticInputCountEndpoint::Legacy(
-                    binding
-                        .endpoint
-                        .descriptor()
-                        .legacy_type()
-                        .expect("legacy endpoint type"),
-                ),
                 TurnEndpoint::Prepared(reference) => {
                     StaticInputCountEndpoint::Prepared(reference.key)
                 }
@@ -1515,23 +913,12 @@ impl NativeSessionBackend {
         {
             cached
         } else {
-            let counted = match &prepared_endpoint {
-                Some((_, endpoint)) => self.input_token_counter.count_prepared_input_tokens(
-                    *endpoint,
-                    &materialized.body,
-                    materialized.input_tokens,
-                )?,
-                None => match &turn_endpoint {
-                    TurnEndpoint::Legacy(binding) => self.input_token_counter.count_input_tokens(
-                        binding.endpoint.as_ref(),
-                        &materialized.body,
-                        materialized.input_tokens,
-                    )?,
-                    TurnEndpoint::Prepared(_) => {
-                        unreachable!("prepared endpoint retained above for token counting")
-                    }
-                },
-            };
+            let (_, endpoint) = &prepared_endpoint;
+            let counted = self.input_token_counter.count_prepared_input_tokens(
+                *endpoint,
+                &materialized.body,
+                materialized.input_tokens,
+            )?;
             if let Some(key) = static_count_key {
                 self.static_input_count_cache
                     .borrow_mut()
@@ -1600,27 +987,6 @@ pub struct NativeDatasetConversationSource {
 }
 
 impl NativeDatasetConversationSource {
-    /// Construct a source that honors the loader's preferred sampler strategy.
-    pub fn preferred(
-        dataset: NativeDataset,
-        model: impl Into<String>,
-        default_output_tokens: usize,
-        rng_root: RngRoot,
-    ) -> Result<Self> {
-        let endpoint = EndpointConfig {
-            streaming: true,
-            use_server_token_count: true,
-            ..EndpointConfig::default()
-        };
-        Self::preferred_with_endpoint_config(
-            dataset,
-            model,
-            default_output_tokens,
-            rng_root,
-            endpoint,
-        )
-    }
-
     /// Honor loader sampling through a directly prepared open endpoint table.
     pub fn preferred_with_prepared_endpoint(
         dataset: NativeDataset,
@@ -1673,97 +1039,6 @@ impl NativeDatasetConversationSource {
         )
     }
 
-    /// Honor loader sampling policy with caller-supplied compile-time registries.
-    pub fn preferred_with_registries(
-        dataset: NativeDataset,
-        model: impl Into<String>,
-        default_output_tokens: usize,
-        rng_root: RngRoot,
-        samplers: &SamplerRegistry,
-        endpoint_resolver: Arc<dyn EndpointResolver>,
-    ) -> Result<Self> {
-        let endpoint = EndpointConfig {
-            streaming: true,
-            use_server_token_count: true,
-            ..EndpointConfig::default()
-        };
-        Self::preferred_with_endpoint_config_and_registries(
-            dataset,
-            model,
-            default_output_tokens,
-            rng_root,
-            endpoint,
-            samplers,
-            endpoint_resolver,
-        )
-    }
-
-    /// Honor loader sampling policy with caller-selected endpoint configuration.
-    pub fn preferred_with_endpoint_config(
-        dataset: NativeDataset,
-        model: impl Into<String>,
-        default_output_tokens: usize,
-        rng_root: RngRoot,
-        endpoint: EndpointConfig,
-    ) -> Result<Self> {
-        let samplers = SamplerRegistry::with_builtin_strategies()?;
-        Self::preferred_with_endpoint_config_and_registries(
-            dataset,
-            model,
-            default_output_tokens,
-            rng_root,
-            endpoint,
-            &samplers,
-            Arc::new(BuiltinEndpointResolver::default()),
-        )
-    }
-
-    /// Honor loader sampling and endpoint policy from caller-supplied registries.
-    #[allow(clippy::too_many_arguments)]
-    pub fn preferred_with_endpoint_config_and_registries(
-        dataset: NativeDataset,
-        model: impl Into<String>,
-        default_output_tokens: usize,
-        rng_root: RngRoot,
-        endpoint: EndpointConfig,
-        samplers: &SamplerRegistry,
-        endpoint_resolver: Arc<dyn EndpointResolver>,
-    ) -> Result<Self> {
-        let dataset = Arc::new(dataset);
-        let sampler = samplers.create(
-            &dataset.metadata().sampling_strategy,
-            &dataset.metadata().conversations,
-            rng_root,
-        )?;
-        let endpoint = endpoint.validate()?;
-        Self::new(
-            dataset,
-            sampler,
-            ModelEndpoint {
-                primary_model_name: model.into(),
-                endpoint,
-            },
-            endpoint_resolver,
-            Arc::new(EndpointRequestMaterializer),
-            Arc::new(TiktokenTokenizer::builtin()),
-            default_output_tokens,
-        )
-    }
-
-    /// Construct the normal sequential source with all built endpoint adapters.
-    pub fn sequential(
-        dataset: NativeDataset,
-        model: impl Into<String>,
-        default_output_tokens: usize,
-    ) -> Result<Self> {
-        let endpoint = EndpointConfig {
-            streaming: true,
-            use_server_token_count: true,
-            ..EndpointConfig::default()
-        };
-        Self::sequential_with_endpoint_config(dataset, model, default_output_tokens, endpoint)
-    }
-
     /// Construct a sequential source through one directly prepared endpoint.
     pub fn sequential_with_prepared_endpoint(
         dataset: NativeDataset,
@@ -1801,76 +1076,6 @@ impl NativeDatasetConversationSource {
             },
             Arc::new(EndpointRequestMaterializer),
             Arc::new(TiktokenTokenizer::builtin()),
-            default_output_tokens,
-        )
-    }
-
-    /// Construct a sequential source with caller-selected endpoint policy.
-    ///
-    /// Endpoint configuration is part of the ordinary dataset pipeline; callers
-    /// use this for compatibility flags such as legacy chat `max_tokens` without
-    /// rebuilding or intercepting HTTP requests.
-    pub fn sequential_with_endpoint_config(
-        dataset: NativeDataset,
-        model: impl Into<String>,
-        default_output_tokens: usize,
-        endpoint: EndpointConfig,
-    ) -> Result<Self> {
-        Self::sequential_with_endpoint_config_and_resolver(
-            dataset,
-            model,
-            default_output_tokens,
-            endpoint,
-            Arc::new(BuiltinEndpointResolver::default()),
-        )
-    }
-
-    /// Construct a sequential source with injected endpoint registration.
-    pub fn sequential_with_endpoint_config_and_resolver(
-        dataset: NativeDataset,
-        model: impl Into<String>,
-        default_output_tokens: usize,
-        endpoint: EndpointConfig,
-        endpoint_resolver: Arc<dyn EndpointResolver>,
-    ) -> Result<Self> {
-        let dataset = Arc::new(dataset);
-        let sampler = SequentialSampler::from_metadata(&dataset.metadata().conversations)?;
-        let endpoint = endpoint.validate()?;
-        Self::new(
-            dataset,
-            Box::new(sampler),
-            ModelEndpoint {
-                primary_model_name: model.into(),
-                endpoint,
-            },
-            endpoint_resolver,
-            Arc::new(EndpointRequestMaterializer),
-            Arc::new(TiktokenTokenizer::builtin()),
-            default_output_tokens,
-        )
-    }
-
-    /// Construct a source with injected sampler, endpoint registry,
-    /// materializer, and response tokenizer.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        dataset: Arc<NativeDataset>,
-        sampler: Box<dyn Sampler>,
-        model_endpoint: ModelEndpoint,
-        endpoint_resolver: Arc<dyn EndpointResolver>,
-        materializer: Arc<dyn RequestMaterializer>,
-        response_tokenizer: Arc<dyn TextTokenizer>,
-        default_output_tokens: usize,
-    ) -> Result<Self> {
-        Self::new_with_endpoint(
-            dataset,
-            sampler,
-            NativeSessionEndpoint::Legacy(Arc::new(LegacyNativeSessionEndpoint {
-                model_endpoint,
-                endpoint_resolver,
-            })),
-            materializer,
-            response_tokenizer,
             default_output_tokens,
         )
     }
@@ -2013,56 +1218,6 @@ impl ConversationSource for NativeDatasetConversationSource {
     }
 }
 
-/// Synthetic conversation source used when the CLI has no dataset file.
-pub struct SyntheticConversationSource {
-    inner: DatasetConversationSource,
-}
-
-impl SyntheticConversationSource {
-    /// Create one fixed K-turn template from the current online workload knobs.
-    pub fn new(workload: SkeletonWorkload) -> Result<Self> {
-        let turns = (0..workload.turns.max(1))
-            .map(|turn_index| TurnMetadata {
-                timestamp_ms: None,
-                delay_ms: (turn_index > 0)
-                    .then_some(workload.think_time_ms.unwrap_or_default() as f64),
-                trace_hash_ids: None,
-                prompt_text: format!(
-                    "turn {turn_index}: {}",
-                    vec!["lorem"; workload.input_tokens].join(" ")
-                ),
-                input_length: workload.input_tokens,
-                max_output_tokens: workload.output_tokens,
-            })
-            .collect();
-        let dataset = ConversationDataset::new(vec![ConversationMetadata {
-            conversation_id: "synthetic".to_string(),
-            turns,
-        }])?;
-        Ok(Self {
-            inner: DatasetConversationSource::new(dataset),
-        })
-    }
-}
-
-impl ConversationSource for SyntheticConversationSource {
-    fn conversations(&self) -> &[ConversationMetadata] {
-        self.inner.conversations()
-    }
-
-    fn next(&mut self, x_correlation_id: Option<String>) -> Result<SampledSession> {
-        self.inner.next(x_correlation_id)
-    }
-
-    fn session_for(
-        &self,
-        conversation_id: &str,
-        x_correlation_id: String,
-    ) -> Result<SampledSession> {
-        self.inner.session_for(conversation_id, x_correlation_id)
-    }
-}
-
 /// Lock-free-by-serialization counters for a single issuer loop.
 #[derive(Default)]
 pub struct CreditCounter {
@@ -2130,6 +1285,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use crate::dataset::{ComposeConfig, DatasetSource, LoadConfig, LoaderRegistry};
+    use crate::endpoints::ChatEndpoint;
     use crate::rng::RngRoot;
     use serde_json::json;
 
@@ -2198,14 +1354,69 @@ mod tests {
         }
     }
 
-    fn workload(turns: usize) -> SkeletonWorkload {
-        SkeletonWorkload {
-            num_requests: 0,
-            input_tokens: 4,
-            output_tokens: 2,
-            turns,
-            think_time_ms: Some(7),
+    fn prepared_source(
+        dataset: NativeDataset,
+        model: &str,
+        default_output_tokens: usize,
+        endpoint_name: &str,
+    ) -> NativeDatasetConversationSource {
+        let registry = crate::endpoints::EndpointRegistry::builtin().unwrap();
+        let endpoint_id = EndpointId::new(endpoint_name).unwrap();
+        let endpoint = registry
+            .prepare(
+                &endpoint_id,
+                crate::endpoints::RawEndpointConfig {
+                    streaming: true,
+                    use_server_token_count: true,
+                    ..crate::endpoints::RawEndpointConfig::default()
+                },
+            )
+            .unwrap();
+        let mut table = PreparedEndpointTable::new();
+        let key = table.push(endpoint).unwrap();
+        NativeDatasetConversationSource::sequential_with_prepared_endpoint(
+            dataset,
+            model,
+            default_output_tokens,
+            Rc::new(table),
+            PreparedEndpointReference { key, endpoint_id },
+        )
+        .unwrap()
+    }
+
+    fn prepared_chat_source(
+        dataset: NativeDataset,
+        model: &str,
+        default_output_tokens: usize,
+    ) -> NativeDatasetConversationSource {
+        prepared_source(dataset, model, default_output_tokens, "chat")
+    }
+
+    async fn inline_multi_turn_dataset(
+        turns: usize,
+        output_tokens: usize,
+        model: &str,
+    ) -> NativeDataset {
+        let mut turn_objs = Vec::new();
+        for index in 0..turns.max(1) {
+            let mut turn = json!({"text": format!("turn {index}"), "output_length": output_tokens});
+            if index > 0 {
+                turn["delay"] = json!(0);
+            }
+            turn_objs.push(turn);
         }
+        LoaderRegistry::with_builtin_formats()
+            .unwrap()
+            .build_dataset(
+                Some("multi_turn"),
+                &LoadConfig::new(DatasetSource::Inline(
+                    json!([{"session_id":"synthetic","turns": turn_objs}]),
+                )),
+                &ComposeConfig::new(model, RngRoot::new(Some(1))),
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap()
     }
 
     #[test]
@@ -2236,105 +1447,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn synthetic_source_reuses_template_but_mints_session_ids() {
-        let mut source = SyntheticConversationSource::new(workload(3)).unwrap();
-        let a = source.next(None).unwrap().build_first_turn(None).unwrap();
-        let b = source.next(None).unwrap().build_first_turn(None).unwrap();
-        assert_eq!(a.conversation_id, "synthetic");
-        assert_eq!(b.conversation_id, "synthetic");
-        assert_ne!(a.x_correlation_id, b.x_correlation_id);
-        assert_eq!(a.turn_index, 0);
-        assert_eq!(a.num_turns, 3);
-        assert_eq!(a.delay_ms, None);
-        assert_eq!(a.input_length, 4);
-        assert_eq!(a.max_output_tokens, 2);
-        assert_eq!(a.messages.len(), 1);
-    }
-
-    #[test]
-    fn continuation_splices_real_reply_and_carries_timing() {
-        let mut source = SyntheticConversationSource::new(workload(3)).unwrap();
-        let first = source.next(None).unwrap().build_first_turn(None).unwrap();
-        let credit = IssuedCredit::from_turn(0, 0, &first);
-        let next = source
-            .next_turn(
-                &credit,
-                TurnResponse {
-                    text: "server reply".to_string(),
-                    assistant_message: None,
-                    completion_tokens: None,
-                    terminal: ReplayTerminalStatus::Completed,
-                },
-            )
-            .unwrap()
-            .unwrap();
-        assert_eq!(next.x_correlation_id, first.x_correlation_id);
-        assert_eq!(next.turn_index, 1);
-        assert_eq!(next.num_turns, 3);
-        assert_eq!(next.delay_ms, Some(7.0));
-        assert_eq!(
-            next.messages
-                .iter()
-                .map(|message| message.role.as_str())
-                .collect::<Vec<_>>(),
-            vec!["user", "assistant", "user"]
-        );
-        assert_eq!(next.messages[1].content, "server reply");
-    }
-
-    #[test]
-    fn virtual_history_cap_clamps_to_sampled_length() {
-        let mut source = SyntheticConversationSource::new(workload(2)).unwrap();
-        let session = source.next(Some("u-1".to_string())).unwrap();
-        let first = session.build_first_turn(Some(99)).unwrap();
-        assert_eq!(first.num_turns, 2);
-        assert_eq!(first.x_correlation_id, "u-1");
-    }
-
-    #[test]
-    fn jsonl_loader_groups_sessions_and_accepts_trace_aliases() {
-        let input = r#"
-{"session_id":"a","timestamp":1000,"text_input":"hello there","output_length":2}
-{"session_id":"a","delay":25,"input_length":3,"max_tokens":4}
-{"timestamp":1050,"input_length":2,"output_length":1}
-"#;
-        let dataset = ConversationDataset::from_json_or_jsonl(input, 8, 6).unwrap();
-        assert_eq!(dataset.conversations().len(), 2);
-        assert_eq!(dataset.conversations()[0].turns.len(), 2);
-        assert_eq!(
-            dataset.conversations()[0].turns[0].timestamp_ms,
-            Some(1000.0)
-        );
-        assert_eq!(dataset.conversations()[0].turns[1].delay_ms, Some(25.0));
-        assert_eq!(dataset.conversations()[1].conversation_id, "trace-row-2");
-    }
-
-    #[test]
-    fn first_turn_window_rebuilds_only_in_range_conversations() {
-        let dataset = ConversationDataset::from_json_or_jsonl(
-            concat!(
-                "{\"timestamp\":1000,\"input_length\":2}\n",
-                "{\"timestamp\":2000,\"input_length\":2}\n",
-                "{\"timestamp\":3000,\"input_length\":2}\n"
-            ),
-            2,
-            1,
-        )
-        .unwrap();
-        let filtered = dataset
-            .filter_first_turn_window(Some(1500.0), Some(2500.0))
-            .unwrap();
-        assert_eq!(filtered.conversations().len(), 1);
-        assert_eq!(
-            filtered.conversations()[0].turns[0].timestamp_ms,
-            Some(2000.0)
-        );
-    }
-
-    #[test]
-    fn counter_matches_python_root_counting_rules() {
-        let mut source = SyntheticConversationSource::new(workload(2)).unwrap();
+    #[tokio::test]
+    async fn counter_matches_python_root_counting_rules() {
+        let dataset = inline_multi_turn_dataset(2, 2, "model").await;
+        let mut source = prepared_chat_source(dataset, "model", 2);
         let mut counter = CreditCounter::default();
         let stop = StopConfig {
             total_expected_requests: None,
@@ -2402,7 +1518,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let mut source = NativeDatasetConversationSource::sequential(dataset, "model", 8).unwrap();
+        let mut source = prepared_chat_source(dataset, "model", 8);
         let first = source
             .next(Some("runtime-session".into()))
             .unwrap()
@@ -2456,19 +1572,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let mut source =
-            NativeDatasetConversationSource::sequential_with_endpoint_config_and_resolver(
-                dataset,
-                "claude",
-                4,
-                EndpointConfig {
-                    endpoint_type: crate::endpoints::EndpointType::Messages,
-                    streaming: true,
-                    ..EndpointConfig::default()
-                },
-                Arc::new(BuiltinEndpointResolver::default()),
-            )
-            .unwrap();
+        let mut source = prepared_source(dataset, "claude", 4, "messages");
         let first = source.next(None).unwrap().build_first_turn(None).unwrap();
         let assistant = json!({
             "role":"assistant",
@@ -2513,7 +1617,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let mut source = NativeDatasetConversationSource::sequential(dataset, "model", 4).unwrap();
+        let mut source = prepared_chat_source(dataset, "model", 4);
         let turn = source.next(None).unwrap().build_first_turn(None).unwrap();
         assert_eq!(turn.request_body.unwrap(), authored);
         assert!(turn.streaming);
@@ -2562,9 +1666,7 @@ mod tests {
         let turn = source.next(None).unwrap().build_first_turn(None).unwrap();
         let repeated = source.next(None).unwrap().build_first_turn(None).unwrap();
 
-        let TurnEndpoint::Prepared(reference) = turn.endpoint else {
-            panic!("prepared source constructed a legacy endpoint turn")
-        };
+        let TurnEndpoint::Prepared(reference) = turn.endpoint;
         assert_eq!(reference.key, key);
         assert_eq!(reference.endpoint_id, endpoint_id);
         let body: Value = serde_json::from_slice(turn.request_body.as_ref().unwrap()).unwrap();
@@ -2594,10 +1696,30 @@ mod tests {
             built.metadata().default_context_mode,
         )
         .unwrap();
-        let error =
-            NativeDatasetConversationSource::preferred(dataset, "model", 4, RngRoot::new(Some(1)))
-                .err()
-                .unwrap();
+        let registry = crate::endpoints::EndpointRegistry::builtin().unwrap();
+        let endpoint_id = EndpointId::new("chat").unwrap();
+        let endpoint = registry
+            .prepare(
+                &endpoint_id,
+                crate::endpoints::RawEndpointConfig {
+                    streaming: true,
+                    use_server_token_count: true,
+                    ..crate::endpoints::RawEndpointConfig::default()
+                },
+            )
+            .unwrap();
+        let mut table = PreparedEndpointTable::new();
+        let key = table.push(endpoint).unwrap();
+        let error = NativeDatasetConversationSource::preferred_with_prepared_endpoint(
+            dataset,
+            "model",
+            4,
+            RngRoot::new(Some(1)),
+            Rc::new(table),
+            PreparedEndpointReference { key, endpoint_id },
+        )
+        .err()
+        .unwrap();
         assert!(error.to_string().contains("unknown sampler strategy"));
     }
 }

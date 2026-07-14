@@ -12,7 +12,7 @@ a wall clock for live-throughput measurement.  Both are selected through
 there is no separate ``aiperf dynosim`` command and no ``replay_mode`` field.
 
 These models mirror the runner's strict decoder
-(``crates/runner/src/offline_execution.rs`` ``DynosimTransportSpec`` and its
+(``rust/runner/src/offline_execution.rs`` ``DynosimTransportSpec`` and its
 ``deny_unknown_fields`` sub-specs) field-for-field so the projected
 ``transport.config`` object round-trips into the exact Rust schema.  The engine and
 router objects are deliberately left as free-form JSON: they are ``MockEngineArgs``

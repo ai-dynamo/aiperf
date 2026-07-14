@@ -982,11 +982,28 @@ mod tests {
             tokenizer.count("first fixture").unwrap() as u64
         );
         let processor = Rc::new(dataset.record_processor());
+        let endpoint_id = crate::endpoints::EndpointId::new("chat").unwrap();
+        let endpoint = crate::endpoints::EndpointRegistry::builtin()
+            .unwrap()
+            .prepare(
+                &endpoint_id,
+                crate::endpoints::RawEndpointConfig {
+                    streaming: true,
+                    use_server_token_count: true,
+                    ..crate::endpoints::RawEndpointConfig::default()
+                },
+            )
+            .unwrap();
+        let mut table = crate::endpoints::PreparedEndpointTable::new();
+        let key = table.push(endpoint).unwrap();
+        let table = Rc::new(table);
         let source: Box<dyn ConversationSource> = Box::new(
-            NativeDatasetConversationSource::sequential(
+            NativeDatasetConversationSource::sequential_with_prepared_endpoint(
                 dataset.dataset().as_ref().clone(),
                 "fixture-model",
                 16,
+                table.clone(),
+                crate::multiturn::PreparedEndpointReference { key, endpoint_id },
             )
             .unwrap(),
         );
@@ -998,6 +1015,7 @@ mod tests {
             2,
             false,
             processors,
+            table,
         )
         .await
         .unwrap();

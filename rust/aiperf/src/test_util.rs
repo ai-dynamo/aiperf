@@ -30,3 +30,122 @@ pub async fn spawn_mock() -> String {
     });
     format!("http://{addr}")
 }
+
+use crate::multiturn::ConversationSource;
+
+/// A prepared-endpoint table holding the builtin streaming `chat` endpoint at
+/// key 0, matching the endpoint the synthetic/native sources bind. Attach it to
+/// a dispatching [`crate::http::TransportSink`] via `with_prepared_endpoints` so
+/// prepared turns resolve their dense endpoint key.
+pub fn chat_dispatch_table() -> std::rc::Rc<crate::endpoints::PreparedEndpointTable> {
+    use crate::endpoints::{EndpointId, EndpointRegistry, PreparedEndpointTable, RawEndpointConfig};
+    let endpoint = EndpointRegistry::builtin()
+        .unwrap()
+        .prepare(
+            &EndpointId::new("chat").unwrap(),
+            RawEndpointConfig {
+                streaming: true,
+                use_server_token_count: true,
+                ..RawEndpointConfig::default()
+            },
+        )
+        .unwrap();
+    let mut table = PreparedEndpointTable::new();
+    table.push(endpoint).unwrap();
+    std::rc::Rc::new(table)
+}
+
+/// Build a conversation source over the live native dataset + prepared chat
+/// endpoint path from inline `multi_turn` conversation JSON.
+async fn build_prepared_source(
+    conversations: serde_json::Value,
+    model: &str,
+    output_tokens: usize,
+) -> Box<dyn ConversationSource> {
+    use crate::dataset::{
+        ComposeConfig, DatasetSource, LoadConfig, LoaderRegistry, TiktokenTokenizer,
+    };
+    use crate::endpoints::{EndpointId, EndpointRegistry, PreparedEndpointTable, RawEndpointConfig};
+    use crate::multiturn::{NativeDatasetConversationSource, PreparedEndpointReference};
+    use crate::rng::RngRoot;
+    let dataset = LoaderRegistry::with_builtin_formats()
+        .unwrap()
+        .build_dataset(
+            Some("multi_turn"),
+            &LoadConfig::new(DatasetSource::Inline(conversations)),
+            &ComposeConfig::new(model, RngRoot::new(Some(1))),
+            &TiktokenTokenizer::builtin(),
+        )
+        .await
+        .unwrap();
+    let registry = EndpointRegistry::builtin().unwrap();
+    let endpoint_id = EndpointId::new("chat").unwrap();
+    let endpoint = registry
+        .prepare(
+            &endpoint_id,
+            RawEndpointConfig {
+                streaming: true,
+                use_server_token_count: true,
+                ..RawEndpointConfig::default()
+            },
+        )
+        .unwrap();
+    let mut table = PreparedEndpointTable::new();
+    let key = table.push(endpoint).unwrap();
+    Box::new(
+        NativeDatasetConversationSource::sequential_with_prepared_endpoint(
+            dataset,
+            model,
+            output_tokens,
+            std::rc::Rc::new(table),
+            PreparedEndpointReference { key, endpoint_id },
+        )
+        .unwrap(),
+    )
+}
+
+/// Synthetic multi-turn conversation source, replacing the removed synthetic
+/// loader. Each session has `turns` turns of `input_tokens`-word prompts.
+pub async fn synthetic_prepared_source(
+    turns: usize,
+    input_tokens: usize,
+    output_tokens: usize,
+    think_time_ms: Option<u64>,
+    model: &str,
+) -> Box<dyn ConversationSource> {
+    let mut turn_objs = Vec::new();
+    for index in 0..turns.max(1) {
+        let mut turn = serde_json::json!({
+            "text": format!("turn {index}: {}", vec!["lorem"; input_tokens].join(" ")),
+            "input_length": input_tokens,
+            "output_length": output_tokens,
+        });
+        if index > 0 {
+            turn["delay"] = serde_json::json!(think_time_ms.unwrap_or(0));
+        }
+        turn_objs.push(turn);
+    }
+    build_prepared_source(
+        serde_json::json!([{"session_id":"synthetic","turns": turn_objs}]),
+        model,
+        output_tokens,
+    )
+    .await
+}
+
+/// Trace-timestamped single-turn conversation source for fixed-schedule tests.
+pub async fn timestamped_prepared_source(
+    entries: &[(&str, f64)],
+    model: &str,
+) -> Box<dyn ConversationSource> {
+    let convs = entries
+        .iter()
+        .map(|(id, timestamp)| {
+            serde_json::json!({
+                "session_id": id,
+                "turns": [{"text": "hello", "timestamp": timestamp, "input_length": 2, "output_length": 1}],
+            })
+        })
+        .collect::<Vec<_>>();
+    build_prepared_source(serde_json::json!(convs), model, 1).await
+}

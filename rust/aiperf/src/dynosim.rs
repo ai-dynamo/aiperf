@@ -6165,13 +6165,55 @@ mod tests {
 
     #[test]
     fn single_turn_dataset_api_enforces_whole_report_parity() {
-        let source = crate::multiturn::SyntheticConversationSource::new(SkeletonWorkload {
-            num_requests: 1,
-            input_tokens: 9,
-            output_tokens: 3,
-            turns: 1,
-            think_time_ms: None,
-        })
+        use crate::dataset::{
+            ComposeConfig, DatasetSource, LoadConfig, LoaderRegistry, TiktokenTokenizer,
+        };
+        use crate::endpoints::{
+            EndpointId, EndpointRegistry, PreparedEndpointTable, RawEndpointConfig,
+        };
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let dataset = runtime
+            .block_on(async {
+                LoaderRegistry::with_builtin_formats()
+                    .unwrap()
+                    .build_dataset(
+                        Some("single_turn"),
+                        &LoadConfig::new(DatasetSource::Inline(serde_json::json!([{
+                            "text": "hello there general",
+                            "input_length": 9,
+                            "output_length": 3
+                        }]))),
+                        &ComposeConfig::new("model", RngRoot::new(Some(1))),
+                        &TiktokenTokenizer::builtin(),
+                    )
+                    .await
+            })
+            .unwrap();
+        let endpoint_id = EndpointId::new("chat").unwrap();
+        let endpoint = EndpointRegistry::builtin()
+            .unwrap()
+            .prepare(
+                &endpoint_id,
+                RawEndpointConfig {
+                    streaming: true,
+                    use_server_token_count: true,
+                    ..RawEndpointConfig::default()
+                },
+            )
+            .unwrap();
+        let mut table = PreparedEndpointTable::new();
+        let key = table.push(endpoint).unwrap();
+        let source = crate::multiturn::NativeDatasetConversationSource::sequential_with_prepared_endpoint(
+            dataset,
+            "model",
+            3,
+            Rc::new(table),
+            crate::multiturn::PreparedEndpointReference { key, endpoint_id },
+        )
         .unwrap();
         let report = run_single_turn_dataset_offline(
             OfflineEngineConfig {

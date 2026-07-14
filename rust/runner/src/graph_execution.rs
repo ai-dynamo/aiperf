@@ -1092,9 +1092,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(dispatch.input_tokens, 4);
-        let PreparedHttpEndpoint::Prepared(reference) = dispatch.endpoint else {
-            panic!("protocol-v2 graph dispatch must retain a prepared endpoint reference")
-        };
+        let PreparedHttpEndpoint::Prepared(reference) = dispatch.endpoint;
         assert_eq!(reference.endpoint_id.as_str(), "chat");
         assert_eq!(reference.key.index(), 1);
     }

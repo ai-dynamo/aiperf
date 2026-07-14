@@ -1,4 +1,4 @@
-// crates/transport-http/tests/request.rs
+// rust/transport-http/tests/request.rs
 mod common;
 use common::{MockServer, chat_body, run_local};
 

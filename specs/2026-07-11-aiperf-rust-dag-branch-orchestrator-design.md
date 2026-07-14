@@ -14,7 +14,7 @@ SPDX-License-Identifier: Apache-2.0
 `_branch_orchestrator_logging.py`; plus the collaborators it drives —
 `src/aiperf/credit/sticky_router.py` (`StickyCreditRouter`), `common/models/branch.py`
 (`ConversationBranchInfo`). Reconciled against the **built** Rust graph dataflow engine —
-`crates/aiperf-graph/src/{executor.rs,channel_store.rs,scheduler.rs,model.rs,runtime.rs,reducers.rs}`.
+`rust/aiperf-graph/src/{executor.rs,channel_store.rs,scheduler.rs,model.rs,runtime.rs,reducers.rs}`.
 Companions: `2026-07-11-aiperf-rust-request-rate-multiturn-design.md` (the credit issuer; DAG children
 dispatched DIRECTLY, bypassing session-slot acquisition + the continuation queue — `agent_depth>0`,
 inherit parent's session slot), `2026-07-09-graph-ir-rust-port-design.md` (the dataflow port),
@@ -30,7 +30,7 @@ top of a fire-and-forget multiprocess credit protocol, the dependency semantics 
 expresses *directly*. Fan-out (spawn children on a parent turn), fan-in (a parent turn gated until N
 children complete), sticky routing (keep a session's turns on one worker), and the join refcount are all
 credit-protocol reconstructions of a **firing gate on an input channel** — which is exactly what
-`crates/aiperf-graph/src/executor.rs` + `channel_store.rs` already implement natively, running under one
+`rust/aiperf-graph/src/executor.rs` + `channel_store.rs` already implement natively, running under one
 single-threaded `LocalSet` per trace (`runtime.rs:5-13`), deterministic under `SimClock` (`drive_sim`,
 `runtime.rs:107`).
 

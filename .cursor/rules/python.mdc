@@ -10,9 +10,9 @@ SPDX-License-Identifier: Apache-2.0
 
 # AIPerf
 
-> ✅ **CANONICAL PRODUCT ARCHITECTURE.** The Python `aiperf` command owns the only human-facing CLI, Config v2, outer orchestration, and presentation. A fresh `aiperf-runner` child is the **only Rust executable on the product execution path** and owns exactly one run's high-performance path; `aiperf-mock-rs` is a standalone developer/test inference target, not an orchestrated backend process. The `crates/aiperf` package is a runtime library with no binary target. There is no ZMQ, service mesh, multiprocess credit protocol, mmap dataset cache, or `plugins.yaml` on the native path. The `aiperf-rs` and `~/projects/aiperf-rust` trees remain **DEPRECATED**. Design record: [`specs/`](specs/); start-here index: [`llms.txt`](llms.txt).
+> ✅ **CANONICAL PRODUCT ARCHITECTURE.** The Python `aiperf` command owns the only human-facing CLI, Config v2, outer orchestration, and presentation. A fresh `aiperf-runner` child is the **only Rust executable on the product execution path** and owns exactly one run's high-performance path; `aiperf-mock-rs` is a standalone developer/test inference target, not an orchestrated backend process. The `rust/aiperf` package is a runtime library with no binary target. There is no ZMQ, service mesh, multiprocess credit protocol, mmap dataset cache, or `plugins.yaml` on the native path. The `aiperf-rs` and `~/projects/aiperf-rust` trees remain **DEPRECATED**. Design record: [`specs/`](specs/); start-here index: [`llms.txt`](llms.txt).
 >
-> Rust execution truth is in `crates/`; canonical Python frontend truth includes `src/aiperf/config/`, `src/aiperf/orchestrator/`, and `src/aiperf/cli_runner/`. Other inherited Python controller/service code is legacy, not an alternate hot path.
+> Rust execution truth is in `rust/`; canonical Python frontend truth includes `src/aiperf/config/`, `src/aiperf/orchestrator/`, and `src/aiperf/cli_runner/`. Other inherited Python controller/service code is legacy, not an alternate hot path.
 
 ## What this is
 
@@ -51,7 +51,7 @@ Ground every claim in `crate/src/file.rs`, not the specs: specs are design inten
 
 When something is designed-but-not-built, this file says so. Do not assume a spec feature exists in the code.
 
-## Crate workspace (`crates/`)
+## Crate workspace (`rust/`)
 
 Workspace: `edition = "2024"`, `resolver = "3"`. Four crates; 16 former `aiperf-*` library crates are now modules of `aiperf` (see §Module organization below).
 
@@ -64,7 +64,7 @@ Workspace: `edition = "2024"`, `resolver = "3"`. Four crates; 16 former `aiperf-
 
 Dependency direction: `aiperf-runner` → {`aiperf`, `loadgen-core`}; `aiperf` → {`loadgen-core`} plus optional `dynamo-mocker` only under `dynosim`; `aiperf-mock-rs` → {`aiperf`}. The runner and mock-rs do not depend on each other; real-network integration tests spawn the mock binary as an ordinary target.
 
-## Module organization (`crates/aiperf/src/`)
+## Module organization (`rust/aiperf/src/`)
 
 Sixteen former `aiperf-*` library crates are now `aiperf::<module>::` namespaces. All inter-module imports use `crate::<module>::` within `aiperf`; runner and mock-rs use `aiperf::<module>::`. Five modules use a `_core` or `transport_` prefix to avoid name conflicts (`metrics_core`, `adaptive_core`, `accuracy_core`, `transport_http`, `transport_grpc`). Full module table with purposes and key files: [`docs/module-organization.md`](docs/module-organization.md).
 
@@ -150,7 +150,7 @@ Unit tests use in-process axum endpoints. `tests/scheduled_real_mock.rs` retains
 
 ## Design specs (`specs/`)
 
-Read for intent; verify against `crates/` for reality. Full index with status and one-liners: [`specs/README.md`](specs/README.md).
+Read for intent; verify against `rust/` for reality. Full index with status and one-liners: [`specs/README.md`](specs/README.md).
 
 ## Adding things
 

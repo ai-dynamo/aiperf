@@ -3371,7 +3371,7 @@ record of the original intent.
 
 Removed:
 
-- The `aiperf-telemetry-archive` crate in its entirety (`crates/telemetry-archive/`).
+- The `aiperf-telemetry-archive` crate in its entirety (`rust/telemetry-archive/`).
 - The runner integration modules `telemetry_archive_components.rs`,
   `telemetry_archive_owner.rs`, `telemetry_attachment.rs`, `telemetry_execution.rs`,
   `telemetry_operation.rs`, `telemetry_pipeline.rs`, `telemetry_source.rs`, and
@@ -3381,7 +3381,7 @@ Removed:
 - The Python `aiperf watch` command (`src/aiperf/cli_commands/watch.py`), its
   test, and its CLI registration.
 - The additive native-v2 telemetry-archive report block in
-  `crates/metrics/src/report.rs` (`ReportTelemetryArchive*`, the loss-ledger and
+  `rust/metrics/src/report.rs` (`ReportTelemetryArchive*`, the loss-ledger and
   boundary report types, `TELEMETRY_ARCHIVE_REPORT_SCHEMA_VERSION`, and the
   `RunOutcome`/`NativeReport` `telemetry_archive` fields).
 
@@ -3406,7 +3406,7 @@ append-only historical record.
 
 Restored to the state before removal:
 
-- The `aiperf-telemetry-archive` crate in its entirety (`crates/telemetry-archive/`),
+- The `aiperf-telemetry-archive` crate in its entirety (`rust/telemetry-archive/`),
   recovered verbatim from the pre-removal blob. Its 205 unit tests pass.
 - The runner integration modules `telemetry_archive_components.rs`,
   `telemetry_archive_owner.rs`, `telemetry_attachment.rs`, `telemetry_execution.rs`,
@@ -3417,7 +3417,7 @@ Restored to the state before removal:
 - The Python `aiperf watch` command (`src/aiperf/cli_commands/watch.py`), its test
   (5/5 passing), and its CLI registration in `src/aiperf/cli.py`.
 - The additive native-v2 telemetry-archive report block in
-  `crates/metrics/src/report.rs` (`ReportTelemetryArchive*`, the loss-ledger and
+  `rust/metrics/src/report.rs` (`ReportTelemetryArchive*`, the loss-ledger and
   boundary report types, and `TELEMETRY_ARCHIVE_REPORT_SCHEMA_VERSION`).
 
 Reconciliation against intervening refactors: the local `LocalCancellationSignal`
@@ -3436,8 +3436,8 @@ object-store sync, query surfaces) was over-engineered for the product's needs,
 and its `aiperf-prometheus` strict parser dependency stood in the way of a
 slimmer server-telemetry ("tachometer") pipeline. Deleted:
 
-- The `aiperf-telemetry-archive` crate (`crates/telemetry-archive/`) in full.
-- The `aiperf-prometheus` crate (`crates/prometheus/`) in full — it had no
+- The `aiperf-telemetry-archive` crate (`rust/telemetry-archive/`) in full.
+- The `aiperf-prometheus` crate (`rust/prometheus/`) in full — it had no
   remaining consumer once `aiperf-server-metrics` re-embedded its own parser and
   the archive was gone.
 - The runner integration modules (`telemetry_archive_components.rs`,
@@ -3450,7 +3450,7 @@ slimmer server-telemetry ("tachometer") pipeline. Deleted:
   `http + telemetry_watch`.
 - The Python `aiperf watch` command (`src/aiperf/cli_commands/watch.py`), its
   test, and its CLI registration in `src/aiperf/cli.py`.
-- The native-v2 telemetry-archive report block in `crates/metrics/src/report.rs`
+- The native-v2 telemetry-archive report block in `rust/metrics/src/report.rs`
   (`ReportTelemetryArchive*`, loss-ledger/boundary report types, and
   `TELEMETRY_ARCHIVE_REPORT_SCHEMA_VERSION`) plus the two archive golden fixtures.
 

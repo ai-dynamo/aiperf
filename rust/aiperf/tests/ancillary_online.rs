@@ -11,8 +11,6 @@ use aiperf::ancillary::AncillaryTimingConfig;
 use aiperf::clock::{Clock, RealClock};
 use aiperf::fixed_schedule::FixedScheduleConfig;
 use aiperf::http::{HttpRequest, TransportSink};
-use aiperf::multiturn::{ConversationDataset, DatasetConversationSource};
-use aiperf::run::run_fixed_schedule_online_with_ancillary;
 use aiperf::transport_http::config::ClientConfig;
 use aiperf::transport_http::models::{ErrorKind, RequestConfig};
 use aiperf::transport_http::transport::http_transport::HttpTransport;
@@ -23,6 +21,8 @@ use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::observer::CollectorObserver;
 use loadgen_core::sink::RequestObserver;
 use uuid::Uuid;
+
+mod common;
 
 const SSE: &str = concat!(
     "data: {\"choices\":[{\"delta\":{\"content\":\"x\"},\"finish_reason\":null}]}\n\n",
@@ -55,27 +55,23 @@ async fn round_robin_resolves_to_real_endpoints_and_keeps_sessions_sticky() {
         .run_until(async {
             let (first_url, first_count) = spawn_counting_endpoint().await;
             let (second_url, second_count) = spawn_counting_endpoint().await;
-            let source = Box::new(DatasetConversationSource::new(
-                ConversationDataset::from_json_or_jsonl(
-                    r#"{
-                      "conversations": [
-                        {"conversation_id":"a","turns":[
-                          {"timestamp_ms":0,"input_length":1,"max_output_tokens":1},
-                          {"delay_ms":1,"input_length":1,"max_output_tokens":1}
-                        ]},
-                        {"conversation_id":"b","turns":[
-                          {"timestamp_ms":0,"input_length":1,"max_output_tokens":1},
-                          {"delay_ms":1,"input_length":1,"max_output_tokens":1}
-                        ]}
-                      ]
-                    }"#,
-                    1,
-                    1,
-                )
-                .unwrap(),
-            ));
+            let source = common::prepared_source_from_conversations(
+                serde_json::json!([
+                    {"session_id":"a","turns":[
+                        {"text":"x","timestamp":0,"input_length":1,"output_length":1},
+                        {"text":"x","delay":1,"input_length":1,"output_length":1}
+                    ]},
+                    {"session_id":"b","turns":[
+                        {"text":"x","timestamp":0,"input_length":1,"output_length":1},
+                        {"text":"x","delay":1,"input_length":1,"output_length":1}
+                    ]}
+                ]),
+                "model",
+                1,
+            )
+            .await;
 
-            let report = run_fixed_schedule_online_with_ancillary(
+            let report = common::run_fixed_schedule_online_with_ancillary(
                 format!("{first_url},{second_url}"),
                 "model".into(),
                 source,

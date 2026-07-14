@@ -22,7 +22,7 @@ observer.
 
 ### 1.1 The buffer-and-replay machinery
 
-`crates/aiperf-runner/src/turn_execution.rs`:
+`rust/aiperf-runner/src/turn_execution.rs`:
 
 - `BufferedObserver` (lines 164–223): a `RequestObserver` whose `on_admit` /
   `on_token` / `on_classified_token` / `on_usage` / `on_endpoint_metrics` /
@@ -77,13 +77,13 @@ C (regression plan) must be extended to run **both** a long-output and a
 short-output/usage-only workload so a request-bound ceiling is distinguishable
 from a token-bound one; a single ratio floor at N=4 cannot tell them apart.
 
-The gRPC path has an identical twin: `crates/aiperf-runner/src/grpc_turn_execution.rs`
+The gRPC path has an identical twin: `rust/aiperf-runner/src/grpc_turn_execution.rs`
 `BufferedObserver` (lines 156–204) and replay loop (lines 376–378).
 
 ### 1.2 Who the single coordinator observer actually is (runner product path)
 
 The runner product path does **not** use the `ScheduledRuntime` observer. In
-`crates/aiperf-runner/src/execute.rs`, `ConfiguredDispatcher::dispatch_turn`
+`rust/aiperf-runner/src/execute.rs`, `ConfiguredDispatcher::dispatch_turn`
 (lines 3268–3287) **ignores** the `ScheduledRuntime`-supplied `_observer`
 (line 3271) and feeds the backend `self.capture.observer` instead. The comment
 at lines 3276–3282 is explicit:
@@ -102,7 +102,7 @@ replayed onto this one observer. **This single observer is the runner ceiling.**
 
 ### 1.3 The reference design that already scales — graph bench
 
-`crates/aiperf-graph/src/transport_bench.rs` keeps a **per-worker**
+`rust/aiperf-graph/src/transport_bench.rs` keeps a **per-worker**
 `MetricsAccumulator` and merges once at the thread join (lines 385–395):
 
 ```rust
@@ -115,7 +115,7 @@ for worker in workers {
 let native_metrics = merged.native.summarize();
 ```
 
-`crates/aiperf-runner/src/graph_execution.rs` builds one `NativeMetricsObserver`
+`rust/aiperf-runner/src/graph_execution.rs` builds one `NativeMetricsObserver`
 per graph worker and registers metadata worker-locally
 (`RunnerGraphSink`, lines 787–805). **The scheduled path is the last consumer
 still routing every token through a single coordinator observer.**
@@ -252,7 +252,7 @@ the regression matrix must add a gRPC parity row (currently absent).
 
 ### 3.1 Worker command / reply — delete the event buffer
 
-`crates/aiperf-runner/src/turn_execution.rs`:
+`rust/aiperf-runner/src/turn_execution.rs`:
 
 - **Delete** `ObserverEvent` (lines 113–162), `BufferedObserver`
   (lines 164–223), and `WorkerReply::events` (line 227). `execute_worker_command`
@@ -291,13 +291,13 @@ the regression matrix must add a gRPC parity row (currently absent).
 
 ### 3.2 gRPC twin — mirror the change
 
-`crates/aiperf-runner/src/grpc_turn_execution.rs`: delete `ObserverEvent`
+`rust/aiperf-runner/src/grpc_turn_execution.rs`: delete `ObserverEvent`
 (105–154), `BufferedObserver` (156–204), `WorkerReply::events` (210), replay
 loop (376–378); apply the identical worker-local observer + drain seam.
 
 ### 3.3 Runner capture — the real product surface
 
-`crates/aiperf-runner/src/execute.rs`:
+`rust/aiperf-runner/src/execute.rs`:
 
 - `RunCapture` (3067–3111) stops owning a single `NativeMetricsObserver`. Its
   responsibilities split:
@@ -397,7 +397,7 @@ loop (376–378); apply the identical worker-local observer + drain seam.
 
 ### 3.4 Library scheduled path (non-runner consumers)
 
-`crates/aiperf/src/scheduled.rs`:
+`rust/aiperf/src/scheduled.rs`:
 
 - `ScheduledRuntime` builds one `ObserverTee` of `CollectorObserver` +
   `NativeMetricsObserver` (lines 482–486) and passes `runtime.observer`
@@ -410,7 +410,7 @@ loop (376–378); apply the identical worker-local observer + drain seam.
   reductions. Under worker-local it instead **merges the per-worker drained
   accumulators** then summarizes.
 
-`crates/aiperf/src/phase_runtime.rs`:
+`rust/aiperf/src/phase_runtime.rs`:
 
 - `run_scheduled_phases_with_aggregate` (592–610) and `_deferred` (617–643)
   attach a whole-run `CollectorObserver` as an `additional_observer`. Per-phase
@@ -419,11 +419,11 @@ loop (376–378); apply the identical worker-local observer + drain seam.
 
 ### 3.5 Merge primitives (already built — reused as-is)
 
-- `MetricsAccumulator::merge` — `crates/aiperf-metrics/src/accumulator.rs:485–514`.
+- `MetricsAccumulator::merge` — `rust/aiperf-metrics/src/accumulator.rs:485–514`.
 - `MetricsMergeError` — same file, 54–79.
-- `ColumnStore::append_store` — `crates/aiperf-metrics/src/store.rs:569–656`
+- `ColumnStore::append_store` — `rust/aiperf-metrics/src/store.rs:569–656`
   (dense precondition asserted at 575–578).
-- `NativeMetricsFinalizer` (Send, plain data) — `crates/aiperf/src/metrics.rs:214–223`;
+- `NativeMetricsFinalizer` (Send, plain data) — `rust/aiperf/src/metrics.rs:214–223`;
   `take_finalizer_at` 356–363; `finish`/`finish_with_records` 404–442.
 - Reference merge call: `transport_bench.rs:385–395`.
 

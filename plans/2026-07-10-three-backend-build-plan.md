@@ -30,7 +30,7 @@ native co-observed data.
 
 ## Ownership split
 
-- **aiperf side** (`crates/`): Phases 0, 1, 4, 5, 6.
+- **aiperf side** (`rust/`): Phases 0, 1, 4, 5, 6.
 - **dynamo side** (`lib/mocker`, base `f553c46a`): Phases 2, 3 — these are "conform
   the mocker to the engine-boundary spec you already wrote"; #2/#3 surface primitives
   that already exist, #1 is the one real signature change.

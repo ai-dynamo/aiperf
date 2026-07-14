@@ -346,7 +346,7 @@ supplies the simulated hardware/model when offline.
 ## Addendum — 2026-07-11
 
 The `lib/aiperf` + dynamo `lib/mocker` framing above describes the historical
-engine-boundary design lineage. Current AIPerf lives under `crates/`; its realized
+engine-boundary design lineage. Current AIPerf lives under `rust/`; its realized
 seams are `aiperf-clock::Clock` and `loadgen-core::{RequestSink<R>, RequestObserver,
 Dispatchable}`. The PR2.5-era split HTTP clock was already removed: the CLI and graph
 benchmark both use the Clock-injected `aiperf-transport-http` hyper client.

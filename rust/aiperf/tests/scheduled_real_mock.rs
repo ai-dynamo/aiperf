@@ -8,13 +8,11 @@ use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use aiperf::fixed_schedule::FixedScheduleConfig;
-use aiperf::multiturn::{
-    ConversationDataset, ConversationSource, DatasetConversationSource, SyntheticConversationSource,
-};
-use aiperf::run::{run_fixed_schedule_online, run_user_centric_online};
+use aiperf::multiturn::ConversationSource;
 use aiperf::timing::StopConfig;
 use aiperf::user_centric::UserCentricConfig;
-use aiperf::workload::SkeletonWorkload;
+
+mod common;
 
 struct RealMock {
     child: Child,
@@ -142,26 +140,22 @@ fn both_scheduled_strategies_match_real_mock_timing() {
         return;
     };
 
-    let fixed_dataset = ConversationDataset::from_json_or_jsonl(
-        r#"{
-          "conversations": [
-            {"conversation_id":"a","turns":[
-              {"timestamp_ms":0,"prompt_text":"a0","input_length":1,"max_output_tokens":2},
-              {"timestamp_ms":140,"prompt_text":"a1","input_length":1,"max_output_tokens":2}
-            ]},
-            {"conversation_id":"b","turns":[
-              {"timestamp_ms":60,"prompt_text":"b0","input_length":1,"max_output_tokens":2},
-              {"delay_ms":30,"prompt_text":"b1","input_length":1,"max_output_tokens":2}
-            ]}
-          ]
-        }"#,
-        1,
-        2,
-    )
-    .unwrap();
     let fixed_source: Box<dyn ConversationSource> =
-        Box::new(DatasetConversationSource::new(fixed_dataset));
-    let fixed = run_local(run_fixed_schedule_online(
+        run_local(common::prepared_source_from_conversations(
+            serde_json::json!([
+                {"session_id":"a","turns":[
+                    {"timestamp":0,"text":"a0","input_length":1,"output_length":2},
+                    {"timestamp":140,"text":"a1","input_length":1,"output_length":2}
+                ]},
+                {"session_id":"b","turns":[
+                    {"timestamp":60,"text":"b0","input_length":1,"output_length":2},
+                    {"delay":30,"text":"b1","input_length":1,"output_length":2}
+                ]}
+            ]),
+            "model",
+            2,
+        ));
+    let fixed = run_local(common::run_fixed_schedule_online(
         mock.base_url.clone(),
         "model".to_string(),
         fixed_source,
@@ -194,17 +188,9 @@ fn both_scheduled_strategies_match_real_mock_timing() {
         "relative delay must be anchored to response terminal"
     );
 
-    let user_source: Box<dyn ConversationSource> = Box::new(
-        SyntheticConversationSource::new(SkeletonWorkload {
-            num_requests: 0,
-            input_tokens: 2,
-            output_tokens: 2,
-            turns: 3,
-            think_time_ms: None,
-        })
-        .unwrap(),
-    );
-    let user = run_local(run_user_centric_online(
+    let user_source: Box<dyn ConversationSource> =
+        run_local(common::synthetic_prepared_source(3, 2, 2, None, "model"));
+    let user = run_local(common::run_user_centric_online(
         mock.base_url.clone(),
         "model".to_string(),
         user_source,

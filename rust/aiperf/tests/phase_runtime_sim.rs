@@ -13,9 +13,7 @@ use std::task::{Context, Poll, Wake, Waker};
 
 use aiperf::clock::{Clock, sim_clock::SimClock};
 use aiperf::metrics_core::HttpTrace;
-use aiperf::multiturn::{
-    ConversationSource, IssuedCredit, SyntheticConversationSource, TurnToSend,
-};
+use aiperf::multiturn::{ConversationSource, IssuedCredit, TurnToSend};
 use aiperf::phase_runtime::{
     RampScheduledPhaseController, ScheduledPhaseController, ScheduledPhasePlan,
     ScheduledPhaseResources, SlotPoolPhaseResources, run_scheduled_phases,
@@ -28,11 +26,12 @@ use aiperf::timing::{
     GracePeriod, LinearRamp, PhaseBranchStats, PhaseConfig, PhaseKind, PhaseObserver, PhaseStats,
     RampDriver, RamperConfig, SlotPool, StopConfig,
 };
-use aiperf::workload::SkeletonWorkload;
 use async_trait::async_trait;
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::RequestObserver;
 use tokio::task::LocalSet;
+
+mod common;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum PhaseEvent {
@@ -294,16 +293,11 @@ fn prepared_ramps_apply_before_issuance_and_stop_at_sending_handoff() {
 }
 
 fn one_request_workload() -> Rc<dyn Workload> {
-    let source: Box<dyn ConversationSource> = Box::new(
-        SyntheticConversationSource::new(SkeletonWorkload {
-            num_requests: 1,
-            input_tokens: 4,
-            output_tokens: 1,
-            turns: 1,
-            think_time_ms: None,
-        })
-        .unwrap(),
-    );
+    let source = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(common::synthetic_prepared_source(1, 4, 1, None, "model"));
     Rc::new(SingleTurnDatasetWorkload::new(source, 1).unwrap())
 }
 
@@ -341,16 +335,11 @@ impl Workload for SharedSlotWorkload {
 }
 
 fn shared_slot_workload(count: usize, slots: Rc<SlotPool>) -> Rc<dyn Workload> {
-    let source: Box<dyn ConversationSource> = Box::new(
-        SyntheticConversationSource::new(SkeletonWorkload {
-            num_requests: count,
-            input_tokens: 4,
-            output_tokens: 1,
-            turns: 1,
-            think_time_ms: None,
-        })
-        .unwrap(),
-    );
+    let source = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(common::synthetic_prepared_source(1, 4, 1, None, "model"));
     Rc::new(SharedSlotWorkload {
         conversations: RefCell::new(source),
         count,

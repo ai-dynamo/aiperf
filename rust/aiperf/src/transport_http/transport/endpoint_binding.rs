@@ -16,8 +16,8 @@ use std::task::{Context, Poll};
 
 use crate::clock::Clock;
 use crate::endpoints::{
-    Endpoint, EndpointConfig, EndpointDescriptor, PreparedEndpoint, RawEndpointConfig,
-    RequestContentType, ServerResponse,
+    EndpointConfig, EndpointDescriptor, PreparedEndpoint, RawEndpointConfig, RequestContentType,
+    ServerResponse,
 };
 use bytes::Bytes;
 use serde_json::Value;
@@ -402,23 +402,6 @@ pub struct MetadataHttpEndpointBinding<'a, C: HttpEndpointConfigView + ?Sized = 
     model_name: &'a str,
 }
 
-impl<'a> MetadataHttpEndpointBinding<'a, EndpointConfig> {
-    /// Bind one endpoint and effective configuration to the available HTTP targets.
-    pub fn new(
-        endpoint: &dyn Endpoint,
-        config: &'a EndpointConfig,
-        default_base_urls: &'a [String],
-        model_name: &'a str,
-    ) -> Self {
-        Self {
-            descriptor: endpoint.descriptor(),
-            config,
-            default_base_urls,
-            model_name,
-        }
-    }
-}
-
 impl<'a> MetadataHttpEndpointBinding<'a, RawEndpointConfig> {
     /// Bind a worker-local prepared endpoint without reconstructing a legacy
     /// enum/configuration pair.
@@ -592,8 +575,18 @@ fn seconds_to_ns(seconds: f64, field: &str) -> Result<i64, HttpEndpointBindingEr
 mod tests {
     use super::*;
     use crate::clock::SimClock;
-    use crate::endpoints::{ChatEndpoint, ImageEditEndpoint};
     use crate::transport_http::models::SseMessage;
+
+    /// Prepare a builtin endpoint by its open ID for the prepared HTTP binding.
+    fn prepared(endpoint_name: &str) -> Box<dyn PreparedEndpoint> {
+        crate::endpoints::EndpointRegistry::builtin()
+            .unwrap()
+            .prepare(
+                &crate::endpoints::EndpointId::new(endpoint_name).unwrap(),
+                RawEndpointConfig::default(),
+            )
+            .unwrap()
+    }
 
     fn endpoint_request(body: Bytes) -> HttpEndpointRequest {
         HttpEndpointRequest {
@@ -637,10 +630,10 @@ mod tests {
 
     #[test]
     fn endpoint_path_join_collapses_v1_and_full_suffix_overlap() {
-        let config = EndpointConfig::default();
+        let chat = prepared("chat");
         let v1_base = vec!["http://host/v1".to_string()];
         let binding =
-            MetadataHttpEndpointBinding::new(&ChatEndpoint, &config, &v1_base, "fixture-model");
+            MetadataHttpEndpointBinding::from_prepared(chat.as_ref(), &v1_base, "fixture-model");
         assert_eq!(
             binding
                 .endpoint_url(Some("/v1/embeddings"), false, None)
@@ -650,7 +643,7 @@ mod tests {
 
         let full_base = vec!["http://host/v1/images/generations".to_string()];
         let binding =
-            MetadataHttpEndpointBinding::new(&ChatEndpoint, &config, &full_base, "fixture-model");
+            MetadataHttpEndpointBinding::from_prepared(chat.as_ref(), &full_base, "fixture-model");
         assert_eq!(
             binding
                 .endpoint_url(Some("/v1/images/generations"), false, None)
@@ -661,10 +654,10 @@ mod tests {
 
     #[test]
     fn endpoint_path_templates_expand_model_name_before_url_joining() {
-        let config = EndpointConfig::default();
+        let chat = prepared("chat");
         let base_urls = vec!["http://host/v1".to_string()];
         let binding =
-            MetadataHttpEndpointBinding::new(&ChatEndpoint, &config, &base_urls, "sklearn-iris");
+            MetadataHttpEndpointBinding::from_prepared(chat.as_ref(), &base_urls, "sklearn-iris");
         assert_eq!(
             binding
                 .endpoint_url(Some("/v1/models/{model_name}:predict"), false, None)
@@ -690,37 +683,31 @@ mod tests {
             clock,
             crate::transport_http::config::ClientConfig::default(),
         );
-        let config = EndpointConfig::default();
         let base_urls = vec!["http://host/v1".to_string()];
+        let chat = prepared("chat");
         let binding =
-            MetadataHttpEndpointBinding::new(&ChatEndpoint, &config, &base_urls, "fixture-model");
+            MetadataHttpEndpointBinding::from_prepared(chat.as_ref(), &base_urls, "fixture-model");
         let body = Bytes::from_static(br#"{"model":"m","messages":[]}"#);
-        let prepared = prepare_request(&binding, &transport, endpoint_request(body.clone()))
+        let request = prepare_request(&binding, &transport, endpoint_request(body.clone()))
             .await
             .unwrap();
-        assert_eq!(prepared.canonical_body, body);
-        assert_eq!(prepared.wire_body, body);
-        assert_eq!(
-            prepared.request_config.url,
-            "http://host/v1/chat/completions"
-        );
+        assert_eq!(request.canonical_body, body);
+        assert_eq!(request.wire_body, body);
+        assert_eq!(request.request_config.url, "http://host/v1/chat/completions");
 
-        let binding = MetadataHttpEndpointBinding::new(
-            &ImageEditEndpoint,
-            &config,
-            &base_urls,
-            "fixture-model",
-        );
+        let image = prepared("image_edit");
+        let binding =
+            MetadataHttpEndpointBinding::from_prepared(image.as_ref(), &base_urls, "fixture-model");
         let body = Bytes::from_static(
             br#"{"prompt":"edit","image":{"b64_data":"aGVsbG8=","filename":"in.txt","content_type":"text/plain"}}"#,
         );
-        let prepared = prepare_request(&binding, &transport, endpoint_request(body.clone()))
+        let request = prepare_request(&binding, &transport, endpoint_request(body.clone()))
             .await
             .unwrap();
-        assert_eq!(prepared.canonical_body, body);
-        assert_ne!(prepared.wire_body, body);
+        assert_eq!(request.canonical_body, body);
+        assert_ne!(request.wire_body, body);
         assert!(
-            prepared.request_config.headers["Content-Type"]
+            request.request_config.headers["Content-Type"]
                 .starts_with("multipart/form-data; boundary=")
         );
     }

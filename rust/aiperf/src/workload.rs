@@ -48,39 +48,4 @@ impl SkeletonWorkload {
             url_index: None,
         }
     }
-
-    /// Materialize `num_requests` requests at once (used by tests).
-    pub fn generate(&self) -> Vec<HttpRequest> {
-        (0..self.num_requests)
-            .map(|_| self.make_request())
-            .collect()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn generates_requested_count_with_text() {
-        let wl = SkeletonWorkload {
-            num_requests: 3,
-            input_tokens: 10,
-            output_tokens: 5,
-            turns: 1,
-            think_time_ms: None,
-        };
-        let reqs = wl.generate();
-        assert_eq!(reqs.len(), 3);
-        assert_eq!(reqs[0].max_output_tokens, 5);
-        assert!(
-            reqs[0]
-                .prompt_text
-                .as_ref()
-                .unwrap()
-                .split_whitespace()
-                .count()
-                >= 8
-        );
-    }
 }

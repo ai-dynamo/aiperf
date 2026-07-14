@@ -22,22 +22,14 @@ def _binary(tmp_path: Path) -> Path:
     return binary
 
 
-def _capabilities(binary: Path, *, offline: bool) -> dict[str, object]:
-    pairs = (
-        [["dynamo_offline", "graph"], ["dynamo_offline", "scheduled"]]
-        if offline
-        else []
-    )
-    transports = (
-        [{"id": "dynamo_offline"}, {"id": "http"}]
-        if offline
-        else [{"id": "http"}]
-    )
+def _capabilities(*, offline: bool) -> dict[str, object]:
+    transport: dict[str, object] = {"http": {}}
+    if offline:
+        transport["dynosim_offline"] = {}
     return {
-        "event": "runner_capabilities",
-        "distribution_id": runner_release_input._distribution_id(binary),
-        "supported_pairs": pairs,
-        "transports": transports,
+        "schema_version": "2",
+        "endpoint": {"chat": {}},
+        "transport": transport,
     }
 
 
@@ -53,7 +45,7 @@ def _write_manifest(
     monkeypatch.setattr(
         runner_release_input,
         "_load_capabilities",
-        lambda _binary: _capabilities(binary, offline=offline),
+        lambda _binary: _capabilities(offline=offline),
     )
     manifest = runner_release_input.create_manifest(
         binary=binary,
@@ -137,7 +129,7 @@ def test_online_profile_rejects_offline_capability_or_feature(
         )
 
 
-def test_offline_profile_requires_both_executable_pairs(
+def test_offline_profile_requires_offline_transport(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -146,15 +138,15 @@ def test_offline_profile_requires_both_executable_pairs(
         tmp_path,
         offline=True,
     )
-    capabilities = _capabilities(binary, offline=True)
-    capabilities["supported_pairs"] = [["dynamo_offline", "scheduled"]]
+    capabilities = _capabilities(offline=True)
+    del capabilities["transport"]["dynosim_offline"]
     monkeypatch.setattr(
         runner_release_input,
         "_load_capabilities",
         lambda _binary: capabilities,
     )
 
-    with pytest.raises(RuntimeError, match="scheduled and graph pairs"):
+    with pytest.raises(RuntimeError, match="dynosim_offline transport"):
         runner_release_input.verify_release_input(
             binary=binary,
             manifest_path=manifest_path,

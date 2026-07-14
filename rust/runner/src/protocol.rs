@@ -9,8 +9,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::protocol_v2::RUNNER_PROTOCOL_V2;
-use crate::registry::{RunnerRegistry, RunnerTransportDescriptor, RunnerWorkloadDescriptor};
+use crate::registry::RunnerRegistry;
 
 /// One plugins.yaml-shaped catalog entry.
 #[derive(Debug, Serialize)]
@@ -95,109 +94,6 @@ fn transport_url_schemes(id: &str) -> &'static [&'static str] {
         "grpc" => &["grpc", "grpcs"],
         "dynosim_offline" | "dynosim_online" => &["dynosim"],
         _ => &[],
-    }
-}
-
-/// Machine-readable runner capabilities returned by `--capabilities`.
-#[derive(Debug, Serialize)]
-pub struct RunnerCapabilities {
-    /// Stable response discriminator.
-    pub event: &'static str,
-    /// Capability-document schema independent of stdin protocol versions.
-    pub capabilities_schema_version: u32,
-    /// Protocol versions accepted on stdin.
-    pub protocol_versions: &'static [u32],
-    /// Native report schema written after a successful run.
-    pub report_schema_version: &'static str,
-    /// Endpoint dialects accepted by the native formatter/parser registry.
-    pub endpoint_types: Vec<&'static str>,
-    /// Canonical endpoint descriptors from the frozen endpoint registry.
-    pub endpoints: Vec<&'static aiperf::endpoints::EndpointDescriptor>,
-    /// Statically linked extension package names in deterministic order.
-    pub extensions: Vec<String>,
-    /// Transport descriptors recognized by protocol-v2 validation.
-    pub transports: Vec<&'static RunnerTransportDescriptor>,
-    /// Workload descriptors recognized by protocol-v2 validation.
-    pub workloads: Vec<&'static RunnerWorkloadDescriptor>,
-    /// Descriptor-compatible pairs, including pairs without an executable v2 adapter.
-    pub statically_compatible_pairs: Vec<[String; 2]>,
-    /// Pairs with a registered executable protocol-v2 adapter.
-    pub supported_pairs: Vec<[String; 2]>,
-    /// Dataset variants accepted by the current protocol.
-    pub dataset_types: &'static [&'static str],
-    /// Phase variants accepted by the current protocol.
-    pub phase_types: &'static [&'static str],
-    /// Optional policies accepted inside a phase.
-    pub phase_features: &'static [&'static str],
-    /// Optional single-run subsystems accepted by the runner.
-    pub run_features: &'static [&'static str],
-    /// GPU telemetry source implementations accepted by the runner.
-    pub telemetry_source_types: &'static [&'static str],
-    /// Server-metrics artifact formats accepted by the runner.
-    pub server_metrics_formats: &'static [&'static str],
-    /// Rust runner package version.
-    pub runner_version: &'static str,
-}
-
-impl RunnerCapabilities {
-    /// Build a deterministic capability document from already frozen registries.
-    pub fn from_registries(
-        runner_registry: &RunnerRegistry,
-        product_registry: &aiperf::extensions::AiperfRegistry,
-    ) -> Self {
-        let endpoints = product_registry
-            .endpoints()
-            .descriptors()
-            .collect::<Vec<_>>();
-        let endpoint_types = endpoints.iter().map(|descriptor| descriptor.id).collect();
-        Self {
-            event: "runner_capabilities",
-            capabilities_schema_version: 2,
-            protocol_versions: &[RUNNER_PROTOCOL_V2],
-            report_schema_version: aiperf::metrics_core::NATIVE_REPORT_SCHEMA_VERSION,
-            endpoint_types,
-            endpoints,
-            extensions: product_registry
-                .extension_names()
-                .map(str::to_owned)
-                .collect(),
-            transports: runner_registry.transport_descriptors(),
-            workloads: runner_registry.workload_descriptors(),
-            statically_compatible_pairs: runner_registry
-                .statically_compatible_pairs()
-                .into_iter()
-                .map(|(transport, workload)| [transport.to_owned(), workload.to_owned()])
-                .collect(),
-            supported_pairs: runner_registry
-                .supported_pairs()
-                .into_iter()
-                .map(|(transport, workload)| [transport.to_owned(), workload.to_owned()])
-                .collect(),
-            dataset_types: &["synthetic", "file", "public"],
-            phase_types: &[
-                "concurrency",
-                "poisson",
-                "gamma",
-                "constant",
-                "user_centric",
-                "fixed_schedule",
-            ],
-            phase_features: &["adaptive_scale", "ramps", "request_cancellation"],
-            run_features: &[
-                "gpu_telemetry",
-                "python_live_streaming",
-                "outputs_json",
-                "python_accuracy_evaluator",
-                "raw_records",
-                "http_transport_policy",
-                "thread_per_core_execution",
-                "network_latency",
-                "server_metrics",
-            ],
-            telemetry_source_types: &["dcgm", "python"],
-            server_metrics_formats: &["json", "csv", "jsonl", "parquet"],
-            runner_version: env!("CARGO_PKG_VERSION"),
-        }
     }
 }
 

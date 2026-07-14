@@ -62,7 +62,8 @@ installation = RunnerInstallation.resolve(
     Path(sys.argv[1]),
     provider_roots=(Path(sys.argv[3]), Path(sys.argv[4])),
 )
-assert ["online_http", "evaluation"] in installation.capabilities["supported_pairs"]
+assert "http" in installation.capabilities["transport"]
+assert "chat" in installation.capabilities["endpoint"]
 combinations = installation.capabilities["supported_evaluation_combinations"]
 assert any(item["provider"] == "nemo_evaluator" for item in combinations)
 assert any(item["provider"] == "openbench" for item in combinations)

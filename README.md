@@ -4,7 +4,7 @@ SPDX-License-Identifier: Apache-2.0
 -->
 
 > # ✅ CANONICAL — native Rust AIPerf (build here)
-> This `crates/` workspace (branch `ajc/rust`) is **THE native Rust AIPerf**:
+> This `rust/` workspace (branch `ajc/rust`) is **THE native Rust AIPerf**:
 > single-process, multi-threaded tokio — no ZMQ, no services, no mmap, no credit
 > protocol. The `aiperf-rs` and `~/projects/aiperf-rust` trees are **DEPRECATED**.
 > Native-Rust design specs live in [`specs/`](specs/).

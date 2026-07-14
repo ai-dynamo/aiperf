@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 name: aiperf-mock-server
 description: >-
   Build, launch, and use the in-repo Rust mock inference server
-  (`aiperf-mock-rs`, crate at `crates/mock-rs`) as a local OpenAI-compatible
+  (`aiperf-mock-rs`, crate at `rust/mock-rs`) as a local OpenAI-compatible
   benchmark target. Use this whenever you need a fake/stand-in LLM server to run
   AIPerf against locally, to smoke-test the HTTP/SSE transport, to reproduce an
   integration test outside of `cargo test`, or when a task mentions "the mock
@@ -26,13 +26,13 @@ It is a **standalone** developer/test target — it is NOT part of the
 yourself, it exposes an ordinary HTTP URL, and you point a benchmark (or the
 transport tests) at that URL.
 
-Source of truth: `crates/mock-rs/src/` (binary `main.rs`, flags `config.rs`,
+Source of truth: `rust/mock-rs/src/` (binary `main.rs`, flags `config.rs`,
 routes `app.rs`). Read those if a flag here looks stale — code is truth.
 
 ## The 30-second path (fast, offline, no HF download)
 
 ```bash
-# From the workspace root (crates/... visible). Build once:
+# From the workspace root (rust/... visible). Build once:
 cargo build --release -p aiperf-mock-rs
 
 # Run instant-latency + no tokenizer download, on 127.0.0.1:8000:
@@ -103,7 +103,7 @@ seen models to `/v1/models`. Use `--models a,b,c` on the server to pre-advertise
 specific names. For real token-count fidelity in the results, drop
 `--no-tokenizer` on the server and let it load the matching tokenizer.
 
-The Rust integration tests under `crates/aiperf/tests/` (e.g.
+The Rust integration tests under `rust/aiperf/tests/` (e.g.
 `scheduled_real_mock.rs`, `transport_http_*.rs`, `graph_*.rs`) spawn this
 same binary automatically. They locate it in this order: `$AIPERF_MOCK_RS_BIN`,
 then next to the test executable, then `target/{debug,release}/aiperf-mock-rs`,
@@ -145,13 +145,13 @@ load), enable the step-based batched scheduler instead of the closed-form model:
 The knee lands near concurrency ≈ `--scheduler-max-batch-size`. Prefill becomes
 the binding constraint as you lower `--scheduler-max-prefill-chunks-per-step`.
 There are many more scheduler knobs (goodput collapse, sublinear prefill
-throughput, admit jitter) — read `crates/mock-rs/src/config.rs` for the full
+throughput, admit jitter) — read `rust/mock-rs/src/config.rs` for the full
 set with inline rationale. `--fast` disables the scheduler, so don't combine
 them.
 
 ## What the server exposes
 
-All routes are registered in `crates/mock-rs/src/app.rs`. Highlights:
+All routes are registered in `rust/mock-rs/src/app.rs`. Highlights:
 
 - **LLM**: `POST /v1/chat/completions`, `POST /v1/completions` (real SSE when
   `stream: true`), `POST /v1/embeddings`
@@ -184,14 +184,14 @@ the log level dynamically with `AIPERF_MOCK_LOG` (a `tracing` env-filter).
 
 ## `fastmock` — the ultra-minimal alternative
 
-`crates/mock-rs/tools/fastmock.rs` is a single-file, std-only TCP server that
+`rust/mock-rs/tools/fastmock.rs` is a single-file, std-only TCP server that
 returns one fixed streaming chat response. It is **not** a registered cargo bin —
 it's a loose file you compile directly with `rustc`. Use it only when you need
 the absolute lowest-overhead loopback target for a transport micro-benchmark and
 don't need real routes/latency/token behavior:
 
 ```bash
-rustc -O crates/mock-rs/tools/fastmock.rs -o /tmp/fastmock
+rustc -O rust/mock-rs/tools/fastmock.rs -o /tmp/fastmock
 /tmp/fastmock 8131   # listens on 127.0.0.1:8131
 ```
 

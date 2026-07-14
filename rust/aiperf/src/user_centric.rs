@@ -672,34 +672,26 @@ fn seconds_to_ns(seconds: f64) -> Result<i64> {
 
 #[cfg(test)]
 mod tests {
-    use crate::multiturn::SyntheticConversationSource;
-    use crate::workload::SkeletonWorkload;
+    use crate::test_util::synthetic_prepared_source;
 
     use super::*;
 
-    fn workload(users: usize, rate: f64, turns: usize) -> UserCentricWorkload {
-        let source = SyntheticConversationSource::new(SkeletonWorkload {
-            num_requests: 0,
-            input_tokens: 4,
-            output_tokens: 1,
-            turns,
-            think_time_ms: None,
-        })
-        .unwrap();
+    async fn workload(users: usize, rate: f64, turns: usize) -> UserCentricWorkload {
+        let source = synthetic_prepared_source(turns, 4, 1, None, "m").await;
         UserCentricWorkload::new(
             UserCentricConfig {
                 num_users: users,
                 request_rate: rate,
                 concurrency: None,
             },
-            Box::new(source),
+            source,
         )
         .unwrap()
     }
 
-    #[test]
-    fn setup_binds_fresh_user_to_actual_sample_length() {
-        let workload = workload(4, 20.0, 3);
+    #[tokio::test]
+    async fn setup_binds_fresh_user_to_actual_sample_length() {
+        let workload = workload(4, 20.0, 3).await;
         let fresh = workload
             .initial_users
             .iter()
@@ -709,9 +701,9 @@ mod tests {
         assert_eq!(workload.initial_users.len(), 4);
     }
 
-    #[test]
-    fn adaptive_scale_up_staggers_and_scale_down_reports_retiring() {
-        let workload = workload(4, 10.0, 3);
+    #[tokio::test]
+    async fn adaptive_scale_up_staggers_and_scale_down_reports_retiring() {
+        let workload = workload(4, 10.0, 3).await;
         workload.pool.queue_initialized.set(true);
         let control = workload.control();
         control.set_target_users(6, 1_000).unwrap();
@@ -736,9 +728,9 @@ mod tests {
         assert!(!workload.pool.should_spawn_replacement());
     }
 
-    #[test]
-    fn adaptive_target_rejects_zero() {
-        let workload = workload(2, 10.0, 2);
+    #[tokio::test]
+    async fn adaptive_target_rejects_zero() {
+        let workload = workload(2, 10.0, 2).await;
         assert!(
             workload
                 .control()
@@ -749,23 +741,16 @@ mod tests {
         );
     }
 
-    #[test]
-    fn single_turn_dataset_is_rejected() {
-        let source = SyntheticConversationSource::new(SkeletonWorkload {
-            num_requests: 0,
-            input_tokens: 4,
-            output_tokens: 1,
-            turns: 1,
-            think_time_ms: None,
-        })
-        .unwrap();
+    #[tokio::test]
+    async fn single_turn_dataset_is_rejected() {
+        let source = synthetic_prepared_source(1, 4, 1, None, "m").await;
         let result = UserCentricWorkload::new(
             UserCentricConfig {
                 num_users: 2,
                 request_rate: 10.0,
                 concurrency: None,
             },
-            Box::new(source),
+            source,
         );
         assert!(matches!(result, Err(error) if error.to_string().contains("multi-turn")));
     }

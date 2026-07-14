@@ -46,13 +46,13 @@ download, cancellation, and decoding back into the canonical response shape; `ai
 endpoint parsing, observation, and scheduled result composition.
 
 **Implementation addendum (2026-07-11):** the complete tier-2 set is built in
-`crates/aiperf-endpoints/src/tier2.rs` and `tier2/flexible.rs`: NIM/Cohere/Hugging Face rankings,
+`rust/aiperf-endpoints/src/tier2.rs` and `tier2/flexible.rs`: NIM/Cohere/Hugging Face rankings,
 image generation/edit, video generation, Hugging Face generate, NIM embeddings, image retrieval,
 Solido RAG, raw, and template. Multipart JSON/binary encoding, request-local inline-media fetch
 deduplication, Clock-paced video polling/download, and post-send cancellation across the entire
-poll lifecycle live under `crates/aiperf-transport-http/src/transport/`. Per-turn endpoint selection
-and response/usage/modality observation are wired in `crates/aiperf/src/http/endpoint_dispatch.rs`.
-`crates/aiperf/tests/tier2_endpoints_online.rs` proves all dialect families and all four special
+poll lifecycle live under `rust/aiperf-transport-http/src/transport/`. Per-turn endpoint selection
+and response/usage/modality observation are wired in `rust/aiperf/src/http/endpoint_dispatch.rs`.
+`rust/aiperf/tests/tier2_endpoints_online.rs` proves all dialect families and all four special
 lifecycles against real loopback HTTP, including cancellation anchored to the original submit-body
 send completion and native image/video report metrics.
 

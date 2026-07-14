@@ -1,4 +1,4 @@
-// crates/transport-http/tests/common/mod.rs
+// rust/transport-http/tests/common/mod.rs
 //! Spawns the workspace `aiperf-mock-rs` binary for integration tests.
 #![allow(dead_code)]
 

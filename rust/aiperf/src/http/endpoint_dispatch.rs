@@ -17,8 +17,8 @@ use bytes::Bytes;
 use serde_json::Value;
 
 use crate::endpoints::{
-    Endpoint, EndpointConfig, EndpointDescriptor, EndpointResult, ExtractedPayload, ParsedResponse,
-    PreparedEndpoint, RequestRecord as EndpointRequestRecord, ResponseData, ServerResponse, Turn,
+    EndpointDescriptor, EndpointResult, ExtractedPayload, ParsedResponse, PreparedEndpoint,
+    RequestRecord as EndpointRequestRecord, ResponseData, ServerResponse, Turn,
     UsageView,
 };
 use crate::metrics_core::HttpTrace;
@@ -135,38 +135,6 @@ where
     }
 }
 
-struct LegacyEndpointAdapter<'a> {
-    endpoint: &'a dyn Endpoint,
-    config: &'a EndpointConfig,
-}
-
-impl RuntimeEndpointAdapter for LegacyEndpointAdapter<'_> {
-    fn descriptor(&self) -> &'static EndpointDescriptor {
-        self.endpoint.descriptor()
-    }
-
-    fn streaming(&self) -> bool {
-        self.config.streaming
-    }
-
-    fn extract_payload_inputs(&self, body: &Value) -> ExtractedPayload {
-        self.endpoint.extract_payload_inputs(body)
-    }
-
-    fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
-        self.endpoint
-            .parse_response_with_config(response, self.config)
-    }
-
-    fn build_assistant_turn(&self, record: &EndpointRequestRecord) -> EndpointResult<Option<Turn>> {
-        self.endpoint.build_assistant_turn(record)
-    }
-
-    fn captures_assistant_turn(&self) -> bool {
-        self.endpoint.captures_assistant_turn()
-    }
-}
-
 struct WorkerPreparedEndpointAdapter<'a>(&'a dyn PreparedEndpoint);
 
 impl RuntimeEndpointAdapter for WorkerPreparedEndpointAdapter<'_> {
@@ -196,31 +164,6 @@ impl RuntimeEndpointAdapter for WorkerPreparedEndpointAdapter<'_> {
 }
 
 impl TransportSink {
-    /// Dispatch a materialized request through lifecycle policy selected only by
-    /// endpoint metadata and its effective per-turn configuration, retaining
-    /// the canonical JSON payload and terminal transport record for an optional
-    /// raw artifact consumer.
-    pub(super) async fn dispatch_endpoint_collect_record_with_hooks(
-        &self,
-        req: HttpRequest,
-        endpoint: &dyn Endpoint,
-        endpoint_config: &EndpointConfig,
-        hooks: EndpointDispatchHooks<'_>,
-    ) -> Result<HttpCollectedDispatch> {
-        let endpoint = LegacyEndpointAdapter {
-            endpoint,
-            config: endpoint_config,
-        };
-        let binding = MetadataHttpEndpointBinding::new(
-            endpoint.endpoint,
-            endpoint.config,
-            &self.base_urls,
-            &self.model,
-        );
-        self.dispatch_runtime_endpoint_collect_record_with_hooks(req, &endpoint, &binding, hooks)
-            .await
-    }
-
     /// Dispatch through a worker-local prepared endpoint binding.
     pub(super) async fn dispatch_prepared_endpoint_collect_record_with_hooks(
         &self,
@@ -767,47 +710,46 @@ fn http_trace(record: &RequestRecord) -> HttpTrace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::endpoints::{ChatEndpoint, HuggingFaceGenerateEndpoint, ImageGenerationEndpoint};
+    use crate::endpoints::PreparedEndpoint;
     use crate::transport_http::models::SseMessage;
     use crate::transport_http::transport::endpoint_binding::decode_sse_response;
 
+    /// Prepare a builtin streaming endpoint by its open ID.
+    fn prepared_streaming(endpoint_name: &str) -> Box<dyn PreparedEndpoint> {
+        crate::endpoints::EndpointRegistry::builtin()
+            .unwrap()
+            .prepare(
+                &crate::endpoints::EndpointId::new(endpoint_name).unwrap(),
+                crate::endpoints::RawEndpointConfig {
+                    streaming: true,
+                    ..crate::endpoints::RawEndpointConfig::default()
+                },
+            )
+            .unwrap()
+    }
+
     #[test]
     fn endpoint_sse_filter_uses_the_selected_dialect() {
-        let mut config = EndpointConfig {
-            streaming: true,
-            ..EndpointConfig::default()
-        };
         let tgi = SseMessage::parse(r#"data: {"token":{"text":"hello"}}"#, 10);
-        let tgi_endpoint = HuggingFaceGenerateEndpoint;
-        let tgi_adapter = LegacyEndpointAdapter {
-            endpoint: &tgi_endpoint,
-            config: &config,
-        };
+        let tgi_endpoint = prepared_streaming("huggingface_generate");
+        let tgi_adapter = WorkerPreparedEndpointAdapter(tgi_endpoint.as_ref());
         assert!(meaningful_endpoint_response(
             &tgi_adapter,
             &decode_sse_response(&tgi).unwrap()
         ));
 
-        config.endpoint_type = crate::endpoints::EndpointType::ImageGeneration;
         let image = SseMessage::parse(r#"data: {"b64_json":"AA=="}"#, 11);
-        let image_endpoint = ImageGenerationEndpoint;
-        let image_adapter = LegacyEndpointAdapter {
-            endpoint: &image_endpoint,
-            config: &config,
-        };
+        let image_endpoint = prepared_streaming("image_generation");
+        let image_adapter = WorkerPreparedEndpointAdapter(image_endpoint.as_ref());
         assert!(!meaningful_endpoint_response(
             &image_adapter,
             &decode_sse_response(&image).unwrap()
         ));
 
-        config.endpoint_type = crate::endpoints::EndpointType::Chat;
         let legacy_chat =
             SseMessage::parse(r#"data: {"choices":[{"delta":{"content":"compat"}}]}"#, 12);
-        let chat_endpoint = ChatEndpoint;
-        let chat_adapter = LegacyEndpointAdapter {
-            endpoint: &chat_endpoint,
-            config: &config,
-        };
+        let chat_endpoint = prepared_streaming("chat");
+        let chat_adapter = WorkerPreparedEndpointAdapter(chat_endpoint.as_ref());
         assert!(meaningful_endpoint_response(
             &chat_adapter,
             &decode_sse_response(&legacy_chat).unwrap()

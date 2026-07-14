@@ -3,15 +3,15 @@
 
 [workspace]
 resolver = "3"
-# The 16 aiperf-* library crates were absorbed into `crates/aiperf`; only these
+# The 16 aiperf-* library crates were absorbed into `rust/aiperf`; only these
 # four real crates remain as workspace members.
 members = [
-    "crates/loadgen-core",
-    "crates/aiperf",
-    "crates/runner",
-    "crates/mock-rs",
+    "rust/loadgen-core",
+    "rust/aiperf",
+    "rust/runner",
+    "rust/mock-rs",
 ]
-exclude = ["crates/runner/tests/fixtures/aiperf-test-static-extension"]
+exclude = ["rust/runner/tests/fixtures/aiperf-test-static-extension"]
 
 [workspace.package]
 version = "0.0.0"
@@ -20,8 +20,8 @@ license = "Apache-2.0"
 
 [workspace.dependencies]
 # internal crates
-loadgen-core = { path = "crates/loadgen-core" }
-aiperf = { path = "crates/aiperf" }
+loadgen-core = { path = "rust/loadgen-core" }
+aiperf = { path = "rust/aiperf" }
 
 # external (shared versions)
 anyhow = "1"

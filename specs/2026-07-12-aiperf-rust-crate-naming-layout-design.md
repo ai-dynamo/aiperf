@@ -348,3 +348,26 @@ directory move to `crates/core` is mechanical and does not bless the name.
 
 Spec bodies above are preserved verbatim per the repository's append-only spec
 policy; this addendum is the authoritative status.
+
+## Addendum — 2026-07-13 (workspace directory renamed `crates/` → `rust/`)
+
+The top-level workspace directory was renamed from `crates/` to `rust/`. This
+supersedes every `crates/<...>` path in the body above and in the first two
+addenda: the umbrella package now lives at `rust/aiperf`, each
+`aiperf-<capability>` package at `rust/<capability>`, and the `loadgen-core`
+exception at `rust/loadgen-core`. Package *identity* is unchanged (still
+`aiperf` / `aiperf-*` / `loadgen-core`); only the workspace *path* moved. The
+rename adopts the language-folder convention (`rust/` holding crates directly,
+no extra nesting) used by polyglot repos, replacing the Rust-community
+`crates/` convention, so the Rust tree sits beside the Python `src/` tree under
+a self-describing top-level name.
+
+`tools/check_crate_layout.py` now resolves `crates_root = repo_root / "rust"`
+and reports policy-mandated `rust/<capability>` directories; the
+`check-docs-current` guard's crate-manifest regex is `^rust/[^/]+/Cargo\.toml$`;
+and the `native-runner` / `rust-docs-guard` CI path filters watch `rust/**`.
+The §8 identity-vs-path split is otherwise intact. Everything listed as
+"still unbuilt" in the prior addendum remains unbuilt.
+
+Spec bodies above are preserved verbatim per the repository's append-only spec
+policy; this addendum is the authoritative status where paths conflict.

@@ -1,4 +1,4 @@
-// crates/transport-http/tests/facade.rs
+// rust/transport-http/tests/facade.rs
 mod common;
 use common::{MockServer, run_local};
 use std::rc::Rc;

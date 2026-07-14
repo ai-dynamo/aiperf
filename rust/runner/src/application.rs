@@ -19,7 +19,7 @@ use crate::dataset_input::{
 };
 use crate::execution_factories::{RunnerExecutionFactories, native_execution_factories};
 use crate::graph_input::{BuiltinRunnerGraphInputAdapterResolver, RunnerGraphInputAdapterResolver};
-use crate::protocol::{RunnerCapabilities, RunnerCatalog};
+use crate::protocol::RunnerCatalog;
 use crate::protocol_v2::RunnerEnvelopeV2;
 use crate::registry::{BuiltinRunnerRegistryFactory, RunnerRegistryFactory};
 use crate::sidecar_input::{
@@ -80,11 +80,6 @@ impl RunnerApplication {
     /// Return the identity of the complete executable image serving this process.
     pub fn distribution_id(&self) -> &str {
         &self.distribution_id
-    }
-
-    /// Advertise capabilities from the exact frozen linked registries.
-    pub fn capabilities(&self) -> RunnerCapabilities {
-        self.coordinator.capabilities()
     }
 
     /// Return the plugins.yaml-shaped catalog for this exact linked runner.

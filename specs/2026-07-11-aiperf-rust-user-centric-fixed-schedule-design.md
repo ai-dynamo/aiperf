@@ -14,7 +14,7 @@ SPDX-License-Identifier: Apache-2.0
 `src/aiperf/timing/strategies/fixed_schedule.py`,
 `src/aiperf/timing/conversation_source.py`,
 `src/aiperf/timing/intervals.py`, and the already-ported
-`crates/aiperf-timing/src/user_centric.rs`.
+`rust/aiperf-timing/src/user_centric.rs`.
 **Companion (read first, not re-derived here):**
 `specs/2026-07-11-aiperf-rust-request-rate-multiturn-design.md` — establishes the
 single-loop credit-issuer model, the session/prefill `SlotPool` contract,
@@ -203,7 +203,7 @@ re-queues a blocked spawn at `now + stagger` (`user_centric_rate.py:302-303`).
 
 ## 3. Reconcile with the already-built `aiperf-timing::plan_user_centric`
 
-`crates/aiperf-timing/src/user_centric.rs` ports **exactly the §2.1 setup math** — the
+`rust/aiperf-timing/src/user_centric.rs` ports **exactly the §2.1 setup math** — the
 pure, RNG-free, clock-free seeding — and nothing else (`user_centric.rs:4-13`).
 
 **Matches (verified line-for-line):**
@@ -500,7 +500,7 @@ build.
 
 This addendum supersedes the original designed/partly-built status, the build-order
 future tense, and the implementation questions in §8. The scheduled workload plane
-is now built in `crates/aiperf` over the existing `{Clock, RequestSink}` seams:
+is now built in `rust/aiperf` over the existing `{Clock, RequestSink}` seams:
 
 - `multiturn.rs` provides the object-safe `ConversationSource` seam, synthetic and
   JSON/JSONL dataset sources, prefix-dependent segment-backed prompt materialization,

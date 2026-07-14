@@ -285,13 +285,13 @@ Set a custom API endpoint path (e.g., `/v1/custom`, `/my-api/chat`). By default,
 
 #### `--endpoint-type` `<str>`
 
-The API endpoint type to benchmark. Determines request/response format and supported features. Common types: `chat` (multi-modal conversations), `embeddings` (vector generation), `completions` (text completion). See enum documentation for all supported endpoint types.
-<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `responses`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `image_edit`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `raw`, `template`]_
+Endpoint dialect identifier compiled into the selected aiperf-runner. Common stock identifiers include `chat`, `messages`, and `responses`; custom runner distributions may add more.
+<br/>_Constraints: min: 1_
 <br/>_Default: `chat`_
 
 #### `--streaming`
 
-Enable streaming responses. When enabled, the server streams tokens incrementally as they are generated. Automatically disabled if the selected endpoint type does not support streaming. Enables measurement of time-to-first-token (TTFT) and inter-token latency (ITL) metrics.
+Enable streaming responses. When enabled, the server streams tokens incrementally as they are generated. The selected runner validates and normalizes endpoint support. Enables measurement of time-to-first-token (TTFT) and inter-token latency (ITL) metrics.
 <br/>_Flag (no value required)_
 
 #### `-u`, `--url` `<list>`
@@ -332,11 +332,6 @@ Seconds between endpoint readiness probe attempts.
 #### `--api-key` `<str>`
 
 API authentication key for the endpoint. When provided, automatically included in request headers as `Authorization: Bearer <api_key>`.
-
-#### `--transport`, `--transport-type` `<str>`
-
-Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme (`http`/`https` -> `TransportType.HTTP`). Currently supports `http` transport using aiohttp with connection pooling, TCP optimization, and Server-Sent Events (SSE) for streaming. Explicit override rarely needed.
-<br/>_Choices: [`http`]_
 
 #### `--use-legacy-max-tokens`
 
@@ -420,7 +415,7 @@ Path to file or directory containing benchmark dataset. Required when using `--c
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets. Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.
-<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`]_
+<br/>_Choices: [`weka_cc_traces_062126`, `exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`]_
 
 #### `--hf-subset` `<str>`
 
@@ -434,7 +429,7 @@ Dataset-specific filter in key=value form. Repeat for multiple filters. Only sup
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace`/`bailian_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`]_
+<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `dynamo_trace`, `weka_trace`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`]_
 
 #### `--dataset-sampling-strategy` `<str>`
 
@@ -1457,7 +1452,7 @@ Number of log-spaced steps for the decode-itl-curve recipe's OSL grid (default 4
 #### `--accuracy-benchmark` `<str>`
 
 Accuracy benchmark to run (e.g., mmlu, aime, hellaswag). When set, enables accuracy benchmarking mode alongside performance profiling.
-<br/>_Choices: [`mmlu`, `aime`, `hellaswag`, `bigbench`, `aime24`, `aime25`, `math_500`, `gsm8k`, `gpqa_diamond`, `lcb_codegeneration`]_
+<br/>_Choices: [`mmlu`, `mmlu_pro`, `aime`, `hellaswag`, `bigbench`, `aime24`, `aime25`, `math_500`, `gsm8k`, `gpqa_diamond`, `lcb_codegeneration`]_
 
 #### `--accuracy-tasks` `<list>`
 
@@ -1468,7 +1463,7 @@ Specific tasks or subtasks within the benchmark to evaluate (e.g., specific MMLU
 Number of few-shot examples to include in the prompt. 0 means zero-shot evaluation, None uses the benchmark default (e.g. MMLU=5). Maximum 32.
 <br/>_Constraints: ≥ 0, ≤ 32_
 
-#### `--accuracy-enable-cot`
+#### `--accuracy-enable-cot`, `--accuracy-no-enable-cot`
 
 Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instructions to the prompt. Defaults to the benchmark's ``default_enable_cot`` metadata when unset (e.g. AIME defaults to True).
 <br/>_Flag (no value required)_
@@ -1476,7 +1471,7 @@ Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instru
 #### `--accuracy-grader` `<str>`
 
 Override the default grader for the selected benchmark (e.g., exact_match, math, multiple_choice, code_execution). If not set, uses the benchmark's default grader.
-<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`, `lighteval_expr`, `lighteval_latex`, `lighteval_gpqa`, `lighteval_gsm8k`]_
+<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`, `lighteval_expr`, `lighteval_latex`, `lighteval_gpqa`, `lighteval_gsm8k`, `mmlu_pro`]_
 
 #### `--accuracy-system-prompt` `<str>`
 
@@ -1713,13 +1708,13 @@ Set a custom API endpoint path (e.g., `/v1/custom`, `/my-api/chat`). By default,
 
 #### `--endpoint-type` `<str>`
 
-The API endpoint type to benchmark. Determines request/response format and supported features. Common types: `chat` (multi-modal conversations), `embeddings` (vector generation), `completions` (text completion). See enum documentation for all supported endpoint types.
-<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `responses`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `image_edit`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `raw`, `template`]_
+Endpoint dialect identifier compiled into the selected aiperf-runner. Common stock identifiers include `chat`, `messages`, and `responses`; custom runner distributions may add more.
+<br/>_Constraints: min: 1_
 <br/>_Default: `chat`_
 
 #### `--streaming`
 
-Enable streaming responses. When enabled, the server streams tokens incrementally as they are generated. Automatically disabled if the selected endpoint type does not support streaming. Enables measurement of time-to-first-token (TTFT) and inter-token latency (ITL) metrics.
+Enable streaming responses. When enabled, the server streams tokens incrementally as they are generated. The selected runner validates and normalizes endpoint support. Enables measurement of time-to-first-token (TTFT) and inter-token latency (ITL) metrics.
 <br/>_Flag (no value required)_
 
 #### `-u`, `--url` `<list>`
@@ -1760,11 +1755,6 @@ Seconds between endpoint readiness probe attempts.
 #### `--api-key` `<str>`
 
 API authentication key for the endpoint. When provided, automatically included in request headers as `Authorization: Bearer <api_key>`.
-
-#### `--transport`, `--transport-type` `<str>`
-
-Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme (`http`/`https` -> `TransportType.HTTP`). Currently supports `http` transport using aiohttp with connection pooling, TCP optimization, and Server-Sent Events (SSE) for streaming. Explicit override rarely needed.
-<br/>_Choices: [`http`]_
 
 #### `--use-legacy-max-tokens`
 
@@ -1848,7 +1838,7 @@ Path to file or directory containing benchmark dataset. Required when using `--c
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets. Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.
-<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`]_
+<br/>_Choices: [`weka_cc_traces_062126`, `exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`]_
 
 #### `--hf-subset` `<str>`
 
@@ -1862,7 +1852,7 @@ Dataset-specific filter in key=value form. Repeat for multiple filters. Only sup
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace`/`bailian_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`]_
+<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `dynamo_trace`, `weka_trace`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`]_
 
 #### `--dataset-sampling-strategy` `<str>`
 
@@ -2885,7 +2875,7 @@ Number of log-spaced steps for the decode-itl-curve recipe's OSL grid (default 4
 #### `--accuracy-benchmark` `<str>`
 
 Accuracy benchmark to run (e.g., mmlu, aime, hellaswag). When set, enables accuracy benchmarking mode alongside performance profiling.
-<br/>_Choices: [`mmlu`, `aime`, `hellaswag`, `bigbench`, `aime24`, `aime25`, `math_500`, `gsm8k`, `gpqa_diamond`, `lcb_codegeneration`]_
+<br/>_Choices: [`mmlu`, `mmlu_pro`, `aime`, `hellaswag`, `bigbench`, `aime24`, `aime25`, `math_500`, `gsm8k`, `gpqa_diamond`, `lcb_codegeneration`]_
 
 #### `--accuracy-tasks` `<list>`
 
@@ -2896,7 +2886,7 @@ Specific tasks or subtasks within the benchmark to evaluate (e.g., specific MMLU
 Number of few-shot examples to include in the prompt. 0 means zero-shot evaluation, None uses the benchmark default (e.g. MMLU=5). Maximum 32.
 <br/>_Constraints: ≥ 0, ≤ 32_
 
-#### `--accuracy-enable-cot`
+#### `--accuracy-enable-cot`, `--accuracy-no-enable-cot`
 
 Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instructions to the prompt. Defaults to the benchmark's ``default_enable_cot`` metadata when unset (e.g. AIME defaults to True).
 <br/>_Flag (no value required)_
@@ -2904,7 +2894,7 @@ Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instru
 #### `--accuracy-grader` `<str>`
 
 Override the default grader for the selected benchmark (e.g., exact_match, math, multiple_choice, code_execution). If not set, uses the benchmark's default grader.
-<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`, `lighteval_expr`, `lighteval_latex`, `lighteval_gpqa`, `lighteval_gsm8k`]_
+<br/>_Choices: [`exact_match`, `math`, `multiple_choice`, `code_execution`, `lighteval_expr`, `lighteval_latex`, `lighteval_gpqa`, `lighteval_gsm8k`, `mmlu_pro`]_
 
 #### `--accuracy-system-prompt` `<str>`
 

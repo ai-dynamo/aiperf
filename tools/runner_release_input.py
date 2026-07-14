@@ -32,10 +32,6 @@ _MANIFEST_FIELDS = {
     "features",
     "dependency_revisions",
 }
-_OFFLINE_PAIRS = {
-    ("dynamo_offline", "graph"),
-    ("dynamo_offline", "scheduled"),
-}
 _NATIVE_MAGICS = (
     b"\x7fELF",
     b"MZ",
@@ -61,12 +57,8 @@ def create_manifest(
     _validate_source_revision(source_revision)
     normalized_features = _validate_features(features)
     normalized_dependencies = _validate_dependency_revisions(dependency_revisions)
-    capabilities = _load_capabilities(binary)
+    _load_capabilities(binary)
     distribution_id = _distribution_id(binary)
-    if capabilities.get("distribution_id") != distribution_id:
-        raise RuntimeError(
-            "runner capabilities distribution_id disagrees with its exact image bytes"
-        )
     return {
         "schema_version": 2,
         "distribution_id": distribution_id,
@@ -103,16 +95,13 @@ def verify_release_input(
             "runner release input distribution_id does not match the exact binary"
         )
     capabilities = _load_capabilities(binary)
-    if capabilities.get("distribution_id") != distribution_id:
-        raise RuntimeError(
-            "runner capabilities distribution_id disagrees with the immutable manifest"
-        )
     _verify_profile(
         profile,
         manifest["features"],
         manifest["dependency_revisions"],
         capabilities,
     )
+    transports = capabilities.get("transport")
     return {
         "profile": profile,
         "distribution_id": distribution_id,
@@ -120,7 +109,7 @@ def verify_release_input(
         "cargo_lock_sha256": manifest["cargo_lock_sha256"],
         "features": manifest["features"],
         "dependency_revisions": manifest["dependency_revisions"],
-        "supported_pairs": capabilities.get("supported_pairs", []),
+        "transports": sorted(transports) if isinstance(transports, dict) else [],
     }
 
 
@@ -244,12 +233,24 @@ def _load_capabilities(binary: Path) -> dict[str, Any]:
         raise RuntimeError(
             f"runner returned invalid capability JSON: {error}"
         ) from error
-    if (
-        not isinstance(capabilities, dict)
-        or capabilities.get("event") != "runner_capabilities"
-    ):
-        raise RuntimeError("runner returned an invalid capability response")
+    if not isinstance(capabilities, dict) or not _is_catalog_shape(capabilities):
+        raise RuntimeError(
+            "runner returned an invalid capability response; expected a "
+            "plugins.yaml-shaped catalog with schema_version, endpoint, and transport"
+        )
     return capabilities
+
+
+def _is_catalog_shape(capabilities: dict[str, Any]) -> bool:
+    """Confirm the runner published a non-empty plugins.yaml-shaped catalog."""
+    return (
+        isinstance(capabilities.get("schema_version"), str)
+        and bool(capabilities["schema_version"])
+        and isinstance(capabilities.get("endpoint"), dict)
+        and bool(capabilities["endpoint"])
+        and isinstance(capabilities.get("transport"), dict)
+        and bool(capabilities["transport"])
+    )
 
 
 def _verify_profile(
@@ -260,18 +261,8 @@ def _verify_profile(
 ) -> None:
     if profile not in ("online", "offline"):
         raise ValueError(f"unknown runner release profile: {profile!r}")
-    pairs = {
-        tuple(pair)
-        for pair in capabilities.get("supported_pairs", [])
-        if isinstance(pair, list)
-        and len(pair) == 2
-        and all(isinstance(value, str) for value in pair)
-    }
-    transport_ids = {
-        descriptor.get("id")
-        for descriptor in capabilities.get("transports", [])
-        if isinstance(descriptor, dict)
-    }
+    transports = capabilities.get("transport")
+    transports = transports if isinstance(transports, dict) else {}
     if profile == "offline":
         if "dynamo-offline" not in features:
             raise RuntimeError(
@@ -281,9 +272,9 @@ def _verify_profile(
             raise RuntimeError(
                 "offline runner manifest must identify the dynamo-aiperf-native revision"
             )
-        if not _OFFLINE_PAIRS.issubset(pairs) or "dynamo_offline" not in transport_ids:
+        if "dynosim_offline" not in transports:
             raise RuntimeError(
-                "offline runner must advertise executable Dynamo scheduled and graph pairs"
+                "offline runner must advertise the executable dynosim_offline transport"
             )
         return
     if any(feature.startswith("dynamo-") for feature in features):
@@ -294,10 +285,10 @@ def _verify_profile(
         raise RuntimeError(
             "online runner manifest cannot contain external dependency revisions"
         )
-    if any(backend == "dynamo_offline" for backend, _workload in pairs):
-        raise RuntimeError("online runner unexpectedly advertises an offline pair")
-    if "dynamo_offline" in transport_ids:
-        raise RuntimeError("online runner unexpectedly advertises the offline backend")
+    if "dynosim_offline" in transports:
+        raise RuntimeError(
+            "online runner unexpectedly advertises the offline transport"
+        )
 
 
 def _parse_dependency_revisions(values: list[str]) -> dict[str, str]:

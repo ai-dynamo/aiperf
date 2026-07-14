@@ -40,7 +40,6 @@ pub use distribution_identity::current_distribution_id;
 pub use execution_factories::{RunnerExecutionFactories, native_execution_factories};
 pub use graph_execution::{NativeRunnerGraphPlacementFactory, RunnerGraphPlacementFactory};
 pub use grpc_turn_execution::NativeGrpcExecutionBackendFactory;
-pub use protocol::RunnerCapabilities;
 pub use turn_execution::{
     HttpExecutionBackendConfig, HttpExecutionBackendFactory, NativeHttpExecutionBackendFactory,
 };

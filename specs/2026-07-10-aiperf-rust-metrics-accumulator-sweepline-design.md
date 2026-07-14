@@ -12,7 +12,7 @@ SPDX-License-Identifier: Apache-2.0
 `metrics/{accumulator,column_store,_column_store_handlers,accumulator_models,accumulator_sweeps,metric_dicts,derived_latency,metric_registry}.py`,
 `common/enums/metric_enums.py`, `common/accumulator_protocols.py`, the summary path
 in `records/records_manager.py`, and the current Rust seam
-`crates/loadgen-core/src/collector.rs`.
+`rust/loadgen-core/src/collector.rs`.
 **Companions:** `2026-07-10-unified-graph-runtime-design.md` (§11.5 `Collector` /
 `Reporter` seams — this IS "the columnar accumulator from the coverage-gap ledger
 §1" they point at), `2026-07-10-aiperf-rust-coverage-gap-ledger.md` §1,
@@ -127,7 +127,7 @@ allocation). Depends only on a shared finite-float type, `serde`, and `blake3`/
 except the crate that owns the `Collector`.
 
 ```
-crates/aiperf-metrics/
+rust/aiperf-metrics/
   Cargo.toml            # serde, serde_json, rustc-hash; no ndarray
   src/
     lib.rs
@@ -558,7 +558,7 @@ create a dependency cycle.
 ## Addendum — 2026-07-11 (native Rust implementation)
 
 The performance-metrics engine described by this spec is now built in
-`crates/aiperf-metrics`. Code truth is split across `store.rs` (NaN-sparse numeric
+`rust/aiperf-metrics`. Code truth is split across `store.rs` (NaN-sparse numeric
 columns, dense categorical interning, exact CSR ragged replay, worker-store merge),
 `accumulator.rs` (record/aggregate/derived dispatch, SLO goodput, phase/window masks,
 timeslices, and per-worker merge), `kernel.rs` (the fixed percentile band and

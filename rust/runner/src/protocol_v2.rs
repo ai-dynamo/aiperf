@@ -171,8 +171,10 @@ pub struct BenchmarkRunWireV2 {
 /// Runner-relevant subset of the canonical BenchmarkConfig dump.
 ///
 /// Unknown Config keys are ignored so Python can dump BenchmarkConfig without
-/// maintaining a second field-for-field allowlist; product rejection of
-/// `workload` / `accuracy` remains explicit below.
+/// maintaining a second field-for-field allowlist. The dump legitimately carries
+/// keys this runner does not consume (for example `model`, `warmup`, `profiling`),
+/// so `deny_unknown_fields` is intentionally NOT used here; removed selectors such
+/// as `workload`/`accuracy` are simply ignored rather than rejected.
 #[derive(Deserialize)]
 pub struct BenchmarkConfigWireV2 {
     /// Model-selection policy.
@@ -185,9 +187,6 @@ pub struct BenchmarkConfigWireV2 {
     /// Canonical single-dataset list.
     #[serde(default)]
     pub datasets: Vec<Value>,
-    /// Deprecated singular dataset alias retained for migration diagnostics.
-    #[serde(default)]
-    pub dataset: Option<Value>,
     /// Ordered phase policy.
     pub phases: Vec<Value>,
     /// Optional tokenizer policy.
@@ -225,12 +224,6 @@ pub struct BenchmarkConfigWireV2 {
     /// Prepared sidecar bag projected by Python when present.
     #[serde(default)]
     pub sidecars: Value,
-    /// Explicit legacy workload selection is not a product-wire field.
-    #[serde(default)]
-    pub workload: Option<Value>,
-    /// Accuracy is intentionally outside this performance-only product wire.
-    #[serde(default)]
-    pub accuracy: Option<Value>,
 }
 
 impl BenchmarkRunWireV2 {
@@ -245,15 +238,7 @@ impl BenchmarkRunWireV2 {
             "run.artifact_dir cannot be empty"
         );
         ensure!(
-            self.cfg.workload.is_none(),
-            "run.cfg.workload is not supported by the BenchmarkRun product wire"
-        );
-        ensure!(
-            self.cfg.accuracy.is_none(),
-            "run.cfg.accuracy is not supported by the performance-only product wire"
-        );
-        ensure!(
-            !self.cfg.datasets.is_empty() || self.cfg.dataset.is_some(),
+            !self.cfg.datasets.is_empty(),
             "run.cfg.datasets must contain exactly one dataset"
         );
         Ok(())
@@ -271,7 +256,6 @@ impl BenchmarkRunWireV2 {
             .datasets
             .into_iter()
             .next()
-            .or(self.cfg.dataset)
             .ok_or_else(|| anyhow!("run.cfg.datasets must contain one dataset"))?;
         let workload_id = dataset_type(&dataset)
             .is_some_and(|kind| matches!(kind, "dag_jsonl" | "weka_trace" | "dynamo_trace"))

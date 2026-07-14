@@ -237,7 +237,7 @@ the installed `aiperf` package) that:
 ```
 aiperf-graph-rs/                 # standalone Cargo workspace
   Cargo.toml
-  crates/
+  rust/
     graph-ir/                    # the pure-logic port (lib)
       src/{model,reducers,sim_clock,runtime,channel_store,channels,scheduler,
            context,placement,executor,dispatch_llm,credit_dispatch_adapter,
@@ -298,7 +298,7 @@ aiperf-graph-rs/                 # standalone Cargo workspace
 ## Addendum — 2026-07-11
 
 The original standalone/offline-only deliverable shape is superseded by the native
-Rust workspace. Graph-IR is now partly realized in `crates/aiperf-graph`, which runs
+Rust workspace. Graph-IR is now partly realized in `rust/aiperf-graph`, which runs
 on tokio `current_thread` runtimes with `LocalSet` and uses the shared `drive_sim` /
 `drive_real` runtime split. The graph benchmark also has a live HTTP dispatch path
 through `aiperf-transport-http`; it is no longer solely a deterministic in-process mock

@@ -142,8 +142,8 @@ def _clear_prior_report(artifact_dir: Path) -> None:
 
     The runner is write-once by design: it refuses to overwrite
     ``native-v2.json`` so a failed execution can never replace a good report
-    mid-run (see ``crates/runner/src/coordinator.rs`` and
-    ``crates/aiperf/src/report.rs``). That guard is correct for a single child
+    mid-run (see ``rust/runner/src/coordinator.rs`` and
+    ``rust/aiperf/src/report.rs``). That guard is correct for a single child
     process, but re-running ``aiperf profile`` into the same artifact dir is a
     legitimate user action, and the orchestrator - not the runner - owns
     artifact-dir lifecycle. We therefore clear the prior authoritative report

@@ -10,7 +10,6 @@ use std::time::Duration;
 
 use aiperf::clock::{Clock, RealClock};
 use aiperf::http::TransportSink;
-use aiperf::multiturn::{ConversationSource, SyntheticConversationSource};
 use aiperf::phase_runtime::{ScheduledPhasePlan, run_scheduled_phases};
 use aiperf::scheduled::{
     ScheduledAncillaryPolicies, SingleTurnDatasetWorkload, TurnDispatcher, Workload,
@@ -18,8 +17,9 @@ use aiperf::scheduled::{
 use aiperf::timing::{
     GracePeriod, NoopPhaseObserver, PhaseConfig, PhaseKind, PhaseObserver, StopConfig,
 };
-use aiperf::workload::SkeletonWorkload;
 use axum::{Router, http::header, response::IntoResponse, routing::post};
+
+mod common;
 
 const SSE: &str = concat!(
     "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n\n",
@@ -65,20 +65,21 @@ async fn seamless_phases_overlap_over_the_real_http_dispatcher() {
                     "model",
                     false,
                 )
-                .unwrap(),
+                .unwrap()
+                .with_prepared_endpoints(common::chat_dispatch_table()),
             );
             let observer: Rc<dyn PhaseObserver> = Rc::new(NoopPhaseObserver);
             run_scheduled_phases(
                 vec![
                     ScheduledPhasePlan::new(
                         phase("warmup", PhaseKind::Warmup, true),
-                        one_request_workload(),
+                        one_request_workload().await,
                         ScheduledAncillaryPolicies::default(),
                     )
                     .with_start_ns(start_ns),
                     ScheduledPhasePlan::new(
                         phase("profiling", PhaseKind::Profiling, false),
-                        one_request_workload(),
+                        one_request_workload().await,
                         ScheduledAncillaryPolicies::default(),
                     )
                     .with_start_ns(start_ns),
@@ -116,16 +117,7 @@ fn phase(id: &str, kind: PhaseKind, seamless: bool) -> PhaseConfig {
     .with_seamless(seamless)
 }
 
-fn one_request_workload() -> Rc<dyn Workload> {
-    let source: Box<dyn ConversationSource> = Box::new(
-        SyntheticConversationSource::new(SkeletonWorkload {
-            num_requests: 1,
-            input_tokens: 4,
-            output_tokens: 1,
-            turns: 1,
-            think_time_ms: None,
-        })
-        .unwrap(),
-    );
+async fn one_request_workload() -> Rc<dyn Workload> {
+    let source = common::synthetic_prepared_source(1, 4, 1, None, "model").await;
     Rc::new(SingleTurnDatasetWorkload::new(source, 1).unwrap())
 }

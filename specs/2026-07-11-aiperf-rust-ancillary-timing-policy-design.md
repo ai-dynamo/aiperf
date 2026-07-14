@@ -418,7 +418,7 @@ This design is now built. This addendum supersedes the original `Status: design
 (not built)`, the designed rows in §4, and the prospective build order in §6.
 
 - `aiperf-timing::{RampStrategy, RampDriver}` is implemented in
-  `crates/aiperf-timing/src/ramping.rs`, with `LinearRamp`,
+  `rust/aiperf-timing/src/ramping.rs`, with `LinearRamp`,
   `ExponentialRamp`, and the precomputed, normalized `PoissonRamp`. Both driver
   modes use injected `Clock` time, natural completion force-applies the exact
   target, and abort freezes the last applied value. Poisson and cancellation

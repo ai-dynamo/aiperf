@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Module organization (`crates/aiperf/src/`)
+# Module organization (`rust/aiperf/src/`)
 
 Sixteen former `aiperf-*` library crates are now `aiperf::<module>::` namespaces. All inter-module imports use `crate::<module>::` within `aiperf`; runner and mock-rs use `aiperf::<module>::`. The five modules with name conflicts with pre-existing thin adapter files use a `_core` or `transport_` prefix (`metrics_core`, `adaptive_core`, `accuracy_core`, `transport_http`, `transport_grpc`).
 

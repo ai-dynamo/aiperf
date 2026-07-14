@@ -11,14 +11,18 @@ use std::sync::{Arc, Mutex};
 
 use aiperf::clock::{Clock, RealClock};
 use aiperf::dataset::{
-    BuiltinEndpointResolver, ComposeConfig, DatasetSource, EndpointResolver, LoadConfig,
-    LoaderRegistry, TiktokenTokenizer,
+    ComposeConfig, DatasetSource, LoadConfig, LoaderRegistry, TiktokenTokenizer,
 };
-use aiperf::endpoints::{EndpointConfig, EndpointType};
+use aiperf::endpoints::{
+    EndpointConfig, EndpointId, EndpointRegistry, EndpointType, PreparedEndpoint,
+    PreparedEndpointTable, RawEndpointConfig,
+};
 use aiperf::metrics_core::MetricTag;
-use aiperf::multiturn::{ConversationSource, NativeDatasetConversationSource};
+use aiperf::multiturn::{
+    ConversationSource, NativeDatasetConversationSource, PreparedEndpointReference,
+    PreparedTurnEndpointResolver, ResolvedPreparedEndpoint,
+};
 use aiperf::rng::RngRoot;
-use aiperf::run::run_single_turn_dataset_online;
 use aiperf::scheduled::ScheduledRunReport;
 use aiperf::transport_http::config::ClientConfig;
 use aiperf::transport_http::models::{ErrorKind, RequestConfig};
@@ -34,6 +38,8 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use loadgen_core::collector::ReplayTerminalStatus;
 use serde_json::{Value, json};
+
+mod common;
 
 const PNG: &[u8] = &[
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
@@ -84,11 +90,128 @@ async fn spawn(app: Router) -> (SocketAddr, tokio::task::JoinHandle<()>) {
     (address, task)
 }
 
+fn normalize_endpoint_name(name: &str) -> String {
+    name.trim().to_ascii_lowercase().replace(['-', '/'], "_")
+}
+
+/// Builtin dialects prepared for per-row `endpoint` overrides, mirroring the
+/// removed `BuiltinEndpointResolver` capability for the tests. Every dialect the
+/// tier-2 fixtures reference by name is prepared once with default config; the
+/// authored default endpoint keeps its caller-supplied configuration.
+const OVERRIDE_DIALECTS: &[&str] = &[
+    "chat",
+    "nim_embeddings",
+    "embeddings",
+    "chat_embeddings",
+    "nim_rankings",
+    "cohere_rankings",
+    "hf_tei_rankings",
+    "huggingface_generate",
+    "image_generation",
+    "image_edit",
+    "image_retrieval",
+    "video_generation",
+    "solido_rag",
+];
+
+/// Test-local multi-endpoint prepared resolver: resolves a per-turn endpoint
+/// name override to a prepared dialect, or the authored default when absent.
+struct MultiPreparedResolver {
+    table: Rc<PreparedEndpointTable>,
+    by_name: BTreeMap<String, PreparedEndpointReference>,
+    default: PreparedEndpointReference,
+}
+
+impl std::fmt::Debug for MultiPreparedResolver {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("MultiPreparedResolver")
+            .field("dialects", &self.by_name.keys().collect::<Vec<_>>())
+            .finish()
+    }
+}
+
+impl PreparedTurnEndpointResolver for MultiPreparedResolver {
+    fn resolve(&self, name: Option<&str>) -> anyhow::Result<ResolvedPreparedEndpoint<'_>> {
+        let reference = match name {
+            None => self.default.clone(),
+            Some(name) => self
+                .by_name
+                .get(&normalize_endpoint_name(name))
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("endpoint override {name:?} was not prepared"))?,
+        };
+        let endpoint = self.table.get(reference.key)?;
+        Ok(ResolvedPreparedEndpoint {
+            reference,
+            endpoint,
+        })
+    }
+}
+
+fn prepare(id: &EndpointId, config: RawEndpointConfig) -> Box<dyn PreparedEndpoint> {
+    EndpointRegistry::builtin()
+        .unwrap()
+        .prepare(id, config)
+        .unwrap()
+}
+
+/// Build one prepared table holding the authored default endpoint plus every
+/// override dialect, and a resolver over it. The same `Rc<table>` must be given
+/// to the dispatching sink so dense keys resolve to identical endpoints.
+fn dialect_table(
+    endpoint_config: EndpointConfig,
+) -> (Rc<PreparedEndpointTable>, Rc<dyn PreparedTurnEndpointResolver>) {
+    let default_id = EndpointId::new(endpoint_config.endpoint_type.canonical_id()).unwrap();
+    // The base config carries per-run settings (polling, download, response
+    // field, ...) that the removed resolver applied to whichever dialect each
+    // row selected. Apply the same base config to every prepared dialect.
+    let base = RawEndpointConfig::from(endpoint_config);
+    let mut table = PreparedEndpointTable::new();
+    let mut by_name = BTreeMap::new();
+    let default_key = table.push(prepare(&default_id, base.clone())).unwrap();
+    let default = PreparedEndpointReference {
+        key: default_key,
+        endpoint_id: default_id.clone(),
+    };
+    by_name.insert(
+        normalize_endpoint_name(default_id.as_str()),
+        default.clone(),
+    );
+    for name in OVERRIDE_DIALECTS {
+        let normalized = normalize_endpoint_name(name);
+        if normalized == normalize_endpoint_name(default_id.as_str()) {
+            continue;
+        }
+        let id = EndpointId::new(name).unwrap();
+        // Some dialects reject unrelated base fields; fall back to defaults.
+        let prepared = EndpointRegistry::builtin()
+            .unwrap()
+            .prepare(&id, base.clone())
+            .or_else(|_| EndpointRegistry::builtin().unwrap().prepare(&id, RawEndpointConfig::default()))
+            .unwrap();
+        let key = table.push(prepared).unwrap();
+        by_name.insert(
+            normalized,
+            PreparedEndpointReference {
+                key,
+                endpoint_id: id,
+            },
+        );
+    }
+    let table = Rc::new(table);
+    let resolver: Rc<dyn PreparedTurnEndpointResolver> = Rc::new(MultiPreparedResolver {
+        table: table.clone(),
+        by_name,
+        default,
+    });
+    (table, resolver)
+}
+
 async fn single_turn_source(
     rows: Value,
     endpoint_config: EndpointConfig,
-    resolver: Option<Arc<dyn EndpointResolver>>,
-) -> Box<dyn ConversationSource> {
+) -> (Box<dyn ConversationSource>, Rc<PreparedEndpointTable>) {
     let dataset = LoaderRegistry::with_builtin_formats()
         .unwrap()
         .build_dataset(
@@ -99,19 +222,23 @@ async fn single_turn_source(
         )
         .await
         .unwrap();
-    Box::new(
-        NativeDatasetConversationSource::sequential_with_endpoint_config_and_resolver(
+    let (table, resolver) = dialect_table(endpoint_config);
+    let source = Box::new(
+        NativeDatasetConversationSource::sequential_with_prepared_resolver(
             dataset,
             "fixture-model",
             16,
-            endpoint_config,
-            resolver.unwrap_or_else(|| Arc::new(BuiltinEndpointResolver::default())),
+            resolver,
         )
         .unwrap(),
-    )
+    );
+    (source, table)
 }
 
-async fn raw_source(body: Bytes, endpoint_config: EndpointConfig) -> Box<dyn ConversationSource> {
+async fn raw_source(
+    body: Bytes,
+    endpoint_config: EndpointConfig,
+) -> (Box<dyn ConversationSource>, Rc<PreparedEndpointTable>) {
     let dataset = LoaderRegistry::with_builtin_formats()
         .unwrap()
         .build_dataset(
@@ -122,32 +249,33 @@ async fn raw_source(body: Bytes, endpoint_config: EndpointConfig) -> Box<dyn Con
         )
         .await
         .unwrap();
-    let resolver: Arc<dyn EndpointResolver> = Arc::new(
-        BuiltinEndpointResolver::default()
-            .with_default("raw")
-            .unwrap(),
-    );
-    Box::new(
-        NativeDatasetConversationSource::sequential_with_endpoint_config_and_resolver(
+    let (table, resolver) = dialect_table(endpoint_config);
+    let source = Box::new(
+        NativeDatasetConversationSource::sequential_with_prepared_resolver(
             dataset,
             "fixture-model",
             16,
-            endpoint_config,
             resolver,
         )
         .unwrap(),
-    )
+    );
+    (source, table)
 }
 
-async fn run(address: SocketAddr, source: Box<dyn ConversationSource>) -> ScheduledRunReport {
+async fn run(
+    address: SocketAddr,
+    source: Box<dyn ConversationSource>,
+    table: Rc<PreparedEndpointTable>,
+) -> ScheduledRunReport {
     tokio::task::LocalSet::new()
-        .run_until(run_single_turn_dataset_online(
+        .run_until(common::run_single_turn_dataset_online(
             format!("http://{address}"),
             "fixture-model".into(),
             source,
             1,
             false,
             Vec::new(),
+            table,
         ))
         .await
         .unwrap()
@@ -216,7 +344,7 @@ async fn all_decoded_tier2_dialects_reach_their_real_paths_and_complete() {
         .route("/rag/api/prompt", post(decoded_endpoint))
         .with_state(captured.clone());
     let (address, server) = spawn(app).await;
-    let source = single_turn_source(
+    let (source, table) = single_turn_source(
         json!([
             {
                 "session_id":"nim-embeddings",
@@ -277,10 +405,9 @@ async fn all_decoded_tier2_dialects_reach_their_real_paths_and_complete() {
             use_server_token_count: true,
             ..EndpointConfig::default()
         },
-        None,
     )
     .await;
-    let report = run(address, source).await;
+    let report = run(address, source, table).await;
     server.abort();
     assert_completed(&report, 7);
 
@@ -336,7 +463,7 @@ async fn raw_and_template_run_through_generic_paths_and_jmespath_parsing() {
         .with_state(captured.clone());
     let (address, server) = spawn(app).await;
 
-    let raw = raw_source(
+    let (raw, raw_table) = raw_source(
         Bytes::from_static(
             br#"{"messages":[{"role":"user","content":"raw body"}],"stream":false}"#,
         ),
@@ -349,9 +476,9 @@ async fn raw_and_template_run_through_generic_paths_and_jmespath_parsing() {
         },
     )
     .await;
-    assert_completed(&run(address, raw).await, 1);
+    assert_completed(&run(address, raw, raw_table).await, 1);
 
-    let template = single_turn_source(
+    let (template, template_table) = single_turn_source(
         json!([{
             "session_id":"template",
             "endpoint":"template",
@@ -366,10 +493,9 @@ async fn raw_and_template_run_through_generic_paths_and_jmespath_parsing() {
             streaming: false,
             ..EndpointConfig::default()
         },
-        None,
     )
     .await;
-    assert_completed(&run(address, template).await, 1);
+    assert_completed(&run(address, template, template_table).await, 1);
     server.abort();
 
     let requests = captured.by_path();
@@ -418,7 +544,7 @@ async fn image_edit_is_multipart_and_retrieval_downloads_deduplicates_and_inline
         .with_state(state.clone());
     let (address, server) = spawn(app).await;
     let asset_url = format!("http://{address}/asset.png");
-    let source = single_turn_source(
+    let (source, table) = single_turn_source(
         json!([
             {
                 "session_id":"image-edit",
@@ -435,10 +561,9 @@ async fn image_edit_is_multipart_and_retrieval_downloads_deduplicates_and_inline
             }
         ]),
         EndpointConfig::default(),
-        None,
     )
     .await;
-    let report = run(address, source).await;
+    let report = run(address, source, table).await;
     server.abort();
     assert_completed(&report, 2);
     assert_eq!(state.asset_hits.load(Ordering::SeqCst), 1);
@@ -528,7 +653,7 @@ async fn video_submission_polls_with_the_shared_clock_and_downloads_completed_co
         .route("/video-content", get(video_content))
         .with_state(state.clone());
     let (address, server) = spawn(app).await;
-    let source = single_turn_source(
+    let (source, table) = single_turn_source(
         json!([{
             "session_id":"video",
             "endpoint":"video_generation",
@@ -541,10 +666,9 @@ async fn video_submission_polls_with_the_shared_clock_and_downloads_completed_co
             download_video_content: true,
             ..EndpointConfig::default()
         },
-        None,
     )
     .await;
-    let report = run(address, source).await;
+    let report = run(address, source, table).await;
     server.abort();
     assert_completed(&report, 1);
     assert_eq!(state.polls.load(Ordering::SeqCst), 2);

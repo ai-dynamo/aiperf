@@ -111,7 +111,7 @@ the engine is a linked library on both sides.
 
 ## Tests
 
-`crates/runner/tests/online_replay_stdio.rs`:
+`rust/runner/tests/online_replay_stdio.rs`:
 
 - `online_product_path_matches_python_dynamo_replay_subprocess_within_3pct` —
   the end-to-end **subprocess vs subprocess** gate above. Skips cleanly when the
@@ -122,7 +122,7 @@ the engine is a linked library on both sides.
   with the native side run **in-process** via Dynamo's public
   `simulate_concurrency_live_requests` (no Python required; always runs).
 
-`crates/aiperf/src/dynosim.rs`:
+`rust/aiperf/src/dynosim.rs`:
 
 - `online_matches_native_dynamo_live_replay_apples_to_apples` — library-level
   check of the online driver against the in-process native driver.

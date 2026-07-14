@@ -82,7 +82,7 @@ flowchart LR
 ## Addendum — 2026-07-12 (historical precursor)
 
 The "IMPLEMENTED" status above refers to the prior `dynamo-aiperf-native` tree,
-not to the current standalone AIPerf Rust workspace under `crates/`. This file is
+not to the current standalone AIPerf Rust workspace under `rust/`. This file is
 kept as lineage for the request-rate/tokenizer increment that informed the later
 `loadgen-core`, `aiperf-rng`, dataset, and scheduled-workload designs.
 

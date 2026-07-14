@@ -14,12 +14,12 @@ purpose for each, so an agent knows which file to open for a given question.
   outer loops, and presentation; a fresh `aiperf-runner` child is the sole Rust
   executable on the product execution path and owns exactly one benchmark hot
   path. The standalone `aiperf-mock-rs` developer/test target is an ordinary
-  online inference server, not an orchestrated backend process. `crates/aiperf`
+  online inference server, not an orchestrated backend process. `rust/aiperf`
   is a runtime library and intentionally has no binary target.
 - **DEPRECATED:** the `aiperf-rs` and `~/projects/aiperf-rust` trees (mechanical
   1:1 ports that reproduce the Python multiprocess/ZMQ complexity this design
   deletes). Do not build on them.
-- **OWNERSHIP:** Rust execution truth is `crates/`; canonical Python frontend
+- **OWNERSHIP:** Rust execution truth is `rust/`; canonical Python frontend
   truth includes `src/aiperf/config`, `src/aiperf/orchestrator`, and
   `src/aiperf/cli_runner`. The old controller/service/ZMQ implementation under
   `src/` remains legacy and is not an alternate hot path.
@@ -85,7 +85,7 @@ the existing `aiperf-rng` BLAKE3/PCG64 stream only; there is no Python SHA/MT
 duplicate. Equivalent logical WEKA and Dynamo inputs produce byte-identical
 native segments and HTTP bodies under that canonical stream.
 
-## Crate topology (`crates/`)
+## Crate topology (`rust/`)
 
 | Crate | Read for | Entry files |
 |---|---|---|
@@ -305,7 +305,7 @@ profiler.
 
 ## "Which file answers…" quick map
 
-- **How is virtual time deterministic?** `crates/clock/src/sim_clock.rs`
+- **How is virtual time deterministic?** `rust/clock/src/sim_clock.rs`
   (min-heap, `(at_ns, seq_no)`, `advance_to`) + `aiperf-graph/src/runtime.rs`
   (`drive_sim` and `drive_sim_with_source` idle-pumps).
 - **How is a request dispatched + measured?** `loadgen-core/src/sink.rs` (traits)
@@ -376,7 +376,7 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
 - `specs/2026-07-12-aiperf-rust-crate-naming-layout-design.md` — **decided / not
   implemented; authoritative for crate identity and paths**: AIPerf-owned Cargo
   packages retain `aiperf` / `aiperf-*`, target directories shorten to
-  `crates/<capability>`, and `loadgen-core` remains neutral for eventual shared
+  `rust/<capability>`, and `loadgen-core` remains neutral for eventual shared
   use by AIPerf and AI-Dynamo Mocker. The directory migration, independent
   shared-crate versioning, Dynamo consumption, and metadata guard remain unbuilt.
 - `specs/2026-07-10-steppable-clock-injected-engine-design.md` — **built and

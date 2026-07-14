@@ -120,16 +120,20 @@ fn graph_dataset_selects_graph_path_before_execution() {
 }
 
 #[test]
-fn authored_workload_is_a_validation_error() {
-    let mut malformed = request("validate");
-    malformed["run"]["cfg"]["workload"] = json!({"type": "scheduled"});
-    let output = run(&malformed);
+fn authored_workload_field_is_ignored_not_rejected() {
+    // `workload` was a removed selector. The runner ignores unknown Config keys
+    // by design (Python dumps the whole BenchmarkConfig), so a stray `workload`
+    // is decoded as if absent rather than rejected by a dedicated guard.
+    let mut authored = request("validate");
+    authored["run"]["cfg"]["tokenizer"] = json!({"name": "builtin"});
+    authored["run"]["cfg"]["workload"] = json!({"type": "scheduled"});
+    let output = run(&authored);
     let response = one_json_line(&output.stdout);
 
-    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.status.code(), Some(0));
     assert_eq!(response["event"], "run_validation");
     assert_eq!(response["benchmark_id"], "v2-process-proof");
-    assert_eq!(response["errors"][0]["path"], "run.cfg.workload");
+    assert_eq!(response["success"], true);
 }
 
 #[test]

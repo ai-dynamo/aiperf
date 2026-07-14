@@ -830,16 +830,6 @@ impl EndpointRegistry {
             .map_err(EndpointRegistryError::from)
     }
 
-    /// Protocol-v1 adapter that discards the closed enum identity before
-    /// canonical registry preparation.
-    pub fn prepare_legacy(
-        &self,
-        id: &EndpointId,
-        config: EndpointConfig,
-    ) -> Result<Box<dyn PreparedEndpoint>, EndpointRegistryError> {
-        self.prepare(id, RawEndpointConfig::from(config))
-    }
-
     /// Resolve the old adapter used by protocol-v1 materializers.
     pub fn legacy_endpoint(
         &self,

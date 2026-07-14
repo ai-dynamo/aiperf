@@ -24,7 +24,7 @@ files. A change FAILS if it:
   * touches any ``specs/*.md`` (other than ``specs/README.md``) without also
     updating ``specs/README.md`` (index row / status / addendum note); and, for a
     spec ADD / REMOVE / RENAME, without also updating ``llms.txt``.
-  * ADDS / REMOVES / RENAMES a crate (a ``crates/<name>/Cargo.toml``) without
+  * ADDS / REMOVES / RENAMES a crate (a ``rust/<name>/Cargo.toml``) without
     updating all four agent instruction files (the crate-topology table) AND
     ``llms.txt`` (the crate table).
 
@@ -56,7 +56,7 @@ SPECS_INDEX = "specs/README.md"
 LLMS = "llms.txt"
 
 _SPEC_MD = re.compile(r"^specs/.+\.md$")
-_CRATE_MANIFEST = re.compile(r"^crates/[^/]+/Cargo\.toml$")
+_CRATE_MANIFEST = re.compile(r"^rust/[^/]+/Cargo\.toml$")
 
 
 def _run(cmd: list[str]) -> str:

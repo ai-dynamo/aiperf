@@ -25,11 +25,11 @@ prefix). This check consults ``cargo metadata`` as the sole authority for
 package identity — it never derives a package name from a directory basename —
 and asserts, for every workspace member:
 
-- the umbrella package ``aiperf`` lives at ``crates/aiperf``;
-- every ``aiperf-<capability>`` package lives at ``crates/<capability>``
+- the umbrella package ``aiperf`` lives at ``rust/aiperf``;
+- every ``aiperf-<capability>`` package lives at ``rust/<capability>``
   (the ``aiperf-`` prefix is stripped from the directory only);
 - ``loadgen-core`` (the intentional cross-product exception) lives at
-  ``crates/loadgen-core``;
+  ``rust/loadgen-core``;
 - any other exception is explicitly allowlisted below with its rationale.
 
 Fails with a non-zero exit code on any mismatch, so it can gate CI and
@@ -47,8 +47,8 @@ import sys
 from pathlib import Path
 
 # Packages whose workspace directory intentionally does NOT follow the
-# aiperf-<capability> -> crates/<capability> rule. Each entry maps the Cargo
-# package name to its required directory basename under crates/, with a reason.
+# aiperf-<capability> -> rust/<capability> rule. Each entry maps the Cargo
+# package name to its required directory basename under rust/, with a reason.
 #
 #   loadgen-core: product-neutral shared dispatch/observation contract designed
 #   for both AIPerf and AI-Dynamo Mocker; it must not carry a product prefix.
@@ -76,7 +76,7 @@ def workspace_packages(repo_root: Path) -> list[tuple[str, Path]]:
 
 
 def expected_directory(package_name: str) -> str:
-    """Return the required ``crates/`` directory basename for a package."""
+    """Return the required ``rust/`` directory basename for a package."""
     if package_name in ALLOWLISTED_EXCEPTIONS:
         return ALLOWLISTED_EXCEPTIONS[package_name]
     if package_name == "aiperf":
@@ -89,12 +89,12 @@ def expected_directory(package_name: str) -> str:
 
 def main() -> None:
     repo_root = Path(__file__).resolve().parent.parent
-    crates_root = repo_root / "crates"
+    crates_root = repo_root / "rust"
 
     violations: list[str] = []
     for name, manifest_path in workspace_packages(repo_root):
         crate_dir = manifest_path.parent
-        # Only govern members that live directly under crates/ (skip excluded
+        # Only govern members that live directly under rust/ (skip excluded
         # test-fixture packages nested deeper in the tree).
         if crate_dir.parent != crates_root:
             continue
@@ -116,7 +116,7 @@ def main() -> None:
         expected = expected_directory(name)
         if actual != expected:
             violations.append(
-                f"package '{name}' is at crates/{actual}, expected crates/{expected}"
+                f"package '{name}' is at rust/{actual}, expected rust/{expected}"
             )
 
     if violations:
@@ -128,7 +128,7 @@ def main() -> None:
             print(f"  - {v}")
         sys.exit(1)
 
-    print("OK: every workspace package sits at its policy-mandated crates/ directory")
+    print("OK: every workspace package sits at its policy-mandated rust/ directory")
 
 
 if __name__ == "__main__":

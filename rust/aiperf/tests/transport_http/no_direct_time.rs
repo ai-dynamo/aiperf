@@ -1,4 +1,4 @@
-// crates/transport-http/tests/no_direct_time.rs
+// rust/transport-http/tests/no_direct_time.rs
 //! Enforces the Global Constraint: no direct time access in `src/`.
 
 use std::fs;
@@ -35,7 +35,7 @@ fn scan(dir: &Path, hits: &mut Vec<String>) {
 
 #[test]
 fn no_direct_time_access_in_src() {
-    // After the monocrate collapse this test lives in `crates/aiperf`, whose
+    // After the monocrate collapse this test lives in `rust/aiperf`, whose
     // `src/` legitimately contains non-transport code that uses wall-clock APIs
     // (RealClock fallback, dynosim). The Global Constraint it enforces applies
     // to the HTTP transport source, so scope the scan to that module only.

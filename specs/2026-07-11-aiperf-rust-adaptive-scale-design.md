@@ -22,7 +22,7 @@ top of), `2026-07-10-aiperf-rust-metrics-accumulator-sweepline-design.md` +
 `…-telemetry-accumulators-design.md` (the measured-metrics seam the window sampler
 reads — referenced, not re-designed), `2026-07-11-aiperf-rust-exporters-overhaul-design.md`
 (where the JSONL/summary artifacts land). `aiperf-timing` built primitives verified in
-`crates/aiperf-timing/src/{intervals,slots,stop}.rs`.
+`rust/aiperf-timing/src/{intervals,slots,stop}.rs`.
 
 ---
 
@@ -417,8 +417,8 @@ pure-logic seams, and the whole loop runs deterministically offline under `SimCl
 ## Addendum — 2026-07-11: implemented in `aiperf-adaptive`
 
 This design is now implemented. The authoritative code is the new
-`crates/aiperf-adaptive` leaf crate plus the online integration in
-`crates/aiperf/src/{adaptive,run,main}.rs`:
+`rust/aiperf-adaptive` leaf crate plus the online integration in
+`rust/aiperf/src/{adaptive,run,main}.rs`:
 
 - The object-safe `ControlActuator`, `SlaEvaluator`, `StepPolicy`,
   `WindowSampler`, and `Controller` traits are built, with the four live

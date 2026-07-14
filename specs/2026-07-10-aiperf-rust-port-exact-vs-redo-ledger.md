@@ -37,7 +37,7 @@ handful of things the current `ajc/rust` spike dropped that will silently change
 benchmark semantics if not restored deliberately.
 
 State of the `ajc/rust` spike as of this writing: a "walking skeleton"
-(`crates/aiperf/src/run.rs:4`), ~11 commits, six crates (`aiperf-clock`,
+(`rust/aiperf/src/run.rs:4`), ~11 commits, six crates (`aiperf-clock`,
 `loadgen-core`, `aiperf-transport-http`, `aiperf-core`, `aiperf-graph`, `aiperf`). It
 already implements thread-per-core single-threaded tokio runtimes, `Rc`/`RefCell`
 per-trace state, raw hyper + UDS transport, `timerfd`/`SimClock`, and has deleted
@@ -73,7 +73,7 @@ buys all three modes for free.
 
 These look simple, are not, and were paid for in bugs. Port the **behavior**
 faithfully; guard with a byte-exact fixture harness (the `graph-rs` model:
-`crates/graph-ir/tests/parity.rs`, ~19-case corpus).
+`rust/graph-ir/tests/parity.rs`, ~19-case corpus).
 
 | Concept | Source of truth (Python) | Why not "redo cleaner" |
 |---|---|---|
@@ -138,7 +138,7 @@ Not port, not drop — get the shape right up front.
 
 ## 5. The trap — deleting "credits" is right; deleting credit *policy* is a silent semantics change
 
-`grep credit crates/**/*.rs` in `ajc/rust` = 0 hits, and admission is a vestigial
+`grep credit rust/**/*.rs` in `ajc/rust` = 0 hits, and admission is a vestigial
 no-op (`admit == dispatch`, `http_sink.rs:235`). Fine for synthetic throughput
 benchmarks; **wrong for real multi-turn / agentic runs.** The Python credit system
 encoded scheduling *policy*, not just an IPC protocol. Kill the ZMQ credit
@@ -149,7 +149,7 @@ module.
 
 - [ ] **Continuation-turn-before-new-session priority** (`request_rate.py:238`).
   Frees session slots faster, prevents starvation. Missing → latency distribution
-  shifts under load. *Where:* the online driver in `crates/aiperf/src/run.rs`
+  shifts under load. *Where:* the online driver in `rust/aiperf/src/run.rs`
   currently just `Semaphore` + `tokio::spawn` per request with no turn priority.
 - [ ] **Prefill slot released on TTFT, not on completion** (`issuer.py`,
   `sticky_router.py:476` FirstToken early-return). Models GPU prompt-processing

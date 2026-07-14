@@ -8,7 +8,7 @@ on:
     paths:
       - Cargo.lock
       - Cargo.toml
-      - crates/**
+      - rust/**
       - src/aiperf/entrypoint.py
       - src/aiperf/cli_commands/dynosim.py
       - src/aiperf/dynosim_capabilities.json
@@ -66,7 +66,7 @@ jobs:
           EXPECTED_REVISION: ${{ inputs.dynamo_revision || vars.DYNAMO_AIPERF_NATIVE_REVISION }}
         run: |
           set -euo pipefail
-          DYNAMO_ROOT=$(realpath -m crates/aiperf/../../../../../dynamo-aiperf-native)
+          DYNAMO_ROOT=$(realpath -m rust/aiperf/../../../../../dynamo-aiperf-native)
           if [ ! -f "${DYNAMO_ROOT}/lib/mocker/Cargo.toml" ]; then
             echo "::error::Missing trusted dynamo-aiperf-native checkout at ${DYNAMO_ROOT}; offline artifacts cannot be synthesized or downgraded to online."
             exit 1
@@ -115,7 +115,7 @@ jobs:
         if: matrix.arch == 'amd64'
         run: |
           set -euo pipefail
-          DYNAMO_ROOT=$(realpath -m crates/aiperf/../../../../../dynamo-aiperf-native)
+          DYNAMO_ROOT=$(realpath -m rust/aiperf/../../../../../dynamo-aiperf-native)
           PARITY_DYNAMO_ROOT="${RUNNER_TEMP}/dynamo-online-parity-source"
           PARITY_VENV="${RUNNER_TEMP}/aiperf-online-parity-venv"
           PARITY_OUTPUT="${RUNNER_TEMP}/aiperf-online-parity"

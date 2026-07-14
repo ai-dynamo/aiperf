@@ -6,7 +6,7 @@
 
 ## 1. Summary
 
-A fresh, standalone Rust crate (`crates/aiperf-transport-http`) that ports AIPerf's
+A fresh, standalone Rust crate (`rust/aiperf-transport-http`) that ports AIPerf's
 Python `aiohttp`-based transport layer and its timing-*recording* machinery to
 idiomatic, high-performance Rust. It reproduces the measurement behavior of the
 Python `src/aiperf/transports/` package — streaming SSE inference over HTTP,
@@ -73,8 +73,8 @@ Repo-relative to `/home/anthony/nvidia/projects/aiperf/ajc/rust`:
   `trace_models.py` (`BaseTraceData`, `AioHttpTraceData`, `*Export`),
   `error_models.py` (`ErrorDetails`).
 
-Local Rust reference: `crates/aiperf-clock` (the `Clock` contract) and
-`crates/aiperf` (existing `dynamo-aiperf` — HttpSink/SSE prior art, and the
+Local Rust reference: `rust/aiperf-clock` (the `Clock` contract) and
+`rust/aiperf` (existing `dynamo-aiperf` — HttpSink/SSE prior art, and the
 `graph::runtime` `drive_real`/`drive_sim` execution model we mirror).
 
 ## 4. Clock abstraction (mandatory foundation)
@@ -250,7 +250,7 @@ config with matching default values.
 ## 8. Crate layout
 
 ```
-crates/aiperf-transport-http/
+rust/aiperf-transport-http/
   Cargo.toml                # standalone; depends on aiperf-clock
   src/
     lib.rs
@@ -274,7 +274,7 @@ net + io-util), `hyper` (features `client`, `http1`, `http2`), `hyper-util`
 
 ## 9. Validation — integrate against `aiperf-mock-rs`
 
-`aiperf-mock-rs` (at `crates/aiperf-mock-rs`) is an
+`aiperf-mock-rs` (at `rust/aiperf-mock-rs`) is an
 OpenAI-compatible mock server: `/v1/chat/completions` (streaming SSE),
 `/v1/completions`, `/v1/models`, `/health`, with `--fast`, `--ttft`/`--itl`,
 `--error-rate`, `--host`/`--port`, and h1+h2 (h2c prior-knowledge) support.
@@ -344,7 +344,7 @@ writers contain every advertised field.
 The current built path is still the single Clock-injected hyper stack used by both the
 CLI online path and graph benchmark. Avoid reading any remaining reqwest-era or
 `Instant` wording in this document as current implementation truth; use
-`crates/aiperf-transport-http`, `crates/aiperf/src/http.rs`, and `loadgen-core` as the
+`rust/aiperf-transport-http`, `rust/aiperf/src/http.rs`, and `loadgen-core` as the
 authoritative code surfaces.
 
 ## Addendum — 2026-07-12

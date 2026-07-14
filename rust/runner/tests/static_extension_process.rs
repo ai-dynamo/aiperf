@@ -215,13 +215,6 @@ fn statically_linked_extension_child() {
 
     assert_eq!(evidence().registry_builds, 1);
     assert_eq!(dataset_loads.load(Ordering::SeqCst), 0);
-    let capabilities = application.capabilities();
-    assert_eq!(capabilities.extensions, [EXTENSION_NAME]);
-    assert!(
-        capabilities
-            .supported_pairs
-            .contains(&["dynosim_offline".to_owned(), "scheduled".to_owned()])
-    );
     assert_eq!(evidence().registry_builds, 1);
     assert_eq!(
         application

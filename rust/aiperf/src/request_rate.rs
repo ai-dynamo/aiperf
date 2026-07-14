@@ -533,9 +533,8 @@ mod tests {
     use loadgen_core::sink::RequestObserver;
 
     use super::*;
-    use crate::multiturn::SyntheticConversationSource;
     use crate::scheduled::{ModelResponseMetadata, TurnDispatchOutcome, TurnDispatcher};
-    use crate::workload::SkeletonWorkload;
+    use crate::test_util::synthetic_prepared_source;
 
     struct DelayedDispatcher {
         clock: Rc<dyn Clock>,
@@ -566,17 +565,16 @@ mod tests {
 
     #[test]
     fn closed_loop_issues_continuations_when_session_slot_is_full() {
+        // Build the native dataset source on a throwaway runtime before the
+        // deterministic sim driver takes over the executor.
+        let source = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(synthetic_prepared_source(2, 8, 4, Some(0), "m"));
         let clock = Rc::new(SimClock::new());
         let runtime_clock: Rc<dyn Clock> = clock.clone();
         let outcome = drive_sim(clock, move |_handle| async move {
-            let source = SyntheticConversationSource::new(SkeletonWorkload {
-                num_requests: 4,
-                input_tokens: 8,
-                output_tokens: 4,
-                turns: 2,
-                think_time_ms: Some(0),
-            })
-            .unwrap();
             let workload = RequestRateWorkload::new(
                 RequestRateConfig {
                     arrival_pattern: ArrivalPattern::ConcurrencyBurst,
@@ -586,7 +584,7 @@ mod tests {
                     prefill_concurrency: None,
                     seed: 0,
                 },
-                Box::new(source),
+                source,
             )
             .unwrap();
             let runtime = ScheduledRuntime::new(

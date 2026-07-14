@@ -1,4 +1,4 @@
-// crates/transport-http/tests/connect.rs
+// rust/transport-http/tests/connect.rs
 mod common;
 use common::{MockServer, run_local};
 

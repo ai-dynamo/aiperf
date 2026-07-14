@@ -12,10 +12,7 @@ use aiperf::fixed_schedule::{
     DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload,
 };
 use aiperf::graph::runtime::drive_sim;
-use aiperf::multiturn::{
-    ConversationDataset, ConversationSource, DatasetConversationSource,
-    SyntheticConversationSource, TurnResponse, TurnToSend,
-};
+use aiperf::multiturn::{ConversationSource, TurnResponse, TurnToSend};
 use aiperf::scheduled::{
     ScheduledAncillaryPolicies, ScheduledRunReport, TurnDispatchOutcome, TurnDispatcher, Workload,
     run_scheduled_workload, run_scheduled_workload_with_ancillary,
@@ -23,10 +20,25 @@ use aiperf::scheduled::{
 use aiperf::timing::{BernoulliFixedDelay, Phase, RoundRobinUrlSelector, StopConfig};
 use aiperf::user_centric::UserTargetController;
 use aiperf::user_centric::{UserCentricConfig, UserCentricWorkload};
-use aiperf::workload::SkeletonWorkload;
 use async_trait::async_trait;
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::RequestObserver;
+
+mod common;
+
+/// Block on an async conversation-source builder from a throwaway current-thread
+/// runtime, so the sync `#[test]` bodies can construct sources before entering
+/// `drive_sim`/`run_sim` (never nest `block_on` inside those closures).
+fn block_on_source<F>(fut: F) -> Box<dyn ConversationSource>
+where
+    F: std::future::Future<Output = Box<dyn ConversationSource>>,
+{
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(fut)
+}
 
 #[derive(Clone, Debug)]
 struct SeenTurn {
@@ -143,11 +155,28 @@ impl TurnDispatcher for SimDispatcher {
         self.seen.borrow_mut().push(SeenTurn {
             conversation_id: turn.conversation_id.clone(),
             turn_index: turn.turn_index,
+            // Native prepared turns carry their message history in the
+            // materialized `request_body`, not the legacy `messages` vec.
             roles: turn
-                .messages
-                .iter()
-                .map(|message| message.role.clone())
-                .collect(),
+                .request_body
+                .as_ref()
+                .and_then(|body| serde_json::from_slice::<serde_json::Value>(body).ok())
+                .and_then(|body| {
+                    body.get("messages").and_then(|messages| {
+                        messages.as_array().map(|messages| {
+                            messages
+                                .iter()
+                                .filter_map(|message| {
+                                    message
+                                        .get("role")
+                                        .and_then(|role| role.as_str())
+                                        .map(String::from)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                    })
+                })
+                .unwrap_or_default(),
             cancel_after_ns: turn.cancel_after_ns,
             url_index: turn.url_index,
         });
@@ -239,26 +268,22 @@ fn run_sim_with_policies(
 
 #[test]
 fn fixed_schedule_replays_absolute_relative_and_immediate_turns_exactly() {
-    let dataset = ConversationDataset::from_json_or_jsonl(
-        r#"{
-          "conversations": [
-            {"conversation_id":"a","turns":[
-              {"timestamp_ms":1000,"prompt_text":"a0","input_length":1,"max_output_tokens":2},
-              {"timestamp_ms":1120,"prompt_text":"a1","input_length":1,"max_output_tokens":2},
-              {"delay_ms":40,"prompt_text":"a2","input_length":1,"max_output_tokens":2}
+    let source: Box<dyn ConversationSource> = block_on_source(common::prepared_source_from_conversations(
+        serde_json::json!([
+            {"session_id":"a","turns":[
+              {"timestamp":1000,"text":"a0","input_length":1,"output_length":2},
+              {"timestamp":1120,"text":"a1","input_length":1,"output_length":2},
+              {"delay":40,"text":"a2","input_length":1,"output_length":2}
             ]},
-            {"conversation_id":"b","turns":[
-              {"timestamp_ms":1050,"prompt_text":"b0","input_length":1,"max_output_tokens":2},
-              {"delay_ms":25,"prompt_text":"b1","input_length":1,"max_output_tokens":2},
-              {"prompt_text":"b2","input_length":1,"max_output_tokens":2}
+            {"session_id":"b","turns":[
+              {"timestamp":1050,"text":"b0","input_length":1,"output_length":2},
+              {"delay":25,"text":"b1","input_length":1,"output_length":2},
+              {"text":"b2","input_length":1,"output_length":2}
             ]}
-          ]
-        }"#,
-        1,
+        ]),
+        "model",
         2,
-    )
-    .unwrap();
-    let source: Box<dyn ConversationSource> = Box::new(DatasetConversationSource::new(dataset));
+    ));
     let schedule_source = Rc::new(
         DatasetFixedScheduleSource::new(FixedScheduleConfig {
             auto_offset_timestamps: true,
@@ -344,28 +369,25 @@ fn fixed_schedule_replays_absolute_relative_and_immediate_turns_exactly() {
 
 #[test]
 fn ancillary_policies_cancel_each_selected_turn_and_pin_urls_per_session() {
-    let dataset = ConversationDataset::from_json_or_jsonl(
-        r#"{
-          "conversations": [
-            {"conversation_id":"a","turns":[
-              {"timestamp_ms":0,"input_length":1,"max_output_tokens":1},
-              {"delay_ms":1,"input_length":1,"max_output_tokens":1},
-              {"delay_ms":1,"input_length":1,"max_output_tokens":1}
+    let source = block_on_source(common::prepared_source_from_conversations(
+        serde_json::json!([
+            {"session_id":"a","turns":[
+              {"timestamp":0,"text":"hi","input_length":1,"output_length":1},
+              {"delay":1,"text":"hi","input_length":1,"output_length":1},
+              {"delay":1,"text":"hi","input_length":1,"output_length":1}
             ]},
-            {"conversation_id":"b","turns":[
-              {"timestamp_ms":0,"input_length":1,"max_output_tokens":1},
-              {"delay_ms":1,"input_length":1,"max_output_tokens":1},
-              {"delay_ms":1,"input_length":1,"max_output_tokens":1}
+            {"session_id":"b","turns":[
+              {"timestamp":0,"text":"hi","input_length":1,"output_length":1},
+              {"delay":1,"text":"hi","input_length":1,"output_length":1},
+              {"delay":1,"text":"hi","input_length":1,"output_length":1}
             ]}
-          ]
-        }"#,
+        ]),
+        "model",
         1,
-        1,
-    )
-    .unwrap();
+    ));
     let workload: Rc<dyn Workload> = Rc::new(
         FixedScheduleWorkload::new(
-            Box::new(DatasetConversationSource::new(dataset)),
+            source,
             Rc::new(
                 DatasetFixedScheduleSource::new(FixedScheduleConfig {
                     auto_offset_timestamps: true,
@@ -414,16 +436,8 @@ fn ancillary_policies_cancel_each_selected_turn_and_pin_urls_per_session() {
 
 #[test]
 fn issued_credit_keeps_selector_output_on_turn_zero_only() {
-    let mut source: Box<dyn ConversationSource> = Box::new(
-        SyntheticConversationSource::new(SkeletonWorkload {
-            num_requests: 0,
-            input_tokens: 1,
-            output_tokens: 1,
-            turns: 3,
-            think_time_ms: None,
-        })
-        .unwrap(),
-    );
+    let mut source: Box<dyn ConversationSource> =
+        block_on_source(common::synthetic_prepared_source(3, 1, 1, None, "model"));
     let first = source
         .next(Some("session".into()))
         .unwrap()
@@ -463,18 +477,19 @@ fn issued_credit_keeps_selector_output_on_turn_zero_only() {
 
 #[test]
 fn fixed_absolute_timestamp_in_the_past_fires_on_response_return() {
-    let dataset = ConversationDataset::from_json_or_jsonl(
-        r#"{"conversation_id":"late","turns":[
-          {"timestamp_ms":0,"input_length":1,"max_output_tokens":1},
-          {"timestamp_ms":20,"input_length":1,"max_output_tokens":1}
-        ]}"#,
+    let source = block_on_source(common::prepared_source_from_conversations(
+        serde_json::json!([
+            {"session_id":"late","turns":[
+              {"timestamp":0,"text":"hi","input_length":1,"output_length":1},
+              {"timestamp":20,"text":"hi","input_length":1,"output_length":1}
+            ]}
+        ]),
+        "model",
         1,
-        1,
-    )
-    .unwrap();
+    ));
     let workload: Rc<dyn Workload> = Rc::new(
         FixedScheduleWorkload::new(
-            Box::new(DatasetConversationSource::new(dataset)),
+            source,
             Rc::new(
                 DatasetFixedScheduleSource::new(FixedScheduleConfig {
                     auto_offset_timestamps: true,
@@ -501,14 +516,7 @@ fn fixed_absolute_timestamp_in_the_past_fires_on_response_return() {
 
 #[test]
 fn user_centric_seed_churn_and_per_user_pacing_match_the_contract() {
-    let source = SyntheticConversationSource::new(SkeletonWorkload {
-        num_requests: 0,
-        input_tokens: 2,
-        output_tokens: 1,
-        turns: 3,
-        think_time_ms: None,
-    })
-    .unwrap();
+    let source = block_on_source(common::synthetic_prepared_source(3, 2, 1, None, "model"));
     let workload: Rc<dyn Workload> = Rc::new(
         UserCentricWorkload::new(
             UserCentricConfig {
@@ -516,7 +524,7 @@ fn user_centric_seed_churn_and_per_user_pacing_match_the_contract() {
                 request_rate: 20.0,
                 concurrency: None,
             },
-            Box::new(source),
+            source,
         )
         .unwrap(),
     );
@@ -566,14 +574,7 @@ fn user_centric_seed_churn_and_per_user_pacing_match_the_contract() {
 
 #[test]
 fn user_centric_optional_concurrency_caps_live_sessions() {
-    let source = SyntheticConversationSource::new(SkeletonWorkload {
-        num_requests: 0,
-        input_tokens: 2,
-        output_tokens: 1,
-        turns: 2,
-        think_time_ms: None,
-    })
-    .unwrap();
+    let source = block_on_source(common::synthetic_prepared_source(2, 2, 1, None, "model"));
     let workload: Rc<dyn Workload> = Rc::new(
         UserCentricWorkload::new(
             UserCentricConfig {
@@ -581,7 +582,7 @@ fn user_centric_optional_concurrency_caps_live_sessions() {
                 request_rate: 100.0,
                 concurrency: Some(2),
             },
-            Box::new(source),
+            source,
         )
         .unwrap(),
     );
@@ -604,14 +605,7 @@ fn user_centric_optional_concurrency_caps_live_sessions() {
 
 #[test]
 fn user_centric_session_bound_starts_exact_sessions_then_drains_turns() {
-    let source = SyntheticConversationSource::new(SkeletonWorkload {
-        num_requests: 0,
-        input_tokens: 2,
-        output_tokens: 1,
-        turns: 3,
-        think_time_ms: None,
-    })
-    .unwrap();
+    let source = block_on_source(common::synthetic_prepared_source(3, 2, 1, None, "model"));
     let workload: Rc<dyn Workload> = Rc::new(
         UserCentricWorkload::new(
             UserCentricConfig {
@@ -619,7 +613,7 @@ fn user_centric_session_bound_starts_exact_sessions_then_drains_turns() {
                 request_rate: 20.0,
                 concurrency: None,
             },
-            Box::new(source),
+            source,
         )
         .unwrap(),
     );
@@ -649,14 +643,7 @@ fn user_centric_session_bound_starts_exact_sessions_then_drains_turns() {
 
 #[test]
 fn user_centric_duration_cancels_future_schedule_but_drains_inflight() {
-    let source = SyntheticConversationSource::new(SkeletonWorkload {
-        num_requests: 0,
-        input_tokens: 2,
-        output_tokens: 1,
-        turns: 3,
-        think_time_ms: None,
-    })
-    .unwrap();
+    let source = block_on_source(common::synthetic_prepared_source(3, 2, 1, None, "model"));
     let workload: Rc<dyn Workload> = Rc::new(
         UserCentricWorkload::new(
             UserCentricConfig {
@@ -664,7 +651,7 @@ fn user_centric_duration_cancels_future_schedule_but_drains_inflight() {
                 request_rate: 20.0,
                 concurrency: None,
             },
-            Box::new(source),
+            source,
         )
         .unwrap(),
     );
@@ -695,14 +682,7 @@ fn user_centric_duration_cancels_future_schedule_but_drains_inflight() {
 
 #[test]
 fn adaptive_scale_up_interrupts_spawn_sleep_and_uses_new_turn_gap() {
-    let source = SyntheticConversationSource::new(SkeletonWorkload {
-        num_requests: 0,
-        input_tokens: 2,
-        output_tokens: 1,
-        turns: 3,
-        think_time_ms: None,
-    })
-    .unwrap();
+    let source = block_on_source(common::synthetic_prepared_source(3, 2, 1, None, "model"));
     let workload = Rc::new(
         UserCentricWorkload::new(
             UserCentricConfig {
@@ -710,7 +690,7 @@ fn adaptive_scale_up_interrupts_spawn_sleep_and_uses_new_turn_gap() {
                 request_rate: 20.0,
                 concurrency: None,
             },
-            Box::new(source),
+            source,
         )
         .unwrap(),
     );

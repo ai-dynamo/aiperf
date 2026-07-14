@@ -249,7 +249,7 @@ through the shared scheduled runtime.
 ## 9. Implementation addendum (2026-07-11)
 
 The linear request-rate chain is built in
-`crates/aiperf/src/request_rate.rs` as `RequestRateWorkload`, a normal
+`rust/aiperf/src/request_rate.rs` as `RequestRateWorkload`, a normal
 `scheduled::Workload`. It owns the single issuer loop, FIFO continuation queue,
 cached next sampler draw, session guards, and per-turn prefill guards. The loop
 draws the next interval before admission, re-anchors rather than catching up,
@@ -275,11 +275,11 @@ store with the real prior assistant reply.
 
 Executable evidence:
 
-- `crates/aiperf/tests/request_rate_sim.rs` proves continuation priority, exact
+- `rust/aiperf/tests/request_rate_sim.rs` proves continuation priority, exact
   turn pacing, cached-sample retry, session and prefill limits, TTFT release,
   terminal fallback, think time, request/session/duration stops, drain behavior,
   and reply-spliced materialization under `SimClock`.
-- `crates/aiperf/tests/request_rate_cli.rs` proves dataset-backed multi-turn CLI
+- `rust/aiperf/tests/request_rate_cli.rs` proves dataset-backed multi-turn CLI
   dispatch and reply splicing over real HTTP.
 - Existing scheduled, ancillary, adaptive, and workspace suites cover the shared
   runtime and actuator regressions.

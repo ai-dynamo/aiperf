@@ -4,7 +4,7 @@
 **Author:** Anthony Casagrande (Tech Lead) + Claude
 **Status:** design sketch
 **Companion:** `2026-07-10-aiperf-rust-port-exact-vs-redo-ledger.md` §5 (the credit-policy trap)
-**Target:** `~/nvidia/projects/aiperf/ajc/rust/crates/aiperf/src/run.rs`
+**Target:** `~/nvidia/projects/aiperf/ajc/rust/rust/aiperf/src/run.rs`
 
 ---
 

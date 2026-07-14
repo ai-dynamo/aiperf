@@ -8,14 +8,14 @@ SPDX-License-Identifier: Apache-2.0
 This folder is the design record for **Python-orchestrated, Rust-executed
 AIPerf** on branch `ajc/rust`: Python owns the user CLI, Config v2, outer loops,
 and presentation; the sole Rust executable is the single-run `aiperf-runner`;
-and the `crates/aiperf` package is a runtime library, not a second CLI. The thesis
+and the `rust/aiperf` package is a runtime library, not a second CLI. The thesis
 across every spec is the same: keep AIPerf's *external contracts* and its
 *earned-in-blood algorithms* (SSE parsing, timing breakdown, metric formulas,
 firing-gate arithmetic), keep the **`{clock}` + `{transport}` trait seam** as the
 crown jewel (it is what makes real / mock / offline execution modes free), and
 throw away every internal artifact of the Python multiprocess/GIL model (ZMQ bus,
 services, credit protocol, `plugins.yaml`, shard export, mmap cache). The specs
-are **design intent** — the code in `crates/` is a walking skeleton that is ahead
+are **design intent** — the code in `rust/` is a walking skeleton that is ahead
 of and behind them in places. When they disagree, the code wins; verify before
 relying on any spec feature (see [`../llms.txt`](../llms.txt) and the four agent
 files for the code-vs-spec gaps).
@@ -43,7 +43,7 @@ Reading order for a newcomer: the **ledger** first (it frames scope), then the
 |---|---|---|
 | `2026-07-10-aiperf-rust-port-exact-vs-redo-ledger.md` | decided + addendum | **Start here.** Per-concept port-exact vs redo-cleaner vs throw-away rulings; the credit-*policy* trap; the "ONE front-end, THREE modes" framing. **Addendum (2026-07-11):** online/offline parity means shared code path + report schema, not byte-identical real-vs-sim metric values; scheduling policy is realized through the unified-runtime `Workload`/`SlotPool`/`RatePool`/`Gate` seams. |
 | `2026-07-10-shared-rust-architecture-northstar.md` | decided (aspirational) + addenda | The cleanest end-state abstraction: three orthogonal axes (time / backend / workload), a ~120-line neutral contract, one `dispatch` verb. North-star backend/engine/harness vocabulary is aspirational; **current built symbols are** `Clock` + `RequestSink<R>` / `RequestObserver` / `Dispatchable`, with virtual controls inherent on `SimClock`. The application-layer addendum replaces the native bin with Python Config v2 plus the strict runner. |
-| `2026-07-12-aiperf-rust-crate-naming-layout-design.md` | decided / migration + guard implemented (see 2nd addendum) | **Authoritative crate identity and layout policy.** AIPerf-owned Cargo packages remain `aiperf` / `aiperf-*`, and their workspace directories now sit at `crates/<capability>` (migration landed); neutral `loadgen-core` remains the intentional exception because it is designed for both AIPerf and AI-Dynamo Mocker. The §8 metadata conformance gate is built as `tools/check_crate_layout.py` (wired into pre-commit). Independent `loadgen-core` versioning and actual Dynamo consumption remain unbuilt. |
+| `2026-07-12-aiperf-rust-crate-naming-layout-design.md` | decided / renamed `crates/`→`rust/` (see 3rd addendum) | **Authoritative crate identity and layout policy.** AIPerf-owned Cargo packages remain `aiperf` / `aiperf-*`, and their workspace directories now sit at `rust/<capability>` (renamed from `crates/`, see 3rd addendum); neutral `loadgen-core` remains the intentional exception because it is designed for both AIPerf and AI-Dynamo Mocker. The §8 metadata conformance gate is built as `tools/check_crate_layout.py` (wired into pre-commit). Independent `loadgen-core` versioning and actual Dynamo consumption remain unbuilt. |
 | `2026-07-10-unified-graph-runtime-design.md` | decided + addendum | **The realization design.** Every load mode reduces to one dispatch verb on the clock-scheduled graph executor; strategies become `Workload` schedule generators. Supersedes the scheduling-policy sketch. **Addendum (2026-07-11):** RNG seed derivation is BLAKE3, and implementation against today's crates should translate north-star backend/sink terms to `RequestSink<R>` / `RequestObserver` / `Dispatchable`. |
 | `2026-07-10-aiperf-rust-coverage-gap-ledger.md` | research synthesis + addendum | 7-pass read of the 720-file Python tree cataloguing large unspec'd bodies. **Addendum (2026-07-11):** metrics, telemetry, and RNG gaps are now covered by dedicated specs/addenda; remaining gap areas are endpoint/exporter, config-v2, timing-engine depth, and presentation/API/plot surfaces. |
 
@@ -89,7 +89,7 @@ Reading order for a newcomer: the **ledger** first (it frames scope), then the
 Implementation design set (adversarially hardened, each with a verified scratch
 compile) for lifting the product's ~100k req/s ceiling and de-duplicating the
 online measurement path, plus the cellular-ready extensibility roadmap. **Not yet
-reflected in `crates/`.** Start with the implementation plan.
+reflected in `rust/`.** Start with the implementation plan.
 
 | Spec | Status | Purpose |
 |---|---|---|
@@ -103,7 +103,7 @@ reflected in `crates/`.** Start with the implementation plan.
 
 ### Historical precursors
 
-These predate the standalone `crates/` workspace and describe a **different**
+These predate the standalone `rust/` workspace and describe a **different**
 working tree (`dynamo-aiperf-native`) built *on* ai-dynamo application internals.
 The current workspace extracted `loadgen-core`; default builds have no Dynamo
 dependency, while `dynosim` uses only the curated public mocker boundary.

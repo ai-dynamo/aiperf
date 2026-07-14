@@ -304,7 +304,7 @@ mod tests {
     use crate::adaptive_core::controller::{RampUntilFailController, RampUntilFailOptions};
     use crate::adaptive_core::sla::{DefaultSlaEvaluator, SlaFilter, SlaOp, SlaStat};
     use crate::adaptive_core::step::SlaMarginStep;
-    use crate::adaptive_core::window::{RequestSample, TumblingWindowSampler};
+    use crate::adaptive_core::window::TumblingWindowSampler;
 
     #[derive(Default)]
     struct RecordedArtifacts {
@@ -472,15 +472,5 @@ mod tests {
             correlation: CorrelationContext::default(),
         };
         assert!(options.validate().is_err());
-    }
-
-    #[allow(dead_code)]
-    fn _sample() -> RequestSample {
-        RequestSample {
-            request_latency_ns: 1,
-            ttft_ns: None,
-            inter_token_latency_ns: None,
-            output_sequence_length: None,
-        }
     }
 }

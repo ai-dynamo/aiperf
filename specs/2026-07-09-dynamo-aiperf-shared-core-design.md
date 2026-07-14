@@ -168,7 +168,7 @@ This document describes a prior `dynamo-aiperf-native` working tree built on
 AI-Dynamo application internals. It is retained only as lineage for the
 `RequestSink` / `RequestObserver` seam and the later `loadgen-core` extraction.
 
-The current AIPerf Rust workspace lives under `crates/`, default builds have no
+The current AIPerf Rust workspace lives under `rust/`, default builds have no
 Dynamo dependency, and the optional `dynosim` adapter consumes only the curated
 public mocker boundary. Do not read the "Approved design" status above as a
 current implementation plan for this repository.

@@ -331,7 +331,7 @@ Likewise, virtual-time controls are not methods on the `Clock` trait in the curr
 code. `Clock` exposes `now_ns`, `sleep`, and `is_virtual`; DES controls such as
 `next_event_time` and `advance_to` are inherent `SimClock` methods so real clocks do
 not carry no-op virtual APIs. Treat this spec as the historical north-star rationale;
-use `CLAUDE.md`, `llms.txt`, `crates/aiperf-clock`, and `crates/loadgen-core` for the
+use `CLAUDE.md`, `llms.txt`, `rust/aiperf-clock`, and `rust/loadgen-core` for the
 current symbol names.
 
 ## Addendum — 2026-07-11 (application layer is Python plus the strict runner)

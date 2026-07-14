@@ -536,7 +536,7 @@ feature was removed (see
 `2026-07-11-aiperf-rust-telemetry-archive-watch-design.md`, 2026-07-13 removal
 addendum), the `aiperf-prometheus` crate lost its only remaining consumer and was
 deleted. `aiperf-server-metrics` again owns a self-contained Prometheus/OpenMetrics
-exposition parser in `crates/server-metrics/src/parser.rs`; there is no separate
+exposition parser in `rust/server-metrics/src/parser.rs`; there is no separate
 parsing leaf. The three live producer leaves (`aiperf-gpu-telemetry`,
 `aiperf-server-metrics`, `aiperf-network-latency`) still implement the shared
 side-channel accumulator seam and depend toward the IO-free `aiperf-metrics`

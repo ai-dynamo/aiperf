@@ -22,6 +22,14 @@
 //!
 //! The transport is `!Send` (`Rc<dyn Clock>`), so the loop runs on a single
 //! `LocalSet` with `spawn_local`; a shared clock is the one time authority.
+//!
+//! The backend-neutral `run_*_with_backend` runtimes and their ancillary
+//! helpers are consumed by the feature-gated `dynosim` co-simulation and by the
+//! in-crate tests; the product online path is driven through the runner. Under a
+//! default, non-test build they have no caller, so dead-code / unused-import
+//! diagnostics are suppressed for that configuration only.
+#![cfg_attr(not(test), allow(unused_imports))]
+#![cfg_attr(not(any(test, feature = "dynosim")), allow(dead_code))]
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -39,9 +47,6 @@ use crate::timing::{
 
 use crate::adaptive::{AdaptiveControlVariable, AdaptiveRunConfig, build_adaptive};
 use crate::ancillary::{AncillaryTimingConfig, parse_base_urls, url_selector};
-use crate::fixed_schedule::{
-    DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload,
-};
 use crate::http::{HttpRequestDispatcher, TransportSink};
 use crate::metrics::{
     NativeMetricsObserver, NativeResponseMetadata, ObserverTee, RequestMetricMetadata,
@@ -49,9 +54,8 @@ use crate::metrics::{
 use crate::multiturn::ConversationSource;
 use crate::request_rate::{RequestRateConfig, RequestRateWorkload};
 use crate::scheduled::{
-    IssuanceGate, ScheduledAncillaryPolicies, ScheduledRunReport, ScheduledRuntime,
-    SingleTurnDatasetWorkload, TurnDispatcher, TurnRecordProcessor, Workload,
-    run_scheduled_workload_with_ancillary, run_scheduled_workload_with_processors,
+    IssuanceGate, ScheduledAncillaryPolicies, ScheduledRunReport, ScheduledRuntime, TurnDispatcher,
+    Workload, run_scheduled_workload_with_ancillary,
 };
 use crate::scheduler::LocalTaskScheduler;
 use crate::user_centric::{UserCentricConfig, UserCentricWorkload};
@@ -224,185 +228,6 @@ pub(crate) fn validate_user_centric_ramps(
         );
     }
     Ok(())
-}
-
-/// Run a closed-loop concurrency-`concurrency` benchmark of `workload` against
-/// `base_url` for `model`, bounded by `workload.num_requests`. Thin wrapper over
-/// [`run_paced`] with `ConcurrencyBurst` arrival (zero delay; throughput bounded by
-/// the session slot pool). Must be driven inside a `LocalSet`.
-pub async fn run(
-    base_url: String,
-    model: String,
-    workload: SkeletonWorkload,
-    concurrency: usize,
-) -> anyhow::Result<TraceSimulationReport> {
-    let stop = StopConfig {
-        total_expected_requests: Some(workload.num_requests as u64),
-        ..Default::default()
-    };
-    run_paced(
-        base_url,
-        model,
-        workload,
-        ArrivalPattern::ConcurrencyBurst,
-        None,
-        None,
-        Some(concurrency),
-        stop,
-        0,
-    )
-    .await
-}
-
-/// Run `workload` against `base_url` with an explicit arrival `pattern`, `stop`
-/// bounds, and optional concurrency cap.
-///
-/// - `rate` (req/s) is required for every pattern except `ConcurrencyBurst`.
-/// - `smoothness` tunes `Gamma` burstiness (`None` -> Poisson-equivalent).
-/// - `concurrency` caps in-flight requests via a `SlotPool`; `None` = open-loop.
-/// - `stop` bounds the run (request-count and/or duration; first-hit wins). At least
-///   one bound must be set or the loop never terminates.
-/// - `seed` seeds the arrival RNG for bit-reproducible spacing.
-///
-/// Pacing is **absolute-schedule** with catch-up re-anchoring; the next interval is
-/// drawn before dispatch. Must be driven inside a `LocalSet`.
-#[allow(clippy::too_many_arguments)]
-pub async fn run_paced(
-    base_url: String,
-    model: String,
-    workload: SkeletonWorkload,
-    pattern: ArrivalPattern,
-    rate: Option<f64>,
-    smoothness: Option<f64>,
-    concurrency: Option<usize>,
-    stop: StopConfig,
-    seed: u64,
-) -> anyhow::Result<TraceSimulationReport> {
-    run_paced_adaptive(
-        base_url,
-        model,
-        workload,
-        pattern,
-        rate,
-        smoothness,
-        concurrency,
-        None,
-        stop,
-        seed,
-        None,
-    )
-    .await
-}
-
-/// Run the online issuer with optional prefill admission and adaptive control.
-///
-/// The adaptive observer and aggregate collector share the same clock-relative
-/// event stream. `adaptive` mutates the exact session/prefill slot pool or
-/// interval generator consumed by this loop, so decisions take effect on the
-/// next admission/interval without a side channel.
-#[allow(clippy::too_many_arguments)]
-pub async fn run_paced_adaptive(
-    base_url: String,
-    model: String,
-    workload: SkeletonWorkload,
-    pattern: ArrivalPattern,
-    rate: Option<f64>,
-    smoothness: Option<f64>,
-    concurrency: Option<usize>,
-    prefill_concurrency: Option<usize>,
-    stop: StopConfig,
-    seed: u64,
-    adaptive: Option<AdaptiveRunConfig>,
-) -> anyhow::Result<TraceSimulationReport> {
-    Ok(run_paced_adaptive_with_metrics(
-        base_url,
-        model,
-        workload,
-        pattern,
-        rate,
-        smoothness,
-        concurrency,
-        prefill_concurrency,
-        stop,
-        seed,
-        adaptive,
-    )
-    .await?
-    .performance)
-}
-
-/// Runs the online issuer and returns both compatibility and native metrics.
-#[allow(clippy::too_many_arguments)]
-pub async fn run_paced_adaptive_with_metrics(
-    base_url: String,
-    model: String,
-    workload: SkeletonWorkload,
-    pattern: ArrivalPattern,
-    rate: Option<f64>,
-    smoothness: Option<f64>,
-    concurrency: Option<usize>,
-    prefill_concurrency: Option<usize>,
-    stop: StopConfig,
-    seed: u64,
-    adaptive: Option<AdaptiveRunConfig>,
-) -> anyhow::Result<OnlineRunReport> {
-    run_paced_adaptive_with_metrics_and_ancillary(
-        base_url,
-        model,
-        workload,
-        pattern,
-        rate,
-        smoothness,
-        concurrency,
-        prefill_concurrency,
-        stop,
-        seed,
-        adaptive,
-        AncillaryTimingConfig::default(),
-    )
-    .await
-}
-
-/// Runs the online issuer with ancillary ramping, cancellation, and URL policy.
-#[allow(clippy::too_many_arguments)]
-pub async fn run_paced_adaptive_with_metrics_and_ancillary(
-    base_url: String,
-    model: String,
-    workload: SkeletonWorkload,
-    pattern: ArrivalPattern,
-    rate: Option<f64>,
-    smoothness: Option<f64>,
-    concurrency: Option<usize>,
-    prefill_concurrency: Option<usize>,
-    stop: StopConfig,
-    seed: u64,
-    adaptive: Option<AdaptiveRunConfig>,
-    ancillary: AncillaryTimingConfig,
-) -> anyhow::Result<OnlineRunReport> {
-    let base_urls = parse_base_urls(&base_url)?;
-    let clock: Rc<dyn Clock> = RealClock::new();
-    let start_ns = clock.now_ns();
-    let sink: Rc<dyn HttpRequestDispatcher> = Rc::new(
-        TransportSink::new_multi(clock.clone(), start_ns, &base_urls, model, false)?
-            .with_wire_response_capture(false),
-    );
-    run_paced_with_backend(
-        clock,
-        start_ns,
-        sink,
-        base_urls,
-        workload,
-        pattern,
-        rate,
-        smoothness,
-        concurrency,
-        prefill_concurrency,
-        stop,
-        seed,
-        adaptive,
-        ancillary,
-    )
-    .await
 }
 
 /// Backend-neutral paced issuer shared by real HTTP and the optional in-process
@@ -677,163 +502,11 @@ pub(crate) async fn run_paced_with_backend(
     })
 }
 
-/// Run absolute-timestamp trace replay over the real HTTP transport.
-///
-/// The fixed trace is prepared before `start_ns` is captured, then every first
-/// turn and response-driven continuation flows through the shared scheduled
-/// workload runtime. Stop bounds are intentionally ignored: the trace itself is
-/// the complete run plan.
-pub async fn run_fixed_schedule_online(
-    base_url: String,
-    model: String,
-    conversations: Box<dyn ConversationSource>,
-    config: FixedScheduleConfig,
-    http2: bool,
-) -> anyhow::Result<ScheduledRunReport> {
-    run_fixed_schedule_online_with_ancillary(
-        base_url,
-        model,
-        conversations,
-        config,
-        http2,
-        AncillaryTimingConfig::default(),
-        0,
-    )
-    .await
-}
-
-/// Run one authored turn per dataset conversation through the ordinary AIPerf
-/// scheduler, transport, observer, metrics, and terminal-processing pipeline.
-///
-/// Accuracy is one consumer of this generic path; the runner has no benchmark,
-/// ground-truth, or grader knowledge.
-#[allow(clippy::too_many_arguments)]
-pub async fn run_single_turn_dataset_online(
-    base_url: String,
-    model: String,
-    conversations: Box<dyn ConversationSource>,
-    concurrency: usize,
-    http2: bool,
-    record_processors: Vec<Rc<dyn TurnRecordProcessor>>,
-) -> anyhow::Result<ScheduledRunReport> {
-    let workload: Rc<dyn Workload> =
-        Rc::new(SingleTurnDatasetWorkload::new(conversations, concurrency)?);
-    run_scheduled_online(base_url, model, workload, http2, record_processors).await
-}
-
-/// Run any prepared [`Workload`] through the standard online transport path.
-///
-/// This is the application composition boundary for dynamic workloads such as
-/// agentic evaluation. The workload owns scheduling decisions only; inference
-/// still traverses the shared `TransportSink`, observers, credits, metrics, and
-/// phase runner assembled here.
-pub async fn run_scheduled_online(
-    base_url: String,
-    model: String,
-    workload: Rc<dyn Workload>,
-    http2: bool,
-    record_processors: Vec<Rc<dyn TurnRecordProcessor>>,
-) -> anyhow::Result<ScheduledRunReport> {
-    let base_urls = parse_base_urls(&base_url)?;
-    let clock: Rc<dyn Clock> = RealClock::new();
-    let start_ns = clock.now_ns();
-    let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(
-        TransportSink::new_multi(clock.clone(), start_ns, &base_urls, model, http2)?
-            .with_wire_response_capture(false),
-    );
-    run_scheduled_workload_with_processors(
-        workload,
-        clock,
-        start_ns,
-        dispatcher,
-        StopConfig::default(),
-        false,
-        ScheduledAncillaryPolicies::default(),
-        record_processors,
-    )
-    .await
-}
-
-/// Run fixed-schedule replay with cancellation and multi-URL selection.
-#[allow(clippy::too_many_arguments)]
-pub async fn run_fixed_schedule_online_with_ancillary(
-    base_url: String,
-    model: String,
-    conversations: Box<dyn ConversationSource>,
-    config: FixedScheduleConfig,
-    http2: bool,
-    ancillary: AncillaryTimingConfig,
-    seed: u64,
-) -> anyhow::Result<ScheduledRunReport> {
-    ancillary.validate()?;
-    anyhow::ensure!(
-        !ancillary.has_ramps(),
-        "fixed-schedule replay has authored timestamps and does not accept actuator ramps"
-    );
-    let base_urls = parse_base_urls(&base_url)?;
-    let schedule_source = Rc::new(DatasetFixedScheduleSource::new(config)?);
-    let workload: Rc<dyn Workload> =
-        Rc::new(FixedScheduleWorkload::new(conversations, schedule_source)?);
-    let clock: Rc<dyn Clock> = RealClock::new();
-    let start_ns = clock.now_ns();
-    let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(
-        TransportSink::new_multi(clock.clone(), start_ns, &base_urls, model, http2)?
-            .with_wire_response_capture(false),
-    );
-    run_scheduled_workload_with_ancillary(
-        workload,
-        clock,
-        start_ns,
-        dispatcher,
-        StopConfig::default(),
-        false,
-        scheduled_policies(&ancillary, &base_urls, seed)?,
-    )
-    .await
-}
-
-/// Run continuation-priority request-rate scheduling over real HTTP.
-///
-/// One interval tick issues either the oldest ready continuation or the cached
-/// first turn of a new sampled session. The supplied conversation source may be
-/// synthetic or dataset-backed; both travel through the same materialization,
-/// observer, slot, stop, ancillary, and adaptive paths.
-#[allow(clippy::too_many_arguments)]
-pub async fn run_request_rate_online_with_ancillary(
-    base_url: String,
-    model: String,
-    conversations: Box<dyn ConversationSource>,
-    config: RequestRateConfig,
-    stop: StopConfig,
-    http2: bool,
-    adaptive: Option<AdaptiveRunConfig>,
-    ancillary: AncillaryTimingConfig,
-) -> anyhow::Result<ScheduledRunReport> {
-    let base_urls = parse_base_urls(&base_url)?;
-    let clock: Rc<dyn Clock> = RealClock::new();
-    let start_ns = clock.now_ns();
-    let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(
-        TransportSink::new_multi(clock.clone(), start_ns, &base_urls, model, http2)?
-            .with_wire_response_capture(false),
-    );
-    run_request_rate_with_backend(
-        clock,
-        start_ns,
-        dispatcher,
-        base_urls,
-        conversations,
-        config,
-        stop,
-        adaptive,
-        ancillary,
-    )
-    .await
-}
-
 /// Backend-neutral request-rate runtime used by both real HTTP and the
 /// in-process Dynamo engine. All scheduling, ramping, cancellation, adaptive
 /// control, observer, and metric code executes above the injected dispatcher.
 #[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(feature = "dynosim"), allow(dead_code))]
 pub(crate) async fn run_request_rate_with_backend(
     clock: Rc<dyn Clock>,
     start_ns: i64,
@@ -963,65 +636,10 @@ pub(crate) async fn run_request_rate_with_backend(
     Ok(runtime.finish(workload.name(), None))
 }
 
-/// Run the full user-centric virtual-history/churn workload over real HTTP.
-pub async fn run_user_centric_online(
-    base_url: String,
-    model: String,
-    conversations: Box<dyn ConversationSource>,
-    config: UserCentricConfig,
-    stop: StopConfig,
-    http2: bool,
-) -> anyhow::Result<ScheduledRunReport> {
-    run_user_centric_online_with_ancillary(
-        base_url,
-        model,
-        conversations,
-        config,
-        stop,
-        http2,
-        AncillaryTimingConfig::default(),
-        0,
-    )
-    .await
-}
-
-/// Run user-centric pacing with session-concurrency ramping, cancellation, and
-/// sticky endpoint selection.
-#[allow(clippy::too_many_arguments)]
-pub async fn run_user_centric_online_with_ancillary(
-    base_url: String,
-    model: String,
-    conversations: Box<dyn ConversationSource>,
-    config: UserCentricConfig,
-    stop: StopConfig,
-    http2: bool,
-    ancillary: AncillaryTimingConfig,
-    seed: u64,
-) -> anyhow::Result<ScheduledRunReport> {
-    let base_urls = parse_base_urls(&base_url)?;
-    let clock: Rc<dyn Clock> = RealClock::new();
-    let start_ns = clock.now_ns();
-    let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(
-        TransportSink::new_multi(clock.clone(), start_ns, &base_urls, model, http2)?
-            .with_wire_response_capture(false),
-    );
-    run_user_centric_with_backend(
-        clock,
-        start_ns,
-        dispatcher,
-        base_urls,
-        conversations,
-        config,
-        stop,
-        ancillary,
-        seed,
-    )
-    .await
-}
-
 /// Backend-neutral user-centric runtime with Clock-native ramps,
 /// cancellation, and endpoint selection.
 #[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(feature = "dynosim"), allow(dead_code))]
 pub(crate) async fn run_user_centric_with_backend(
     clock: Rc<dyn Clock>,
     start_ns: i64,
@@ -1067,69 +685,6 @@ impl IssuanceGate for crate::adaptive_core::AdaptiveScale {
     fn can_issue(&self) -> bool {
         !self.should_stop_sending()
     }
-}
-
-/// Run user-centric pacing with the same adaptive controller used by the
-/// single-turn issuer. The supplied user config should use the adaptive minimum
-/// as its initial user count; `adaptive.maximum` remains the scale-up ceiling.
-#[allow(clippy::too_many_arguments)]
-pub async fn run_user_centric_adaptive_online(
-    base_url: String,
-    model: String,
-    conversations: Box<dyn ConversationSource>,
-    config: UserCentricConfig,
-    stop: StopConfig,
-    http2: bool,
-    adaptive: AdaptiveRunConfig,
-) -> anyhow::Result<ScheduledRunReport> {
-    run_user_centric_adaptive_online_with_ancillary(
-        base_url,
-        model,
-        conversations,
-        config,
-        stop,
-        http2,
-        adaptive,
-        AncillaryTimingConfig::default(),
-        0,
-    )
-    .await
-}
-
-/// Run adaptive user-centric pacing with ancillary session-concurrency ramping,
-/// cancellation, and URL policy.
-#[allow(clippy::too_many_arguments)]
-pub async fn run_user_centric_adaptive_online_with_ancillary(
-    base_url: String,
-    model: String,
-    conversations: Box<dyn ConversationSource>,
-    config: UserCentricConfig,
-    stop: StopConfig,
-    http2: bool,
-    adaptive: AdaptiveRunConfig,
-    ancillary: AncillaryTimingConfig,
-    seed: u64,
-) -> anyhow::Result<ScheduledRunReport> {
-    let base_urls = parse_base_urls(&base_url)?;
-    let clock: Rc<dyn Clock> = RealClock::new();
-    let start_ns = clock.now_ns();
-    let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(
-        TransportSink::new_multi(clock.clone(), start_ns, &base_urls, model, http2)?
-            .with_wire_response_capture(false),
-    );
-    run_user_centric_adaptive_with_backend(
-        clock,
-        start_ns,
-        dispatcher,
-        base_urls,
-        conversations,
-        config,
-        stop,
-        adaptive,
-        ancillary,
-        seed,
-    )
-    .await
 }
 
 /// Backend-neutral adaptive user-centric runtime. The injected clock and
@@ -1231,6 +786,206 @@ pub(crate) async fn run_user_centric_adaptive_with_backend(
     Ok(runtime.finish(workload.name(), workload.user_control_snapshot()))
 }
 
+// Test-only thin HTTP wrappers over the backend-neutral runtimes. The product
+// path no longer exposes these one-shot builders (Python composes runs through
+// the runner); they are retained here only to keep the live `*_with_backend`
+// paths under direct unit-test coverage.
+#[cfg(test)]
+async fn run(
+    base_url: String,
+    model: String,
+    workload: SkeletonWorkload,
+    concurrency: usize,
+) -> anyhow::Result<TraceSimulationReport> {
+    let stop = StopConfig {
+        total_expected_requests: Some(workload.num_requests as u64),
+        ..Default::default()
+    };
+    run_paced(
+        base_url,
+        model,
+        workload,
+        ArrivalPattern::ConcurrencyBurst,
+        None,
+        None,
+        Some(concurrency),
+        stop,
+        0,
+    )
+    .await
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+async fn run_paced(
+    base_url: String,
+    model: String,
+    workload: SkeletonWorkload,
+    pattern: ArrivalPattern,
+    rate: Option<f64>,
+    smoothness: Option<f64>,
+    concurrency: Option<usize>,
+    stop: StopConfig,
+    seed: u64,
+) -> anyhow::Result<TraceSimulationReport> {
+    run_paced_adaptive(
+        base_url,
+        model,
+        workload,
+        pattern,
+        rate,
+        smoothness,
+        concurrency,
+        None,
+        stop,
+        seed,
+        None,
+    )
+    .await
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+async fn run_paced_adaptive(
+    base_url: String,
+    model: String,
+    workload: SkeletonWorkload,
+    pattern: ArrivalPattern,
+    rate: Option<f64>,
+    smoothness: Option<f64>,
+    concurrency: Option<usize>,
+    prefill_concurrency: Option<usize>,
+    stop: StopConfig,
+    seed: u64,
+    adaptive: Option<AdaptiveRunConfig>,
+) -> anyhow::Result<TraceSimulationReport> {
+    Ok(run_paced_adaptive_with_metrics(
+        base_url,
+        model,
+        workload,
+        pattern,
+        rate,
+        smoothness,
+        concurrency,
+        prefill_concurrency,
+        stop,
+        seed,
+        adaptive,
+    )
+    .await?
+    .performance)
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+async fn run_paced_adaptive_with_metrics(
+    base_url: String,
+    model: String,
+    workload: SkeletonWorkload,
+    pattern: ArrivalPattern,
+    rate: Option<f64>,
+    smoothness: Option<f64>,
+    concurrency: Option<usize>,
+    prefill_concurrency: Option<usize>,
+    stop: StopConfig,
+    seed: u64,
+    adaptive: Option<AdaptiveRunConfig>,
+) -> anyhow::Result<OnlineRunReport> {
+    let base_urls = parse_base_urls(&base_url)?;
+    let clock: Rc<dyn Clock> = RealClock::new();
+    let start_ns = clock.now_ns();
+    let sink: Rc<dyn HttpRequestDispatcher> = Rc::new(
+        TransportSink::new_multi(clock.clone(), start_ns, &base_urls, model, false)?
+            .with_wire_response_capture(false),
+    );
+    run_paced_with_backend(
+        clock,
+        start_ns,
+        sink,
+        base_urls,
+        workload,
+        pattern,
+        rate,
+        smoothness,
+        concurrency,
+        prefill_concurrency,
+        stop,
+        seed,
+        adaptive,
+        AncillaryTimingConfig::default(),
+    )
+    .await
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+async fn run_user_centric_adaptive_online(
+    base_url: String,
+    model: String,
+    conversations: Box<dyn ConversationSource>,
+    config: UserCentricConfig,
+    stop: StopConfig,
+    http2: bool,
+    adaptive: AdaptiveRunConfig,
+) -> anyhow::Result<ScheduledRunReport> {
+    let base_urls = parse_base_urls(&base_url)?;
+    let clock: Rc<dyn Clock> = RealClock::new();
+    let start_ns = clock.now_ns();
+    let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(
+        TransportSink::new_multi(clock.clone(), start_ns, &base_urls, model, http2)?
+            .with_wire_response_capture(false)
+            .with_prepared_endpoints(crate::test_util::chat_dispatch_table()),
+    );
+    run_user_centric_adaptive_with_backend(
+        clock,
+        start_ns,
+        dispatcher,
+        base_urls,
+        conversations,
+        config,
+        stop,
+        adaptive,
+        AncillaryTimingConfig::default(),
+        0,
+    )
+    .await
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_single_turn_dataset_online(
+    base_url: String,
+    model: String,
+    conversations: Box<dyn ConversationSource>,
+    concurrency: usize,
+    http2: bool,
+    record_processors: Vec<Rc<dyn crate::scheduled::TurnRecordProcessor>>,
+    prepared_endpoints: Rc<crate::endpoints::PreparedEndpointTable>,
+) -> anyhow::Result<ScheduledRunReport> {
+    use crate::scheduled::{SingleTurnDatasetWorkload, run_scheduled_workload_with_processors};
+    let base_urls = parse_base_urls(&base_url)?;
+    let clock: Rc<dyn Clock> = RealClock::new();
+    let start_ns = clock.now_ns();
+    let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(
+        TransportSink::new_multi(clock.clone(), start_ns, &base_urls, model, http2)?
+            .with_wire_response_capture(false)
+            .with_prepared_endpoints(prepared_endpoints),
+    );
+    let workload: Rc<dyn Workload> =
+        Rc::new(SingleTurnDatasetWorkload::new(conversations, concurrency)?);
+    run_scheduled_workload_with_processors(
+        workload,
+        clock,
+        start_ns,
+        dispatcher,
+        StopConfig::default(),
+        false,
+        ScheduledAncillaryPolicies::default(),
+        record_processors,
+    )
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1238,6 +993,7 @@ mod tests {
     use crate::adaptive_core::{CorrelationContext, SlaFilter, SlaOp, SlaStat};
     use crate::clock::SimClock;
     use crate::graph::runtime::drive_sim;
+    use crate::test_util::synthetic_prepared_source;
     use crate::workload::SkeletonWorkload;
 
     #[test]
@@ -1650,20 +1406,13 @@ mod tests {
         local
             .run_until(async {
                 let base = crate::test_util::spawn_mock().await;
-                let source = crate::multiturn::SyntheticConversationSource::new(SkeletonWorkload {
-                    num_requests: 0,
-                    input_tokens: 4,
-                    output_tokens: 1,
-                    turns: 2,
-                    think_time_ms: None,
-                })
-                .unwrap();
+                let source = synthetic_prepared_source(2, 4, 1, None, "m").await;
                 let artifact_dir = std::env::temp_dir()
                     .join(format!("aiperf-adaptive-users-{}", uuid::Uuid::new_v4()));
                 let report = run_user_centric_adaptive_online(
                     base,
                     "m".into(),
-                    Box::new(source),
+                    source,
                     UserCentricConfig {
                         num_users: 1,
                         request_rate: 20.0,

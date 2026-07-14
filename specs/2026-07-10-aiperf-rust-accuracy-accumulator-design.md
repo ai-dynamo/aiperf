@@ -180,7 +180,7 @@ association.
 
 ## Addendum — 2026-07-11 (native Rust implementation)
 
-The native Rust workspace now implements the core first-class accuracy accumulator/analyzer in `crates/aiperf-metrics/src/accuracy.rs`. The built surface includes typed `AccuracyRecord` / `GradingResult`, real `CorrelationId` and `TaskId` association, phase/time-window summaries via `ExportContext`, Wilson confidence intervals, per-task rollups, `Analyzer` / `SummaryContext` dependency enforcement, `AccuracyResultsAnalyzer`, and optional joins to metric goodput/request-throughput and energy telemetry summaries. The grader plugin zoo and runtime record-routing/exporter wiring remain future consumers of this built leaf crate.
+The native Rust workspace now implements the core first-class accuracy accumulator/analyzer in `rust/aiperf-metrics/src/accuracy.rs`. The built surface includes typed `AccuracyRecord` / `GradingResult`, real `CorrelationId` and `TaskId` association, phase/time-window summaries via `ExportContext`, Wilson confidence intervals, per-task rollups, `Analyzer` / `SummaryContext` dependency enforcement, `AccuracyResultsAnalyzer`, and optional joins to metric goodput/request-throughput and energy telemetry summaries. The grader plugin zoo and runtime record-routing/exporter wiring remain future consumers of this built leaf crate.
 
 ## Addendum — 2026-07-11 (runtime and report wiring)
 
@@ -367,7 +367,7 @@ other packaged benchmark has been proven end to end in this environment.
 ## Addendum — 2026-07-11 (real Harbor registry, Docker, and verifier proof)
 
 The final generic-Harbor caveat above is now superseded. The opt-in
-`crates/aiperf/tests/agentic_harbor_e2e.rs` acceptance test uses the real pinned
+`rust/aiperf/tests/agentic_harbor_e2e.rs` acceptance test uses the real pinned
 worker environment and Harbor's live package registry. It resolves
 `harbor/hello-world` to immutable dataset revision
 `sha256:d10e96e201d6816b22553504e06e7de0153a26381e808d11404cbca530b9d388`,
@@ -527,7 +527,7 @@ package, worker-source, lock, and optional container identity.
 Executable proof has two levels. The Python suite uses the real pinned registry
 and a real local MiniWoB++ checkout at revision
 `7fd85d71a4b60325c6585396ec4f48377d049838`; the canonical environment returns
-reward `1.0`. `crates/aiperf/tests/agentic_browsergym_e2e.rs` then runs the
+reward `1.0`. `rust/aiperf/tests/agentic_browsergym_e2e.rs` then runs the
 compiled Rust CLI against that environment and a loopback OpenAI-SSE server. It
 requires one captured streaming request with `include_usage`, exact full
 messages, Rust token/call accounting, AgentLab/BrowserGym provenance, canonical
@@ -596,7 +596,7 @@ shipped `verify.py`. The compiled Rust CLI serves three normal streaming model
 turns: discover the allowed directory, issue the canonical MCP tools that
 classify all eight files, and finish. The verifier checks directory creation,
 exact membership, byte-size ranges, empty root, and total count, then returns
-`pass=1.0`. `crates/aiperf/tests/agentic_mcpmark_e2e.rs` requires exactly three
+`pass=1.0`. `rust/aiperf/tests/agentic_mcpmark_e2e.rs` requires exactly three
 captured Rust HTTP requests with `include_usage`, model/tool history, 32,768
 max tokens, temperature 1.0, the exact worker/source/lock identity, concrete
 environment digest, MCPMark artifacts, and canonical reward 1.0:
@@ -670,7 +670,7 @@ subprocess, report-consumer, and exact deletion gates are satisfied.
 
 The runner's protocol-v1 support has been deleted. `aiperf-runner` now advertises
 `protocol_versions: [2]` only and rejects any non-v2 request as a protocol-v2
-failure envelope. Removed from `crates/aiperf-runner`: the v1 request `dispatch`
+failure envelope. Removed from `rust/aiperf-runner`: the v1 request `dispatch`
 entry, `execute_v1` and the `execute_run*` chain, the `RunRequest` / `RunSpec` /
 `RunTerminal` / `EndpointSpec` / `DatasetSpec` / `AccuracySpec` wire DTOs, the
 `load_protocol_v1` graph-input adapters, and the `Legacy` enum variants, plus the

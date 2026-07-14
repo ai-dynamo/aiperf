@@ -72,7 +72,7 @@ we promote it from a graph-only optimization to the universal dataset substrate.
 
 ## 2. The segment/blob store seam (Rust)
 
-Take tree-1's `aiperf-graph` seam (`crates/aiperf-graph/src/segment.rs`,
+Take tree-1's `aiperf-graph` seam (`rust/aiperf-graph/src/segment.rs`,
 `materialize.rs`) as the base, add the production interned-handle form from the
 Python unified store (`graph_segment_unified_store.py`), and generalize it to carry
 media blobs too.
@@ -321,7 +321,7 @@ Proof is executable and self-contained: `cargo test -p aiperf-dataset --all-targ
 passes 78 tests; `cargo clippy -p aiperf-dataset --all-targets -- -D warnings` is clean;
 the graph suite passes 22 unit tests plus both real h1/h2c transport integrations; and
 `cargo test -p aiperf --all-targets` passes the native runtime/CLI suite. In particular,
-`crates/aiperf/tests/dataset_online.rs` starts a real loopback HTTP server, runs the
+`rust/aiperf/tests/dataset_online.rs` starts a real loopback HTTP server, runs the
 compiled CLI over a two-turn native dataset, and proves that the live first reply is
 present in the second request. The dataset suite also executes FFmpeg-backed audio/video
 generation and ASR normalization, exact raw replay, all four context modes, loader
