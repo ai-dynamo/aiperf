@@ -75,13 +75,21 @@ added it is its own dialect, never derived from Codex.
 
 ## 4. Library and the "not slow" bar
 
-- **`tokio-tungstenite`** (the **upstream** crate) is the transport (strict RFC framing,
-  `MaybeTlsStream` TLS via `connect_async_tls_with_config`, `WebSocketConfig`, single-task
-  drive, hyper-upgrade-capable, battle-tested). This supersedes an earlier "lean
-  fastwebsockets" note — `fastwebsockets` is worth a look only if a **frame-size
-  microbench** proves it faster for our envelopes; its non-strict/thread-safety caveats
-  matter little only because aiperf is thread-per-core `!Send`. Default to
-  `tokio-tungstenite`.
+- **Library — keep `tokio-tungstenite` (upstream, ≥0.26); a 3-way microbench refuted the
+  case for switching.** The reputational premise was that `tungstenite` allocates an owned
+  `Message` per frame, fighting aiperf's no-alloc discipline. That was true **pre-0.26**
+  (`String`-backed `Text`) but **0.26+ is `bytes`-backed → zero-copy reads**, same as
+  `fastwebsockets` (borrowed `Frame`) and `tokio-websockets` (`bytes`). The bench
+  (`aiperf-ws-lib-bench`; `benchmark-findings/rust-websocket-client-libs-read-path.md`)
+  confirms it: **0–9 total allocations across 150k–300k received frames for all three** at
+  256 B / 2 KB / 32 KB — `alloc/frame ≈ 0` universally — and throughput ranks flip
+  run-to-run (loopback noise dwarfs any delta, i.e. the WS lib is not the bottleneck).
+  `tungstenite` also showed the **tightest small-frame p99**, which suits a low-jitter
+  measurement client. RFC-6455 is why the alloc concern was small anyway: server→client
+  frames are **unmasked**, so the received-delta flood costs parse, not un/masking (and
+  `tokio-websockets`' SIMD-*un*mask headline barely helps a client). Net: strict,
+  battle-tested, zero-alloc, competitive — **no speed reason to switch.** Revisit only if a
+  *quiet-machine* bench shows a material, repeatable throughput/jitter delta.
 - **Frames are spliced, not serialized.** The `BodyPlan → WS-frame` materializer (the
   third, after JSON-splice and proto-encode) concatenates pre-serialized segment bytes
   into each event envelope; base64 audio is pre-encoded at lowering. **No per-frame
