@@ -23,8 +23,9 @@ use crate::execution_factories::RunnerExecutionFactories;
 use crate::graph_input::RunnerGraphInputAdapterResolver;
 use crate::protocol::RunnerCatalog;
 use crate::protocol_v2::{
-    DeferredCheckV2, RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2,
-    RunnerEnvelopeV2, RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
+    AuthoredRunSpecV2, DeferredCheckV2, RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2,
+    RunnerDiagnosticV2, RunnerEnvelopeV2, RunnerFailureStageV2, RunnerOperationV2,
+    ValidationCompletenessV2,
 };
 use crate::redaction::redact_diagnostic;
 use crate::registry::{
@@ -295,7 +296,7 @@ impl RunnerV2Coordinator {
         match operation.execute() {
             Ok(outcome) => {
                 let mut provenance =
-                    match persist_prepared_report(outcome, report_provenance, &report_path) {
+                    match persist_prepared_report(outcome, report_provenance, &report_path, &run) {
                         Ok(provenance) => provenance,
                         Err(error) => {
                             return terminal_failure(
@@ -366,6 +367,7 @@ fn persist_prepared_report(
     outcome: PreparedRunOutcome,
     report_provenance: ReportRunProvenance,
     report_path: &Path,
+    run: &AuthoredRunSpecV2,
 ) -> std::result::Result<BTreeMap<String, String>, ReportPersistenceFailure> {
     if report_path.exists() {
         return Err(ReportPersistenceFailure {
@@ -382,7 +384,7 @@ fn persist_prepared_report(
         provenance,
         report_commit,
     } = outcome;
-    finalize_and_write_native_report_json(
+    let finalized = finalize_and_write_native_report_json(
         native_report,
         report_provenance,
         report_facts,
@@ -392,6 +394,10 @@ fn persist_prepared_report(
         code: "reporting_failed",
         message: format!("{error:#}"),
     })?;
+    // Native post-report export plane. Best-effort: the native-v2 report above is
+    // the committed authority; genai-perf compat / OTLP / MLflow side outputs log
+    // and never fail the run (see `aiperf::export`).
+    aiperf::export::run_exporters(&finalized, &run.artifact_target, &run.export);
     if let Some(report_commit) = report_commit {
         report_commit
             .commit()

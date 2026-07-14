@@ -34,7 +34,11 @@ __all__ = [
 # Narrow to what the codebase actually emits: MetricsJsonExporter writes the
 # summary JSON, RecordExportResultsProcessor writes the records JSONL. No YAML
 # summary exporter and no records-CSV exporter exist; do not advertise them.
-SummaryExportFormat = Literal["json"]
+# "json" -> the native aiperf summary JSON; "genai_perf" -> the native-Rust
+# genai-perf v1 byte-exact compatibility artifacts (profile_export_genai_perf.
+# {json,csv}), emitted by the runner's `aiperf::export::genai_perf` sink. Both are
+# toggles only; all emission is native Rust.
+SummaryExportFormat = Literal["json", "genai_perf"]
 RecordsExportFormat = Literal["jsonl"]
 
 

@@ -23,16 +23,20 @@ pub fn write_native_report_json(report: &NativeReport, path: impl AsRef<Path>) -
 /// coordinator constructs [`ReportRunProvenance`] from its exact executable and
 /// frozen registries. This function joins those typed values before
 /// serialization and never parses or mutates raw report JSON.
+/// Returns the finalized [`NativeReport`] so the caller can drive the native
+/// post-report [`crate::export`] exporter plane over the exact committed report
+/// (the report is otherwise consumed by the write).
 pub fn finalize_and_write_native_report_json(
     report: NativeReport,
     provenance: ReportRunProvenance,
     facts: ReportPairRunFacts,
     path: impl AsRef<Path>,
-) -> Result<()> {
+) -> Result<NativeReport> {
     let report = report
         .finalize_run(provenance, facts)
         .context("finalizing native report run provenance")?;
-    write_json(&report, path)
+    write_json(&report, path)?;
+    Ok(report)
 }
 
 fn write_json(value: &impl Serialize, path: impl AsRef<Path>) -> Result<()> {

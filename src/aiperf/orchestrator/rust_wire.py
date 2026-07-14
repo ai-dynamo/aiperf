@@ -107,6 +107,7 @@ def dump_benchmark_run(run: BenchmarkRun) -> dict[str, Any]:
     }
     cfg["metrics"] = _authored_metrics(run.cfg)
     cfg["artifacts"] = _authored_artifacts(run)
+    cfg["export"] = _export(run)
     if "sidecars" not in cfg:
         # Sidecar presence remains Config-section driven; the runner adapter
         # materializes them from these lowered blocks when present.
@@ -643,6 +644,27 @@ def _server_metrics(run: BenchmarkRun) -> dict[str, Any] | None:
     if "parquet" in formats:
         result["parquet_wire_path"] = str(SERVER_METRICS_PARQUET_WIRE_PATH)
     return result
+
+
+def _export(run: BenchmarkRun) -> dict[str, Any]:
+    """Project the native-Rust post-report export policy onto ``cfg.export``.
+
+    Toggle/config passthrough only — the runner's ``aiperf::export`` plane owns
+    all emission. genai-perf v1 compat is enabled when ``"genai_perf"`` is present
+    in ``artifacts.summary``; OTel/MLflow projection is added when those sinks are
+    migrated to the native path (they currently emit via the supervised Python
+    live-streaming extension, see :func:`_live_streaming`).
+    """
+    config = run.cfg
+    summary = config.artifacts.summary
+    genai_perf_enabled = isinstance(summary, list) and "genai_perf" in summary
+    return {
+        "genai_perf": {
+            "enabled": genai_perf_enabled,
+            "endpoint_type": str(config.endpoint.type),
+            "streaming": bool(config.endpoint.streaming),
+        },
+    }
 
 
 def _live_streaming(run: BenchmarkRun) -> dict[str, Any] | None:

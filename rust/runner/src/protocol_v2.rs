@@ -229,6 +229,11 @@ pub struct BenchmarkConfigWireV2 {
     /// Prepared sidecar bag projected by Python when present.
     #[serde(default)]
     pub sidecars: Value,
+    /// Native post-report export policy (genai-perf v1 compat, OTLP metrics,
+    /// MLflow). Projected by Python; absent decodes to all-disabled defaults so
+    /// the base path emits only the native-v2 report.
+    #[serde(default)]
+    pub export: Value,
 }
 
 impl BenchmarkRunWireV2 {
@@ -326,6 +331,7 @@ impl BenchmarkRunWireV2 {
             workload,
             metrics: serde_json::from_value(self.cfg.metrics).unwrap_or_default(),
             artifacts: serde_json::from_value(self.cfg.artifacts).unwrap_or_default(),
+            export: serde_json::from_value(self.cfg.export).unwrap_or_default(),
             sidecars,
             resource_presence: ResourcePresenceV2 {
                 models: true,
@@ -434,6 +440,8 @@ pub struct AuthoredRunSpecV2 {
     /// Optional supervised sidecars, retained raw until their native factory
     /// performs its strict decode.
     pub sidecars: SidecarSpecV2,
+    /// Native post-report export policy driving the [`aiperf::export`] plane.
+    pub export: aiperf::export::ExportConfig,
     resource_presence: ResourcePresenceV2,
 }
 
@@ -501,6 +509,7 @@ impl<'de> Deserialize<'de> for AuthoredRunSpecV2 {
             metrics: wire.resources.metrics.unwrap_or_default(),
             artifacts: wire.resources.artifacts.unwrap_or_default(),
             sidecars: wire.resources.sidecars.unwrap_or_default(),
+            export: aiperf::export::ExportConfig::default(),
             resource_presence,
         })
     }
