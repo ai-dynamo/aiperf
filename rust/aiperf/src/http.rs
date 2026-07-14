@@ -1273,7 +1273,7 @@ impl TransportSink {
         responses: &dyn TurnResponseObserver,
     ) -> Result<DispatchResult> {
         let turn = PreparedTurn::from_turn(turn, &self.model);
-        self.dispatch_collect_with_observer(turn, observer, on_first_token, Some(responses))
+        self.dispatch_collect_streaming(turn, observer, on_first_token, Some(responses))
             .await
     }
 
@@ -1286,20 +1286,7 @@ impl TransportSink {
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
     ) -> Result<DispatchResult> {
-        self.dispatch_collect_with_observer(turn, observer, on_first_token, None)
-            .await
-    }
-
-    /// Execute an owned scheduler-free command while publishing live,
-    /// endpoint-normalized response frames.
-    pub async fn dispatch_collect_streaming(
-        &self,
-        turn: PreparedTurn,
-        observer: &dyn RequestObserver,
-        on_first_token: &dyn Fn(i64),
-        responses: &dyn TurnResponseObserver,
-    ) -> Result<DispatchResult> {
-        self.dispatch_collect_with_observer(turn, observer, on_first_token, Some(responses))
+        self.dispatch_collect_streaming(turn, observer, on_first_token, None)
             .await
     }
 
@@ -1341,7 +1328,7 @@ impl TransportSink {
             context.requested_output_length,
         );
         let result = self
-            .dispatch_collect_with_observer(turn, observer, on_first_token, responses)
+            .dispatch_collect_streaming(turn, observer, on_first_token, responses)
             .await;
         match &result {
             Ok(collected) => {
@@ -1376,7 +1363,12 @@ impl TransportSink {
         result
     }
 
-    async fn dispatch_collect_with_observer(
+    /// Dispatch one prepared turn and retain the exact wire exchange. This is
+    /// the single collect primitive: `responses` is `Some` for the live-frame
+    /// streaming path and `None` for terminal-only collection, so the surface is
+    /// two methods ([`dispatch_collect`](Self::dispatch_collect) is the `None`
+    /// convenience) rather than a family of near-duplicates.
+    pub async fn dispatch_collect_streaming(
         &self,
         turn: PreparedTurn,
         observer: &dyn RequestObserver,
