@@ -3,7 +3,7 @@
 **Date:** 2026-07-12
 **Status:** Proposed (verified against code; compile-checked projection skeleton attached)
 **Scope:** `rust/aiperf` (scheduled/run/phase_runtime/metrics), `rust/loadgen-core` (collector), `rust/aiperf/src/metrics_core` (accumulator/report), `rust/loadgen-core` (observer). Repo is READ-ONLY for this spec; no repo files were modified.
-**Verification artifact:** `~/tmp/a2-spec/` — a throwaway Cargo crate with path deps on `loadgen-core` + `aiperf-metrics` that compiles `fn project_trace_report(summary: &AccumulatorSummary, records: &[RecordIngest], wall_ms) -> TraceSimulationReport`. `cargo build` is green (see "Verification evidence").
+**Verification artifact:** `~/tmp/a2-spec/` — a throwaway Cargo crate with path deps on `loadgen-core` + `aiperf` (for the `aiperf::metrics_core` module) that compiles `fn project_trace_report(summary: &AccumulatorSummary, records: &[RecordIngest], wall_ms) -> TraceSimulationReport`. `cargo build` is green (see "Verification evidence").
 
 ---
 
@@ -152,7 +152,7 @@ A1 (retiring / relocating `loadgen-core`'s live `TraceCollector`/`CollectorObser
 
 ## 9. Verification evidence
 
-**Compile-checked skeleton:** `~/tmp/a2-spec/` (`Cargo.toml` path-deps `loadgen-core` + `aiperf-metrics`; `src/lib.rs` implements `project_trace_report`). `cargo build` → `Finished dev` (green). It proves against the **real** public types that:
+**Compile-checked skeleton:** `~/tmp/a2-spec/` (`Cargo.toml` path-deps `loadgen-core` + `aiperf` for the `aiperf::metrics_core` module; `src/lib.rs` implements `project_trace_report`). `cargo build` → `Finished dev` (green). It proves against the **real** public types that:
 
 - `AccumulatorSummary::result(tag).distribution()` yields `DistributionStats { avg, min, max, std: Option<f64>, percentiles: BTreeMap<u32, MetricValue> }` (`kernel.rs:24-43`) — exactly the `mean/min/max/std` + `p50/p75/p90/p95/p99` the compat `TraceDistributionStats` needs.
 - `AccumulatorSummary::finite_value(MetricTag)` supplies every scalar count/throughput/duration/goodput field.

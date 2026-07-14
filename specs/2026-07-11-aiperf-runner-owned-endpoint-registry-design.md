@@ -22,10 +22,10 @@ belongs to the normative companion `2026-07-11-aiperf-runner-only-execution-surf
 Product deletion is complete only when that companion makes every built Rust mode runner-addressable
 with the same composed endpoint registry.
 
-The `aiperf-endpoints` and `aiperf-dataset` crates named throughout this record are now modules of
-the `aiperf` runtime library (`aiperf::endpoints`, `aiperf::dataset`); the `aiperf-runner` executable
-is the `rust/runner` crate. Code truth lives in `rust/aiperf/src/endpoints*`,
-`rust/aiperf/src/extensions*`, and `rust/runner/src/*`.
+The `aiperf-endpoints`, `aiperf-dataset`, and `aiperf-extensions` crates named throughout this record
+are now modules of the `aiperf` runtime library (`aiperf::endpoints`, `aiperf::dataset`,
+`aiperf::extensions`); the `aiperf-runner` executable is the `rust/runner` crate. Code truth lives in
+`rust/aiperf/src/endpoints*`, `rust/aiperf/src/extensions*`, and `rust/runner/src/*`.
 
 **Companions:**
 

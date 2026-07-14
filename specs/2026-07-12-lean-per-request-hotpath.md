@@ -115,7 +115,7 @@ a **local `Vec`** during the stream, hand off once.
 defaulted method** — backward compatible, object-safe (proven in the scratch
 crate via `&dyn RequestObserver`). It requires editing `ObserverTee`
 (`metrics.rs`), `NativeMetricsObserver`, `CollectorObserver`, and the
-`aiperf-adaptive` tee (`rust/aiperf/src/adaptive_core/observer.rs:91`) to override
+`aiperf::adaptive_core` tee (`rust/aiperf/src/adaptive_core/observer.rs:91`) to override
 for full benefit, but nothing breaks if they don't. Option A is a deeper
 cross-crate seam change.
 
@@ -174,7 +174,7 @@ runs. Combine with Finding #1 Option B so inline parsing feeds one batched
 observer handoff.
 
 **Seam impact.** This is **not** a `loadgen-core` change — it is a **transport
-restructure** in `aiperf-transport-http` + `rust/aiperf/src/http.rs`. The
+restructure** in `aiperf::transport_http` + `rust/aiperf/src/http.rs`. The
 transport currently returns `RequestRecord { responses: Vec<Response>, … }`
 consumed by many callers (evaluation/agentic read `wire_responses`; endpoint
 dispatch decodes `record.responses` at `endpoint_dispatch.rs:368`). A streaming
@@ -221,7 +221,7 @@ grouping key for per-endpoint/model series, the cheapest zero-risk move is:
   returning clones of interned `Rc<str>`-backed values; or
 - change `InferenceDimensions` to carry `Option<Rc<str>>` so the per-request
   clone is a refcount bump, not a heap `String` copy. (This touches
-  `aiperf-metrics`'s `InferenceDimensions` — a wider but mechanical change.)
+  `aiperf::metrics_core`'s `InferenceDimensions` — a wider but mechanical change.)
 
 The conversation/correlation clones are genuinely per-request (unique per
 turn/session) and cannot be interned; leave them (they are already elided in
@@ -229,7 +229,7 @@ aggregate-only mode).
 
 **Seam impact.** Localized to `rust/aiperf/src/http.rs` if done as a sink-side
 cache returning cloned interned strings. If `InferenceDimensions` is changed to
-`Rc<str>`, it touches `aiperf-metrics` (not `loadgen-core`).
+`Rc<str>`, it touches `aiperf::metrics_core` (not `loadgen-core`).
 **Expected impact.** Medium — removes 2 `String` allocs/request on the steady
 path. **Blast radius.** Small (sink cache) to medium (`InferenceDimensions`
 type change ripples through `store.rs`/`report.rs`). **Risk.** Low; values are
@@ -295,7 +295,7 @@ observer is the only ns-sensitive consumer.
 
 **Seam impact.** This **is** a `loadgen-core::RequestObserver` signature change
 (new ns methods across all impls: `NativeMetricsObserver`, `CollectorObserver`,
-`ObserverTee`, `aiperf-adaptive` window sampler, `aiperf-graph`, offline
+`ObserverTee`, `aiperf::adaptive_core` window sampler, `aiperf::graph`, offline
 `dynosim`, plus the `Dispatchable` test doubles). Object-safe with defaults.
 **Expected impact.** Low-medium — one FP multiply+round per token removed; small
 next to the hash lookups. **Blast radius.** Large (every observer impl and every
@@ -377,7 +377,7 @@ metric. Guard with a test that ICL still appears whenever the flag is on.
 |---|---|---|---|---|---|
 | **1B** | Batched classified token handoff (1 lookup/request) | **High** | Mostly (1 defaulted seam method + 3-4 observer impls) | **Yes** — 1 backward-compatible defaulted method | ✅ #1 |
 | **3** | Intern/memoize constant `InferenceDimensions` (sink-side) | Medium | **Yes** (sink cache) | No | ✅ #2 |
-| **6** | Skip `token_arrivals_ns` Vec + dims when no records/ICL | Medium | **Yes** (`aiperf`/`aiperf-metrics`) | No | ✅ #3 |
+| **6** | Skip `token_arrivals_ns` Vec + dims when no records/ICL | Medium | **Yes** (`aiperf`/`aiperf::metrics_core`) | No | ✅ #3 |
 | **4a** | Avoid `turn.clone()` (Rc/borrow) | Medium | Yes (dispatcher sig) | No | next |
 | **5** | Integer-ns token timestamps | Low-med | No (all observer impls) | **Yes** — new ns methods everywhere | seam-coordinated |
 | **2** | Inline SSE parse, drop `Vec<Response>` second pass | Med-high | No (transport restructure) | No (transport API, not loadgen-core) | connector spec |

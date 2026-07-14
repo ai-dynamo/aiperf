@@ -31,7 +31,7 @@ measured metrics as the Python transport; the RNG and byte layout need not
 match Python bit-for-bit. Data models are **idiomatic Rust**, not a 1:1
 transcription of the Pydantic classes.
 
-**Hard constraint:** all time access goes through the `aiperf-clock` `Clock`
+**Hard constraint:** all time access goes through the `aiperf::clock` `Clock`
 abstraction — never `Instant::now()`, `SystemTime::now()`, or raw
 `tokio::time`. See §4.
 
@@ -87,7 +87,7 @@ Local Rust reference: `rust/aiperf/src/clock` (the `Clock` contract) and
 
 ## 4. Clock abstraction (mandatory foundation)
 
-Everything time-related is sourced from `aiperf-clock`:
+Everything time-related is sourced from `aiperf::clock`:
 
 ```rust
 pub trait Clock {
@@ -176,8 +176,9 @@ as `aiperf-mock-server` (server: `hyper-util` `auto::Builder`) and reqwest 0.12
 
 All timing fields are **`i64` Clock-nanoseconds** (`clock.now_ns()` readings),
 optional ones `Option<i64>`. Durations are computed on demand as `Option<i64>`
-ns (or `Option<Duration>`) accessor methods, not materialized fields. Errors use
-`thiserror`.
+ns (or `Option<Duration>`) accessor methods, not materialized fields. Errors are
+plain enums with hand-written `Display` (no `thiserror`), per the workspace
+error-handling convention.
 
 | Python | Rust (idiomatic) |
 |---|---|
@@ -186,7 +187,7 @@ ns (or `Option<Duration>`) accessor methods, not materialized fields. Errors use
 | `SSEMessage{perf_ns, packets}` + `parse()` | `struct SseMessage { perf_ns: i64, packets: Vec<SseField> }`; `SseMessage::parse(raw: &str, perf_ns: i64)` |
 | `TextResponse{perf_ns, text, content_type}` | `struct TextResponse { perf_ns: i64, text: String, content_type: Option<String> }` |
 | `AioHttpTraceData` (~30 `Optional[int]` + `computed_field` props) | `struct TraceData` with `Option<i64>` capture points; methods `sending()/waiting()/receiving()/duration()/blocked()/dns_lookup()/connecting() -> Option<i64>`; `to_export(reference)` → wall-clock `TraceExport` |
-| `ErrorDetails{type: str, code, message}` | `struct ErrorDetails { kind: ErrorKind, code: Option<u16>, message: String }`; `enum ErrorKind { Http, Sse, Cancelled, SendTimeout, Connect, Timeout, Other }` |
+| `ErrorDetails{type: str, code, message}` | `struct ErrorDetails { kind: ErrorKind, code: Option<u16>, message: String }`; `enum ErrorKind { Http, Sse, Cancelled, Connect, Timeout, Other }` |
 | `RequestRecord` (Pydantic) | `struct RequestRecord { start_ns: i64, end_ns: Option<i64>, recv_start_ns: Option<i64>, status: Option<u16>, responses: Vec<Response>, error: Option<ErrorDetails>, trace: Option<TraceData>, request_headers: Option<HeaderMap>, cancellation_ns: Option<i64> }`; methods `was_cancelled()`, `has_error()`, `is_valid()` |
 | `RequestInfo` + kwargs dicts | typed `RequestConfig`/builder: url(s), headers, params, `cancel_after_ns`, `url_index`, `is_final_turn`, `correlation_id`, `request_id`, `reuse: ConnectionReuseStrategy` |
 | `ConnectionReuseStrategy` str-enum | `enum ConnectionReuseStrategy { Pooled, Never, StickyUserSessions }` |
@@ -236,10 +237,11 @@ trailing delimiter-less message at stream end. `inspect_message_for_error` raise
 Post-send cancellation is built. HTTP cancellation is armed from the captured
 request-body `SendCompletion` signal, so the configured cancellation delay starts
 only after the outbound body has been fully sent — not from request submission.
-The request future is spawned (`spawn_local`); an outbound-body wrapper fires a
-"request fully sent" signal once `bytes_sent >= expected_body_size`, bounded by a
-`clock.sleep(send_timeout_ns)` safety net (→ `SendTimeout` if never sent); then the
-in-flight request races `clock.sleep(cancel_after_ns)`. On timer win: abort the
+An outbound-body wrapper (`SendCompletion`) fires a "request fully sent" signal
+once the body is fully written; the in-flight request races that signal. A request
+that finishes or fails before send-completion is returned normally. Once the
+send-completion signal fires, the request races `clock.sleep(cancel_after_ns)`
+anchored to the captured send time. On timer win: abort the
 request, record `cancellation_ns` + `ErrorKind::Cancelled` (499). Both the h1 and
 h2 paths key off that body-wrapper completion signal rather than racing the entire
 dispatch future from submission time; the "body fully sent" point is well-defined
@@ -294,7 +296,7 @@ Dependencies: `aiperf::clock` (the Clock), `tokio` (current-thread + macros +
 net + io-util), `hyper` (features `client`, `http1`, `http2`), `hyper-util`
 **only** for `rt::{TokioIo, TokioExecutor}`, `http`, `http-body-util`,
 `tokio-rustls`, `rustls`, `webpki-roots`, `bytes`, `futures`, `serde`,
-`serde_json`, `thiserror`, `tracing`, `url`, `socket2`.
+`serde_json`, `tracing`, `url`, `socket2`.
 
 ## 9. Validation — integrate against `aiperf-mock-server`
 

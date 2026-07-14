@@ -38,7 +38,7 @@ changes shape between them (aiperf-v2 REQ 10, REQ 5).
   releases it on terminal, through one object-safe seam. Carries the **global
   dispatch ordinal** assignment (see A1: single, dense, deterministic → byte-parity).
 - **Today (Tier 0 "Direct"):** in-process — one coordinator-owned `SlotPool`
-  (`aiperf-timing/slots.rs`) + the sequential `record_index` counter
+  (`aiperf::timing`, `slots.rs`) + the sequential `record_index` counter
   (`scheduled.rs:868`). **Exact** global concurrency; deterministic assignment.
   Implement as a **single central assignment point**, NOT a shared-atomic self-issue
   (shared-atomic breaks run-to-run float reproducibility — A1).
@@ -78,7 +78,7 @@ changes shape between them (aiperf-v2 REQ 10, REQ 5).
   percentiles are **sketch-derived; the final report is exact** from S2 partitions
   (aiperf-v2 REQ 7, line 399).
 - **Today:** a single cheap live lane — one `WindowSampler`-style consumer
-  (`aiperf-adaptive/window.rs`) of the drained record stream computing counts + a
+  (`aiperf::adaptive_core`, `window.rs`) of the drained record stream computing counts + a
   **t-digest** of TTFT/ITL/latency, plus per-record live streaming to Python
   (`live_streaming.rs`, already per-record). In-process merge of shard sketches on a
   timer. Live counts from the monotonic issuer (S1), not summed shards (avoids the
@@ -97,7 +97,7 @@ changes shape between them (aiperf-v2 REQ 10, REQ 5).
 - **Contract:** identical `(workload_seed, cell_count, partition_assignment)` →
   byte-stable artifacts; per-shard RNG derivation composable so different cell counts
   produce the same trace **set** with different **ownership/order** (aiperf-v2 REQ 3).
-- **Today:** **already most of the way there** — `aiperf-rng::RngRoot::derive`
+- **Today:** **already most of the way there** — `aiperf::rng::RngRoot::derive`
   (order-independent `blake3(root:id)` per trace/hash id) is composable by
   construction; trace identity does not depend on who runs it. Basic case:
   `cell_count = 1`, `partition = identity`. Take `(cell_id, cell_count)` in the
@@ -114,7 +114,7 @@ changes shape between them (aiperf-v2 REQ 10, REQ 5).
   loop, with a **flat-graph fast path** whose overhead matches non-graph dispatch
   (aiperf-v2 REQ 8/9).
 - **Today:** the scheduled dispatch path *is* the flat/degenerate case; the graph
-  executor (`aiperf-graph`) already exists for DAG workloads. No new work for Track-A
+  executor (`aiperf::graph`) already exists for DAG workloads. No new work for Track-A
   beyond keeping the scheduled path lean (A4).
 - **Later:** unify scheduled + graph under the one `VirtualTraceRunner`/`FlatGraphActor`
   pool (aiperf-v2 "unified substrate"). Noted, not scheduled here.

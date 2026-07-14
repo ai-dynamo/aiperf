@@ -51,7 +51,7 @@ Sequence: **PR1 → PR2 (A1)**, **PR3 (A3)** and **PR4 (A4)** in parallel after 
 
 The one load-bearing refactor, isolated so it can land and bake before A1.
 
-- **Where:** `rust/aiperf-runner/src/execute.rs:3200-3234` (`RunCapture::finish`).
+- **Where:** `rust/runner/src/execute.rs:3200-3234` (`RunCapture::finish`; crate `aiperf-runner`).
 - **Change:** replace the positional record↔identity zip (`ingest.correlation_id ==
   identity.uuid`, `:3211-3218`) with a **uuid-keyed join** keyed on the record's
   **true `Uuid`** (built from the dispatch identities; each record resolved by its
@@ -217,7 +217,8 @@ The one load-bearing refactor, isolated so it can land and bake before A1.
   **`rust/aiperf/src/graph/transport_bench.rs:462-506,516` — the ONE live non-`None` writer
   of `uds_path` (NOT dead code, correcting the earlier claim; it sets `uds_path` via
   struct-shorthand which a `grep "uds_path:"` misses). Migrate it to `unix:`-scheme
-  connector selection in this SAME PR or aiperf-graph fails to compile (field drop) /
+  connector selection in this SAME PR or the `aiperf` crate's `graph` module (formerly
+  the `aiperf-graph` crate) fails to compile (field drop) /
   silently TCP-connects its dummy `http://localhost` URL (branch drop).**
 - **Selection:** scheme→connector at the endpoint-prepare composition root
   (`http(s)://`→Tcp, `unix:/path`→Uds), **not** a config flag threaded through layers.
@@ -244,7 +245,9 @@ The one load-bearing refactor, isolated so it can land and bake before A1.
   this as real Python work.
 - **UDS-win throughput driver is unbudgeted:** `rps_bench` (Harness C driver) calls
   `establish` directly and is not wired to a `unix:` client (regression plan §1.4).
-  Rewiring it to a `UdsConnector` (or `fast_sse` `UDS_PATH` + a `unix:` client) to
+  Rewiring it to a `UdsConnector` (the `fast_sse` example that formerly exposed a
+  `UDS_PATH` + `unix:` client has since been removed, so a new `unix:` client driver is
+  needed) to
   measure the headline UDS win is additional PR3 work; without it the seam risks
   landing test-only with no measured product win.
 - **Independent of** A1/A2/A4.

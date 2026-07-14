@@ -19,7 +19,7 @@ projects it into the strict authored protocol-v2 request. The runner validates
 that projection without filesystem or socket effects. At execution time one
 run-owned Rust resource binds the HTTP listener, serves a confined directory,
 tracks complete transfers, and shuts down after benchmark drain. Synthetic
-media generation remains in `aiperf-dataset`; an injected publication trait
+media generation remains in `aiperf::dataset`; an injected publication trait
 selects the existing inline representation or persisted image/video URLs.
 
 This is an online delivery sidecar, not a new transport or execution mode.
@@ -84,13 +84,12 @@ adapters decide whether it is executable:
 | `online_http + scheduled` | Built; generated image/video values can be externalized. |
 | `online_http + graph` | Server resource is accepted; graph-provided URLs can fetch from the serving root. |
 | `online_http + static_accuracy` | Resource lifecycle is accepted, though evaluator-authored inputs are not rewritten. |
-| `online_http + agentic/evaluation` | Rejected; those separately owned evaluator/gateway lifecycles do not consume the dataset publication or native sidecar-resource seam. |
 | `online_grpc + scheduled` | Rejected with the other unsupported sidecars. |
 | `dynosim + scheduled/graph` | Rejected as an online sidecar. |
 
 ## Dataset publication seam
 
-`aiperf-dataset::SyntheticMediaPublisher` is the extension boundary between a
+`aiperf::dataset::SyntheticMediaPublisher` is the extension boundary between a
 codec/generator and its endpoint-ready representation:
 
 ```text
@@ -127,17 +126,19 @@ replaced rather than followed, so publication cannot overwrite their targets.
 Failures are dataset construction failures; the runner never falls back to
 base64 after the user explicitly selected externalization.
 
-## Native server crate
+## Native server module
 
-`aiperf-content-server` is a run-resource leaf with one workspace dependency on
-`aiperf-dataset` for the publication trait. Its replaceable boundaries are:
+The `aiperf::content_server` module (formerly the `aiperf-content-server` crate,
+now inlined as a module of `aiperf`) is a run-resource leaf that depends on the
+sibling `aiperf::dataset` module for the publication trait. Its replaceable
+boundaries are:
 
 - `ContentServerClock`: wall time for correlation plus monotonic time for
   intervals.
 - `ContentServerFactory`: listener/resource construction.
 - `ContentServerRuntime`: status, bound address, tracker snapshot, and graceful
   shutdown.
-- `SyntheticMediaPublisher` (owned by `aiperf-dataset`): final media delivery
+- `SyntheticMediaPublisher` (owned by `aiperf::dataset`): final media delivery
   representation.
 
 The built factory uses Axum and `tower-http::ServeDir`. It binds the listener

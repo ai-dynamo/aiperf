@@ -2,7 +2,7 @@
 
 **Status:** Designed, compile-verified (scratch project), not yet implemented.
 **Date:** 2026-07-12
-**Crate:** `aiperf-transport-http`
+**Crate:** the seam lives in the `aiperf::transport_http` module (formerly the standalone `aiperf-transport-http` crate, now inlined into `aiperf`).
 **Verification:** `~/tmp/connector-spec/` — trait + all three impls build on the workspace dep majors (hyper 1.10, hyper-util 0.1, tokio 1, async-trait 0.1) AND round-trip end-to-end over `TcpStream`, `UnixStream`, and `tokio::io::DuplexStream` behind one object-safe `#[async_trait(?Send)]` trait held as `Rc<dyn Connector>`.
 
 ---
@@ -88,7 +88,7 @@ reuse accounting, tracing, observer) is unchanged.
 ```rust
 use std::rc::Rc;
 use url::Url;
-use aiperf_clock::Clock;
+use crate::clock::Clock;
 use crate::client::connection::{Sender, SocketInfo};
 use crate::config::ClientConfig;
 use crate::models::{ErrorDetails, TraceData};
@@ -349,7 +349,8 @@ handler; the exact HTTP client stack runs with no loopback socket.**
   (`transport_bench.rs:462–474` parse, `:502–506` `ClientConfig { … uds_path … }`,
   `:516` `establish(&url, &cfg, …)`). Removing the field or the UDS branch of
   `establish_inner` without touching `transport_bench` **fails to compile
-  aiperf-graph** (field removed) or, worse, **silently reverts its UDS mode to a
+  the `aiperf` crate** (the `graph` module, formerly the `aiperf-graph` crate, no
+  longer sees the removed field) or, worse, **silently reverts its UDS mode to a
   TCP connect against the dummy `http://localhost` URL** (branch removed but field
   kept) — breaking the co-located UDS benchmark that Harness C (§ regression plan)
   depends on. Migration: `transport_bench` must build the same `unix:`-scheme URL
@@ -417,10 +418,12 @@ product-reachable mode.
 
 **UDS-win throughput harness needs an unbudgeted `rps_bench` rewire.** The
 regression plan's UDS-vs-TCP win driver (Harness C) uses
-`aiperf/examples/rps_bench.rs`, which calls `establish` directly
+`rust/aiperf/examples/rps_bench.rs`, which calls `establish` directly
 and is **not** wired to a `unix:`-scheme client (regression plan §1.4). Measuring
 the headline UDS win requires rewiring `rps_bench` to select a `UdsConnector`
-(or `fast_sse`'s `UDS_PATH` server plus a `unix:` client), which is additional
+(the `fast_sse` example that earlier drafts cited for its `UDS_PATH` server has
+since been REMOVED with the dissolution of `aiperf-core`, so a `unix:`-client rig
+must be built rather than reused), which is additional
 work PR3 must schedule; without it the connector seam risks landing as test-only
 code with no measured product win.
 
@@ -571,7 +574,7 @@ cargo test       # all_three_connectors_round_trip ... ok
   `:330` (establish → connector), add `connector` field; `config/defaults.rs:199-202,220`
   (drop `uds_path`); **`rust/aiperf/src/graph/transport_bench.rs:462-506,516`**
   (migrate the live `uds_path` writer to `unix:`-scheme connector selection — same
-  change, or aiperf-graph fails to compile); **`src/aiperf/config/endpoint.py`
+  change, or the `aiperf` crate's `graph` module fails to compile); **`src/aiperf/config/endpoint.py`
   ~460-475** (relax netloc/hostname + whitelist `unix` + skip port parse, three
   gates, to make `unix:` product-reachable).
 - **Verified constraints:** `async_trait(?Send)` mandatory (native async fn not

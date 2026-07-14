@@ -73,7 +73,7 @@ mmap/backing-store/client-store or graph-private segment-store fallback remainin
 
 ## 2. The segment/blob store seam (Rust)
 
-The seam takes tree-1's `aiperf-graph` base (`rust/aiperf/src/graph/segment.rs`,
+The seam takes the `aiperf::graph` module's base (`rust/aiperf/src/graph/segment.rs`,
 `materialize.rs`), adds the production interned-handle form from the Python unified
 store (`graph_segment_unified_store.py`), and generalizes it to carry media blobs
 and raw token arrays too.
@@ -331,10 +331,13 @@ There is no mmap/backing-store/client-store or graph-private segment-store fallb
 
 Proof is executable and self-contained: the dataset suite passes under
 `cargo test -p aiperf --lib`, clippy is clean under `-D warnings`, and the native
-runtime/CLI suite passes under `cargo test -p aiperf --all-targets`. In particular,
-`rust/aiperf/tests/dataset_online.rs` starts a real loopback HTTP server, runs the
-compiled CLI over a two-turn native dataset, and proves that the live first reply is
-present in the second request. The suite also exercises FFmpeg-backed audio/video
+runtime suite passes under `cargo test -p aiperf --all-targets`. Full-product coverage
+lives in the separate `aiperf-e2e-tests` crate (`rust/e2e`), which boots the
+`aiperf-mock-server` router on a real loopback port and drives the product
+`aiperf profile` frontend against it as a subprocess. In particular,
+`rust/e2e/tests/test_chat.rs::test_multi_turn_resends_history` runs the product over a
+multi-turn dataset and proves that a live turn's reply is carried into the next
+request's resent history. The dataset suite also exercises FFmpeg-backed audio/video
 generation and ASR normalization, exact raw replay, all four context modes, loader
 auto-detection, fixed/prefix hashing, sampler reproducibility, Hugging Face pagination
 and revision pinning, token-native validation, and endpoint-specific request

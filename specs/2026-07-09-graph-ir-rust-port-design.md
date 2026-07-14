@@ -135,7 +135,7 @@ as submodules of `aiperf::graph` (`rust/aiperf/src/graph/`).
 |---|---|---|
 | `model` | subset of `dataset/graph/models.py` | `ParsedGraph`, `GraphRecord`, `LlmNode`, `StaticEdge`, `ChannelSpec`, `ChannelType`, `ChannelRequirement` (incl. `count: int \| "all"`), `ReducerName`, `TraceRecord`, `START`/`END`. serde-deserialized from Python-emitted JSON. Only runtime-relevant fields are modeled; prompt/materialization fields (`prompt`, `raw_tools`, `extra_body`, trie hashes, `segment_pool`) are carried opaquely or omitted. |
 | `reducers` | `reducers.py` | `overwrite_reducer`, `add_messages_reducer` with `MessageList` `id→index` O(1) replacement; `UNSET` sentinel; `OverwriteConflictError`. |
-| `sim_clock` | `common/clock.py` + dynosim `offline/{events,runtime_utils}.rs` | `Clock` trait; `SimClock` = the ported dynosim DES event-queue (min-`BinaryHeap` of `SimEvent { at_ns, seq_no }`, `next_event_time`/`advance_to`, `seq_no` tie-break) serving as the `VirtualClock`; `WallClock` for `drive_real`. |
+| `crate::clock` (shared, not a `graph` submodule) | `common/clock.py` + dynosim `offline/{events,runtime_utils}.rs` | `Clock` trait; `SimClock` (`aiperf::clock`, `rust/aiperf/src/clock/sim_clock.rs`) = the ported dynosim DES event-queue (min-`BinaryHeap` of `SimEvent { at_ns, seq_no }`, `next_event_time`/`advance_to`, `seq_no` tie-break) serving as the `VirtualClock`; `RealClock` (`real_clock.rs`) for `drive_real`. The graph module consumes the shared `aiperf` crate `Clock` seam rather than owning its own clock. |
 | `channel_store` | `channel_store.py` | `VersionedChannelStore`: append-only per-channel logs, monotonic `_next_seq` (0 reserved for init seeds), `await_inputs` (count=N / "all"), `_capture`, `read`, `snapshot`, `snapshot_at_seq`, `current_seq`, `mark_producer_done` producer accounting + orphan propagation, `ChannelOrphanedError`. Async waiters via the runtime's waker primitive. |
 | `channels` | `channels.py` | `producers_per_channel`. |
 | `scheduler` | `scheduler.py` | Adjacency (`entry_nodes`, `successors_after`, `start_anchored_successors`, `incoming_static_edges`), `_reject_mixed_anchor_fan_in`, `collapse_leading_start_offsets`. |
@@ -285,11 +285,12 @@ transport, rather than as a detached workspace:
 
 ```
 rust/aiperf/src/graph/           # the pure-logic runtime port (aiperf::graph)
-  {model,reducers,sim_clock,runtime,channel_store,channels,scheduler,
-   context,placement,executor,dispatch_llm,credit_dispatch_adapter}.rs
+  {model,reducers,runtime,channel_store,channels,scheduler,
+   context,placement,executor}.rs   # LLM dispatch + credit-adapter logic folded into executor.rs
   recorded/                      # native WEKA + dynamo_trace compilers (aiperf::graph::recorded)
-  # sim_clock = dynosim-style DES event queue; runtime = current_thread tokio + LocalSet
-rust/aiperf-runner/              # sole product entry: strict `graph` workload + resolver
+  # runtime = current_thread tokio + LocalSet drive_sim/drive_real pump
+rust/aiperf/src/clock/sim_clock.rs  # shared SimClock = dynosim-style DES event queue (aiperf::clock)
+rust/runner/                     # aiperf-runner crate: sole product entry — strict `graph` workload + resolver
 tools/gen_fixtures.py            # Python twin-harness fixture generator (parity)
 fixtures/corpus/*.json           # Python-emitted inputs + golden outputs
 ```

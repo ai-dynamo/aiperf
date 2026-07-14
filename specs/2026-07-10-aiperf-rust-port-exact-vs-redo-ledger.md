@@ -51,7 +51,7 @@ mostly "keep doing that, plus these gaps."
 This is the most important thing and it is **not** about performance. It is what
 buys all three modes for free.
 
-- **`Clock` trait (`aiperf-clock`)** — `now_ns` / `sleep` / `next_event_time` /
+- **`Clock` trait (`aiperf::clock`, formerly the `aiperf-clock` crate)** — `now_ns` / `sleep` / `next_event_time` /
   `advance_to` / `is_virtual`, with `RealClock` (Linux `timerfd`, CLOCK_MONOTONIC,
   awaited via tokio `AsyncFd`) and `SimClock` (integer-ns `BinaryHeap` DES,
   `(deadline, seq_no)` tie-break). `is_virtual()` selects `drive_sim` vs

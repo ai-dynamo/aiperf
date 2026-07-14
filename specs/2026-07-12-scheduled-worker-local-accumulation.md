@@ -6,9 +6,10 @@
 scheduled measurement path by giving each thread-per-core worker its own
 `NativeMetricsObserver` and merging once at the join — exactly the pattern the
 graph transport bench already uses. The runner product path (HTTP scheduled
-`workers==1` and `workers>1`, plus the gRPC twin) ships this via an **additive
-measured seam**; the library `ScheduledRuntime`/`phase_runtime` path is still
-gated on A2 (planned) and remains single-observer for now.
+`workers==1` and `workers>1`, plus the gRPC twin) ships this via a
+**worker-local measured seam** (the former buffered replay path is removed); the
+library `ScheduledRuntime`/`phase_runtime` path is still gated on A2 (planned) and
+remains single-observer for now.
 
 > All file:line citations are against the read-only working tree at
 > `/home/anthony/nvidia/projects/aiperf/ajc/rust` as of this date. "code is
@@ -23,9 +24,15 @@ The online scheduled path already fans transport work across OS threads
 worker's observer events are buffered and replayed onto ONE coordinator-side
 observer.
 
-### 1.1 The buffer-and-replay machinery
+### 1.1 The buffer-and-replay machinery (pre-change HEAD — since removed)
 
-`rust/runner/src/turn_execution.rs`:
+> This subsection describes the **pre-change HEAD** machinery this spec set out
+> to kill. As of the current tree the buffered path is **fully removed**:
+> `BufferedObserver`, `ObserverEvent`, and the buffered `execute_turn(observer)`
+> replay loop no longer exist anywhere in `rust/` (see §3.1). The file:line
+> citations below are historical, describing the state the measured seam replaced.
+
+`rust/runner/src/turn_execution.rs` (pre-change):
 
 - `BufferedObserver` (lines 164–223): a `RequestObserver` whose `on_admit` /
   `on_token` / `on_classified_token` / `on_usage` / `on_endpoint_metrics` /
@@ -161,8 +168,8 @@ Key properties:
 2. **Cross-thread traffic drops from O(tokens) to O(requests):** on the measured
    seam only the `WorkerReply { result, ttft, live_record? }` crosses back per
    request; no per-token `ObserverEvent` is buffered or replayed. (The legacy
-   buffered `execute_turn(observer)` path is retained but unused by the scheduled
-   measured seam — see §3.1.)
+   buffered `execute_turn(observer)` path has been **removed entirely**; the
+   measured seam is now the sole dispatch path — see §3.1.)
 3. **Merge once at the join.** Each worker returns a drained, `Send`
    `MetricsAccumulator` (or `NativeMetricsFinalizer`); the coordinator merges
    with `MetricsAccumulator::merge`, injects run-level telemetry scalars, and
@@ -222,9 +229,10 @@ own accumulator. Two facts make accumulator-merge the wrong seam here:
 
 **Corrected runner mechanism (records-first).** Each worker owns its
 `NativeMetricsObserver` and accumulates tokens locally (the O(tokens) relocation
-that is the whole point). At drain, the backend hands back each worker's
-**records** — `Vec<RecordIngest>` from that worker's `finish_with_records()`
-(a `drain_records(end_ns)` seam), NOT its `MetricsAccumulator`. The coordinator:
+that is the whole point). At drain, the backend hands back its workers'
+**records** — a flat `Vec<(Uuid, RecordIngest)>` collected from each worker's
+`finish_with_records()` (the `drain_records(end_ns)` seam), NOT their
+`MetricsAccumulator`s. The coordinator:
 
 1. concatenates per-worker record vectors,
 2. **reassigns `request_index`** (§4.2) so the merged set is a dense, collision-free
@@ -252,38 +260,38 @@ the regression matrix must add a gRPC parity row (currently absent).
 
 ## 3. Exact touch points (file:line)
 
-### 3.1 Worker command / reply — an additive measured seam (built)
+### 3.1 Worker command / reply — the measured seam (built)
 
 `rust/runner/src/turn_execution.rs`:
 
-- **`BufferedObserver` / `execute_turn(observer)` are RETAINED, not deleted.**
-  `ThreadPerCoreHttpExecutionBackend` and `ThreadPerCoreGrpcExecutionBackend` are
-  also used by the **agentic** and **evaluation** paths
-  (`evaluation_execution.rs` builds `workers = available_parallelism()`), which
-  still consume the buffered `execute_turn(observer)` replay; deleting it would
-  break those paths. `ObserverEvent`, `BufferedObserver`, and the buffered replay
-  loop stay byte-for-byte for those consumers.
-- **The worker-local path is ADDITIVE.** `HttpTurnExecutionBackend` gains a
-  measured seam — `configure_measurement` / `execute_turn_measured`
+- **`BufferedObserver` / `ObserverEvent` / `execute_turn(observer)` are DELETED.**
+  The buffered replay path described in §1.1 no longer exists anywhere in `rust/`;
+  the measured seam below is the sole dispatch path. (The former agentic and
+  external-evaluator verticals that once consumed the buffered replay have been
+  removed from the runner; the remaining accuracy consumer — the static-accuracy
+  pair, `online_execution.rs::OnlineStaticAccuracyAdapter` — also dispatches
+  through the same measured seam via `ConfiguredDispatcher`.)
+- **The measured seam is the only path.** `HttpTurnExecutionBackend` exposes
+  `configure_measurement` / `execute_turn_measured`
   (+ `execute_turn_measured_streaming`) / `drain_records` — carrying a
   `MeasuredTurnContext` in and a `MeasuredTurnOutcome` out, implemented on
   `TransportSink`, `GrpcTransportSink`, `ThreadPerCoreHttpExecutionBackend`, and
-  `ThreadPerCoreGrpcExecutionBackend`. The scheduled `ConfiguredDispatcher` uses
-  the measured seam; the buffered path is unchanged. Each worker command carries
-  `Option<MeasuredTurnContext>`: `Some` → worker-local observer, `None` →
-  `BufferedObserver`.
-- **Worker owns the observer.** On the measured seam each worker builds one
+  `ThreadPerCoreGrpcExecutionBackend`. The scheduled `ConfiguredDispatcher` calls
+  `execute_turn_measured`. Each `WorkerCommand` carries a **non-optional**
+  `MeasuredTurnContext` (`turn_execution.rs:117-119`); there is no buffered
+  fallback branch.
+- **Worker owns the observer.** Each worker builds one
   worker-local `Rc<NativeMetricsObserver>` next to its `TransportSink` via
   `configure_measurement`, dispatches into that observer, and finalizes the
   record worker-side; no per-token event crosses a thread. `WorkerReply` carries
   `{ result, ttft }` in the common case, and additionally a **non-consuming
   cloned** `live_record: Option<RecordIngest>` when a live sink is attached (see
   §3.3 — never the consuming `drain_terminal_record`).
-- **Coordinator drain returns per-worker RECORDS, not accumulators.** Per §2.1,
-  `drain_records(end_ns) -> Vec<Vec<(Uuid, RecordIngest)>>` collects each worker's
-  `finish_with_records()` output across the thread join. The coordinator
-  concatenates, reassigns `request_index` (§4.2), uuid-joins/rewrites `admit_ns`,
-  and re-ingests in dispatch order (`execute.rs:1557-1560`). No
+- **Coordinator drain returns RECORDS, not accumulators.** Per §2.1,
+  `drain_records(end_ns) -> Vec<(Uuid, RecordIngest)>` collects the backend's
+  workers' `finish_with_records()` output across the thread join into one flat
+  vec. The coordinator reassigns `request_index` (§4.2), uuid-joins/rewrites
+  `admit_ns`, and re-ingests in dispatch order (`execute.rs:1557-1560`). No
   `drain_accumulators` / `MetricsAccumulator::merge` seam is used on the runner
   path, where the per-record `admit_ns` rewrite (§2.1) forbids pre-summarizing
   worker accumulators; accumulator-merge is the mechanism for the **library**
@@ -295,10 +303,11 @@ the regression matrix must add a gRPC parity row (currently absent).
 ### 3.2 gRPC twin — mirrors the change (built)
 
 `rust/runner/src/grpc_turn_execution.rs`: the `GrpcTransportSink` and
-`ThreadPerCoreGrpcExecutionBackend` implement the same additive measured seam
-(worker-local observer + `drain_records`); the buffered `ObserverEvent` /
-`BufferedObserver` / replay loop are retained for the agentic/evaluation gRPC
-consumers, exactly as on the HTTP side.
+`ThreadPerCoreGrpcExecutionBackend` implement the same measured seam
+(worker-local observer + `drain_records`, `grpc_turn_execution.rs:255/268`),
+exactly as on the HTTP side. Like the HTTP path, the gRPC buffered
+`ObserverEvent` / `BufferedObserver` / replay loop have been removed; the
+measured seam is the sole path.
 
 ### 3.3 Runner capture — the real product surface
 
@@ -658,8 +667,9 @@ reading of the plan's "no reported metric change" goal.**
 ## 5. The `CollectorObserver` blocker and the A2 dependency
 
 `loadgen-core::TraceCollector` (collector.rs:466–490) and its wrapper
-`aiperf-core::CollectorObserver` (observer.rs:19–68) produce the compat
-`TraceSimulationReport`. Two facts:
+`loadgen-core::CollectorObserver` (`loadgen-core/src/observer.rs`, struct at
+line 21) produce the compat `TraceSimulationReport`. (`CollectorObserver` moved
+into `loadgen-core` when the former `aiperf-core` crate was dissolved.) Two facts:
 
 1. **No merge path exists.** `TraceCollector` is a `FxHashMap<Uuid, …>`
    (collector.rs:467) with `finish(self)` (748–836) consuming it; there is no
@@ -720,8 +730,9 @@ Verified `Send`:
 
 ### Scratch proof — `~/tmp/a1-spec/`
 
-A throwaway crate (path-dep on `aiperf-metrics`, no repo mutation) proves the
-merge primitives compile and behave:
+A throwaway crate (path-dep on `aiperf`, whose `metrics_core` module holds the
+former `aiperf-metrics` primitives; no repo mutation) proves the merge primitives
+compile and behave:
 
 - `src/main.rs`:
   - `assert_send::<MetricsAccumulator>()` and
@@ -818,19 +829,20 @@ Runner path — **built**:
 
 1. Metrics-side groundwork: `MetricsConfig` is broadcast to workers via
    `configure_measurement`; `HttpTurnExecutionBackend::drain_records(end_ns) ->
-   Vec<Vec<(Uuid, RecordIngest)>>` (per §2.1/§3.3 — the runner drain returns
-   uuid-paired **records**, not accumulators). No `drain_accumulators` seam is
+   Vec<(Uuid, RecordIngest)>` (per §2.1/§3.3 — the runner drain returns a flat vec
+   of uuid-paired **records**, not accumulators). No `drain_accumulators` seam is
    used on the runner path.
 2. Runner relocation: worker-local `NativeMetricsObserver` in
-   `turn_execution.rs` + `grpc_turn_execution.rs` behind the additive measured
-   seam; `RunCapture` uuid-joins in `finish` (keyed on the drain-provided `Uuid`,
+   `turn_execution.rs` + `grpc_turn_execution.rs` behind the measured seam; `RunCapture` uuid-joins in `finish` (keyed on the drain-provided `Uuid`,
    reassigning `request_index` to the `begin` push order before re-ingest — §3.3,
    §4.2) and patches phase/session/`admit_ns` at finish. The existing
    dispatch-order re-ingest (`execute.rs:1557-1560`) is preserved. No A2
    dependency on this path.
-3. `ObserverEvent` / `BufferedObserver` / `execute_turn(observer)` are **retained**
-   for the agentic/evaluation consumers (each worker command selects the observer
-   via `Option<MeasuredTurnContext>`).
+3. `ObserverEvent` / `BufferedObserver` / `execute_turn(observer)` have been
+   **removed** — the former agentic/external-evaluator verticals that consumed the
+   buffered replay are gone, and the surviving static-accuracy consumer dispatches
+   through the same measured seam. Every `WorkerCommand` carries a non-optional
+   `MeasuredTurnContext`; there is no buffered fallback branch.
 
 Library path — **gated on A2** (planned):
 
@@ -857,10 +869,13 @@ Proof (built):
 - Scratch project: `~/tmp/a1-spec/` (`src/main.rs`, `src/bin/sparse.rs`) —
   Send static asserts, 3-thread cross-thread merge, order-independence, and
   dense-precondition rejection. Runs clean.
-- Primary code citations: `turn_execution.rs` 113–223 / 415–521 / 647–693;
+- Primary code citations (the `turn_execution.rs` / `grpc_turn_execution.rs`
+  buffered-path ranges are pre-change HEAD — that code is now removed, replaced by
+  the measured seam): `turn_execution.rs` 113–223 / 415–521 / 647–693;
   `grpc_turn_execution.rs` 105–210 / 376–378; `execute.rs` 3067–3111 /
   3200–3234 / 3244–3287; `scheduled.rs` 420–539 / 868–1017 / 1089–1136;
   `metrics.rs` 190–443 / 546–736; `accumulator.rs` 34–79 / 485–514;
   `store.rs` 569–656 / 1437–1471; `collector.rs` 466–490 / 748–836 / 928–1013;
-  `observer.rs` 19–68; `transport_bench.rs` 385–395; `graph_execution.rs`
+  `loadgen-core/src/observer.rs` (`CollectorObserver`, struct at line 21);
+  `transport_bench.rs` 385–395; `graph_execution.rs`
   738 / 787–805; `phase_runtime.rs` 586–643 / 760–778.

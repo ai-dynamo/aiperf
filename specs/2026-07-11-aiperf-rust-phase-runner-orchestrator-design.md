@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 **Date:** 2026-07-11
 **Author:** Anthony Casagrande (Tech Lead) + Claude
-**Status:** design (not built)
+**Status:** built (`aiperf::timing::phase`, adapted for graph via `rust/runner/src/graph_phase_runtime.rs`) — see the implementation-status sections below for the per-item build state.
 **Grounding:** end-to-end line-by-line read of the Python phase-driver stack —
 `src/aiperf/timing/phase/runner.py` (786 lines), `src/aiperf/timing/phase_orchestrator.py`,
 `src/aiperf/timing/phase/publisher.py`, `src/aiperf/timing/manager.py`,
@@ -18,9 +18,9 @@ companion spec but re-read here): `timing/phase/lifecycle.py`, `timing/phase/sto
 issuer + `ConversationSource` + continuation queue + two `SlotPool`s that this spec's
 runner *drives*. This spec covers the layer ABOVE that: the per-phase execution driver, the
 warmup→profiling sequencer, and the top-level manager. Crown-jewel seams already built:
-`aiperf-clock::Clock`, `loadgen-core::{RequestSink<R>, RequestObserver, Dispatchable}`,
-`aiperf-timing::{IntervalGenerator, SlotPool, StopChecker/StopConfig/RunState, ConcurrencyManager}`,
-`aiperf-graph`.
+`aiperf::clock::Clock`, `loadgen-core::{RequestSink<R>, RequestObserver, Dispatchable}`,
+`aiperf::timing::{IntervalGenerator, SlotPool, StopChecker/StopConfig/RunState, ConcurrencyManager}`,
+`aiperf::graph`.
 
 ---
 
@@ -274,7 +274,7 @@ The `ConcurrencyManager` is **shared and long-lived**, so slot state carries acr
 layer; the companion spec §1.1 documents the underlying `DynamicConcurrencyLimit` =
 semaphore + **debt tracking** for graceful ramp-down. When profiling's caps differ from
 warmup's, the debt mechanism drains the delta rather than hard-cancelling in-flight work.
-This is the already-built `SlotPool` debt-drain in `aiperf-timing`; the orchestrator's job
+This is the already-built `SlotPool` debt-drain in the `aiperf::timing` module; the orchestrator's job
 is only to hold the single shared `ConcurrencyManager` across the runner instances.
 
 ### 3.4 Orchestrator lifecycle & teardown
@@ -314,7 +314,7 @@ else in these five files is IPC glue.
 ## 5. `CreditPhaseConfig` → the Rust config shape
 
 `CreditPhaseConfig` (`config.py:123-242`) is the per-phase knob bag. It fans out onto the
-already-built `aiperf-timing` primitives:
+already-built `aiperf::timing` primitives:
 
 | Python field (`config.py`) | Rust target | Notes |
 |---|---|---|
@@ -343,20 +343,20 @@ from the first profiling phase that declares one (`config.py:106-113`).
 
 ## 6. Mapping onto crates — built vs designed
 
-| Concern | Primitive | Crate | Status |
+| Concern | Primitive | Module / crate | Status |
 |---|---|---|---|
-| Clock (grace/timeout/duration/drain all via `now_ns`/`sleep`) | `Clock` (Real/Sim) | `aiperf-clock` | **built** |
-| Stop bounds (count/session/duration/lifecycle) | `StopChecker` / `StopConfig` / `RunState` | `aiperf-timing` | **built** |
-| Session + prefill caps, cross-phase debt-drain | `SlotPool` / `ConcurrencyManager` | `aiperf-timing` | **built** |
-| Inter-arrival + `set_rate` ramp target | `IntervalGenerator` | `aiperf-timing` | **built** |
+| Clock (grace/timeout/duration/drain all via `now_ns`/`sleep`) | `Clock` (Real/Sim) | `aiperf::clock` | **built** |
+| Stop bounds (count/session/duration/lifecycle) | `StopChecker` / `StopConfig` / `RunState` | `aiperf::timing` | **built** |
+| Session + prefill caps, cross-phase debt-drain | `SlotPool` / `ConcurrencyManager` | `aiperf::timing` | **built** |
+| Inter-arrival + `set_rate` ramp target | `IntervalGenerator` | `aiperf::timing` | **built** |
 | Terminal / first-token → progress + slot release | `RequestObserver` | `loadgen-core` | **built** (terminal turn-final + TTFT-release hooks still needed — companion §7) |
-| Single-loop credit issuer (the strategy) | `CreditIssuer` + continuation queue | new / `aiperf-timing` | **designed** (companion spec) |
-| **Phase lifecycle state machine** | `PhaseLifecycle` (CREATED→…→COMPLETE + cancel flag) | `aiperf-timing` | **designed** (this spec) |
-| **Per-phase execution driver** | `PhaseRunner` trait + impl | new / `aiperf-timing` | **designed** (this spec) |
-| **Warmup→profiling sequencer, seamless overlap** | `PhaseOrchestrator` | new / `aiperf-timing` | **designed** (this spec) |
-| **Progress / lifecycle emission (replaces publisher+bus)** | `PhaseObserver` trait | new | **designed** (this spec) |
-| **Think-time deferred enqueue** | `LoopScheduler` (single owner) | `aiperf-timing` | **designed** (companion) |
-| Ramping (stepped concurrency / continuous rate) | `Ramper` | `aiperf-timing` | **designed** |
+| Single-loop credit issuer (the strategy) | `CreditIssuer` + continuation queue | `aiperf::timing` | **designed** (companion spec) |
+| **Phase lifecycle state machine** | `PhaseLifecycle` (CREATED→…→COMPLETE + cancel flag) | `aiperf::timing` | **designed** (this spec) |
+| **Per-phase execution driver** | `PhaseRunner` trait + impl | `aiperf::timing` | **designed** (this spec) |
+| **Warmup→profiling sequencer, seamless overlap** | `PhaseOrchestrator` | `aiperf::timing` | **designed** (this spec) |
+| **Progress / lifecycle emission (replaces publisher+bus)** | `PhaseObserver` trait | `aiperf::timing` | **designed** (this spec) |
+| **Think-time deferred enqueue** | `LoopScheduler` (single owner) | `aiperf::timing` | **designed** (companion) |
+| Ramping (stepped concurrency / continuous rate) | `Ramper` | `aiperf::timing` | **designed** |
 | Top-level driver (replaces `TimingManager` service) | direct `run()` entry in the CLI | `aiperf` | **designed** — collapses the ZMQ service into a function |
 
 ### 6.1 New trait seams (every extension point a trait)
@@ -489,8 +489,8 @@ for a deterministic, reproducible phase escalation.
 ## Implementation addendum (2026-07-11)
 
 **Status: built.** This addendum supersedes the original designed-status tables. The
-process-independent phase policy is implemented in `aiperf-timing`; the normal scheduled
-application pipeline is connected in `aiperf`. No ZMQ, service lifecycle, worker-registration
+process-independent phase policy is implemented in the `aiperf::timing` module; the normal scheduled
+application pipeline is connected in the rest of the `aiperf` crate. No ZMQ, service lifecycle, worker-registration
 handshake, or credit-router wire type was reintroduced.
 
 ### Built symbols and ownership
@@ -541,13 +541,13 @@ handshake, or credit-router wire type was reintroduced.
 
 ### Executable proof
 
-- `aiperf-timing` unit tests pin lifecycle transition errors, one-clock deadline arithmetic,
+- `aiperf::timing` unit tests pin lifecycle transition errors, one-clock deadline arithmetic,
   source-compatible defaults, freeze/late-return behavior, session/root counting, and branch
   completion gating.
-- `tests/phase_runner.rs` uses `SimClock` to prove the happy path, exact duration+grace
+- `aiperf/tests/timing_phase_runner.rs` uses `SimClock` to prove the happy path, exact duration+grace
   deadline, cancellation drain, exact force-completion instant and stuck-slot release,
   external-cancel short circuit, progress ticks, and failure lifecycle flush.
-- `tests/phase_orchestrator.rs` proves both non-seamless drain-before-start and seamless
+- `aiperf/tests/timing_phase_orchestrator.rs` proves both non-seamless drain-before-start and seamless
   overlap. Its shared `SlotPool` case lowers warmup capacity 4 → profiling capacity 3 while
   four warmup guards remain live: debt is one, profiling blocks until a warmup return repays
   it, and the pool finishes with limit three/debt zero. It also proves cancellation cannot
@@ -578,8 +578,7 @@ converts it through `Dataset`, `Conversation`, protocol v1, or another Graph-IR
 representation.
 
 The process tests in `aiperf-runner/tests/{online_v2_stdio,offline_stdio}.rs`
-and `tests/integration/test_rust_v2_offline_reachability.py` prove direct pair
-loading. The offline proof authors warmup plus profiling in one protocol-v2
+prove direct pair loading. The offline proof authors warmup plus profiling in one protocol-v2
 request and observes both phases on the same Dynamo engine/clock, including
 warmup metrics and six node terminals from two executions of one three-node
 trace.
