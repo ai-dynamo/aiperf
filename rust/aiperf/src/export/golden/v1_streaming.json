@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.4",
+  "aiperf_version": "0.0.0-test",
+  "request_throughput": {
+    "unit": "requests/sec",
+    "avg": 4.0,
+    "min": 4.0,
+    "max": 4.0
+  },
+  "request_latency": {
+    "unit": "ms",
+    "avg": 200.0,
+    "p1": 101.0,
+    "p5": 105.0,
+    "p10": 110.0,
+    "p25": 125.0,
+    "p50": 150.0,
+    "p75": 175.0,
+    "p90": 190.0,
+    "p95": 195.0,
+    "p99": 199.0,
+    "min": 100.0,
+    "max": 300.0,
+    "std": 50.25,
+    "count": 3
+  },
+  "request_count": {
+    "unit": "requests",
+    "avg": 3.0,
+    "min": 3.0,
+    "max": 3.0,
+    "sum": 3.0
+  },
+  "time_to_first_token": {
+    "unit": "ms",
+    "avg": 10.0,
+    "p1": 5.5,
+    "p5": 6.0,
+    "p10": 6.5,
+    "p25": 7.5,
+    "p50": 10.0,
+    "p75": 12.5,
+    "p90": 14.0,
+    "p95": 14.5,
+    "p99": 14.9,
+    "min": 5.0,
+    "max": 15.0,
+    "std": 2.5,
+    "count": 3
+  },
+  "goodput": {
+    "unit": "requests/sec",
+    "avg": 2.0,
+    "min": 2.0,
+    "max": 2.0
+  },
+  "was_cancelled": false,
+  "error_summary": []
+}

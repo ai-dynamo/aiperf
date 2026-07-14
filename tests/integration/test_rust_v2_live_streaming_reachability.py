@@ -16,6 +16,7 @@ from typing import Any
 import orjson
 import pytest
 
+from aiperf.common.environment import Environment
 from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.orchestrator.runner_installation import RunnerInstallation
 from aiperf.orchestrator.rust_executor import RustSubprocessExecutor
@@ -206,13 +207,24 @@ def test_python_config_v2_reaches_live_worker_without_v1_or_early_artifacts(
         captured: list[tuple[dict[str, Any], subprocess.CompletedProcess[bytes]]] = []
 
         def recording_execute(
-            selected: RunnerInstallation, request: dict[str, Any]
+            selected: RunnerInstallation,
+            request: dict[str, Any],
+            *,
+            on_stderr_line: Any = None,
         ) -> subprocess.CompletedProcess[bytes]:
-            completed = original_execute(selected, request)
+            completed = original_execute(
+                selected, request, on_stderr_line=on_stderr_line
+            )
             captured.append((copy.deepcopy(request), completed))
             return completed
 
         monkeypatch.setattr(RunnerInstallation, "execute", recording_execute)
+        # This test proves the legacy live-streaming Python worker is reached and
+        # activates only after the artifact commit. That sidecar is suppressed on
+        # the default native path (the native aiperf::export::otel sink is the
+        # single network emitter), so exercise the still-supported legacy path via
+        # AIPERF_RUNTIME_NATIVE_EXPORT=0 (mirrors AIPERF_RUNTIME_ENGINE=python A/B).
+        monkeypatch.setattr(Environment.RUNTIME, "NATIVE_EXPORT", False)
         result = RustSubprocessExecutor(
             artifact_dir,
             installation=scheduled_installation,

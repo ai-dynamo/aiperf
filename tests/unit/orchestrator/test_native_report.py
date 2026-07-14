@@ -16,6 +16,21 @@ from aiperf.orchestrator.native_report import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _legacy_python_export(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise the legacy Python ExporterManager rendering path.
+
+    ``export_python_compatibility_reports`` is a no-op on the default native
+    path (the Rust ``aiperf::export`` sinks are the sole emitter). These tests
+    pin the legacy Python renderer that remains reachable via
+    ``AIPERF_RUNTIME_NATIVE_EXPORT=0`` and the ``AIPERF_RUNTIME_ENGINE=python``
+    service mesh, so they run with the native plane disabled.
+    """
+    from aiperf.common.environment import Environment
+
+    monkeypatch.setattr(Environment.RUNTIME, "NATIVE_EXPORT", False)
+
+
 def _entry(metric_type: str, unit: str, stats: dict, *, labels=None) -> dict:
     return {
         "type": metric_type,

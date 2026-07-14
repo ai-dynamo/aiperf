@@ -1,0 +1,15 @@
+3 of 10 requests (30.0%) have output length differing from requested by more than the threshold.
+Threshold (tokens): min(requested x 5%, 50)
+Average mismatch: 7.5%
+
+Why: Server hit EOS token before reaching requested output length.
+
+Fix Options:
+  - --extra-inputs ignore_eos:true - Generate until max_tokens (vLLM, TensorRT-LLM)
+  - --extra-inputs min_tokens:<N> - Set minimum output length (vLLM, TensorRT-LLM, SGLang)
+  - --use-server-token-count - Use server-reported token counts if tokenizer mismatch suspected
+
+Diagnostics:
+  - Review profile_export.jsonl -> osl_mismatch_diff_pct for per-request values
+  - Adjust: AIPERF_METRICS_OSL_MISMATCH_PCT_THRESHOLD=5
+  - Adjust: AIPERF_METRICS_OSL_MISMATCH_MAX_TOKEN_THRESHOLD=50

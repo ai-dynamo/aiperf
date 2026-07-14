@@ -650,36 +650,625 @@ def _export(run: BenchmarkRun) -> dict[str, Any]:
     """Project the native-Rust post-report export policy onto ``cfg.export``.
 
     Toggle/config passthrough only — the runner's ``aiperf::export`` plane owns
-    all emission. genai-perf v1 compat is enabled when ``"genai_perf"`` is present
-    in ``artifacts.summary``; OTel/MLflow projection is added when those sinks are
-    migrated to the native path (they currently emit via the supervised Python
-    live-streaming extension, see :func:`_live_streaming`).
+    all emission and serialization. genai-perf v1 compat is enabled when
+    ``"genai_perf"`` is present in ``artifacts.summary``; OTel/MLflow projection is
+    added when those sinks are migrated to the native path (they currently emit
+    via the supervised Python live-streaming extension, see
+    :func:`_live_streaming`).
+
+    When the v1 sink is enabled, we additionally project the frontend-owned data
+    values the native report alone cannot reconstruct, so the native
+    ``profile_export_aiperf.{json,csv}`` reproduce the Python exporters
+    byte-for-byte. The sink still owns all assembly and serialization; Python
+    only supplies the metric-registry-derived headers/filters and the exact
+    envelope JSON values (see :func:`_genai_perf_frontend_projection`).
+
+    The timeslice and server-metrics sinks follow the same discipline: their
+    metric VALUES come from the native report, but the frontend-owned envelope
+    (`input_config` for both, plus `benchmark_id` for server metrics) is projected
+    here so the two native artifacts reproduce their Python exporters byte-for-byte
+    (see :func:`_timeslice_frontend_projection` /
+    :func:`_server_metrics_frontend_projection`).
     """
+    # Legacy escape hatch: when the native export plane is disabled
+    # (AIPERF_RUNTIME_NATIVE_EXPORT=0) the runner drives no export sinks — an
+    # empty block decodes to all-disabled defaults (see
+    # ``rust/aiperf/src/export/mod.rs``) so it writes only the authoritative
+    # native-v2 report, and the Python ExporterManager + live-streaming sidecar
+    # become the single emitter for every artifact (see
+    # :func:`_live_streaming` and
+    # ``native_report.export_python_compatibility_reports``).
+    if not Environment.RUNTIME.NATIVE_EXPORT:
+        return {}
+
     config = run.cfg
     summary = config.artifacts.summary
-    # The native aiperf-v1 sink emits profile_export_aiperf.{json,csv}. It fires
-    # whenever the JSON summary is requested (the legacy default) or explicitly
-    # via "genai_perf", so it can run alongside the Python exporter for parity
-    # diffing (see AIPERF_EXPORT_SUBDIR in the runner).
-    genai_perf_enabled = isinstance(summary, list) and (
-        "json" in summary or "genai_perf" in summary
-    )
+    # The native v1 summary sink writes profile_export_aiperf.{json,csv} — the
+    # exact files the legacy MetricsJsonExporter (gated on ``"json" in summary``,
+    # see metrics_json_exporter.py) + MetricsCsvExporter produced. It is the sole
+    # emitter of those artifacts on the native path, so it enables on the same
+    # ``"json"`` signal the Python JSON exporter used (default ``["json"]``).
+    genai_perf_enabled = isinstance(summary, list) and "json" in summary
+    genai_perf: dict[str, Any] = {"enabled": genai_perf_enabled}
+    if genai_perf_enabled:
+        genai_perf.update(_genai_perf_frontend_projection(run))
+    result: dict[str, Any] = {"genai_perf": genai_perf}
+
+    timeslice = _timeslice_frontend_projection(run)
+    if timeslice is not None:
+        result["timeslice"] = timeslice
+    server_metrics = _server_metrics_frontend_projection(run)
+    if server_metrics is not None:
+        result["server_metrics"] = server_metrics
+    parquet = _parquet_frontend_projection(run)
+    if parquet is not None:
+        result["parquet"] = parquet
+    accuracy_csv = _accuracy_csv_frontend_projection(run)
+    if accuracy_csv is not None:
+        result["accuracy_csv"] = accuracy_csv
+    result["console_txt"] = _console_txt_frontend_projection(run)
+
+    # Network sinks (OTLP/HTTP, MLflow, W&B) are driven by the native export
+    # plane by default. Each block is projected only when its config signal is
+    # present (collector/tracking_uri/project); the native Rust sink is then the
+    # single emitter and the Python streaming sidecar + post-run uploaders are
+    # skipped (see :func:`_live_streaming` and
+    # ``native_report.export_python_compatibility_reports``). The legacy Python
+    # paths return under AIPERF_RUNTIME_NATIVE_EXPORT=0 above.
+    otel = _otel_frontend_projection(run)
+    if otel is not None:
+        result["otel"] = otel
+    mlflow = _mlflow_frontend_projection(run)
+    if mlflow is not None:
+        result["mlflow"] = mlflow
+    wandb = _wandb_frontend_projection(run)
+    if wandb is not None:
+        result["wandb"] = wandb
+    return result
+
+
+def _console_txt_frontend_projection(run: BenchmarkRun) -> dict[str, Any]:
+    """Project the fixed-width console-artifact policy onto ``cfg.export.console_txt``.
+
+    The runner's ``aiperf::export::console_txt`` sink owns the full render
+    (Rich box geometry, the error-summary table, and the warning/insight panels).
+    Metric VALUES come from the native report; but the grouped-metrics-table
+    CONTENT — which metric lands in which ``MetricConsoleGroup``, its display
+    header, its display order, the INTERNAL/EXPERIMENTAL filter, and the table
+    titles — is owned by the Python ``MetricRegistry`` and cannot be reconstructed
+    from the report. Projecting it here makes the native
+    ``profile_export_console.txt`` reproduce the Python ``ConsoleMetricsExporter``
+    byte-for-byte instead of grouping/naming from the divergent Rust
+    ``metrics_core`` catalog.
+
+    Wire fields (``ConsoleTxtExportConfig``):
+
+    * ``enabled`` — the ``.txt`` artifact is always written
+      (``ExporterManager._write_console_txt``).
+    * ``width`` — the fixed render width (``Environment.UI.CONSOLE_EXPORT_WIDTH``,
+      the width the Python recording ``Console`` is pinned to).
+    * ``dev`` — INTERNAL/EXPERIMENTAL visibility; off for the standard end-of-run
+      tables (the dev-only tables are not ported).
+    * ``title`` — the base metrics title (``ConsoleMetricsExporter._get_title``):
+      ``NVIDIA AIPerf | <endpoint metrics_title>``, degrading to ``NVIDIA AIPerf``
+      for a runner-only endpoint dialect with no Python metadata.
+    * ``metrics`` — per-registered-tag ``{header, group, display_order, internal,
+      experimental, error_only}`` from ``MetricRegistry.all_classes()``. An
+      unregistered (native-only) tag is deliberately omitted; the sink then
+      renders it in the DEFAULT group under its raw tag with no display order and
+      no flag filter, exactly as Python's ``MetricResult`` for an unregistered
+      tag does (``console_metrics_exporter._record_group`` / ``_should_show`` /
+      ``_display_order`` and ``native_report._metric_result``).
+    """
+    from aiperf.common.enums import MetricFlags
+    from aiperf.metrics.metric_registry import MetricRegistry
+
+    metrics: dict[str, Any] = {}
+    for metric_class in MetricRegistry.all_classes():
+        meta: dict[str, Any] = {
+            "header": metric_class.header,
+            "group": metric_class.console_group.value,
+        }
+        if metric_class.display_order is not None:
+            meta["display_order"] = metric_class.display_order
+        if metric_class.has_flags(MetricFlags.INTERNAL):
+            meta["internal"] = True
+        if metric_class.has_flags(MetricFlags.EXPERIMENTAL):
+            meta["experimental"] = True
+        if metric_class.has_flags(MetricFlags.ERROR_ONLY):
+            meta["error_only"] = True
+        metrics[str(metric_class.tag)] = meta
+
     return {
-        "genai_perf": {
-            "enabled": genai_perf_enabled,
-            "endpoint_type": str(config.endpoint.type),
-            "streaming": bool(config.endpoint.streaming),
-        },
+        "enabled": True,
+        "width": Environment.UI.CONSOLE_EXPORT_WIDTH,
+        "dev": False,
+        "title": _console_metrics_title(run),
+        "metrics": metrics,
+    }
+
+
+def _console_metrics_title(run: BenchmarkRun) -> str:
+    """Reproduce ``ConsoleMetricsExporter._get_title`` for the runner path.
+
+    The console title is ``NVIDIA AIPerf | <metrics_title>`` where the metrics
+    title comes from the endpoint plugin metadata; a runner-only endpoint dialect
+    (``dynosim``, ``vllm_generate``) has no Python metadata entry, so the title
+    degrades to the product default ``NVIDIA AIPerf`` rather than failing.
+    """
+    from aiperf.plugin import plugins
+
+    try:
+        metadata = plugins.get_endpoint_metadata(run.cfg.endpoint.type)
+    except Exception:
+        return "NVIDIA AIPerf"
+    return f"NVIDIA AIPerf | {metadata.metrics_title}"
+
+
+def _otel_frontend_projection(run: BenchmarkRun) -> dict[str, Any] | None:
+    """Project ``cfg.otel`` onto the native OTLP/HTTP metrics sink block.
+
+    Mirrors the four wire fields the Rust emitter decodes (see
+    ``aiperf::export::otel::OtelExportConfig``): ``enabled`` (true iff a metrics
+    URL is configured), the already-normalized ``endpoint`` (``cfg.otel``'s
+    ``BeforeValidator`` guarantees the ``…/v1/metrics`` suffix), the optional
+    ``provider`` (``gen_ai.provider.name`` override), and the ``resource_attributes``
+    map. ``service.name=aiperf`` is added by the sink, so the map here reproduces
+    the rest of ``OtelMetricsResultsProcessor._build_resource_attributes``
+    (``otel_metrics_results_processor.py:433``): ``service.instance.id`` (the
+    records-manager default, matching the Python fanout's ``service_id`` fallback),
+    ``aiperf.benchmark.id``, ``aiperf.endpoint.type``, ``aiperf.model.name``, then
+    the user ``custom_resource_attributes``.
+    """
+    otel = run.cfg.otel
+    if otel.metrics_url is None:
+        return None
+
+    resource_attributes: dict[str, str] = {"service.instance.id": "records-manager"}
+    if run.benchmark_id is not None:
+        resource_attributes["aiperf.benchmark.id"] = run.benchmark_id
+    resource_attributes["aiperf.endpoint.type"] = str(run.cfg.endpoint.type)
+    model_names = run.cfg.get_model_names()
+    if model_names:
+        resource_attributes["aiperf.model.name"] = model_names[0]
+    resource_attributes.update(otel.custom_resource_attributes)
+
+    projection: dict[str, Any] = {
+        "enabled": True,
+        "endpoint": otel.metrics_url,
+        "resource_attributes": resource_attributes,
+    }
+    if otel.gen_ai_provider is not None:
+        projection["provider"] = otel.gen_ai_provider
+    return projection
+
+
+def _mlflow_frontend_projection(run: BenchmarkRun) -> dict[str, Any] | None:
+    """Project ``cfg.mlflow`` onto the native MLflow run-tracker block.
+
+    Enabled iff a tracking URI is set (``MLflowConfig.enabled``). Reproduces the
+    fields the Rust uploader decodes (``aiperf::export::mlflow::MlflowExportConfig``):
+    the endpoint/experiment/run identity, the user ``tags``, the resolved
+    ``artifact_globs``, the ``benchmark_id``, the pre-built ``params`` payload
+    (``MLflowDataExporter._build_param_payload``, ``mlflow_data_exporter.py:357``),
+    and the AIPerf package ``aiperf_version`` (for the ``aiperf.version`` tag; the
+    native report carries only the Rust crate version) — pure frontend config the
+    native report cannot reconstruct. Metric VALUES and the ``metric.tag`` /
+    ``metric.tag.<stat>`` key scheme are assembled by the Rust sink from the
+    report; only config-derived params/tags are projected here.
+    """
+    mlflow_cfg = run.cfg.mlflow
+    if mlflow_cfg.tracking_uri is None:
+        return None
+
+    from aiperf import __version__ as aiperf_version
+
+    projection: dict[str, Any] = {
+        "enabled": True,
+        "tracking_uri": mlflow_cfg.tracking_uri,
+        "experiment": mlflow_cfg.experiment,
+        "tags": mlflow_cfg.tags_dict,
+        "artifact_globs": mlflow_cfg.resolved_artifact_globs,
+        "params": _mlflow_param_payload(run),
+        "aiperf_version": aiperf_version,
+    }
+    if mlflow_cfg.run_name is not None:
+        projection["run_name"] = mlflow_cfg.run_name
+    if mlflow_cfg.parent_run_id is not None:
+        projection["parent_run_id"] = mlflow_cfg.parent_run_id
+    if run.benchmark_id is not None:
+        projection["benchmark_id"] = run.benchmark_id
+    total_expected = _mlflow_total_expected(run)
+    if total_expected is not None:
+        projection["total_expected_requests"] = total_expected
+    return projection
+
+
+def _mlflow_param_payload(run: BenchmarkRun) -> dict[str, str]:
+    """Reproduce ``MLflowDataExporter._build_param_payload`` (``mlflow_data_exporter.py:357``).
+
+    Pure frontend config: endpoint type/models/urls (URLs redacted), the artifact
+    directory, and — from the first profiling phase — the timing mode and any
+    concurrency / request-rate / request-count / benchmark-duration loadgen axis,
+    plus the redacted CLI command. The native report carries none of this, so it
+    is assembled and redacted here and forwarded verbatim to the Rust sink.
+    """
+    from aiperf.common.redact import redact_cli_command, redact_url
+    from aiperf.config.phases import get_phase_rate
+
+    cfg = run.cfg
+    params: dict[str, str] = {
+        "endpoint.type": str(cfg.endpoint.type),
+        "endpoint.models": ",".join(cfg.get_model_names()),
+        "endpoint.urls": ",".join(redact_url(url) for url in cfg.endpoint.urls),
+        "output.artifact_directory": str(cfg.artifacts.artifact_directory),
+    }
+
+    profiling_phases = cfg.get_profiling_phases()
+    if profiling_phases:
+        phase = profiling_phases[0]
+        params["timing.mode"] = str(phase.type)
+        if getattr(phase, "concurrency", None) is not None:
+            params["loadgen.concurrency"] = str(phase.concurrency)
+        rate = get_phase_rate(phase)
+        if rate is not None:
+            params["loadgen.request_rate"] = str(rate)
+        if phase.requests is not None:
+            params["loadgen.request_count"] = str(phase.requests)
+        if phase.duration is not None:
+            params["loadgen.benchmark_duration"] = str(phase.duration)
+
+    cli_command = getattr(cfg, "cli_command", None) or run.cli_command
+    if cli_command:
+        params["aiperf.cli_command"] = redact_cli_command(cli_command)
+    return params
+
+
+def _mlflow_total_expected(run: BenchmarkRun) -> float | None:
+    """Derive ``total_expected_requests`` for the ``aiperf.total_expected_requests`` metric.
+
+    ``MLflowDataExporter`` reads this from ``ProfileResults.total_expected``; the
+    native report has no such field, so it is derived from the first profiling
+    phase's configured ``requests`` when present (``None`` otherwise, matching the
+    exporter's skip-when-absent behavior).
+    """
+    profiling_phases = run.cfg.get_profiling_phases()
+    if not profiling_phases:
+        return None
+    requests = profiling_phases[0].requests
+    return float(requests) if requests is not None else None
+
+
+def _wandb_frontend_projection(run: BenchmarkRun) -> dict[str, Any] | None:
+    """Project ``cfg.wandb`` onto the native Weights & Biases sink block.
+
+    Enabled iff a project is set (``WandbConfig.enabled``). Reproduces the fields
+    the Rust offline-``.wandb`` writer decodes
+    (``aiperf::export::wandb::WandbExportConfig``): project/entity/run-name, the
+    user ``tags`` (the ``aiperf-<version>`` / ``benchmark-<id8>`` tags are derived
+    by the sink from the projected ``aiperf_version`` — the AIPerf package version,
+    since the native report carries only the Rust crate version — and the
+    ``benchmark_id``), the ``benchmark_id``, the serialized redacted ``config_json``
+    (``cfg.model_dump(mode="json", exclude_none=True)`` — the same object
+    ``WandbDataExporter._build_config_payload`` logs, ``wandb_data_exporter.py:160``),
+    and the redacted ``cli_command`` recorded under ``aiperf.cli_command``.
+    """
+    import orjson
+
+    from aiperf import __version__ as aiperf_version
+    from aiperf.common.redact import redact_cli_command
+
+    wandb_cfg = run.cfg.wandb
+    if wandb_cfg.project is None:
+        return None
+
+    config_payload = run.cfg.model_dump(mode="json", exclude_none=True)
+    projection: dict[str, Any] = {
+        "project": wandb_cfg.project,
+        "config_json": orjson.dumps(config_payload).decode("utf-8"),
+        "aiperf_version": aiperf_version,
+    }
+    if wandb_cfg.entity is not None:
+        projection["entity"] = wandb_cfg.entity
+    if wandb_cfg.run_name is not None:
+        projection["run_name"] = wandb_cfg.run_name
+    if wandb_cfg.tags:
+        projection["tags"] = list(wandb_cfg.tags)
+    if run.benchmark_id is not None:
+        projection["benchmark_id"] = run.benchmark_id
+    if run.cli_command:
+        projection["cli_command"] = redact_cli_command(run.cli_command)
+    return projection
+
+
+def _timeslice_frontend_projection(run: BenchmarkRun) -> dict[str, Any] | None:
+    """Project the frontend-owned timeslice export policy onto ``cfg.export``.
+
+    The native runner emits per-slice timeslices only when the run configures a
+    ``slice_duration``; mirror that gate. Both JSON and CSV timeslice files are
+    always produced by the Python exporter suite (each gated only on the presence
+    of timeslices), so the native sink emits both here too.
+
+    Like the genai-perf v1 sink, the timeslice files also need the registry-derived
+    metric identity the native report cannot reconstruct — ``header_map`` (CSV
+    display names), ``filtered_tags`` (registered INTERNAL/EXPERIMENTAL drop set),
+    and ``scalar_tags`` (AGGREGATE/DERIVED ``count``-drop set). These are projected
+    via :func:`_metric_registry_projection` so the native sink names, filters, and
+    scalar-suppresses exactly as the Python exporters do (native-runtime metrics
+    Python never registered — ``active_*``/``effective_*``/``credit_*`` — are kept
+    and named by their snake tag).
+
+    The JSON ``input_config`` object is projected as the exact value
+    :class:`TimesliceCollectionExportData` emits — ``model_dump(mode="json",
+    exclude_unset=True, exclude_none=True)`` then ``scrub_non_finite`` — so the
+    native sink wraps it verbatim after the ``timeslices`` array. This is the same
+    ``input_config`` value the genai-perf envelope carries (identical field type,
+    identical dump options); it is recomputed here through the timeslice model so
+    the parity oracle is exact.
+    """
+    if run.cfg.artifacts.slice_duration is None:
+        return None
+
+    from aiperf.common.finite import scrub_non_finite
+    from aiperf.common.models.export_models import TimesliceCollectionExportData
+
+    collection = TimesliceCollectionExportData(timeslices=[], input_config=run.cfg)
+    dumped = scrub_non_finite(
+        collection.model_dump(mode="json", exclude_unset=True, exclude_none=True)
+    )
+    projection: dict[str, Any] = {
+        "json": True,
+        "csv": True,
+        "input_config": dumped["input_config"],
+    }
+    projection.update(_metric_registry_projection())
+    return projection
+
+
+def _metric_registry_projection() -> dict[str, Any]:
+    """Project the registry-derived metric identity shared by the file exporters.
+
+    Returns ``header_map`` / ``filtered_tags`` / ``scalar_tags`` computed exactly
+    as :func:`_genai_perf_frontend_projection` derives them (see that function for
+    the ``native_report._metric_result`` / ``_prepare_metrics`` /
+    ``to_json_result`` grounding). Factored out so the timeslice sink reproduces
+    the genai-perf sink's naming/filtering byte-for-byte without re-deriving the
+    catalog.
+    """
+    from aiperf.common.enums import MetricFlags, MetricType
+    from aiperf.metrics.metric_registry import MetricRegistry
+
+    show_internal = Environment.DEV.SHOW_INTERNAL_METRICS
+    show_experimental = Environment.DEV.SHOW_EXPERIMENTAL_METRICS
+
+    header_map: dict[str, str] = {}
+    filtered_tags: list[str] = []
+    scalar_tags: list[str] = []
+    for metric_class in MetricRegistry.all_classes():
+        tag = str(metric_class.tag)
+        header_map[tag] = metric_class.header
+        if (metric_class.has_flags(MetricFlags.INTERNAL) and not show_internal) or (
+            metric_class.has_flags(MetricFlags.EXPERIMENTAL) and not show_experimental
+        ):
+            filtered_tags.append(tag)
+        if metric_class.type in {MetricType.AGGREGATE, MetricType.DERIVED}:
+            scalar_tags.append(tag)
+
+    return {
+        "header_map": header_map,
+        "filtered_tags": sorted(filtered_tags),
+        "scalar_tags": sorted(scalar_tags),
+    }
+
+
+def _server_metrics_frontend_projection(run: BenchmarkRun) -> dict[str, Any] | None:
+    """Project the frontend-owned server-metrics export policy onto ``cfg.export``.
+
+    Enabled when server-metrics collection is enabled and the JSON and/or CSV
+    format is selected (``cfg.server_metrics.formats``); the ``jsonl`` / ``parquet``
+    formats are handled by :func:`_server_metrics`, not this summary sink. The
+    per-format toggles mirror the Python exporters' ``ServerMetricsFormat`` gate.
+
+    Three frontend-owned envelope values are projected because the native report
+    cannot reconstruct them:
+
+    * ``aiperf_version`` — the AIPerf package version (``aiperf.__version__``); the
+      native report carries only the Rust crate version, so the frontend supplies
+      the authoritative value emitted in the JSON ``aiperf_version`` field and the
+      CSV ``# aiperf_version:`` comment header.
+    * ``benchmark_id`` — the run identity string; the Python exporters emit it in
+      both the JSON ``benchmark_id`` field and the CSV ``# benchmark_id:`` comment
+      header (``None`` when absent).
+    * ``input_config`` — projected as the exact value
+      :class:`ServerMetricsExportData` emits for its ``input_config`` field:
+      ``cfg.model_dump(mode="json", exclude_unset=True)`` placed into the export
+      model, then ``model_dump(mode="json", exclude_none=True)`` and
+      ``scrub_non_finite``. It is reconstructed here through the real export model
+      (with a throwaway minimal summary) so the outer ``exclude_none`` recursion is
+      byte-exact regardless of Pydantic's dict-field semantics. Only the JSON file
+      carries ``input_config``; the CSV does not.
+    """
+    server_metrics = run.cfg.server_metrics
+    if not server_metrics.enabled:
+        return None
+
+    formats = {str(fmt) for fmt in server_metrics.formats}
+    json_enabled = "json" in formats
+    csv_enabled = "csv" in formats
+    if not (json_enabled or csv_enabled):
+        return None
+
+    from aiperf import __version__ as aiperf_version
+
+    projection: dict[str, Any] = {
+        "json": json_enabled,
+        "csv": csv_enabled,
+        "aiperf_version": aiperf_version,
+    }
+    if run.benchmark_id is not None:
+        projection["benchmark_id"] = run.benchmark_id
+    if json_enabled:
+        projection["input_config"] = _server_metrics_input_config(run)
+    return projection
+
+
+def _server_metrics_input_config(run: BenchmarkRun) -> Any:
+    """Compute the exact ``input_config`` value the server-metrics JSON emits.
+
+    Reproduces ``ServerMetricsJsonExporter._generate_content`` for the
+    ``input_config`` field alone: dump the config with ``exclude_unset=True`` (no
+    ``exclude_none``), place it into :class:`ServerMetricsExportData`, then apply
+    the model's ``model_dump(mode="json", exclude_none=True)`` and
+    ``scrub_non_finite``. Serialization of the ``input_config`` field is
+    independent of the ``summary`` / ``metrics`` payloads, so a throwaway minimal
+    summary yields the byte-exact value.
+    """
+    from datetime import datetime
+
+    from aiperf.common.finite import scrub_non_finite
+    from aiperf.common.models.server_metrics_models import (
+        ServerMetricsExportData,
+        ServerMetricsSummary,
+    )
+
+    input_config = run.cfg.model_dump(mode="json", exclude_unset=True)
+    export_data = ServerMetricsExportData(
+        aiperf_version=None,
+        benchmark_id=None,
+        summary=ServerMetricsSummary(
+            endpoints_configured=[],
+            endpoints_successful=[],
+            start_time=datetime.fromtimestamp(0),
+            end_time=datetime.fromtimestamp(0),
+        ),
+        input_config=input_config,
+    )
+    dumped = scrub_non_finite(export_data.model_dump(mode="json", exclude_none=True))
+    return dumped["input_config"]
+
+
+def _parquet_frontend_projection(run: BenchmarkRun) -> dict[str, Any] | None:
+    """Project the server-metrics Parquet sink toggle onto ``cfg.export.parquet``.
+
+    Config-only passthrough: the native ``aiperf::export::parquet`` sink owns all
+    assembly and serialization. It reads the runner-emitted
+    ``.aiperf-server-metrics-parquet-wire.jsonl`` wire file (whose path is lowered
+    by :func:`_server_metrics` when ``parquet`` is in ``cfg.server_metrics.formats``)
+    and the profiling boundary carried on the native report
+    (``report.summary.server_metrics.profiling``); nothing else is frontend-owned,
+    so ``enabled`` is the sole projected field
+    (``aiperf::export::parquet::ParquetExportConfig``).
+
+    Enabled iff server-metrics collection is on and the ``parquet`` format is
+    selected — the same gate under which :func:`_server_metrics` writes the
+    ``parquet_wire_path`` the sink consumes. Absent either, the block is omitted
+    and the sink stays disabled.
+    """
+    server_metrics = run.cfg.server_metrics
+    if not server_metrics.enabled:
+        return None
+    formats = {str(fmt) for fmt in server_metrics.formats}
+    if "parquet" not in formats:
+        return None
+    return {"enabled": True}
+
+
+def _accuracy_csv_frontend_projection(run: BenchmarkRun) -> dict[str, Any] | None:
+    """Project the accuracy CSV sink toggle onto ``cfg.export.accuracy_csv``.
+
+    Config-only passthrough: the native ``aiperf::export::accuracy_csv`` sink reads
+    ``report.accuracy.summary`` (the overall + per-task rollups) directly and writes
+    ``accuracy_results.csv`` byte-for-byte against the Python
+    ``AccuracyDataExporter``; there is no frontend-owned envelope value, so
+    ``enabled`` is the sole projected field
+    (``aiperf::export::accuracy_csv::AccuracyCsvExportConfig``).
+
+    Enabled iff accuracy benchmarking mode is on (``cfg.accuracy.enabled``), the
+    same gate that selects the ``static_accuracy`` workload (see
+    :func:`_workload_type`). The sink additionally self-skips when the report carries
+    no accuracy analysis or an empty population, matching the Python exporter.
+    """
+    accuracy = run.cfg.accuracy
+    if accuracy is None or not accuracy.enabled:
+        return None
+    return {"enabled": True}
+
+
+def _genai_perf_frontend_projection(run: BenchmarkRun) -> dict[str, Any]:
+    """Project frontend-owned genai-perf v1 data absent from the native report.
+
+    Three families of value are computed here because only the Python frontend
+    can derive them, and the native ``aiperf::export::genai_perf`` sink consumes
+    them verbatim (it performs all assembly/serialization itself):
+
+    * ``header_map`` — the display header for every registered metric tag, exactly
+      as :func:`native_report._metric_result` derives it
+      (``MetricRegistry.get_class_or_none(tag).header``). Unregistered tags are
+      absent here; the sink falls back to the tag string, matching Python's
+      ``else tag`` branch. Native-runtime metrics (``active_*``/``effective_*``/
+      ``credit_*``) are unregistered, so Python emits their snake tag as the name.
+    * ``filtered_tags`` / ``scalar_tags`` — the registered tags the Python file
+      exporters drop (``metrics_base_exporter._prepare_metrics``: INTERNAL /
+      EXPERIMENTAL, honoring the dev show-flags) and the registered scalar-tier
+      tags whose ``count`` is dropped by ``record_models.to_json_result``
+      (``MetricType.AGGREGATE`` / ``DERIVED``).
+    * ``envelope`` — ``benchmark_id``, ``aiperf_version``, ``input_config``, and
+      ``run_info`` serialized exactly as :class:`MetricsJsonExporter` emits them
+      (``JsonExportData.model_dump(mode="json", exclude_unset=True,
+      exclude_none=True)`` then ``scrub_non_finite``).
+    """
+    from aiperf import __version__ as aiperf_version
+    from aiperf.common.enums import MetricFlags, MetricType
+    from aiperf.common.finite import scrub_non_finite
+    from aiperf.common.models.export_models import JsonExportData, RunInfo
+    from aiperf.metrics.metric_registry import MetricRegistry
+
+    show_internal = Environment.DEV.SHOW_INTERNAL_METRICS
+    show_experimental = Environment.DEV.SHOW_EXPERIMENTAL_METRICS
+
+    header_map: dict[str, str] = {}
+    filtered_tags: list[str] = []
+    scalar_tags: list[str] = []
+    for metric_class in MetricRegistry.all_classes():
+        tag = str(metric_class.tag)
+        header_map[tag] = metric_class.header
+        if (metric_class.has_flags(MetricFlags.INTERNAL) and not show_internal) or (
+            metric_class.has_flags(MetricFlags.EXPERIMENTAL) and not show_experimental
+        ):
+            filtered_tags.append(tag)
+        if metric_class.type in {MetricType.AGGREGATE, MetricType.DERIVED}:
+            scalar_tags.append(tag)
+
+    envelope_model = JsonExportData(
+        aiperf_version=aiperf_version,
+        benchmark_id=run.benchmark_id,
+        input_config=run.cfg,
+        run_info=RunInfo.from_run(run),
+    )
+    envelope = scrub_non_finite(
+        envelope_model.model_dump(mode="json", exclude_unset=True, exclude_none=True)
+    )
+
+    return {
+        "header_map": header_map,
+        "filtered_tags": sorted(filtered_tags),
+        "scalar_tags": sorted(scalar_tags),
+        "envelope": envelope,
     }
 
 
 def _live_streaming(run: BenchmarkRun) -> dict[str, Any] | None:
     """Lower OTel/live-MLflow into the supervised Python extension ABI."""
     config = run.cfg
+    # By default the native Rust OTel/MLflow sinks are the single network emitter
+    # (see :func:`_export`); suppress the Python streaming sidecar so those
+    # destinations are not written twice. Reversible: AIPERF_RUNTIME_NATIVE_EXPORT=0
+    # restores the legacy live-streaming path.
+    if Environment.RUNTIME.NATIVE_EXPORT:
+        return None
     if not config.otel.collector_enabled and not config.mlflow.enabled:
         return None
 
-    from aiperf.common.environment import Environment
     from aiperf.config.otel import normalize_otel_metrics_url
 
     metrics_url = normalize_otel_metrics_url(config.otel.metrics_url)

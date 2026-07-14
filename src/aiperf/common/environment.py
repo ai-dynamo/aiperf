@@ -267,6 +267,20 @@ class _RuntimeSettings(BaseSettings):
         "Set via AIPERF_RUNTIME_ENGINE.",
     )
 
+    NATIVE_EXPORT: bool = Field(
+        default=True,
+        description="Whether the native Rust `aiperf::export` sink plane is the "
+        "sole emitter for every report artifact (profile_export_aiperf.{json,csv}, "
+        "timeslices, server_metrics.{json,csv,parquet}, accuracy_results.csv, "
+        "profile_export_console.txt, and the OTel/MLflow/W&B network sinks). When "
+        "true (default) the frontend projects cfg.export for the runner, suppresses "
+        "the Python live-streaming sidecar, and skips the Python ExporterManager + "
+        "post-run uploaders entirely so each destination receives a single native "
+        "emission. Set AIPERF_RUNTIME_NATIVE_EXPORT=0 to restore the legacy Python "
+        "emitters (ExporterManager, mlflow/wandb uploaders, OTel sidecar) for A/B "
+        "verification, mirroring AIPERF_RUNTIME_ENGINE=python. Reversible.",
+    )
+
 
 class _RngSettings(BaseSettings):
     """Selects which random-number backend seeds AIPerf's reproducible streams.

@@ -1,0 +1,18 @@
+# AIPerf Server Metrics Export (CSV)
+# aiperf_version: 0.0.0
+# schema_version: 1.0
+# benchmark_id: bench-123
+# Note: Same benchmark_id and version appear in JSON and Parquet exports
+#
+Endpoint,Type,Metric,Unit,avg,min,max,std,p1,p5,p10,p25,p50,p75,p90,p95,p99,model,Description
+localhost:8081,gauge,num_requests_running,requests,2.5000,1.0000,4.0000,1.2000,1.0000,1.0000,1.0000,2.0000,2.5000,3.0000,4.0000,4.0000,4.0000,llama,Number of running requests.
+
+Endpoint,Type,Metric,Unit,total,rate,rate_avg,rate_min,rate_max,rate_std,Description
+localhost:8081,counter,prompt_tokens_total,tokens,1000.0000,16.6667,,,,,Total prompt tokens.
+
+Endpoint,Type,Metric,Unit,count,count_rate,sum,sum_rate,avg,p1_estimate,p5_estimate,p10_estimate,p25_estimate,p50_estimate,p75_estimate,p90_estimate,p95_estimate,p99_estimate,Description,buckets
+localhost:8081,histogram,request_latency_seconds,seconds,5,0.0833,3.5000,0.0583,0.7000,,,,,0.6000,,,,1.4000,Request latency in seconds.,+Inf=5;0.1=1;1.0=3
+
+Endpoint,Metric,Key,Value,Description
+localhost:8081,cache_config_info,block_size,16,Cache configuration.
+localhost:8081,cache_config_info,version,1.2,Cache configuration.
