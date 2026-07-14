@@ -591,6 +591,14 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   `SlotPool`/`StopCondition`/`WorkerPool`/`Dispatcher`/`Observer`/`OnFailure`/`Clock`
   (`MonotonicClock`/`VirtualClock`). Deletes the executor tier and `Admission`
   outright. Destination the P1 renames walk toward; not an incremental plan.
+- `specs/2026-07-13-segment-unification-design.md` — **segment unification**
+  (design): collapse `Turn`'s five body fields (content/messages/raw_payload/
+  raw_messages/raw_token_ids) into segment `Handle`s in the one `SegmentPool`;
+  lowering = the single compiler; dispatch materializes one `Full<Bytes>` by
+  concat-not-reserialize with the segment **domain as discriminant** (`raw` = 12 ns
+  clone, `message` = splice). Live continuation = runtime segments (O(depth²) but
+  cheap). Honors the single-`Full`-buffer + `SendCompletion` constraint (no
+  scatter-gather). Grounded in segment.rs/request.rs/model.rs/connection.rs + microbench.
 - `specs/2026-07-09-dynamo-aiperf-{shared-core,request-rate-tokenizer}-design.md`
   — historical precursors (built on dynamo's `lib/mocker`; superseded by the
   standalone workspace).
