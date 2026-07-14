@@ -162,3 +162,35 @@ every seam is the one the cellular runtime consumes, so none of it is throwaway.
    trace identity (S4).
 5. Preserve the public contracts aiperf-v2 REQ 4 pins: records-manager finalization
    predicate, exporter formats/filenames, CLI flag semantics, `CreditPhaseStats` schema.
+
+## Addendum — 2026-07-14 — Phase 1 seams built (S1, S2, S4)
+
+Phase 1 seam extraction is **built** as the always-on `aiperf::cellular` module
+(`rust/aiperf/src/cellular/`), each seam a trait with its Direct in-process impl.
+Implementation design: `~/.aiperf/docs/superpowers/specs/2026-07-14-rust-cellular-runtime-implementation-design.md`.
+
+- **S1 `cellular::issuance`** — `IssuanceAuthority` (map a cell-local dispatch index
+  to the dense global dispatch ordinal); `DirectIssuanceAuthority` (identity, the
+  shipping cell-of-one) and `CellularAutonomousIssuer` (`local*cell_count+cell_id`,
+  = the round-robin trace instance index; tiles the dense `0..total` ordinal space,
+  zero coordinator hop). Threaded through `RunCapture::finish` in the runner: the
+  default Direct authority is identity, so single-process output is byte-unchanged
+  (confirmed by the 1-vs-4-worker parity harness and a real end-to-end mock run).
+- **S2 `cellular::shard`** — `RecordsShard` + two serializable partitions on a
+  MessagePack wire: `RecordsShardPartition` (raw records; the controller re-ingests
+  every cell's records in global-ordinal order via `merge_records_in_global_order`,
+  which is **byte-identical to a single-cell run** — the same worker-count-independent
+  mechanism the product path already uses — and validates the ordinals are a
+  permutation of `0..total`, returning `RecordsMergeError` rather than panicking on
+  malformed wire input), and `ColumnStorePartition` (the roadmap's serializable
+  store form; `append_store` merge, deterministic at a fixed topology). `ColumnStore`
+  and `RecordIngest` (+ their nested types and `MetricValue`) are now serde-serializable.
+- **S4 `cellular::partition`** — `CellPartition` + `ModuloCellPartition` (round-robin
+  ownership, identity `(0,1)`; disjoint+complete instance coverage; per-cell seed
+  derivation via `RngRoot::derive_indexed_root`).
+
+Superseded here: the earlier "MetricsHeartbeat carries the report percentiles"
+framing is unaffected — S3 remains the live-only sketch. **Still designed, not
+built:** S3 `MetricsHeartbeat` (t-digest live lane) and the `CellTransport` +
+controller/cell multi-process topology (Phase 2). Section 124's "What ships today
+(Phase 0)" is superseded for S1/S2/S4 by this addendum; the hot path is unchanged.

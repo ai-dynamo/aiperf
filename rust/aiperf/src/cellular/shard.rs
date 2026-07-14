@@ -94,27 +94,82 @@ impl RecordsShardPartition {
 /// ([`request_index`](RecordIngest::request_index)) order, so both absolute-slot
 /// placement and ragged `append_order` match a single-cell run: the summary is
 /// byte-identical to the same records accumulated as one cell. Run-level scalars
-/// (network RTT, injected side-channel scalars) are applied by the caller. Records
-/// without an index sort first, deterministically.
+/// (network RTT, injected side-channel scalars) are applied by the caller.
+///
+/// The union of every cell's global ordinals must be a permutation of `0..total`.
+/// This is validated before any record is placed, so a misframed or overlapping
+/// wire partition (a duplicate, missing, or out-of-range ordinal — the input here
+/// arrives off [`RecordsShardPartition::from_bytes`]) returns a structured
+/// [`RecordsMergeError`] instead of an `insert_record_at` panic or an
+/// O(max-ordinal) allocation.
 pub fn merge_records_in_global_order(
     config: MetricsConfig,
     partitions: Vec<RecordsShardPartition>,
-) -> MetricsAccumulator {
+) -> Result<MetricsAccumulator, RecordsMergeError> {
     let mut records: Vec<RecordIngest> = partitions
         .into_iter()
         .flat_map(RecordsShardPartition::into_records)
         .collect();
+
+    let total = records.len();
+    let mut seen = vec![false; total];
+    for record in &records {
+        match record.request_index {
+            Some(ordinal) if ordinal < total => {
+                if std::mem::replace(&mut seen[ordinal], true) {
+                    return Err(RecordsMergeError::DuplicateOrdinal(ordinal));
+                }
+            }
+            Some(ordinal) => return Err(RecordsMergeError::OrdinalOutOfRange { ordinal, total }),
+            None => return Err(RecordsMergeError::MissingOrdinal),
+        }
+    }
+
     // Stable sort by the dense global dispatch ordinal so the re-ingested order —
     // and therefore every order-sensitive floating-point reduction — reproduces a
-    // single-cell run exactly.
+    // single-cell run exactly. Validated above as a permutation of 0..total.
     records.sort_by_key(|record| record.request_index);
 
     let mut accumulator = MetricsAccumulator::with_config(config);
     for record in &records {
         accumulator.process_record(record);
     }
-    accumulator
+    Ok(accumulator)
 }
+
+/// Error merging cell records: the union of global ordinals was not a permutation
+/// of `0..total` (dense, unique, in range), so re-ingestion could not proceed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecordsMergeError {
+    /// A record carried no global dispatch ordinal.
+    MissingOrdinal,
+    /// Two records claimed the same global ordinal.
+    DuplicateOrdinal(usize),
+    /// A global ordinal fell outside `0..total`.
+    OrdinalOutOfRange {
+        /// The offending ordinal.
+        ordinal: usize,
+        /// The record count it was checked against.
+        total: usize,
+    },
+}
+
+impl Display for RecordsMergeError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingOrdinal => write!(f, "a cell record carried no global dispatch ordinal"),
+            Self::DuplicateOrdinal(ordinal) => {
+                write!(f, "two cell records claimed global ordinal {ordinal}")
+            }
+            Self::OrdinalOutOfRange { ordinal, total } => write!(
+                f,
+                "global ordinal {ordinal} is out of range for {total} merged records"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RecordsMergeError {}
 
 /// S2 seam: a shard captures a cell's completed records and exports them as a
 /// serializable, mergeable partition at a phase boundary.
@@ -416,13 +471,46 @@ mod tests {
             })
             .collect();
 
-        let merged = merge_records_in_global_order(MetricsConfig::default(), partitions);
+        let merged = merge_records_in_global_order(MetricsConfig::default(), partitions)
+            .expect("cell ordinals tile 0..24");
         assert_eq!(merged.record_count(), 24);
         assert_eq!(
             merged.summarize(),
             direct.summarize(),
             "merge of cell records must be byte-identical to the single-cell run"
         );
+    }
+
+    #[test]
+    fn merge_rejects_ordinals_that_are_not_a_permutation() {
+        let dup = merge_records_in_global_order(
+            MetricsConfig::default(),
+            vec![
+                RecordsShardPartition::new(0, vec![record(0)]),
+                RecordsShardPartition::new(1, vec![record(0)]),
+            ],
+        );
+        assert_eq!(dup.unwrap_err(), RecordsMergeError::DuplicateOrdinal(0));
+
+        let out_of_range = merge_records_in_global_order(
+            MetricsConfig::default(),
+            vec![RecordsShardPartition::new(0, vec![record(9)])],
+        );
+        assert_eq!(
+            out_of_range.unwrap_err(),
+            RecordsMergeError::OrdinalOutOfRange {
+                ordinal: 9,
+                total: 1
+            }
+        );
+
+        let mut indexless = record(0);
+        indexless.request_index = None;
+        let missing = merge_records_in_global_order(
+            MetricsConfig::default(),
+            vec![RecordsShardPartition::new(0, vec![indexless])],
+        );
+        assert_eq!(missing.unwrap_err(), RecordsMergeError::MissingOrdinal);
     }
 
     #[test]
@@ -444,11 +532,13 @@ mod tests {
         let ascending = merge_records_in_global_order(
             MetricsConfig::default(),
             vec![p[0].clone(), p[1].clone(), p[2].clone()],
-        );
+        )
+        .expect("cell ordinals tile 0..18");
         let shuffled = merge_records_in_global_order(
             MetricsConfig::default(),
             vec![p[2].clone(), p[0].clone(), p[1].clone()],
-        );
+        )
+        .expect("cell ordinals tile 0..18");
         assert_eq!(ascending.summarize(), shuffled.summarize());
     }
 
@@ -460,7 +550,8 @@ mod tests {
                 RecordsShardPartition::new(0, Vec::new()),
                 RecordsShardPartition::new(1, Vec::new()),
             ],
-        );
+        )
+        .expect("no records is a trivial permutation");
         assert_eq!(merged.record_count(), 0);
     }
 

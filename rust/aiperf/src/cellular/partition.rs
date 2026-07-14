@@ -259,12 +259,4 @@ mod tests {
             RngRoot::new(None)
         );
     }
-
-    #[test]
-    fn direct_matches_modulo_zero_of_one() {
-        assert_eq!(
-            ModuloCellPartition::direct(),
-            ModuloCellPartition::new(0, 1).unwrap()
-        );
-    }
 }

@@ -61,13 +61,13 @@ impl Serialize for MetricValue {
     }
 }
 
-/// Deserializes the boundary encoding [`Serialize`] produces, exactly: a number
-/// (including `+inf`/`-inf`) is [`Finite`](MetricValue::Finite), the string
-/// `"+inf"` is [`PosInf`](MetricValue::PosInf), and null/unit is
-/// [`Absent`](MetricValue::Absent). Requires a self-describing format
-/// (`deserialize_any`); the cellular wire uses MessagePack for exactly this
-/// reason. The pairing keeps a wire-shipped record's injected overrides
-/// byte-faithful on re-ingestion.
+/// Deserializes exactly what [`Serialize`] emits, decoded from a self-describing
+/// format: a float is [`Finite`](MetricValue::Finite), the string `"+inf"` is
+/// [`PosInf`](MetricValue::PosInf), and nil is [`Absent`](MetricValue::Absent).
+/// The `Serialize` impl only ever writes those three forms (`serialize_f64` /
+/// `serialize_str` / `serialize_none`), so the visitor handles exactly those and
+/// nothing else. Requires `deserialize_any`; the cellular wire uses MessagePack
+/// for this reason, keeping a wire-shipped record's injected overrides byte-faithful.
 impl<'de> Deserialize<'de> for MetricValue {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -79,19 +79,11 @@ impl<'de> Deserialize<'de> for MetricValue {
             type Value = MetricValue;
 
             fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                formatter.write_str("a number, the string \"+inf\", or null")
+                formatter.write_str("a float, the string \"+inf\", or nil")
             }
 
             fn visit_f64<E>(self, value: f64) -> Result<MetricValue, E> {
                 Ok(MetricValue::Finite(value))
-            }
-
-            fn visit_i64<E>(self, value: i64) -> Result<MetricValue, E> {
-                Ok(MetricValue::Finite(value as f64))
-            }
-
-            fn visit_u64<E>(self, value: u64) -> Result<MetricValue, E> {
-                Ok(MetricValue::Finite(value as f64))
             }
 
             fn visit_str<E>(self, value: &str) -> Result<MetricValue, E>
@@ -106,10 +98,7 @@ impl<'de> Deserialize<'de> for MetricValue {
                 }
             }
 
-            fn visit_none<E>(self) -> Result<MetricValue, E> {
-                Ok(MetricValue::Absent)
-            }
-
+            // MessagePack (and JSON) decode nil via `visit_unit` under `deserialize_any`.
             fn visit_unit<E>(self) -> Result<MetricValue, E> {
                 Ok(MetricValue::Absent)
             }
