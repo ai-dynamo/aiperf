@@ -577,6 +577,13 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   wrappers over the same primitives. Only failure behavior genuinely differs
   (graph fail-fast/abort-run vs. scheduled resilient). Corrects the
   graph-is-metrics-lite impression; flags incidental cleanups; no refactor.
+- `specs/2026-07-13-p1-generic-execution-substrate-names.md` — **P1 naming pass**
+  (design): give the already-shared execution substrate one generic vocabulary
+  and collapse `TransportSink`'s ~6 dispatch methods to two primitives.
+  `PreparedHttpTurn`/`MeasuredTurn*`/`HttpTurnDispatchResult` →
+  `PreparedRequest`/`Measured*`/`DispatchResult`; placement seams →
+  `RequestExecutor` (per-request) / `TraceExecutor` (per-trace). Pure rename +
+  de-dup, no behavior change; does not merge the seams (deferred).
 - `specs/2026-07-09-dynamo-aiperf-{shared-core,request-rate-tokenizer}-design.md`
   — historical precursors (built on dynamo's `lib/mocker`; superseded by the
   standalone workspace).

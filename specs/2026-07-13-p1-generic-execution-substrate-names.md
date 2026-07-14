@@ -1,0 +1,84 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# P1 — Generic shared names for the execution substrate
+
+**Date:** 2026-07-13
+**Status:** design (proposed, not built)
+**Scope:** A **naming + dispatch-method-consolidation** pass over the execution substrate the scheduled and graph online paths *already share*. Pure rename + de-duplication — **no behavior change, no structural merge**. Premised on the production audit `2026-07-13-scheduled-graph-production-convergence.md`.
+
+> This supersedes the withdrawn "unify the dispatch seam" P1 draft, which was built on the false premise that the graph path was metrics-lite. The graph path (`RunnerGraphSink`) is full-fidelity and already calls the same `TransportSink` with the same `PreparedHttpTurn` and `NativeMetricsObserver`. What's actually wrong is that the shared substrate is **named path-specifically** (`Http*` / `Turn*`) and reached through a **sprawl of ~6 near-duplicate `TransportSink` dispatch methods**, so the convergence is invisible in the code.
+
+## 1. Problem
+
+The scheduled and graph online paths share these exact types/instances (audit §"Already shared"), but under names that imply otherwise:
+
+- **Shared DTOs, `Http*`/`Turn*`-named:** `PreparedHttpTurn`, `MeasuredTurnContext`, `MeasuredTurnOutcome`, `HttpTurnDispatchResult` (`rust/aiperf/src/http.rs:190,209,306,329`). Both the scheduled worker and `RunnerGraphSink` build/consume these.
+- **Shared transport dispatch, sprawling:** `TransportSink` exposes `execute_turn_measured[_streaming]`, `dispatch_prepared_turn_measured`, `dispatch_prepared_turn_collect_record[_streaming]`, `dispatch_prepared_turn_collect_record_with_response_observer` (`http.rs:1155-1405`). The scheduled worker calls `dispatch_prepared_turn_measured` (`turn_execution.rs:670`); `RunnerGraphSink` calls `dispatch_prepared_turn_collect_record` (`graph_execution.rs:816`). They bottom out in the **same** underlying function.
+- **Two placement seams named non-parallel:** `HttpTurnExecutionBackend` (per-request, `http.rs:343`) and `GraphTraceExecutionBackend` (per-trace, `graph/placement.rs`). Both are "execute on thread-per-core workers" at different granularity, but nothing in the names says so, and `HttpTurnExecutionBackend` serves gRPC too (the `Http` is a lie).
+
+P1 gives all of this **one generic vocabulary** and trims the dispatch sprawl. It does **not** merge the two placement seams or change any behavior — those are the deferred v2 structural work.
+
+## 2. Naming
+
+### Group A — shared substrate (used by BOTH paths; the main win)
+
+| Now | New | Note |
+|---|---|---|
+| `PreparedHttpTurn` | `PreparedRequest` | both paths build it (`from_turn` stays a scheduled-only helper) |
+| `MeasuredTurnContext` | `MeasuredContext` | pairs with `execute_measured` |
+| `MeasuredTurnOutcome` | `MeasuredOutcome` | |
+| `HttpTurnDispatchResult` | `DispatchResult` | `{ outcome, request_payload, record }` unchanged |
+| `TransportSink::dispatch_prepared_turn_measured` | `TransportSink::dispatch_measured` | context-wired: register metadata → dispatch → record |
+| `TransportSink::dispatch_prepared_turn_collect_record[_streaming]` | `TransportSink::dispatch_collect[_streaming]` | primitive: dispatch → return `DispatchResult`, caller wires the observer |
+| `..._collect_record_with_response_observer` | fold into `dispatch_collect_streaming` | trims the sprawl: ~6 methods → 2 primitives + streaming |
+
+### Group B — the two placement seams (parallel generic names; they stay separate)
+
+| Now | New | Granularity |
+|---|---|---|
+| `HttpTurnExecutionBackend` | `RequestExecutor` | per **request** |
+| `execute_turn_measured[_streaming]` (on it) | `execute_measured[_streaming]` | |
+| `inference_dimensions(&TurnToSend)` | `inference_dimensions(&PreparedRequest)` | decouple from the scheduler type (an `&HttpRequest` variant already exists) |
+| `HttpExecutionBackendFactory` / `NativeHttpExecutionBackendFactory` | `RequestExecutorFactory` / `NativeRequestExecutorFactory` | |
+| `ThreadPerCoreHttpExecutionBackend` | `ThreadPerCoreRequestExecutor` | |
+| `GraphTraceExecutionBackend` / `…Factory` | `TraceExecutor` / `TraceExecutorFactory` | per **trace** |
+| `ThreadPerCoreGraphTraceExecutionBackend` | `ThreadPerCoreTraceExecutor` | |
+
+Level convention this establishes: **`execute_*`** = placement-level (route to a worker); **`dispatch_*`** = transport-level (send bytes + measure). `RequestExecutor` vs the existing `RequestSink` (loadgen-core raw transport) are deliberately distinct levels; if that proximity reads as ambiguous, `MeasuredExecutor` is the fallback trait name.
+
+### Not renamed in P1 (scope creep / wide read surface)
+
+- `HttpRequest` (leaf transport DTO shared by http+grpc).
+- `TurnDispatchOutcome` — the nested `DispatchResult.outcome` double-`outcome` smell; renaming to `ResponseOutcome` touches the whole scheduled read surface. Deferred.
+- `TurnResponseObserver`, `TurnDispatcher`/`ConfiguredDispatcher`.
+- `GraphSink` / `GraphReply` — genuinely graph-specific (per-node DAG splice). Kept; `RunnerGraphSink` just calls the renamed `dispatch_collect`. `TransportSink` keeps its name.
+
+## 3. What stays as-is (explicitly)
+
+- Both placement seams remain **two** traits (`RequestExecutor` per-request, `TraceExecutor` per-trace). Merging them is the deferred structural unification, not P1.
+- Failure-policy divergence (graph fail-fast vs scheduled resilient) is untouched — a separate decision (audit §"Genuinely different").
+- The graph keeps per-node observer wiring (`register_metadata`/`record_response`/`drain_terminal_record` in `RunnerGraphSink`); it just calls the generically-named `dispatch_collect`.
+
+## 4. Rollout (staged; each stage keeps the suite green)
+
+1. **Rename Group A** (shared DTOs + `TransportSink` methods) and trim the dispatch-method sprawl to `dispatch_measured` + `dispatch_collect[_streaming]`. Update both callers (`turn_execution.rs`, `graph_execution.rs`, `http.rs`, `grpc.rs`).
+2. **Rename Group B** (placement seams + factories + thread-per-core impls) and decouple `inference_dimensions` to `&PreparedRequest`.
+3. Update `execution_factories.rs`, `registry.rs`, docs (`module-organization.md` crate/module table if any symbol is referenced), and the four agent files only if a renamed symbol appears in them.
+
+Pure rename/consolidation: no control-flow or measurement change at any stage.
+
+## 5. Parity & testing
+
+Rename + method-consolidation only, so **no metric or dispatch-event change**. The existing graph byte-exact parity tests, scheduled dispatch tests, and sim/online integration tests must stay green **unmodified** — that is the entire correctness argument. No new tests are required beyond confirming the suite is green after each stage; add none for the sake of the diff.
+
+## 6. Value
+
+Modest but real: the shared substrate becomes **visibly** shared (one vocabulary), the ~6 `TransportSink` dispatch methods collapse to 2 primitives, and `Http`/`Turn` stop lying about what the code serves (gRPC, graph). It also lays the vocabulary groundwork for the eventual structural merge of `RequestExecutor` + `TraceExecutor` without committing to it now.
+
+## 7. Related
+
+- `2026-07-13-scheduled-graph-production-convergence.md` — the audit this is premised on (what's shared vs. different).
+- `2026-07-12-scheduled-worker-local-accumulation.md` — Track A A1, which built the worker-local measured seam being renamed here.
