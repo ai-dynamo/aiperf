@@ -41,6 +41,7 @@ path = "src/lib.rs"
 loadgen-core.workspace = true
 # External deps consolidated from the 16 absorbed aiperf-* library crates.
 anyhow.workspace = true
+arrow.workspace = true
 async-trait.workspace = true
 axum.workspace = true
 base64.workspace = true
