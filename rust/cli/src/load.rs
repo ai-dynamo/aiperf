@@ -744,18 +744,23 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         }),
         network_latency: network_latency_sidecar,
     };
-    let mut gpu_cfg = crate::model::telemetry::GpuTelemetryConfig::default();
-    gpu_cfg.enabled = inputs.gpu_telemetry_enabled;
-    gpu_cfg.urls = inputs.gpu_telemetry_urls.clone();
-    let mut server_cfg = crate::model::telemetry::ServerMetricsConfig::default();
-    server_cfg.enabled = inputs.server_metrics_enabled;
-    // The raw config value lands in `cfg.server_metrics.urls` verbatim (the flag
-    // path normalizes at the input stage, mirroring Python's converter; the YAML
-    // path keeps the authored value raw). Only the sidecar always normalizes.
-    server_cfg.urls = inputs.server_metrics_urls.clone();
-    if let Some(formats) = &inputs.server_metrics_formats {
-        server_cfg.formats = formats.clone();
-    }
+    let gpu_cfg = crate::model::telemetry::GpuTelemetryConfig {
+        enabled: inputs.gpu_telemetry_enabled,
+        urls: inputs.gpu_telemetry_urls.clone(),
+        ..Default::default()
+    };
+    let server_cfg = crate::model::telemetry::ServerMetricsConfig {
+        enabled: inputs.server_metrics_enabled,
+        // The raw config value lands in `cfg.server_metrics.urls` verbatim (the
+        // flag path normalizes at the input stage, mirroring Python's converter;
+        // the YAML path keeps the authored value raw). Only the sidecar normalizes.
+        urls: inputs.server_metrics_urls.clone(),
+        formats: inputs
+            .server_metrics_formats
+            .clone()
+            .unwrap_or_else(|| crate::model::telemetry::ServerMetricsConfig::default().formats),
+        ..Default::default()
+    };
     let mut cfg = BenchmarkConfig {
         models: Some(models),
         endpoint: Some(endpoint),

@@ -244,6 +244,9 @@ pub struct PublicDataset {
 /// One typed dataset (discriminated by `type`).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+// A single run builds exactly one dataset; the size gap between variants is not
+// worth a `Box` indirection (which would also complicate the serde tag round-trip).
+#[allow(clippy::large_enum_variant)]
 pub enum Dataset {
     /// Synthetically generated prompts.
     Synthetic(Synthetic),
