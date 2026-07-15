@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use clap::Parser;
 
 /// Parsed `aiperf profile` flags.
-#[derive(Debug, Parser)]
+#[derive(Debug, Clone, Parser)]
 #[command(name = "profile", disable_help_subcommand = true)]
 pub struct ProfileFlags {
     /// Model name(s) to benchmark (`--model-names` / `--model` / `-m`).
@@ -83,6 +83,11 @@ pub struct ProfileFlags {
     /// e.g. `256,128:60;512,256:40` (optional stddev: `256|10,128|5:60`).
     #[arg(long = "seq-dist", visible_alias = "sequence-distribution")]
     pub seq_dist: Option<String>,
+
+    /// Multi-value sweep combination strategy (`--sweep-type`): `grid` (Cartesian
+    /// product, default) or `zip` (element-wise lockstep).
+    #[arg(long = "sweep-type", default_value = "grid")]
+    pub sweep_type: String,
 
     /// Mean turns per session for multi-turn (`--session-turns-mean`).
     #[arg(long = "session-turns-mean")]

@@ -158,7 +158,9 @@ struct ArtifactsSection {
 #[serde(untagged)]
 enum RecordsFormats {
     List(Vec<String>),
-    Disabled(bool),
+    /// `records: false` disables per-record export; the bool is only a
+    /// deserialization discriminant, never read.
+    Disabled(#[allow(dead_code)] bool),
 }
 
 #[derive(Debug, Deserialize)]

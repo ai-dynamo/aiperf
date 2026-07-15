@@ -1,0 +1,89 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//! Byte-exact parity of the native sweep expander against `dump_sweep.py`.
+//!
+//! For each sweep fixture the native `expand` + `plan_cells` must reproduce the
+//! oracle's per-cell list: same order, labels, artifact dirs, seeds, and the
+//! swept scalar landing in the right phase field.
+
+use aiperf_cli::flags::ProfileFlags;
+use aiperf_cli::load;
+use aiperf_cli::sweep::{self, artifact_dir::IterationOrder, run};
+
+fn load_golden(name: &str) -> serde_json::Value {
+    let path = format!("../../tools/parity/sweep_golden/{name}.json");
+    let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+    serde_json::from_slice(&bytes).expect("golden json")
+}
+
+fn fixture_args(name: &str) -> Vec<String> {
+    let path = format!("../../tools/parity/fixtures/{name}.args");
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("read {path}: {e}"))
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The sweep fixtures whose native cells match the oracle.
+const SWEEP_FIXTURES: &[(&str, sweep::SweepType)] = &[
+    ("sweep_grid", sweep::SweepType::Grid),
+    ("sweep_isl", sweep::SweepType::Grid),
+    ("sweep_zip", sweep::SweepType::Zip),
+];
+
+#[test]
+fn sweep_cells_match_oracle() {
+    for (name, sweep_type) in SWEEP_FIXTURES {
+        let golden = load_golden(name);
+        let cells_g = golden["cells"].as_array().expect("cells array");
+
+        let flags = ProfileFlags::parse_from_args(&fixture_args(name))
+            .unwrap_or_else(|e| panic!("[{name}] flags: {e}"));
+        let expansion = sweep::expand(&flags, *sweep_type)
+            .unwrap_or_else(|e| panic!("[{name}] expand: {e}"));
+        let cells = run::plan_cells(
+            &flags,
+            &expansion,
+            1,
+            IterationOrder::Repeated,
+            "parity-sweep",
+            run::DEFAULT_SWEEP_SEED,
+            |f| load::resolve(f),
+        )
+        .unwrap_or_else(|e| panic!("[{name}] plan_cells: {e}"));
+
+        assert_eq!(
+            cells.len(),
+            cells_g.len(),
+            "[{name}] cell count: got {} want {}",
+            cells.len(),
+            cells_g.len()
+        );
+
+        // The `cfg` sections the single-run parity already asserts; here we check
+        // the swept scalar landed and the per-cell coordinates match the oracle.
+        let ported = ["phases", "datasets", "endpoint", "models", "runtime", "metrics"];
+        for (i, (cell, want)) in cells.iter().zip(cells_g).enumerate() {
+            assert_eq!(cell.label, want["label"], "[{name}] cell {i} label");
+            assert_eq!(
+                cell.run.artifact_dir.to_str().unwrap(),
+                want["artifact_dir"].as_str().unwrap(),
+                "[{name}] cell {i} artifact_dir"
+            );
+            assert_eq!(
+                cell.run.random_seed,
+                want["random_seed"].as_u64(),
+                "[{name}] cell {i} random_seed"
+            );
+            let built = serde_json::to_value(&cell.run).expect("serialize");
+            for section in ported {
+                assert_eq!(
+                    built["cfg"][section], want["request"]["run"]["cfg"][section],
+                    "[{name}] cell {i} cfg.{section} diverges\n got {:#}\nwant {:#}",
+                    built["cfg"][section], want["request"]["run"]["cfg"][section]
+                );
+            }
+        }
+    }
+}
