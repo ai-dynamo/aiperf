@@ -17,7 +17,6 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::Duration;
 
 use aiperf::rng::RandomGenerator;
 use parking_lot::Mutex;
@@ -216,9 +215,11 @@ impl BatchScheduler {
     }
 
     async fn tick_loop(self: Arc<Self>) {
-        let step = Duration::from_secs_f64((self.step_ms * 0.001).max(0.0));
+        // Nanosecond-precise step cadence via the RealClock `timerfd` primitive
+        // (not `tokio::time`'s 1 ms wheel, which would coarsen a sub-10 ms step).
+        let step_ns = ((self.step_ms * 1_000_000.0).max(0.0)) as i64;
         loop {
-            tokio::time::sleep(step).await;
+            aiperf::clock::sleep_ns(step_ns).await;
             if self.stopped.load(Ordering::Relaxed) {
                 break;
             }

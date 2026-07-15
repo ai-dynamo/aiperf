@@ -149,6 +149,50 @@ throughput, admit jitter) — read `rust/mock-server/src/config.rs` for the full
 set with inline rationale. `--fast` disables the scheduler, so don't combine
 them.
 
+## Multi-process load balancer (`--processes N`)
+
+A single server process shares one tokio runtime; at very high request rates the
+runtime scheduler / allocator can become the ceiling. `--processes N` (N > 1)
+turns the launched binary into a **lightweight L4 (TCP) round-robin load
+balancer**: it binds the public `--host:--port`, spawns `N` child
+`aiperf-mock-server` processes (the same binary, carrying the exact same config)
+on internal loopback ports, and splices each accepted connection to the next
+backend in rotation. The client sees the identical OpenAI-compatible frontend on
+**one URL** — HTTP/1.1 keep-alive, HTTP/2, and SSE streaming all pass through
+untouched, because the balancer never parses HTTP.
+
+```bash
+# 4 backend processes behind one round-robin front door on :8000.
+./target/release/aiperf-mock-server --processes 4 --no-tokenizer --port 8000
+# --processes 0 = auto = one process per CPU.
+```
+
+- **When to use it:** you have saturated a single mock process (it is CPU-bound
+  on one runtime) and want more aggregate throughput on a many-core box.
+- **Worker threads auto-divide:** with `--workers` on its default (auto), each
+  child gets `max(1, nproc / processes)` tokio workers, so the total worker count
+  stays bounded rather than `N × nproc`. An explicit `--workers` is honored
+  per-child.
+- **Round-robin is per connection, not per request** (the cheapest, HTTP-blind
+  distribution). A benchmark driving concurrency `C` opens ~`C` keep-alive
+  connections, which spread evenly across the `N` backends as long as `C >= N`
+  (the intended regime); below that some backends idle.
+- **Lifecycle:** the balancer health-gates every child before opening the public
+  port, tears everything down on Ctrl-C, and fails fast if any child dies. On
+  Linux children also get `PR_SET_PDEATHSIG`, so they are reaped even if the
+  balancer is `SIGKILL`ed. `--processes 1` (the default) is the unchanged
+  single-process path.
+
+## Timer precision (timerfd)
+
+Latency injection (TTFT/ITL pacing, scheduler step cadence) runs on the `aiperf`
+`RealClock` backend: waits use a `CLOCK_MONOTONIC` **`timerfd`** awaited through
+tokio's IO reactor (`aiperf::clock::sleep_ns`), giving nanosecond resolution
+instead of `tokio::time`'s ~1 ms timer wheel (which would quantize a 5 ms ITL by
+~20%). This matters whenever you set sub-10 ms `--itl` / `--ttft` or a small
+`--scheduler-step-ms`; it is transparent otherwise. Non-Linux platforms fall back
+to `tokio::time` (coarser).
+
 ## What the server exposes
 
 All routes are registered in `rust/mock-server/src/app.rs`. Highlights:
@@ -173,6 +217,7 @@ All routes are registered in `rust/mock-server/src/app.rs`. Highlights:
 | `-f, --fast` | off | Zero all latency; bypass scheduler + cache |
 | `--no-tokenizer` | off | Skip HF tokenizer load (avoids network download) |
 | `-w, --workers` | 0 (=nproc) | Tokio worker threads |
+| `--processes` | 1 | Spawn N child servers behind an L4 round-robin balancer (0=nproc) |
 | `-v, --verbose` | off | DEBUG logging (also `--log-level DEBUG`) |
 | `--access-logs` | off | Per-request access logging |
 | `--models a,b` | built-in list | Pre-advertise models on `/v1/models` |

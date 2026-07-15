@@ -7,10 +7,12 @@
 //! configurable latency, and deterministic responses for benchmarking.
 
 pub mod app;
+pub mod balancer;
 pub mod config;
 pub mod dcgm;
 pub mod handlers;
 pub mod latency;
+pub mod listener;
 pub mod metrics;
 pub mod models;
 pub mod prefix_cache;

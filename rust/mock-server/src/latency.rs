@@ -12,14 +12,30 @@
 //! * **Scheduler**: the first token blocks on the batched scheduler's prefill
 //!   admission and later tokens on per-step decode admission, so latency
 //!   emerges from batch contention (plus a small positive jitter).
+//!
+//! Timing runs on the `aiperf` [`RealClock`](aiperf::clock::RealClock) backend:
+//! `now` is read off a shared [`RealClockAnchor`] and every wait uses
+//! [`aiperf::clock::sleep_ns`] — the RealClock `timerfd` primitive with
+//! nanosecond resolution, instead of `tokio::time`'s 1 ms wheel (which would
+//! quantize a 5 ms ITL by ~20%). The `Clock` trait's own `sleep` is `!Send` /
+//! `Rc`-based and cannot cross this crate's multi-threaded axum handler
+//! boundary, so we use the anchor + the `Send` `sleep_ns` form of the same
+//! primitive.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use aiperf::clock::{RealClockAnchor, sleep_ns};
 use aiperf::rng::RandomGenerator;
 
 use crate::config::MockServerConfig;
 use crate::scheduler::BatchScheduler;
+
+/// Milliseconds → integer nanoseconds, floored at 0.
+#[inline]
+fn ms_to_ns(ms: f64) -> i64 {
+    (ms * 1_000_000.0).max(0.0) as i64
+}
 
 /// Lognormal multiplier with mean ~= 1.0 and coefficient of variation `cv`
 /// (stddev/mean). `cv <= 0` returns 1.0. The `-sigma^2/2` term keeps the mean
@@ -56,11 +72,14 @@ fn seeded_rng(seed: u64, salt: u64) -> RandomGenerator {
 
 /// Per-request latency scheduler. Owned exclusively by one request.
 pub struct LatencySimulator {
-    pub start: Instant,
-    /// Effective analytic TTFT (base + ISL + concurrency terms, jittered once).
-    ttft: Duration,
-    /// Effective analytic ITL (base + OSL + concurrency terms, jittered once).
-    itl: Duration,
+    /// Shared `RealClock` timeline; `now_ns` reads and target math run on it.
+    anchor: RealClockAnchor,
+    /// Request start, in ns on `anchor`'s timeline.
+    start_ns: i64,
+    /// Effective analytic TTFT (base + ISL + concurrency terms, jittered once), ns.
+    ttft_ns: i64,
+    /// Effective analytic ITL (base + OSL + concurrency terms, jittered once), ns.
+    itl_ns: i64,
     /// Set in scheduler mode; admission drives timing instead of the delays above.
     sched: Option<Arc<BatchScheduler>>,
     request_key: String,
@@ -81,7 +100,7 @@ impl LatencySimulator {
     /// only when the batched scheduler is enabled.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        start: Instant,
+        anchor: RealClockAnchor,
         cfg: &MockServerConfig,
         isl: usize,
         osl: usize,
@@ -114,9 +133,10 @@ impl LatencySimulator {
                 * lognormal_jitter(&mut rng, cfg.itl_jitter_cv);
 
         Self {
-            start,
-            ttft: Duration::from_secs_f64((ttft_ms * 0.001).max(0.0)),
-            itl: Duration::from_secs_f64((itl_ms * 0.001).max(0.0)),
+            anchor,
+            start_ns: anchor.now_ns(),
+            ttft_ns: ms_to_ns(ttft_ms),
+            itl_ns: ms_to_ns(itl_ms),
             sched,
             request_key,
             isl,
@@ -132,7 +152,14 @@ impl LatencySimulator {
     /// Zero-latency only when there's no scheduler and both delays are zero.
     #[inline]
     pub fn is_fast(&self) -> bool {
-        self.sched.is_none() && self.ttft.is_zero() && self.itl.is_zero()
+        self.sched.is_none() && self.ttft_ns == 0 && self.itl_ns == 0
+    }
+
+    /// Elapsed wall time since this request started, as a `Duration`, read off
+    /// the `RealClock` timeline.
+    #[inline]
+    fn elapsed(&self) -> Duration {
+        Duration::from_nanos((self.anchor.now_ns() - self.start_ns).max(0) as u64)
     }
 
     /// Wait until the emission time for token `index`. Returns the resume instant
@@ -160,10 +187,10 @@ impl LatencySimulator {
         if self.is_fast() {
             return Instant::now();
         }
-        let target = self.start + self.ttft + self.itl * (index as u32);
-        let now = Instant::now();
-        if target > now {
-            tokio::time::sleep(target - now).await;
+        let target_ns = self.start_ns + self.ttft_ns + self.itl_ns * index as i64;
+        let delta_ns = target_ns - self.anchor.now_ns();
+        if delta_ns > 0 {
+            sleep_ns(delta_ns).await;
         }
         Instant::now()
     }
@@ -182,31 +209,31 @@ impl LatencySimulator {
                 .await;
             self.sleep_jitter_extra(self.ttft_base_ms, self.ttft_cv, 0)
                 .await;
-            let measured_ttft = Instant::now().saturating_duration_since(self.start);
+            let measured_ttft = self.elapsed();
             for i in 0..num_tokens {
                 sched.next_decode_step(&self.request_key).await;
                 self.sleep_jitter_extra(self.itl_base_ms, self.itl_cv, (i + 1) as u64)
                     .await;
             }
-            let total = Instant::now().saturating_duration_since(self.start);
+            let total = self.elapsed();
             return (measured_ttft, total.saturating_sub(measured_ttft));
         }
         if self.is_fast() {
             return (Duration::ZERO, Duration::ZERO);
         }
-        let ttft_target = self.start + self.ttft;
-        let now = Instant::now();
-        if ttft_target > now {
-            tokio::time::sleep(ttft_target - now).await;
+        let ttft_target_ns = self.start_ns + self.ttft_ns;
+        let delta_ns = ttft_target_ns - self.anchor.now_ns();
+        if delta_ns > 0 {
+            sleep_ns(delta_ns).await;
         }
-        let measured_ttft = Instant::now().saturating_duration_since(self.start);
+        let measured_ttft = self.elapsed();
 
-        let decode_target = ttft_target + self.itl * (num_tokens as u32);
-        let now = Instant::now();
-        if decode_target > now {
-            tokio::time::sleep(decode_target - now).await;
+        let decode_target_ns = ttft_target_ns + self.itl_ns * num_tokens as i64;
+        let delta_ns = decode_target_ns - self.anchor.now_ns();
+        if delta_ns > 0 {
+            sleep_ns(delta_ns).await;
         }
-        let total = Instant::now().saturating_duration_since(self.start);
+        let total = self.elapsed();
         (measured_ttft, total.saturating_sub(measured_ttft))
     }
 
@@ -214,12 +241,12 @@ impl LatencySimulator {
         if cv <= 0.0 || base_ms <= 0.0 {
             return;
         }
-        let extra = {
+        let extra_secs = {
             let mut rng = seeded_rng(self.seed, salt.wrapping_add(0xABCD));
             positive_jitter_extra_secs(&mut rng, base_ms, cv)
         };
-        if extra > 0.0 {
-            tokio::time::sleep(Duration::from_secs_f64(extra)).await;
+        if extra_secs > 0.0 {
+            sleep_ns((extra_secs * 1_000_000_000.0) as i64).await;
         }
     }
 }
@@ -227,6 +254,6 @@ impl LatencySimulator {
 pub async fn wait_for_processing(base_ms: f64, per_unit_ms: f64, units: usize) {
     let total_ms = base_ms + per_unit_ms * (units as f64);
     if total_ms > 0.0 {
-        tokio::time::sleep(Duration::from_secs_f64(total_ms / 1000.0)).await;
+        sleep_ns(ms_to_ns(total_ms)).await;
     }
 }

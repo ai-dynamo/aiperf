@@ -22,6 +22,20 @@ pub struct MockServerConfig {
     #[arg(short = 'w', long, env = "MOCK_SERVER_WORKERS", default_value_t = 0)]
     pub workers: usize,
 
+    /// Number of server processes to run behind a built-in round-robin load
+    /// balancer. `1` (the default) is the unchanged single-process path. `N > 1`
+    /// turns this process into a lightweight L4 (TCP) round-robin balancer: it
+    /// binds `--host:--port`, spawns `N` child `aiperf-mock-server` processes on
+    /// internal loopback ports carrying this exact config, and splices each
+    /// accepted connection to the next backend in rotation. This lets the mock
+    /// saturate many cores across independent processes (separate allocators and
+    /// tokio runtimes) without a single shared-runtime bottleneck, while exposing
+    /// the same OpenAI-compatible frontend on one URL. `0` = auto = number of
+    /// CPUs. When auto-dividing, each child's tokio `--workers` defaults to
+    /// `max(1, nproc / processes)` so the total worker-thread count stays bounded.
+    #[arg(long, env = "MOCK_SERVER_PROCESSES", default_value_t = 1)]
+    pub processes: usize,
+
     #[arg(short = 't', long, env = "MOCK_SERVER_TTFT", default_value_t = 20.0)]
     pub ttft: f64,
 
@@ -464,6 +478,8 @@ mod tests {
         let cfg = MockServerConfig::default();
         assert_eq!(cfg.port, 8000);
         assert_eq!(cfg.host, "127.0.0.1");
+        assert_eq!(cfg.processes, 1);
+        assert_eq!(cfg.workers, 0);
         assert_eq!(cfg.ttft, 20.0);
         assert_eq!(cfg.itl, 5.0);
         assert_eq!(cfg.ttft_per_isl_token_ms, 0.0);

@@ -147,6 +147,7 @@ dependencies = [
  "futures",
  "hyper 1.10.1",
  "hyper-util",
+ "libc",
  "num_cpus",
  "once_cell",
  "parking_lot",
