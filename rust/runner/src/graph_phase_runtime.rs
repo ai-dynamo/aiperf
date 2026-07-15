@@ -1372,9 +1372,18 @@ fn prepare_graph_phase(
 /// ([`WindowTStarSampler`]), and the plan graph is rewritten: the WARMUP phase
 /// keeps only the boundary priming turns ([`rewrite_for_warmup`]); every other
 /// phase (profiling) keeps only the live post-`t*` frontier
-/// ([`chop_trie_at_tstar`]). The default `[0, 0]` window yields `t* = 0` for
-/// every trace, so profiling returns the graph unchanged (byte-identical full
-/// native replay) and warmup returns an empty graph.
+/// ([`chop_trie_at_tstar`]).
+///
+/// The default `[0, 0]` window is a TRUE NO-OP: BOTH warmup and profiling return
+/// the plans UNCHANGED. This restores pre-`t*`-split behavior — a plain
+/// (`dag_jsonl` / no-scenario) run has a normal warmup that dispatches the full
+/// graph. The t* warmup/profiling split only engages when a snapshot window is
+/// actually configured (non-default). In the Python source the warmup graph is
+/// routed through [`rewrite_for_warmup`] only under the GRAPH_IR replay strategy
+/// that a t* scenario activates; without a scenario, `rewrite_for_warmup` at
+/// `t* = 0` would empty the warmup graph and every trace would report "contains
+/// no dispatchable nodes". The default-window early return skips both the
+/// per-trace sample and the rewrite (also avoiding a needless per-plan clone).
 ///
 /// Warmup and profiling are independent phases that each clone `plans`, but they
 /// sample the identical deterministic `t*` per trace (same window, seed, trace
@@ -1391,6 +1400,12 @@ fn apply_tstar_split(
     phase: &PhaseSpec,
     t_star: TStarWindow,
 ) -> Vec<GraphTracePlan> {
+    // Default `[0, 0]` window: the split is inactive, so leave both warmup and
+    // profiling graphs untouched (pre-split behavior). Only a configured
+    // (non-default) window engages the per-trace warmup/profiling rewrite.
+    if t_star.start_min_ratio == 0.0 && t_star.start_max_ratio == 0.0 {
+        return plans.to_vec();
+    }
     let is_warmup = phase.common().name == "warmup";
     let sampler = WindowTStarSampler {
         start_min_ratio: t_star.start_min_ratio,
@@ -1735,9 +1750,12 @@ mod tests {
 
     #[test]
     fn tstar_default_window_is_unchanged_full_replay() {
-        // Regression guard: the default [0, 0] window yields t* = 0, so profiling
-        // is the byte-identical full graph and warmup is empty.
+        // Regression guard (fixA): the default [0, 0] window is a TRUE no-op, so
+        // BOTH profiling and warmup return the full graph unchanged. Emptying the
+        // warmup graph here (via rewrite_for_warmup at t* = 0) regressed plain
+        // dag_jsonl runs with "contains no dispatchable nodes".
         let window = TStarWindow::default();
+        let original = tstar_chain_plan();
         let profiling = apply_tstar_split(
             &tstar_chain_plan(),
             &named_concurrency_phase("profiling"),
@@ -1747,20 +1765,24 @@ mod tests {
             node_ids(&profiling),
             vec!["n_0".to_owned(), "n_1".to_owned(), "n_2".to_owned()]
         );
-        // Edges carried through verbatim (full-replay chop early-returns a clone).
-        let original = tstar_chain_plan();
+        // Edges carried through verbatim (default window returns plans as-is).
         assert_eq!(
             profiling[0].graph.edges.len(),
             original[0].graph.edges.len()
         );
 
+        // The warmup phase must ALSO be unchanged at the default window — a plain
+        // (no-scenario) warmup runs the full graph, not an empty priming rewrite.
         let warmup = apply_tstar_split(
             &tstar_chain_plan(),
             &named_concurrency_phase("warmup"),
             window,
         );
-        assert!(warmup[0].graph.nodes.is_empty());
-        assert!(warmup[0].graph.edges.is_empty());
+        assert_eq!(
+            node_ids(&warmup),
+            vec!["n_0".to_owned(), "n_1".to_owned(), "n_2".to_owned()]
+        );
+        assert_eq!(warmup[0].graph.edges.len(), original[0].graph.edges.len());
     }
 
     #[derive(Default)]
