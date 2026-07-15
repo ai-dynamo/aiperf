@@ -1330,6 +1330,7 @@ async fn execute_graph_native(
     // report; the accumulator/report the cell keeps building below lands only in
     // the controller's throwaway scratch artifact_dir and is discarded. Absent the
     // controller address (the single-process path) this is inert.
+    #[cfg(feature = "velo")]
     if let Some(shipper) = crate::cellular_cell::CellRecordsShipper::from_env() {
         let records: Vec<RecordIngest> = captured
             .iter()
@@ -2447,6 +2448,7 @@ async fn execute_native_inner(
     // modes retain no full record set, so cellular record shipping is unsupported there
     // (a cell partition would ship its merged accumulator instead — a future seam). The
     // exact-fold gate already rejects the cellular case, so this guard is belt-and-braces.
+    #[cfg(feature = "velo")]
     if let Some(shipper) = crate::cellular_cell::CellRecordsShipper::from_env() {
         ensure!(
             !sketch_mode && !exact_fold,
