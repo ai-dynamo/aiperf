@@ -1,0 +1,15 @@
+schemaVersion: "2.0"
+benchmark:
+  model: Qwen/Qwen3-0.6B
+  endpoint: {type: chat, url: 127.0.0.1:8000}
+  dataset:
+    type: file
+    path: /tmp/aiperf-parity/sched.jsonl
+    format: mooncake_trace
+    sampling: sequential
+  phases:
+    type: fixed_schedule
+    auto_offset: false
+    start_offset: 1
+    end_offset: 4
+  artifacts: {dir: /tmp/aiperf-parity/yaml_sched}

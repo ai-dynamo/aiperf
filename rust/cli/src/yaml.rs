@@ -404,6 +404,13 @@ struct PhaseSection {
     cancellation: Option<CancellationSection>,
     /// User-centric concurrent-user count (`user_centric` phase).
     users: Option<u32>,
+    /// Fixed-schedule auto-offset toggle (defaults to "no explicit offsets").
+    #[serde(default, alias = "autoOffset")]
+    auto_offset: Option<bool>,
+    #[serde(default, alias = "startOffset")]
+    start_offset: Option<i64>,
+    #[serde(default, alias = "endOffset")]
+    end_offset: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -577,6 +584,17 @@ impl Benchmark {
         // user_centric drives its own rate; keep request_rate clear for it.
         let phase_rate = if is_user_centric { None } else { phase.rate };
         let phase_cancellation = phase.cancellation.as_ref().map(|c| (c.rate, c.delay));
+
+        // Fixed-schedule replay: carries the auto-offset toggle (defaulting to
+        // "true unless explicit offsets are set", mirroring the flag path). Unlike
+        // the flag path, the config leaves `requests` unset (the runner derives
+        // the count from the trace).
+        let is_fixed_schedule = phase_type == Some("fixed_schedule");
+        let fixed_schedule = is_fixed_schedule.then(|| {
+            phase
+                .auto_offset
+                .unwrap_or(phase.start_offset.is_none() && phase.end_offset.is_none())
+        });
 
         // Synthetic conversation count: num_conversations or an explicit
         // dataset `entries`, else the Python default (never the request bound).
@@ -755,9 +773,9 @@ impl Benchmark {
             public_dataset,
             hf_subset,
             inter_turn_delay_cap_seconds,
-            fixed_schedule: None,
-            fixed_schedule_start_offset: None,
-            fixed_schedule_end_offset: None,
+            fixed_schedule,
+            fixed_schedule_start_offset: phase.start_offset,
+            fixed_schedule_end_offset: phase.end_offset,
             model_strategy,
             slice_duration,
             isl_block_size,
