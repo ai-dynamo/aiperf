@@ -204,6 +204,31 @@ fn validate_graph_ramp(phase_index: usize, name: &str, duration: f64) -> Result<
     Ok(())
 }
 
+/// Upper bound in seconds on the extended (cache-pressure) warmup phase's
+/// drain grace period.
+///
+/// Port of `Environment.GRAPH.PRESSURE_DRAIN_GRACE_CAP` (default `300.0`) in
+/// `src/aiperf/common/environment.py:657`, consumed by
+/// `timing/config.py::_graph_pressure_grace_sec`.
+pub const PRESSURE_DRAIN_GRACE_CAP_SEC: f64 = 300.0;
+
+/// Derive the drain grace (seconds) for a cache-pressure-mode graph warmup.
+///
+/// Port of `timing/config.py::_graph_pressure_grace_sec`
+/// (`src/aiperf/timing/config.py:771-791`). An EXPLICIT `user_grace`
+/// (`Some`) is honored verbatim -- the operator's escape hatch when a healthy
+/// drain outlives the pressure duration (e.g. a 45s prefill in flight at a
+/// 30s deadline). Otherwise the drain is bounded by
+/// `min(cache_pressure, PRESSURE_DRAIN_GRACE_CAP_SEC)` so a wedged or lost
+/// return cannot hang the run. AgentX's benchmark-grace floor branch is
+/// intentionally not ported. Callers gate on a set pressure duration first.
+pub fn graph_pressure_grace_sec(user_grace: Option<f64>, cache_pressure: f64) -> f64 {
+    match user_grace {
+        Some(grace) => grace,
+        None => cache_pressure.min(PRESSURE_DRAIN_GRACE_CAP_SEC),
+    }
+}
+
 struct PreparedGraphPhase {
     workload: GraphWorkload,
     placement: Rc<dyn TracePlacement>,
@@ -1617,6 +1642,24 @@ mod tests {
             value["sessions"] = serde_json::json!(sessions);
         }
         serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn graph_pressure_grace_matches_python_derived_values() {
+        // _graph_pressure_grace_sec: explicit user_grace honored verbatim.
+        assert_eq!(graph_pressure_grace_sec(Some(30.0), 45.0), 30.0);
+        assert_eq!(graph_pressure_grace_sec(Some(45.0), 30.0), 45.0);
+        // Explicit grace of 0.0 is still honored (not treated as absent).
+        assert_eq!(graph_pressure_grace_sec(Some(0.0), 100.0), 0.0);
+        // None -> min(cache_pressure, cap); below cap returns the duration.
+        assert_eq!(graph_pressure_grace_sec(None, 10.0), 10.0);
+        // At the cap boundary (300.0) returns the cap exactly.
+        assert_eq!(
+            graph_pressure_grace_sec(None, PRESSURE_DRAIN_GRACE_CAP_SEC),
+            300.0
+        );
+        // Above the cap clamps to the cap.
+        assert_eq!(graph_pressure_grace_sec(None, 10_000.0), 300.0);
     }
 
     #[test]
