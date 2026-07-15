@@ -514,6 +514,21 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             sampling: Sampling(inputs.sampling.clone()),
             options: {
                 let mut o = serde_json::Map::new();
+                // Trace loaders carry a default KV block size (mirrors
+                // `_authored_dataset_v2`: mooncake=512, bailian=16).
+                let format = inputs
+                    .custom_dataset_type
+                    .as_deref()
+                    .unwrap_or("single_turn");
+                match format {
+                    "mooncake_trace" => {
+                        o.insert("block_size".to_string(), serde_json::json!(512));
+                    }
+                    "bailian_trace" => {
+                        o.insert("block_size".to_string(), serde_json::json!(16));
+                    }
+                    _ => {}
+                }
                 if let Some(cap) = inputs.inter_turn_delay_cap_seconds {
                     o.insert(
                         "inter_turn_delay_cap_seconds".to_string(),
@@ -664,10 +679,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     // DynoSim co-simulation opens no sockets, so every online sidecar is forced
     // off (mirrors `_authored_sidecars`); other transports keep the default
     // GPU-telemetry + server-metrics scraping.
-    let is_dynosim = matches!(
-        inputs.transport,
-        Transport::DynosimOffline | Transport::DynosimOnline
-    );
+    let is_dynosim = inputs.transport.is_dynosim();
     // DynoSim forces all sidecars off; otherwise GPU-telemetry and
     // server-metrics scraping are enabled by default and independently toggled.
     let gpu_enabled = inputs.gpu_telemetry_enabled && !is_dynosim;
@@ -733,9 +745,11 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         artifacts: Some(Artifacts {
             trace: false,
             inputs_path: "inputs.json".to_string(),
-            // Sketch retention keeps no per-record values, so the per-record
-            // JSONL is dropped (mirrors `_authored_artifacts`).
-            records_path: (!inputs.sketch_metrics).then(|| "profile_export.jsonl".to_string()),
+            // Sketch retention keeps no per-record values, and DynoSim emits its
+            // own backend Dynamo artifacts, so both drop the per-record JSONL
+            // (mirrors `_authored_artifacts`, which pops it and forces trace off).
+            records_path: (!inputs.sketch_metrics && !is_dynosim)
+                .then(|| "profile_export.jsonl".to_string()),
             ..Default::default()
         }),
         datasets: Some(vec![dataset]),

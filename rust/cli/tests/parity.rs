@@ -254,6 +254,23 @@ fn loader_reproduces_goldens() {
 const YAML_FIXTURES: &[(&str, &str, &str)] = &[
     ("basic", "yaml_basic", "/tmp/aiperf-parity/yaml_basic"),
     ("grpc", "grpc", "/tmp/aiperf-parity/grpc"),
+    (
+        "dynosim_offline",
+        "dynosim_offline",
+        "/tmp/aiperf-parity/dynosim_offline",
+    ),
+    (
+        "dynosim_online",
+        "dynosim_online",
+        "/tmp/aiperf-parity/dynosim_online",
+    ),
+    // camelCase authoring (template-style): aliases resolve, wire is snake_case,
+    // required_features sorted + deduped.
+    (
+        "dynosim_camel",
+        "dynosim_camel",
+        "/tmp/aiperf-parity/dynosim_camel",
+    ),
 ];
 
 #[test]

@@ -17,7 +17,7 @@ use serde::Deserialize;
 
 use crate::load::{self, Inputs, Warmup, default_isl};
 use crate::model::dataset::Distribution;
-use crate::model::transport::Transport;
+use crate::model::transport::{DynosimConfig, Transport};
 
 /// Parse a YAML config file into one native run.
 pub fn resolve(
@@ -101,19 +101,34 @@ struct ModelItem {
 struct TransportSection {
     #[serde(rename = "type")]
     transport_type: String,
+    /// DynoSim knobs sit flat on the transport object (like Config's
+    /// `DynosimOfflineTransport`); captured for the `dynosim_*` types and
+    /// ignored (all-`None`) for `http`/`grpc`.
+    #[serde(flatten)]
+    dynosim: DynosimConfig,
 }
 
 #[derive(Debug, Deserialize)]
 struct EndpointSection {
     #[serde(rename = "type")]
     endpoint_type: Option<String>,
-    url: StringOrVec,
+    /// Optional: DynoSim endpoints carry no URL (the sentinel is injected).
+    url: Option<StringOrVec>,
     #[serde(default)]
     streaming: bool,
 }
 
 #[derive(Debug, Deserialize)]
 struct DatasetSection {
+    /// `synthetic` (default) or `file`; drives the loader branch.
+    #[serde(rename = "type")]
+    dataset_type: Option<String>,
+    /// File-dataset path (trace/replay).
+    path: Option<String>,
+    /// Native file format id (e.g. `mooncake_trace`, `single_turn`).
+    format: Option<String>,
+    /// Sampling order (`sequential` default).
+    sampling: Option<String>,
     entries: Option<u32>,
     #[serde(alias = "num_conversations")]
     num_conversations: Option<u32>,
@@ -160,10 +175,27 @@ impl Benchmark {
     fn into_inputs(self, artifact_dir: Option<PathBuf>) -> anyhow::Result<Inputs> {
         let model_names = self.resolve_model_names()?;
 
+        // Transport first: DynoSim relaxes the endpoint URL/type requirements
+        // (the runner opens no socket) and injects the never-dialed sentinel.
+        let transport = parse_transport(self.transport.as_ref())?;
+        let is_dynosim = transport.is_dynosim();
+
+        // DynoSim endpoints default to the `dynosim` dialect when the author
+        // leaves `endpoint.type` unset (mirrors `default_dynosim_endpoint_dialect`).
         let endpoint_type = self
             .endpoint
             .endpoint_type
+            .clone()
+            .or_else(|| is_dynosim.then(|| "dynosim".to_string()))
             .ok_or_else(|| anyhow::anyhow!("endpoint.type is required"))?;
+
+        // DynoSim opens no sockets: inject the `dynosim://offline` sentinel when
+        // no URL is authored (mirrors `inject_dynosim_placeholder_url`).
+        let urls = match self.endpoint.url {
+            Some(u) => u.into_vec(),
+            None if is_dynosim => vec!["dynosim://offline".to_string()],
+            None => anyhow::bail!("endpoint.url is required"),
+        };
 
         // Single-run: the shorthand `dataset:` or the first `datasets:` entry.
         let dataset = self
@@ -172,6 +204,20 @@ impl Benchmark {
         let (isl, osl, batch_size) = extract_prompts(dataset.as_ref());
         let num_conversations = dataset.as_ref().and_then(|d| d.num_conversations);
         let dataset_entries = dataset.as_ref().and_then(|d| d.entries);
+
+        // A `type: file` dataset routes through the file loader (path/format/
+        // sampling); anything else stays on the synthetic path.
+        let is_file = dataset.as_ref().and_then(|d| d.dataset_type.as_deref()) == Some("file");
+        let (input_file, custom_dataset_type, sampling) = if is_file {
+            let d = dataset.as_ref().expect("file dataset present");
+            (
+                d.path.clone().map(PathBuf::from),
+                d.format.clone(),
+                d.sampling.clone().unwrap_or_else(|| "sequential".to_string()),
+            )
+        } else {
+            (None, None, "sequential".to_string())
+        };
 
         // Single phase on the single-run path.
         let phase = match self.phases {
@@ -194,9 +240,9 @@ impl Benchmark {
 
         Ok(Inputs {
             model_names,
-            urls: self.endpoint.url.into_vec(),
+            urls,
             endpoint_type,
-            transport: parse_transport(self.transport.as_ref())?,
+            transport,
             streaming: self.endpoint.streaming,
             timeout_seconds: None,
             use_legacy_max_tokens: false,
@@ -242,9 +288,10 @@ impl Benchmark {
             turn_delay_ms: None,
             session_header: None,
             batch_size: batch_size.unwrap_or(1),
-            sampling: "sequential".to_string(),
+            sampling,
             entries,
-            dataset_entries: Some(entries),
+            // Explicit entries only (file/public); synthetic uses `entries`.
+            dataset_entries,
             sessions: num_conversations.map(u64::from).or(phase.sessions),
             concurrency: phase.concurrency,
             request_rate: phase.rate,
@@ -259,8 +306,8 @@ impl Benchmark {
             grace_period: phase.grace_period,
             warmup: None::<Warmup>,
             random_seed: None,
-            input_file: None,
-            custom_dataset_type: None,
+            input_file,
+            custom_dataset_type,
             public_dataset: None,
             hf_subset: None,
             inter_turn_delay_cap_seconds: None,
@@ -299,11 +346,16 @@ fn parse_transport(section: Option<&TransportSection>) -> anyhow::Result<Transpo
     let Some(section) = section else {
         return Ok(Transport::Http);
     };
+    let dynosim = || {
+        let mut cfg: DynosimConfig = section.dynosim.clone();
+        cfg.normalize();
+        cfg
+    };
     Ok(match section.transport_type.as_str() {
         "http" => Transport::Http,
         "grpc" => Transport::Grpc,
-        "dynosim_offline" => Transport::DynosimOffline,
-        "dynosim_online" => Transport::DynosimOnline,
+        "dynosim_offline" => Transport::DynosimOffline(dynosim()),
+        "dynosim_online" => Transport::DynosimOnline(dynosim()),
         other => anyhow::bail!("unknown transport.type {other:?}"),
     })
 }

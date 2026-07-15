@@ -1,0 +1,33 @@
+schemaVersion: "2.0"
+randomSeed: 42
+benchmark:
+  model: meta-llama/Llama-3.1-8B-Instruct
+  endpoint:
+    type: dynosim
+  transport:
+    type: dynosim_offline
+    topology: aggregated
+    routerMode: kv
+    workers: 2
+    prefillWorkers: 1
+    decodeWorkers: 1
+    requiredFeatures: [dynamo-zmq-events, dynamo-router-runtime, dynamo-zmq-events]
+    sla:
+      ttftMs: 300
+      e2EMs: 1000
+    artifacts:
+      reportJson: dynamo_report.json
+      perRequestJsonl: dynamo_pr.jsonl
+      workerArtifactsJson: worker.json
+  dataset:
+    type: file
+    path: /tmp/aiperf-parity/production_trace.jsonl
+    format: mooncake_trace
+    sampling: sequential
+  phases:
+    type: concurrency
+    requests: 500
+    concurrency: 32
+  artifacts:
+    dir: /tmp/aiperf-parity/dynosim_camel
+    summary: [json]
