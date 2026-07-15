@@ -15,5 +15,5 @@
 pub mod delegate;
 pub mod dispatch;
 pub mod execute;
+pub mod model;
 pub mod runner_install;
-pub mod wire;

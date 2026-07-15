@@ -18,8 +18,30 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::thread;
 
-/// The runner's single terminal response line, reduced to the fields the CLI
-/// acts on. Mirrors the `run_terminal` envelope the runner writes to stdout.
+use serde::Deserialize;
+
+/// The runner's single terminal response line, deserialized with typed field
+/// access (no `serde_json::Value` poking). Mirrors the `run_terminal` envelope
+/// the runner writes to stdout; unknown fields are ignored so the CLI reads only
+/// what it acts on.
+#[derive(Debug, Deserialize)]
+struct TerminalResponse {
+    /// Wire protocol discriminator; must equal `2`.
+    protocol_version: u32,
+    /// Envelope discriminator; must equal `"run_terminal"`.
+    event: String,
+    /// Whether the run committed a report successfully.
+    success: bool,
+    /// Absolute path to the committed `native-v2.json`, present on success.
+    #[serde(default)]
+    report_path: Option<String>,
+    /// Human-readable failure detail, present on failure.
+    #[serde(default)]
+    error: Option<String>,
+}
+
+/// The runner's terminal outcome, reduced to the fields the CLI acts on plus the
+/// observed process exit code.
 #[derive(Debug)]
 pub struct Terminal {
     /// Whether the run committed a report successfully.
@@ -89,7 +111,8 @@ pub fn run_once(runner: &Path, request_json: &[u8]) -> anyhow::Result<Terminal> 
 }
 
 /// Parse the runner's stdout into a [`Terminal`], enforcing the "exactly one
-/// terminal JSON line" contract. Mirrors `rust_executor._parse_terminal`.
+/// terminal JSON line" contract via typed deserialization (no `Value` poking).
+/// Mirrors `rust_executor._parse_terminal`.
 fn parse_terminal(stdout: &[u8], returncode: i32) -> anyhow::Result<Terminal> {
     let text = String::from_utf8_lossy(stdout);
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
@@ -99,36 +122,25 @@ fn parse_terminal(stdout: &[u8], returncode: i32) -> anyhow::Result<Terminal> {
         lines.len()
     );
 
-    let value: serde_json::Value = serde_json::from_str(lines[0])
+    let response: TerminalResponse = serde_json::from_str(lines[0])
         .map_err(|e| anyhow::anyhow!("runner returned invalid terminal JSON: {e}"))?;
 
     anyhow::ensure!(
-        value
-            .get("protocol_version")
-            .and_then(serde_json::Value::as_u64)
-            == Some(2),
-        "runner terminal protocol_version != 2"
+        response.protocol_version == 2,
+        "runner terminal protocol_version {} != 2",
+        response.protocol_version
     );
     anyhow::ensure!(
-        value.get("event").and_then(serde_json::Value::as_str) == Some("run_terminal"),
-        "runner terminal event != run_terminal"
+        response.event == "run_terminal",
+        "runner terminal event {:?} != run_terminal",
+        response.event
     );
-    let success = value
-        .get("success")
-        .and_then(serde_json::Value::as_bool)
-        .ok_or_else(|| anyhow::anyhow!("runner terminal success is not a boolean"))?;
 
     Ok(Terminal {
-        success,
+        success: response.success,
         returncode,
-        report_path: value
-            .get("report_path")
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_owned),
-        error: value
-            .get("error")
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_owned),
+        report_path: response.report_path,
+        error: response.error,
     })
 }
 
