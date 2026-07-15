@@ -38,8 +38,8 @@ use loadgen_core::sink::{
 use uuid::Uuid;
 
 use crate::http::{
-    DispatchResult, HttpRequest, MeasuredContext, MeasuredOutcome, PreparedHttpEndpoint,
-    PreparedTurn, RequestExecutor,
+    DispatchResult, Dispatcher, HttpRequest, MeasuredContext, MeasuredOutcome,
+    PreparedHttpEndpoint, PreparedTurn, RequestExecutor,
 };
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata};
 use crate::multiturn::TurnToSend;
@@ -509,6 +509,29 @@ impl GrpcTransportSink {
             request_payload,
             record: compatibility_record,
         })
+    }
+}
+
+#[async_trait(?Send)]
+impl Dispatcher for GrpcTransportSink {
+    async fn dispatch_collect(
+        &self,
+        turn: PreparedTurn,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+    ) -> Result<DispatchResult> {
+        GrpcTransportSink::dispatch_collect(self, turn, observer, on_first_token).await
+    }
+
+    // The inherent gRPC `inference_dimensions` resolves from a `&TurnToSend`
+    // (scheduled path); the `Dispatcher` seam is keyed on the transport-neutral
+    // `HttpRequest`. Build the same dimensions gRPC produces — selected URL by
+    // the request's url index, model falling back to the sink's model.
+    fn inference_dimensions(&self, request: &HttpRequest) -> InferenceDimensions {
+        InferenceDimensions {
+            endpoint_url: self.selected_url(request.url_index),
+            model: Some(self.model.clone()),
+        }
     }
 }
 
