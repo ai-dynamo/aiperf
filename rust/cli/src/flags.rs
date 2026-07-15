@@ -54,6 +54,14 @@ pub struct ProfileFlags {
     #[arg(long = "num-conversations")]
     pub num_conversations: Option<String>,
 
+    /// Mean turns per session for multi-turn (`--session-turns-mean`).
+    #[arg(long = "session-turns-mean")]
+    pub session_turns_mean: Option<f64>,
+
+    /// Stddev of turns per session (`--session-turns-stddev`).
+    #[arg(long = "session-turns-stddev")]
+    pub session_turns_stddev: Option<f64>,
+
     /// Synthetic input length mean (`--isl` / `--synthetic-input-tokens-mean`);
     /// comma ⇒ sweep.
     #[arg(long = "isl", visible_alias = "synthetic-input-tokens-mean")]
@@ -111,6 +119,14 @@ pub struct ProfileFlags {
     /// Gamma burstiness/smoothness shape (`--arrival-smoothness`).
     #[arg(long = "arrival-smoothness")]
     pub arrival_smoothness: Option<f64>,
+
+    /// Per-user request rate for user-centric mode (`--user-centric-rate`).
+    #[arg(long = "user-centric-rate")]
+    pub user_centric_rate: Option<f64>,
+
+    /// Number of users for user-centric mode (`--num-users`).
+    #[arg(long = "num-users")]
+    pub num_users: Option<u32>,
 
     /// Ramp concurrency over N seconds (`--concurrency-ramp-duration`).
     #[arg(long = "concurrency-ramp-duration")]

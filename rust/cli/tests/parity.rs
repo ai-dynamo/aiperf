@@ -59,6 +59,8 @@ const FIXTURES: &[&str] = &[
     "tuning",
     "ramp",
     "cancel",
+    "multi_turn",
+    "user_centric",
 ];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).

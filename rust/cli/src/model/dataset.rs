@@ -75,6 +75,9 @@ pub struct Synthetic {
     pub prompts: Prompts,
     /// Sampling order.
     pub sampling: Sampling,
+    /// Turns-per-session distribution (multi-turn; present when authored).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turns: Option<Distribution>,
     /// Per-turn delay as a ratio of think time.
     pub turn_delay_ratio: f64,
     /// Number of dataset entries (present when set).
@@ -166,6 +169,7 @@ mod tests {
                 prefix_prompt_length: None,
             },
             sampling: Sampling("sequential".into()),
+            turns: None,
             turn_delay_ratio: 1.0,
             entries: Some(1),
             num_conversations: None,

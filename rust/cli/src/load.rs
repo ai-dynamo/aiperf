@@ -64,6 +64,8 @@ pub(crate) struct Inputs {
     pub tokenizer_trust: bool,
     pub isl: Distribution,
     pub osl: Option<Distribution>,
+    /// Turns-per-session distribution (multi-turn).
+    pub turns: Option<Distribution>,
     pub batch_size: u32,
     pub sampling: String,
     pub entries: u32,
@@ -81,6 +83,8 @@ pub(crate) struct Inputs {
     pub rate_ramp: Option<f64>,
     /// Post-send cancellation `(rate, delay)`.
     pub cancellation: Option<(f64, f64)>,
+    /// User-centric arrival `(rate, users)`.
+    pub user_centric: Option<(f64, u32)>,
     pub request_count: Option<u64>,
     pub benchmark_duration: Option<f64>,
     pub grace_period: Option<f64>,
@@ -155,6 +159,12 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
     let isl_mean = parse_single::<f64>("--isl", flags.isl.as_deref())?;
     let osl_mean = parse_single::<f64>("--osl", flags.osl.as_deref())?;
 
+    let turns = flags.session_turns_mean.map(|mean| Distribution {
+        mean: Some(mean),
+        stddev: Some(flags.session_turns_stddev.unwrap_or(0.0)),
+        ..Default::default()
+    });
+
     let warmup = if flags.warmup_request_count.is_none()
         && flags.warmup_concurrency.is_none()
         && flags.warmup_request_rate.is_none()
@@ -195,6 +205,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
             stddev: Some(flags.osl_stddev.unwrap_or(0.0)),
             ..Default::default()
         }),
+        turns,
         batch_size: 1,
         sampling: "sequential".to_string(),
         entries: num_conversations
@@ -212,6 +223,10 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
             flags.request_cancellation_delay,
         ) {
             (Some(rate), delay) => Some((rate, delay.unwrap_or(0.0))),
+            _ => None,
+        },
+        user_centric: match (flags.user_centric_rate, flags.num_users) {
+            (Some(rate), Some(users)) => Some((rate, users)),
             _ => None,
         },
         request_count,
@@ -332,6 +347,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 prefix_prompt_length: None,
             },
             sampling: Sampling(inputs.sampling.clone()),
+            turns: inputs.turns.clone(),
             turn_delay_ratio: 1.0,
             entries: Some(inputs.entries),
             num_conversations: None,
@@ -339,7 +355,30 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         })
     };
 
-    let profiling = if let Some(auto_offset) = inputs.fixed_schedule {
+    let profiling = if let Some((rate, users)) = inputs.user_centric {
+        Phase {
+            common: PhaseCommon {
+                name: "profiling".to_string(),
+                exclude_from_results: false,
+                seamless: false,
+                requests: inputs.request_count,
+                sessions: inputs.sessions,
+                duration: inputs.benchmark_duration,
+                prefill_concurrency: None,
+                grace_period: inputs.grace_period,
+                concurrency_ramp: None,
+                prefill_ramp: None,
+                rate_ramp: None,
+                cancellation: None,
+                agentic_cache_warmup_duration: None,
+            },
+            kind: PhaseKind::UserCentric {
+                rate,
+                users,
+                concurrency: inputs.concurrency,
+            },
+        }
+    } else if let Some(auto_offset) = inputs.fixed_schedule {
         Phase {
             common: PhaseCommon {
                 name: "profiling".to_string(),
