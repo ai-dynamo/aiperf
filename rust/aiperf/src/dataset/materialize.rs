@@ -81,7 +81,10 @@ impl Overrides {
 
     /// Serialize the override fields as a spliceable tail with the enclosing
     /// braces stripped, so callers can insert them into an existing object.
-    pub(crate) fn inner_bytes(&self) -> Result<Vec<u8>> {
+    /// Public so callers can pre-serialize a reusable tail once and feed it to
+    /// [`build_message_body_from_wire_parts`] instead of re-serializing per
+    /// dispatch.
+    pub fn inner_bytes(&self) -> Result<Vec<u8>> {
         if self.fields.is_empty() {
             return Ok(Vec::new());
         }
@@ -190,12 +193,26 @@ pub(crate) fn message_wire<S: SegmentStore + ?Sized>(store: &S, handle: Handle) 
 /// message slices, then the sink adds its model/stream/token overrides without
 /// decoding any message.
 pub fn build_message_body_from_wires(messages: &[Bytes], overrides: &Overrides) -> Result<Bytes> {
-    for (index, message) in messages.iter().enumerate() {
-        validate_object_slice(message).map_err(|error| {
-            DatasetError::InvalidWire(format!("message at index {index}: {error}"))
-        })?;
-    }
     let override_inner = overrides.inner_bytes()?;
+    Ok(build_message_body_from_wire_parts(
+        messages,
+        &override_inner,
+    ))
+}
+
+/// Assemble a request body from message wires plus a **pre-serialized** override
+/// tail — the override object's inner bytes with the enclosing braces stripped
+/// (see [`Overrides::inner_bytes`]). Byte-identical to
+/// [`build_message_body_from_wires`] for the same inputs.
+///
+/// This is the hottest allocation on the graph dispatch path, so the override
+/// tail is serialized once by the caller (per distinct value) and reused here
+/// rather than re-serialized per request. There is **no validation on this
+/// path**: static message wires are produced by the dataset composer
+/// serializing parsed messages, and dynamic splices are replies serialized from
+/// a typed value, so every wire reaching here is a well-formed JSON object by
+/// construction. Re-scanning each slice per dispatch would be pure overhead.
+pub fn build_message_body_from_wire_parts(messages: &[Bytes], override_inner: &[u8]) -> Bytes {
     let message_bytes = messages.iter().map(Bytes::len).sum::<usize>();
     let commas = messages.len().saturating_sub(1);
     let tail = if override_inner.is_empty() { 2 } else { 3 };
@@ -212,10 +229,10 @@ pub fn build_message_body_from_wires(messages: &[Bytes], overrides: &Overrides) 
     body.put_u8(b']');
     if !override_inner.is_empty() {
         body.put_u8(b',');
-        body.put_slice(&override_inner);
+        body.put_slice(override_inner);
     }
     body.put_u8(b'}');
-    Ok(body.freeze())
+    body.freeze()
 }
 
 pub(crate) fn splice_raw_object(wire: &Bytes, overrides: &Overrides) -> Result<Bytes> {

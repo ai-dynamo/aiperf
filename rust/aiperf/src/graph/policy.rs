@@ -23,8 +23,9 @@ use crate::graph::sink::{GraphDispatchOptions, GraphReplyStatus};
 /// Immutable context supplied before one node enters backend admission.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeDispatchInfo {
-    /// Trace identifier.
-    pub trace_id: String,
+    /// Trace identifier. `Rc<str>`-shared from the per-trace context so the
+    /// fire path pointer-bumps rather than reallocating the id per node.
+    pub trace_id: Rc<str>,
     /// Graph node identifier.
     pub node_id: String,
     /// Authored output-token limit.
@@ -225,8 +226,8 @@ impl NodeDispatchPolicy for CompositeNodeDispatchPolicy {
 /// Failure observed at the node/backend boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeFailure {
-    /// Trace identifier.
-    pub trace_id: String,
+    /// Trace identifier. `Rc<str>`-shared from the per-trace context.
+    pub trace_id: Rc<str>,
     /// Node identifier.
     pub node_id: String,
     /// Stable failure classification.
