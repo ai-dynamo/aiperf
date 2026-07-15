@@ -8,6 +8,7 @@ import pytest
 from aiperf.accuracy.accuracy_record_processor import AccuracyRecordProcessor
 from aiperf.accuracy.accuracy_results_processor import AccuracyResultsProcessor
 from aiperf.accuracy.models import GradingResult
+from aiperf.common.enums import CreditPhase
 from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.models.dataset_models import ConversationMetadata, DatasetMetadata
 from aiperf.config import BenchmarkRun
@@ -283,8 +284,8 @@ class TestAccuracyResultsProcessorSessionBounds:
         # session_num=1 wraps to index 0 (the only task, "algebra")
         await processor.process_record(_make_record_data(session_num=1))
 
-        assert processor._task_total["algebra"] == 1
-        assert processor._overall_total == 1
+        assert processor._task_total[CreditPhase.PROFILING]["algebra"] == 1
+        assert processor._overall_total[CreditPhase.PROFILING] == 1
 
     async def test_process_record_wraps_to_correct_task(self) -> None:
         """With N problems, session_num=N+1 accumulates under the task at index 1."""
@@ -294,8 +295,8 @@ class TestAccuracyResultsProcessorSessionBounds:
         # session_num=4 % 3 = index 1 → task="history"
         await processor.process_record(_make_record_data(session_num=4))
 
-        assert processor._task_total["history"] == 1
-        assert processor._task_total.get("algebra", 0) == 0
+        assert processor._task_total[CreditPhase.PROFILING]["history"] == 1
+        assert processor._task_total[CreditPhase.PROFILING].get("algebra", 0) == 0
 
     async def test_process_record_last_valid_session_num_succeeds(self) -> None:
         processor = _make_accuracy_accumulator()
@@ -303,9 +304,9 @@ class TestAccuracyResultsProcessorSessionBounds:
 
         await processor.process_record(_make_record_data(session_num=1, correct=1.0))
 
-        assert processor._overall_total == 1
-        assert processor._overall_correct == 1
-        assert processor._task_correct["test_task"] == 1
+        assert processor._overall_total[CreditPhase.PROFILING] == 1
+        assert processor._overall_correct[CreditPhase.PROFILING] == 1
+        assert processor._task_correct[CreditPhase.PROFILING]["test_task"] == 1
 
     async def test_process_record_raises_if_not_configured(self) -> None:
         """process_record must raise if on_dataset_configured was never called."""
@@ -322,8 +323,8 @@ class TestAccuracyResultsProcessorSessionBounds:
             _make_record_data(session_num=0, correct=1.0, unparsed=1.0)
         )
 
-        assert processor._overall_unparsed == 1
-        assert processor._overall_total == 1
+        assert processor._overall_unparsed[CreditPhase.PROFILING] == 1
+        assert processor._overall_total[CreditPhase.PROFILING] == 1
 
     async def test_process_record_increments_task_unparsed(self) -> None:
         processor = _make_accuracy_accumulator()
@@ -333,7 +334,7 @@ class TestAccuracyResultsProcessorSessionBounds:
             _make_record_data(session_num=0, correct=0.0, unparsed=1.0)
         )
 
-        assert processor._task_unparsed["algebra"] == 1
+        assert processor._task_unparsed[CreditPhase.PROFILING]["algebra"] == 1
 
     async def test_process_record_does_not_increment_unparsed_when_conforming(
         self,
@@ -345,8 +346,8 @@ class TestAccuracyResultsProcessorSessionBounds:
             _make_record_data(session_num=0, correct=1.0, unparsed=0.0)
         )
 
-        assert processor._overall_unparsed == 0
-        assert processor._task_unparsed.get("algebra", 0) == 0
+        assert processor._overall_unparsed[CreditPhase.PROFILING] == 0
+        assert processor._task_unparsed[CreditPhase.PROFILING].get("algebra", 0) == 0
 
     async def test_process_record_missing_unparsed_key_treated_as_conforming(
         self,
@@ -361,4 +362,4 @@ class TestAccuracyResultsProcessorSessionBounds:
 
         await processor.process_record(data)
 
-        assert processor._overall_unparsed == 0
+        assert processor._overall_unparsed[CreditPhase.PROFILING] == 0

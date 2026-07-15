@@ -1070,15 +1070,18 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         Returns the result (or exception object) so a single bad accumulator
         cannot abort the rest. Accumulators that support phase/window-scoped
-        export (MetricsAccumulator) get ``export_results(ctx)`` so warmup records
-        are excluded from profiling summaries; otherwise prefers ``summarize()``
-        and falls back to ``export_results(ctx)``.
+        export (marked with ``supports_phase_scoped_export`` — MetricsAccumulator
+        and AccuracyResultsProcessor) get ``export_results(ctx)`` so warmup
+        records are excluded from profiling summaries; otherwise prefers
+        ``summarize()`` and falls back to ``export_results(ctx)``.
         """
         name = accumulator.__class__.__name__
         self.debug(f"Starting summarize for accumulator {acc_type}: {name}")
         try:
-            if accumulator.__class__.__name__ == "MetricsAccumulator" and hasattr(
-                accumulator, "export_results"
+            # ``is True`` (not truthiness) so a MagicMock's auto-created attribute
+            # does not spuriously route mock accumulators through export_results.
+            if getattr(accumulator, "supports_phase_scoped_export", False) is True and (
+                hasattr(accumulator, "export_results")
             ):
                 res = await asyncio.wait_for(
                     accumulator.export_results(ctx),

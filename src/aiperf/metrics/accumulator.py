@@ -75,6 +75,10 @@ class MetricsAccumulator(BaseMetricsProcessor):
     DERIVED metrics computed from those at summarize time.
     """
 
+    # RecordsManager routes phase-scoped-export accumulators through
+    # export_results(ctx) so warmup records are excluded from profiling summaries.
+    supports_phase_scoped_export = True
+
     def __init__(
         self,
         run: BenchmarkRun,
