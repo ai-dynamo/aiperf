@@ -45,6 +45,8 @@ pub(crate) struct Warmup {
     pub rate: Option<f64>,
     /// Warmup request bound.
     pub requests: Option<u64>,
+    /// Warmup session bound.
+    pub sessions: Option<u64>,
 }
 
 /// Normalized inputs both surfaces (flags / YAML) resolve to before building.
@@ -66,6 +68,12 @@ pub(crate) struct Inputs {
     pub osl: Option<Distribution>,
     /// Turns-per-session distribution (multi-turn).
     pub turns: Option<Distribution>,
+    /// Per-session think-time delay ratio.
+    pub turn_delay_ratio: f64,
+    /// Inter-turn fixed delay distribution, milliseconds.
+    pub turn_delay_ms: Option<Distribution>,
+    /// Per-session affinity header name (`endpoint.session_header`).
+    pub session_header: Option<String>,
     pub batch_size: u32,
     pub sampling: String,
     pub entries: u32,
@@ -159,6 +167,13 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
     let isl_mean = parse_single::<f64>("--isl", flags.isl.as_deref())?;
     let osl_mean = parse_single::<f64>("--osl", flags.osl.as_deref())?;
 
+    reject_sweep("--num-sessions", flags.num_sessions.as_deref())?;
+    let num_sessions = parse_single::<u32>("--num-sessions", flags.num_sessions.as_deref())?;
+    let turn_delay_ms = flags.session_turn_delay_mean.map(|mean| Distribution {
+        mean: Some(mean),
+        stddev: Some(flags.session_turn_delay_stddev.unwrap_or(0.0)),
+        ..Default::default()
+    });
     let turns = flags.session_turns_mean.map(|mean| Distribution {
         mean: Some(mean),
         stddev: Some(flags.session_turns_stddev.unwrap_or(0.0)),
@@ -168,6 +183,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
     let warmup = if flags.warmup_request_count.is_none()
         && flags.warmup_concurrency.is_none()
         && flags.warmup_request_rate.is_none()
+        && flags.num_warmup_sessions.is_none()
     {
         None
     } else {
@@ -175,6 +191,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
             concurrency: flags.warmup_concurrency,
             rate: flags.warmup_request_rate,
             requests: flags.warmup_request_count,
+            sessions: flags.num_warmup_sessions,
         })
     };
 
@@ -206,12 +223,16 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
             ..Default::default()
         }),
         turns,
+        turn_delay_ratio: flags.session_delay_ratio.unwrap_or(1.0),
+        turn_delay_ms,
+        session_header: flags.session_header.clone(),
         batch_size: 1,
         sampling: "sequential".to_string(),
         entries: num_conversations
+            .or(num_sessions)
             .or(request_count.map(|n| n as u32))
             .unwrap_or(DEFAULT_ENTRIES),
-        sessions: num_conversations.map(u64::from),
+        sessions: num_conversations.or(num_sessions).map(u64::from),
         concurrency,
         request_rate,
         rate_mode: flags.request_rate_mode.clone(),
@@ -283,7 +304,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         wait_for_model_mode: WaitForModelMode::Inference,
         path: None,
         api_key: inputs.api_key,
-        session_header: None,
+        session_header: inputs.session_header,
         request_content_type: None,
         template: None,
         response_field: None,
@@ -348,10 +369,10 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             },
             sampling: Sampling(inputs.sampling.clone()),
             turns: inputs.turns.clone(),
-            turn_delay_ratio: 1.0,
+            turn_delay_ratio: inputs.turn_delay_ratio,
             entries: Some(inputs.entries),
             num_conversations: None,
-            turn_delay_ms: None,
+            turn_delay_ms: inputs.turn_delay_ms.clone(),
         })
     };
 
@@ -434,7 +455,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             None,
             concurrency,
             warmup.requests,
-            None,
+            warmup.sessions,
             None,
             None,
         ));

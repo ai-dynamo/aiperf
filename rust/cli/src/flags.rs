@@ -62,6 +62,30 @@ pub struct ProfileFlags {
     #[arg(long = "session-turns-stddev")]
     pub session_turns_stddev: Option<f64>,
 
+    /// Number of sessions to generate (`--num-sessions`); comma ⇒ sweep.
+    #[arg(long = "num-sessions")]
+    pub num_sessions: Option<String>,
+
+    /// Per-session think-time delay ratio (`--session-delay-ratio`).
+    #[arg(long = "session-delay-ratio")]
+    pub session_delay_ratio: Option<f64>,
+
+    /// Mean inter-turn delay, milliseconds (`--session-turn-delay-mean`).
+    #[arg(long = "session-turn-delay-mean")]
+    pub session_turn_delay_mean: Option<f64>,
+
+    /// Stddev of inter-turn delay, milliseconds (`--session-turn-delay-stddev`).
+    #[arg(long = "session-turn-delay-stddev")]
+    pub session_turn_delay_stddev: Option<f64>,
+
+    /// Per-session affinity header name (`--session-header`).
+    #[arg(long = "session-header")]
+    pub session_header: Option<String>,
+
+    /// Number of warmup sessions (`--num-warmup-sessions`).
+    #[arg(long = "num-warmup-sessions")]
+    pub num_warmup_sessions: Option<u64>,
+
     /// Synthetic input length mean (`--isl` / `--synthetic-input-tokens-mean`);
     /// comma ⇒ sweep.
     #[arg(long = "isl", visible_alias = "synthetic-input-tokens-mean")]

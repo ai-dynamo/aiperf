@@ -86,10 +86,10 @@ pub struct Synthetic {
     /// Number of conversation sessions (present when set).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub num_conversations: Option<u32>,
-    /// Per-turn fixed delay, milliseconds (present when set; renamed from
-    /// `turn_delay` by the projection).
+    /// Per-turn fixed delay distribution, milliseconds (present when set;
+    /// renamed from `turn_delay` by the projection).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub turn_delay_ms: Option<f64>,
+    pub turn_delay_ms: Option<Distribution>,
 }
 
 /// A file-backed dataset (trace/replay). Ported from `_authored_dataset_v2`'s

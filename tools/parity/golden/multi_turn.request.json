@@ -13,7 +13,7 @@
       },
       "datasets": [
         {
-          "entries": 4,
+          "entries": 7,
           "prompts": {
             "batch_size": 1,
             "isl": {
@@ -22,7 +22,11 @@
             }
           },
           "sampling": "sequential",
-          "turn_delay_ratio": 1.0,
+          "turn_delay_ms": {
+            "mean": 200.0,
+            "stddev": 0.0
+          },
+          "turn_delay_ratio": 0.5,
           "turns": {
             "mean": 3.0,
             "stddev": 1.0
@@ -38,6 +42,7 @@
         "headers": {},
         "http2": false,
         "keepalive_timeout": 300.0,
+        "session_header": "X-Session-ID",
         "ssl_verify": true,
         "streaming": false,
         "timeout_seconds": 21600.0,
@@ -571,13 +576,18 @@
               },
               "datasets": [
                 {
-                  "entries": 4,
+                  "entries": 7,
                   "name": "main",
                   "prompts": {
                     "isl": {
                       "mean": 550.0
                     }
                   },
+                  "turn_delay": {
+                    "mean": 200.0,
+                    "stddev": 0.0
+                  },
+                  "turn_delay_ratio": 0.5,
                   "turns": {
                     "mean": 3.0,
                     "stddev": 1.0
@@ -586,6 +596,7 @@
                 }
               ],
               "endpoint": {
+                "session_header": "X-Session-ID",
                 "type": "chat",
                 "urls": [
                   "http://127.0.0.1:8000"
@@ -611,6 +622,7 @@
                   "concurrency": 1,
                   "name": "profiling",
                   "requests": 4,
+                  "sessions": 7,
                   "type": "concurrency"
                 }
               ],
@@ -812,13 +824,18 @@
             },
             "datasets": [
               {
-                "entries": 4,
+                "entries": 7,
                 "name": "main",
                 "prompts": {
                   "isl": {
                     "mean": 550.0
                   }
                 },
+                "turn_delay": {
+                  "mean": 200.0,
+                  "stddev": 0.0
+                },
+                "turn_delay_ratio": 0.5,
                 "turns": {
                   "mean": 3.0,
                   "stddev": 1.0
@@ -827,6 +844,7 @@
               }
             ],
             "endpoint": {
+              "session_header": "X-Session-ID",
               "type": "chat",
               "urls": [
                 "http://127.0.0.1:8000"
@@ -852,6 +870,7 @@
                 "concurrency": 1,
                 "name": "profiling",
                 "requests": 4,
+                "sessions": 7,
                 "type": "concurrency"
               }
             ],
@@ -903,6 +922,7 @@
           "name": "profiling",
           "requests": 4,
           "seamless": false,
+          "sessions": 7,
           "type": "concurrency"
         }
       ],
