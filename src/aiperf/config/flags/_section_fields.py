@@ -119,6 +119,7 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "synthesis_output_len_multiplier",
         "synthesis_max_isl",
         "synthesis_max_osl",
+        "synthesis_idle_gap_cap",
     }
 )
 
@@ -180,6 +181,7 @@ LOADGEN_FIELDS: frozenset[str] = frozenset(
         "warmup_request_count",
         "warmup_request_rate",
         "warmup_request_rate_ramp_duration",
+        "agentic_cache_warmup_duration",
     }
 )
 

@@ -137,6 +137,19 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         ),
     ]
 
+    agentic_cache_warmup_duration: Annotated[
+        float | None,
+        Field(
+            default=None,
+            gt=0,
+            description="Extended cache-pressure warmup duration, in seconds, for "
+            "recorded-graph (agentic/weka) replay. When set on a warmup phase, the "
+            "native runner drives cache-pressure warmup traffic for this many "
+            "seconds to prime the server's prefix/KV cache before profiling begins. "
+            "None (the default) disables the extended cache-pressure warmup.",
+        ),
+    ]
+
     # -------------------------------------------------------------------------
     # Concurrency Control
     # -------------------------------------------------------------------------

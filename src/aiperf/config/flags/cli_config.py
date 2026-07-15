@@ -1638,6 +1638,47 @@ class CLIConfig(BaseConfig):
         CLIParameter(name=("--synthesis-max-osl",), group=Groups.SYNTHESIS),
     ] = None
 
+    synthesis_idle_gap_cap: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0.0,
+            description="True-idle gap cap in seconds for weka_trace/dynamo_trace "
+            "replay; caps long idle gaps between recorded turns so replay does not "
+            "stall on multi-minute think times. Null disables warping (recorded "
+            "gaps replay verbatim). Unset selects the 60s default.",
+        ),
+        CLIParameter(name=("--synthesis-idle-gap-cap",), group=Groups.SYNTHESIS),
+    ] = None
+
+    trajectory_start_min_ratio: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0.0,
+            le=1.0,
+            description="Lower bound of the recorded-graph trajectory-start (t*) "
+            "snapshot window, as a fraction of each trace's total duration. Replay "
+            "begins at a per-trace offset sampled in [min, max] of the trace's "
+            "duration (an active t* window) rather than at t=0. 0/0 disables it.",
+        ),
+        CLIParameter(name=("--trajectory-start-min-ratio",), group=Groups.SYNTHESIS),
+    ] = None
+
+    trajectory_start_max_ratio: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0.0,
+            le=1.0,
+            description="Upper bound of the recorded-graph trajectory-start (t*) "
+            "snapshot window, as a fraction of each trace's total duration. Paired "
+            "with --trajectory-start-min-ratio; must be >= it. 0 disables the "
+            "window (every trace starts at t=0).",
+        ),
+        CLIParameter(name=("--trajectory-start-max-ratio",), group=Groups.SYNTHESIS),
+    ] = None
+
     ##############################################################################
     # Load Generator
     ##############################################################################
@@ -2068,6 +2109,24 @@ class CLIConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--warmup-request-rate-ramp-duration",),
+            group=Groups.WARMUP,
+        ),
+    ] = None
+
+    agentic_cache_warmup_duration: Annotated[
+        float | None,
+        Field(
+            gt=0,
+            description="Extended cache-pressure warmup duration in seconds for "
+            "recorded-graph (agentic/weka) replay. When set, the native runner "
+            "drives cache-pressure warmup traffic for this many seconds to prime "
+            "the server's prefix/KV cache before profiling begins. Sets "
+            "agentic_cache_warmup_duration on the warmup phase; requires a warmup "
+            "trigger (--warmup-request-count / --num-warmup-sessions / "
+            "--warmup-duration) so a warmup phase exists to carry it.",
+        ),
+        CLIParameter(
+            name=("--agentic-cache-warmup-duration",),
             group=Groups.WARMUP,
         ),
     ] = None
