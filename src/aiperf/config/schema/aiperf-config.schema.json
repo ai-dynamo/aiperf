@@ -20,6 +20,7 @@
     "AccuracyBenchmarkType": {
       "enum": [
         "mmlu",
+        "mmlu_pro",
         "aime",
         "hellaswag",
         "bigbench",
@@ -151,7 +152,8 @@
         "lighteval_expr",
         "lighteval_latex",
         "lighteval_gpqa",
-        "lighteval_gsm8k"
+        "lighteval_gsm8k",
+        "mmlu_pro"
       ],
       "title": "AccuracyGraderType",
       "type": "string"

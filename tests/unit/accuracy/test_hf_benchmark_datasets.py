@@ -75,6 +75,14 @@ _BENCHMARK_DATASETS = [
         id="mmlu",
     ),
     param(
+        "TIGER-Lab/MMLU-Pro",
+        None,
+        "test",
+        ["question", "options", "answer", "category"],
+        False,
+        id="mmlu_pro",
+    ),
+    param(
         "Rowan/hellaswag",
         None,
         "train",

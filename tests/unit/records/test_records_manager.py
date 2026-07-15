@@ -893,6 +893,9 @@ class TestRecordsManagerEfficiencyMetricsSnapshot:
         manager.service_id = "records-manager-test"
         manager._latest_branch_stats = None
         manager._flush_metric_results_processors = AsyncMock()
+        # No accuracy processors in this fixture: the orphaned-summarize re-run
+        # iterates an empty list and contributes nothing.
+        manager._metric_results_processors = []
         manager.publish = AsyncMock()
 
         manager.run = MagicMock()
@@ -984,6 +987,9 @@ class TestRecordsManagerEfficiencyMetricsDegeneratePhase:
         manager.service_id = "records-manager-test"
         manager._latest_branch_stats = None
         manager._flush_metric_results_processors = AsyncMock()
+        # No accuracy processors in this fixture: the orphaned-summarize re-run
+        # iterates an empty list and contributes nothing.
+        manager._metric_results_processors = []
         manager.publish = AsyncMock()
 
         manager.run = MagicMock()
@@ -1047,6 +1053,9 @@ class TestRecordsManagerEfficiencyMetricsDegeneratePhase:
         manager.service_id = "records-manager-test"
         manager._latest_branch_stats = None
         manager._flush_metric_results_processors = AsyncMock()
+        # No accuracy processors in this fixture: the orphaned-summarize re-run
+        # iterates an empty list and contributes nothing.
+        manager._metric_results_processors = []
         manager.publish = AsyncMock()
 
         manager.run = MagicMock()

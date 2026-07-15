@@ -132,6 +132,10 @@ def _make_manager_mock(
     # the summary numbers — stub it out.
     mgr._flush_metric_results_processors = AsyncMock()
 
+    # Accuracy summary merge (orphaned-summarize re-run) — no accuracy processors
+    # in these unit fixtures, so it contributes nothing.
+    mgr._summarize_accuracy_results_processors = AsyncMock(return_value=[])
+
     # Records tracker — drives the time window via PROFILING phase stats.
     phase_stats = PhaseRecordsStats(
         phase=CreditPhase.PROFILING,

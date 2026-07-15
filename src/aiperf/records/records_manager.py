@@ -1472,6 +1472,36 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 timeslices = ts
         return records_results, timeslices, error_results
 
+    async def _summarize_accuracy_results_processors(self) -> list[MetricResult]:
+        """Summarize accuracy results processors orphaned by the accumulator engine.
+
+        AccuracyResultsProcessor lives in ``_metric_results_processors`` and
+        accumulates per-task correct/total/unparsed counts via ``process_result``
+        as records arrive, but emits its ``accuracy.*`` MetricResult rows only
+        from ``summarize()`` — which the accumulator refactor (#1102) no longer
+        calls. Run it here so the rows reach ProfileResults.records and the
+        accuracy exporters. Best-effort: a summarize failure is logged, never
+        fatal to the run.
+        """
+        from aiperf.accuracy.accuracy_results_processor import (
+            AccuracyResultsProcessor,
+        )
+
+        results: list[MetricResult] = []
+        for processor in self._metric_results_processors:
+            if not isinstance(processor, AccuracyResultsProcessor):
+                continue
+            try:
+                summary = await processor.summarize()
+            except Exception as e:  # noqa: BLE001
+                self.error(
+                    f"Accuracy summarize() failed for "
+                    f"{processor.__class__.__name__}: {e!r}"
+                )
+                continue
+            results.extend(r for r in summary if isinstance(r, MetricResult))
+        return results
+
     def _has_records_for_phase(self, phase: CreditPhase) -> bool:
         phase_trackers = getattr(self._records_tracker, "_phase_trackers", {})
         if not isinstance(phase_trackers, dict):
@@ -1629,11 +1659,24 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         await self._finalize_stream_exporters()
 
         phase_stats = self._records_tracker.create_stats_for_phase(phase)
-        # Snapshot count BEFORE extending with efficiency metrics — `completed`
-        # reports the number of request-derived records, not derived aggregates.
+        # Snapshot count BEFORE extending with efficiency/accuracy aggregates —
+        # `completed` reports the number of request-derived records, not derived
+        # aggregates.
         records_completed = len(records_results)
 
         self._apply_gpu_efficiency_metrics(records_results, phase_stats, phase)
+
+        # The accumulator engine (#1102) became the sole summary producer, which
+        # orphaned results-processors that emit their summary via summarize() —
+        # notably AccuracyResultsProcessor, whose per-task accuracy rows are
+        # produced ONLY in summarize(). process_result() still accumulates its
+        # counters per-record, but summarize() is no longer called on the
+        # _metric_results_processors list, so its accuracy.* MetricResults never
+        # reached ProfileResults.records (empty accuracy table/CSV). Merge them
+        # back in (after the completed snapshot, since they are derived
+        # aggregates, not request records) so the accuracy exporters see them.
+        if phase == CreditPhase.PROFILING:
+            records_results.extend(await self._summarize_accuracy_results_processors())
 
         result = ProcessRecordsResult(
             results=ProfileResults(
