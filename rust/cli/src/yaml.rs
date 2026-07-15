@@ -241,9 +241,15 @@ struct EndpointSection {
 
 #[derive(Debug, Deserialize)]
 struct DatasetSection {
-    /// `synthetic` (default) or `file`; drives the loader branch.
+    /// `synthetic` (default), `file`, or `public`; drives the loader branch.
     #[serde(rename = "type")]
     dataset_type: Option<String>,
+    /// Public dataset catalog name (`dataset.dataset`, when `type: public`).
+    #[serde(rename = "dataset")]
+    public_name: Option<String>,
+    /// HuggingFace subset override for the public dataset.
+    #[serde(default, alias = "hfSubset")]
+    hf_subset: Option<String>,
     /// File-dataset path (trace/replay).
     path: Option<String>,
     /// Native file format id (e.g. `mooncake_trace`, `single_turn`).
@@ -531,9 +537,14 @@ impl Benchmark {
             .and_then(|d| d.sampling.clone())
             .unwrap_or_else(|| "sequential".to_string());
 
-        // A `type: file` dataset routes through the file loader (path/format);
-        // anything else stays on the synthetic path.
-        let is_file = dataset.as_ref().and_then(|d| d.dataset_type.as_deref()) == Some("file");
+        // Dataset kind: `public` (catalog name) > `file` (path/format) >
+        // synthetic. `build()` picks public first when `public_dataset` is set.
+        let dataset_type = dataset.as_ref().and_then(|d| d.dataset_type.as_deref());
+        let public_dataset = (dataset_type == Some("public"))
+            .then(|| dataset.as_ref().and_then(|d| d.public_name.clone()))
+            .flatten();
+        let hf_subset = dataset.as_ref().and_then(|d| d.hf_subset.clone());
+        let is_file = dataset_type == Some("file");
         let (input_file, custom_dataset_type) = if is_file {
             let d = dataset.as_ref().expect("file dataset present");
             (d.path.clone().map(PathBuf::from), d.format.clone())
@@ -741,8 +752,8 @@ impl Benchmark {
             dataset_random_seed,
             input_file,
             custom_dataset_type,
-            public_dataset: None,
-            hf_subset: None,
+            public_dataset,
+            hf_subset,
             inter_turn_delay_cap_seconds,
             fixed_schedule: None,
             fixed_schedule_start_offset: None,

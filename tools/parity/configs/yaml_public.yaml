@@ -1,0 +1,10 @@
+schemaVersion: "2.0"
+benchmark:
+  model: Qwen/Qwen3-0.6B
+  endpoint: {type: chat, url: 127.0.0.1:8000}
+  dataset:
+    type: public
+    dataset: sharegpt
+    entries: 4
+  phases: {type: concurrency, requests: 4, concurrency: 2}
+  artifacts: {dir: /tmp/aiperf-parity/yaml_public}
