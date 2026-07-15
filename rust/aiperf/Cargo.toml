@@ -37,6 +37,11 @@ dynamo-full = [
 # Exact official-harness builds align the enabled Dynamo capability set. The
 # embedding executable, not this library, owns process-global allocator choice.
 dynamo-parity = ["dynamo-full"]
+# Cellular cross-host cell transport over the official ai-dynamo/velo messaging
+# framework. Gates all velo-dependent code (the velo CellClient/ControllerTransport
+# impls + the cell connection seam). Without it, `cells=1` is byte-unchanged and the
+# runner fails closed on `cells>1`.
+velo = ["dep:velo"]
 
 [lib]
 name = "aiperf"
@@ -78,6 +83,7 @@ smallvec.workspace = true
 tiktoken-rs.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
+velo = { git = "https://github.com/ai-dynamo/velo.git", tag = "v0.5.0", default-features = false, optional = true }
 tonic.workspace = true
 tracing.workspace = true
 uuid.workspace = true
@@ -182,3 +188,8 @@ path = "tests/transport_http/reuse.rs"
 [[test]]
 name = "transport_http_tls"
 path = "tests/transport_http/tls.rs"
+
+[[example]]
+name = "velo_cell_spike"
+path = "examples/velo_cell_spike.rs"
+required-features = ["velo"]
