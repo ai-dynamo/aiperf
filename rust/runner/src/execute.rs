@@ -2255,6 +2255,18 @@ async fn execute_native_inner(
                 inputs_need_retain,
             ),
         });
+    // One line marking which memory path the run took. Exact-fold and the legacy
+    // retain path are byte-identical in their artifacts by design, so the ONLY
+    // externally observable difference is coordinator memory (VmHWM) — this log lets
+    // an A/B harness prove non-vacuously that the default run engaged the fold-and-drop
+    // path and the `AIPERF_RUNTIME_EXACT_FOLD=0` run engaged the legacy retain path,
+    // without which such a test cannot distinguish "same path twice" from real parity.
+    tracing::info!(
+        exact_fold,
+        shardable,
+        sketch_mode,
+        "record retention path selected"
+    );
     // Per-record OTLP folded at completion by the exact-fold capture (task S3); the
     // retain/sharded arms leave this `None` and fold their retained records post-run.
     let mut folded_otel: Option<OtelRecordAccumulator> = None;
