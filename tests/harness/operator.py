@@ -36,7 +36,6 @@ def build_sample_body() -> dict[str, Any]:
                 "datasets": [{"name": "main", "type": "synthetic"}],
                 "phases": {
                     "type": "concurrency",
-                    "dataset": "main",
                     "requests": 10,
                     "concurrency": 1,
                 },
@@ -61,7 +60,6 @@ def build_minimal_aiperfjob_spec() -> dict[str, Any]:
             "datasets": [{"name": "main", "type": "synthetic"}],
             "phases": {
                 "type": "concurrency",
-                "dataset": "main",
                 "requests": 10,
                 "concurrency": 1,
             },
@@ -85,7 +83,6 @@ def build_full_aiperfjob_spec() -> dict[str, Any]:
                 {
                     "name": "warmup",
                     "type": "concurrency",
-                    "dataset": "main",
                     "requests": 50,
                     "concurrency": 500,
                     "exclude_from_results": True,
@@ -93,7 +90,6 @@ def build_full_aiperfjob_spec() -> dict[str, Any]:
                 {
                     "name": "profiling",
                     "type": "concurrency",
-                    "dataset": "main",
                     "requests": 1000,
                     "concurrency": 500,
                 },
@@ -139,7 +135,6 @@ def build_high_concurrency_spec() -> dict[str, Any]:
             "datasets": [{"name": "main", "type": "synthetic"}],
             "phases": {
                 "type": "concurrency",
-                "dataset": "main",
                 "requests": 1000,
                 "concurrency": 1000,
             },

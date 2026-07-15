@@ -64,6 +64,13 @@ def run_cellular_role(cli_config: CLIConfig, *, role: str) -> None:
     from aiperf.cli_utils import exit_on_error
     from aiperf.config.loader.errors import ConfigurationError
 
+    # A cell needs no config: it fetches its sliced protocol-v2 envelope from the
+    # controller over velo (using the operator-set AIPERF_CELL_* env), so it just
+    # execs ``aiperf-runner --cell``. Only the controller reads Config v2 + reports.
+    if role == "cell":
+        _run_cell()
+        return
+
     with exit_on_error(title="Error Running AIPerf Cellular Role", show_traceback=False):
         from aiperf.cli_runner import _make_benchmark_run
         from aiperf.config.flags.resolver import resolve_config
@@ -83,23 +90,29 @@ def run_cellular_role(cli_config: CLIConfig, *, role: str) -> None:
         title="Error Running AIPerf Cellular Role",
         quiet_for=(ConfigurationError,),
     ):
-        if role == "controller":
-            asyncio.run(_run_controller(run))
-        else:
-            _run_cell(run)
+        asyncio.run(_run_controller(run))
 
 
-def _run_cell(run: BenchmarkRun) -> None:
-    """Run this pod as a cell: launch the runner and let it ship its shard.
+def _run_cell() -> None:
+    """Run this pod as a cell: exec ``aiperf-runner --cell`` and wait.
 
-    A cell owns only its ``(cell_id, cell_count)`` slice and streams its records
-    shard to the controller (the ``CELL_*`` env the operator set makes the runner
-    cell-aware), so there is nothing to report to Kubernetes -- the controller holds
-    the aggregate view. This is the plain native run path.
+    The velo cell reads no config and no stdin -- it fetches its ``(cell_id,
+    cell_count)`` budget slice + sliced execute envelope from the controller over
+    velo, using the ``AIPERF_CELL_ID`` / ``AIPERF_CELL_COUNT`` /
+    ``AIPERF_CELL_CONTROLLER_ADDR`` env the operator set (rust: main.rs::run_cell).
+    It streams its records shard back to the controller, which owns the aggregate
+    view, so a cell reports nothing to Kubernetes. The runner inherits this process's
+    env, so the operator's CELL_* vars flow straight through.
     """
-    result = _execute(run)
-    if not result.success:
-        raise RuntimeError(f"cell run failed: {result.error}")
+    import subprocess
+
+    from aiperf.orchestrator.runner_installation import RunnerInstallation
+
+    binary = RunnerInstallation.resolve().binary
+    logger.info("launching cell runner: %s --cell", binary)
+    completed = subprocess.run([str(binary), "--cell"], check=False)  # noqa: S603
+    if completed.returncode != 0:
+        raise RuntimeError(f"cell runner exited with {completed.returncode}")
 
 
 async def _run_controller(run: BenchmarkRun) -> None:

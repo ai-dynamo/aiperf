@@ -192,15 +192,21 @@ def build_container_ports(
 # raw TCP CELL_CONTROLLER_ADDR with velo discovery. The operator side is stable.
 # ---------------------------------------------------------------------------
 
-# Port the controller binds its (routable) cell transport on, and cells dial.
-CELL_CONTROLLER_PORT: int = 7000
-# Env contract the aiperf cell frontend reads for its partition + controller.
+# The controller serves its velo PeerInfo bootstrap on this port
+# (aiperf-runner's AIPERF_CONTROLLER_BOOTSTRAP_BIND default 0.0.0.0:9500,
+# cellular_controller.rs::controller_bootstrap); cells fetch it from
+# tcp://<controller-dns>:9500. The velo DATA plane binds an ephemeral port and is
+# reached via the PeerInfo, so only this bootstrap port is a fixed contract.
+CELL_CONTROLLER_PORT: int = 9500
+# Env contract the velo runner reads (rust: aiperf::cellular::partition +
+# cellular_cell + cell_launcher). Names/values must match the runner exactly.
 CELL_ID_ENV = "AIPERF_CELL_ID"
 CELL_COUNT_ENV = "AIPERF_CELL_COUNT"
 CELL_CONTROLLER_ADDR_ENV = "AIPERF_CELL_CONTROLLER_ADDR"
-# Port the controller frontend binds its cell transport on (matches the port in
-# each cell's CELL_CONTROLLER_ADDR).
-CELL_CONTROLLER_PORT_ENV = "AIPERF_CELL_CONTROLLER_PORT"
+# Selects the runner's cell launcher: "k8s" means the controller does NOT spawn
+# cell children (the JobSet already created the cell pods; it waits on the velo
+# registration barrier). cell_launcher.rs::CELL_LAUNCHER_ENV, default "local".
+CELL_LAUNCHER_ENV = "AIPERF_CELL_LAUNCHER"
 
 # HF tokenizer cache dir; the runner tokenizes in-process, so it is the one piece
 # of the mesh container env the native pods still need. Matches the tokenizer-cache
@@ -277,18 +283,23 @@ def build_cell_env_vars(*, cells: int, controller_dns: str) -> list[dict[str, An
         },
         {"name": CELL_COUNT_ENV, "value": str(cells)},
         {
+            # velo fetches the controller PeerInfo from this bootstrap coordinate;
+            # the runner requires the ``tcp://HOST:PORT`` form for k8s
+            # (cell_launcher.rs CellLaunchContext.controller_coordinate).
             "name": CELL_CONTROLLER_ADDR_ENV,
-            "value": f"{controller_dns}:{CELL_CONTROLLER_PORT}",
+            "value": f"tcp://{controller_dns}:{CELL_CONTROLLER_PORT}",
         },
     ]
 
 
 def build_controller_env_vars() -> list[dict[str, Any]]:
-    """Env for the controller pod: the port its cell transport binds on.
+    """Env for the controller pod: select the k8s cell launcher.
 
-    Matches the port each cell's CELL_CONTROLLER_ADDR dials (CELL_CONTROLLER_PORT).
+    ``AIPERF_CELL_LAUNCHER=k8s`` tells the runner-controller not to spawn cell
+    children (the JobSet already created the ``cells`` cell pods); it binds its velo
+    bootstrap on the default ``0.0.0.0:9500`` and waits for the cell pods to register.
     """
-    return [{"name": CELL_CONTROLLER_PORT_ENV, "value": str(CELL_CONTROLLER_PORT)}]
+    return [{"name": CELL_LAUNCHER_ENV, "value": "k8s"}]
 
 
 def build_cr_identity_env(*, job_id: str, namespace: str) -> list[dict[str, Any]]:
