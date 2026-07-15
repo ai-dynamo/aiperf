@@ -13,11 +13,10 @@
 //! top-level `randomSeed`, telemetry (gpu/server-metrics/network-latency), export
 //! sinks (otel/mlflow/wandb), runtime (workers/cells), metrics (slos/slice), the
 //! synthetic dataset (prompts, prefix-prompts, multi-turn, media, sampling), file
-//! datasets, and phases (arrival pattern/rate/smoothness/ramps/prefill/
-//! cancellation/user-centric). Unknown keys are ignored (no `deny_unknown_fields`).
-//!
-//! Deferred (documented, not yet wired): the `warmup`/`profiling` block structure,
-//! the `adaptive_scale` block, fixed-schedule-via-YAML, and public-dataset-via-YAML.
+//! datasets, public datasets, and phases (arrival pattern/rate/smoothness/ramps/
+//! prefill/cancellation/user-centric/fixed-schedule/adaptive-scale, plus the
+//! `warmup`/`profiling` simple-config form). Unknown keys are ignored (no
+//! `deny_unknown_fields`).
 
 use std::path::PathBuf;
 
