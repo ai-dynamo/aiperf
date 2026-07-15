@@ -36,6 +36,9 @@ const PORTED_CFG_SECTIONS: &[&str] = &[
 /// Run-level (non-`cfg`) fields the native type currently models byte-exact.
 const PORTED_RUN_FIELDS: &[&str] = &["resolved"];
 
+/// Golden fixtures the native path reproduces byte-exact (name = fixture stem).
+const FIXTURES: &[&str] = &["minimal_chat", "rate_chat"];
+
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).
 fn load_golden(name: &str) -> serde_json::Value {
     let path = format!("../../tools/parity/golden/{name}.request.json");
@@ -50,38 +53,6 @@ fn runner_view(golden: &serde_json::Value) -> serde_json::Value {
     serde_json::to_value(&run).expect("native run serializes")
 }
 
-#[test]
-fn golden_minimal_chat_is_valid_runner_input() {
-    let golden = load_golden("minimal_chat");
-    // The unchanged runner input type must accept the golden bytes.
-    let _: RunnerEnvelopeV2 =
-        serde_json::from_value(golden.clone()).expect("golden is valid RunnerEnvelopeV2");
-}
-
-#[test]
-fn golden_minimal_chat_ported_sections_roundtrip() {
-    let golden = load_golden("minimal_chat");
-    let view = runner_view(&golden);
-    for section in PORTED_CFG_SECTIONS {
-        let want = &golden["run"]["cfg"][section];
-        // `runner_view` serializes the run object directly (not the envelope).
-        let got = &view["cfg"][section];
-        assert!(!want.is_null(), "golden is missing cfg.{section}");
-        assert_eq!(
-            got, want,
-            "cfg.{section} diverges from golden\n got: {got:#}\nwant: {want:#}"
-        );
-    }
-    for field in PORTED_RUN_FIELDS {
-        let want = &golden["run"][field];
-        let got = &view[field];
-        assert_eq!(
-            got, want,
-            "run.{field} diverges from golden\n got: {got:#}\nwant: {want:#}"
-        );
-    }
-}
-
 /// Read a `.args` fixture and split into argv tokens (fixtures use simple
 /// whitespace-separated tokens, no quoting).
 fn fixture_args(name: &str) -> Vec<String> {
@@ -90,37 +61,66 @@ fn fixture_args(name: &str) -> Vec<String> {
     text.split_whitespace().map(str::to_owned).collect()
 }
 
-#[test]
-fn loader_minimal_chat_matches_golden() {
-    // The pre-translation (flags -> native run) must reproduce the golden's
-    // consumed cfg sections + resolved. benchmark_id/cli_command are
-    // invocation-specific and excluded; artifact_dir comes from the flag.
-    let golden = load_golden("minimal_chat");
-    let flags = ProfileFlags::parse_from_args(&fixture_args("minimal_chat")).expect("flags parse");
-    let run = load::resolve(&flags).expect("loader resolves");
-    let built = serde_json::to_value(&run).expect("serialize built run");
-
+/// Assert the built run's consumed sections + run fields + artifact_dir match a
+/// golden, and that it deserializes as valid runner input.
+fn assert_matches_golden(fixture: &str, built: &serde_json::Value, golden: &serde_json::Value) {
     for section in PORTED_CFG_SECTIONS {
+        let want = &golden["run"]["cfg"][section];
+        assert!(!want.is_null(), "[{fixture}] golden missing cfg.{section}");
         assert_eq!(
-            &built["cfg"][section], &golden["run"]["cfg"][section],
-            "loader cfg.{section} diverges from golden\n got: {:#}\nwant: {:#}",
-            built["cfg"][section], golden["run"]["cfg"][section]
+            &built["cfg"][section], want,
+            "[{fixture}] cfg.{section} diverges\n got: {:#}\nwant: {want:#}",
+            built["cfg"][section]
         );
     }
     for field in PORTED_RUN_FIELDS {
         assert_eq!(
             &built[field], &golden["run"][field],
-            "loader run.{field} diverges from golden"
+            "[{fixture}] run.{field} diverges"
         );
     }
-    assert_eq!(
-        built["artifact_dir"], golden["run"]["artifact_dir"],
-        "loader artifact_dir diverges from golden"
-    );
-    // The built request must be valid input for the unchanged runner.
     let envelope = serde_json::json!({
         "protocol_version": 2, "operation": "execute", "run": built,
     });
-    let _: RunnerEnvelopeV2 =
-        serde_json::from_value(envelope).expect("built run is valid RunnerEnvelopeV2");
+    let _: RunnerEnvelopeV2 = serde_json::from_value(envelope)
+        .unwrap_or_else(|e| panic!("[{fixture}] invalid runner input: {e}"));
+}
+
+#[test]
+fn goldens_are_valid_runner_input() {
+    for fixture in FIXTURES {
+        let golden = load_golden(fixture);
+        let _: RunnerEnvelopeV2 = serde_json::from_value(golden)
+            .unwrap_or_else(|e| panic!("[{fixture}] golden is not valid RunnerEnvelopeV2: {e}"));
+    }
+}
+
+#[test]
+fn goldens_roundtrip_through_native_type() {
+    // Deserializing a golden through the native type and re-serializing must
+    // reproduce every ported section byte-exact (the type is correct).
+    for fixture in FIXTURES {
+        let golden = load_golden(fixture);
+        let view = runner_view(&golden);
+        assert_matches_golden(fixture, &view, &golden);
+    }
+}
+
+#[test]
+fn loader_reproduces_goldens() {
+    // The pre-translation (flags -> native run) must reproduce each golden's
+    // consumed sections + resolved + artifact_dir. benchmark_id/cli_command are
+    // invocation-specific and excluded.
+    for fixture in FIXTURES {
+        let golden = load_golden(fixture);
+        let flags = ProfileFlags::parse_from_args(&fixture_args(fixture))
+            .unwrap_or_else(|e| panic!("[{fixture}] flags parse: {e}"));
+        let run = load::resolve(&flags).unwrap_or_else(|e| panic!("[{fixture}] loader: {e}"));
+        let built = serde_json::to_value(&run).expect("serialize built run");
+        assert_matches_golden(fixture, &built, &golden);
+        assert_eq!(
+            built["artifact_dir"], golden["run"]["artifact_dir"],
+            "[{fixture}] artifact_dir diverges"
+        );
+    }
 }

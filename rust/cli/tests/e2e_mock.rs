@@ -20,10 +20,7 @@ fn aiperf_bin() -> PathBuf {
 
 /// A sibling binary in the same target dir as `aiperf` (runner / mock server).
 fn sibling(name: &str) -> PathBuf {
-    aiperf_bin()
-        .parent()
-        .expect("target dir")
-        .join(name)
+    aiperf_bin().parent().expect("target dir").join(name)
 }
 
 #[test]

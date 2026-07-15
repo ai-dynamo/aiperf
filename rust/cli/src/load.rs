@@ -45,6 +45,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
     }
     reject_sweep("--concurrency", flags.concurrency.as_deref())?;
     reject_sweep("--request-count", flags.request_count.as_deref())?;
+    reject_sweep("--request-rate", flags.request_rate.as_deref())?;
 
     anyhow::ensure!(
         !flags.model_names.is_empty(),
@@ -59,6 +60,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
     let primary_model = flags.model_names[0].clone();
     let concurrency = parse_single::<u32>("--concurrency", flags.concurrency.as_deref())?;
     let request_count = parse_single::<u64>("--request-count", flags.request_count.as_deref())?;
+    let request_rate = parse_single::<f64>("--request-rate", flags.request_rate.as_deref())?;
 
     let models = Models {
         strategy: ModelStrategy::RoundRobin,
@@ -121,12 +123,22 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         },
         sampling: Sampling("sequential".to_string()),
         turn_delay_ratio: 1.0,
-        entries: Some(1),
+        // The synthetic corpus is sized to the request bound (one entry per
+        // request); Python projects `entries == request_count` on this path.
+        entries: request_count.map(|n| n as u32),
         num_conversations: None,
         turn_delay_ms: None,
     });
 
-    // One profiling phase: concurrency-driven with an optional request bound.
+    // One profiling phase. A request rate selects a Poisson arrival phase;
+    // otherwise a fixed-concurrency phase (default concurrency 1).
+    let kind = if let Some(rate) = request_rate {
+        PhaseKind::Poisson { rate, concurrency }
+    } else {
+        PhaseKind::Concurrency {
+            concurrency: concurrency.unwrap_or(1),
+        }
+    };
     let phase = Phase {
         common: PhaseCommon {
             name: "profiling".to_string(),
@@ -143,9 +155,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
             cancellation: None,
             agentic_cache_warmup_duration: None,
         },
-        kind: PhaseKind::Concurrency {
-            concurrency: concurrency.unwrap_or(1),
-        },
+        kind,
     };
 
     let cfg = BenchmarkConfig {

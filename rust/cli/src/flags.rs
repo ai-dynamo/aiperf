@@ -46,6 +46,10 @@ pub struct ProfileFlags {
     #[arg(long = "concurrency")]
     pub concurrency: Option<String>,
 
+    /// Target request rate, requests/second (`--request-rate`); comma ⇒ sweep.
+    #[arg(long = "request-rate")]
+    pub request_rate: Option<String>,
+
     /// Maximum requests to send (`--request-count`); comma-list ⇒ sweep.
     #[arg(long = "request-count")]
     pub request_count: Option<String>,
