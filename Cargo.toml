@@ -9,6 +9,7 @@ members = [
     "rust/loadgen-core",
     "rust/aiperf",
     "rust/runner",
+    "rust/cli",
     "rust/mock-server",
     "rust/e2e",
     # pyo3 cdylib compiled into the single interned `aiperf` wheel (aiperf._native);
