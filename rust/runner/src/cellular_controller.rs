@@ -668,7 +668,13 @@ fn validate_graph_cellular_phases(envelope: &serde_json::Value, cell_count: u32)
 /// A phase's per-cell slice is the difference of this over the phase's `[base,
 /// base+len)` window (see [`build_cell_envelope`]); over a single phase (`base=0`)
 /// it is just each cell's share, summing to `total`.
-fn owned_positions(total: u64, cell_id: u32, cell_count: u32) -> u64 {
+///
+/// `pub(crate)` so the thread-per-core sharded scheduled runtime
+/// ([`crate::sharded_scheduled`]) reuses the identical round-robin share when it
+/// slices a cell's already-cell-sliced phase budget across its `W` sub-cell
+/// threads — the two-level partition tiles only if both levels use this exact
+/// `ceil((total-k)/C)` share.
+pub(crate) fn owned_positions(total: u64, cell_id: u32, cell_count: u32) -> u64 {
     let count = cell_count as u64;
     let k = cell_id as u64;
     if k >= total {

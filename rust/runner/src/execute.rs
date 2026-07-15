@@ -25,7 +25,7 @@ use aiperf::adaptive_core::{
     AdaptiveScale, CorrelationContext, SharedWindowSampler, SlaFilter, UserTarget,
 };
 use aiperf::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
-use aiperf::cellular::IssuanceAuthority;
+use aiperf::cellular::{CellPartition, IssuanceAuthority, ModuloCellPartition};
 use aiperf::clock::{Clock, RealClock, RealClockAnchor};
 use aiperf::content_server::{
     ContentServerConfig, ContentServerFactory, ContentServerRuntime, NativeContentServerFactory,
@@ -305,8 +305,13 @@ pub(crate) fn default_prepared_endpoint_profile(
     prepared_endpoint_profile(profiles, DEFAULT_ENDPOINT_PROFILE_ID)
 }
 
+/// Worker-local prepared endpoint table factory. `pub(crate)` so the
+/// thread-per-core sharded runtime can retain the concrete `Arc` in its shared
+/// bundle and build one coordinator resolver per sub-cell thread (the resolver is
+/// `Rc`/`!Send`, so it cannot be shared — only rebuilt per thread from this
+/// `Send + Sync` factory).
 #[derive(Clone)]
-struct NativePreparedEndpointTableFactory {
+pub(crate) struct NativePreparedEndpointTableFactory {
     registry: EndpointRegistry,
     profiles: Arc<Vec<ValidatedEndpointProfileV2>>,
 }
@@ -341,7 +346,7 @@ impl NativePreparedEndpointTableFactory {
         })
     }
 
-    fn coordinator_resolver(&self) -> Result<Rc<dyn PreparedTurnEndpointResolver>> {
+    pub(crate) fn coordinator_resolver(&self) -> Result<Rc<dyn PreparedTurnEndpointResolver>> {
         let table = Rc::new(self.prepare_table()?);
         let default = self.reference(DEFAULT_ENDPOINT_PROFILE_ID)?;
         Ok(Rc::new(PreparedEndpointTableResolver::single(
@@ -467,7 +472,7 @@ pub(crate) struct NativeGraphDatasetPlan {
 /// reinterpret the authored source a second time.
 pub(crate) fn execute_prepared_native_plan_uncommitted_with_factories(
     plan: NativeRunSpec,
-    transport_factory: &dyn RequestExecutorFactory,
+    transport_factory: Arc<dyn RequestExecutorFactory>,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
@@ -493,7 +498,7 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_with_execution_factories(
 ) -> Result<NativeReport> {
     execute_prepared_native_plan_uncommitted_with_runtime_factories(
         plan,
-        factories.http(),
+        factories.http_handle(),
         factories.graph(),
         registry,
         &BuiltinNativeSidecarResourceFactory,
@@ -504,7 +509,7 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_with_execution_factories(
 /// Execute one fully prepared plan with sidecar resource construction injected.
 pub(crate) fn execute_prepared_native_plan_uncommitted_with_all_factories(
     plan: NativeRunSpec,
-    transport_factory: &dyn RequestExecutorFactory,
+    transport_factory: Arc<dyn RequestExecutorFactory>,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
     sidecar_factory: &dyn NativeSidecarResourceFactory,
@@ -521,7 +526,7 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_with_all_factories(
 
 fn execute_prepared_native_plan_uncommitted_with_runtime_factories(
     plan: NativeRunSpec,
-    transport_factory: &dyn RequestExecutorFactory,
+    transport_factory: Arc<dyn RequestExecutorFactory>,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
     sidecar_factory: &dyn NativeSidecarResourceFactory,
@@ -964,7 +969,7 @@ impl PreparedNativeSidecarResources {
 
 async fn prepare_and_execute_native(
     request: NativeRunSpec,
-    transport_factory: &dyn RequestExecutorFactory,
+    transport_factory: Arc<dyn RequestExecutorFactory>,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
     sidecar_factory: &dyn NativeSidecarResourceFactory,
@@ -1028,7 +1033,7 @@ async fn execute_native(
     request: NativeRunSpec,
     accuracy: Option<&mut PreparedAccuracy>,
     sidecars: &mut PreparedNativeSidecarResources,
-    transport_factory: &dyn RequestExecutorFactory,
+    transport_factory: Arc<dyn RequestExecutorFactory>,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
@@ -1046,7 +1051,7 @@ async fn execute_scheduled_native(
     request: NativeRunSpec,
     accuracy: Option<&mut PreparedAccuracy>,
     sidecars: &mut PreparedNativeSidecarResources,
-    transport_factory: &dyn RequestExecutorFactory,
+    transport_factory: Arc<dyn RequestExecutorFactory>,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
     execute_native_inner(request, accuracy, sidecars, transport_factory, registry).await
@@ -1471,11 +1476,270 @@ fn finish_with_shutdown<T>(result: Result<T>, shutdown: Result<()>, label: &str)
     }
 }
 
+/// The `Send + Sync` inputs one thread-per-core sub-cell needs to build and run
+/// its whole scheduled pipeline, shared read-only across the `W` worker threads
+/// through an `Arc`.
+///
+/// Everything here is either owned+`Send` (config, dataset, phase specs, rng
+/// roots), an `Arc` handle (the transport factory, the prepared-endpoint table
+/// factory, the tokenizers), or `Copy` (the clock anchor). The `!Send` per-thread
+/// stack — clock, transport sink, `RunCapture`, dispatcher, `SlotPool`s, plans —
+/// is built *inside* each worker from these. Only the read-only dataset/registry
+/// `Arc`s cross the spawn boundary, so no lock sits on the hot path.
+pub(crate) struct ShardedShared {
+    /// The injected transport factory (HTTP or gRPC). Each thread builds its own
+    /// `workers == 1` sink from it, co-locating scheduler and transport.
+    pub(crate) transport_factory: Arc<dyn RequestExecutorFactory>,
+    /// Concrete prepared-endpoint table factory; each thread derives its own
+    /// worker-local prepared table and (`Rc`) coordinator resolver from it.
+    pub(crate) table_factory: Arc<NativePreparedEndpointTableFactory>,
+    /// Cloned sampler registry (the source factory borrows it per thread).
+    pub(crate) samplers: aiperf::dataset::SamplerRegistry,
+    /// The composed dataset every thread partitions.
+    pub(crate) dataset: Dataset,
+    /// Effective primary model.
+    pub(crate) primary_model: String,
+    /// Resolved native metrics policy.
+    pub(crate) metrics_config: MetricsConfig,
+    /// Shared response tokenizer.
+    pub(crate) tokenizer: Arc<dyn TextTokenizer>,
+    /// Shared input-token counter.
+    pub(crate) input_token_counter: Arc<dyn InputTokenCounter>,
+    /// Ordered inference endpoint URLs.
+    pub(crate) endpoint_urls: Vec<String>,
+    /// Fully resolved transport policy.
+    pub(crate) transport_config: TransportSinkConfig,
+    /// Dataset default output-token bound.
+    pub(crate) default_output_tokens: usize,
+    /// Dataset RNG root (seeded per phase inside the plan builder).
+    pub(crate) dataset_rng_root: RngRoot,
+    /// Run RNG root (arrival/cancellation/ramp derivations).
+    pub(crate) rng_root: RngRoot,
+    /// The authored phases (unsliced; each thread slices its own copy by `W`).
+    pub(crate) phases: Vec<PhaseSpec>,
+    /// Stable benchmark id (adaptive artifact naming).
+    pub(crate) benchmark_id: String,
+    /// Run artifact directory (adaptive artifacts).
+    pub(crate) artifact_dir: PathBuf,
+    /// Whether raw HTTP exchanges are retained.
+    pub(crate) raw_enabled: bool,
+    /// Whether `inputs.json` canonical payloads are retained.
+    pub(crate) inputs_enabled: bool,
+    /// Whether an adaptive phase needs each completed turn's terminal record.
+    pub(crate) wants_adaptive_record: bool,
+    /// Run-failure discipline.
+    pub(crate) on_failure: OnFailure,
+    /// The shared monotonic real-clock origin; each thread builds a reactor-local
+    /// clock from it so all timestamps sit on one timeline.
+    pub(crate) real_clock_anchor: RealClockAnchor,
+    /// The run origin (`now_ns` captured once on the main thread).
+    pub(crate) start_ns: i64,
+    /// This process's cell id (0 when not a controller child).
+    pub(crate) cell_id: u32,
+    /// This run's cell count (1 when not a controller child).
+    pub(crate) cells: u32,
+    /// This cell's thread-per-core sub-cell count.
+    pub(crate) workers: u32,
+    /// Each phase's global ordinal base (env for a controller child, computed for a
+    /// lone process), injected identically into every thread's issuer.
+    pub(crate) phase_ordinal_bases: HashMap<MetricsPhase, usize>,
+}
+
+/// One sub-cell thread's captured records plus the phase facts the once-per-cell
+/// report tail folds across threads. `Send` so it crosses the worker join.
+#[derive(Default)]
+pub(crate) struct ScheduledShardOutcome {
+    /// This thread's finished records, each stamped with its global two-level
+    /// dispatch ordinal.
+    pub(crate) captured: Vec<CapturedRecord>,
+    /// This thread's `inputs.json` sessions (disjoint conversation ids across
+    /// threads, so the union needs only a re-sort by session id).
+    pub(crate) input_sessions: Vec<InputSession>,
+    /// Whether any of this thread's phases was externally cancelled.
+    pub(crate) was_cancelled: bool,
+    /// Whether this thread ran a warmup phase (gates the warmup metrics export).
+    pub(crate) has_warmup: bool,
+}
+
+impl ScheduledShardOutcome {
+    /// Fold another thread's shard into this one: concatenate records and input
+    /// sessions, OR the phase flags. Ordinal ordering is applied once after all
+    /// shards are absorbed.
+    pub(crate) fn absorb(&mut self, other: ScheduledShardOutcome) {
+        self.captured.extend(other.captured);
+        self.input_sessions.extend(other.input_sessions);
+        self.was_cancelled |= other.was_cancelled;
+        self.has_warmup |= other.has_warmup;
+    }
+}
+
+/// Build and run one sub-cell thread's complete scheduled pipeline over its `1/W`
+/// nested partition, returning its record shard.
+///
+/// This is the per-thread body of the sharded runtime: it mirrors the
+/// single-thread scheduled path in [`execute_native_inner`] exactly, differing
+/// only in the parts that make a thread a self-contained sub-cell — a fresh
+/// reactor-local clock, a `workers == 1` co-located transport (no hop), an
+/// injected two-level [`IssuanceAuthority`] + injected ordinal bases, its
+/// per-thread cell partition threaded into both the sampler and the issuer, and
+/// phases sliced to this thread's `1/W` share. It runs the **unchanged**
+/// [`run_scheduled_phases`] engine. It never touches a sidecar, the live sink, the
+/// heartbeat lane, or an artifact — those stay once-per-cell on the main thread.
+///
+/// Called on a worker OS thread inside that thread's own `current_thread` runtime
+/// + `LocalSet`, so its entire `!Send` stack is thread-local.
+pub(crate) async fn execute_scheduled_shard(
+    shared: &ShardedShared,
+    thread_id: usize,
+) -> Result<ScheduledShardOutcome> {
+    // A reactor-local clock on the shared real-clock timeline (the graph
+    // thread-per-core model); never the coordinator's clock object.
+    let clock: Rc<dyn Clock> = RealClock::from_anchor(shared.real_clock_anchor);
+    let start_ns = shared.start_ns;
+    // This thread's nested `(cell × thread)` partition — the same object feeds the
+    // sampler (which instances it draws) and the issuer (which global ordinals it
+    // stamps), so `within*(cells*W) + index == instance` holds and the ordinals
+    // tile 0..total.
+    let partition =
+        crate::sharded_scheduled::two_level_partition(shared.cell_id, shared.cells, thread_id, shared.workers)?;
+
+    let prepared_endpoints: Arc<dyn HttpPreparedEndpointTableFactory> = shared.table_factory.clone();
+    let execution_backend = shared.transport_factory.build(HttpExecutionBackendConfig {
+        // One worker: the sink stays on this thread's reactor, co-located with the
+        // scheduler — the old per-request mpsc/oneshot hop is gone.
+        workers: 1,
+        coordinator_clock: clock.clone(),
+        real_clock_anchor: shared.real_clock_anchor,
+        base_urls: shared.endpoint_urls.clone(),
+        model: shared.primary_model.clone(),
+        transport: shared.transport_config.clone(),
+        prepared_endpoints: Some(prepared_endpoints),
+    })?;
+    let capture = Rc::new(RunCapture::new_with_issuance_and_bases(
+        clock.clone(),
+        start_ns,
+        shared.metrics_config.clone(),
+        shared.raw_enabled,
+        shared.inputs_enabled,
+        // Worker threads never feed the live sink or heartbeat lane (D5); those are
+        // driven once-per-cell on the main thread.
+        false,
+        shared.wants_adaptive_record,
+        crate::cellular_cell::issuance_authority_for(partition),
+        shared.phase_ordinal_bases.clone(),
+    ));
+    let resolver = shared.table_factory.coordinator_resolver()?;
+    let source_factory = PreparedNativeConversationSourceFactory {
+        endpoint_resolver: resolver,
+        samplers: &shared.samplers,
+        // Inject this thread's partition so its sampler draws only its nested
+        // subset of the cell's instances.
+        cell_partition: Some(partition),
+    };
+    let sliced_phases: Vec<PhaseSpec> = shared
+        .phases
+        .iter()
+        .map(|phase| crate::sharded_scheduled::slice_phase_for_thread(phase, thread_id, shared.workers))
+        .collect();
+
+    let execution_result = async {
+        execution_backend.set_run_origin(start_ns)?;
+        execution_backend.configure_measurement(shared.metrics_config.clone(), start_ns)?;
+        let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(ConfiguredDispatcher {
+            execution_backend: execution_backend.clone(),
+            model: shared.primary_model.clone(),
+            capture: capture.clone(),
+        });
+        let shared_resources = native_scheduled_resources(&sliced_phases);
+
+        let mut plans = Vec::with_capacity(sliced_phases.len());
+        for (phase_index, phase) in sliced_phases.iter().enumerate() {
+            let mut plan = build_native_scheduled_phase_plan_with_source_factory(
+                phase_index,
+                phase,
+                phase_seamless_to_next(&sliced_phases, phase_index),
+                &shared.dataset,
+                &shared.primary_model,
+                shared.default_output_tokens,
+                shared.dataset_rng_root,
+                shared.rng_root,
+                &source_factory,
+                shared.tokenizer.clone(),
+                shared.input_token_counter.clone(),
+                clock.clone(),
+                start_ns,
+                &shared.benchmark_id,
+                &shared.artifact_dir,
+                &shared.endpoint_urls,
+                &shared_resources,
+                shared
+                    .wants_adaptive_record
+                    .then(|| capture.clone() as Rc<dyn AdaptiveTerminalRecordSource>),
+                shared.on_failure,
+            )?;
+            let record_processor: Rc<dyn TurnRecordProcessor> = Rc::new(CapturePhaseProcessor {
+                capture: capture.clone(),
+                phase: metrics_phase(phase)?,
+                has_credit_timestamp: !matches!(phase, PhaseSpec::FixedSchedule { .. }),
+                // Once-per-cell on the main thread; a worker never feeds them.
+                live_sink: None,
+                heartbeat: None,
+            });
+            plan = plan
+                .with_record_processors(vec![record_processor])
+                .with_performance_record_capture(false)
+                .with_native_metric_record_dimensions(false);
+            plans.push(plan);
+        }
+
+        // No live/heartbeat phase observers on a worker thread.
+        let observer: Rc<dyn PhaseObserver> = Rc::new(NoopPhaseObserver);
+        let phased = run_scheduled_phases(plans, clock.clone(), dispatcher, observer).await?;
+        phased
+            .reports
+            .iter()
+            .find(|report| report.kind == PhaseKind::Profiling)
+            .ok_or_else(|| {
+                anyhow!("sharded scheduled worker completed without a profiling report")
+            })?;
+        Ok(phased)
+    }
+    .await;
+
+    let drained = if execution_result.is_ok() {
+        execution_backend.drain_records(clock.now_ns())
+    } else {
+        Ok(Vec::new())
+    };
+    let shutdown = execution_backend.shutdown();
+    let phased = finish_with_shutdown(execution_result, shutdown, "sharded execution backend")?;
+    let drained = drained?;
+    let issued_times = phased
+        .reports
+        .iter()
+        .flat_map(|report| report.report.turns.iter())
+        .map(|turn| (turn.uuid, turn.issued_offset_ns))
+        .collect::<HashMap<_, _>>();
+    let captured = capture.finish(&issued_times, drained)?;
+    let input_sessions = capture.take_input_sessions();
+    let was_cancelled = phased.phases.iter().any(|phase| phase.was_cancelled);
+    let has_warmup = phased
+        .reports
+        .iter()
+        .any(|report| report.kind == PhaseKind::Warmup);
+    Ok(ScheduledShardOutcome {
+        captured,
+        input_sessions,
+        was_cancelled,
+        has_warmup,
+    })
+}
+
 async fn execute_native_inner(
     request: NativeRunSpec,
     mut accuracy: Option<&mut PreparedAccuracy>,
     sidecars: &mut PreparedNativeSidecarResources,
-    transport_factory: &dyn RequestExecutorFactory,
+    transport_factory: Arc<dyn RequestExecutorFactory>,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
     let live_sink = sidecars.live_sink();
@@ -1527,6 +1791,9 @@ async fn execute_native_inner(
             Box::new(PreparedNativeConversationSourceFactory {
                 endpoint_resolver,
                 samplers: registry.samplers(),
+                // The coordinator (single-process / cell-entry) path reads the
+                // process-global partition from the environment; byte-unchanged.
+                cell_partition: None,
             }),
         )
     };
@@ -1557,6 +1824,38 @@ async fn execute_native_inner(
 
     let real_clock_anchor = sidecars.real_clock_anchor;
     let clock = sidecars.clock.clone();
+    // An adaptive phase needs each completed turn's finished worker record fed
+    // into its window sampler; the online dispatcher records per-token facts
+    // worker-locally, so the coordinator sampler is otherwise starved.
+    let wants_adaptive_record = request
+        .phases
+        .iter()
+        .any(|phase| phase.common().adaptive_scale.is_some());
+
+    // `workers == 1` keeps the byte-unchanged single coordinator-reactor path;
+    // `runtime.workers` defaults to a CPU-based count (> 1), so the sharded path is
+    // the common case, not an opt-in. A thread-per-core sub-cell can partition only
+    // request-bounded phases (concurrency/poisson/gamma/constant) and cannot host a
+    // single main-thread static-accuracy evaluator; every other shape — trace-driven
+    // `user_centric`/`fixed_schedule` phases, static-accuracy scoring, and always
+    // `workers <= 1` — keeps the established path unchanged (which still fans the
+    // transport across `workers` threads via `ThreadPerCoreRequestExecutor` for
+    // `workers > 1`). So route by shardability rather than fail closed: an
+    // unshardable default-workers run must not regress to an error.
+    let shardable = request.workers > 1
+        && accuracy.is_none()
+        && request.phases.iter().all(|phase| {
+            matches!(
+                phase,
+                PhaseSpec::Concurrency { .. }
+                    | PhaseSpec::Poisson { .. }
+                    | PhaseSpec::Gamma { .. }
+                    | PhaseSpec::Constant { .. }
+            )
+        });
+    // Both arms converge on the same `captured` records + phase facts the
+    // once-per-cell report tail below folds, so that tail stays written exactly once.
+    let (captured, input_sessions, was_cancelled, has_warmup, start_ns) = if !shardable {
     let execution_backend = transport_factory.build(HttpExecutionBackendConfig {
         workers: request.workers,
         coordinator_clock: clock.clone(),
@@ -1571,13 +1870,6 @@ async fn execute_native_inner(
     // the controller aggregates across cells in Phase 2. It consumes the per-record
     // live clone, so it forces record capture on even without the Python sink.
     let heartbeat_lane = HeartbeatLane::from_env(clock.clone(), start_ns)?;
-    // An adaptive phase needs each completed turn's finished worker record fed
-    // into its window sampler; the online dispatcher records per-token facts
-    // worker-locally, so the coordinator sampler is otherwise starved.
-    let wants_adaptive_record = request
-        .phases
-        .iter()
-        .any(|phase| phase.common().adaptive_scale.is_some());
     let capture = Rc::new(RunCapture::new(
         clock.clone(),
         start_ns,
@@ -1704,7 +1996,7 @@ async fn execute_native_inner(
         } else {
             CompositePhaseObserver::compose(observers)
         };
-        let phased = run_scheduled_phases(plans, clock, dispatcher, observer).await?;
+        let phased = run_scheduled_phases(plans, clock.clone(), dispatcher, observer).await?;
         phased
             .reports
             .iter()
@@ -1730,6 +2022,113 @@ async fn execute_native_inner(
         .map(|turn| (turn.uuid, turn.issued_offset_ns))
         .collect::<HashMap<_, _>>();
     let captured = capture.finish(&issued_times, drained)?;
+    let input_sessions = capture.take_input_sessions();
+    let was_cancelled = phased.phases.iter().any(|phase| phase.was_cancelled);
+    let has_warmup = phased
+        .reports
+        .iter()
+        .any(|report| report.kind == PhaseKind::Warmup);
+    (captured, input_sessions, was_cancelled, has_warmup, start_ns)
+    } else {
+        // ==================== THREAD-PER-CORE SHARDED PATH ====================
+        // `shardable` above guarantees workers > 1, no static-accuracy scoring, and
+        // only request-bounded phases — the shapes a sub-cell can partition.
+        // Once-per-cell on the main thread, before the sub-cell threads spawn.
+        create_run_artifacts(&request)?;
+        sidecars.activate_live_streaming().await;
+        if live_sink.is_some() {
+            tracing::warn!(
+                "live-streaming per-record updates are delivered only at end-of-run under \
+                 thread-per-core scheduled execution (workers > 1); intermediate live progress is \
+                 degraded"
+            );
+        }
+        let start_ns = clock.now_ns();
+        // The two-level grid: this process is cell `cell_id` of `cells`
+        // (`AIPERF_CELL_ID`/`_COUNT`, default the lone `(0, 1)`), sub-divided into
+        // `workers` thread-per-core sub-cells.
+        let (cell_id, cells) = ModuloCellPartition::from_env()
+            .map(|partition| (partition.cell_id(), partition.cell_count()))
+            .unwrap_or((0, 1));
+        // A controller child already carries the global phase ordinal bases in the
+        // env; a lone process computes them from its (global == local) phase
+        // budgets so profiling ordinals never collide with warmup's `[0, W)` block.
+        let env_bases = crate::cellular_cell::phase_ordinal_bases_from_env();
+        let phase_ordinal_bases = if env_bases.is_empty() {
+            crate::sharded_scheduled::compute_phase_ordinal_bases(&request.phases)?
+        } else {
+            env_bases
+        };
+        // The concrete prepared-endpoint table factory the sub-cell threads share
+        // (each derives its own Rc resolver from it). Rebuilt from the request here
+        // rather than plumbed out of the coordinator setup so the workers == 1 path
+        // stays untouched; the coordinator `source_factory`/`prepared_endpoints`
+        // built above go unused on this arm.
+        let table_factory = {
+            let NativeEndpointPlan::Prepared(profiles) = &request.endpoint;
+            Arc::new(NativePreparedEndpointTableFactory::new(
+                registry.endpoints().clone(),
+                profiles.clone(),
+            ))
+        };
+        let shared = Arc::new(ShardedShared {
+            transport_factory: transport_factory.clone(),
+            table_factory,
+            samplers: registry.samplers().clone(),
+            dataset: dataset.clone(),
+            primary_model: primary_model.clone(),
+            metrics_config: metrics_config.clone(),
+            tokenizer: tokenizer.clone(),
+            input_token_counter: input_token_counter.clone(),
+            endpoint_urls: endpoint_urls.clone(),
+            transport_config: transport_config.clone(),
+            default_output_tokens,
+            dataset_rng_root,
+            rng_root,
+            phases: request.phases.clone(),
+            benchmark_id: request.benchmark_id.clone(),
+            artifact_dir: request.artifact_dir.clone(),
+            raw_enabled: request.artifacts.raw_path.is_some(),
+            inputs_enabled: request.artifacts.inputs_path.is_some(),
+            wants_adaptive_record,
+            on_failure: OnFailure::scheduled_or_default(request.failure_policy),
+            real_clock_anchor,
+            start_ns,
+            cell_id,
+            cells,
+            workers: request.workers as u32,
+            phase_ordinal_bases,
+        });
+        // Build the once-per-cell profiling-phase side-channel sidecars on the main
+        // thread; the sharded runtime drives them over the run window while the
+        // sub-cell threads execute (a worker thread never scrapes telemetry).
+        let mut profiling_sidecars: Vec<Rc<dyn aiperf::phase_runtime::ScheduledPhaseSidecar>> =
+            Vec::new();
+        if let Some(server_metrics) = sidecars.server_metrics.as_ref() {
+            profiling_sidecars.push(server_metrics.sidecar(MetricsPhase::Profiling));
+        }
+        if let Some(gpu_telemetry) = sidecars.gpu_telemetry.as_ref() {
+            profiling_sidecars.push(gpu_telemetry.sidecar());
+        }
+        if let Some(network_latency) = sidecars.network_latency.as_ref()
+            && let Some(sidecar) = network_latency.sidecar()
+        {
+            profiling_sidecars.push(sidecar);
+        }
+        let outcome = crate::sharded_scheduled::run_sharded_scheduled(
+            shared,
+            profiling_sidecars,
+            clock.clone(),
+        )
+        .await?;
+        (
+            outcome.captured,
+            outcome.input_sessions,
+            outcome.was_cancelled,
+            outcome.has_warmup,
+            start_ns,
+        )
+    };
     // A cell ships its captured records — each carrying the dense global dispatch
     // ordinal the autonomous issuer stamped — to the controller, which merges every
     // cell's records in global order into the single authoritative report. Absent
@@ -1739,7 +2138,7 @@ async fn execute_native_inner(
             .iter()
             .map(|record| record.ingest.clone())
             .collect();
-        let epoch_ns: i64 = capture.clock.now_ns().saturating_sub(start_ns);
+        let epoch_ns: i64 = clock.now_ns().saturating_sub(start_ns);
         shipper.ship_records(records, epoch_ns)?;
     }
     let gpu_telemetry = sidecars.gpu_telemetry.as_ref();
@@ -1779,10 +2178,7 @@ async fn execute_native_inner(
     let profiling_server_summary = server_metrics.map(|server_metrics| {
         server_metrics.summarize(MetricsPhase::Profiling, metrics_config.slice_duration_ns)
     });
-    let warmup = phased
-        .reports
-        .iter()
-        .any(|report| report.kind == PhaseKind::Warmup)
+    let warmup = has_warmup
         .then(|| accumulator.export_results(&ExportContext::phase(MetricsPhase::Warmup)));
     let warmup_server_summary = server_metrics
         .filter(|_| warmup.is_some())
@@ -1808,7 +2204,7 @@ async fn execute_native_inner(
     }
     if let Some(inputs_path) = &request.artifacts.inputs_path {
         let inputs_path = artifact_path(&request.artifact_dir, inputs_path, "inputs_path")?;
-        write_inputs_json(&inputs_path, &capture.take_input_sessions())?;
+        write_inputs_json(&inputs_path, &input_sessions)?;
     }
     if let (Some(gpu_telemetry), Some(gpu_records_path)) = (gpu_telemetry, gpu_records_path) {
         gpu_telemetry.write_records_jsonl(gpu_records_path)?;
@@ -1841,7 +2237,8 @@ async fn execute_native_inner(
             // orchestrator reports was_cancelled=true alongside the partial
             // results written on a graceful Ctrl+C. The graph path sets this
             // the same way; the scheduled summary previously left it default.
-            was_cancelled: phased.phases.iter().any(|phase| phase.was_cancelled),
+            // Sharded runs OR this across every sub-cell thread.
+            was_cancelled,
             ..ReportSummary::default()
         },
         warmup,
@@ -1932,6 +2329,12 @@ type NativeEndpointExecutionParts<'a> = (
 struct PreparedNativeConversationSourceFactory<'a> {
     endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
     samplers: &'a aiperf::dataset::SamplerRegistry,
+    /// The dataset instance partition this source draws, or `None` to read the
+    /// process-global partition from the environment. `None` is the byte-unchanged
+    /// default for the coordinator (single-process) and multi-process cell paths;
+    /// the thread-per-core sharded runtime injects `Some` per sub-cell thread with
+    /// a partition the process-global `AIPERF_CELL_ID`/`_COUNT` cannot express.
+    cell_partition: Option<ModuloCellPartition>,
 }
 
 impl NativeConversationSourceFactory for PreparedNativeConversationSourceFactory<'_> {
@@ -1946,20 +2349,22 @@ impl NativeConversationSourceFactory for PreparedNativeConversationSourceFactory
         sequential: bool,
     ) -> Result<Box<dyn ConversationSource>> {
         let source = if sequential {
-            NativeDatasetConversationSource::sequential_with_prepared_resolver(
+            NativeDatasetConversationSource::sequential_with_prepared_resolver_for_partition(
                 dataset,
                 model,
                 default_output_tokens,
                 self.endpoint_resolver.clone(),
+                self.cell_partition,
             )?
         } else {
-            NativeDatasetConversationSource::preferred_with_prepared_resolver(
+            NativeDatasetConversationSource::preferred_with_prepared_resolver_for_partition(
                 dataset,
                 model,
                 default_output_tokens,
                 rng_root,
                 self.samplers,
                 self.endpoint_resolver.clone(),
+                self.cell_partition,
             )?
         };
         Ok(Box::new(
@@ -3425,6 +3830,48 @@ impl RunCapture {
         wants_adaptive_record: bool,
         issuance: Rc<dyn IssuanceAuthority>,
     ) -> Self {
+        // The multi-process cell path carries its per-phase global ordinal bases in
+        // the environment (`AIPERF_CELL_PHASE_ORDINAL_BASES`); the single-process
+        // default reads an empty (all-zero) map, so non-cell output is unchanged.
+        Self::new_with_issuance_and_bases(
+            clock,
+            origin_ns,
+            config,
+            raw_enabled,
+            inputs_enabled,
+            wants_live_sink_record,
+            wants_adaptive_record,
+            issuance,
+            crate::cellular_cell::phase_ordinal_bases_from_env(),
+        )
+    }
+
+    /// Same as [`Self::new_with_issuance`] but with the per-phase global ordinal
+    /// bases injected instead of read from the process environment.
+    ///
+    /// A single-process thread-per-core scheduled run (cells == 1, no controller)
+    /// has no `AIPERF_CELL_PHASE_ORDINAL_BASES` env var, yet its `W` sub-cell
+    /// threads still need each phase's global base so profiling ordinals do not
+    /// collide with warmup's `[0, W)` block. The sharded runtime computes the
+    /// bases from the phase `requests` budgets (mirroring
+    /// [`crate::cellular_controller::phase_ordinal_bases`]) and injects the same
+    /// map into every thread's capture. A controller child instead reuses the
+    /// controller-provided env bases (they are already global and
+    /// partition-independent, identical across a cell's threads);
+    /// [`Self::new_with_issuance`] delegates here with the env default so every
+    /// non-sharded call site stays byte-unchanged.
+    #[allow(clippy::too_many_arguments)]
+    fn new_with_issuance_and_bases(
+        clock: Rc<dyn Clock>,
+        origin_ns: i64,
+        config: MetricsConfig,
+        raw_enabled: bool,
+        inputs_enabled: bool,
+        wants_live_sink_record: bool,
+        wants_adaptive_record: bool,
+        issuance: Rc<dyn IssuanceAuthority>,
+        phase_ordinal_bases: HashMap<MetricsPhase, usize>,
+    ) -> Self {
         Self {
             clock,
             origin_ns,
@@ -3441,7 +3888,7 @@ impl RunCapture {
             wants_live_sink_record,
             wants_adaptive_record,
             issuance,
-            phase_ordinal_bases: crate::cellular_cell::phase_ordinal_bases_from_env(),
+            phase_ordinal_bases,
         }
     }
 

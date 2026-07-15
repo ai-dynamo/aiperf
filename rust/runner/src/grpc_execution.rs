@@ -215,7 +215,7 @@ impl PreparedRunnerOperation for PreparedGrpcScheduledOperation {
     fn execute(self: Box<Self>) -> Result<PreparedRunOutcome> {
         let native_report = execute_prepared_native_plan_uncommitted_with_factories(
             self.plan,
-            self.execution_factories.grpc(),
+            self.execution_factories.grpc_handle(),
             self.execution_factories.graph(),
             self.product_registry.as_ref(),
         )?;
