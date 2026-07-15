@@ -18,7 +18,7 @@
 //! the re-root offset arithmetic are otherwise identical.
 
 use crate::graph::model::{GraphRecord, LlmNode, ParsedGraph, START_NODE_ID, StaticEdge};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// The node's recorded arrival offset in microseconds, or `0.0` when absent.
 ///
@@ -177,6 +177,198 @@ fn chop_node_inputs(node: &LlmNode, survivor_out_channels: &BTreeSet<String>) ->
     let mut out = node.clone();
     out.inputs = kept;
     out
+}
+
+/// Chop a segment-trie [`ParsedGraph`] to its extended-warmup handoff frontier.
+///
+/// The extended (cache-pressure) warmup replays the post-`t*` remainder with
+/// zero idle delay; at drain, PROFILING must resume each chain at its first
+/// NOT-yet-executed node rather than re-firing from `t*`. The chop:
+///
+/// * Drops every node with `arrival_offset_us < t_star_us` (pre-`t*` history,
+///   primed by the boundary warmup) AND every node in `executed`
+///   (dispatched-and-returned during warmup/pressure — the server holds their
+///   KV).
+/// * Keeps inter-survivor edges verbatim (recorded pacing resumes past the
+///   frontier).
+/// * Re-roots each surviving node that lost ALL its real predecessors from
+///   `START` with `min_start_delay_us` set to its RESIDUAL delay: for each
+///   dropped predecessor edge, the residual is the recorded gap
+///   `recorded_delay` minus the wall time `max(0, drain_end_wall_us
+///   − return_wall_us[pred])` already spent waiting for the drain, floored at 0.
+///   AND-fan-in takes the max across dropped predecessors, and the result is
+///   clamped to `residual_cap_us` when set. The recorded base uses ONLY
+///   end-anchored quantities (`delay_after_predecessor_us`, edge
+///   `min_start_delay_us`): the ledger wall is the predecessor's RETURN, so a
+///   dispatch-anchored delay (`delay_after_predecessor_start_us` / first-token)
+///   debited from a return-anchored elapsed would over-delay by the pred's live
+///   service time, so start-anchored edges contribute 0 (burst). A dropped
+///   predecessor with no recorded wall contributes 0 (fire immediately).
+/// * Rescopes surviving nodes' AND-fan-in `inputs` exactly like
+///   [`chop_trie_at_tstar`]. A survivor that KEEPS a surviving-pred edge but LOST
+///   a residual-carrying binding edge to the chop is NOT re-rooted; instead that
+///   dropped edge's residual is FOLDED into the node's `min_start_delay_us`
+///   (max-combined with any existing node value). Under
+///   `absolute_start_offsets=True` the executor anchors that node-level gate to
+///   the instance run-start — the same anchor the re-root residuals use.
+///
+/// `return_wall_us` and `drain_end_wall_us` share one monotonic clock (the
+/// warmup strategy's ledger); only differences are meaningful. Unlike
+/// [`chop_trie_at_tstar`], this chop has NO `t_star_us <= 0` early return: at
+/// `t*<=0` every node still passes the arrival test, but `executed` nodes are
+/// STILL dropped and their successors re-rooted at residuals.
+///
+/// Port of `snapshot_chop.py:130-189` (`chop_trie_at_frontier` plus helper
+/// `_frontier_edges`) from branch `ajc/aiperf-graph-ir`. Signature adaptation:
+/// the Python original takes keyword-only `t_star_us: float`, `executed:
+/// frozenset[str]`, `return_wall_us: dict[str, float]`, `drain_end_wall_us:
+/// float`, and `residual_cap_us: float | None`; the Rust port takes the same
+/// arguments positionally as `&HashSet<String>` / `&HashMap<String, f64>` /
+/// `f64` / `Option<f64>`, and reads `arrival_offset_us` from
+/// `metadata["arrival_offset_us"]` (per [`arrival_offset_us`]) rather than a
+/// first-class field. The wall-ledger arguments are retained (NOT dropped to a
+/// bare `(graph, t*, executed)` shape) because the residual pacing they drive is
+/// the whole point of the frontier chop vs the t* chop — Python behavior governs.
+pub fn chop_trie_at_frontier(
+    graph: &ParsedGraph,
+    t_star_us: f64,
+    executed: &HashSet<String>,
+    return_wall_us: &HashMap<String, f64>,
+    drain_end_wall_us: f64,
+    residual_cap_us: Option<f64>,
+) -> ParsedGraph {
+    let old_graph = &graph.graph;
+
+    // Survivors: post-`t*` AND not-yet-executed, in stable node-id order.
+    let survivor_ids: BTreeSet<&str> = old_graph
+        .nodes
+        .iter()
+        .filter(|(nid, node)| {
+            arrival_offset_us(node) >= t_star_us && !executed.contains(nid.as_str())
+        })
+        .map(|(nid, _)| nid.as_str())
+        .collect();
+
+    let (new_edges, kept_pred_residuals) = frontier_edges(
+        &old_graph.edges,
+        &survivor_ids,
+        return_wall_us,
+        drain_end_wall_us,
+        residual_cap_us,
+    );
+
+    let survivor_out_channels: BTreeSet<String> = survivor_ids
+        .iter()
+        .map(|nid| format!("{nid}_out"))
+        .collect();
+
+    let mut rescoped: BTreeMap<String, LlmNode> = BTreeMap::new();
+    for nid in &survivor_ids {
+        let node = &old_graph.nodes[*nid];
+        let mut node = chop_node_inputs(node, &survivor_out_channels);
+        // A dropped binding edge's residual must not vanish just because a
+        // zero-delay join edge from a SURVIVING pred remains: fold it into the
+        // node-level gate, max-combined with any existing node value.
+        if let Some(&residual) = kept_pred_residuals.get(*nid) {
+            node.min_start_delay_us = Some(node.min_start_delay_us.unwrap_or(0.0).max(residual));
+        }
+        rescoped.insert((*nid).to_owned(), node);
+    }
+
+    let mut new_graph = old_graph.clone();
+    new_graph.nodes = rescoped;
+    new_graph.edges = new_edges;
+
+    let mut out = graph.clone();
+    out.graph = new_graph;
+    out
+}
+
+/// Edge set for the handoff chop: keep inter-survivor, re-root at residuals.
+///
+/// Mirrors [`chop_edges`] structurally; the ONLY divergence is the re-root
+/// offset — the t* chop rebases to the recorded absolute offset (`arrival - t*`)
+/// because nothing was replayed yet, while the frontier chop uses the
+/// residual-of-recorded-gap because pressure already consumed the recorded leads.
+///
+/// Returns `(edges, kept_pred_residuals)`. `kept_pred_residuals` maps a survivor
+/// id to the leftover residual of a dropped binding edge whose target ALSO
+/// retains a surviving-pred edge (so it is not re-rooted); the caller folds those
+/// node-level so a dropped binding gap is not lost behind a zero-delay join edge.
+/// Port of `snapshot_chop.py:_frontier_edges`.
+fn frontier_edges(
+    edges: &[StaticEdge],
+    survivors: &BTreeSet<&str>,
+    return_wall_us: &HashMap<String, f64>,
+    drain_end_wall_us: f64,
+    residual_cap_us: Option<f64>,
+) -> (Vec<StaticEdge>, BTreeMap<String, f64>) {
+    let mut kept_edges: Vec<StaticEdge> = Vec::new();
+    let mut has_surviving_pred: BTreeSet<&str> = BTreeSet::new();
+    let mut residual_by_target: BTreeMap<&str, f64> = BTreeMap::new();
+    for edge in edges {
+        let (src, tgt) = (edge.source.as_str(), edge.target.as_str());
+        if !survivors.contains(tgt) {
+            continue;
+        }
+        if src == START_NODE_ID || survivors.contains(src) {
+            kept_edges.push(edge.clone());
+            if src != START_NODE_ID
+                && let Some(id) = survivors.get(tgt)
+            {
+                has_surviving_pred.insert(*id);
+            }
+            continue;
+        }
+        // `src` was dropped (executed / pre-t* history): fold its recorded gap,
+        // minus the wall time already waited since its return, into the target's
+        // re-root offset. END-anchored quantities only (see the doc comment); a
+        // dropped pred with no recorded wall bursts (residual 0).
+        let recorded_us = edge
+            .delay_after_predecessor_us
+            .unwrap_or(0.0)
+            .max(edge.min_start_delay_us.unwrap_or(0.0));
+        let mut residual = match return_wall_us.get(src) {
+            Some(&wall) => (recorded_us - (drain_end_wall_us - wall).max(0.0)).max(0.0),
+            None => 0.0,
+        };
+        if let Some(cap) = residual_cap_us {
+            residual = residual.min(cap);
+        }
+        // `tgt` is a survivor id (checked above); reborrow it so the key
+        // reference outlives this loop iteration.
+        if let Some(id) = survivors.get(tgt) {
+            let slot = residual_by_target.entry(*id).or_insert(0.0);
+            *slot = slot.max(residual);
+        }
+    }
+
+    let mut new_edges: Vec<StaticEdge> = kept_edges
+        .into_iter()
+        // Drop a kept START edge only when its target gained a re-root (lost all
+        // surviving preds) — same De Morgan filter as [`chop_edges`].
+        .filter(|e| e.source != START_NODE_ID || has_surviving_pred.contains(e.target.as_str()))
+        .collect();
+
+    let mut kept_pred_residuals: BTreeMap<String, f64> = BTreeMap::new();
+    for nid in survivors {
+        if !has_surviving_pred.contains(nid) {
+            new_edges.push(StaticEdge {
+                source: START_NODE_ID.to_owned(),
+                target: (*nid).to_owned(),
+                delay_after_predecessor_us: None,
+                min_start_delay_us: Some(residual_by_target.get(nid).copied().unwrap_or(0.0)),
+                delay_after_predecessor_start_us: None,
+                delay_after_predecessor_first_token_us: None,
+            });
+        } else {
+            let residual = residual_by_target.get(nid).copied().unwrap_or(0.0);
+            if residual > 0.0 {
+                kept_pred_residuals.insert((*nid).to_owned(), residual);
+            }
+        }
+    }
+    (new_edges, kept_pred_residuals)
 }
 
 /// The per-session chain key a trie node id belongs to.
@@ -592,5 +784,211 @@ mod tests {
         let warmup = rewrite_for_warmup(&warmup_fixture(), -5.0);
         assert!(warmup.graph.nodes.is_empty());
         assert!(warmup.graph.edges.is_empty());
+    }
+
+    // --- frontier handoff-resume chop (task B3) -------------------------------
+    //
+    // Expected values below were produced by running the VERBATIM Python
+    // frontier chop (`snapshot_chop.py:130-189`: `chop_trie_at_frontier` +
+    // `_frontier_edges`, reusing `_chop_node_inputs`) against a shape-equivalent
+    // standalone fixture — see the task-B3 report and `/tmp/frontier/derive.py`.
+
+    /// Linear chain `n0 -> n1 -> n2 -> n3` at arrivals 0/1e6/2e6/3e6 us, edges
+    /// START->n0, n0->n1, n1->n2, n2->n3, n3->END (each inter-node edge carries
+    /// an end-anchored `delay_after_predecessor_us = 1e6`). Mirrors
+    /// `base_fixture()` in `/tmp/frontier/derive.py`.
+    fn frontier_fixture() -> ParsedGraph {
+        let mut nodes = BTreeMap::new();
+        nodes.insert("n0".to_owned(), node(0, &[]));
+        nodes.insert("n1".to_owned(), node(1_000_000, &["n0_out"]));
+        nodes.insert("n2".to_owned(), node(2_000_000, &["n1_out"]));
+        nodes.insert("n3".to_owned(), node(3_000_000, &["n2_out"]));
+        let edges = vec![
+            edge("START", "n0", None, Some(0.0)),
+            edge("n0", "n1", Some(1_000_000.0), None),
+            edge("n1", "n2", Some(1_000_000.0), None),
+            edge("n2", "n3", Some(1_000_000.0), None),
+            edge("n3", "END", None, None),
+        ];
+        ParsedGraph {
+            graph: GraphRecord {
+                nodes,
+                edges,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    fn set(ids: &[&str]) -> HashSet<String> {
+        ids.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    fn walls(pairs: &[(&str, f64)]) -> HashMap<String, f64> {
+        pairs.iter().map(|(k, v)| ((*k).to_owned(), *v)).collect()
+    }
+
+    #[test]
+    fn frontier_drops_pre_tstar_and_executed_reroots_at_residual() {
+        // t*=1e6 drops n0 (arrival 0 < t*); executed={n1} drops n1 mid-graph.
+        // Survivors n2, n3. n2 lost pred n1 (dropped) -> re-root from START at
+        // residual = max(0, recorded 1e6 - (drain 300 - return 100)) = 999800.
+        let chopped = chop_trie_at_frontier(
+            &frontier_fixture(),
+            1_000_000.0,
+            &set(&["n1"]),
+            &walls(&[("n1", 100.0)]),
+            300.0,
+            None,
+        );
+
+        assert_eq!(
+            chopped.graph.nodes.keys().cloned().collect::<Vec<_>>(),
+            vec!["n2".to_owned(), "n3".to_owned()]
+        );
+        // n2 lost its only pred -> inputs rescoped to empty; n3 keeps n2_out.
+        assert!(chopped.graph.nodes["n2"].inputs.is_empty());
+        assert_eq!(chopped.graph.nodes["n3"].inputs.len(), 1);
+        assert_eq!(chopped.graph.nodes["n3"].inputs[0].channel, "n2_out");
+        // Kept inter-survivor n2->n3 verbatim; re-root START->n2 at residual.
+        assert_eq!(
+            edge_tuples(&chopped),
+            vec![
+                ("n2".to_owned(), "n3".to_owned(), None, Some(1_000_000.0)),
+                ("START".to_owned(), "n2".to_owned(), Some(999_800.0), None),
+            ]
+        );
+    }
+
+    #[test]
+    fn frontier_residual_cap_clamps_reroot_offset() {
+        // Same as above but residual_cap_us=500 clamps 999800 -> 500.
+        let chopped = chop_trie_at_frontier(
+            &frontier_fixture(),
+            1_000_000.0,
+            &set(&["n1"]),
+            &walls(&[("n1", 100.0)]),
+            300.0,
+            Some(500.0),
+        );
+        assert_eq!(
+            edge_tuples(&chopped),
+            vec![
+                ("n2".to_owned(), "n3".to_owned(), None, Some(1_000_000.0)),
+                ("START".to_owned(), "n2".to_owned(), Some(500.0), None),
+            ]
+        );
+    }
+
+    #[test]
+    fn frontier_dropped_pred_without_wall_bursts_at_zero() {
+        // No recorded wall for n1 -> residual 0 (burst).
+        let chopped = chop_trie_at_frontier(
+            &frontier_fixture(),
+            1_000_000.0,
+            &set(&["n1"]),
+            &walls(&[]),
+            300.0,
+            None,
+        );
+        assert_eq!(
+            edge_tuples(&chopped),
+            vec![
+                ("n2".to_owned(), "n3".to_owned(), None, Some(1_000_000.0)),
+                ("START".to_owned(), "n2".to_owned(), Some(0.0), None),
+            ]
+        );
+    }
+
+    #[test]
+    fn frontier_tstar_zero_still_drops_executed_no_early_return() {
+        // Unlike chop_trie_at_tstar, t*<=0 does NOT short-circuit: executed
+        // nodes are still dropped. executed={n0,n2} -> survivors n1, n3.
+        // n1 lost pred n0 (executed) -> residual = max(0, 1e6 - (100-50)) = 999950.
+        // n3 lost pred n2 (executed, no wall) -> residual 0.
+        let chopped = chop_trie_at_frontier(
+            &frontier_fixture(),
+            0.0,
+            &set(&["n0", "n2"]),
+            &walls(&[("n0", 50.0)]),
+            100.0,
+            None,
+        );
+        assert_eq!(
+            chopped.graph.nodes.keys().cloned().collect::<Vec<_>>(),
+            vec!["n1".to_owned(), "n3".to_owned()]
+        );
+        assert!(chopped.graph.nodes["n1"].inputs.is_empty());
+        assert!(chopped.graph.nodes["n3"].inputs.is_empty());
+        assert_eq!(
+            edge_tuples(&chopped),
+            vec![
+                ("START".to_owned(), "n1".to_owned(), Some(999_950.0), None),
+                ("START".to_owned(), "n3".to_owned(), Some(0.0), None),
+            ]
+        );
+    }
+
+    /// AND-fan-in `j` depends on both `a1` (recorded chain pred) and `x` (a
+    /// binding pred). Dropping `x` while `a1` survives exercises the
+    /// fold-into-kept-survivor path: `j` is NOT re-rooted (it keeps a1->j) but
+    /// x->j's residual is folded into `j.min_start_delay_us`. Mirrors
+    /// `fold_fixture()` in `/tmp/frontier/derive.py`.
+    fn fold_fixture() -> ParsedGraph {
+        let mut nodes = BTreeMap::new();
+        nodes.insert("a0".to_owned(), node(0, &[]));
+        nodes.insert("a1".to_owned(), node(1_000_000, &["a0_out"]));
+        nodes.insert("x".to_owned(), node(1_000_000, &[]));
+        nodes.insert("j".to_owned(), node(2_000_000, &["a1_out", "x_out"]));
+        let edges = vec![
+            edge("START", "a0", None, Some(0.0)),
+            edge("a0", "a1", Some(1_000_000.0), None),
+            edge("START", "x", None, Some(1_000_000.0)),
+            edge("a1", "j", Some(500_000.0), None),
+            edge("x", "j", Some(800_000.0), None),
+        ];
+        ParsedGraph {
+            graph: GraphRecord {
+                nodes,
+                edges,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn frontier_folds_dropped_binding_residual_into_kept_survivor() {
+        // t*=5e5 drops a0 (pre-t*); executed={x} drops the binding pred x.
+        // Survivors a1, j. a1 lost pred a0 (pre-t*, no wall) -> re-root residual 0.
+        // j keeps surviving pred a1 (edge a1->j) so is NOT re-rooted; the dropped
+        // x->j residual = max(0, 800000 - (1000-400)) = 799400 folds into
+        // j.min_start_delay_us. j's inputs rescope to just a1_out (x_out dropped).
+        let chopped = chop_trie_at_frontier(
+            &fold_fixture(),
+            500_000.0,
+            &set(&["x"]),
+            &walls(&[("x", 400.0)]),
+            1000.0,
+            None,
+        );
+        assert_eq!(
+            chopped.graph.nodes.keys().cloned().collect::<Vec<_>>(),
+            vec!["a1".to_owned(), "j".to_owned()]
+        );
+        assert!(chopped.graph.nodes["a1"].inputs.is_empty());
+        assert_eq!(chopped.graph.nodes["a1"].min_start_delay_us, None);
+        // j: binding x_out dropped, a1_out kept; residual folded node-level.
+        assert_eq!(chopped.graph.nodes["j"].inputs.len(), 1);
+        assert_eq!(chopped.graph.nodes["j"].inputs[0].channel, "a1_out");
+        assert_eq!(chopped.graph.nodes["j"].min_start_delay_us, Some(799_400.0));
+        // Kept a1->j verbatim; re-root START->a1 at residual 0. No START->j.
+        assert_eq!(
+            edge_tuples(&chopped),
+            vec![
+                ("a1".to_owned(), "j".to_owned(), None, Some(500_000.0)),
+                ("START".to_owned(), "a1".to_owned(), Some(0.0), None),
+            ]
+        );
     }
 }
