@@ -315,8 +315,7 @@ impl Dataset {
                         {
                             continue;
                         }
-                        let turns =
-                            static_endpoint_turns(store, conversation, turn_index, mode)?;
+                        let turns = static_endpoint_turns(store, conversation, turn_index, mode)?;
                         let request = PreparedRequest::new(
                             primary_model_name,
                             &turns,
@@ -1072,7 +1071,10 @@ mod tests {
     fn coexisting_raw_body_and_token_ids_keep_the_token_count_validation() {
         let mut pool = SegmentPool::new();
         let raw = pool
-            .intern_raw(None, Bytes::from_static(br#"{"messages":[],"token_ids":[1,2,3]}"#))
+            .intern_raw(
+                None,
+                Bytes::from_static(br#"{"messages":[],"token_ids":[1,2,3]}"#),
+            )
             .unwrap();
         let token = pool.intern_token_ids(Some(raw), [1_u32, 2, 3]).unwrap();
         let store: Arc<dyn SegmentStore> = Arc::new(pool.freeze());
@@ -1091,7 +1093,10 @@ mod tests {
         )
         .unwrap();
         // Raw leads (dispatch bypass) with the token handle retained after it.
-        assert_eq!(dataset.conversations()[0].turns[0].body.as_slice(), &[raw, token]);
+        assert_eq!(
+            dataset.conversations()[0].turns[0].body.as_slice(),
+            &[raw, token]
+        );
 
         let mut bad = Conversation::new("bad");
         bad.turns.push(Turn {

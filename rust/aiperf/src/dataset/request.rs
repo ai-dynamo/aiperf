@@ -25,11 +25,11 @@ use crate::body_plan::{BodyPlan, JsonBodyMaterializer};
 use crate::dataset::dataset::Dataset;
 use crate::dataset::error::{DatasetError, Result};
 use crate::dataset::materialize::{Overrides, message_wire};
-use smallvec::SmallVec;
 use crate::dataset::model::{
     AccuracyAssociation, Conversation, ConversationContextMode, MediaKind, SessionId, Turn,
 };
 use crate::dataset::segment::{Handle, Payload, SegmentDomain, SegmentStore};
+use smallvec::SmallVec;
 
 /// One fully built dispatch request and its media-free accounting metadata.
 #[derive(Debug, Clone, PartialEq)]
@@ -2037,7 +2037,12 @@ mod tests {
     fn lowered_dispatch_body_is_byte_identical_to_pre_lowering() {
         let mut pool = SegmentPool::new();
         let text = pool
-            .intern_text(None, Role::from("user"), Bytes::from_static(b"hello"), vec![1, 2])
+            .intern_text(
+                None,
+                Role::from("user"),
+                Bytes::from_static(b"hello"),
+                vec![1, 2],
+            )
             .unwrap();
         let image = pool
             .intern_media(
@@ -2070,7 +2075,12 @@ mod tests {
     fn identical_content_turns_dedup_to_one_segment_when_lowered() {
         let mut pool = SegmentPool::new();
         let text = pool
-            .intern_text(None, Role::from("user"), Bytes::from_static(b"same"), vec![9])
+            .intern_text(
+                None,
+                Role::from("user"),
+                Bytes::from_static(b"same"),
+                vec![9],
+            )
             .unwrap();
         let mut conversation = Conversation::new("session");
         conversation.context_mode = Some(ConversationContextMode::MessageArrayWithResponses);
@@ -2184,8 +2194,18 @@ mod tests {
                         for overrides_variant in 0..2 {
                             let mut pool = SegmentPool::new();
                             let turns = vec![
-                                text_turn(&mut pool, b"hello world", with_max_tokens, with_extra_body),
-                                text_turn(&mut pool, b"second turn", with_max_tokens, with_extra_body),
+                                text_turn(
+                                    &mut pool,
+                                    b"hello world",
+                                    with_max_tokens,
+                                    with_extra_body,
+                                ),
+                                text_turn(
+                                    &mut pool,
+                                    b"second turn",
+                                    with_max_tokens,
+                                    with_extra_body,
+                                ),
                             ];
                             let base = single_conversation_dataset(mode, turns, pool);
                             let endpoint = prepare_endpoint(endpoint_id);
@@ -2254,10 +2274,20 @@ mod tests {
         // drops it. The profiling-phase cache must therefore never serve warmup.
         let mut pool = SegmentPool::new();
         let system = pool
-            .intern_text(None, Role::from("system"), Bytes::from_static(b"be terse"), vec![1])
+            .intern_text(
+                None,
+                Role::from("system"),
+                Bytes::from_static(b"be terse"),
+                vec![1],
+            )
             .unwrap();
         let system_turn_text = pool
-            .intern_text(None, Role::from("system"), Bytes::from_static(b"base"), vec![2, 3])
+            .intern_text(
+                None,
+                Role::from("system"),
+                Bytes::from_static(b"base"),
+                vec![2, 3],
+            )
             .unwrap();
         let system_turn = Turn {
             role: Some(Role::from("system")),
@@ -2371,9 +2401,10 @@ mod tests {
             content: smallvec![ContentGroup {
                 kind: MediaKind::Text,
                 name: String::new(),
-                handles: smallvec![pool
-                    .intern_text(None, Role::from("user"), Bytes::from_static(b"ov"), vec![1])
-                    .unwrap()],
+                handles: smallvec![
+                    pool.intern_text(None, Role::from("user"), Bytes::from_static(b"ov"), vec![1])
+                        .unwrap()
+                ],
             }],
             input_tokens: 1,
             ..Turn::default()
@@ -2445,7 +2476,12 @@ mod tests {
     fn same_text_different_media_turns_lower_to_distinct_segments() {
         let mut pool = SegmentPool::new();
         let text = pool
-            .intern_text(None, Role::from("user"), Bytes::from_static(b"look"), vec![9])
+            .intern_text(
+                None,
+                Role::from("user"),
+                Bytes::from_static(b"look"),
+                vec![9],
+            )
             .unwrap();
         let image_a = pool
             .intern_media(None, MediaKind::Image, Bytes::from_static(b"http://a"))

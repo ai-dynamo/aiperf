@@ -918,103 +918,104 @@ pub(crate) fn prepare_dynosim_scheduled(
 
     let tokenizer_spec = lower_authored_tokenizer(&workload.tokenizer, tokenizers.as_ref())?;
     let tokenizer = load_tokenizer(Some(&tokenizer_spec.name))?;
-        let input_token_counter: Arc<dyn InputTokenCounter> = Arc::new(
-            EndpointInputTokenCounter::new(tokenizer.clone(), tokenizer_spec.apply_chat_template),
+    let input_token_counter: Arc<dyn InputTokenCounter> = Arc::new(EndpointInputTokenCounter::new(
+        tokenizer.clone(),
+        tokenizer_spec.apply_chat_template,
+    ));
+    let profile = context.default_endpoint_profile()?;
+    let prepared_endpoint = context
+        .product_registry()
+        .endpoints()
+        .prepare(&profile.endpoint_id, profile.config.clone())
+        .context("preparing offline scheduled endpoint materialization policy")?;
+    let rankings = prepared_endpoint
+        .descriptor()
+        .output_modalities
+        .contains(&Modality::Rankings);
+    let endpoint_descriptor = prepared_endpoint.descriptor();
+    let mut endpoint_table = PreparedEndpointTable::new();
+    let endpoint_key = endpoint_table.push(prepared_endpoint)?;
+    let endpoint_reference = PreparedEndpointReference {
+        key: endpoint_key,
+        endpoint_id: profile.endpoint_id.clone(),
+    };
+    let endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver> = Rc::new(
+        PreparedEndpointTableResolver::single(Rc::new(endpoint_table), endpoint_reference)?,
+    );
+
+    let rng_root = RngRoot::new(run.identity.random_seed);
+    let dataset_context = RunnerDatasetInputContext {
+        registry: context.product_registry(),
+        models: &run.models,
+        run_rng_root: rng_root,
+        tokenizer: tokenizer.as_ref(),
+        rankings,
+        endpoint_descriptor,
+        trace_prompt_storage: Arc::new(HashIdentityTracePromptStorage),
+        media_generator_factory: Arc::new(NativeSyntheticMediaGeneratorFactory::default()),
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("creating offline scheduled preparation runtime")?;
+    let local = tokio::task::LocalSet::new();
+    let prepared_dataset = local
+        .block_on(
+            &runtime,
+            context
+                .dataset_inputs()
+                .load(&workload.dataset, &dataset_context),
+        )
+        .context("loading and validating authored offline scheduled dataset")?;
+    // Offline co-simulation drives no real server, so server usage counts
+    // never arrive; input accounting stays on the client tokenizer.
+    let metrics = metrics_config(&run.metrics, false)?;
+    let model = run
+        .models
+        .items
+        .first()
+        .map(|item| item.name.clone())
+        .ok_or_else(|| anyhow!("dynosim scheduled execution requires a model"))?;
+
+    let adaptive_paths = [
+        Path::new("adaptive_scale_events.jsonl"),
+        Path::new("adaptive_scale_summary.json"),
+    ];
+    for backend_path in [
+        backend.artifacts.report_json.as_deref(),
+        backend.artifacts.per_request_jsonl.as_deref(),
+        backend.artifacts.worker_artifacts_json.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        ensure!(
+            !workload
+                .phases
+                .iter()
+                .any(|phase| phase.common().adaptive_scale.is_some())
+                || !adaptive_paths.contains(&backend_path),
+            "backend artifact path conflicts with an adaptive-scale artifact: {}",
+            backend_path.display()
         );
-        let profile = context.default_endpoint_profile()?;
-        let prepared_endpoint = context
-            .product_registry()
-            .endpoints()
-            .prepare(&profile.endpoint_id, profile.config.clone())
-            .context("preparing offline scheduled endpoint materialization policy")?;
-        let rankings = prepared_endpoint
-            .descriptor()
-            .output_modalities
-            .contains(&Modality::Rankings);
-        let endpoint_descriptor = prepared_endpoint.descriptor();
-        let mut endpoint_table = PreparedEndpointTable::new();
-        let endpoint_key = endpoint_table.push(prepared_endpoint)?;
-        let endpoint_reference = PreparedEndpointReference {
-            key: endpoint_key,
-            endpoint_id: profile.endpoint_id.clone(),
-        };
-        let endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver> = Rc::new(
-            PreparedEndpointTableResolver::single(Rc::new(endpoint_table), endpoint_reference)?,
-        );
+    }
 
-        let rng_root = RngRoot::new(run.identity.random_seed);
-        let dataset_context = RunnerDatasetInputContext {
-            registry: context.product_registry(),
-            models: &run.models,
-            run_rng_root: rng_root,
-            tokenizer: tokenizer.as_ref(),
-            rankings,
-            endpoint_descriptor,
-            trace_prompt_storage: Arc::new(HashIdentityTracePromptStorage),
-            media_generator_factory: Arc::new(NativeSyntheticMediaGeneratorFactory::default()),
-        };
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .context("creating offline scheduled preparation runtime")?;
-        let local = tokio::task::LocalSet::new();
-        let prepared_dataset = local
-            .block_on(
-                &runtime,
-                context
-                    .dataset_inputs()
-                    .load(&workload.dataset, &dataset_context),
-            )
-            .context("loading and validating authored offline scheduled dataset")?;
-        // Offline co-simulation drives no real server, so server usage counts
-        // never arrive; input accounting stays on the client tokenizer.
-        let metrics = metrics_config(&run.metrics, false)?;
-        let model = run
-            .models
-            .items
-            .first()
-            .map(|item| item.name.clone())
-            .ok_or_else(|| anyhow!("dynosim scheduled execution requires a model"))?;
-
-        let adaptive_paths = [
-            Path::new("adaptive_scale_events.jsonl"),
-            Path::new("adaptive_scale_summary.json"),
-        ];
-        for backend_path in [
-            backend.artifacts.report_json.as_deref(),
-            backend.artifacts.per_request_jsonl.as_deref(),
-            backend.artifacts.worker_artifacts_json.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            ensure!(
-                !workload
-                    .phases
-                    .iter()
-                    .any(|phase| phase.common().adaptive_scale.is_some())
-                    || !adaptive_paths.contains(&backend_path),
-                "backend artifact path conflicts with an adaptive-scale artifact: {}",
-                backend_path.display()
-            );
-        }
-
-        Ok(Box::new(PreparedDynosimScheduledOperation {
-            backend,
-            dataset: prepared_dataset,
-            source_factory: DynosimPreparedConversationSourceFactory {
-                endpoint_resolver,
-                samplers: context.product_registry().samplers().clone(),
-            },
-            tokenizer,
-            input_token_counter,
-            phases: workload.phases.clone(),
-            metrics,
-            model,
-            rng_root,
-            artifact_target: run.artifact_target.clone(),
-            benchmark_id: run.identity.benchmark_id.clone(),
-        }))
+    Ok(Box::new(PreparedDynosimScheduledOperation {
+        backend,
+        dataset: prepared_dataset,
+        source_factory: DynosimPreparedConversationSourceFactory {
+            endpoint_resolver,
+            samplers: context.product_registry().samplers().clone(),
+        },
+        tokenizer,
+        input_token_counter,
+        phases: workload.phases.clone(),
+        metrics,
+        model,
+        rng_root,
+        artifact_target: run.artifact_target.clone(),
+        benchmark_id: run.identity.benchmark_id.clone(),
+    }))
 }
 
 fn validated_scheduled_workload(
@@ -1480,58 +1481,58 @@ pub(crate) fn prepare_dynosim_graph(
     let backend = validated_dynosim_transport(transport.as_ref())?.clone();
     let workload = validated_graph_workload(workload.as_ref())?;
     let phases = workload.phases.clone();
-        ensure!(
-            run.models.items.len() == 1
-                && matches!(run.models.strategy, ModelSelectionStrategy::RoundRobin),
-            "dynosim direct graph requires exactly one round_robin model"
-        );
-        ensure!(
-            run.artifacts.records_path.is_none()
-                && run.artifacts.raw_path.is_none()
-                && run.artifacts.outputs_path.is_none()
-                && !run.artifacts.trace
-                && run.artifacts.user_files.is_empty(),
-            "dynosim direct graph does not yet project common request/raw/output/user-file artifacts; use backend Dynamo artifacts or disable them"
-        );
-        // The artifact target directory may already exist: the Python CLI
-        // creates it for its own logs before launching the runner, exactly as on
-        // the online HTTP path. Each backend-owned Dynamo artifact still rejects
-        // a pre-existing file of its own name in `emit_backend_artifacts`, so no
-        // output is silently overwritten.
-        let model = run.models.items[0].name.clone();
-        let tokenizer_spec = lower_authored_tokenizer(&workload.tokenizer, tokenizers.as_ref())?;
-        let tokenizer = load_tokenizer(Some(&tokenizer_spec.name))?;
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .context("creating direct graph preparation runtime")?;
-        let prepared = runtime
-            .block_on(context.graph_inputs().load(
-                &workload.dataset,
-                &RunnerGraphInputContext {
-                    tokenizer: tokenizer.as_ref(),
-                    run_random_seed: run.identity.random_seed,
-                },
-            ))
-            .context("loading direct authored Graph-IR input")?;
-        let metrics = offline_metrics_config(&run.metrics)?;
-        let default_max_tokens = prepared.default_output_tokens;
-        let allow_dataset_wrap = prepared.allow_dataset_wrap;
-        let random_seed = prepared.random_seed.or(run.identity.random_seed);
-        Ok(Box::new(PreparedDynosimGraphOperation {
-            backend,
-            input: prepared.bundle,
-            phases,
-            metrics,
-            model,
-            benchmark_id: run.identity.benchmark_id.clone(),
-            random_seed,
-            artifact_target: run.artifact_target.clone(),
-            default_max_tokens,
-            allow_dataset_wrap,
-            worker_count: workload.worker_count,
-            phase_count: workload.phases.len(),
-        }))
+    ensure!(
+        run.models.items.len() == 1
+            && matches!(run.models.strategy, ModelSelectionStrategy::RoundRobin),
+        "dynosim direct graph requires exactly one round_robin model"
+    );
+    ensure!(
+        run.artifacts.records_path.is_none()
+            && run.artifacts.raw_path.is_none()
+            && run.artifacts.outputs_path.is_none()
+            && !run.artifacts.trace
+            && run.artifacts.user_files.is_empty(),
+        "dynosim direct graph does not yet project common request/raw/output/user-file artifacts; use backend Dynamo artifacts or disable them"
+    );
+    // The artifact target directory may already exist: the Python CLI
+    // creates it for its own logs before launching the runner, exactly as on
+    // the online HTTP path. Each backend-owned Dynamo artifact still rejects
+    // a pre-existing file of its own name in `emit_backend_artifacts`, so no
+    // output is silently overwritten.
+    let model = run.models.items[0].name.clone();
+    let tokenizer_spec = lower_authored_tokenizer(&workload.tokenizer, tokenizers.as_ref())?;
+    let tokenizer = load_tokenizer(Some(&tokenizer_spec.name))?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("creating direct graph preparation runtime")?;
+    let prepared = runtime
+        .block_on(context.graph_inputs().load(
+            &workload.dataset,
+            &RunnerGraphInputContext {
+                tokenizer: tokenizer.as_ref(),
+                run_random_seed: run.identity.random_seed,
+            },
+        ))
+        .context("loading direct authored Graph-IR input")?;
+    let metrics = offline_metrics_config(&run.metrics)?;
+    let default_max_tokens = prepared.default_output_tokens;
+    let allow_dataset_wrap = prepared.allow_dataset_wrap;
+    let random_seed = prepared.random_seed.or(run.identity.random_seed);
+    Ok(Box::new(PreparedDynosimGraphOperation {
+        backend,
+        input: prepared.bundle,
+        phases,
+        metrics,
+        model,
+        benchmark_id: run.identity.benchmark_id.clone(),
+        random_seed,
+        artifact_target: run.artifact_target.clone(),
+        default_max_tokens,
+        allow_dataset_wrap,
+        worker_count: workload.worker_count,
+        phase_count: workload.phases.len(),
+    }))
 }
 
 fn validated_graph_workload(

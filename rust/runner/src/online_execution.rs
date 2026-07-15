@@ -220,7 +220,9 @@ impl RunnerWorkloadFactory for ScheduledWorkloadFactoryV2 {
                 #[cfg(not(feature = "dynosim"))]
                 {
                     let _ = (run, context, workload);
-                    anyhow::bail!("transport {_transport_id:?} does not support the scheduled workload");
+                    anyhow::bail!(
+                        "transport {_transport_id:?} does not support the scheduled workload"
+                    );
                 }
             }
         }
@@ -286,7 +288,9 @@ impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
                     "online graph execution requires exactly one default model"
                 );
                 validate_authored_tokenizer(&workload.tokenizer)?;
-                context.graph_inputs().validate_identity(&workload.dataset)?;
+                context
+                    .graph_inputs()
+                    .validate_identity(&workload.dataset)?;
                 let _ = transport_id;
                 Ok(())
             }
@@ -320,8 +324,13 @@ impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
                     NativeTransportSelection::Http => GraphTransportKind::Http,
                     NativeTransportSelection::Grpc => GraphTransportKind::Grpc,
                 };
-                let plan =
-                    lower_graph(run, context, workload, self.tokenizers.as_ref(), transport_kind)?;
+                let plan = lower_graph(
+                    run,
+                    context,
+                    workload,
+                    self.tokenizers.as_ref(),
+                    transport_kind,
+                )?;
                 prepare_native_operation(run, context, plan, selection)
             }
             None => {
@@ -336,7 +345,9 @@ impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
                 #[cfg(not(feature = "dynosim"))]
                 {
                     let _ = (run, context, workload);
-                    anyhow::bail!("transport {_transport_id:?} does not support the graph workload");
+                    anyhow::bail!(
+                        "transport {_transport_id:?} does not support the graph workload"
+                    );
                 }
             }
         }
@@ -399,7 +410,8 @@ impl RunnerWorkloadFactory for StaticAccuracyWorkloadFactoryV2 {
             run.models.items.len() == 1,
             "static accuracy execution currently requires exactly one model"
         );
-        let workload = workload_config::<StaticAccuracyWorkloadConfigV2>(workload, "static_accuracy")?;
+        let workload =
+            workload_config::<StaticAccuracyWorkloadConfigV2>(workload, "static_accuracy")?;
         validate_authored_tokenizer(&workload.tokenizer)?;
         StaticAccuracyConfigV2::decode(&workload.accuracy).map(drop)
     }
@@ -419,8 +431,10 @@ impl RunnerWorkloadFactory for StaticAccuracyWorkloadFactoryV2 {
             ),
             "static accuracy execution runs only over the http transport"
         );
-        let workload =
-            workload_config::<StaticAccuracyWorkloadConfigV2>(workload.as_ref(), "static_accuracy")?;
+        let workload = workload_config::<StaticAccuracyWorkloadConfigV2>(
+            workload.as_ref(),
+            "static_accuracy",
+        )?;
         let plan = lower_static_accuracy(
             run,
             context,

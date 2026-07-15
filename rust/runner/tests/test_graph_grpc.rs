@@ -423,7 +423,9 @@ async fn graph_dag_dispatches_over_native_grpc() {
         requests.len()
     );
     assert!(
-        requests.iter().all(|request| request.model_name == "graph-model"),
+        requests
+            .iter()
+            .all(|request| request.model_name == "graph-model"),
         "all graph nodes dispatch the configured model over gRPC"
     );
     assert!(
@@ -439,16 +441,14 @@ async fn graph_dag_dispatches_over_native_grpc() {
     );
 
     // The report folds per-node records: three graph nodes → three requests.
-    let report: Value = serde_json::from_slice(
-        &std::fs::read(artifact_dir.join("native-v2.json")).unwrap(),
-    )
-    .unwrap();
+    let report: Value =
+        serde_json::from_slice(&std::fs::read(artifact_dir.join("native-v2.json")).unwrap())
+            .unwrap();
     assert_eq!(report["run"]["transport"], "grpc");
     assert_eq!(report["run"]["workload"], "graph");
     assert_eq!(report["run"]["mode"], "graph");
     assert_eq!(
-        report["metrics"]["request_count"]["series"][0]["stats"]["total"],
-        3.0,
+        report["metrics"]["request_count"]["series"][0]["stats"]["total"], 3.0,
         "graph-over-gRPC report must carry one record per dispatched node"
     );
 
