@@ -12,6 +12,7 @@
 //! The library target exists so both the `aiperf` binary and the integration
 //! tests share the same wire DTOs and projection code (see [`wire`]).
 
+pub mod config;
 pub mod delegate;
 pub mod dispatch;
 pub mod execute;

@@ -521,12 +521,14 @@ impl Benchmark {
 
         // DynoSim endpoints default to the `dynosim` dialect when the author
         // leaves `endpoint.type` unset (mirrors `default_dynosim_endpoint_dialect`).
+        // Endpoint dialect defaults to `chat` (Python `EndpointConfig.type`), or
+        // `dynosim` under a DynoSim transport.
         let endpoint_type = self
             .endpoint
             .endpoint_type
             .clone()
             .or_else(|| is_dynosim.then(|| "dynosim".to_string()))
-            .ok_or_else(|| anyhow::anyhow!("endpoint.type is required"))?;
+            .unwrap_or_else(|| "chat".to_string());
 
         // DynoSim opens no sockets: inject the `dynosim://offline` sentinel when
         // no URL is authored (mirrors `inject_dynosim_placeholder_url`).
