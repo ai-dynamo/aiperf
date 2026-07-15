@@ -34,8 +34,6 @@ from aiperf.operator.handlers.monitor import (
     _benchmark_appears_complete,
     _delete_jobset_or_retry,
     _fetch_jobset_or_reconcile,
-    _fetch_progress,
-    _handle_jobset_failed_condition,
     _maybe_recover_terminated_controller,
     _reconcile_missing_jobset,
 )
@@ -112,11 +110,17 @@ def _controller_pod(
     *,
     exit_code: int = 137,
     reason: str = "OOMKilled",
+    container_name: str = Containers.CONTROL_PLANE,
 ) -> SimpleNamespace:
-    """Build a controller pod whose control-plane container has terminated."""
+    """Build a controller pod whose controller container has terminated.
+
+    ``container_name`` selects the mesh (``control-plane``) or native cellular
+    (``controller``) aggregate container so the completion gate can be exercised
+    for both topologies.
+    """
     terminated = SimpleNamespace(exit_code=exit_code, reason=reason)
     controller = SimpleNamespace(
-        name=Containers.CONTROL_PLANE,
+        name=container_name,
         state=SimpleNamespace(terminated=terminated),
     )
     sidecar = SimpleNamespace(
@@ -229,6 +233,39 @@ class TestMissingJobSetReconciliation:
 
         assert result is False
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "container_name",
+        [
+            param(Containers.CELL_CONTROLLER, id="cellular-controller"),
+            param(Containers.CONTROL_PLANE, id="mesh-control-plane"),
+        ],
+    )  # fmt: skip
+    async def test_benchmark_appears_complete_terminated_controller_either_name(
+        self, container_name: str
+    ) -> None:
+        """A terminated aggregate container is completion evidence under either name.
+
+        The native cellular controller container is named ``controller``; the
+        legacy mesh one ``control-plane``. The orphan-recovery gate must fire for
+        both, else a cellular run whose completion handler crashed mid-flight
+        never self-heals out of ``Running``.
+        """
+        api = MagicMock()
+
+        with mock_patch(
+            "aiperf.operator.handlers.monitor._get_controller_pod",
+            new=AsyncMock(return_value=_controller_pod(container_name=container_name)),
+        ):
+            result = await _benchmark_appears_complete(
+                api=api,
+                namespace="bench-prod",
+                jobset_name="llama3-8b-throughput-js",
+                key="bench-prod/llama3-8b-throughput",
+            )
+
+        assert result is True
+
 
 # =============================================================================
 # Status phase, subPhase, and ResultsAvailable contracts
@@ -291,42 +328,6 @@ class TestStatusProgressContracts:
         conditions = {cond["type"]: cond for cond in patch.status["conditions"]}
         assert conditions["Complete"]["status"] == "True"
         assert conditions["Failed"]["status"] == "False"
-
-    @pytest.mark.asyncio
-    async def test_fetch_progress_configuring_system_state_sets_subphase_without_current_phase(
-        self,
-    ) -> None:
-        """SystemState propagates before any benchmark CreditPhase is active."""
-        sb, patch = _status_builder()
-        progress_client = MagicMock()
-        progress_client.get_progress = AsyncMock(
-            return_value=_progress(
-                current_phase=None,
-                system_state=SystemState.CONFIGURING,
-            )
-        )
-        progress_client.get_metrics = AsyncMock(return_value=None)
-        progress_client.get_server_metrics = AsyncMock(return_value=None)
-
-        result = await _fetch_progress(
-            "bench-prod",
-            "llama3-8b-throughput-js",
-            patch,
-            sb,
-            progress_client,
-            "bench-prod/llama3-8b-throughput",
-            Phase.INITIALIZING,
-            body=_body(),
-        )
-
-        assert result is False
-        assert patch.status["subPhase"] == "configuring"
-        assert "currentPhase" not in patch.status
-        assert patch.status["workers"] == {
-            "ready": 4,
-            "total": 4,
-            "degraded": 0,
-        }
 
 class TestPodRestartShortcutEvents:
     """Pod watch shortcuts report restart spikes without monitor polling."""

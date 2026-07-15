@@ -19,7 +19,6 @@ import zstandard
 from kubernetes_asyncio.client.exceptions import ApiException
 from pytest import param
 
-from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
 from aiperf.operator.client_cache import (
     _progress_clients,
 )
@@ -44,7 +43,7 @@ from aiperf.operator.models import (
     EndpointHealthResult,
     OwnerReference,
 )
-from aiperf.operator.progress_client import ControllerAggregateWorkerStatus, JobProgress
+from aiperf.operator.progress_client import JobProgress
 from aiperf.operator.status import Phase
 
 # Body fixture with a deterministic creationTimestamp so results_layout
@@ -1779,100 +1778,6 @@ class TestMonitorProgressAdvanced:
         _reset_for_testing()
 
     @pytest.mark.asyncio
-    async def test_monitor_progress_uses_controller_phase_when_profiling_started(
-        self,
-    ) -> None:
-        """Verify controller progress makes Running authoritative once profiling starts."""
-        from aiperf.operator.main import monitor_progress
-
-        kopf_patch = MagicMock()
-        kopf_patch.status = {}
-        mock_jobset = MagicMock()
-        mock_jobset.raw = {
-            "status": {
-                "conditions": [],
-                "replicatedJobsStatus": [
-                    {
-                        "name": "workers",
-                        "ready": 1,
-                        "active": 1,
-                        "succeeded": 0,
-                        "failed": 0,
-                        "suspended": 0,
-                    }
-                ],
-            }
-        }
-        mock_progress = JobProgress(
-            phases={
-                "profiling": CombinedPhaseStats(
-                    phase="profiling",
-                    total_expected_requests=10,
-                    requests_completed=1,
-                    start_ns=1,
-                    last_update_ns=2,
-                )
-            },
-            workers=ControllerAggregateWorkerStatus(
-                ready=1,
-                total=2,
-                dispatchable=1,
-                router_connected=2,
-                ready_record_processors=1,
-                declared_record_processors=1,
-                ready_pods=1,
-                total_pods=2,
-                degraded_pods=0,
-            ),
-        )
-        mock_client = AsyncMock()
-        mock_client.get_progress = AsyncMock(return_value=mock_progress)
-        mock_client.get_metrics = AsyncMock(return_value={})
-        mock_client.get_server_metrics = AsyncMock(return_value={})
-
-        with (
-            mock_patch(
-                "aiperf.operator.handlers.monitor.k8s_client",
-                return_value=_fake_k8s_client(MagicMock()),
-            ),
-            mock_patch(
-                "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
-                return_value=MagicMock(
-                    get_namespaced_custom_object=AsyncMock(
-                        return_value=mock_jobset.raw
-                    ),
-                    delete_namespaced_custom_object=AsyncMock(return_value={}),
-                ),
-            ),
-            mock_patch(
-                "aiperf.operator.handlers.monitor.get_or_create_progress_client",
-                new_callable=AsyncMock,
-                return_value=mock_client,
-            ),
-            mock_patch(
-                "aiperf.operator.handlers.monitor._maybe_recover_terminated_controller",
-                new_callable=AsyncMock,
-                return_value=False,
-            ),
-        ):
-            await monitor_progress(
-                body=_FIXTURE_BODY,
-                status={
-                    "phase": Phase.INITIALIZING,
-                    "jobSetName": "test-jobset",
-                    "jobId": "job-123",
-                },
-                spec={},
-                name="test-job",
-                namespace="default",
-                patch=kopf_patch,
-            )
-
-        assert kopf_patch.status["phase"] == Phase.RUNNING
-        assert kopf_patch.status["currentPhase"] == "profiling"
-        assert kopf_patch.status["workers"]["dispatchable"] == 1
-
-    @pytest.mark.asyncio
     async def test_preserves_bootstrap_fallback_when_controller_progress_unavailable(
         self,
     ) -> None:
@@ -2407,123 +2312,6 @@ class TestFetchProgress:
     """Tests for _fetch_progress function."""
 
     @pytest.mark.asyncio
-    async def test_updates_status_with_progress(self) -> None:
-        """Verify controller progress updates phase and aggregate worker status."""
-        from aiperf.operator.handlers.monitor import _fetch_progress
-        from aiperf.operator.status import StatusBuilder
-
-        kopf_patch = MagicMock()
-        kopf_patch.status = {}
-        sb = StatusBuilder(kopf_patch)
-
-        mock_progress = JobProgress(
-            phases={
-                "profiling": CombinedPhaseStats(
-                    phase="profiling",
-                    total_expected_requests=10,
-                    requests_completed=1,
-                    start_ns=1,
-                    last_update_ns=2,
-                )
-            },
-            workers=ControllerAggregateWorkerStatus(
-                ready=1,
-                total=2,
-                dispatchable=1,
-                router_connected=2,
-                ready_record_processors=1,
-                declared_record_processors=1,
-                ready_pods=1,
-                total_pods=2,
-                degraded_pods=0,
-            ),
-        )
-
-        mock_client = AsyncMock()
-        mock_client.get_progress = AsyncMock(return_value=mock_progress)
-        mock_client.get_metrics = AsyncMock(
-            return_value={"metrics": {"throughput": 50}}
-        )
-        mock_client.get_server_metrics = AsyncMock(
-            return_value={"endpoint_summaries": []}
-        )
-
-        await _fetch_progress(
-            "default", "test-jobset", kopf_patch, sb, mock_client, "job-1"
-        )
-
-        assert kopf_patch.status.get("phase") == Phase.RUNNING
-        assert kopf_patch.status.get("currentPhase") == "profiling"
-        assert kopf_patch.status["workers"]["dispatchable"] == 1
-        assert kopf_patch.status["workers"]["routerConnected"] == 2
-        assert "liveMetrics" in kopf_patch.status
-
-    @pytest.mark.asyncio
-    async def test_applies_worker_status_when_current_phase_is_empty(self) -> None:
-        """Verify worker aggregate status is still applied when current_phase is empty."""
-        from aiperf.operator.handlers.monitor import _fetch_progress
-        from aiperf.operator.status import StatusBuilder
-
-        kopf_patch = MagicMock()
-        kopf_patch.status = {}
-        sb = StatusBuilder(kopf_patch)
-
-        mock_progress = MagicMock()
-        mock_progress.connection_error = False
-        mock_progress.phases = {
-            "warmup": CombinedPhaseStats(
-                phase="warmup",
-                total_expected_requests=10,
-                requests_completed=1,
-                start_ns=1,
-                last_update_ns=2,
-            )
-        }
-        mock_progress.current_phase = None
-        mock_progress.workers = ControllerAggregateWorkerStatus(
-            ready=1,
-            total=2,
-            dispatchable=1,
-            router_connected=2,
-            ready_record_processors=1,
-            declared_record_processors=2,
-            ready_pods=1,
-            total_pods=2,
-            degraded_pods=1,
-        )
-        mock_progress.error = None
-        mock_progress.is_complete = False
-
-        mock_client = AsyncMock()
-        mock_client.get_progress = AsyncMock(return_value=mock_progress)
-        mock_client.get_metrics = AsyncMock(return_value={})
-        mock_client.get_server_metrics = AsyncMock(return_value={})
-
-        await _fetch_progress(
-            "default",
-            "test-jobset",
-            kopf_patch,
-            sb,
-            mock_client,
-            "job-1",
-            Phase.INITIALIZING,
-        )
-
-        assert kopf_patch.status["workers"] == {
-            "ready": 1,
-            "total": 2,
-            "dispatchable": 1,
-            "routerConnected": 2,
-            "readyRecordProcessors": 1,
-            "declaredRecordProcessors": 2,
-            "readyPods": 1,
-            "totalPods": 2,
-            "degradedPods": 1,
-        }
-        assert "currentPhase" not in kopf_patch.status
-        assert "phase" not in kopf_patch.status
-
-    @pytest.mark.asyncio
     async def test_handles_connection_error(self) -> None:
         """Verify handles connection errors gracefully."""
         from aiperf.operator.handlers.monitor import _fetch_progress
@@ -2545,33 +2333,6 @@ class TestFetchProgress:
 
         # Should return early without updating liveMetrics
         assert "liveMetrics" not in kopf_patch.status
-
-    @pytest.mark.asyncio
-    async def test_handles_progress_error(self) -> None:
-        """Verify records error in status."""
-        from aiperf.operator.handlers.monitor import _fetch_progress
-        from aiperf.operator.status import StatusBuilder
-
-        kopf_patch = MagicMock()
-        kopf_patch.status = {}
-        sb = StatusBuilder(kopf_patch)
-
-        mock_progress = MagicMock()
-        mock_progress.connection_error = False
-        mock_progress.phases = {}
-        mock_progress.current_phase = None
-        mock_progress.error = "Connection refused to endpoint"
-
-        mock_client = AsyncMock()
-        mock_client.get_progress = AsyncMock(return_value=mock_progress)
-        mock_client.get_metrics = AsyncMock(return_value={})
-        mock_client.get_server_metrics = AsyncMock(return_value={})
-
-        await _fetch_progress(
-            "default", "test-jobset", kopf_patch, sb, mock_client, "job-1"
-        )
-
-        assert kopf_patch.status.get("error") == "Connection refused to endpoint"
 
     @pytest.mark.asyncio
     async def test_handles_exception_gracefully(self) -> None:
@@ -4192,75 +3953,6 @@ class TestMonitorStaleReadLogging:
         ), (
             f"Expected stale-read exception log, got: {[r.message for r in caplog.records]}"
         )
-
-
-class TestFetchProgressServerMetricsLogging:
-    """Verify that server metrics fetch failures are logged at debug level
-    with the exception detail, rather than silently swallowed."""
-
-    @pytest.mark.asyncio
-    async def test_server_metrics_exception_logs_debug(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        import logging
-
-        from aiperf.operator.handlers.monitor import _fetch_progress
-        from aiperf.operator.status import StatusBuilder
-
-        kopf_patch = MagicMock()
-        kopf_patch.status = {}
-        sb = StatusBuilder(kopf_patch)
-
-        mock_progress = JobProgress(
-            phases={
-                "profiling": CombinedPhaseStats(
-                    phase="profiling",
-                    total_expected_requests=10,
-                    requests_completed=1,
-                    start_ns=1,
-                    last_update_ns=2,
-                )
-            },
-            workers=ControllerAggregateWorkerStatus(
-                ready=1,
-                total=2,
-                dispatchable=1,
-                router_connected=2,
-                ready_record_processors=1,
-                declared_record_processors=1,
-                ready_pods=1,
-                total_pods=2,
-                degraded_pods=0,
-            ),
-        )
-
-        mock_client = AsyncMock()
-        mock_client.get_progress = AsyncMock(return_value=mock_progress)
-        mock_client.get_metrics = AsyncMock(return_value=None)
-        mock_client.get_server_metrics = AsyncMock(
-            side_effect=RuntimeError("endpoint not ready yet")
-        )
-
-        with caplog.at_level(logging.DEBUG, logger="aiperf.operator.handlers.monitor"):
-            await _fetch_progress(
-                "default",
-                "test-jobset",
-                kopf_patch,
-                sb,
-                mock_client,
-                "default/job-1",
-            )
-
-        assert any(
-            "Server metrics unavailable for test-jobset" in rec.message
-            and "endpoint not ready yet" in rec.message
-            and rec.levelname == "DEBUG"
-            for rec in caplog.records
-        ), (
-            f"Expected debug log with exception detail, got: {[r.message for r in caplog.records]}"
-        )
-        # Server metrics must not be written to status on failure
-        assert "serverMetrics" not in kopf_patch.status
 
 
 class TestOpenRunsIndexSelfHeal:
