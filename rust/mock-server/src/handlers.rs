@@ -119,7 +119,7 @@ impl RequestCtx {
         // concurrency knobs, or routes through the scheduler when enabled.
         let active_inflight = (state.recorder.inflight_count().max(0) as usize) + 1;
         let latency_sim = LatencySimulator::new(
-            start,
+            state.clock_anchor,
             &state.config,
             usage.prompt_tokens,
             tokenized.count(),

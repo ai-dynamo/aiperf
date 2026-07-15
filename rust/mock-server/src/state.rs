@@ -6,6 +6,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use aiperf::clock::RealClockAnchor;
 use parking_lot::Mutex;
 
 use crate::config::MockServerConfig;
@@ -19,6 +20,11 @@ pub struct AppState {
     pub recorder: MetricRecorder,
     pub dcgm: DcgmPool,
     pub start_instant: Instant,
+    /// Monotonic `RealClock` timeline anchor for this process. Latency injection
+    /// reads `now_ns` off this anchor and sleeps via the RealClock `timerfd`
+    /// primitive ([`aiperf::clock::sleep_ns`]), so the mock's TTFT/ITL pacing has
+    /// nanosecond resolution instead of `tokio::time`'s 1 ms wheel.
+    pub clock_anchor: RealClockAnchor,
     pub start_wallclock: std::time::SystemTime,
     pub error_rng: Mutex<ErrorRng>,
     /// Step-based batched scheduler, present only when `--scheduler-enabled`.
@@ -70,6 +76,7 @@ impl AppState {
             recorder,
             dcgm: dcgm_pool,
             start_instant: Instant::now(),
+            clock_anchor: RealClockAnchor::now(),
             start_wallclock: std::time::SystemTime::now(),
             scheduler,
             prefix_cache,

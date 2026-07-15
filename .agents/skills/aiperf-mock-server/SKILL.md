@@ -149,6 +149,50 @@ throughput, admit jitter) — read `rust/mock-server/src/config.rs` for the full
 set with inline rationale. `--fast` disables the scheduler, so don't combine
 them.
 
+## Multi-process load balancer (`--processes N`)
+
+A single server process shares one tokio runtime; at very high request rates the
+runtime scheduler / allocator can become the ceiling. `--processes N` (N > 1)
+turns the launched binary into a **lightweight L4 (TCP) round-robin load
+balancer**: it binds the public `--host:--port`, spawns `N` child
+`aiperf-mock-server` processes (the same binary, carrying the exact same config)
+on internal loopback ports, and splices each accepted connection to the next
+backend in rotation. The client sees the identical OpenAI-compatible frontend on
+**one URL** — HTTP/1.1 keep-alive, HTTP/2, and SSE streaming all pass through
+untouched, because the balancer never parses HTTP.
+
+```bash
+# 4 backend processes behind one round-robin front door on :8000.
+./target/release/aiperf-mock-server --processes 4 --no-tokenizer --port 8000
+# --processes 0 = auto = one process per CPU.
+```
+
+- **When to use it:** you have saturated a single mock process (it is CPU-bound
+  on one runtime) and want more aggregate throughput on a many-core box.
+- **Worker threads auto-divide:** with `--workers` on its default (auto), each
+  child gets `max(1, nproc / processes)` tokio workers, so the total worker count
+  stays bounded rather than `N × nproc`. An explicit `--workers` is honored
+  per-child.
+- **Round-robin is per connection, not per request** (the cheapest, HTTP-blind
+  distribution). A benchmark driving concurrency `C` opens ~`C` keep-alive
+  connections, which spread evenly across the `N` backends as long as `C >= N`
+  (the intended regime); below that some backends idle.
+- **Lifecycle:** the balancer health-gates every child before opening the public
+  port, tears everything down on Ctrl-C, and fails fast if any child dies. On
+  Linux children also get `PR_SET_PDEATHSIG`, so they are reaped even if the
+  balancer is `SIGKILL`ed. `--processes 1` (the default) is the unchanged
+  single-process path.
+
+## Timer precision (timerfd)
+
+Latency injection (TTFT/ITL pacing, scheduler step cadence) runs on the `aiperf`
+`RealClock` backend: waits use a `CLOCK_MONOTONIC` **`timerfd`** awaited through
+tokio's IO reactor (`aiperf::clock::sleep_ns`), giving nanosecond resolution
+instead of `tokio::time`'s ~1 ms timer wheel (which would quantize a 5 ms ITL by
+~20%). This matters whenever you set sub-10 ms `--itl` / `--ttft` or a small
+`--scheduler-step-ms`; it is transparent otherwise. Non-Linux platforms fall back
+to `tokio::time` (coarser).
+
 ## What the server exposes
 
 All routes are registered in `rust/mock-server/src/app.rs`. Highlights:
@@ -173,6 +217,7 @@ All routes are registered in `rust/mock-server/src/app.rs`. Highlights:
 | `-f, --fast` | off | Zero all latency; bypass scheduler + cache |
 | `--no-tokenizer` | off | Skip HF tokenizer load (avoids network download) |
 | `-w, --workers` | 0 (=nproc) | Tokio worker threads |
+| `--processes` | 1 | Spawn N child servers behind an L4 round-robin balancer (0=nproc) |
 | `-v, --verbose` | off | DEBUG logging (also `--log-level DEBUG`) |
 | `--access-logs` | off | Per-request access logging |
 | `--models a,b` | built-in list | Pre-advertise models on `/v1/models` |
@@ -192,11 +237,55 @@ don't need real routes/latency/token behavior:
 
 ```bash
 rustc -O rust/mock-server/tools/fastmock.rs -o /tmp/fastmock
-/tmp/fastmock 8131   # listens on 127.0.0.1:8131
+/tmp/fastmock 8131                       # 127.0.0.1:8131, one accept thread (baseline)
+/tmp/fastmock 8131 --threads 4           # 4 accept threads share one listener, same process
+/tmp/fastmock 8131 --procs 4             # 4 SO_REUSEPORT processes on :8131 (kernel-balanced)
+/tmp/fastmock 8131 --procs 4 --threads 2 # compose: 4 processes × 2 accept threads
 ```
 
+`fastmock` scales two ways without any proxy hop (both `0` = auto = CPU count):
+
+- `--threads M` — M concurrent `accept()` threads over one shared listener, lifting
+  the single-accept-loop ceiling in one process with zero added latency.
+- `--procs N` — N independent server processes bound to the same port via
+  `SO_REUSEPORT`; the kernel spreads new connections across them (true
+  multi-process sharing, no L4 proxy in the data path — the right fit for a
+  lowest-overhead target). The leader supervises the children and, on Linux,
+  sets `PR_SET_PDEATHSIG` so they never orphan. Linux-only; elsewhere `--procs`
+  degrades to a plain bind.
+
+Prefer these over fronting `fastmock` with the `aiperf-mock-server --processes N`
+balancer: that balancer re-execs `aiperf-mock-server` (not `fastmock`) and adds a
+byte-splicing hop that undercuts `fastmock`'s whole reason to exist.
+
 For anything realistic — multiple endpoints, latency modeling, telemetry,
-token counting — use the full `aiperf-mock-server` server above.
+token counting — use the full `aiperf-mock-server` server above (which has its own
+`--processes N` round-robin balancer).
+
+### `fastclient` — a monster load generator for the fast targets
+
+`rust/mock-server/tools/fastclient.rs` is a std-only (`rustc`-compiled) HTTP/1.1
+load generator that blazes past the reqwest `examples/loadgen` (which caps ~650k
+rps and is itself the bottleneck). Persistent keep-alive connections, response
+framing by probed byte length (no per-request parsing) — >2M rps on loopback.
+
+```bash
+rustc -O rust/mock-server/tools/fastclient.rs -o /tmp/fastclient
+/tmp/fastclient http://127.0.0.1:8131/v1/chat/completions --connections 512 --duration 6
+```
+
+`--pipeline` defaults to **1** (one in-flight per connection) — the honest setting,
+since real HTTP/1.1 clients don't pipeline; express concurrency via `--connections`.
+`--pipeline P>1` measures the server's raw *retirement ceiling* (batches syscalls in
+a way real traffic won't) — label it as such, never quote it as client RPS.
+
+### `fastmock-uring` — io_uring engine A/B
+
+`rust/mock-server/tools/fastmock-uring/` is a monoio (io_uring) thread-per-core twin
+of `fastmock` for A/B-ing the I/O engine. Result: at realistic `pipeline=1`, io_uring
+beats blocking thread-per-connection **+27–54%**; under deep pipelining blocking wins
+(unrepresentative). See its `README.md` and the durable finding at
+`~/.claude/benchmark-findings/rust-io_uring-monoio-vs-blocking-threadperconn-http.md`.
 
 ## Gotchas recap
 

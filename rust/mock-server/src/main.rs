@@ -5,23 +5,30 @@
 
 use std::net::SocketAddr;
 
-use aiperf_mock_server::{MockServerConfig, build_router};
+use aiperf_mock_server::listener::{LISTEN_BACKLOG, build_listener};
+use aiperf_mock_server::{MockServerConfig, balancer, build_router};
 use clap::Parser;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as ConnBuilder;
-use socket2::{Domain, Protocol, Socket, Type};
 use tower::Service;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::filter::LevelFilter;
 
-/// Listen backlog. Large enough that a C10K burst of SYNs doesn't get dropped;
-/// kernel silently clamps to /proc/sys/net/core/somaxconn (4096 on modern Linux).
-const LISTEN_BACKLOG: i32 = 16_384;
-
 fn main() -> anyhow::Result<()> {
-    let config = MockServerConfig::parse().apply_flags();
+    let config = load_config()?;
 
     init_tracing(&config.log_level);
+
+    // Multi-process mode: become a round-robin balancer over `processes` child
+    // servers. `0` = auto = nproc; `1` falls through to the single-process path.
+    let processes = if config.processes == 0 {
+        num_cpus::get().max(1)
+    } else {
+        config.processes
+    };
+    if processes > 1 {
+        return balancer::run(config, processes);
+    }
 
     // Build a tuned multi-threaded tokio runtime:
     //   - worker_threads = nproc by default (override via --workers)
@@ -112,24 +119,18 @@ async fn serve(config: MockServerConfig, worker_threads: usize) -> anyhow::Resul
     }
 }
 
-fn build_listener(addr: SocketAddr) -> anyhow::Result<tokio::net::TcpListener> {
-    let domain = if addr.is_ipv4() {
-        Domain::IPV4
-    } else {
-        Domain::IPV6
-    };
-    let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
-    socket.set_nonblocking(true)?;
-    socket.set_reuse_address(true)?;
-    // SO_REUSEPORT on Linux lets multiple sockets bind the same port so the
-    // kernel load-balances accepts across them. Safe fallback if unsupported.
-    #[cfg(target_os = "linux")]
-    let _ = socket.set_reuse_port(true);
-    socket.bind(&addr.into())?;
-    socket.listen(LISTEN_BACKLOG)?;
-    let std_listener: std::net::TcpListener = socket.into();
-    let listener = tokio::net::TcpListener::from_std(std_listener)?;
-    Ok(listener)
+/// Load the effective config. A balancer-spawned child carries its exact config
+/// as JSON in [`balancer::CONFIG_JSON_ENV`] — deserialize that verbatim (already
+/// final, `apply_flags` was run by the parent) rather than re-parsing argv.
+/// Otherwise parse the CLI/env surface and apply the `--fast`/`--verbose`
+/// post-processing.
+fn load_config() -> anyhow::Result<MockServerConfig> {
+    if let Ok(json) = std::env::var(balancer::CONFIG_JSON_ENV) {
+        let config: MockServerConfig = serde_json::from_str(&json)
+            .map_err(|e| anyhow::anyhow!("invalid {}: {e}", balancer::CONFIG_JSON_ENV))?;
+        return Ok(config);
+    }
+    Ok(MockServerConfig::parse().apply_flags())
 }
 
 fn init_tracing(level: &str) {

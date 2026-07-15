@@ -35,6 +35,17 @@ impl RealClockAnchor {
             start: Instant::now(),
         }
     }
+
+    /// Nanoseconds elapsed on this timeline since the anchor was captured.
+    ///
+    /// The allocation-free `now_ns` reader for callers that hold a copyable
+    /// [`RealClockAnchor`] (it is `Copy`/`Send`) rather than an `Rc<RealClock>`.
+    /// Same monotonic reading as [`RealClock::now_ns`], so both sit on one
+    /// timeline — the entry point for `Send` contexts (e.g. a multi-threaded
+    /// server) that cannot hold the `!Send` `Rc<RealClock>` across an await.
+    pub fn now_ns(&self) -> i64 {
+        self.start.elapsed().as_nanos() as i64
+    }
 }
 
 /// Monotonic wall clock with ns-precision `timerfd` sleeps.
@@ -66,8 +77,15 @@ impl Clock for RealClock {
     }
 }
 
+/// Sleep for `duration_ns` on this platform's most precise timer — a
+/// `CLOCK_MONOTONIC` `timerfd` awaited through tokio's IO reactor on Linux, or
+/// `tokio::time` elsewhere. This is the exact primitive backing
+/// [`RealClock::sleep`], exposed as a standalone `Send` future so `Send`-bound
+/// callers (a multi-threaded server whose tasks cannot hold the `!Send`
+/// `Rc<RealClock>`) get the same nanosecond-resolution sleep without the coarse
+/// `tokio::time` 1 ms wheel. Non-positive durations resolve after a single yield.
 #[cfg(target_os = "linux")]
-async fn sleep_ns(duration_ns: i64) {
+pub async fn sleep_ns(duration_ns: i64) {
     if duration_ns <= 0 {
         tokio::task::yield_now().await;
         return;
@@ -153,8 +171,9 @@ async fn timerfd_sleep_ns(duration_ns: i64) -> std::io::Result<()> {
     }
 }
 
+/// Non-Linux fallback for [`sleep_ns`]: `tokio::time` (coarser than a `timerfd`).
 #[cfg(not(target_os = "linux"))]
-async fn sleep_ns(duration_ns: i64) {
+pub async fn sleep_ns(duration_ns: i64) {
     if duration_ns <= 0 {
         tokio::task::yield_now().await;
     } else {
