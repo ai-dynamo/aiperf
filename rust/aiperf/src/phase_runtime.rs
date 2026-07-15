@@ -781,27 +781,57 @@ fn spawn_cancel_on_signal(orchestrator: ClockPhaseOrchestrator) -> SignalCancelG
     SignalCancelGuard { handle }
 }
 
+/// Windows equivalent: cancel on the first Ctrl+C or Ctrl+Break. tokio's
+/// `ctrl_c`/`ctrl_break` sources are async and runtime-driven, so the listener
+/// stays on the thread-per-core `!Send` model exactly like the unix path.
+#[cfg(windows)]
+fn spawn_cancel_on_signal(orchestrator: ClockPhaseOrchestrator) -> SignalCancelGuard {
+    let handle = tokio::task::spawn_local(async move {
+        use tokio::signal::windows::{ctrl_break, ctrl_c};
+        let mut interrupt = ctrl_c().ok();
+        let mut brk = ctrl_break().ok();
+        match (interrupt.as_mut(), brk.as_mut()) {
+            (Some(interrupt), Some(brk)) => {
+                tokio::select! {
+                    _ = interrupt.recv() => {}
+                    _ = brk.recv() => {}
+                }
+            }
+            (Some(interrupt), None) => {
+                interrupt.recv().await;
+            }
+            (None, Some(brk)) => {
+                brk.recv().await;
+            }
+            // Registration failed for both: never cancel from here.
+            (None, None) => std::future::pending::<()>().await,
+        }
+        let _ = orchestrator.cancel().await;
+    });
+    SignalCancelGuard { handle }
+}
+
 /// Aborts the background signal listener when the phase run returns.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 struct SignalCancelGuard {
     handle: tokio::task::JoinHandle<()>,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl Drop for SignalCancelGuard {
     fn drop(&mut self) {
         self.handle.abort();
     }
 }
 
-/// Non-unix builds carry no signal listener; the product target is Linux.
-#[cfg(not(unix))]
+/// Other targets carry no signal listener; the product target is Linux.
+#[cfg(not(any(unix, windows)))]
 fn spawn_cancel_on_signal(_orchestrator: ClockPhaseOrchestrator) -> SignalCancelGuard {
     SignalCancelGuard
 }
 
-/// Placeholder guard on platforms without `tokio::signal::unix`.
-#[cfg(not(unix))]
+/// Placeholder guard on platforms without a supported signal source.
+#[cfg(not(any(unix, windows)))]
 struct SignalCancelGuard;
 
 /// The lifecycle marker relayed to a signal-forwarding lifecycle owner.

@@ -55,6 +55,7 @@ use std::path::Path;
 
 use crate::export::{ExportConfig, Exporter};
 use crate::metrics_core::{MetricEntry, MetricSeries, NativeReport, ReportStats, ReportValue};
+use chrono::{Local, TimeZone};
 use serde_json::{Map, Value};
 
 /// AIPerf v1 summary-export policy. Disabled unless the frontend requests the
@@ -277,8 +278,26 @@ fn project(name: &str, entry: &MetricEntry, cfg: &GenaiPerfExportConfig) -> Opti
         .get(name)
         .cloned()
         .unwrap_or_else(|| name.to_owned());
-    let unit = entry.unit.clone();
+    let mut projected = project_stats(&series.stats, entry.unit.clone(), header)?;
 
+    // `to_json_result` (record_models.py:99-123) drops `count` for AGGREGATE /
+    // DERIVED (scalar-tier) metrics, where it would trivially be 1. The scalar
+    // classification is the Python `MetricType`, projected as `cfg.scalar_tags`.
+    if cfg.scalar_tags.contains(name) {
+        projected.count = None;
+    }
+
+    Some(projected)
+}
+
+/// Map one series' [`ReportStats`] into the flat v1 stat set, applying the
+/// native metric-type value shape (`native_report.py:_legacy_stats`,
+/// `823-854`). Returns `None` when a required scalar / counter value is
+/// non-finite (Python would raise; the best-effort export skips instead). The
+/// `cfg.scalar_tags` `count`-drop is a request-metric concern applied by the
+/// caller, not here, so this helper is reusable for GPU-telemetry series where
+/// `count` is always retained.
+fn project_stats(stats: &ReportStats, unit: String, header: String) -> Option<Projected> {
     let mut projected = Projected {
         header,
         unit,
@@ -291,7 +310,7 @@ fn project(name: &str, entry: &MetricEntry, cfg: &GenaiPerfExportConfig) -> Opti
         sum: None,
     };
 
-    match &series.stats {
+    match stats {
         ReportStats::Distribution(stats) => {
             projected.avg = finite(stats.avg);
             projected.min = finite(stats.min);
@@ -323,13 +342,6 @@ fn project(name: &str, entry: &MetricEntry, cfg: &GenaiPerfExportConfig) -> Opti
                 projected.percentiles[index] = finite(stats.percentiles.get(*label).copied());
             }
         }
-    }
-
-    // `to_json_result` (record_models.py:99-123) drops `count` for AGGREGATE /
-    // DERIVED (scalar-tier) metrics, where it would trivially be 1. The scalar
-    // classification is the Python `MetricType`, projected as `cfg.scalar_tags`.
-    if cfg.scalar_tags.contains(name) {
-        projected.count = None;
     }
 
     Some(projected)
@@ -383,6 +395,204 @@ fn insert_number(object: &mut Map<String, Value>, key: &str, value: Option<f64>)
     }
 }
 
+/// One GPU accumulated across the report's metric series, in first-seen order.
+struct TelemetryGpu {
+    gpu_index: i64,
+    gpu_name: String,
+    gpu_uuid: String,
+    hostname: Option<String>,
+    namespace: Option<String>,
+    pod_name: Option<String>,
+    /// `metric_name -> JsonMetricResult` object, inserted in report (alphabetical) order.
+    metrics: Map<String, Value>,
+}
+
+/// One DCGM endpoint accumulated across the report's metric series. The raw
+/// scrape URL is the `endpoint_order` key; the `summary` endpoint lists reuse it.
+struct TelemetryEndpoint {
+    /// GPU UUIDs in first-seen order.
+    gpu_order: Vec<String>,
+    /// GPU accumulators keyed by UUID.
+    gpus: HashMap<String, TelemetryGpu>,
+}
+
+/// Project the report's GPU-telemetry series into the Python `TelemetryExportData`
+/// shape (`native_report.py:_project_gpu_telemetry`, `620-720`). A series is
+/// GPU telemetry iff it carries an `endpoint_url` and string `gpu` / `gpu_uuid`
+/// / `model_name` labels — this excludes request metrics and the unlabeled
+/// `total_gpu_*` aggregates while naturally including custom (`sm_clock`, …)
+/// signals. Grouping is by `endpoint_url` then `gpu_uuid`, both in first-seen
+/// order with no sorting; per-metric objects reuse [`project_stats`] +
+/// [`metric_object`] so gauge/counter rendering is byte-identical to the
+/// top-level metrics. Returns `None` when the run collected no GPU telemetry, so
+/// the caller omits the whole block (`exclude_none`).
+fn render_telemetry_data(report: &NativeReport) -> Option<Value> {
+    let mut endpoint_order: Vec<String> = Vec::new();
+    let mut endpoints: HashMap<String, TelemetryEndpoint> = HashMap::new();
+
+    for (name, entry) in &report.metrics {
+        for series in &entry.series {
+            let Some(labels) = &series.labels else {
+                continue;
+            };
+            let Some(endpoint_url) = &series.endpoint_url else {
+                continue;
+            };
+            // Required GPU-identity labels; a series missing any is not telemetry.
+            let (Some(gpu_label), Some(gpu_uuid), Some(model_name)) = (
+                labels.get("gpu"),
+                labels.get("gpu_uuid"),
+                labels.get("model_name"),
+            ) else {
+                continue;
+            };
+            // Best-effort export skips a malformed index rather than aborting.
+            let Ok(gpu_index) = gpu_label.parse::<i64>() else {
+                continue;
+            };
+            if gpu_index < 0 {
+                continue;
+            }
+            let Some(projected) = project_stats(&series.stats, entry.unit.clone(), name.clone())
+            else {
+                continue;
+            };
+
+            if !endpoints.contains_key(endpoint_url) {
+                endpoint_order.push(endpoint_url.clone());
+                endpoints.insert(
+                    endpoint_url.clone(),
+                    TelemetryEndpoint {
+                        gpu_order: Vec::new(),
+                        gpus: HashMap::new(),
+                    },
+                );
+            }
+            let endpoint = endpoints
+                .get_mut(endpoint_url)
+                .expect("endpoint just inserted");
+            if !endpoint.gpus.contains_key(gpu_uuid) {
+                endpoint.gpu_order.push(gpu_uuid.clone());
+                endpoint.gpus.insert(
+                    gpu_uuid.clone(),
+                    TelemetryGpu {
+                        gpu_index,
+                        gpu_name: model_name.clone(),
+                        gpu_uuid: gpu_uuid.clone(),
+                        hostname: labels.get("hostname").cloned(),
+                        namespace: labels.get("namespace").cloned(),
+                        pod_name: labels.get("pod").cloned(),
+                        metrics: Map::new(),
+                    },
+                );
+            }
+            let gpu = endpoint.gpus.get_mut(gpu_uuid).expect("gpu just inserted");
+            gpu.metrics.insert(name.clone(), metric_object(&projected));
+        }
+    }
+
+    if endpoint_order.is_empty() {
+        return None;
+    }
+
+    let mut endpoints_obj = Map::new();
+    for raw_url in &endpoint_order {
+        let endpoint = &endpoints[raw_url];
+        let mut gpus_obj = Map::new();
+        for gpu_uuid in &endpoint.gpu_order {
+            let gpu = &endpoint.gpus[gpu_uuid];
+            let mut gpu_obj = Map::new();
+            gpu_obj.insert("gpu_index".to_owned(), Value::from(gpu.gpu_index));
+            gpu_obj.insert("gpu_name".to_owned(), Value::String(gpu.gpu_name.clone()));
+            gpu_obj.insert("gpu_uuid".to_owned(), Value::String(gpu.gpu_uuid.clone()));
+            if let Some(hostname) = &gpu.hostname {
+                gpu_obj.insert("hostname".to_owned(), Value::String(hostname.clone()));
+            }
+            if let Some(namespace) = &gpu.namespace {
+                gpu_obj.insert("namespace".to_owned(), Value::String(namespace.clone()));
+            }
+            if let Some(pod_name) = &gpu.pod_name {
+                gpu_obj.insert("pod_name".to_owned(), Value::String(pod_name.clone()));
+            }
+            gpu_obj.insert("metrics".to_owned(), Value::Object(gpu.metrics.clone()));
+            gpus_obj.insert(format!("gpu_{}", gpu.gpu_index), Value::Object(gpu_obj));
+        }
+        let mut endpoint_obj = Map::new();
+        endpoint_obj.insert("gpus".to_owned(), Value::Object(gpus_obj));
+        endpoints_obj.insert(
+            normalize_endpoint_display(raw_url),
+            Value::Object(endpoint_obj),
+        );
+    }
+
+    let raw_urls: Vec<Value> = endpoint_order
+        .iter()
+        .map(|url| Value::String(url.clone()))
+        .collect();
+    let mut summary = Map::new();
+    summary.insert(
+        "endpoints_configured".to_owned(),
+        Value::Array(raw_urls.clone()),
+    );
+    summary.insert("endpoints_successful".to_owned(), Value::Array(raw_urls));
+    summary.insert(
+        "start_time".to_owned(),
+        Value::String(format_native_time(report.summary.start_time)),
+    );
+    summary.insert(
+        "end_time".to_owned(),
+        Value::String(format_native_time(report.summary.end_time)),
+    );
+
+    let mut telemetry = Map::new();
+    telemetry.insert("summary".to_owned(), Value::Object(summary));
+    telemetry.insert("endpoints".to_owned(), Value::Object(endpoints_obj));
+    Some(Value::Object(telemetry))
+}
+
+/// Strip the scheme and a trailing `/metrics` path segment from a DCGM URL,
+/// exactly mirroring Python's `normalize_endpoint_display` (`exporters/utils.py:7-23`,
+/// `urlparse` `netloc` + `path.removesuffix("/metrics")`). Netloc (host, port,
+/// any userinfo) is preserved verbatim, so `http://127.0.0.1:9400/dcgm1/metrics`
+/// becomes `127.0.0.1:9400/dcgm1`.
+fn normalize_endpoint_display(url: &str) -> String {
+    let after_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let (netloc, path) = match after_scheme.find('/') {
+        Some(index) => (&after_scheme[..index], &after_scheme[index..]),
+        None => (after_scheme, ""),
+    };
+    let path = path.strip_suffix("/metrics").unwrap_or(path);
+    format!("{netloc}{path}")
+}
+
+/// Format a run-timeline nanosecond timestamp as Python
+/// `datetime.fromtimestamp(ns/1e9).isoformat()` does (`native_report.py:705-709`):
+/// local-timezone ISO-8601 with microsecond precision, dropping the fractional
+/// part when it is zero. `None`/negative clamps to the epoch, matching the
+/// oracle's guard. These are wall-clock values and inherently non-reproducible
+/// across machines/timezones (as in Python); byte-exact parity is on the
+/// `endpoints` subtree, which the tests and product consume.
+fn format_native_time(ns: Option<i64>) -> String {
+    let ns = ns.filter(|value| *value >= 0).unwrap_or(0);
+    let seconds = ns / 1_000_000_000;
+    let sub_nanos = (ns % 1_000_000_000) as u32;
+    let datetime = Local
+        .timestamp_opt(seconds, sub_nanos)
+        .single()
+        .unwrap_or_else(|| {
+            Local
+                .timestamp_opt(0, 0)
+                .single()
+                .expect("unix epoch is a valid local timestamp")
+        });
+    let micros = datetime.timestamp_subsec_micros();
+    if micros == 0 {
+        datetime.format("%Y-%m-%dT%H:%M:%S").to_string()
+    } else {
+        format!("{}.{micros:06}", datetime.format("%Y-%m-%dT%H:%M:%S"))
+    }
+}
+
 /// Render `<stem>_aiperf.json` byte-for-byte against the Python
 /// `MetricsJsonExporter`. The top-level map is assembled in `JsonExportData`
 /// declaration order (`export_models.py:293-349`): `schema_version`,
@@ -392,10 +602,11 @@ fn insert_number(object: &mut Map<String, Value>, key: &str, value: Option<f64>)
 /// (alphabetical) order. Frontend-owned scalars (`aiperf_version`,
 /// `benchmark_id`, `input_config`, `run_info`) are spliced from `cfg.envelope`;
 /// the sink pins `schema_version` and derives `was_cancelled` / `error_summary`
-/// from the [`NativeReport`]. `start_time` / `end_time` / `telemetry_data` /
-/// `branch_stats` are `None` on the native compatibility path (the Python
-/// oracle passes `start_ns=end_ns=0`, no telemetry, no DAG stats) and are
-/// therefore omitted by `exclude_none`.
+/// from the [`NativeReport`]. `telemetry_data` is projected from the report's
+/// GPU-telemetry series (see [`render_telemetry_data`]) and omitted when the run
+/// carried none. `start_time` / `end_time` / `branch_stats` remain `None` on the
+/// native compatibility path (the Python oracle passes `start_ns=end_ns=0`, no
+/// DAG stats) and are therefore omitted by `exclude_none`.
 fn render_json(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> String {
     let collected = collect_metrics(&report.metrics, cfg);
     let mut by_name: HashMap<&str, &Projected> = HashMap::new();
@@ -426,6 +637,13 @@ fn render_json(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> String {
         if let Some(projected) = by_name.get(tag) {
             root.insert((*tag).to_owned(), metric_object(projected));
         }
+    }
+
+    // `telemetry_data` is the declared `JsonExportData` field immediately after
+    // the last metric slot and before `input_config` (`export_models.py`), so it
+    // is spliced here. Omitted when the run collected no GPU telemetry.
+    if let Some(telemetry) = render_telemetry_data(report) {
+        root.insert("telemetry_data".to_owned(), telemetry);
     }
 
     // Frontend-owned envelope values, spliced verbatim in declaration order.

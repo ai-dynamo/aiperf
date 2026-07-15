@@ -60,8 +60,8 @@ aiperf-runner
     |     +-- endpoint factories
     |     +-- dataset/sampler factories
     |     +-- transport factories
-    |     +-- workload factories
-    |     `-- explicit pair factories
+    |     +-- workload factories  (own their prepare/lowering)
+    |     `-- descriptor compatibility predicate  (no pair objects)
     |
     +-- validate
     |     `-- authored run -> validated plan (+ deferred checks)
@@ -80,8 +80,21 @@ Transport and workload are orthogonal selections. A new transport does not acqui
 duplicate every workload DTO, and a new workload does not acquire its own transport. Factories
 lower the versioned run into today's real seams—`Clock`, `RequestSink<R>`, `TurnDispatcher`,
 `GraphSink`, phase/runtime traits, observers, and reporters—not an aspirational parallel harness.
-An explicit `RunnerPairFactory` owns cross-component compatibility so the coordinator never matches
-on transport or workload strings.
+Transport × workload compatibility is a **descriptor predicate**
+(`validate_descriptor_compatibility`: `semantic_responses`, `required_transport_features`,
+`clock_kinds`), not a reified pair object — the coordinator resolves each axis by id and composes
+them inline, so it still never matches on transport or workload strings.
+
+> **History reversal (2026-07-14).** This section originally specified an explicit `RunnerPairFactory`
+> ("open double dispatch") that reified each transport×workload cell. That mechanism is **struck**: a
+> per-cell object is the O(transport × workload) anti-pattern the orthogonal-axes design exists to
+> avoid. The decided design keeps only transport and workload factories joined by the compatibility
+> predicate; the workload factory owns `prepare`/`validate_run` and receives the validated transport.
+> The "coordinator never string-matches" invariant is preserved (map lookups by id + the predicate).
+> The prose below has been rewritten to the target; the `RunnerPairFactory` type still exists in code
+> until it is deleted in Stage 1 of `2026-07-14-unified-execution-substrate-design.md` §2.3 (which owns
+> the rationale and staged plan). Where §1 says "current code truth," read the pair removal as decided-
+> but-pending that stage.
 
 ---
 
@@ -95,8 +108,8 @@ only command-line operation and writes the plugins.yaml-shaped catalog (§8).
 ### 1.1 Product-reachable, built matrix
 
 The frozen registry (`registry.rs::BuiltinRunnerRegistryFactory`) registers the `http` and `grpc`
-transports and the `scheduled` and `graph` workloads, then composes explicit pair factories. The
-base build advertises these executable protocol-v2 pairs:
+transports and the `scheduled` and `graph` workloads; the executable matrix is the descriptor-compatible
+cross-product (no pair objects). The base build's executable protocol-v2 combinations:
 
 | Runner distribution | Executable protocol-v2 pairs |
 |---|---|
@@ -132,11 +145,13 @@ Any workload the linked registry does not compose fails closed.
 
 ### 1.3 Composition structure
 
-Runner composition implements open double dispatch: transport and workload factories validate their
-own raw configuration, an explicit `RunnerPairFactory` owns cross-component compatibility, and
-preparation returns one `PreparedRunnerOperation`. Online execution further uses a direct
+Runner composition is two orthogonal registries joined by a predicate: transport and workload
+factories validate their own raw configuration; `validate_descriptor_compatibility` gates the
+combination; the **workload factory owns** `prepare`/`validate_run` (receiving the validated transport
+and its id) and returns one `PreparedRunnerOperation`. Online execution uses a direct
 `OnlineWorkloadAdapter -> PreparedOnlineHarness` transition. The coordinator does not match on
-workload strings or convert v2 values through a v1 DTO. Startup-only typed lowering into shared
+transport or workload strings or convert v2 values through a v1 DTO. (The `RunnerPairFactory`
+pair-object mechanism is struck by design — deleted in Stage 1 per §0's note.) Startup-only typed lowering into shared
 runtime values is the single adapter load, not a second wire conversion. `RunnerApplication` freezes
 the linked registry at bootstrap; duplicate IDs are rejected and capabilities are derived from the
 frozen factories, never a handwritten static array.
@@ -150,7 +165,7 @@ frozen factories, never a handwritten static array.
    retains one fresh child per variation/trial.
 3. **No Python inference fallback.** Missing runner capabilities fail before execution.
 4. **Orthogonal transport/workload selection.** The run describes both; compatibility is validated
-   explicitly through the pair factory.
+   by the descriptor predicate composing the two registries (no pair object).
 5. **Trait-backed registries.** Transport and workload IDs select statically linked factories, not
    central string branches or a closed enum of implementation kinds.
 6. **Exact-image handshake.** Capability and execution processes identify the exact selected runner
@@ -367,8 +382,9 @@ spec:
 - **telemetry-watch** (the former operational-history pair) has been removed from the runner
   entirely.
 
-Re-adding any of these to the product wire re-registers its pair factory and restores its subprocess
-proof; until then, capability truth for a given image excludes them.
+Re-adding any of these to the product wire registers its workload factory (admitted against transports
+by the compat predicate) and restores its subprocess proof; until then, capability truth for a given
+image excludes them.
 
 ---
 
@@ -430,7 +446,7 @@ The `validate` operation:
 
 1. resolves transport/workload/endpoint IDs through frozen registries;
 2. strictly deserializes their owned configs;
-3. validates transport/workload compatibility through the pair factory and the compiled feature set;
+3. validates transport/workload compatibility through the descriptor predicate and the compiled feature set;
 4. validates every rule possible without external dataset/evaluator/server IO;
 5. returns `completeness` plus typed deferred checks.
 

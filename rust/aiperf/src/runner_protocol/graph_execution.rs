@@ -112,7 +112,21 @@ pub(crate) enum RunnerGraphExecutionEvent {
         uuid: Uuid,
     },
     /// One node reached a transport terminal and has a complete native record.
-    Record(Box<CapturedRecord>),
+    Record {
+        /// Complete native metric record for the terminal node request.
+        record: Box<CapturedRecord>,
+        /// Static graph node id (e.g. `"n_1"`) this terminal record belongs to.
+        ///
+        /// Carried so the phase observer can attribute the return to a specific
+        /// node in its per-lane executed-node/return-wall ledgers (the E3c
+        /// cache-pressure handoff). `None` for backends with no node identity
+        /// (the offline dynosim adapter), which never feed the warmup handoff.
+        /// Ports the `credit.node_ordinal` -> `node_id` inversion Python does in
+        /// `graph_ir_replay.py:_record_return_wall`
+        /// (`src/aiperf/timing/strategies/graph_ir_replay.py:884`); the Rust
+        /// worker already holds the node id, so no ordinal round-trip is needed.
+        node_id: Option<String>,
+    },
     /// One admitted root trace reached its placement terminal.
     TraceComplete {
         /// Unique execution-instance identity.
@@ -940,23 +954,23 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
                     self.trace_id
                 )
             })?;
-        self.events
-            .emit(RunnerGraphExecutionEvent::Record(Box::new(
-                CapturedRecord {
-                    uuid,
-                    x_correlation_id: self.trace_id.clone(),
-                    output: CapturedModelOutput::from_parts(
-                        &outcome.response_text,
-                        outcome.model_response.content.as_deref(),
-                        outcome.model_response.reasoning.as_deref(),
-                    ),
-                    raw: self.raw_enabled.then_some(CapturedHttpExchange {
-                        request_payload: collected.request_payload.to_vec(),
-                        record: collected.record,
-                    }),
-                    ingest,
-                },
-            )))?;
+        self.events.emit(RunnerGraphExecutionEvent::Record {
+            record: Box::new(CapturedRecord {
+                uuid,
+                x_correlation_id: self.trace_id.clone(),
+                output: CapturedModelOutput::from_parts(
+                    &outcome.response_text,
+                    outcome.model_response.content.as_deref(),
+                    outcome.model_response.reasoning.as_deref(),
+                ),
+                raw: self.raw_enabled.then_some(CapturedHttpExchange {
+                    request_payload: collected.request_payload.to_vec(),
+                    record: collected.record,
+                }),
+                ingest,
+            }),
+            node_id: Some(node_id.to_owned()),
+        })?;
         self.emitted_records.set(ordinal.saturating_add(1));
 
         Ok(match outcome.terminal {

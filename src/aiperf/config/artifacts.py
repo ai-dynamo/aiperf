@@ -39,7 +39,7 @@ __all__ = [
 # {json,csv}), emitted by the runner's `aiperf::export::genai_perf` sink. Both are
 # toggles only; all emission is native Rust.
 SummaryExportFormat = Literal["json", "genai_perf"]
-RecordsExportFormat = Literal["jsonl"]
+RecordsExportFormat = Literal["jsonl", "csv", "parquet"]
 
 
 @dataclass(frozen=True)
@@ -127,9 +127,14 @@ class ArtifactsConfig(BaseConfig):
         list[RecordsExportFormat] | Literal[False],
         Field(
             default_factory=lambda: ["jsonl"],
-            description="Per-request records export formats. "
-            "Only 'jsonl' is wired up today. Set to false to disable the "
-            "per-record JSONL file.",
+            description="Per-request records export formats. 'jsonl' writes the "
+            "row-oriented `profile_export.jsonl`; 'csv' writes a flat "
+            "`profile_export_records.csv` (one row per request, a `{metric}_value`/"
+            "`{metric}_unit` column pair per metric); 'parquet' writes a wide, "
+            "columnar `profile_export.parquet` sidecar. Combine them "
+            "(`[jsonl, csv, parquet]`) or select any subset. Parquet requires an "
+            "`aiperf-runner` built with the `parquet` feature (the default build). "
+            "Set to false to disable per-record export entirely.",
         ),
     ]
 
@@ -245,6 +250,7 @@ class ArtifactsConfig(BaseConfig):
         "_timeslices.csv",
         "_timeslices.json",
         "_console.txt",
+        "_records.csv",
         "_raw.jsonl",
         ".parquet",
         ".csv",
@@ -306,6 +312,20 @@ class ArtifactsConfig(BaseConfig):
         """Path for the per-record JSONL export file."""
         base = self._base()
         name = f"{base}.jsonl" if base else "profile_export.jsonl"
+        return self.dir / name
+
+    @property
+    def profile_export_parquet_file(self) -> Path:
+        """Path for the wide per-record Parquet sidecar to the JSONL."""
+        base = self._base()
+        name = f"{base}.parquet" if base else "profile_export.parquet"
+        return self.dir / name
+
+    @property
+    def profile_export_records_csv_file(self) -> Path:
+        """Path for the flat per-record CSV sidecar to the JSONL."""
+        base = self._base()
+        name = f"{base}_records.csv" if base else "profile_export_records.csv"
         return self.dir / name
 
     @property

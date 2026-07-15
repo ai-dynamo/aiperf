@@ -80,17 +80,18 @@ fn main() {
     }
 
     // A cell child runs its budget slice single-process, with the autonomous issuer
-    // and per-cell sampler selected from the controller-set environment.
+    // and per-cell sampler selected from the controller-set environment; it fetches
+    // its sliced envelope over velo (not stdin).
     if cell_mode {
-        run_cell(input);
+        run_cell();
     }
 
     // A non-cell execute request asking for more than one cell becomes the
-    // controller: it spawns the cell subprocesses and merges their records.
+    // controller: it drives the cells over velo and merges their records.
     if std::env::var(aiperf::cellular::partition::CELL_ID_ENV).is_err()
         && let Ok(envelope) = serde_json::from_slice::<Value>(&input)
         && envelope.pointer("/operation").and_then(Value::as_str) == Some("execute")
-        && aiperf::runner_protocol::cellular_controller::cell_count_from_envelope(&envelope) > 1
+        && aiperf::runner_protocol::cell_launcher::cell_count_from_envelope(&envelope) > 1
     {
         run_controller(&envelope);
     }
@@ -103,57 +104,70 @@ fn main() {
     run_v2(&input, &application);
 }
 
-/// Runs this process as one cell of a multi-cell run: set the partition/controller
-/// environment from the launch spec, then execute the sliced envelope through the
+/// Runs this process as one cell of a multi-cell run. The launcher has already set
+/// the partition/controller environment (`AIPERF_CELL_*`); the cell fetches its
+/// sliced execute envelope from the controller over velo, then runs it through the
 /// ordinary single-process path (which the environment makes cell-aware).
-fn run_cell(input: Vec<u8>) -> ! {
-    let spec: aiperf::runner_protocol::cellular_cell::CellLaunchSpec =
-        match serde_json::from_slice(&input) {
-            Ok(spec) => spec,
-            Err(error) => {
-                tracing::error!(error = %error, "invalid cell launch spec");
-                std::process::exit(2);
-            }
-        };
-    // SAFETY: the process is still single-threaded here. The only code that ran
-    // before this is `init_tracing`, whose synchronous stderr subscriber spawns no
-    // background writer thread, and no runtime exists yet — so no other thread can
-    // read the environment concurrently. This is the same pre-runtime window
-    // `configure_dynosim_process_defaults` mutates env in.
-    unsafe {
-        std::env::set_var(
-            aiperf::cellular::partition::CELL_ID_ENV,
-            spec.cell_id.to_string(),
-        );
-        std::env::set_var(
-            aiperf::cellular::partition::CELL_COUNT_ENV,
-            spec.cell_count.to_string(),
-        );
-        std::env::set_var(
-            aiperf::runner_protocol::cellular_cell::CELL_CONTROLLER_ADDR_ENV,
-            &spec.controller_addr,
-        );
-        if let Ok(bases) = serde_json::to_string(&spec.phase_ordinal_bases) {
-            std::env::set_var(
-                aiperf::runner_protocol::cellular_cell::CELL_PHASE_ORDINAL_BASES_ENV,
-                bases,
-            );
-        }
-    }
-    let envelope_bytes = match serde_json::to_vec(&spec.envelope) {
-        Ok(bytes) => bytes,
+#[cfg(feature = "velo")]
+fn run_cell() -> ! {
+    // A dedicated runtime just to fetch the envelope over velo; dropped before the
+    // execute path builds its own thread-per-core runtime.
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
         Err(error) => {
-            tracing::error!(error = %error, "invalid cell envelope");
+            tracing::error!(error = %error, "failed to build cell fetch runtime");
             std::process::exit(2);
         }
     };
+    let envelope_bytes =
+        match runtime.block_on(aiperf::runner_protocol::cellular_cell::fetch_cell_envelope()) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                tracing::error!(
+                    error = format!("{error:#}"),
+                    "cell failed to fetch its envelope"
+                );
+                std::process::exit(2);
+            }
+        };
+    drop(runtime);
     configure_dynosim_process_defaults(&envelope_bytes);
     let application = compose_stock_application();
     run_v2(&envelope_bytes, &application);
 }
 
-/// Runs this process as the cellular controller: spawn the cells, merge their
-/// records into the single report, and emit the one terminal envelope.
+/// Without the `velo` feature there is no cell transport, so `--cell` cannot run.
+#[cfg(not(feature = "velo"))]
+fn run_cell() -> ! {
+    tracing::error!(
+        "aiperf-runner was built without the `velo` feature; `--cell` (multi-cell runs) requires it"
+    );
+    std::process::exit(2);
+}
+
+/// Without the `velo` feature there is no cell transport, so a `cells>1` run
+/// cannot be driven; fail closed with a typed execution envelope.
+#[cfg(not(feature = "velo"))]
+fn run_controller(envelope: &Value) -> ! {
+    let benchmark_id = envelope
+        .pointer("/run/benchmark_id")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    emit_cellular_failure(
+        benchmark_id,
+        "velo_feature_required",
+        "aiperf-runner was built without the `velo` feature; multi-cell runs (cells>1) require it"
+            .to_owned(),
+    );
+}
+
+/// Runs this process as the cellular controller: drive the cells over velo, merge
+/// their records into the single report, and emit the one terminal envelope.
+#[cfg(feature = "velo")]
 fn run_controller(envelope: &Value) -> ! {
     let benchmark_id = envelope
         .pointer("/run/benchmark_id")
@@ -164,8 +178,7 @@ fn run_controller(envelope: &Value) -> ! {
         .and_then(Value::as_str)
         .unwrap_or_default();
     let report_path = std::path::Path::new(artifact_dir).join("native-v2.json");
-    let cell_count =
-        aiperf::runner_protocol::cellular_controller::cell_count_from_envelope(envelope);
+    let cell_count = aiperf::runner_protocol::cell_launcher::cell_count_from_envelope(envelope);
     // Compose the stock application so the merged-report export plane resolves the
     // built-in exporter sinks from the one unified `AIPerfRegistry`, exactly as the
     // single-process coordinator path does via `product_registry().exporters()`.

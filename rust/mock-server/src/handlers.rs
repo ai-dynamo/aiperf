@@ -75,17 +75,21 @@ fn maybe_inject_error(state: &AppState) -> Option<AppError> {
 }
 
 /// Shared context for a tokenized LLM request.
-struct RequestCtx {
-    request_id: String,
-    model: String,
-    tokenized: TokenizedText,
-    usage: Usage,
-    latency_sim: LatencySimulator,
-    start: Instant,
+///
+/// `pub(crate)` so alternative front doors (e.g. the KServe gRPC service in
+/// [`crate::grpc`]) reuse the exact tokenize → usage → latency/prefix-cache head
+/// the HTTP handlers use, rather than re-deriving it.
+pub(crate) struct RequestCtx {
+    pub(crate) request_id: String,
+    pub(crate) model: String,
+    pub(crate) tokenized: TokenizedText,
+    pub(crate) usage: Usage,
+    pub(crate) latency_sim: LatencySimulator,
+    pub(crate) start: Instant,
 }
 
 impl RequestCtx {
-    fn build(
+    pub(crate) fn build(
         request_id_prefix: &str,
         req_gen: &GenRequest<'_>,
         _endpoint: &str,
@@ -1503,6 +1507,27 @@ fn chat_stream(
         }
 
         let num = ctx.tokenized.tokens.len();
+        // Pre-serialize the constant per-request frame envelope once. Every
+        // middle token's chunk is byte-for-byte `<prefix>"<escaped token>"<suffix>`
+        // — only the token string varies — so we serialize just that string and
+        // splice, instead of re-serializing the whole `ChatStreamChunk` struct
+        // once per token (the profiled hot path: e.g. 254 serializes/request ×
+        // millions of requests). Each token is still emitted as its own SSE
+        // frame (one `yield` = one packet on the wire); this only removes the
+        // redundant per-token struct traversal, byte-identical to `sse_chunk_ser`.
+        // The first frame carries `role` and the last carries `finish_reason`, so
+        // those two boundary frames fall back to the full serializer.
+        let mid_prefix: Vec<u8> = {
+            let mut p = Vec::with_capacity(96);
+            p.extend_from_slice(b"data: {\"id\":");
+            serde_json::to_writer(&mut p, &ctx.request_id).expect("serialize id");
+            p.extend_from_slice(b",\"object\":\"chat.completion.chunk\",\"created\":");
+            p.extend_from_slice(created.to_string().as_bytes());
+            p.extend_from_slice(b",\"model\":");
+            serde_json::to_writer(&mut p, &ctx.model).expect("serialize model");
+            p.extend_from_slice(b",\"choices\":[{\"index\":0,\"delta\":{\"content\":");
+            p
+        };
         for (i, token) in ctx.tokenized.tokens.iter().enumerate() {
             let emit_at = ctx.latency_sim.wait_for_index(idx).await;
             if first_emit.is_none() {
@@ -1518,22 +1543,32 @@ fn chat_stream(
             state.recorder.record_streamed_token_fast(&labeled);
             let role = if i == 0 && !has_reasoning { Some("assistant") } else { None };
             let finish = if i + 1 == num { Some(ctx.tokenized.finish_reason) } else { None };
-            let chunk = ChatStreamChunk {
-                id: &ctx.request_id,
-                object: "chat.completion.chunk",
-                created,
-                model: &ctx.model,
-                choices: [ChatChoiceDelta {
-                    index: 0,
-                    finish_reason: finish,
-                    delta: ChatDelta {
-                        role,
-                        content: Some(token.as_str()),
-                        reasoning_content: None,
-                    },
-                }],
-            };
-            yield Ok::<Bytes, Infallible>(sse_chunk_ser(&chunk));
+            if role.is_none() && finish.is_none() {
+                // Common middle token: splice the pre-serialized envelope with the
+                // token's own escaped JSON string. Still one frame per token.
+                let mut out = Vec::with_capacity(mid_prefix.len() + token.len() + 8);
+                out.extend_from_slice(&mid_prefix);
+                serde_json::to_writer(&mut out, token.as_str()).expect("serialize token");
+                out.extend_from_slice(b"}}]}\n\n");
+                yield Ok::<Bytes, Infallible>(Bytes::from(out));
+            } else {
+                let chunk = ChatStreamChunk {
+                    id: &ctx.request_id,
+                    object: "chat.completion.chunk",
+                    created,
+                    model: &ctx.model,
+                    choices: [ChatChoiceDelta {
+                        index: 0,
+                        finish_reason: finish,
+                        delta: ChatDelta {
+                            role,
+                            content: Some(token.as_str()),
+                            reasoning_content: None,
+                        },
+                    }],
+                };
+                yield Ok::<Bytes, Infallible>(sse_chunk_ser(&chunk));
+            }
         }
 
         if include_usage {
@@ -2047,4 +2082,84 @@ pub async fn image_edit(
     state.recorder.record_request_end(endpoint);
 
     Ok(Json(body).into_response())
+}
+
+#[cfg(test)]
+mod stream_frame_tests {
+    use super::*;
+
+    // The full-serialize form the streaming loop falls back to for boundary frames.
+    fn full_serde(id: &str, model: &str, created: i64, token: &str) -> Vec<u8> {
+        let chunk = ChatStreamChunk {
+            id,
+            object: "chat.completion.chunk",
+            created,
+            model,
+            choices: [ChatChoiceDelta {
+                index: 0,
+                finish_reason: None,
+                delta: ChatDelta {
+                    role: None,
+                    content: Some(token),
+                    reasoning_content: None,
+                },
+            }],
+        };
+        sse_chunk_ser(&chunk).to_vec()
+    }
+
+    // The pre-serialized-envelope splice used for middle tokens.
+    fn templated(id: &str, model: &str, created: i64, token: &str) -> Vec<u8> {
+        let mut p = Vec::new();
+        p.extend_from_slice(b"data: {\"id\":");
+        serde_json::to_writer(&mut p, &id).unwrap();
+        p.extend_from_slice(b",\"object\":\"chat.completion.chunk\",\"created\":");
+        p.extend_from_slice(created.to_string().as_bytes());
+        p.extend_from_slice(b",\"model\":");
+        serde_json::to_writer(&mut p, &model).unwrap();
+        p.extend_from_slice(b",\"choices\":[{\"index\":0,\"delta\":{\"content\":");
+        serde_json::to_writer(&mut p, &token).unwrap();
+        p.extend_from_slice(b"}}]}\n\n");
+        p
+    }
+
+    #[test]
+    fn templated_frame_is_byte_identical_to_full_serialize() {
+        let id = "chatcmpl-abc123";
+        let model = "meta-llama/Llama-3.1-8B-Instruct";
+        let created = 1_726_000_000_i64;
+        for token in [
+            "hello",
+            " world",
+            "tok42",
+            "",
+            "with\"quote",
+            "back\\slash",
+            "new\nline",
+            "tab\there",
+            "unicode-\u{00e9}\u{4e2d}\u{6587}",
+            "emoji-\u{1F600}",
+            "ctrl-\u{0001}\u{001f}",
+            "\"",
+            "\\",
+            "\u{0000}",
+        ] {
+            assert_eq!(
+                templated(id, model, created, token),
+                full_serde(id, model, created, token),
+                "templated frame diverged from full serialize for token {token:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn templated_frame_is_valid_sse_and_parses() {
+        let out = templated("id1", "m", 7, "hi");
+        assert!(out.starts_with(b"data: "));
+        assert!(out.ends_with(b"}}]}\n\n"));
+        let json = &out[b"data: ".len()..out.len() - 2];
+        let v: serde_json::Value = serde_json::from_slice(json).unwrap();
+        assert_eq!(v["object"], "chat.completion.chunk");
+        assert_eq!(v["choices"][0]["delta"]["content"], "hi");
+    }
 }

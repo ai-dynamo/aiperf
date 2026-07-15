@@ -305,6 +305,82 @@ def test_graph_dataset_stays_on_cfg(tmp_path: Path) -> None:
     assert "workload" not in authored
 
 
+def test_records_parquet_absent_by_default(tmp_path: Path) -> None:
+    # Default records format is ["jsonl"]: JSONL path present, no parquet sidecar.
+    run = _run(tmp_path / "artifacts")
+    artifacts = dump_benchmark_run(run)["cfg"]["artifacts"]
+    assert artifacts["records_path"] == "profile_export.jsonl"
+    assert "records_parquet_path" not in artifacts
+
+
+def test_records_parquet_projects_relative_path_when_in_formats(tmp_path: Path) -> None:
+    run = _run(tmp_path / "artifacts")
+    run.cfg.artifacts.records = ["jsonl", "parquet"]
+    artifacts = dump_benchmark_run(run)["cfg"]["artifacts"]
+    assert artifacts["records_path"] == "profile_export.jsonl"
+    assert artifacts["records_parquet_path"] == "profile_export.parquet"
+
+
+def test_records_parquet_only_omits_jsonl(tmp_path: Path) -> None:
+    # ["parquet"] alone selects the columnar sidecar without the JSONL.
+    run = _run(tmp_path / "artifacts")
+    run.cfg.artifacts.records = ["parquet"]
+    artifacts = dump_benchmark_run(run)["cfg"]["artifacts"]
+    assert "records_path" not in artifacts
+    assert artifacts["records_parquet_path"] == "profile_export.parquet"
+
+
+def test_records_csv_projects_relative_path_when_in_formats(tmp_path: Path) -> None:
+    run = _run(tmp_path / "artifacts")
+    run.cfg.artifacts.records = ["jsonl", "csv"]
+    artifacts = dump_benchmark_run(run)["cfg"]["artifacts"]
+    assert artifacts["records_path"] == "profile_export.jsonl"
+    assert artifacts["records_csv_path"] == "profile_export_records.csv"
+
+
+def test_records_all_three_formats_project_together(tmp_path: Path) -> None:
+    run = _run(tmp_path / "artifacts")
+    run.cfg.artifacts.records = ["jsonl", "csv", "parquet"]
+    artifacts = dump_benchmark_run(run)["cfg"]["artifacts"]
+    assert artifacts["records_path"] == "profile_export.jsonl"
+    assert artifacts["records_csv_path"] == "profile_export_records.csv"
+    assert artifacts["records_parquet_path"] == "profile_export.parquet"
+
+
+def test_records_csv_stripped_for_dynosim(tmp_path: Path) -> None:
+    run = _run(
+        tmp_path / "artifacts",
+        transport={
+            "type": "dynosim_offline",
+            "topology": "single",
+            "engine": {"block_size": 16},
+            "required_features": ["dynamo-full"],
+        },
+        endpoint_type="dynosim",
+        endpoint_url="dynosim://offline",
+    )
+    run.cfg.artifacts.records = ["jsonl", "csv"]
+    artifacts = dump_benchmark_run(run)["cfg"]["artifacts"]
+    assert "records_csv_path" not in artifacts
+
+
+def test_records_parquet_stripped_for_dynosim(tmp_path: Path) -> None:
+    run = _run(
+        tmp_path / "artifacts",
+        transport={
+            "type": "dynosim_offline",
+            "topology": "single",
+            "engine": {"block_size": 16},
+            "required_features": ["dynamo-full"],
+        },
+        endpoint_type="dynosim",
+        endpoint_url="dynosim://offline",
+    )
+    run.cfg.artifacts.records = ["jsonl", "parquet"]
+    artifacts = dump_benchmark_run(run)["cfg"]["artifacts"]
+    assert "records_parquet_path" not in artifacts
+
+
 def test_dynosim_transport_inline(tmp_path: Path) -> None:
     run = _run(
         tmp_path / "artifacts",
@@ -380,3 +456,60 @@ def test_explicit_file_format_bypasses_detection(tmp_path: Path) -> None:
     )
     authored = build_authored_run_request(run, operation="execute")["run"]
     assert authored["cfg"]["datasets"][0]["format"] == "single_turn"
+
+
+def _recorded_run(tmp_path: Path) -> BenchmarkRun:
+    """A recorded weka_trace run whose dataset carries a synthesis block."""
+    return _run(
+        tmp_path / "artifacts",
+        dataset={
+            "type": "file",
+            "path": str(tmp_path / "trace.jsonl"),
+            "format": "weka_trace",
+            "synthesis": {
+                "speedup_ratio": 1.0,
+                "prefix_len_multiplier": 1.0,
+                "prefix_root_multiplier": 1,
+                "prompt_len_multiplier": 1.0,
+                "output_len_multiplier": 1.0,
+            },
+        },
+    )
+
+
+def test_trajectory_knobs_default_to_disabled_on_synthesis(tmp_path: Path) -> None:
+    # A non-scenario recorded run carries the disabled t* defaults plus the run
+    # seed on the synthesis block; the runner reads its own 0.0/0.0/0 defaults
+    # when absent, but the projection is explicit so C2's binding is stable.
+    run = _recorded_run(tmp_path)
+    synthesis = dump_benchmark_run(run)["cfg"]["datasets"][0]["synthesis"]
+    assert synthesis["trajectory_start_min_ratio"] == 0.0
+    assert synthesis["trajectory_start_max_ratio"] == 0.0
+    # run.random_seed is 17 in the shared fixture.
+    assert synthesis["t_star_random_seed"] == 17
+
+
+def test_scenario_trajectory_and_warmup_knobs_reach_the_wire(tmp_path: Path) -> None:
+    # Simulate a submission-scenario run: the scenario auto-fills the per-run t*
+    # window on cfg and the agentic cache-warmup duration on the warmup phase.
+    # (Those Config fields live on the graph-IR branch; object.__setattr__ mirrors
+    # the auto-fill without depending on that branch's config surface.)
+    run = _recorded_run(tmp_path)
+    object.__setattr__(run.cfg, "trajectory_start_min_ratio", 0.25)
+    object.__setattr__(run.cfg, "trajectory_start_max_ratio", 0.75)
+    object.__setattr__(run.cfg.phases[0], "agentic_cache_warmup_duration", 8.5)
+
+    authored = dump_benchmark_run(run)["cfg"]
+    synthesis = authored["datasets"][0]["synthesis"]
+    assert synthesis["trajectory_start_min_ratio"] == 0.25
+    assert synthesis["trajectory_start_max_ratio"] == 0.75
+    assert synthesis["t_star_random_seed"] == 17
+
+    phase = authored["phases"][0]
+    assert phase["agentic_cache_warmup_duration"] == 8.5
+
+
+def test_agentic_cache_warmup_absent_on_non_scenario_phase(tmp_path: Path) -> None:
+    run = _run(tmp_path / "artifacts")
+    phase = dump_benchmark_run(run)["cfg"]["phases"][0]
+    assert "agentic_cache_warmup_duration" not in phase

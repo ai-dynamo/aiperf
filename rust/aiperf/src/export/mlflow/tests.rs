@@ -229,8 +229,20 @@ struct MockServer {
     handle: Option<std::thread::JoinHandle<()>>,
 }
 
+/// Whether the mock's `get-by-name` reports the experiment as already existing
+/// (200 with an id) or missing (404, forcing the create path).
+#[derive(Clone, Copy)]
+enum ExperimentState {
+    Missing,
+    Existing,
+}
+
 impl MockServer {
     fn start() -> Self {
+        Self::start_with(ExperimentState::Missing)
+    }
+
+    fn start_with(state: ExperimentState) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = format!("http://{}", listener.local_addr().unwrap());
         listener.set_nonblocking(true).unwrap();
@@ -244,7 +256,7 @@ impl MockServer {
                     Ok((mut stream, _)) => {
                         stream.set_nonblocking(false).ok();
                         if let Some(rec) = read_request(&mut stream) {
-                            let response = canned_response(&rec.path);
+                            let response = canned_response(&rec.path, state);
                             let _ = stream.write_all(response.as_bytes());
                             let _ = stream.flush();
                             requests_thread.lock().unwrap().push(rec);
@@ -325,13 +337,20 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-fn canned_response(path: &str) -> String {
+fn canned_response(path: &str, state: ExperimentState) -> String {
     let (code, body) = if path.contains("experiments/get-by-name") {
-        // Force the create path.
-        (
-            404,
-            r#"{"error_code":"RESOURCE_DOES_NOT_EXIST","message":"no experiment"}"#.to_string(),
-        )
+        match state {
+            // Force the create path.
+            ExperimentState::Missing => (
+                404,
+                r#"{"error_code":"RESOURCE_DOES_NOT_EXIST","message":"no experiment"}"#.to_string(),
+            ),
+            // Experiment already exists: the exporter must reuse it, never create.
+            ExperimentState::Existing => (
+                200,
+                r#"{"experiment":{"experiment_id":"7","name":"aiperf"}}"#.to_string(),
+            ),
+        }
     } else if path.contains("experiments/create") {
         (200, r#"{"experiment_id":"7"}"#.to_string())
     } else if path.contains("runs/create") {
@@ -374,6 +393,12 @@ fn rest_upload_sends_expected_experiment_run_and_log_batch_bodies() {
     let paths: Vec<&str> = requests.iter().map(|r| r.path.as_str()).collect();
     assert!(paths.iter().any(|p| p.contains("experiments/get-by-name")));
     assert!(paths.iter().any(|p| p.contains("experiments/create")));
+    // `get-by-name` must be a GET (POST returns 405 from a real MLflow server).
+    assert!(
+        requests
+            .iter()
+            .any(|r| r.path.contains("experiments/get-by-name") && r.method == "GET")
+    );
     // Artifact uploaded through the mlflow-artifacts proxy under exports/.
     assert!(requests.iter().any(|r| {
         r.method == "PUT"
@@ -435,6 +460,54 @@ fn rest_upload_sends_expected_experiment_run_and_log_batch_bodies() {
     ] {
         assert!(tag_keys.contains(key), "missing tag key {key}");
     }
+}
+
+/// Regression: when the target experiment already exists, the exporter must
+/// reuse the id from `get-by-name` and never POST `experiments/create`. Before
+/// the fix, `get-by-name` was sent as POST (405 from real MLflow) and the code
+/// fell through to `create`, which fails RESOURCE_ALREADY_EXISTS on the second
+/// run to the same experiment — silently dropping every run after the first.
+#[test]
+fn rest_upload_reuses_existing_experiment_without_create() {
+    let server = MockServer::start_with(ExperimentState::Existing);
+    let report = sample_report();
+    let cfg = sample_config(&server.addr);
+    let export_cfg = ExportConfig {
+        mlflow: cfg,
+        ..ExportConfig::default()
+    };
+    let artifact_dir =
+        std::env::temp_dir().join(format!("aiperf-mlflow-existing-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&artifact_dir);
+    std::fs::create_dir_all(&artifact_dir).unwrap();
+
+    MlflowExporter
+        .export(&report, &artifact_dir, &export_cfg)
+        .expect("REST export should succeed reusing the existing experiment");
+
+    let requests = server.requests();
+    let _ = std::fs::remove_dir_all(&artifact_dir);
+
+    // The experiment was looked up via GET and reused; create was never called.
+    assert!(
+        requests
+            .iter()
+            .any(|r| r.path.contains("experiments/get-by-name") && r.method == "GET"),
+        "expected a GET experiments/get-by-name"
+    );
+    assert!(
+        !requests
+            .iter()
+            .any(|r| r.path.contains("experiments/create")),
+        "must not create an experiment that already exists"
+    );
+    // The run was still created under the resolved experiment.
+    assert!(
+        requests
+            .iter()
+            .any(|r| r.path.contains("runs/create") && r.method == "POST"),
+        "expected the run to be created"
+    );
 }
 
 #[test]

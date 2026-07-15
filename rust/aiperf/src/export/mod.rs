@@ -41,7 +41,22 @@ pub mod console_txt;
 pub mod genai_perf;
 pub mod mlflow;
 pub mod otel;
+/// Server-metrics Parquet sink. Gated behind the `parquet` feature: it links
+/// `arrow` + `parquet` (~2.6 MiB of `.text`), which a lite/online-only build
+/// (e.g. a lightweight nightly wheel) can drop. When the feature is off the
+/// [`ParquetExporter`] is not registered and the public-dataset loader rejects
+/// `.parquet` inputs; [`ParquetExportConfig`] stays present so the wire
+/// `cfg.export.parquet` block still decodes (it is simply inert).
+#[cfg(feature = "parquet")]
 pub mod parquet;
+/// Wide, per-request Parquet sidecar to `profile_export.jsonl`. Gated behind the
+/// `parquet` feature (links `arrow` + `parquet`): a lite build drops it and the
+/// runner skips the artifact with a warning. Unlike the sinks in [`registry`],
+/// this is not an [`Exporter`] over the aggregated [`NativeReport`] — the
+/// per-record data lives only at the runner's `CapturedRecord` callsites, so the
+/// runner drives this writer directly.
+#[cfg(feature = "parquet")]
+pub mod per_record_parquet;
 pub mod server_metrics;
 pub mod timeslice;
 pub mod wandb;
@@ -51,10 +66,21 @@ pub use console_txt::ConsoleTxtExportConfig;
 pub use genai_perf::GenaiPerfExportConfig;
 pub use mlflow::MlflowExportConfig;
 pub use otel::OtelExportConfig;
-pub use parquet::ParquetExportConfig;
 pub use server_metrics::ServerMetricsExportConfig;
 pub use timeslice::TimesliceExportConfig;
 pub use wandb::WandbExportConfig;
+
+/// Server-metrics Parquet export policy.
+///
+/// Defined here (not in the feature-gated [`parquet`] module) so the wire
+/// `cfg.export.parquet` block always decodes: a lite build with the `parquet`
+/// feature off still accepts the config, it just registers no Parquet exporter.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ParquetExportConfig {
+    /// Emit `server_metrics_export.parquet`.
+    pub enabled: bool,
+}
 
 /// Typed export policy projected by the Python frontend onto the wire `cfg.export`
 /// block and decoded once by the runner. Each sub-config is independently gated;
@@ -181,8 +207,11 @@ impl ExporterRegistry {
     /// `BuiltinExportersExtension` that folds these sinks into the unified
     /// [`AIPerfRegistry`](crate::extensions::AIPerfRegistry) delegate here.
     pub fn register_builtins(&mut self) -> Result<(), DuplicateName> {
-        // Local-file writers (so the uploaders below see the on-disk files).
-        let builtins: [(u32, Arc<dyn Exporter + Send + Sync>); 9] = [
+        // Local-file writers (so the uploaders below see the on-disk files). The
+        // server-metrics Parquet sink is gated behind the `parquet` feature: a
+        // lite/online-only build drops `arrow`/`parquet` and leaves the slot empty
+        // (its `cfg.export.parquet` block still decodes but is inert).
+        let mut builtins: Vec<(u32, Arc<dyn Exporter + Send + Sync>)> = vec![
             (ORDER_FILE_WRITER, Arc::new(genai_perf::GenaiPerfV1Exporter)),
             (
                 ORDER_FILE_WRITER + 1,
@@ -196,16 +225,19 @@ impl ExporterRegistry {
                 ORDER_FILE_WRITER + 3,
                 Arc::new(accuracy_csv::AccuracyCsvExporter),
             ),
-            (ORDER_FILE_WRITER + 4, Arc::new(parquet::ParquetExporter)),
+        ];
+        #[cfg(feature = "parquet")]
+        builtins.push((ORDER_FILE_WRITER + 4, Arc::new(parquet::ParquetExporter)));
+        builtins.extend([
             (
                 ORDER_FILE_WRITER + 5,
-                Arc::new(console_txt::ConsoleTxtExporter),
+                Arc::new(console_txt::ConsoleTxtExporter) as Arc<dyn Exporter + Send + Sync>,
             ),
             // Network / deferred uploaders.
             (ORDER_UPLOADER, Arc::new(otel::OtelExporter)),
             (ORDER_UPLOADER + 1, Arc::new(mlflow::MlflowExporter)),
             (ORDER_UPLOADER + 2, Arc::new(wandb::WandbExporter)),
-        ];
+        ]);
         for (order, exporter) in builtins {
             self.register(order, exporter)?;
         }

@@ -23,6 +23,9 @@ pub struct NodeExecutionResult;
 /// Per-trace mutable state passed into every node's fire path.
 pub struct TraceContext {
     pub trace: TraceRecord,
+    /// `Rc<str>` copy of `trace.id`, derived once here so the per-node fire path
+    /// clones a pointer instead of reallocating the id string on every node.
+    pub trace_id: Rc<str>,
     pub store: Rc<VersionedChannelStore>,
     pub scheduled_node_ids: RefCell<HashSet<String>>,
     /// Node ids that finished firing. The cycle guard uses this to distinguish
@@ -44,8 +47,10 @@ pub struct TraceContext {
 
 impl TraceContext {
     pub fn new(trace: TraceRecord, store: Rc<VersionedChannelStore>) -> Rc<Self> {
+        let trace_id: Rc<str> = Rc::from(trace.id.as_str());
         Rc::new(TraceContext {
             trace,
+            trace_id,
             store,
             scheduled_node_ids: RefCell::new(HashSet::new()),
             completed_node_ids: RefCell::new(HashSet::new()),

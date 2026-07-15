@@ -17,14 +17,24 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::cellular::{
-    CellMessage, ControllerTransport, MetricsHeartbeat, RecordsShardPartition, TDigest,
-    TcpControllerTransport, merge_records_by_concatenation, merge_records_in_global_order,
+    MetricsHeartbeat, RecordsShardPartition, TDigest, merge_records_by_concatenation,
+    merge_records_in_global_order,
 };
 use crate::metrics_core::report::NativeReport;
 use crate::metrics_core::{ExportContext, MetricsAccumulator, MetricsConfig, PERCENTILES};
 use anyhow::{Context, Result, bail, ensure};
 
-use crate::runner_protocol::cellular_cell::CellLaunchSpec;
+use crate::runner_protocol::cell_launcher::owned_positions;
+
+// The velo transport + launcher wiring is the only part of the controller that
+// needs the `velo` feature; the validation, budget-slicing, merge, and report
+// assembly below are plain envelope/metric logic reused by the non-velo build.
+#[cfg(feature = "velo")]
+use crate::cellular::transport::connect::{BindSpec, BootstrapSource, build_velo, serve_bootstrap};
+#[cfg(feature = "velo")]
+use crate::cellular::{CellMessage, ControllerTransport, SpecFor, VeloControllerTransport};
+#[cfg(feature = "velo")]
+use crate::runner_protocol::cell_launcher::{CellLaunchContext, select_launcher};
 
 /// The outcome of a cellular run: the merged report path plus a live view of the
 /// last heartbeat each cell reported (for diagnostics/logging).
@@ -124,8 +134,10 @@ impl CellularRunKind {
     }
 }
 
-/// Runs one benchmark across `cell_count` cell subprocesses and writes the merged
-/// report to `report_path`. Blocks until every cell finishes.
+/// Runs one benchmark across `cell_count` cells and writes the merged report to
+/// `report_path`. Blocks until every cell ships. Requires the `velo` feature (the
+/// cell transport).
+#[cfg(feature = "velo")]
 pub fn run_cellular(
     envelope: &serde_json::Value,
     cell_count: u32,
@@ -158,11 +170,6 @@ pub fn run_cellular(
         .context("building controller runtime")?;
 
     runtime.block_on(async move {
-        let mut transport = TcpControllerTransport::bind("127.0.0.1:0", cell_count as usize)
-            .await
-            .context("binding controller transport")?;
-        let controller_addr = transport.local_addr().to_string();
-
         let temp_root =
             std::env::temp_dir().join(format!("aiperf-cellular-{}", std::process::id()));
         // Cleans the scratch tree on every exit path, including a bail. On a bail this
@@ -170,68 +177,113 @@ pub fn run_cellular(
         // BEFORE `runtime` drops and kill_on_drop SIGKILLs the cells; a surviving cell
         // could briefly recreate part of its `cell_dir` in that window. That is benign
         // — a cell's artifacts are discarded, and its records were already shipped if
-        // it got far enough to matter — leaving at worst a small orphaned `/tmp` subtree
-        // the OS reclaims. (A crashed run's data is not trusted regardless.)
+        // it got far enough to matter. (A crashed run's data is not trusted regardless.)
         let _scratch = ScratchTreeGuard(temp_root.clone());
+        std::fs::create_dir_all(&temp_root)
+            .with_context(|| format!("creating cellular scratch {}", temp_root.display()))?;
+
+        // Build the controller's velo transport and publish its PeerInfo so cells
+        // reach it from the one operator-hardcoded coordinate (zero discovery).
+        let is_k8s = matches!(
+            std::env::var(crate::runner_protocol::cell_launcher::CELL_LAUNCHER_ENV).as_deref(),
+            Ok("k8s")
+        );
+        let velo = build_velo(controller_velo_bind(is_k8s, &temp_root))
+            .await
+            .context("building controller velo")?;
+        // The run-wide synchronized-START event: cells await it after registering,
+        // and the controller triggers it once every cell has registered so they all
+        // begin dispatching together. Created before `velo` moves into the transport;
+        // held here so a bail (before trigger) drop-poisons it and unblocks every
+        // waiting cell with an error rather than a hang.
+        let start_event = velo
+            .event_manager()
+            .new_event()
+            .context("creating cellular start event")?;
+        let start_handle = start_event.handle();
+        let (serve_source, cell_coordinate) = controller_bootstrap(is_k8s, &temp_root)?;
+        let _bootstrap = serve_bootstrap(&serve_source, &velo.peer_info())
+            .await
+            .context("serving controller bootstrap PeerInfo")?;
+
         // Each phase's global dispatch base (turns dispatched by prior phases): a
         // cell's sampler restarts each phase, so the cell adds this to its phase-local
         // slot to stamp the single-cell absolute slot. Same for every cell. Graph cells
         // partition by trace and never read it, so the graph kind returns an empty map.
         let phase_ordinal_bases = kind.phase_ordinal_bases(envelope)?;
-        let mut children = Vec::with_capacity(cell_count as usize);
+
+        // Precompute each cell's sliced execute envelope; the register handler serves
+        // it as that cell's spec (replacing the stdin pipe).
+        let mut specs: Vec<Vec<u8>> = Vec::with_capacity(cell_count as usize);
         for cell_id in 0..cell_count {
             let cell_dir = temp_root.join(format!("cell-{cell_id}"));
             std::fs::create_dir_all(&cell_dir)
                 .with_context(|| format!("creating cell {cell_id} artifact dir"))?;
             let cell_envelope =
                 build_cell_envelope(envelope, cell_id, cell_count, &cell_dir, injected_seed)?;
-            let spec = CellLaunchSpec {
-                cell_id,
-                cell_count,
-                controller_addr: controller_addr.clone(),
-                phase_ordinal_bases: phase_ordinal_bases.clone(),
-                envelope: cell_envelope,
-            };
-            children.push(spawn_cell(&spec).await?);
+            specs.push(
+                serde_json::to_vec(&cell_envelope)
+                    .with_context(|| format!("serializing cell {cell_id} envelope"))?,
+            );
         }
+        let specs = std::sync::Arc::new(specs);
+        let spec_for: SpecFor = {
+            let specs = specs.clone();
+            std::sync::Arc::new(move |cell_id: u32| specs.get(cell_id as usize).cloned())
+        };
+        let mut transport =
+            VeloControllerTransport::bind_controller(velo, spec_for, cell_count, start_handle)
+                .context("binding controller transport")?;
 
-        // Watch each cell in a background task and forward the first hard failure, so
-        // a cell that dies BEFORE connecting aborts the run rather than hanging the
-        // transport's accept loop (which awaits `expected_cells` connections).
+        // Launch (local subprocesses) or expect (k8s pods) the cells.
+        let launch_ctx = CellLaunchContext {
+            cell_count,
+            controller_coordinate: cell_coordinate,
+            phase_ordinal_bases,
+        };
+        let mut handles = select_launcher()
+            .launch(&launch_ctx)
+            .context("launching cells")?;
+
+        // Watch each cell for a hard failure and forward it, so a cell that dies
+        // BEFORE registering aborts the run rather than hanging the collect. A local
+        // child exit resolves; a k8s handle never resolves (the collect deadline
+        // below is the k8s backstop).
         let (failure_tx, mut failure_rx) =
-            tokio::sync::mpsc::channel::<String>(cell_count as usize);
-        for (cell_id, mut child) in children.into_iter().enumerate() {
+            tokio::sync::mpsc::channel::<String>(cell_count.max(1) as usize);
+        for mut handle in handles.drain(..) {
             let failure_tx = failure_tx.clone();
             tokio::spawn(async move {
-                let report = match child.wait().await {
-                    Ok(status) if status.success() => None,
-                    Ok(status) => Some(format!("cell {cell_id} exited with {status}")),
-                    Err(error) => Some(format!("cell {cell_id} could not be waited on: {error}")),
-                };
-                if let Some(report) = report {
-                    let _ = failure_tx.send(report).await;
-                }
+                let report = handle.wait_failure().await;
+                let _ = failure_tx.send(report).await;
             });
         }
         drop(failure_tx);
 
-        // Collect exactly one partition per cell (plus the latest heartbeat). The
-        // `select!` is `biased`, so within a single poll a ready cell message is taken
-        // before a cell-exit failure — the ship-then-exit race resolves in the cell's
-        // favour when both land together. This is NOT blanket immunity for a cell that
-        // already shipped: if a cell ships its partition and only LATER exits nonzero
-        // while sibling partitions are still outstanding, the failure branch fires and
-        // aborts the run even though that cell's records were already collected. For
-        // this off-product-path experimental feature that is accepted — a cell's only
-        // post-ship work is throwaway-temp-dir artifact writes (the controller, not the
-        // cell, assembles the authoritative report), so a post-ship nonzero exit is
-        // rare and the direction is fail-loud, never silent corruption or a parity
-        // break. A cell that fails WITHOUT shipping leaves the transport with nothing
-        // pending, so the failure branch fires and aborts — the crash-before-connecting
-        // case that would otherwise hang the accept loop. A cell that connects but hangs
-        // indefinitely without shipping or exiting is NOT covered (no per-cell deadline
-        // yet — the failure watcher only fires on a cell exit); that bound belongs with
-        // the cross-host transport work.
+        // Synchronized start: wait for every cell to register (bounded — cells only
+        // fetch their envelope, no work yet), then trigger the START event so all
+        // cells begin dispatching together. A cell that dies before registering, or a
+        // registration timeout, aborts the run (dropping `start_event` poisons it, so
+        // any already-waiting cell unblocks with an error rather than hanging).
+        tokio::select! {
+            biased;
+            () = transport.await_all_registered() => {}
+            Some(failure) = failure_rx.recv() => bail!("{failure}"),
+            () = tokio::time::sleep(register_timeout()) => {
+                bail!("cells did not all register within the registration timeout")
+            }
+        }
+        start_event
+            .trigger()
+            .context("triggering cellular benchmark start")?;
+
+        // Collect exactly one partition per cell (plus the latest heartbeat), with a
+        // generous deadline so a cell that never ships (a k8s pod with no child to
+        // watch) aborts loudly instead of hanging forever. The `select!` is `biased`,
+        // so a ready cell message is taken before a cell-exit failure — the
+        // ship-then-exit race resolves in the cell's favour when both land together.
+        let deadline = tokio::time::sleep(collect_timeout());
+        tokio::pin!(deadline);
         let mut partitions: Vec<RecordsShardPartition> = Vec::with_capacity(cell_count as usize);
         let mut heartbeats: BTreeMap<u32, MetricsHeartbeat> = BTreeMap::new();
         while partitions.len() < cell_count as usize {
@@ -248,6 +300,10 @@ pub fn run_cellular(
                     ),
                 },
                 Some(failure) = failure_rx.recv() => bail!("{failure}"),
+                _ = &mut deadline => bail!(
+                    "cellular run timed out with {} of {cell_count} cell partitions",
+                    partitions.len()
+                ),
             }
         }
 
@@ -339,32 +395,69 @@ pub fn run_cellular(
     })
 }
 
-/// Spawns one `aiperf-runner --cell` child and pipes its [`CellLaunchSpec`] to stdin.
-async fn spawn_cell(spec: &CellLaunchSpec) -> Result<tokio::process::Child> {
-    use std::process::Stdio;
-    use tokio::io::AsyncWriteExt;
-    let exe = std::env::current_exe().context("resolving the runner executable for a cell")?;
-    let spec_bytes = serde_json::to_vec(spec).context("serializing cell launch spec")?;
-    let mut child = tokio::process::Command::new(exe)
-        .arg("--cell")
-        .stdin(Stdio::piped())
-        // A cell's records flow over the transport; keep stderr for its diagnostics
-        // and drop stdout (its would-be terminal envelope is unused by the controller).
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
-        // On any controller abort the runtime is dropped, cancelling the watcher
-        // tasks that own these children; kill_on_drop then SIGKILLs each cell so a
-        // failed run never leaves cells generating load against the target.
-        .kill_on_drop(true)
-        .spawn()
-        .with_context(|| format!("spawning cell {}", spec.cell_id))?;
-    let mut stdin = child.stdin.take().context("cell child stdin unavailable")?;
-    stdin
-        .write_all(&spec_bytes)
-        .await
-        .with_context(|| format!("piping launch spec to cell {}", spec.cell_id))?;
-    stdin.shutdown().await.ok();
-    Ok(child)
+/// The controller's velo messaging bind. k8s binds an ephemeral routable TCP port
+/// (its address is advertised to cells via the bootstrap `PeerInfo`); a co-located
+/// launcher binds UDS on unix (a lower-overhead local socket) or loopback elsewhere.
+#[cfg(feature = "velo")]
+fn controller_velo_bind(is_k8s: bool, temp_root: &Path) -> BindSpec {
+    if is_k8s {
+        return BindSpec::TcpBind("0.0.0.0:0".parse().expect("valid ephemeral bind addr"));
+    }
+    #[cfg(unix)]
+    {
+        BindSpec::UdsPath(temp_root.join("controller.sock"))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = temp_root;
+        BindSpec::TcpLoopback
+    }
+}
+
+/// The controller's bootstrap publication and the coordinate cells fetch it from.
+/// - **k8s**: serve the `PeerInfo` on the operator-hardcoded bootstrap bind
+///   (`AIPERF_CONTROLLER_BOOTSTRAP_BIND`, default `0.0.0.0:9500`); the cell fetch
+///   coordinate is supplied to the pods by the operator (`AIPERF_CELL_CONTROLLER_ADDR`),
+///   so the launcher's copy is unused here (empty).
+/// - **local**: write the `PeerInfo` to a file in the scratch tree; cells (same host)
+///   read it via a `file:` coordinate the local launcher injects.
+#[cfg(feature = "velo")]
+fn controller_bootstrap(is_k8s: bool, temp_root: &Path) -> Result<(BootstrapSource, String)> {
+    if is_k8s {
+        let bind = std::env::var("AIPERF_CONTROLLER_BOOTSTRAP_BIND")
+            .unwrap_or_else(|_| "0.0.0.0:9500".to_owned());
+        Ok((BootstrapSource::Tcp(bind), String::new()))
+    } else {
+        let path = temp_root.join("controller-peer.rmp");
+        let coordinate = format!("file:{}", path.display());
+        Ok((BootstrapSource::File(path), coordinate))
+    }
+}
+
+/// The deadline for collecting every cell's partition. Covers the whole run (cells
+/// execute the benchmark before shipping), so it is generous and env-overridable
+/// (`AIPERF_CELL_COLLECT_TIMEOUT_SECS`, default 2 hours). Primarily a k8s backstop —
+/// a local run's per-child exit watcher catches a dead cell far sooner.
+#[cfg(feature = "velo")]
+fn collect_timeout() -> std::time::Duration {
+    let secs = std::env::var("AIPERF_CELL_COLLECT_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(7200);
+    std::time::Duration::from_secs(secs)
+}
+
+/// The deadline for every cell to REGISTER (before the synchronized start). Cells
+/// only fetch their envelope here — no benchmark work yet — so this is a short
+/// startup bound (env `AIPERF_CELL_REGISTER_TIMEOUT_SECS`, default 5 minutes),
+/// unlike [`collect_timeout`] which must span the whole run.
+#[cfg(feature = "velo")]
+fn register_timeout() -> std::time::Duration {
+    let secs = std::env::var("AIPERF_CELL_REGISTER_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(300);
+    std::time::Duration::from_secs(secs)
 }
 
 /// Builds the protocol-v2 envelope for one cell: the same run with its phase
@@ -675,26 +768,6 @@ fn validate_graph_cellular_phases(envelope: &serde_json::Value, cell_count: u32)
     Ok(())
 }
 
-/// The number of dispatch-stream positions in `[0, total)` that cell `k` owns under
-/// round-robin ownership (`position % cell_count == cell_id`) — `ceil((total-k)/C)`.
-/// A phase's per-cell slice is the difference of this over the phase's `[base,
-/// base+len)` window (see [`build_cell_envelope`]); over a single phase (`base=0`)
-/// it is just each cell's share, summing to `total`.
-///
-/// `pub(crate)` so the thread-per-core sharded scheduled runtime
-/// ([`crate::runner_protocol::sharded_scheduled`]) reuses the identical round-robin share when it
-/// slices a cell's already-cell-sliced phase budget across its `W` sub-cell
-/// threads — the two-level partition tiles only if both levels use this exact
-/// `ceil((total-k)/C)` share.
-pub(crate) fn owned_positions(total: u64, cell_id: u32, cell_count: u32) -> u64 {
-    let count = cell_count as u64;
-    let k = cell_id as u64;
-    if k >= total {
-        return 0;
-    }
-    (total - k).div_ceil(count)
-}
-
 /// The native metrics policy for the merge, derived from the v2 envelope exactly as
 /// the single-process path does — `cfg.metrics` (SLOs + slice duration) plus
 /// `cfg.endpoint.use_server_token_count`. Passing `MetricsConfig::default()` would
@@ -898,15 +971,6 @@ fn cellular_endpoint_urls(envelope: &serde_json::Value) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-/// Reads `cfg.runtime.cells` from a v2 envelope, defaulting to 1 (single process).
-pub fn cell_count_from_envelope(envelope: &serde_json::Value) -> u32 {
-    envelope
-        .pointer("/run/cfg/runtime/cells")
-        .and_then(serde_json::Value::as_u64)
-        .map(|cells| cells.clamp(1, 1024) as u32)
-        .unwrap_or(1)
 }
 
 /// Writes the merged cross-cell live heartbeat beside the report as a JSON-safe
@@ -1205,16 +1269,6 @@ mod tests {
     }
 
     #[test]
-    fn owned_positions_sum_to_total_and_tile() {
-        for total in [1_u64, 7, 100, 500, 501] {
-            for count in 1..=8u32 {
-                let sum: u64 = (0..count).map(|k| owned_positions(total, k, count)).sum();
-                assert_eq!(sum, total, "total {total} count {count}");
-            }
-        }
-    }
-
-    #[test]
     fn each_phase_partitions_and_tiles_independently() {
         // The per-cell sampler restarts each phase, so each phase is partitioned on
         // its OWN instance space `0..phase_requests`: cell k's per-phase count is
@@ -1306,13 +1360,5 @@ mod tests {
             (rate_sum - 40.0).abs() < 1e-9,
             "per-cell rates must sum to the authored aggregate, got {rate_sum}"
         );
-    }
-
-    #[test]
-    fn cell_count_reads_runtime_cells() {
-        let envelope = serde_json::json!({"run": {"cfg": {"runtime": {"cells": 4}}}});
-        assert_eq!(cell_count_from_envelope(&envelope), 4);
-        let single = serde_json::json!({"run": {"cfg": {"runtime": {"workers": 1}}}});
-        assert_eq!(cell_count_from_envelope(&single), 1);
     }
 }

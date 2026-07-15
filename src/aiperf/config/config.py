@@ -470,13 +470,15 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         if not isinstance(data, dict):
             return data
         transport = data.get("transport")
-        transport_type = (
-            transport.get("type") if isinstance(transport, dict) else None
-        )
+        transport_type = transport.get("type") if isinstance(transport, dict) else None
         if transport_type not in {"dynosim_offline", "dynosim_online"}:
             return data
         endpoint = data.get("endpoint")
-        if isinstance(endpoint, dict) and not endpoint.get("urls") and not endpoint.get("url"):
+        if (
+            isinstance(endpoint, dict)
+            and not endpoint.get("urls")
+            and not endpoint.get("url")
+        ):
             endpoint["urls"] = ["dynosim://offline"]
         return data
 
@@ -828,9 +830,27 @@ class AIPerfConfig(BaseConfig):
         unknown = [k for k in data if isinstance(k, str) and k not in known]
         if not unknown:
             return data
+        # Body fields (endpoint, mlflow, otel, gpuTelemetry, …) live under
+        # ``benchmark:``, not at the envelope root. A misplaced body key is a
+        # common mistake, so point the user at the right nesting explicitly.
+        body_keys: set[str] = set()
+        for name, field in BenchmarkConfig.model_fields.items():
+            body_keys.add(name)
+            if field.alias:
+                body_keys.add(field.alias)
         suggestions = []
         for key in unknown:
+            if key in body_keys:
+                suggestions.append(f"{key!r} (nest it under 'benchmark:')")
+                continue
             close = difflib.get_close_matches(key, known, n=1, cutoff=0.6)
+            if not close:
+                close = difflib.get_close_matches(key, body_keys, n=1, cutoff=0.6)
+                if close:
+                    suggestions.append(
+                        f"{key!r} (did you mean 'benchmark.{close[0]}'?)"
+                    )
+                    continue
             if close:
                 suggestions.append(f"{key!r} (did you mean {close[0]!r}?)")
             else:

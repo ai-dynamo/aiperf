@@ -1,0 +1,251 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//! How a cellular run's cells are started.
+//!
+//! The velo transport is uniform across deployments; only *how the cell processes
+//! come to exist* differs, so that is the one seam here:
+//!
+//! - [`LocalLauncher`] (default, dev/test) spawns `aiperf-runner --cell`
+//!   subprocesses on the same host. Each child learns only its `cell_id`, the
+//!   `cell_count`, and the controller's bootstrap coordinate — all via env — and
+//!   fetches its full `CellLaunchSpec` over velo (no stdin pipe).
+//! - [`K8sLauncher`] does **not** spawn: the operator/JobSet already created the
+//!   cell pods. It only reports how many cells to expect; the pods find the
+//!   controller from the same env the operator injects.
+//!
+//! A cell that never comes up is caught by [`CellHandle::wait_failure`] (a local
+//! child exit) or, for k8s where there is no child to watch, by the controller's
+//! registration timeout.
+
+use std::collections::BTreeMap;
+
+use anyhow::{Context, Result};
+use tokio::process::Child;
+
+use crate::cellular::partition::{CELL_COUNT_ENV, CELL_ID_ENV};
+
+use crate::runner_protocol::cellular_cell::{
+    CELL_CONTROLLER_ADDR_ENV, CELL_PHASE_ORDINAL_BASES_ENV,
+};
+
+/// Env var selecting the launcher: `local` (default) or `k8s`.
+pub const CELL_LAUNCHER_ENV: &str = "AIPERF_CELL_LAUNCHER";
+
+/// Everything a launcher needs to start (or expect) a run's cells. The controller
+/// builds this after it has bound its velo transport and published its bootstrap
+/// coordinate.
+pub struct CellLaunchContext {
+    /// Number of cells the run is partitioned across.
+    pub cell_count: u32,
+    /// The controller's bootstrap coordinate cells fetch its `PeerInfo` from
+    /// (`file:PATH` locally, `tcp://HOST:PORT` in k8s), injected as
+    /// [`CELL_CONTROLLER_ADDR_ENV`].
+    pub controller_coordinate: String,
+    /// Each phase's global dispatch-ordinal base, injected as
+    /// [`CELL_PHASE_ORDINAL_BASES_ENV`] so a cell's issuer stamps
+    /// single-cell-equivalent absolute slots (unchanged from the process launcher).
+    pub phase_ordinal_bases: BTreeMap<String, u64>,
+}
+
+/// A started cell the controller watches for hard failure. For a local subprocess
+/// this wraps the child; for a k8s pod there is nothing to wait on (pod liveness
+/// is the operator's concern; the controller uses a registration timeout).
+pub struct CellHandle {
+    child: Option<Child>,
+    cell_id: u32,
+}
+
+impl CellHandle {
+    /// Await this cell's failure, returning a diagnostic if it exits non-zero (or
+    /// cannot be waited on). For a k8s cell (no child) this never resolves.
+    pub async fn wait_failure(&mut self) -> String {
+        match self.child.as_mut() {
+            Some(child) => match child.wait().await {
+                Ok(status) if status.success() => {
+                    // A cell that exits cleanly is not a failure; park so the
+                    // controller's select! keeps waiting on the transport instead.
+                    std::future::pending::<()>().await;
+                    unreachable!()
+                }
+                Ok(status) => format!("cell {} exited with {status}", self.cell_id),
+                Err(error) => format!("cell {} could not be waited on: {error}", self.cell_id),
+            },
+            None => {
+                std::future::pending::<()>().await;
+                unreachable!()
+            }
+        }
+    }
+}
+
+/// Starts (or expects) a run's cells; the transport is always velo.
+pub trait CellLauncher {
+    /// Start the cells and return handles the controller watches for hard failure.
+    fn launch(&self, ctx: &CellLaunchContext) -> Result<Vec<CellHandle>>;
+}
+
+/// Spawns `aiperf-runner --cell` subprocesses on this host.
+pub struct LocalLauncher;
+
+impl LocalLauncher {
+    /// Build (but do not spawn) the `Command` for one cell — its own function so
+    /// the env wiring is unit-testable without spawning a process.
+    pub fn cell_command(&self, ctx: &CellLaunchContext, cell_id: u32) -> tokio::process::Command {
+        use std::process::Stdio;
+        // `current_exe` can fail; a failure surfaces at launch, so build eagerly.
+        let exe = std::env::current_exe().unwrap_or_else(|_| "aiperf-runner".into());
+        let mut command = tokio::process::Command::new(exe);
+        command
+            .arg("--cell")
+            .env(CELL_ID_ENV, cell_id.to_string())
+            .env(CELL_COUNT_ENV, ctx.cell_count.to_string())
+            .env(CELL_CONTROLLER_ADDR_ENV, &ctx.controller_coordinate)
+            // A cell fetches its spec over velo and ships records over velo; keep
+            // stderr for diagnostics and drop stdout (its would-be terminal
+            // envelope is unused by the controller).
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            // On any controller abort the runtime drops the watcher tasks owning
+            // these children; kill_on_drop then SIGKILLs each cell so a failed run
+            // never leaves cells generating load.
+            .kill_on_drop(true);
+        if let Ok(bases) = serde_json::to_string(&ctx.phase_ordinal_bases) {
+            command.env(CELL_PHASE_ORDINAL_BASES_ENV, bases);
+        }
+        command
+    }
+}
+
+impl CellLauncher for LocalLauncher {
+    fn launch(&self, ctx: &CellLaunchContext) -> Result<Vec<CellHandle>> {
+        let mut handles = Vec::with_capacity(ctx.cell_count as usize);
+        for cell_id in 0..ctx.cell_count {
+            let child = self
+                .cell_command(ctx, cell_id)
+                .spawn()
+                .with_context(|| format!("spawning cell {cell_id}"))?;
+            handles.push(CellHandle {
+                child: Some(child),
+                cell_id,
+            });
+        }
+        Ok(handles)
+    }
+}
+
+/// Expects cells that a Kubernetes JobSet/operator already created. Spawns nothing;
+/// the pods discover the controller from the operator-injected env.
+pub struct K8sLauncher;
+
+impl CellLauncher for K8sLauncher {
+    fn launch(&self, ctx: &CellLaunchContext) -> Result<Vec<CellHandle>> {
+        tracing::info!(
+            cell_count = ctx.cell_count,
+            "cellular k8s launcher: expecting cell pods to register (no local spawn)"
+        );
+        Ok((0..ctx.cell_count)
+            .map(|cell_id| CellHandle {
+                child: None,
+                cell_id,
+            })
+            .collect())
+    }
+}
+
+/// Select the launcher from [`CELL_LAUNCHER_ENV`] (`local` default, `k8s`).
+pub fn select_launcher() -> Box<dyn CellLauncher> {
+    match std::env::var(CELL_LAUNCHER_ENV).as_deref() {
+        Ok("k8s") => Box::new(K8sLauncher),
+        _ => Box::new(LocalLauncher),
+    }
+}
+
+/// The number of dispatch-stream positions in `[0, total)` that cell `k` owns under
+/// round-robin ownership (`position % cell_count == cell_id`) — `ceil((total-k)/C)`.
+/// A phase's per-cell slice is the difference of this over the phase's `[base,
+/// base+len)` window; over a single phase (`base=0`) it is just each cell's share,
+/// summing to `total`.
+///
+/// Lives here (not the velo-gated controller) so the thread-per-core sharded
+/// scheduled runtime ([`crate::runner_protocol::sharded_scheduled`]) reuses the identical round-robin
+/// share **without** the `velo` feature — the two-level `(cell × thread)` partition
+/// tiles only if both levels use this exact `ceil((total-k)/C)` share.
+pub(crate) fn owned_positions(total: u64, cell_id: u32, cell_count: u32) -> u64 {
+    let count = cell_count as u64;
+    let k = cell_id as u64;
+    if k >= total {
+        return 0;
+    }
+    (total - k).div_ceil(count)
+}
+
+/// Reads `cfg.runtime.cells` from a v2 envelope, defaulting to 1 (single process).
+/// Lives here (not the velo-gated controller) so the runner's mode dispatch can
+/// read it without the `velo` feature.
+pub fn cell_count_from_envelope(envelope: &serde_json::Value) -> u32 {
+    envelope
+        .pointer("/run/cfg/runtime/cells")
+        .and_then(serde_json::Value::as_u64)
+        .map(|cells| cells.clamp(1, 1024) as u32)
+        .unwrap_or(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn context() -> CellLaunchContext {
+        let mut bases = BTreeMap::new();
+        bases.insert("profiling".to_owned(), 0);
+        CellLaunchContext {
+            cell_count: 2,
+            controller_coordinate: "file:/tmp/controller-peer.rmp".to_owned(),
+            phase_ordinal_bases: bases,
+        }
+    }
+
+    #[test]
+    fn local_launcher_sets_cell_env() {
+        let cmd = LocalLauncher.cell_command(&context(), 1);
+        let envs: std::collections::HashMap<String, String> = cmd
+            .as_std()
+            .get_envs()
+            .filter_map(|(key, value)| {
+                Some((key.to_str()?.to_owned(), value?.to_str()?.to_owned()))
+            })
+            .collect();
+        assert_eq!(envs.get(CELL_ID_ENV).map(String::as_str), Some("1"));
+        assert_eq!(envs.get(CELL_COUNT_ENV).map(String::as_str), Some("2"));
+        assert_eq!(
+            envs.get(CELL_CONTROLLER_ADDR_ENV).map(String::as_str),
+            Some("file:/tmp/controller-peer.rmp")
+        );
+        assert!(envs.contains_key(CELL_PHASE_ORDINAL_BASES_ENV));
+    }
+
+    #[test]
+    fn k8s_launcher_spawns_nothing_but_expects_all_cells() {
+        let handles = K8sLauncher.launch(&context()).expect("k8s launch");
+        assert_eq!(handles.len(), 2);
+        assert!(handles.iter().all(|handle| handle.child.is_none()));
+    }
+
+    #[test]
+    fn owned_positions_sum_to_total_and_tile() {
+        for total in [1_u64, 7, 100, 500, 501] {
+            for count in 1..=8u32 {
+                let sum: u64 = (0..count).map(|k| owned_positions(total, k, count)).sum();
+                assert_eq!(sum, total, "total {total} count {count}");
+            }
+        }
+    }
+
+    #[test]
+    fn cell_count_reads_runtime_cells() {
+        let envelope = serde_json::json!({"run": {"cfg": {"runtime": {"cells": 4}}}});
+        assert_eq!(cell_count_from_envelope(&envelope), 4);
+        let single = serde_json::json!({"run": {"cfg": {}}});
+        assert_eq!(cell_count_from_envelope(&single), 1);
+    }
+}

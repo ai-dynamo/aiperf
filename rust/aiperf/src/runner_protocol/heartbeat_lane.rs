@@ -120,6 +120,14 @@ pub(crate) struct HeartbeatLane {
 }
 
 impl HeartbeatLane {
+    /// Whether `AIPERF_CELLULAR_HEARTBEAT_LOG` names a non-empty path, i.e. whether
+    /// [`Self::from_env`] would build a lane. Lets a caller decide (e.g. exact-fold
+    /// gating) whether the per-record heartbeat consumer is active without paying the
+    /// file-truncating construction.
+    pub(crate) fn enabled_by_env() -> bool {
+        std::env::var_os(HEARTBEAT_LOG_ENV).is_some_and(|path| !path.is_empty())
+    }
+
     /// Builds the lane when `AIPERF_CELLULAR_HEARTBEAT_LOG` names a writable path,
     /// else `None`. Truncates the target so each run starts a fresh stream.
     pub(crate) fn from_env(clock: Rc<dyn Clock>, origin_ns: i64) -> Result<Option<Rc<Self>>> {

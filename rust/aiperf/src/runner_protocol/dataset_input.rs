@@ -143,6 +143,21 @@ pub struct TraceSynthesisSpec {
     /// Recorded content corpus (`coding` by default, or `sonnet`).
     #[serde(default)]
     pub corpus: Option<String>,
+    /// Recorded-graph trajectory-start (t*) window lower bound, as a fraction of
+    /// each trace's replayable span. Zero (the default) disables trajectory-start
+    /// selection. Python projects this per-run knob (Config `trajectory_start_min_ratio`)
+    /// onto the synthesis block beside [`Self::idle_gap_cap_seconds`].
+    #[serde(default)]
+    pub trajectory_start_min_ratio: f64,
+    /// Recorded-graph trajectory-start (t*) window upper bound, as a fraction of
+    /// each trace's replayable span. Zero (the default) disables trajectory-start
+    /// selection. Projected from Config `trajectory_start_max_ratio`.
+    #[serde(default)]
+    pub trajectory_start_max_ratio: f64,
+    /// Deterministic seed for trajectory-start (t*) sampling, derived by Python
+    /// from the run seed. Zero (the default) selects the run-root-derived seed.
+    #[serde(default)]
+    pub t_star_random_seed: u64,
 }
 
 fn default_recorded_idle_gap_cap() -> Option<f64> {
@@ -944,6 +959,67 @@ mod tests {
         .unwrap();
 
         assert_eq!(identity.source_type, "synthetic");
+    }
+
+    #[test]
+    fn trace_synthesis_carries_tstar_and_warmup_knobs() {
+        // Recorded-graph trajectory-start (t*) window and its derived seed ride
+        // on the synthesis block beside idle_gap_cap_seconds; C2 binds them into
+        // RecordedTraceInputConfig.
+        let spec: TraceSynthesisSpec = serde_json::from_str(
+            r#"{
+                "speedup_ratio": 1.0,
+                "prefix_len_multiplier": 1.0,
+                "prefix_root_multiplier": 1,
+                "prompt_len_multiplier": 1.0,
+                "output_len_multiplier": 1.0,
+                "trajectory_start_min_ratio": 0.25,
+                "trajectory_start_max_ratio": 0.75,
+                "t_star_random_seed": 4242
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(spec.trajectory_start_min_ratio, 0.25);
+        assert_eq!(spec.trajectory_start_max_ratio, 0.75);
+        assert_eq!(spec.t_star_random_seed, 4242);
+        // idle_gap_cap_seconds default is retained beside the new knobs.
+        assert_eq!(spec.idle_gap_cap_seconds, Some(60.0));
+    }
+
+    #[test]
+    fn trace_synthesis_tstar_knobs_default_to_disabled() {
+        let spec: TraceSynthesisSpec = serde_json::from_str(
+            r#"{
+                "speedup_ratio": 1.0,
+                "prefix_len_multiplier": 1.0,
+                "prefix_root_multiplier": 1,
+                "prompt_len_multiplier": 1.0,
+                "output_len_multiplier": 1.0
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(spec.trajectory_start_min_ratio, 0.0);
+        assert_eq!(spec.trajectory_start_max_ratio, 0.0);
+        assert_eq!(spec.t_star_random_seed, 0);
+    }
+
+    #[test]
+    fn trace_synthesis_rejects_unknown_fields_with_tstar_present() {
+        let result = serde_json::from_str::<TraceSynthesisSpec>(
+            r#"{
+                "speedup_ratio": 1.0,
+                "prefix_len_multiplier": 1.0,
+                "prefix_root_multiplier": 1,
+                "prompt_len_multiplier": 1.0,
+                "output_len_multiplier": 1.0,
+                "trajectory_start_min_ratio": 0.25,
+                "unknown_tstar_field": true
+            }"#,
+        );
+        let Err(error) = result else {
+            panic!("synthesis accepted an unknown field")
+        };
+        assert!(error.to_string().contains("unknown field"));
     }
 
     #[test]

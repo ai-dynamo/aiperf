@@ -42,7 +42,7 @@
 //! would overflow its residue class. For a single process (`cells == 1`) the two
 //! formulas coincide (`0 + 1*t == 0*W + t == t`, modulus `W`), so this correction
 //! only matters for the multi-process (`cells > 1`) grid — verified against
-//! [`owned_positions`](crate::runner_protocol::cellular_controller) below.
+//! [`owned_positions`](crate::runner_protocol::cell_launcher) below.
 //!
 //! # Per-thread workload slicing (slice by `W`, not `cells*W`)
 //!
@@ -89,7 +89,7 @@ use crate::metrics_core::Phase;
 use crate::phase_runtime::ScheduledPhaseSidecar;
 use anyhow::{Context, Result, anyhow, bail};
 
-use crate::runner_protocol::cellular_controller::owned_positions;
+use crate::runner_protocol::cell_launcher::owned_positions;
 use crate::runner_protocol::execute::{
     ScheduledShardOutcome, ShardRecords, ShardedShared, execute_scheduled_shard, metrics_phase,
 };

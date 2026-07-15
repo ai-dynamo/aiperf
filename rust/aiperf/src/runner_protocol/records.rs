@@ -304,6 +304,318 @@ pub fn write_records_jsonl(
         .with_context(|| format!("flushing record export {}", path.display()))
 }
 
+/// Write finalized request metrics as a wide, columnar Parquet sidecar beside
+/// the per-request JSONL.
+///
+/// This is a faithful columnar mirror of [`write_records_jsonl`]: it reuses the
+/// exact same [`record_metrics`] projection and [`classify_record_error`]
+/// classification (no logic is duplicated), so the Parquet metric columns and
+/// error triple agree with the JSONL row for the same record. The columnar
+/// assembly lives in [`crate::export::per_record_parquet`] because the runner has
+/// no direct `arrow`/`parquet` dependency. `include_trace` mirrors the JSONL's
+/// conditional `trace_data`, appending flat `trace_*` columns.
+#[cfg(feature = "parquet")]
+pub(crate) fn write_records_parquet(
+    path: &Path,
+    records: &[CapturedRecord],
+    config: &MetricsConfig,
+    include_trace: bool,
+) -> Result<()> {
+    use crate::export::per_record_parquet::{record_metric_columns, write_per_record_parquet};
+
+    let columns = record_metric_columns();
+    let rows: Vec<_> = records
+        .iter()
+        .map(|captured| per_record_parquet_row(captured, config, include_trace))
+        .collect();
+    write_per_record_parquet(path, &rows, &columns, include_trace)
+        .with_context(|| format!("writing per-record parquet export {}", path.display()))
+}
+
+/// Serialized [`Phase`] discriminant matching the JSONL `benchmark_phase` field
+/// (serde `snake_case`). Shared by the Parquet and CSV per-record writers.
+fn phase_str(phase: Phase) -> &'static str {
+    match phase {
+        Phase::Warmup => "warmup",
+        Phase::Profiling => "profiling",
+    }
+}
+
+/// Map one [`CapturedRecord`] into the crate-neutral wide Parquet row.
+#[cfg(feature = "parquet")]
+fn per_record_parquet_row(
+    captured: &CapturedRecord,
+    config: &MetricsConfig,
+    include_trace: bool,
+) -> crate::export::per_record_parquet::PerRecordRow {
+    use crate::export::per_record_parquet::{PerRecordRow, PerRecordTrace};
+
+    let record = &captured.ingest;
+    let metrics = record_metrics(captured, config)
+        .into_iter()
+        .map(|(name, metric)| (name, metric.value))
+        .collect();
+    let error = classify_record_error(captured);
+    let trace = include_trace.then(|| {
+        let http = &record.http;
+        PerRecordTrace {
+            stream_setup_ns: http.stream_setup_ns,
+            blocked_ns: http.blocked_ns,
+            dns_lookup_ns: http.dns_lookup_ns,
+            connecting_ns: http.connecting_ns,
+            sending_ns: http.sending_ns,
+            waiting_ns: http.waiting_ns,
+            receiving_ns: http.receiving_ns,
+            duration_ns: http.duration_ns,
+            connection_reused: http.connection_reused,
+            data_sent_bytes: http.data_sent_bytes.map(|value| value as i64),
+            data_received_bytes: http.data_received_bytes.map(|value| value as i64),
+            chunks_sent: http.chunks_sent.map(|value| value as i64),
+            chunks_received: http.chunks_received.map(|value| value as i64),
+        }
+    });
+    PerRecordRow {
+        session_num: record.session_num,
+        x_request_id: captured.uuid.to_string(),
+        x_correlation_id: captured.x_correlation_id.clone(),
+        conversation_id: record.conversation_id.clone(),
+        turn_index: record.turn_index,
+        credit_issued_ns: record.admit_ns,
+        request_start_ns: record.start_ns,
+        request_ack_ns: record.first_token_ns,
+        request_end_ns: record.end_ns,
+        benchmark_phase: phase_str(record.phase),
+        was_cancelled: record.canceled,
+        cancellation_time_ns: record.canceled.then_some(record.end_ns),
+        error_code: error.as_ref().and_then(|classified| classified.code),
+        error_type: error.as_ref().map(|classified| classified.error_type),
+        error_message: error.map(|classified| classified.message),
+        metrics,
+        trace,
+    }
+}
+
+/// Fixed per-record metadata columns, in JSONL/Parquet order. Shared header for
+/// the records CSV.
+const CSV_METADATA_COLUMNS: &[&str] = &[
+    "session_num",
+    "x_request_id",
+    "x_correlation_id",
+    "conversation_id",
+    "turn_index",
+    "credit_issued_ns",
+    "request_start_ns",
+    "request_ack_ns",
+    "request_end_ns",
+    "worker_id",
+    "record_processor_id",
+    "benchmark_phase",
+    "was_cancelled",
+    "cancellation_time_ns",
+];
+
+/// Flat `trace_*` CSV columns, appended when trace capture is enabled. Names and
+/// order match the Parquet sink's trace columns.
+const CSV_TRACE_COLUMNS: &[&str] = &[
+    "trace_stream_setup_ns",
+    "trace_blocked_ns",
+    "trace_dns_lookup_ns",
+    "trace_connecting_ns",
+    "trace_sending_ns",
+    "trace_waiting_ns",
+    "trace_receiving_ns",
+    "trace_duration_ns",
+    "trace_data_sent_bytes",
+    "trace_data_received_bytes",
+    "trace_chunks_sent",
+    "trace_chunks_received",
+    "trace_connection_reused",
+];
+
+/// Escape one CSV field, mirroring the legacy Python
+/// `BufferedCsvWriterMixin._escape_csv_value`: quote when the value contains a
+/// comma, double-quote, or newline, doubling any embedded quote.
+fn csv_escape(value: &str) -> String {
+    if value.contains(',') || value.contains('"') || value.contains('\n') {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
+}
+
+/// Render an optional integer cell: the number, or empty when absent.
+fn csv_opt_i64(value: Option<i64>) -> String {
+    value.map(|v| v.to_string()).unwrap_or_default()
+}
+
+/// Render an optional unsigned integer cell.
+fn csv_opt_u64(value: Option<u64>) -> String {
+    value.map(|v| v.to_string()).unwrap_or_default()
+}
+
+/// Write finalized request metrics as a per-record CSV.
+///
+/// Ported from the legacy Python `RecordExportCsvResultsProcessor`
+/// (`src/aiperf/post_processors/record_export_csv_results_processor.py`) plus its
+/// `BufferedCsvWriterMixin` (`src/aiperf/common/mixins/buffered_csv_writer_mixin.py`)
+/// onto the native post-run path. The runner already holds every finalized
+/// record, so the Python streaming/column-evolution/temp-file machinery collapses
+/// into one deterministic write: metadata columns, then one column per catalog
+/// record-metric (in catalog order, empty when a request lacks the metric), then
+/// the error columns. Reuses the exact [`record_metrics`] projection and
+/// [`classify_record_error`] classification the JSONL/Parquet sinks use, so all
+/// three per-record artifacts agree.
+///
+/// Metric columns follow the summary CSV's convention rather than the legacy
+/// per-record CSV's `{tag}_value`/`{tag}_unit` pairs: one column per metric named
+/// `{Header} ({unit})` (`RecordMetricColumn::csv_display_name`), so the unit lives
+/// in the header exactly like `profile_export_aiperf.csv`.
+///
+/// Two fields the legacy Python CSV lacked are included for parity with the newer
+/// JSONL/Parquet per-record artifacts: the error status `error_code` (e.g. 499 for
+/// a post-send cancellation) and, when `include_trace` is set, the flat `trace_*`
+/// HTTP-timing columns (the Python CSV dropped trace entirely). A record with no
+/// projected metrics and no error is skipped (mirroring the Python
+/// `if not display_metrics and not error: return`); an all-skipped run writes no
+/// file.
+pub(crate) fn write_records_csv(
+    path: &Path,
+    records: &[CapturedRecord],
+    config: &MetricsConfig,
+    include_trace: bool,
+) -> Result<()> {
+    use crate::metrics_core::record_metric_columns;
+
+    let columns = record_metric_columns();
+
+    let mut rows: Vec<String> = Vec::new();
+    for captured in records {
+        let metrics = record_metrics(captured, config);
+        let error = classify_record_error(captured);
+        // Skip records with nothing to report unless they carry an error.
+        if metrics.is_empty() && error.is_none() {
+            continue;
+        }
+        let record = &captured.ingest;
+        let mut cells: Vec<String> = Vec::with_capacity(
+            CSV_METADATA_COLUMNS.len() + columns.len() + 3 + CSV_TRACE_COLUMNS.len(),
+        );
+
+        // Metadata (order matches CSV_METADATA_COLUMNS).
+        cells.push(record.session_num.to_string());
+        cells.push(csv_escape(&captured.uuid.to_string()));
+        cells.push(csv_escape(&captured.x_correlation_id));
+        cells.push(
+            record
+                .conversation_id
+                .as_deref()
+                .map(csv_escape)
+                .unwrap_or_default(),
+        );
+        cells.push(record.turn_index.to_string());
+        cells.push(csv_opt_i64(record.admit_ns));
+        cells.push(record.start_ns.to_string());
+        cells.push(csv_opt_i64(record.first_token_ns));
+        cells.push(record.end_ns.to_string());
+        cells.push("rust-0".to_string());
+        cells.push("aiperf-runner".to_string());
+        cells.push(phase_str(record.phase).to_string());
+        cells.push(record.canceled.to_string());
+        cells.push(csv_opt_i64(record.canceled.then_some(record.end_ns)));
+
+        // Metrics: one value cell per catalog column (unit is carried in the
+        // header), empty when the record lacks the metric.
+        for column in &columns {
+            match metrics.get(&column.tag) {
+                Some(metric) => cells.push(metric.value.to_string()),
+                None => cells.push(String::new()),
+            }
+        }
+
+        // Error: code / type / message (empty when the record reached a normal
+        // terminal).
+        match &error {
+            Some(classified) => {
+                cells.push(csv_opt_i64(classified.code.map(i64::from)));
+                cells.push(classified.error_type.to_string());
+                cells.push(csv_escape(&classified.message));
+            }
+            None => {
+                cells.push(String::new());
+                cells.push(String::new());
+                cells.push(String::new());
+            }
+        }
+
+        // Trace columns, only when requested (mirrors the JSONL's conditional
+        // trace_data and the Parquet trace_* tail).
+        if include_trace {
+            let http = &record.http;
+            cells.push(csv_opt_i64(http.stream_setup_ns));
+            cells.push(csv_opt_i64(http.blocked_ns));
+            cells.push(csv_opt_i64(http.dns_lookup_ns));
+            cells.push(csv_opt_i64(http.connecting_ns));
+            cells.push(csv_opt_i64(http.sending_ns));
+            cells.push(csv_opt_i64(http.waiting_ns));
+            cells.push(csv_opt_i64(http.receiving_ns));
+            cells.push(csv_opt_i64(http.duration_ns));
+            cells.push(csv_opt_u64(http.data_sent_bytes));
+            cells.push(csv_opt_u64(http.data_received_bytes));
+            cells.push(csv_opt_u64(http.chunks_sent));
+            cells.push(csv_opt_u64(http.chunks_received));
+            cells.push(
+                http.connection_reused
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+            );
+        }
+
+        rows.push(cells.join(","));
+    }
+
+    // No displayable records -> no file (mirrors the Python zero-row cleanup and
+    // the Parquet empty-skip).
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating records CSV directory {}", parent.display()))?;
+    }
+    let file = File::create(path)
+        .with_context(|| format!("creating records CSV export {}", path.display()))?;
+    let mut writer = BufWriter::new(file);
+
+    let mut header: Vec<String> = CSV_METADATA_COLUMNS
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+    for column in &columns {
+        header.push(csv_escape(&column.csv_display_name()));
+    }
+    header.push("error_code".to_string());
+    header.push("error_type".to_string());
+    header.push("error_message".to_string());
+    if include_trace {
+        header.extend(CSV_TRACE_COLUMNS.iter().map(|name| name.to_string()));
+    }
+
+    writer
+        .write_all(header.join(",").as_bytes())
+        .and_then(|()| writer.write_all(b"\n"))
+        .with_context(|| format!("writing records CSV header {}", path.display()))?;
+    for row in &rows {
+        writer
+            .write_all(row.as_bytes())
+            .and_then(|()| writer.write_all(b"\n"))
+            .with_context(|| format!("writing records CSV row {}", path.display()))?;
+    }
+    writer
+        .flush()
+        .with_context(|| format!("flushing records CSV export {}", path.display()))
+}
+
 /// Serialize one terminal record through the canonical compatibility shape.
 ///
 /// Live extension workers consume this exact object while the post-run JSONL
@@ -784,6 +1096,165 @@ mod tests {
         assert_eq!(row["metrics"]["inter_token_latency"]["value"], 2.5);
         assert!(row.get("trace_data").is_none());
         assert!(row["error"].is_null());
+    }
+
+    #[cfg(feature = "parquet")]
+    #[test]
+    fn parquet_sidecar_mirrors_jsonl_records() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("profile_export.parquet");
+
+        let mut ok = RecordIngest::minimal(1_000_000, 11_000_000, Phase::Profiling);
+        ok.first_token_ns = Some(6_000_000);
+        ok.token_arrival_ns = vec![6_000_000, 8_000_000, 11_000_000];
+        ok.tokens = TokenCounts {
+            input: Some(8),
+            output: Some(3),
+            requested_output: Some(3),
+            ..TokenCounts::default()
+        };
+        let success = CapturedRecord {
+            uuid: Uuid::from_u128(7),
+            x_correlation_id: "session-7".into(),
+            output: CapturedModelOutput::from_parts("hello", None, None),
+            raw: None,
+            ingest: ok,
+        };
+
+        let mut cancel = RecordIngest::minimal(1_000_000, 5_000_000, Phase::Profiling);
+        cancel.canceled = true;
+        cancel.tokens.input = Some(128);
+        let cancelled = CapturedRecord {
+            uuid: Uuid::from_u128(3),
+            x_correlation_id: "session-3".into(),
+            output: CapturedModelOutput::default(),
+            raw: None,
+            ingest: cancel,
+        };
+
+        // The mapped rows agree with the JSONL projection for the same records.
+        let success_row = per_record_parquet_row(&success, &MetricsConfig::default(), false);
+        assert_eq!(success_row.benchmark_phase, "profiling");
+        assert_eq!(
+            success_row.metrics.get("request_latency").copied(),
+            Some(10.0)
+        );
+        assert!(success_row.error_code.is_none());
+
+        let cancelled_row = per_record_parquet_row(&cancelled, &MetricsConfig::default(), false);
+        assert!(cancelled_row.was_cancelled);
+        assert_eq!(cancelled_row.error_code, Some(499));
+        assert_eq!(cancelled_row.error_type, Some("RequestCancellationError"));
+        assert!(!cancelled_row.metrics.contains_key("request_latency"));
+
+        write_records_parquet(
+            &path,
+            &[success, cancelled],
+            &MetricsConfig::default(),
+            false,
+        )
+        .unwrap();
+        assert!(path.exists());
+        assert!(std::fs::metadata(&path).unwrap().len() > 0);
+
+        // Empty records write no file (mirrors the aiperf writer contract).
+        let empty = directory.path().join("empty.parquet");
+        write_records_parquet(&empty, &[], &MetricsConfig::default(), false).unwrap();
+        assert!(!empty.exists());
+    }
+
+    #[test]
+    fn records_csv_has_metadata_metric_and_error_columns() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("profile_export_records.csv");
+
+        let mut ok = RecordIngest::minimal(1_000_000, 11_000_000, Phase::Profiling);
+        ok.session_num = 7;
+        ok.first_token_ns = Some(6_000_000);
+        ok.token_arrival_ns = vec![6_000_000, 8_000_000, 11_000_000];
+        ok.tokens = TokenCounts {
+            input: Some(8),
+            output: Some(3),
+            requested_output: Some(3),
+            ..TokenCounts::default()
+        };
+        let success = CapturedRecord {
+            uuid: Uuid::from_u128(7),
+            x_correlation_id: "session-7".into(),
+            output: CapturedModelOutput::from_parts("hello", None, None),
+            raw: None,
+            ingest: ok,
+        };
+
+        let mut cancel = RecordIngest::minimal(1_000_000, 5_000_000, Phase::Profiling);
+        cancel.session_num = 3;
+        cancel.canceled = true;
+        cancel.tokens.input = Some(128);
+        let cancelled = CapturedRecord {
+            uuid: Uuid::from_u128(3),
+            x_correlation_id: "session-3".into(),
+            output: CapturedModelOutput::default(),
+            raw: None,
+            ingest: cancel,
+        };
+
+        write_records_csv(
+            &path,
+            &[success, cancelled],
+            &MetricsConfig::default(),
+            false,
+        )
+        .unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        let mut lines = text.lines();
+        let header: Vec<&str> = lines.next().unwrap().split(',').collect();
+        // Metadata + one column per metric (unit in the header, summary-CSV style)
+        // + error columns are all present.
+        for column in [
+            "session_num",
+            "x_request_id",
+            "benchmark_phase",
+            "was_cancelled",
+            "Request Latency (ms)",
+            "error_code",
+            "error_type",
+            "error_message",
+        ] {
+            assert!(
+                header.contains(&column),
+                "header missing {column}: {header:?}"
+            );
+        }
+        // Units live in the header, not in a separate per-metric unit column.
+        assert!(!header.iter().any(|c| c.ends_with("_unit")));
+        // No trace columns when trace is disabled.
+        assert!(!header.iter().any(|c| c.starts_with("trace_")));
+
+        let idx = |name: &str| header.iter().position(|c| *c == name).unwrap();
+        let rows: Vec<Vec<&str>> = lines.map(|l| l.split(',').collect()).collect();
+        assert_eq!(rows.len(), 2);
+
+        let ok_row = &rows[0];
+        assert_eq!(ok_row[idx("session_num")], "7");
+        assert_eq!(ok_row[idx("benchmark_phase")], "profiling");
+        assert_eq!(ok_row[idx("was_cancelled")], "false");
+        assert_eq!(ok_row[idx("Request Latency (ms)")], "10");
+        assert_eq!(ok_row[idx("error_code")], "");
+        assert_eq!(ok_row[idx("error_type")], "");
+
+        let cancel_row = &rows[1];
+        assert_eq!(cancel_row[idx("session_num")], "3");
+        assert_eq!(cancel_row[idx("was_cancelled")], "true");
+        assert_eq!(cancel_row[idx("error_code")], "499");
+        assert_eq!(cancel_row[idx("error_type")], "RequestCancellationError");
+        // The cancelled request produced no latency -> empty metric cell.
+        assert_eq!(cancel_row[idx("Request Latency (ms)")], "");
+
+        // Empty input writes no file.
+        let empty = directory.path().join("empty_records.csv");
+        write_records_csv(&empty, &[], &MetricsConfig::default(), false).unwrap();
+        assert!(!empty.exists());
     }
 
     #[test]

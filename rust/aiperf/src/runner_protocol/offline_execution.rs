@@ -1531,6 +1531,7 @@ pub(crate) fn prepare_dynosim_graph(
         artifact_target: run.artifact_target.clone(),
         default_max_tokens,
         allow_dataset_wrap,
+        t_star_window: prepared.t_star_window,
         worker_count: workload.worker_count,
         phase_count: workload.phases.len(),
     }))
@@ -1561,15 +1562,18 @@ impl OfflineGraphEventSink for OfflineGraphRunnerEventSink {
 
     fn record(&self, record: OfflineGraphRequestRecord) -> Result<()> {
         self.events
-            .emit(RunnerGraphExecutionEvent::Record(Box::new(
-                CapturedRecord {
+            .emit(RunnerGraphExecutionEvent::Record {
+                record: Box::new(CapturedRecord {
                     uuid: record.uuid,
                     x_correlation_id: record.trace_id,
                     output: CapturedModelOutput::from_parts(&record.response_text, None, None),
                     raw: None,
                     ingest: record.ingest,
-                },
-            )))
+                }),
+                // The offline dynosim adapter carries no static node id and never
+                // feeds the (online-only) cache-pressure warmup handoff.
+                node_id: None,
+            })
             .map_err(Into::into)
     }
 }
@@ -1627,6 +1631,7 @@ struct PreparedDynosimGraphOperation {
     artifact_target: PathBuf,
     default_max_tokens: usize,
     allow_dataset_wrap: bool,
+    t_star_window: crate::runner_protocol::graph_input::TStarWindow,
     worker_count: usize,
     phase_count: usize,
 }
@@ -1655,6 +1660,7 @@ impl PreparedRunnerOperation for PreparedDynosimGraphOperation {
             artifact_target,
             default_max_tokens,
             allow_dataset_wrap,
+            t_star_window,
             worker_count,
             phase_count,
         } = *self;
@@ -1686,6 +1692,7 @@ impl PreparedRunnerOperation for PreparedDynosimGraphOperation {
                         clock,
                         rng_root,
                         allow_dataset_wrap,
+                        t_star_window,
                         phase_sidecars,
                         &backends,
                         // Offline replay keeps its historical fail-fast graph

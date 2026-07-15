@@ -23,6 +23,11 @@
 
 pub mod application;
 pub mod cellular_cell;
+// The controller orchestration (cell launch + velo transport + merge) is only
+// reachable with the `velo` feature; `owned_positions` (needed by the non-velo
+// sharded runtime) lives in `cell_launcher` instead.
+pub mod cell_launcher;
+#[cfg(feature = "velo")]
 pub mod cellular_controller;
 pub mod control_plane_http;
 pub mod coordinator;

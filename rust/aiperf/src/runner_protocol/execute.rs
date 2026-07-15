@@ -3,7 +3,7 @@
 
 //! Native construction and execution of one resolved benchmark run.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
@@ -121,7 +121,7 @@ use crate::runner_protocol::readiness::{PreparedOnlineReadiness, ReadinessTransp
 use crate::runner_protocol::records::{
     CapturedHttpExchange, CapturedModelOutput, CapturedRecord, InputSession, group_record_errors,
     observe_otel_record, write_inputs_json, write_outputs_json, write_raw_records_jsonl,
-    write_records_jsonl,
+    write_records_csv, write_records_jsonl,
 };
 use crate::runner_protocol::registry::ValidatedEndpointProfileV2;
 use crate::runner_protocol::server_metrics::ServerMetricsRun;
@@ -471,6 +471,7 @@ pub(crate) struct NativeGraphDatasetPlan {
     pub(crate) random_seed: Option<u64>,
     pub(crate) default_output_tokens: usize,
     pub(crate) allow_dataset_wrap: bool,
+    pub(crate) t_star_window: crate::runner_protocol::graph_input::TStarWindow,
 }
 
 /// Execute a protocol-v2 plan through a transport-selected request executor.
@@ -757,6 +758,77 @@ fn validate_plan(request: &NativeRunSpec) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Whether the run requests any per-record file artifact (records/raw/outputs/inputs
+/// JSONL, the columnar records sidecars, or per-record OTLP). Exact-fold drops the
+/// per-record data during the run, so it is eligible only when every one of these is
+/// absent; the streaming writers that let artifact-present runs also drop are later
+/// tasks (S2–S4).
+fn wants_per_record_artifacts(request: &NativeRunSpec) -> bool {
+    request.artifacts.records_path.is_some()
+        || request.artifacts.raw_path.is_some()
+        || request.artifacts.outputs_path.is_some()
+        || request.artifacts.inputs_path.is_some()
+        || request.artifacts.records_parquet_path.is_some()
+        || request.artifacts.records_csv_path.is_some()
+        || request.native_otel_enabled
+}
+
+/// Force-disable switch for exact-fold, mirroring the `AIPERF_RUNTIME_*` env toggles
+/// (e.g. `AIPERF_RUNTIME_ENGINE`). Default on; `AIPERF_RUNTIME_EXACT_FOLD` set to
+/// `0`/`false`/`off`/`no` routes the run through the legacy retain path for A/B.
+fn exact_fold_enabled_by_env() -> bool {
+    match std::env::var("AIPERF_RUNTIME_EXACT_FOLD") {
+        Ok(value) => !matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "off" | "no"
+        ),
+        Err(_) => true,
+    }
+}
+
+/// Gate for the exact-mode per-record fold-and-drop path (task S1).
+///
+/// Exact-fold folds each completed record's metric scalars into the EXACT accumulator
+/// (keeping the NaN-sparse columns for exact percentiles/timeslices/series) and drops
+/// the heavy per-record data during the run — but only when the run needs nothing the
+/// legacy retain path holds records for. It is selected only when ALL hold:
+///
+/// - no per-record file artifacts / per-record OTLP (`wants_per_record_artifacts`),
+///   since those still read the retained records (streaming writers are S2–S4);
+/// - not sketch mode (sketch has its own bounded fold with a different storage mode);
+/// - the single-thread scheduled path (`!shardable`), where the lone capture uses the
+///   `DirectIssuanceAuthority` and stamps dense `0..N` absolute ordinals — the sharded
+///   arm's per-shard `CellularAutonomousIssuer` stamps STRIDED ordinals whose sparse
+///   per-shard store the accumulator-to-accumulator merge cannot absorb (that is S5);
+/// - not a cellular child (no `AIPERF_CELL_*`), for the same dense-ordinal reason and
+///   because cellular record shipping needs the full retained set;
+/// - not adaptive, and no live sink / heartbeat lane — all three consume retained or
+///   per-turn record clones the fold-and-drop path does not keep;
+/// - the env switch is not forcing legacy retain.
+///
+/// (The scheduled path never carries a graph dataset — that is a separate executor —
+/// so "not graph" is implicit here.)
+#[allow(clippy::too_many_arguments)]
+fn exact_fold_eligible(
+    sketch_mode: bool,
+    shardable: bool,
+    is_cellular: bool,
+    has_accuracy: bool,
+    wants_adaptive_record: bool,
+    has_live_sink: bool,
+    has_heartbeat: bool,
+    wants_per_record_artifacts: bool,
+) -> bool {
+    !sketch_mode
+        && !shardable
+        && !is_cellular
+        && !has_accuracy
+        && !wants_adaptive_record
+        && !has_live_sink
+        && !has_heartbeat
+        && !wants_per_record_artifacts
 }
 
 struct PreparedAccuracy {
@@ -1130,6 +1202,7 @@ async fn execute_graph_native(
     let graph_random_seed = graph.random_seed;
     let graph_default_output_tokens = graph.default_output_tokens;
     let allow_dataset_wrap = graph.allow_dataset_wrap;
+    let t_star_window = graph.t_star_window;
     let metrics_config =
         metrics_config(&request.metrics, request.endpoint.use_server_token_count())?;
     let tokenizer = load_tokenizer(Some(&request.tokenizer.name))?;
@@ -1210,6 +1283,7 @@ async fn execute_graph_native(
         clock.clone(),
         rng_root,
         allow_dataset_wrap,
+        t_star_window,
         phase_sidecars,
         &backends,
         on_failure,
@@ -1232,6 +1306,7 @@ async fn execute_graph_native(
     // report; the accumulator/report the cell keeps building below lands only in
     // the controller's throwaway scratch artifact_dir and is discarded. Absent the
     // controller address (the single-process path) this is inert.
+    #[cfg(feature = "velo")]
     if let Some(shipper) = crate::runner_protocol::cellular_cell::CellRecordsShipper::from_env() {
         let records: Vec<RecordIngest> = captured
             .iter()
@@ -1369,6 +1444,54 @@ async fn execute_graph_native(
     Ok(NativeReport::from_outcome(&profiling_metrics, &outcome))
 }
 
+/// Emit the optional wide per-record Parquet sidecar beside the per-request
+/// JSONL. Best-effort and gated on the `parquet` feature: a runner built without
+/// it warns once and skips, so a lite build still decodes the wire field.
+fn write_records_parquet_artifact(
+    request: &NativeRunSpec,
+    captured: &[CapturedRecord],
+    metrics_config: &MetricsConfig,
+) -> Result<()> {
+    let Some(parquet_path) = &request.artifacts.records_parquet_path else {
+        return Ok(());
+    };
+    let path = artifact_path(&request.artifact_dir, parquet_path, "records_parquet_path")?;
+    #[cfg(feature = "parquet")]
+    {
+        crate::runner_protocol::records::write_records_parquet(
+            &path,
+            captured,
+            metrics_config,
+            request.artifacts.trace,
+        )?;
+    }
+    #[cfg(not(feature = "parquet"))]
+    {
+        let _ = (captured, metrics_config);
+        tracing::warn!(
+            "records_parquet requested ({}) but this runner was built without the \
+             `parquet` feature; skipping",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+/// Emit the optional per-record CSV sidecar beside the per-request JSONL. Unlike
+/// the Parquet sidecar this needs no extra Cargo feature (CSV is stdlib), so it is
+/// always available.
+fn write_records_csv_artifact(
+    request: &NativeRunSpec,
+    captured: &[CapturedRecord],
+    metrics_config: &MetricsConfig,
+) -> Result<()> {
+    let Some(csv_path) = &request.artifacts.records_csv_path else {
+        return Ok(());
+    };
+    let path = artifact_path(&request.artifact_dir, csv_path, "records_csv_path")?;
+    write_records_csv(&path, captured, metrics_config, request.artifacts.trace)
+}
+
 fn write_graph_artifacts(
     request: &NativeRunSpec,
     captured: &[CapturedRecord],
@@ -1378,6 +1501,8 @@ fn write_graph_artifacts(
         let path = artifact_path(&request.artifact_dir, records_path, "records_path")?;
         write_records_jsonl(&path, captured, metrics_config, request.artifacts.trace)?;
     }
+    write_records_parquet_artifact(request, captured, metrics_config)?;
+    write_records_csv_artifact(request, captured, metrics_config)?;
     if let Some(raw_path) = &request.artifacts.raw_path {
         let path = artifact_path(&request.artifact_dir, raw_path, "raw_path")?;
         write_raw_records_jsonl(&path, captured)?;
@@ -1678,6 +1803,12 @@ pub(crate) async fn execute_scheduled_shard(
         // driven once-per-cell on the main thread.
         false,
         shared.wants_adaptive_record,
+        // The thread-per-core sharded arm folds per shard into the sketch/exact
+        // accumulator but stamps STRIDED global ordinals (its CellularAutonomousIssuer
+        // is sparse within a shard), so the exact-fold dense-column path is not valid
+        // here — it stays on the retain/sketch shard path. Sharded exact-fold is a
+        // later task (S5).
+        false,
         crate::runner_protocol::cellular_cell::issuance_authority_for(partition),
         shared.phase_ordinal_bases.clone(),
     ));
@@ -1944,6 +2075,24 @@ async fn execute_native_inner(
     // sketch mode drops records as it goes), the sharded arm ingests its merged shard
     // records. Created before the branch so both arms share the one instance.
     let mut accumulator = MetricsAccumulator::with_config(metrics_config.clone());
+    // Exact-fold (task S1) folds each completed record into the exact accumulator and
+    // drops the heavy per-record data mid-run, but only on the single-thread
+    // `DirectIssuanceAuthority` path with no per-record artifacts. Computed once here
+    // (mirroring `sketch_mode`): the single-thread arm reads it to build the capture and
+    // pick the finalize, the sharded arm's gate rejects it (`shardable`), and the
+    // cellular-shipping guard reads it below. Heartbeat presence is probed from the env
+    // rather than the (file-truncating) lane so this stays a pre-branch decision.
+    let exact_fold = exact_fold_enabled_by_env()
+        && exact_fold_eligible(
+            sketch_mode,
+            shardable,
+            ModuloCellPartition::from_env().is_some(),
+            accuracy.is_some(),
+            wants_adaptive_record,
+            live_sink.is_some(),
+            HeartbeatLane::enabled_by_env(),
+            wants_per_record_artifacts(&request),
+        );
     let (captured, input_sessions, was_cancelled, has_warmup, start_ns) = if !shardable {
         let execution_backend = transport_factory.build(HttpExecutionBackendConfig {
             workers: request.workers,
@@ -1967,6 +2116,7 @@ async fn execute_native_inner(
             request.artifacts.inputs_path.is_some(),
             live_sink.is_some() || heartbeat_lane.is_some(),
             wants_adaptive_record,
+            exact_fold,
         ));
         let execution_result = async {
             execution_backend.set_run_origin(start_ns)?;
@@ -2097,10 +2247,12 @@ async fn execute_native_inner(
         .await;
         // Drain each worker observer's records before shutting the workers down; on
         // the failure path the report is discarded, so an empty drain is fine.
-        // Metrics-only mode already folded and dropped every completed record as it
-        // streamed (the worker moved each out of its observer), so skip the drain —
-        // materializing that Vec would reintroduce the O(records) peak.
-        let drained = if execution_result.is_ok() && !sketch_mode {
+        // Fold-and-drop modes (sketch or exact-fold) already folded and dropped every
+        // completed record as it streamed (the worker moved each out of its observer),
+        // so skip the drain — materializing that Vec would reintroduce the O(records)
+        // peak.
+        let folds_records = sketch_mode || exact_fold;
+        let drained = if execution_result.is_ok() && !folds_records {
             execution_backend.drain_records(capture.clock.now_ns())
         } else {
             Ok(Vec::new())
@@ -2114,15 +2266,19 @@ async fn execute_native_inner(
             .flat_map(|report| report.report.turns.iter())
             .map(|turn| (turn.uuid, turn.issued_offset_ns))
             .collect::<HashMap<_, _>>();
-        // Single-thread finalize: sketch mode folded each record into the capture's
-        // bounded streaming accumulator as the run streamed and dropped it (only
+        // Single-thread finalize: a fold-and-drop mode folded each record into the
+        // capture's streaming accumulator as the run streamed and dropped it (only
         // errored records retained for error grouping); merge that into the report
-        // `accumulator`. The exact path keeps the full record Vec and ingests it.
-        let captured = if sketch_mode {
+        // `accumulator`. Sketch merges a bounded t-digest partition; exact-fold merges
+        // a dense EXACT accumulator whose rows already sit at their absolute
+        // `request_index` slots, so the merged report is byte-identical to the retain
+        // path's dispatch-order re-ingest. The retain path keeps the full record Vec
+        // and ingests it.
+        let captured = if folds_records {
             let (streamed, errored) = capture.take_streamed();
             accumulator
                 .merge(&streamed)
-                .map_err(|error| anyhow!("merging streamed sketch: {error}"))?;
+                .map_err(|error| anyhow!("merging streamed fold-and-drop accumulator: {error}"))?;
             errored
         } else {
             let captured = capture.finish(&issued_times, drained)?;
@@ -2147,7 +2303,10 @@ async fn execute_native_inner(
     } else {
         // ==================== THREAD-PER-CORE SHARDED PATH ====================
         // `shardable` above guarantees workers > 1, no static-accuracy scoring, and
-        // only request-bounded phases — the shapes a sub-cell can partition.
+        // only request-bounded phases — the shapes a sub-cell can partition. The
+        // `shardable` gate already forces `exact_fold` false here: the sharded arm folds
+        // per shard with STRIDED ordinals, so exact-fold (dense single-thread ordinals)
+        // is not selected — that is task S5.
         // Once-per-cell on the main thread, before the sub-cell threads spawn.
         create_run_artifacts(&request)?;
         sidecars.activate_live_streaming().await;
@@ -2270,13 +2429,15 @@ async fn execute_native_inner(
     // A cell ships its captured records — each carrying the dense global dispatch
     // ordinal the autonomous issuer stamped — to the controller, which merges every
     // cell's records in global order into the single authoritative report. Absent
-    // the controller address (the single-process path) this is inert. Sketch mode
-    // retains no full record set, so cellular record shipping is unsupported there
-    // (a cell partition would ship its merged sketch instead — a future seam).
+    // the controller address (the single-process path) this is inert. Fold-and-drop
+    // modes retain no full record set, so cellular record shipping is unsupported there
+    // (a cell partition would ship its merged accumulator instead — a future seam). The
+    // exact-fold gate already rejects the cellular case, so this guard is belt-and-braces.
+    #[cfg(feature = "velo")]
     if let Some(shipper) = crate::runner_protocol::cellular_cell::CellRecordsShipper::from_env() {
         ensure!(
-            !sketch_mode,
-            "sketch metrics mode does not support cellular record shipping yet"
+            !sketch_mode && !exact_fold,
+            "fold-and-drop metrics modes do not support cellular record shipping yet"
         );
         let records: Vec<RecordIngest> = captured
             .iter()
@@ -2334,6 +2495,8 @@ async fn execute_native_inner(
             request.artifacts.trace,
         )?;
     }
+    write_records_parquet_artifact(&request, &captured, &metrics_config)?;
+    write_records_csv_artifact(&request, &captured, &metrics_config)?;
     if let Some(raw_path) = &request.artifacts.raw_path {
         let raw_path = artifact_path(&request.artifact_dir, raw_path, "raw_path")?;
         write_raw_records_jsonl(&raw_path, &captured)?;
@@ -3944,9 +4107,30 @@ struct RunCapture {
     /// grouping ([`group_record_errors`]); the fold drops every non-errored
     /// record, so this stays O(errors), not O(records).
     streaming_errored: RefCell<Vec<CapturedRecord>>,
+    /// Whether this capture runs in exact-fold mode: like sketch, it folds each
+    /// completed record into `accumulator` and drops the heavy per-record data as
+    /// the run streams, BUT the accumulator stays in EXACT (non-sketch) storage and
+    /// each record is stamped with its absolute dispatch `request_index` before the
+    /// fold, so `export_results` yields exact percentiles/timeslices/series — not the
+    /// sketch approximation. Distinct from `metrics_only` (sketch); the two are
+    /// mutually exclusive. Selected only for the single-thread `DirectIssuanceAuthority`
+    /// scheduled path with no per-record file artifacts (see [`exact_fold_eligible`]).
+    exact_fold: bool,
+    /// Monotonic dispatch-ordinal counter for exact-fold, incremented once per
+    /// [`RunCapture::begin`]. Its value at `begin` is the turn's `flat_local` — the
+    /// dense absolute record slot the [`DirectIssuanceAuthority`] would stamp — so
+    /// exact-fold rows land at the same absolute ordinals as the legacy retain path.
+    /// Unused (and left at 0) in sketch/exact modes.
+    fold_dispatch_next: Cell<usize>,
+    /// Maps each dispatched turn's uuid to the dispatch ordinal assigned at `begin`,
+    /// consumed once at completion by the phase processor's exact-fold branch. Drained
+    /// per completed turn, so it never outgrows in-flight work. Only populated in
+    /// exact-fold mode.
+    fold_dispatch_ordinals: RefCell<HashMap<Uuid, usize>>,
 }
 
 impl RunCapture {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         clock: Rc<dyn Clock>,
         origin_ns: i64,
@@ -3955,6 +4139,7 @@ impl RunCapture {
         inputs_enabled: bool,
         wants_live_sink_record: bool,
         wants_adaptive_record: bool,
+        exact_fold: bool,
     ) -> Self {
         // Cell processes select the autonomous issuer from the environment
         // (`AIPERF_CELL_ID`/`_COUNT`); the single-process default is Direct
@@ -3967,6 +4152,7 @@ impl RunCapture {
             inputs_enabled,
             wants_live_sink_record,
             wants_adaptive_record,
+            exact_fold,
             crate::runner_protocol::cellular_cell::issuance_authority_from_env(),
         )
     }
@@ -3990,6 +4176,7 @@ impl RunCapture {
         inputs_enabled: bool,
         wants_live_sink_record: bool,
         wants_adaptive_record: bool,
+        exact_fold: bool,
         issuance: Rc<dyn IssuanceAuthority>,
     ) -> Self {
         // The multi-process cell path carries its per-phase global ordinal bases in
@@ -4003,6 +4190,7 @@ impl RunCapture {
             inputs_enabled,
             wants_live_sink_record,
             wants_adaptive_record,
+            exact_fold,
             issuance,
             crate::runner_protocol::cellular_cell::phase_ordinal_bases_from_env(),
         )
@@ -4031,6 +4219,7 @@ impl RunCapture {
         inputs_enabled: bool,
         wants_live_sink_record: bool,
         wants_adaptive_record: bool,
+        exact_fold: bool,
         issuance: Rc<dyn IssuanceAuthority>,
         phase_ordinal_bases: HashMap<MetricsPhase, usize>,
     ) -> Self {
@@ -4041,6 +4230,11 @@ impl RunCapture {
             config.storage_mode,
             crate::metrics_core::MetricsStorageMode::Sketch { .. }
         );
+        // Sketch and exact-fold are mutually exclusive: sketch keeps the bounded
+        // t-digest, exact-fold keeps exact NaN-sparse columns. The caller only sets
+        // exact_fold on the exact (non-sketch) scheduled path, but guard it so a
+        // sketch config can never accidentally run the exact-fold column path.
+        let exact_fold = exact_fold && !metrics_only;
         let accumulator = RefCell::new(MetricsAccumulator::with_config(config.clone()));
         Self {
             clock,
@@ -4062,6 +4256,9 @@ impl RunCapture {
             metrics_only,
             accumulator,
             streaming_errored: RefCell::new(Vec::new()),
+            exact_fold,
+            fold_dispatch_next: Cell::new(0),
+            fold_dispatch_ordinals: RefCell::new(HashMap::new()),
         }
     }
 
@@ -4113,7 +4310,35 @@ impl RunCapture {
     /// snapshot for the live-results sink or the adaptive window sampler, or a
     /// consuming drain in metrics-only mode (see [`MeasuredContext::consume_record`]).
     fn wants_live_record(&self) -> bool {
-        self.wants_live_sink_record || self.wants_adaptive_record || self.metrics_only
+        self.wants_live_sink_record || self.wants_adaptive_record || self.folds_records()
+    }
+
+    /// Whether this capture folds each completed record into `accumulator` and drops
+    /// the heavy per-record data (worker `token_arrivals_ns`, identities/labels) as
+    /// the run streams, rather than retaining every record until end-of-run. True for
+    /// both sketch (`metrics_only`) and exact-fold; the two differ only in the
+    /// accumulator's storage mode and whether `request_index` is stamped.
+    fn folds_records(&self) -> bool {
+        self.metrics_only || self.exact_fold
+    }
+
+    /// Assign and record the next dense dispatch ordinal for `uuid` (exact-fold only).
+    /// Called once per turn at [`Self::begin`]; the value is the turn's `flat_local`,
+    /// which the [`DirectIssuanceAuthority`] maps identically to its `request_index`.
+    fn assign_fold_ordinal(&self, uuid: Uuid) -> usize {
+        let ordinal = self.fold_dispatch_next.get();
+        self.fold_dispatch_next.set(ordinal + 1);
+        self.fold_dispatch_ordinals
+            .borrow_mut()
+            .insert(uuid, ordinal);
+        ordinal
+    }
+
+    /// Consume the dispatch ordinal assigned to `uuid` at `begin`. `None` for a turn
+    /// no `begin` recorded (never happens on the exact-fold path, where every
+    /// dispatched turn passes through `begin`), in which case the fold appends.
+    fn take_fold_ordinal(&self, uuid: Uuid) -> Option<usize> {
+        self.fold_dispatch_ordinals.borrow_mut().remove(&uuid)
     }
 
     /// Record the dispatch identity plus coordinator-known arrival facts, and
@@ -4134,21 +4359,30 @@ impl RunCapture {
                 ..RequestMetricMetadata::default()
             },
             wants_live_record: self.wants_live_record(),
-            // Metrics-only mode folds each record and drops it, so the worker must
-            // move the record out of its observer to free token storage as it goes.
-            consume_record: self.metrics_only,
+            // Fold-and-drop modes (sketch + exact-fold) fold each record and drop it,
+            // so the worker must move the record out of its observer to free token
+            // storage as it goes.
+            consume_record: self.folds_records(),
         };
-        // Metrics-only mode never joins records by dispatch identity at finish (it
-        // folds each on completion), so skip the O(records) identity retention —
-        // the fold source is the per-turn record staged by `record_live`, and a
-        // failed turn's record is synthesized in `process` instead. Every other
-        // mode retains the identity for the finish-time uuid join, byte-unchanged.
-        if !self.metrics_only {
+        // Fold-and-drop modes never join records by dispatch identity at finish (they
+        // fold each on completion), so skip the O(records) identity retention — the
+        // fold source is the per-turn record staged by `record_live`, and a failed
+        // turn's record is synthesized in `process` instead. Every other mode retains
+        // the identity for the finish-time uuid join, byte-unchanged.
+        if !self.folds_records() {
             self.identities.borrow_mut().push(CaptureIdentity {
                 uuid: turn.uuid,
                 x_correlation_id: turn.x_correlation_id.clone(),
                 context: context.clone(),
             });
+        }
+        // Exact-fold stamps each record's absolute dispatch `request_index` so its row
+        // lands at the same ordinal the legacy retain path would assign. The ordinal is
+        // this turn's `begin` push order (dense `0, 1, 2, …`), matching the
+        // `DirectIssuanceAuthority` `flat_local`; record it here for the completion-time
+        // fold. (Sketch ignores `request_index`, so it needs no ordinal.)
+        if self.exact_fold {
+            self.assign_fold_ordinal(turn.uuid);
         }
         context
     }
@@ -4160,10 +4394,10 @@ impl RunCapture {
         has_credit_timestamp: bool,
         outcome: &TurnDispatchOutcome,
     ) {
-        // Labels feed the finish-time uuid join only; metrics-only mode folds each
-        // record on completion and never joins, so retaining them would be pure
+        // Labels feed the finish-time uuid join only; fold-and-drop modes fold each
+        // record on completion and never join, so retaining them would be pure
         // O(records) waste. The fold applies phase/session/admit itself.
-        if self.metrics_only {
+        if self.folds_records() {
             return;
         }
         self.labels.borrow_mut().insert(
@@ -4180,12 +4414,12 @@ impl RunCapture {
     }
 
     fn record_live(&self, uuid: Uuid, record: RecordIngest) {
-        // Metrics-only mode stages every completed turn's record for the phase
+        // Fold-and-drop modes stage every completed turn's record for the phase
         // processor's fold-and-drop, regardless of any live/adaptive consumer. An
         // adaptive phase still needs its own copy (read-only window sampling), so
         // clone into `adaptive_records` when one is active. Both maps are drained
         // per completed turn, so neither outgrows in-flight work.
-        if self.metrics_only {
+        if self.folds_records() {
             if self.wants_adaptive_record {
                 self.adaptive_records
                     .borrow_mut()
@@ -4221,10 +4455,11 @@ impl RunCapture {
         visible_text: Option<&str>,
         reasoning_text: Option<&str>,
     ) -> Result<()> {
-        // Metrics-only (sketch) mode retains no per-record output artifact
-        // (`validate_plan` forbids `outputs_path`), so keeping the text would be
-        // pure O(records) waste; drop it before the map grows.
-        if self.metrics_only {
+        // Fold-and-drop modes retain no per-record output artifact (`validate_plan`
+        // forbids `outputs_path` for sketch; the exact-fold gate requires it absent),
+        // so keeping the text would be pure O(records) waste; drop it before the map
+        // grows.
+        if self.folds_records() {
             return Ok(());
         }
         ensure!(
@@ -4353,41 +4588,81 @@ impl RunCapture {
             .collect()
     }
 
-    /// Fold one completed metrics-only turn's record into the streaming sketch and
-    /// drop it, keeping peak memory O(sketch) rather than O(records).
+    /// Fold one completed fold-and-drop turn's record into the streaming
+    /// accumulator and drop it, keeping peak memory O(sketch)/O(scalars) rather than
+    /// O(full records).
     ///
     /// Applies the coordinator-owned fields the finish-time join would apply —
     /// `phase` (the worker defaults every record, warmup included, to Profiling),
     /// `session_num`, and the credit-issued `admit_ns` (bit-equal to the finish
-    /// path's `issued_offset_ns` because the run origin equals every phase's start)
-    /// — then processes the record into the bounded accumulator. Only errored or
-    /// canceled records are retained, for [`group_record_errors`], so the retained
-    /// set stays O(errors).
+    /// path's `issued_offset_ns` because the run origin equals every phase's start).
+    /// In exact-fold `request_index` is `Some` (the turn's dense absolute dispatch
+    /// ordinal), so the record's row lands at the same absolute slot the legacy retain
+    /// path assigns and exact percentiles/timeslices/series are byte-identical; in
+    /// sketch it is `None` (the sketch store ignores it).
     ///
-    /// Approximate-memory contract: the sketch (t-digest percentiles, Welford
+    /// Sketch approximate-memory contract: the sketch (t-digest percentiles, Welford
     /// mean/M2, and the float running sums) is order-independent only up to a few
     /// ULPs, and this folds in *completion* order rather than the finish path's
     /// *dispatch* order. So percentiles, means, and float sums drift a few ULPs —
     /// below display precision — and lose exact run-to-run reproducibility, while
-    /// counts, min/max, and integer sums stay bit-identical. That drift is the
-    /// accepted price of bounded memory; a reorder buffer would be O(records) and
-    /// defeat the goal.
+    /// counts, min/max, and integer sums stay bit-identical. Exact-fold does NOT drift:
+    /// `insert_record_at(request_index)` places each row at its absolute slot, so the
+    /// dense NaN-sparse columns are byte-identical to dispatch-order ingestion. That
+    /// sketch drift is the accepted price of bounded memory; a reorder buffer would be
+    /// O(records) and defeat the goal.
     fn fold_streaming(
         &self,
-        mut ingest: RecordIngest,
+        ingest: RecordIngest,
         phase: MetricsPhase,
         has_credit_timestamp: bool,
+        request_index: Option<usize>,
         credit: &IssuedCredit,
     ) {
-        ingest.phase = phase;
-        ingest.session_num = credit.id;
-        ingest.admit_ns =
+        let admit_ns =
             has_credit_timestamp.then(|| credit.issued_ns.saturating_sub(self.origin_ns));
+        self.fold_record(
+            ingest,
+            credit.turn.uuid,
+            &credit.turn.x_correlation_id,
+            phase,
+            credit.id,
+            admit_ns,
+            request_index,
+        );
+    }
+
+    /// Stamp the coordinator-owned fields onto one completed record, process it into
+    /// the streaming accumulator, and drop it — retaining only errored/canceled
+    /// records for [`group_record_errors`]. The primitive both the sketch and
+    /// exact-fold fold paths share; taking the fields directly (not an
+    /// [`IssuedCredit`]) keeps it unit-testable in isolation.
+    ///
+    /// `request_index` overwrites the worker's dense-local slot with the absolute
+    /// dispatch ordinal in exact-fold; passing `None` (sketch) leaves the worker value
+    /// untouched, which the sketch store ignores.
+    #[allow(clippy::too_many_arguments)]
+    fn fold_record(
+        &self,
+        mut ingest: RecordIngest,
+        uuid: Uuid,
+        x_correlation_id: &str,
+        phase: MetricsPhase,
+        session_num: u64,
+        admit_ns: Option<i64>,
+        request_index: Option<usize>,
+    ) {
+        ingest.phase = phase;
+        ingest.session_num = session_num;
+        ingest.admit_ns = admit_ns;
+        if let Some(row) = request_index {
+            ingest.request_index = Some(row);
+        }
         self.accumulator.borrow_mut().process_record(&ingest);
         if ingest.errored || ingest.canceled {
             self.streaming_errored.borrow_mut().push(CapturedRecord {
-                uuid: credit.turn.uuid,
-                x_correlation_id: credit.turn.x_correlation_id.clone(),
+                uuid,
+                x_correlation_id: x_correlation_id.to_string(),
                 output: CapturedModelOutput::default(),
                 raw: None,
                 ingest,
@@ -4645,22 +4920,34 @@ struct CapturePhaseProcessor {
 #[async_trait(?Send)]
 impl TurnRecordProcessor for CapturePhaseProcessor {
     async fn process(&self, credit: &IssuedCredit, outcome: &TurnDispatchOutcome) -> Result<()> {
-        if self.capture.metrics_only {
-            // Metrics-only (sketch) mode: fold this turn's record into the bounded
-            // streaming accumulator and drop it, so peak memory stays O(sketch). A
-            // successful turn staged its record via `record_live`; a failed or
-            // canceled turn never did (its `Err`/cancel path skips `record_live`),
-            // so synthesize the record — matching the exact path's finish-time
-            // fallback — to keep error counts and grouping correct. The per-record
-            // live sink and cellular heartbeat are not driven here: sketch retains
-            // no per-record data to stream, and the sharded workers that dominate
-            // this mode already run with neither attached.
+        if self.capture.folds_records() {
+            // Fold-and-drop mode (sketch or exact-fold): fold this turn's record into
+            // the streaming accumulator and drop it, so peak memory stays
+            // O(sketch)/O(scalars). A successful turn staged its record via
+            // `record_live`; a failed or canceled turn never did (its `Err`/cancel path
+            // skips `record_live`), so synthesize the record — matching the exact
+            // path's finish-time fallback — to keep error counts and grouping correct.
+            // Exact-fold also stamps the turn's absolute dispatch `request_index`
+            // (assigned at `begin`) so its row lands at the legacy retain path's
+            // ordinal; sketch ignores it. The per-record live sink and cellular
+            // heartbeat are not driven here: fold-and-drop retains no per-record data to
+            // stream, and the exact-fold gate/sharded workers run with neither attached.
             let ingest = match self.capture.take_streaming_record(credit.turn.uuid) {
                 Some(ingest) => ingest,
                 None => self.capture.synthesize_streaming_fallback(credit, outcome),
             };
-            self.capture
-                .fold_streaming(ingest, self.phase, self.has_credit_timestamp, credit);
+            let request_index = if self.capture.exact_fold {
+                self.capture.take_fold_ordinal(credit.turn.uuid)
+            } else {
+                None
+            };
+            self.capture.fold_streaming(
+                ingest,
+                self.phase,
+                self.has_credit_timestamp,
+                request_index,
+                credit,
+            );
             return Ok(());
         }
         self.capture
@@ -5177,6 +5464,7 @@ mod tests {
             false,
             false,
             false,
+            false,
         );
         let (a, b, c) = facts();
         // Dispatch order A, B, C.
@@ -5251,8 +5539,16 @@ mod tests {
         let build = |split: bool| -> (Vec<u8>, Option<f64>) {
             let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
             let config = MetricsConfig::default();
-            let capture =
-                RunCapture::new(clock.clone(), 0, config.clone(), false, false, false, false);
+            let capture = RunCapture::new(
+                clock.clone(),
+                0,
+                config.clone(),
+                false,
+                false,
+                false,
+                false,
+                false,
+            );
             let (a, b, c) = facts();
             register_identity(&capture, "corr-a", 0, ReplayTerminalStatus::Completed, &a);
             register_identity(&capture, "corr-b", 1, ReplayTerminalStatus::Completed, &b);
@@ -5336,6 +5632,7 @@ mod tests {
             false,
             false,
             false,
+            false,
         );
         let (a, b, _c) = facts();
         register_identity(&capture, "corr-a", 0, ReplayTerminalStatus::Completed, &a);
@@ -5381,6 +5678,244 @@ mod tests {
         assert_eq!(
             summary.finite_value(MetricTag::CompletedRequestCount),
             Some(2.0)
+        );
+    }
+
+    /// S1 parity: folding each completed record into the EXACT accumulator — in
+    /// completion order, stamping the absolute dispatch `request_index` — and merging
+    /// that accumulator into the report yields byte-identical exported results to the
+    /// legacy retain path's dispatch-order re-ingest, for BOTH the profiling and warmup
+    /// windows and including an errored record's accounting. This is the core contract:
+    /// exact-fold keeps exact NaN-sparse columns (not the sketch approximation), so the
+    /// mid-run fold-and-drop is invisible in the summary.
+    #[test]
+    fn exact_fold_matches_legacy_retain_byte_for_byte() {
+        let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
+        let config = MetricsConfig::default();
+
+        // Four realistic worker-drained records; array index i is dispatch ordinal i.
+        let source_facts = [
+            RequestFacts {
+                uuid: Uuid::from_u128(0x11),
+                arrival_ms: 1.0,
+                token_times_ms: &[5.0, 8.0],
+                prompt_tokens: 4,
+                completion_tokens: 2,
+                start_ns: 2_000_000,
+                end_ns: 9_000_000,
+            },
+            RequestFacts {
+                uuid: Uuid::from_u128(0x22),
+                arrival_ms: 2.0,
+                token_times_ms: &[6.0, 10.0, 14.0],
+                prompt_tokens: 5,
+                completion_tokens: 3,
+                start_ns: 3_000_000,
+                end_ns: 15_000_000,
+            },
+            RequestFacts {
+                uuid: Uuid::from_u128(0x33),
+                arrival_ms: 3.0,
+                token_times_ms: &[7.0, 9.0],
+                prompt_tokens: 6,
+                completion_tokens: 2,
+                start_ns: 4_000_000,
+                end_ns: 12_000_000,
+            },
+            RequestFacts {
+                uuid: Uuid::from_u128(0x44),
+                arrival_ms: 4.0,
+                token_times_ms: &[8.0],
+                prompt_tokens: 7,
+                completion_tokens: 1,
+                start_ns: 5_000_000,
+                end_ns: 8_000_000,
+            },
+        ];
+        // Per-record coordinator-owned facts: phase (mix of warmup + profiling),
+        // session number, admit ns, and whether the record errored (record 3).
+        let phases = [
+            MetricsPhase::Profiling,
+            MetricsPhase::Warmup,
+            MetricsPhase::Profiling,
+            MetricsPhase::Profiling,
+        ];
+        let admits = [1_500_000i64, 2_500_000, 3_500_000, 4_500_000];
+        let is_errored = [false, false, false, true];
+
+        // Build the drained ingests fresh (dispatch order), applying the errored flag.
+        let build_records = || -> Vec<RecordIngest> {
+            source_facts
+                .iter()
+                .enumerate()
+                .map(|(i, facts)| {
+                    let observer = NativeMetricsObserver::new(clock.clone(), 0, config.clone());
+                    drive_worker_request(&observer, facts);
+                    let mut ingest = observer
+                        .finish_with_records()
+                        .records
+                        .into_iter()
+                        .next()
+                        .unwrap()
+                        .1;
+                    ingest.errored = is_errored[i];
+                    ingest
+                })
+                .collect()
+        };
+
+        // Reference: legacy retain semantics — patch the coordinator-owned fields and
+        // process in dispatch order into a report accumulator (what finish -> re-ingest
+        // does at the accumulator level).
+        let reference_summary = |phase: MetricsPhase| -> Vec<u8> {
+            let mut accumulator = MetricsAccumulator::with_config(config.clone());
+            for (i, mut ingest) in build_records().into_iter().enumerate() {
+                ingest.phase = phases[i];
+                ingest.session_num = i as u64;
+                ingest.admit_ns = Some(admits[i]);
+                ingest.request_index = Some(i);
+                accumulator.process_record(&ingest);
+            }
+            serde_json::to_vec(&accumulator.export_results(&ExportContext::phase(phase))).unwrap()
+        };
+
+        // Subject: exact-fold — fold each record (in REVERSE completion order, to prove
+        // the absolute-slot placement is order-independent) into the capture's exact
+        // accumulator, then merge it into a fresh report accumulator.
+        let subject_summary = |phase: MetricsPhase| -> Vec<u8> {
+            let capture = RunCapture::new(
+                clock.clone(),
+                0,
+                config.clone(),
+                false,
+                false,
+                false,
+                false,
+                true,
+            );
+            assert!(
+                capture.exact_fold && !capture.metrics_only,
+                "exact-fold keeps EXACT storage, not sketch"
+            );
+            let records = build_records();
+            for i in (0..records.len()).rev() {
+                capture.fold_record(
+                    records[i].clone(),
+                    source_facts[i].uuid,
+                    "corr",
+                    phases[i],
+                    i as u64,
+                    Some(admits[i]),
+                    Some(i),
+                );
+            }
+            let (streamed, errored_records) = capture.take_streamed();
+            assert_eq!(
+                errored_records.len(),
+                1,
+                "only the errored record is retained; the rest are dropped"
+            );
+            let mut accumulator = MetricsAccumulator::with_config(config.clone());
+            accumulator.merge(&streamed).unwrap();
+            serde_json::to_vec(&accumulator.export_results(&ExportContext::phase(phase))).unwrap()
+        };
+
+        assert_eq!(
+            reference_summary(MetricsPhase::Profiling),
+            subject_summary(MetricsPhase::Profiling),
+            "profiling window must be byte-identical to the retain path",
+        );
+        assert_eq!(
+            reference_summary(MetricsPhase::Warmup),
+            subject_summary(MetricsPhase::Warmup),
+            "warmup window must be byte-identical to the retain path",
+        );
+    }
+
+    /// Exact-fold sets the fold-and-drop flags (so the worker consumes each record out
+    /// of its observer) and assigns dense `0..N` dispatch ordinals at begin, consumed
+    /// once at completion. A plain exact (retain) capture folds nothing.
+    #[test]
+    fn exact_fold_flags_and_dense_dispatch_ordinals() {
+        let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
+        let config = MetricsConfig::default();
+        let capture = RunCapture::new(
+            clock.clone(),
+            0,
+            config.clone(),
+            false,
+            false,
+            false,
+            false,
+            true,
+        );
+        assert!(
+            capture.folds_records(),
+            "exact-fold is a fold-and-drop mode"
+        );
+        assert!(
+            capture.wants_live_record(),
+            "the worker must return each record so the fold can consume it"
+        );
+        let a = Uuid::from_u128(0xA1);
+        let b = Uuid::from_u128(0xB2);
+        let c = Uuid::from_u128(0xC3);
+        assert_eq!(capture.assign_fold_ordinal(a), 0);
+        assert_eq!(capture.assign_fold_ordinal(b), 1);
+        assert_eq!(capture.assign_fold_ordinal(c), 2);
+        assert_eq!(capture.take_fold_ordinal(b), Some(1));
+        assert_eq!(capture.take_fold_ordinal(b), None, "consumed exactly once");
+        assert_eq!(capture.take_fold_ordinal(a), Some(0));
+        assert_eq!(capture.take_fold_ordinal(c), Some(2));
+
+        // The default exact (retain) capture folds nothing and needs no live record.
+        let retain = RunCapture::new(clock, 0, config, false, false, false, false, false);
+        assert!(!retain.folds_records());
+        assert!(!retain.wants_live_record());
+    }
+
+    /// The exact-fold gate accepts a clean single-thread scheduled metrics run and
+    /// rejects every disqualifier independently. (Graph datasets never reach this
+    /// scheduled path, so "not graph" is implicit; cellular record shipping is covered
+    /// by the `is_cellular` axis.)
+    #[test]
+    fn exact_fold_gate_accepts_clean_run_and_rejects_disqualifiers() {
+        // sketch, shardable, cellular, accuracy, adaptive, live_sink, heartbeat, artifacts
+        assert!(
+            exact_fold_eligible(false, false, false, false, false, false, false, false),
+            "a clean single-thread scheduled metrics-only run is eligible"
+        );
+        assert!(
+            !exact_fold_eligible(true, false, false, false, false, false, false, false),
+            "sketch mode has its own fold path"
+        );
+        assert!(
+            !exact_fold_eligible(false, true, false, false, false, false, false, false),
+            "the sharded arm stamps strided ordinals (S5)"
+        );
+        assert!(
+            !exact_fold_eligible(false, false, true, false, false, false, false, false),
+            "a cellular child ships the full retained set"
+        );
+        assert!(
+            !exact_fold_eligible(false, false, false, true, false, false, false, false),
+            "accuracy stays on the retain path"
+        );
+        assert!(
+            !exact_fold_eligible(false, false, false, false, true, false, false, false),
+            "adaptive samples retained records"
+        );
+        assert!(
+            !exact_fold_eligible(false, false, false, false, false, true, false, false),
+            "the live sink reads per-record clones"
+        );
+        assert!(
+            !exact_fold_eligible(false, false, false, false, false, false, true, false),
+            "the heartbeat lane reads per-record clones"
+        );
+        assert!(
+            !exact_fold_eligible(false, false, false, false, false, false, false, true),
+            "per-record artifacts still read the retained records"
         );
     }
 }

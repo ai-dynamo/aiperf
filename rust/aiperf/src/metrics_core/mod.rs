@@ -36,7 +36,7 @@ pub use accuracy::{
 };
 pub use catalog::{
     AggregationKind, CATALOG, MetricConsoleGroup, MetricFlags, MetricSpec, MetricTag, MetricType,
-    PlotMetricDirection, validate_catalog,
+    PlotMetricDirection, RecordMetricColumn, record_metric_columns, validate_catalog,
 };
 pub use counter::{CounterDelta, boundary_counter_delta};
 pub use derived::{delta_ms, error_adjusted_result, network_adjusted_ms};

@@ -583,14 +583,20 @@ fn resolve_template_source(source: &str) -> String {
     std::fs::read_to_string(resolved).unwrap_or_else(|_| source.to_string())
 }
 
+/// Home directory for `~` expansion: `HOME` (Unix) with a `USERPROFILE`
+/// fallback so the tilde still resolves on Windows, where `HOME` is unset.
+fn home_dir_os() -> Option<std::ffi::OsString> {
+    std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))
+}
+
 fn expanded_template_path(source: &str) -> PathBuf {
     if source == "~"
-        && let Some(home) = std::env::var_os("HOME")
+        && let Some(home) = home_dir_os()
     {
         return PathBuf::from(home);
     }
     if let Some(relative) = source.strip_prefix("~/")
-        && let Some(home) = std::env::var_os("HOME")
+        && let Some(home) = home_dir_os()
     {
         return PathBuf::from(home).join(relative);
     }

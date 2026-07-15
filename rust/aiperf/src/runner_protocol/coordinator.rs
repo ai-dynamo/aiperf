@@ -180,7 +180,25 @@ impl RunnerV2Coordinator {
                     );
                 }
             };
-        let sidecar_inputs = match self.sidecar_inputs.prepare(&run.sidecars.authored_inputs()) {
+        // In cellular mode every cell runs this coordinator, but sidecar telemetry
+        // (GPU/DCGM, network-latency calibration, server-metrics scraping) is
+        // host-level and the controller drops all but one cell's anyway
+        // (`warn_dropped_sidecar_telemetry`). Running the collectors on every cell
+        // is pure waste — N DCGM/Prometheus scrapes, N localhost telemetry probes.
+        // So only the primary cell (`cell_id == 0`, or any non-cellular run) starts
+        // the collectors; secondary cells prepare an empty sidecar set.
+        let run_sidecars = crate::cellular::ModuloCellPartition::from_env()
+            .map(|partition| {
+                !(crate::cellular::CellPartition::cell_count(&partition) > 1
+                    && crate::cellular::CellPartition::cell_id(&partition) != 0)
+            })
+            .unwrap_or(true);
+        let authored_sidecars = if run_sidecars {
+            run.sidecars.authored_inputs()
+        } else {
+            Vec::new()
+        };
+        let sidecar_inputs = match self.sidecar_inputs.prepare(&authored_sidecars) {
             Ok(sidecars) => Arc::new(sidecars),
             Err(error) => {
                 return failure(

@@ -18,6 +18,7 @@ use arrow::array::{Array, Float64Array, Int64Array, StringArray};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
 use super::*;
+use crate::export::ParquetExportConfig;
 use crate::export::{ExportConfig, Exporter};
 use crate::metrics_core::{
     AccumulatorSummary, NativeReport, ReportServerMetricsMetadata, ReportServerMetricsPhaseRange,

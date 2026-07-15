@@ -1122,6 +1122,7 @@ fn lower_graph(
         random_seed: prepared.random_seed,
         default_output_tokens: prepared.default_output_tokens,
         allow_dataset_wrap: prepared.allow_dataset_wrap,
+        t_star_window: prepared.t_star_window,
     };
     build_common_plan(
         run,
@@ -1205,6 +1206,8 @@ fn build_common_plan(
         metrics: run.metrics.clone(),
         artifacts: ArtifactSpec {
             records_path: run.artifacts.records_path.clone(),
+            records_parquet_path: run.artifacts.records_parquet_path.clone(),
+            records_csv_path: run.artifacts.records_csv_path.clone(),
             raw_path: run.artifacts.raw_path.clone(),
             outputs_path: run.artifacts.outputs_path.clone(),
             inputs_path: run.artifacts.inputs_path.clone(),
