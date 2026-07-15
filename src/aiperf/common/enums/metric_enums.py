@@ -787,7 +787,13 @@ class MetricFlags(Flag):
     Surfaces honest tail latency under non-trivial error rates — see
     https://github.com/ai-dynamo/aiperf/issues/688."""
 
-    DISABLE_ON_ACCURACY = 1 << 18
+    FIXED_SCHEDULE_ONLY = 1 << 18
+    """Metrics that are only applicable when the profiling phase replays a fixed schedule of
+    absolute timestamps. Turn timestamps also reach records under other timing modes (e.g. a
+    timestamped trace run with --no-fixed-schedule), where schedule-fidelity metrics would be
+    meaningless."""
+
+    DISABLE_ON_ACCURACY = 1 << 19
     """Metrics that should not be computed when accuracy benchmarking mode is
     enabled. Accuracy benchmarks set ``max_tokens`` as a generation ceiling that
     the model is expected to stop well under (chain-of-thought answers finish

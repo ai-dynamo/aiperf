@@ -433,6 +433,32 @@ class TestCustomDatasetComposerInferDatasetType:
             result = composer._infer_dataset_type(temp_dir)
             assert result == CustomDatasetType.RANDOM_POOL
 
+    def test_infer_from_parquet_file(self, create_cfg_and_composer, tmp_path):
+        """Test inferring Baseten trace type from a Parquet file."""
+        # Local skip (not module-level) so the mooncake/bailian/speed_bench
+        # detection coverage above still runs on platforms without pyarrow.
+        pa = pytest.importorskip("pyarrow")
+        pq = pytest.importorskip("pyarrow.parquet")
+        parquet_path = tmp_path / "trace.parquet"
+        pq.write_table(
+            pa.Table.from_pylist(
+                [
+                    {
+                        "timestamp_start_unix_ms": 1000,
+                        "prompt": "hello",
+                        "input_tokens": 10,
+                        "output_tokens": 4,
+                    }
+                ]
+            ),
+            parquet_path,
+        )
+        _, composer = create_cfg_and_composer()
+
+        result = composer._infer_dataset_type(str(parquet_path))
+
+        assert result == CustomDatasetType.BASETEN_TRACE
+
 
 class TestDetectionPriorityAndAmbiguity:
     """Tests for detection priority and handling of ambiguous cases.
