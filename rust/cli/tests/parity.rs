@@ -91,6 +91,7 @@ const FIXTURES: &[&str] = &[
     "dataset_entries",
     "custom_endpoint",
     "export_raw",
+    "cells",
 ];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).

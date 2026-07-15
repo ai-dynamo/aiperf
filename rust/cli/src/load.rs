@@ -450,7 +450,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         // runner defaults (auto workers, single cell).
         runtime_workers: None,
         runtime_workers_min: None,
-        runtime_cells: 1,
+        runtime_cells: flags.cells.unwrap_or(1),
         input_file: flags.input_file.clone(),
         custom_dataset_type: flags.custom_dataset_type.clone(),
         public_dataset: flags.public_dataset.clone(),

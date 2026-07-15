@@ -75,6 +75,10 @@ pub struct ProfileFlags {
     #[arg(long = "export-http-trace", default_value_t = false)]
     pub export_http_trace: bool,
 
+    /// Cellular (multi-process) cell count (`--cells`); `1` = single process.
+    #[arg(long = "cells")]
+    pub cells: Option<u32>,
+
     /// Mean turns per session for multi-turn (`--session-turns-mean`).
     #[arg(long = "session-turns-mean")]
     pub session_turns_mean: Option<f64>,
