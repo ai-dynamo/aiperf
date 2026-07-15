@@ -2157,6 +2157,7 @@ fn prepare_graph_phase(
         // A profiling phase that later pops a handoff rebuilds its source with the
         // resume cursor in `rebuild_resume_workload`.
         0,
+        t_star,
     )?;
     let seed = phase_rng.derive_seed_or_entropy(namespace::GRAPH_ARRIVAL);
     let intervals = Rc::new(RefCell::new(match phase.request_arrival() {
@@ -2770,7 +2771,16 @@ fn build_graph_trace_source(
     request_limit: Option<u64>,
     trace_instances: GraphTraceInstanceSequence,
     start_ordinal: u64,
+    t_star: TStarWindow,
 ) -> Result<Rc<dyn GraphTraceSource>> {
+    // `--dataset-sampling-strategy` governs WHICH template a freed recycle lane
+    // serves via the SAME per-pass seeded permutation the pressure stage draws
+    // (`graph_ir_replay.py:_draw_index` is the single choke point for the pressure
+    // fan-out AND the profiling recycle draw). `Sequential` (the default) keeps
+    // the byte-unchanged modulo pick; the base seed is the run's
+    // `t_star_random_seed`, so a freed profiling lane continues the SAME order.
+    let shuffled = t_star.sampling_strategy.is_shuffled();
+    let base_seed = t_star.random_seed;
     Ok(match ModuloCellPartition::from_env() {
         Some(partition) if partition.cell_count() > 1 && request_limit.is_none() => {
             tracing::debug!(
@@ -2783,12 +2793,15 @@ fn build_graph_trace_source(
             // request-unbounded cellular case (`request_limit.is_none()`), where
             // Python's `recycle_is_bounded` corpus-cursor continuation does not
             // engage, so a nonzero cursor cannot reach this arm on the product path.
-            Rc::new(PartitionedGraphTraceSource::new(
-                plans,
-                session_limit,
-                partition.cell_id(),
-                partition.cell_count(),
-            )?)
+            Rc::new(
+                PartitionedGraphTraceSource::new(
+                    plans,
+                    session_limit,
+                    partition.cell_id(),
+                    partition.cell_count(),
+                )?
+                .with_sampling(shuffled, base_seed),
+            )
         }
         _ => Rc::new(
             CyclingGraphTraceSource::with_budgets_and_sequence(
@@ -2797,7 +2810,8 @@ fn build_graph_trace_source(
                 request_limit,
                 trace_instances,
             )?
-            .starting_at(start_ordinal),
+            .starting_at(start_ordinal)
+            .with_sampling(shuffled, base_seed),
         ),
     })
 }
@@ -2903,6 +2917,7 @@ fn rebuild_resume_workload(
         resume.request_limit,
         resume.trace_instances.clone(),
         start_ordinal,
+        resume.t_star,
     )?;
     let source: Rc<dyn GraphTraceSource> = Rc::new(LaneResumeGraphTraceSource {
         prefix,
@@ -3048,11 +3063,11 @@ mod tests {
     use std::rc::Rc;
 
     use crate::adaptive_core::{SharedWindowSampler, TumblingWindowSampler};
-    use crate::runner_protocol::graph_input::GraphSamplingStrategy;
     use crate::dataset::SegmentPool;
     use crate::graph::errors::TraceError;
     use crate::graph::model::{GraphRecord, GraphTracePlan, TraceRecord};
     use crate::graph::workload::{GraphWorkloadReport, TraceAdmissionInfo};
+    use crate::runner_protocol::graph_input::GraphSamplingStrategy;
     use crate::timing::{PhaseReturn, PhaseSend};
     use uuid::Uuid;
 
@@ -4732,6 +4747,7 @@ mod tests {
             None,
             GraphTraceInstanceSequence::default(),
             0,
+            TStarWindow::default(),
         )
         .unwrap();
         let source = LaneResumeGraphTraceSource {
@@ -4778,6 +4794,7 @@ mod tests {
             None,
             GraphTraceInstanceSequence::default(),
             0,
+            TStarWindow::default(),
         )
         .unwrap();
         let source = LaneResumeGraphTraceSource {
@@ -4848,6 +4865,7 @@ mod tests {
             GraphTraceInstanceSequence::default(),
             // corpus_cursor = 4 over a 3-template corpus: first draw is 4 % 3 = 1.
             4,
+            TStarWindow::default(),
         )
         .unwrap();
         let drawn: Vec<String> = std::iter::from_fn(|| {
@@ -4872,6 +4890,7 @@ mod tests {
             None,
             GraphTraceInstanceSequence::default(),
             0,
+            TStarWindow::default(),
         )
         .unwrap();
         let drawn: Vec<String> = std::iter::from_fn(|| {
