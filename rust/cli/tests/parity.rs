@@ -47,6 +47,7 @@ const FIXTURES: &[&str] = &[
     "tokenizer",
     "isl_osl",
     "auth",
+    "file_ds",
 ];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).

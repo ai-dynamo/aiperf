@@ -89,12 +89,38 @@ pub struct Synthetic {
     pub turn_delay_ms: Option<f64>,
 }
 
+/// A file-backed dataset (trace/replay). Ported from `_authored_dataset_v2`'s
+/// `FileDataset` branch.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FileDataset {
+    /// Native file format id (e.g. `single_turn`, `mooncake_trace`).
+    pub format: String,
+    /// Sampling order.
+    pub sampling: Sampling,
+    /// Format-specific loader options (open bag).
+    pub options: serde_json::Map<String, serde_json::Value>,
+    /// Absolute path to the dataset file/directory (present when path-backed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// Number of dataset entries (present when set).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entries: Option<u32>,
+    /// Deterministic sampling seed (present when set).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub random_seed: Option<u64>,
+    /// Output sequence length distribution (present when authored).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub osl: Option<Distribution>,
+}
+
 /// One typed dataset (discriminated by `type`).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Dataset {
     /// Synthetically generated prompts.
     Synthetic(Synthetic),
+    /// File-backed trace/replay dataset.
+    File(FileDataset),
 }
 
 #[cfg(test)]

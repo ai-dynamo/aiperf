@@ -205,6 +205,9 @@ impl Benchmark {
             benchmark_duration: phase.duration,
             grace_period: phase.grace_period,
             warmup: None::<Warmup>,
+            random_seed: None,
+            input_file: None,
+            custom_dataset_type: None,
             artifact_dir: artifact_dir.unwrap_or_else(|| PathBuf::from("artifacts")),
         })
     }

@@ -71,6 +71,11 @@ pub(crate) struct Inputs {
     pub benchmark_duration: Option<f64>,
     pub grace_period: Option<f64>,
     pub warmup: Option<Warmup>,
+    pub random_seed: Option<u64>,
+    /// File-backed dataset path (mutually exclusive with the synthetic path).
+    pub input_file: Option<PathBuf>,
+    /// File dataset format id (`--custom-dataset-type`).
+    pub custom_dataset_type: Option<String>,
     pub artifact_dir: PathBuf,
 }
 
@@ -165,6 +170,9 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         benchmark_duration,
         grace_period: flags.benchmark_grace_period,
         warmup,
+        random_seed: flags.random_seed,
+        input_file: flags.input_file.clone(),
+        custom_dataset_type: flags.custom_dataset_type.clone(),
         artifact_dir: flags
             .artifact_dir
             .clone()
@@ -225,20 +233,34 @@ pub(crate) fn build(inputs: Inputs) -> BenchmarkRun {
         apply_chat_template: false,
     };
 
-    let dataset = Dataset::Synthetic(Synthetic {
-        prompts: Prompts {
-            batch_size: inputs.batch_size,
-            isl: inputs.isl,
-            osl: inputs.osl,
-            num_prefix_prompts: None,
-            prefix_prompt_length: None,
-        },
-        sampling: Sampling(inputs.sampling),
-        turn_delay_ratio: 1.0,
-        entries: Some(inputs.entries),
-        num_conversations: None,
-        turn_delay_ms: None,
-    });
+    let dataset = match &inputs.input_file {
+        Some(path) => Dataset::File(crate::model::dataset::FileDataset {
+            format: inputs
+                .custom_dataset_type
+                .clone()
+                .unwrap_or_else(|| "single_turn".to_string()),
+            sampling: Sampling(inputs.sampling.clone()),
+            options: serde_json::Map::new(),
+            path: Some(absolute_path(path)),
+            entries: Some(inputs.entries),
+            random_seed: inputs.random_seed,
+            osl: inputs.osl.clone(),
+        }),
+        None => Dataset::Synthetic(Synthetic {
+            prompts: Prompts {
+                batch_size: inputs.batch_size,
+                isl: inputs.isl.clone(),
+                osl: inputs.osl.clone(),
+                num_prefix_prompts: None,
+                prefix_prompt_length: None,
+            },
+            sampling: Sampling(inputs.sampling.clone()),
+            turn_delay_ratio: 1.0,
+            entries: Some(inputs.entries),
+            num_conversations: None,
+            turn_delay_ms: None,
+        }),
+    };
 
     let profiling = build_phase(
         "profiling",
@@ -306,7 +328,7 @@ pub(crate) fn build(inputs: Inputs) -> BenchmarkRun {
         cfg,
         cli_command: None,
         label: String::new(),
-        random_seed: None,
+        random_seed: inputs.random_seed,
         sweep_id: None,
         trial: 0,
         variation: None,
@@ -367,6 +389,18 @@ fn parse_headers(raw: &[String]) -> anyhow::Result<std::collections::BTreeMap<St
         headers.insert(name.trim().to_string(), value.trim().to_string());
     }
     Ok(headers)
+}
+
+/// Make a dataset path absolute (Python uses `path.absolute()`: cwd-join without
+/// symlink resolution). Falls back to the input on cwd errors.
+fn absolute_path(path: &std::path::Path) -> String {
+    if path.is_absolute() {
+        return path.to_string_lossy().into_owned();
+    }
+    match std::env::current_dir() {
+        Ok(cwd) => cwd.join(path).to_string_lossy().into_owned(),
+        Err(_) => path.to_string_lossy().into_owned(),
+    }
 }
 
 /// Normalize a base URL to include a scheme (Python prepends `http://` when the

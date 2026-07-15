@@ -119,6 +119,18 @@ pub struct ProfileFlags {
     #[arg(long = "artifact-dir")]
     pub artifact_dir: Option<PathBuf>,
 
+    /// Input trace/dataset file or directory (`--input-file`).
+    #[arg(long = "input-file")]
+    pub input_file: Option<PathBuf>,
+
+    /// Custom dataset format for `--input-file` (`--custom-dataset-type`).
+    #[arg(long = "custom-dataset-type")]
+    pub custom_dataset_type: Option<String>,
+
+    /// Deterministic random seed (`--random-seed`).
+    #[arg(long = "random-seed")]
+    pub random_seed: Option<u64>,
+
     /// YAML configuration file (`--config` / `-f`).
     #[arg(long = "config", short = 'f')]
     pub config_file: Option<PathBuf>,

@@ -1,0 +1,1 @@
+--model M --url 127.0.0.1:8000 --endpoint-type chat --concurrency 1 --request-count 2 --input-file /tmp/trace.jsonl --random-seed 42 --artifact-dir /tmp/x
