@@ -302,6 +302,10 @@ pub struct ProfileFlags {
     #[arg(long = "network-latency-ping-interval")]
     pub network_latency_ping_interval: Option<f64>,
 
+    /// OTLP/HTTP metrics collector URL (`--otel-url`).
+    #[arg(long = "otel-url")]
+    pub otel_url: Option<String>,
+
     /// YAML configuration file (`--config` / `-f`).
     #[arg(long = "config", short = 'f')]
     pub config_file: Option<PathBuf>,

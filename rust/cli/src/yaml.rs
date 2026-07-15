@@ -215,6 +215,7 @@ impl Benchmark {
             slos: serde_json::Map::new(),
             network_latency_mean: None,
             network_latency_probe: None,
+            otel_url: None,
             api_key: None,
             headers: std::collections::BTreeMap::new(),
             tokenizer_name,

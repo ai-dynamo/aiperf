@@ -88,6 +88,8 @@ pub(crate) struct Inputs {
     pub network_latency_mean: Option<f64>,
     /// Automatic RTT probe with an optional ping interval (seconds).
     pub network_latency_probe: Option<f64>,
+    /// OTLP collector URL (`--otel-url`).
+    pub otel_url: Option<String>,
     pub api_key: Option<String>,
     pub headers: std::collections::BTreeMap<String, String>,
     pub tokenizer_name: Option<String>,
@@ -272,6 +274,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         network_latency_probe: flags
             .network_latency_automatic
             .then(|| flags.network_latency_ping_interval.unwrap_or(1.0)),
+        otel_url: flags.otel_url.clone(),
         api_key: flags.api_key.clone(),
         headers: parse_headers(&flags.headers)?,
         tokenizer_name: flags.tokenizer.clone(),
@@ -383,7 +386,9 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     };
 
     let tokenizer = Tokenizer {
-        name: inputs.tokenizer_name.unwrap_or(primary_model),
+        name: inputs
+            .tokenizer_name
+            .unwrap_or_else(|| primary_model.clone()),
         revision: inputs
             .tokenizer_revision
             .unwrap_or_else(|| "main".to_string()),
@@ -621,13 +626,22 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     // opaque passthrough, so a projection of the native cfg (best-effort vs
     // Python's exclude_unset dump) keeps the aiperf-v1 exports emitting.
     let input_config = serde_json::to_value(&cfg).unwrap_or(serde_json::Value::Null);
-    cfg.export = Some(crate::model::export::Export::build(
+    let mut export = crate::model::export::Export::build(
         &endpoint_type,
         true,
         &benchmark_id,
         input_config,
         serde_json::json!({}),
-    ));
+    );
+    if let Some(url) = &inputs.otel_url {
+        export.otel = Some(crate::model::export::OtelExport::build(
+            url,
+            &benchmark_id,
+            &endpoint_type,
+            &primary_model,
+        ));
+    }
+    cfg.export = Some(export);
 
     Ok(BenchmarkRun {
         benchmark_id,

@@ -115,6 +115,46 @@ pub struct GenaiPerf {
     pub envelope: GenaiPerfEnvelope,
 }
 
+/// The OTLP/HTTP metrics sink (mirrors `OtelExportConfig`, projected fields).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OtelExport {
+    /// Whether the OTLP sink runs.
+    pub enabled: bool,
+    /// OTLP metrics endpoint (`<url>/v1/metrics`).
+    pub endpoint: String,
+    /// Resource attributes attached to every metric.
+    pub resource_attributes: std::collections::BTreeMap<String, String>,
+}
+
+impl OtelExport {
+    /// Build the OTLP sink from a collector URL and run identity (mirrors
+    /// `_otel_frontend_projection`): append `/v1/metrics` when absent and attach
+    /// the canonical aiperf resource attributes.
+    pub fn build(url: &str, benchmark_id: &str, endpoint_type: &str, model: &str) -> Self {
+        let endpoint = if url.ends_with("/v1/metrics") {
+            url.to_string()
+        } else {
+            format!("{}/v1/metrics", url.trim_end_matches('/'))
+        };
+        let mut attrs = std::collections::BTreeMap::new();
+        attrs.insert("aiperf.benchmark.id".to_string(), benchmark_id.to_string());
+        attrs.insert(
+            "aiperf.endpoint.type".to_string(),
+            endpoint_type.to_string(),
+        );
+        attrs.insert("aiperf.model.name".to_string(), model.to_string());
+        attrs.insert(
+            "service.instance.id".to_string(),
+            "records-manager".to_string(),
+        );
+        Self {
+            enabled: true,
+            endpoint,
+            resource_attributes: attrs,
+        }
+    }
+}
+
 /// The typed `export` policy. Only the sinks the frontend enables are modeled;
 /// omitted sinks decode to the runner's all-disabled defaults.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -123,6 +163,9 @@ pub struct Export {
     pub genai_perf: GenaiPerf,
     /// Console artifact sink.
     pub console_txt: ConsoleTxt,
+    /// OTLP/HTTP metrics sink (present when `--otel-url` is set).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub otel: Option<OtelExport>,
 }
 
 impl Export {
@@ -159,6 +202,7 @@ impl Export {
                 title: console_title(endpoint_type),
                 metrics: META.console_metrics.clone(),
             },
+            otel: None,
         }
     }
 }
