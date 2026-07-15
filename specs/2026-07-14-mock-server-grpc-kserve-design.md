@@ -26,7 +26,7 @@ in-repo gRPC mock to test/benchmark that client against. This adds one.
   encodes/decodes — guaranteeing wire parity by construction. This matches the workspace discipline:
   the runner checks in prost types by hand and hand-rolls its client with `RawBytesCodec` +
   `PathAndQuery`; no crate in the workspace uses `tonic-build`/`prost-build`/`protoc`.
-- **Listener:** **opt-in** `--grpc-port` (env `AIPERF_MOCK_GRPC_PORT`). HTTP is unchanged on `--port`;
+- **Listener:** **opt-in** `--grpc-port` (env `MOCK_SERVER_GRPC_PORT`). HTTP is unchanged on `--port`;
   gRPC starts only when the flag is set. Zero behavior change to existing runs.
 - **Balancer:** **deferred.** Ship gRPC on the single-process path. If `--processes > 1` **and**
   `--grpc-port` is set, warn and skip the gRPC listener (HTTP balancer behavior unchanged). Full
@@ -88,7 +88,7 @@ symmetric and parity is structural, not test-enforced.
    duplicated. If a small shared helper needs extracting from `handlers.rs` (the chat/text path) to
    avoid copy-paste, do that as a targeted refactor rather than re-implementing.
 
-4. **`config.rs`** — add `grpc_port: Option<u16>` (clap `--grpc-port`, env `AIPERF_MOCK_GRPC_PORT`).
+4. **`config.rs`** — add `grpc_port: Option<u16>` (clap `--grpc-port`, env `MOCK_SERVER_GRPC_PORT`).
 
 5. **`main.rs`** — after building `AppState`, if `config.grpc_port` is `Some` and not skipped by
    balancer mode, `tokio::spawn(serve_grpc(...))` alongside the existing HTTP accept loop; both run to
@@ -140,10 +140,17 @@ client only decodes `ModelReadyResponse`, so `ServerLive`/`ServerReady` messages
    - `ModelStreamInfer` yields ≥1 chunk and the concatenation matches the unary text shape;
    - `ModelReady` returns `ready: true`;
    - malformed request → `invalid_argument`.
-2. **E2e (`rust/e2e/tests/`)** — drive AIPerf's real KServe gRPC client end-to-end: launch the mock
-   with `--grpc-port`, run a `transport.type: grpc`, `grpc://127.0.0.1:<port>` KServe config, assert
-   the run produces the expected request/token metrics. Closes the client↔server loop over the shared
-   prost types. Use `127.0.0.1` (not `localhost`) to avoid the IPv6/IPv4 mock mismatch.
+2. **Wire round-trip (`rust/mock-server/tests/grpc_integration.rs`)** — a real tonic client drives
+   `serve_grpc` over h2 using AIPerf's own `aiperf::transport_grpc` encode/decode helpers, exercising
+   the framing/trailers/prost round-trip the handler unit tests bypass (unary, server-streaming,
+   readiness).
+3. **Full-stack e2e (`rust/runner/tests/mock_server_grpc_e2e.rs`)** — the real `aiperf-runner` binary's
+   production gRPC KServe client drives `aiperf_mock_server::grpc::serve_grpc` (not a throwaway
+   in-test server) over a protocol-v2 `execute` request with `transport.type: grpc`,
+   `grpc://127.0.0.1:<port>`, endpoint `kserve_v2_infer`. Asserts `run_terminal` success,
+   `transport=grpc`, the expected `request_count`, and positive mean OSL — for both `streaming: true`
+   (`ModelStreamInfer`) and `streaming: false` (`ModelInfer`). Closes the client↔server loop over the
+   shared prost types. Use `127.0.0.1` (not `localhost`) to avoid the IPv6/IPv4 mock mismatch.
 
 ## Extensibility notes (repo non-negotiable)
 

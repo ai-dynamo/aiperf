@@ -48,6 +48,11 @@ pub struct MockServer {
     pub url: String,
     /// The bound loopback port.
     pub port: u16,
+    /// KServe gRPC URL, e.g. `grpc://127.0.0.1:<grpc_port>`, when the server was
+    /// started with the gRPC listener enabled ([`MockServer::start_with_grpc`]).
+    pub grpc_url: Option<String>,
+    /// The bound gRPC loopback port, when enabled.
+    pub grpc_port: Option<u16>,
     // Owned runtime whose worker threads drive the accept loop. Dropping it
     // shuts the server down. Kept last so it drops after everything else.
     runtime: Option<tokio::runtime::Runtime>,
@@ -65,7 +70,18 @@ impl MockServer {
 
     /// Start a mock server from an explicit config. The `port`/`host` fields are
     /// overridden: the harness always binds `127.0.0.1:0` (random free port).
-    pub fn start_with(mut cfg: MockServerConfig) -> Self {
+    pub fn start_with(cfg: MockServerConfig) -> Self {
+        Self::start_inner(cfg, false)
+    }
+
+    /// Like [`start_with`](Self::start_with) but additionally serves the KServe
+    /// OIP v2 gRPC service on a second random loopback port, exposed as
+    /// [`grpc_url`](Self::grpc_url). Both listeners share one `AppState`.
+    pub fn start_with_grpc(cfg: MockServerConfig) -> Self {
+        Self::start_inner(cfg, true)
+    }
+
+    fn start_inner(mut cfg: MockServerConfig, with_grpc: bool) -> Self {
         cfg = cfg.apply_flags();
 
         // Bind synchronously so the port is known and already listening before
@@ -77,7 +93,6 @@ impl MockServer {
             .expect("set listener nonblocking");
 
         let state: Arc<AppState> = AppState::build(cfg);
-        let router = build_router(state);
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -85,6 +100,26 @@ impl MockServer {
             .build()
             .expect("build mock server runtime");
 
+        // Optional KServe gRPC listener on its own port, sharing the same state.
+        let (grpc_url, grpc_port) = if with_grpc {
+            let grpc_std =
+                StdTcpListener::bind("127.0.0.1:0").expect("bind mock server grpc listener");
+            let grpc_port = grpc_std.local_addr().expect("grpc listener addr").port();
+            drop(grpc_std);
+            let grpc_addr = std::net::SocketAddr::from(([127, 0, 0, 1], grpc_port));
+            let grpc_state = state.clone();
+            runtime.spawn(async move {
+                let _ = aiperf_mock_server::grpc::serve_grpc(grpc_addr, grpc_state).await;
+            });
+            (
+                Some(format!("grpc://127.0.0.1:{grpc_port}")),
+                Some(grpc_port),
+            )
+        } else {
+            (None, None)
+        };
+
+        let router = build_router(state);
         runtime.spawn(async move {
             let listener = tokio::net::TcpListener::from_std(std_listener)
                 .expect("adopt std listener into tokio");
@@ -95,9 +130,14 @@ impl MockServer {
 
         let url = format!("http://127.0.0.1:{port}");
         wait_for_health(port);
+        if let Some(grpc_port) = grpc_port {
+            wait_for_tcp(grpc_port);
+        }
         Self {
             url,
             port,
+            grpc_url,
+            grpc_port,
             runtime: Some(runtime),
         }
     }
@@ -157,6 +197,18 @@ fn wait_for_health(port: u16) {
     panic!("mock server on port {port} never became healthy");
 }
 
+/// Poll a raw TCP connect up to 50 times (100ms apart) until the port accepts.
+/// Used for the gRPC listener, which has no HTTP `/health` route.
+fn wait_for_tcp(port: u16) {
+    for _ in 0..50 {
+        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    panic!("mock gRPC server on port {port} never became reachable");
+}
+
 fn health_ok(port: u16) -> bool {
     let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) else {
         return false;
@@ -191,6 +243,16 @@ impl AIPerfHarness {
     /// Start a mock from an explicit config plus a temp dir.
     pub async fn new_with(cfg: MockServerConfig) -> Self {
         Self::from_mock(MockServer::start_with(cfg))
+    }
+
+    /// Start a default mock with the KServe gRPC listener enabled, plus a temp
+    /// dir. The gRPC target URL is `self.mock.grpc_url`.
+    pub async fn new_with_grpc() -> Self {
+        let mut cfg = MockServerConfig::default();
+        cfg.fast = true;
+        cfg.workers = 8;
+        cfg.no_tokenizer = true;
+        Self::from_mock(MockServer::start_with_grpc(cfg))
     }
 
     fn from_mock(mock: MockServer) -> Self {

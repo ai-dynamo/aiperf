@@ -43,7 +43,6 @@ use bytes::{Buf, Bytes};
 use futures::Stream;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as ConnBuilder;
-use prost::Message as _;
 use serde_json::Value;
 use tonic::body::Body;
 use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
@@ -295,7 +294,12 @@ fn text_output_tensor(name: &str, text: &str) -> InferOutputTensor {
 }
 
 /// Build a `ModelInferResponse` with a single `text_output` tensor.
-fn build_infer_response(id: &str, model: &str, output_name: &str, text: &str) -> ModelInferResponse {
+fn build_infer_response(
+    id: &str,
+    model: &str,
+    output_name: &str,
+    text: &str,
+) -> ModelInferResponse {
     ModelInferResponse {
         model_name: model.to_string(),
         model_version: String::new(),
@@ -661,10 +665,13 @@ mod tests {
     #[tokio::test]
     async fn model_infer_returns_text_output() {
         let state = fast_state();
-        let response = model_infer(state, Request::new(infer_request("generate some text here", None)))
-            .await
-            .expect("infer ok")
-            .into_inner();
+        let response = model_infer(
+            state,
+            Request::new(infer_request("generate some text here", None)),
+        )
+        .await
+        .expect("infer ok")
+        .into_inner();
         assert_eq!(response.id, "req-1");
         assert_eq!(response.model_name, "test-model");
         let text = output_text(&response, DEFAULT_OUTPUT_NAME);
@@ -691,16 +698,22 @@ mod tests {
     async fn model_stream_infer_yields_chunks() {
         use futures::StreamExt;
         let state = fast_state();
-        let unary = model_infer(state.clone(), Request::new(infer_request("stream this prompt text", None)))
-            .await
-            .expect("unary ok")
-            .into_inner();
+        let unary = model_infer(
+            state.clone(),
+            Request::new(infer_request("stream this prompt text", None)),
+        )
+        .await
+        .expect("unary ok")
+        .into_inner();
         let expected = output_text(&unary, DEFAULT_OUTPUT_NAME);
 
-        let mut stream = model_stream_infer(state, Request::new(infer_request("stream this prompt text", None)))
-            .await
-            .expect("stream ok")
-            .into_inner();
+        let mut stream = model_stream_infer(
+            state,
+            Request::new(infer_request("stream this prompt text", None)),
+        )
+        .await
+        .expect("stream ok")
+        .into_inner();
         let mut chunks = 0usize;
         let mut assembled = String::new();
         while let Some(item) = stream.next().await {

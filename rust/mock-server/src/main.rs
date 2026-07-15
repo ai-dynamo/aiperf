@@ -27,6 +27,14 @@ fn main() -> anyhow::Result<()> {
         config.processes
     };
     if processes > 1 {
+        // The L4 balancer is HTTP-only; the KServe gRPC listener is not spliced
+        // across children (each would bind the same port). Warn and skip it.
+        if config.grpc_port.is_some() {
+            tracing::warn!(
+                "--grpc-port is ignored with --processes > 1 (the balancer is HTTP-only); \
+                 gRPC is not served in multi-process mode"
+            );
+        }
         return balancer::run(config, processes);
     }
 
@@ -68,6 +76,19 @@ async fn serve(config: MockServerConfig, worker_threads: usize) -> anyhow::Resul
         .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
     let addr = SocketAddr::new(host, config.port);
     let state = aiperf_mock_server::app::build_state(config.clone());
+
+    // Optional KServe OIP v2 gRPC listener on its own port, sharing this run's
+    // AppState (recorder/prefix-cache/scheduler) with the HTTP frontend.
+    if let Some(grpc_port) = config.grpc_port {
+        let grpc_addr = SocketAddr::new(host, grpc_port);
+        let grpc_state = state.clone();
+        tokio::spawn(async move {
+            if let Err(error) = aiperf_mock_server::grpc::serve_grpc(grpc_addr, grpc_state).await {
+                tracing::error!(%grpc_addr, "gRPC server exited: {error}");
+            }
+        });
+    }
+
     let router = build_router(state);
 
     tracing::info!(%addr, backlog = LISTEN_BACKLOG, "Listening");
