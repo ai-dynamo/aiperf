@@ -31,6 +31,7 @@ pub mod artifacts;
 pub mod config;
 pub mod dataset;
 pub mod endpoint;
+pub mod export;
 pub mod metrics;
 pub mod models;
 pub mod phase;

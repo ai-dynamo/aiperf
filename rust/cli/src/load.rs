@@ -268,7 +268,8 @@ pub(crate) fn build(inputs: Inputs) -> BenchmarkRun {
     }
     phases.push(profiling);
 
-    let cfg = BenchmarkConfig {
+    let endpoint_type = endpoint.endpoint_type.0.clone();
+    let mut cfg = BenchmarkConfig {
         models: Some(models),
         endpoint: Some(endpoint),
         tokenizer: Some(tokenizer),
@@ -283,10 +284,24 @@ pub(crate) fn build(inputs: Inputs) -> BenchmarkRun {
         }),
         datasets: Some(vec![dataset]),
         phases: Some(phases),
+        export: None,
     };
 
+    let benchmark_id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
+    // The genai-perf-v1 envelope echoes the config; the runner treats it as an
+    // opaque passthrough, so a projection of the native cfg (best-effort vs
+    // Python's exclude_unset dump) keeps the aiperf-v1 exports emitting.
+    let input_config = serde_json::to_value(&cfg).unwrap_or(serde_json::Value::Null);
+    cfg.export = Some(crate::model::export::Export::build(
+        &endpoint_type,
+        true,
+        &benchmark_id,
+        input_config,
+        serde_json::json!({}),
+    ));
+
     BenchmarkRun {
-        benchmark_id: uuid::Uuid::new_v4().simple().to_string()[..12].to_string(),
+        benchmark_id,
         artifact_dir: inputs.artifact_dir,
         cfg,
         cli_command: None,

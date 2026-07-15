@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use super::artifacts::Artifacts;
 use super::dataset::Dataset;
 use super::endpoint::Endpoint;
+use super::export::Export;
 use super::metrics::Metrics;
 use super::models::Models;
 use super::phase::Phase;
@@ -60,5 +61,8 @@ pub struct BenchmarkConfig {
     /// Ordered phase policy (`cfg.phases`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phases: Option<Vec<Phase>>,
-    // Further sections (slos, sidecars, export, …) are added here as ported.
+    /// Post-report export policy (`cfg.export`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub export: Option<Export>,
+    // Further sections (slos, sidecars, …) are added here as ported.
 }

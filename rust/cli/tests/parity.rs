@@ -89,11 +89,42 @@ fn assert_matches_golden(fixture: &str, built: &serde_json::Value, golden: &serd
             "[{fixture}] run.{field} diverges"
         );
     }
+    // The `export` section's static, registry-derived metadata (console_txt +
+    // genai_perf header/tag maps) is byte-exact; the genai_perf envelope is a
+    // best-effort echo (Python exclude_unset) and is compared only structurally.
+    assert_export_static(
+        fixture,
+        &built["cfg"]["export"],
+        &golden["run"]["cfg"]["export"],
+    );
+
     let envelope = serde_json::json!({
         "protocol_version": 2, "operation": "execute", "run": built,
     });
     let _: RunnerEnvelopeV2 = serde_json::from_value(envelope)
         .unwrap_or_else(|e| panic!("[{fixture}] invalid runner input: {e}"));
+}
+
+/// Compare the byte-exact static parts of `export`; skip the best-effort
+/// genai_perf envelope (opaque, echoed by the runner).
+fn assert_export_static(fixture: &str, built: &serde_json::Value, golden: &serde_json::Value) {
+    if golden.is_null() {
+        return;
+    }
+    assert_eq!(
+        built["console_txt"], golden["console_txt"],
+        "[{fixture}] export.console_txt diverges"
+    );
+    for key in ["enabled", "header_map", "filtered_tags", "scalar_tags"] {
+        assert_eq!(
+            built["genai_perf"][key], golden["genai_perf"][key],
+            "[{fixture}] export.genai_perf.{key} diverges"
+        );
+    }
+    assert!(
+        built["genai_perf"]["envelope"].is_object(),
+        "[{fixture}] export.genai_perf.envelope must be present"
+    );
 }
 
 #[test]
