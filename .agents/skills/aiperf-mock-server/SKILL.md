@@ -237,11 +237,30 @@ don't need real routes/latency/token behavior:
 
 ```bash
 rustc -O rust/mock-server/tools/fastmock.rs -o /tmp/fastmock
-/tmp/fastmock 8131   # listens on 127.0.0.1:8131
+/tmp/fastmock 8131                       # 127.0.0.1:8131, one accept thread (baseline)
+/tmp/fastmock 8131 --threads 4           # 4 accept threads share one listener, same process
+/tmp/fastmock 8131 --procs 4             # 4 SO_REUSEPORT processes on :8131 (kernel-balanced)
+/tmp/fastmock 8131 --procs 4 --threads 2 # compose: 4 processes × 2 accept threads
 ```
 
+`fastmock` scales two ways without any proxy hop (both `0` = auto = CPU count):
+
+- `--threads M` — M concurrent `accept()` threads over one shared listener, lifting
+  the single-accept-loop ceiling in one process with zero added latency.
+- `--procs N` — N independent server processes bound to the same port via
+  `SO_REUSEPORT`; the kernel spreads new connections across them (true
+  multi-process sharing, no L4 proxy in the data path — the right fit for a
+  lowest-overhead target). The leader supervises the children and, on Linux,
+  sets `PR_SET_PDEATHSIG` so they never orphan. Linux-only; elsewhere `--procs`
+  degrades to a plain bind.
+
+Prefer these over fronting `fastmock` with the `aiperf-mock-server --processes N`
+balancer: that balancer re-execs `aiperf-mock-server` (not `fastmock`) and adds a
+byte-splicing hop that undercuts `fastmock`'s whole reason to exist.
+
 For anything realistic — multiple endpoints, latency modeling, telemetry,
-token counting — use the full `aiperf-mock-server` server above.
+token counting — use the full `aiperf-mock-server` server above (which has its own
+`--processes N` round-robin balancer).
 
 ## Gotchas recap
 
