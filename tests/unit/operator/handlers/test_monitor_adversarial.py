@@ -31,7 +31,6 @@ from aiperf.common.enums.lifecycle_enums import SystemState
 from aiperf.kubernetes.constants import Annotations, Containers, JobSetLabels
 from aiperf.operator.client_cache import _reset_for_testing, request_cancellation
 from aiperf.operator.handlers.monitor import (
-    _apply_controller_progress_status,
     _benchmark_appears_complete,
     _delete_jobset_or_retry,
     _fetch_jobset_or_reconcile,
@@ -328,72 +327,6 @@ class TestStatusProgressContracts:
             "total": 4,
             "degraded": 0,
         }
-
-    def test_apply_controller_progress_processing_state_keeps_phase_running(
-        self,
-    ) -> None:
-        """Processing subPhase is not terminal; phase remains Running until results land."""
-        sb, patch = _status_builder()
-
-        _apply_controller_progress_status(
-            patch,
-            sb,
-            _progress(
-                current_phase="profiling",
-                system_state=SystemState.PROCESSING,
-                is_complete=True,
-            ),
-            Phase.RUNNING,
-        )
-
-        assert patch.status["phase"] == str(Phase.RUNNING)
-        assert patch.status["currentPhase"] == "processing"
-        assert patch.status["subPhase"] == "processing"
-
-    @pytest.mark.asyncio
-    async def test_jobset_failed_condition_clears_stage_labels_on_fatal_failure(
-        self,
-    ) -> None:
-        """Fatal JobSet failure must clear currentPhase/subPhase in the same patch."""
-        sb, patch = _status_builder(
-            {"currentPhase": "profiling", "subPhase": "profiling"}
-        )
-
-        with (
-            mock_patch("aiperf.operator.handlers.monitor.events.failed"),
-            mock_patch(
-                "aiperf.operator.handlers.monitor.close_progress_client",
-                new=AsyncMock(),
-            ),
-        ):
-            result = await _handle_jobset_failed_condition(
-                body=_body(),
-                condition={
-                    "type": "Failed",
-                    "status": "True",
-                    "message": "controller pod OOMKilled",
-                },
-                jobset_status={
-                    "replicatedJobsStatus": [
-                        {"name": "controller", "failed": 1},
-                        {"name": "workers", "failed": 0},
-                    ]
-                },
-                job_id="llama3-8b-throughput",
-                key="bench-prod/llama3-8b-throughput",
-                sb=sb,
-            )
-
-        assert result is True
-        assert patch.status["phase"] == str(Phase.FAILED)
-        assert patch.status["currentPhase"] is None
-        assert patch.status["subPhase"] is None
-
-
-# =============================================================================
-# Pod-restart shortcut events
-# =============================================================================
-
 
 class TestPodRestartShortcutEvents:
     """Pod watch shortcuts report restart spikes without monitor polling."""

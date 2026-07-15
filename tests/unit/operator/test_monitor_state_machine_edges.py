@@ -48,7 +48,6 @@ from pytest import param
 from aiperf.kubernetes.constants import Annotations
 from aiperf.operator.client_cache import _reset_for_testing
 from aiperf.operator.handlers.monitor import (
-    _apply_controller_progress_status,
     _check_job_timeout,
     _fetch_jobset_or_reconcile,
     _fetch_progress,
@@ -196,48 +195,6 @@ class TestStateMachineTransitions:
 
         mock_client_cm.assert_not_called()
         assert kopf_patch.status == {}
-
-    @pytest.mark.asyncio
-    async def test_apply_progress_does_not_demote_running_to_initializing(
-        self,
-    ) -> None:
-        """A RUNNING CR with controller in ``warmup`` must not move backward.
-
-        ``_apply_controller_progress_status`` may receive a stale snapshot
-        where the controller reports ``warmup`` after the CR has already
-        moved to RUNNING. The illegal Running->Initializing transition is
-        explicitly suppressed by the ``current_phase in (PENDING, QUEUED,
-        INITIALIZING)`` guard.
-        """
-        sb, patch = _make_status_builder()
-        progress = _progress_obj(current_phase="warmup")
-
-        _apply_controller_progress_status(patch, sb, progress, Phase.RUNNING)
-
-        assert "phase" not in patch.status
-        assert patch.status["currentPhase"] == "warmup"
-
-    @pytest.mark.asyncio
-    async def test_apply_progress_promotes_pending_to_initializing(self) -> None:
-        """The forward Pending->Initializing edge fires on first controller phase."""
-        sb, patch = _make_status_builder()
-        progress = _progress_obj(current_phase="warmup")
-
-        _apply_controller_progress_status(patch, sb, progress, Phase.PENDING)
-
-        assert patch.status["phase"] == str(Phase.INITIALIZING)
-
-    @pytest.mark.asyncio
-    async def test_apply_progress_promotes_to_running_on_profiling(self) -> None:
-        """Initializing->Running fires once the controller enters ``profiling``."""
-        sb, patch = _make_status_builder()
-        progress = _progress_obj(current_phase="profiling", is_complete=False)
-
-        _apply_controller_progress_status(patch, sb, progress, Phase.INITIALIZING)
-
-        assert patch.status["phase"] == str(Phase.RUNNING)
-        assert patch.status["currentPhase"] == "profiling"
-
 
 # =============================================================================
 # Job-timeout escalation

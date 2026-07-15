@@ -6,8 +6,8 @@ The end-to-end ``monitor_progress`` flow is exercised by ``test_main.py`` and
 ``test_cancellation.py``. This file targets the small helper functions
 (``_classify_jobset_failure``, ``_should_poll_progress``,
 ``_handle_kueue_suspension``, ``_container_status_by_name``,
-``_get_terminated_controller_info``, ``_update_worker_counts``,
-``_apply_controller_progress_status``) which have no direct unit tests.
+``_get_terminated_controller_info``, ``_update_worker_counts``) which have
+no direct unit tests.
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ from pytest import param
 
 from aiperf.common.enums.lifecycle_enums import SystemState
 from aiperf.operator.handlers.monitor import (
-    _apply_controller_progress_status,
     _check_job_timeout,
     _classify_jobset_failure,
     _container_status_by_name,
@@ -669,174 +668,3 @@ class TestCleanupDeleteFailures:
             "profile_export_aiperf.csv",
         ]
         assert result.error == ""
-
-
-class TestApplyControllerProgressStatus:
-    """Tests for ``_apply_controller_progress_status``."""
-
-    def _progress(
-        self,
-        *,
-        current_phase: str | None,
-        workers: dict[str, int] | None = None,
-        is_complete: bool = False,
-        system_state: SystemState = SystemState.PROFILING,
-    ) -> MagicMock:
-        p = MagicMock()
-        p.current_phase = current_phase
-        p.is_complete = is_complete
-        p.system_state = system_state
-        p.workers = MagicMock()
-        p.workers.model_dump = MagicMock(
-            return_value=workers if workers is not None else {"ready": 1, "total": 1}
-        )
-        return p
-
-    def test_sets_running_when_profiling(self) -> None:
-        """Verify 'profiling' controller phase promotes the CR to RUNNING."""
-        sb, patch = _make_status_builder()
-        progress = self._progress(current_phase="profiling")
-
-        _apply_controller_progress_status(patch, sb, progress, Phase.INITIALIZING)
-
-        assert patch.status["currentPhase"] == "profiling"
-        assert patch.status["phase"] == str(Phase.RUNNING)
-
-    def test_sets_initializing_when_pre_profiling_in_pending(self) -> None:
-        """Verify pre-profiling phases advance PENDING to INITIALIZING."""
-        sb, patch = _make_status_builder()
-        progress = self._progress(current_phase="warmup")
-
-        _apply_controller_progress_status(patch, sb, progress, Phase.PENDING)
-
-        assert patch.status["currentPhase"] == "warmup"
-        assert patch.status["phase"] == str(Phase.INITIALIZING)
-
-    def test_noop_when_controller_has_no_phase(self) -> None:
-        """Verify no phase fields are written when the controller has no phase yet."""
-        sb, patch = _make_status_builder()
-        progress = self._progress(current_phase=None)
-
-        _apply_controller_progress_status(patch, sb, progress, Phase.RUNNING)
-
-        assert "phase" not in patch.status
-        assert "currentPhase" not in patch.status
-
-    def test_does_not_demote_running_from_non_profiling_phase(self) -> None:
-        """Verify a RUNNING CR is not demoted back to INITIALIZING mid-run."""
-        sb, patch = _make_status_builder()
-        progress = self._progress(current_phase="warmup")
-
-        _apply_controller_progress_status(patch, sb, progress, Phase.RUNNING)
-
-        # Controller currentPhase still recorded, but CR phase unchanged.
-        assert patch.status["currentPhase"] == "warmup"
-        assert "phase" not in patch.status
-
-    def test_stamps_processing_when_profiling_complete(self) -> None:
-        """Verify 'processing' is stamped once profiling is complete (drain window).
-
-        is_complete=True from the controller means all profiling requests
-        have been sent AND all records processed; the operator is now
-        fetching results / aggregating. STAGE must reflect the drain, not
-        keep showing 'profiling' as if the workload were still in flight.
-        """
-        sb, patch = _make_status_builder()
-        progress = self._progress(current_phase="profiling", is_complete=True)
-
-        _apply_controller_progress_status(patch, sb, progress, Phase.RUNNING)
-
-        assert patch.status["currentPhase"] == "processing"
-        # The CR phase stays RUNNING — terminal phase is set later by
-        # handle_completion. We only flip the in-flight stage label here.
-        assert patch.status["phase"] == str(Phase.RUNNING)
-
-    def test_keeps_profiling_when_workload_still_in_flight(self) -> None:
-        """Verify 'profiling' (not 'processing') while requests still pending."""
-        sb, patch = _make_status_builder()
-        progress = self._progress(current_phase="profiling", is_complete=False)
-
-        _apply_controller_progress_status(patch, sb, progress, Phase.RUNNING)
-
-        assert patch.status["currentPhase"] == "profiling"
-
-    def test_warmup_complete_does_not_stamp_processing(self) -> None:
-        """Verify is_complete only flips 'profiling', not earlier phases.
-
-        ``progress.is_complete`` is gated on the profiling phase finishing,
-        but a defensive check: even if a controller bug returned is_complete
-        with current_phase='warmup', we should not silently rewrite warmup
-        as processing — it'd hide a real bug.
-        """
-        sb, patch = _make_status_builder()
-        progress = self._progress(current_phase="warmup", is_complete=True)
-
-        _apply_controller_progress_status(patch, sb, progress, Phase.INITIALIZING)
-
-        assert patch.status["currentPhase"] == "warmup"
-
-    def test_stamps_subphase_from_system_state(self) -> None:
-        """Verify ``status.subPhase`` mirrors the controller's ``system_state``.
-
-        ``subPhase`` is the outer-lifecycle label (initializing → configuring →
-        ready → profiling → processing → stopping → shutdown) — distinct from
-        ``currentPhase`` (the inner benchmark stage). It is stamped on every
-        invocation so kubectl observers can see the controller advance through
-        startup before the workload ever begins.
-        """
-        sb, patch = _make_status_builder()
-        progress = self._progress(
-            current_phase="profiling", system_state=SystemState.PROFILING
-        )
-
-        _apply_controller_progress_status(patch, sb, progress, Phase.RUNNING)
-
-        assert patch.status["subPhase"] == "profiling"
-
-    @pytest.mark.parametrize(
-        "system_state,expected",
-        [
-            param(SystemState.INITIALIZING, "initializing", id="initializing"),
-            param(SystemState.CONFIGURING, "configuring", id="configuring"),
-            param(SystemState.READY, "ready", id="ready"),
-            param(SystemState.PROFILING, "profiling", id="profiling"),
-            param(SystemState.PROCESSING, "processing", id="processing"),
-            param(SystemState.STOPPING, "stopping", id="stopping"),
-            param(SystemState.SHUTDOWN, "shutdown", id="shutdown"),
-        ],
-    )  # fmt: skip
-    def test_subphase_maps_every_system_state_value(
-        self, system_state: SystemState, expected: str
-    ) -> None:
-        """Every SystemState serializes to its lowercase enum value on the CR.
-
-        The CRD enum constraint (`crd.yaml status.properties.subPhase`) is
-        keyed on these exact strings; a drift between Python enum values and
-        CRD enum entries would cause the apiserver to reject the patch.
-        """
-        sb, patch = _make_status_builder()
-        # current_phase is required to exercise the subPhase stamp before the
-        # early return; pass any non-empty value.
-        progress = self._progress(current_phase="profiling", system_state=system_state)
-
-        _apply_controller_progress_status(patch, sb, progress, Phase.RUNNING)
-
-        assert patch.status["subPhase"] == expected
-
-    def test_subphase_stamped_even_when_current_phase_empty(self) -> None:
-        """``subPhase`` is stamped before the empty-current_phase early return.
-
-        The controller advances ``system_state`` through CONFIGURING and READY
-        long before any ``CreditPhase`` is active. We must not gate the
-        ``subPhase`` write behind the controller having a phase.
-        """
-        sb, patch = _make_status_builder()
-        progress = self._progress(
-            current_phase=None, system_state=SystemState.CONFIGURING
-        )
-
-        _apply_controller_progress_status(patch, sb, progress, Phase.INITIALIZING)
-
-        assert patch.status["subPhase"] == "configuring"
-        # Confirms we still hit the early-return after the stamp.
-        assert "currentPhase" not in patch.status

@@ -12,7 +12,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import aiohttp
 import kopf
@@ -20,7 +20,6 @@ from kubernetes_asyncio import client
 from kubernetes_asyncio.client import ApiClient, CustomObjectsApi
 from kubernetes_asyncio.client.exceptions import ApiException
 
-from aiperf.common.finite import scrub_non_finite
 from aiperf.kubernetes.client import k8s_client
 from aiperf.kubernetes.constants import Annotations, Containers, JobSetLabels
 from aiperf.kubernetes.cr_refs import (
@@ -51,7 +50,7 @@ from aiperf.operator.handlers.completion import (
     fetch_results_with_retry,
     handle_completion,
 )
-from aiperf.operator.models import ControllerFetchResult, MetricsSummary, PhaseProgress
+from aiperf.operator.models import ControllerFetchResult, MetricsSummary
 from aiperf.operator.progress_client import ProgressClient
 from aiperf.operator.results_layout import epoch_key_from_body, run_dir
 from aiperf.operator.status import (
@@ -60,9 +59,6 @@ from aiperf.operator.status import (
     StatusBuilder,
     parse_timestamp,
 )
-
-if TYPE_CHECKING:
-    from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
 
 logger = logging.getLogger(__name__)
 
@@ -158,61 +154,6 @@ def _fatal_pod_waiting_message(
         f"{waiting.pod_name} container {waiting.container_name} is waiting with "
         f"fatal reason {waiting.reason}{detail}"
     )
-
-
-def _apply_controller_progress_status(
-    patch: kopf.Patch,
-    sb: StatusBuilder,
-    progress: Any,
-    current_phase: Phase,
-) -> None:
-    """Apply controller-authored progress to CR status.
-
-    The CR's ``status.currentPhase`` (the kubectl ``STAGE`` print column)
-    surfaces three values during the active job lifecycle:
-
-    - ``warmup`` / ``profiling`` — pass through the controller's reported
-      ``CreditPhase`` while the workload is in flight.
-    - ``processing`` — stamped once the controller reports
-      ``progress.is_complete=True`` (all profiling requests sent AND all
-      records processed). This signals the operator-side drain window:
-      results are being fetched from the controller pod, aggregated, and
-      written to disk. Without this, ``STAGE`` would freeze at
-      ``profiling`` for the seconds-long fetch window, indistinguishable
-      from a stalled benchmark.
-
-    The terminal-phase clear (``currentPhase=None`` once the CR reaches
-    Completed/Failed/Cancelled) is performed by ``handle_completion`` and
-    the failure paths in ``monitor.py`` itself — not here.
-
-    ``status.subPhase`` mirrors the controller's ``SystemState`` (the outer
-    lifecycle: initializing → configuring → ready → profiling → processing
-    → stopping → shutdown). Distinct from ``currentPhase`` (the inner
-    benchmark stage: warmup / profiling / processing). ``set_phase`` clears
-    ``subPhase`` on terminal transitions for the same reason it clears
-    ``currentPhase`` — neither label is meaningful after the job ends.
-    """
-    patch.status["subPhase"] = str(progress.system_state)
-    sb.set_worker_aggregate_status(progress.workers.model_dump())
-
-    if not progress.current_phase:
-        return
-
-    is_complete = bool(getattr(progress, "is_complete", False))
-    if progress.current_phase == "profiling" and is_complete:
-        patch.status["currentPhase"] = "processing"
-    else:
-        patch.status["currentPhase"] = progress.current_phase
-
-    if progress.current_phase == "profiling":
-        sb.set_phase(Phase.RUNNING)
-        sb.conditions.set_true(
-            ConditionType.BENCHMARK_RUNNING,
-            "BenchmarkStarted",
-            "Benchmark is running",
-        )
-    elif current_phase in (Phase.PENDING, Phase.QUEUED, Phase.INITIALIZING):
-        sb.set_phase(Phase.INITIALIZING)
 
 
 async def _delete_jobset_or_retry(
@@ -1715,64 +1656,6 @@ async def _maybe_recover_terminated_controller(
     return True
 
 
-async def _fetch_live_metrics(
-    progress_client: ProgressClient,
-    host: str,
-    jobset_name: str,
-    patch: kopf.Patch,
-) -> None:
-    """Fetch live metrics from controller and stamp them onto the CR patch."""
-    try:
-        metrics = await progress_client.get_metrics(host)
-    except (TimeoutError, aiohttp.ClientError, OSError) as e:
-        logger.warning(f"Live metrics fetch failed for {jobset_name}: {e}")
-        return
-    except Exception as e:  # noqa: BLE001 - live metrics are optional; any parse/transport failure downgrades to 'no live metrics this tick'
-        logger.warning(f"Live metrics fetch failed for {jobset_name}: {e}")
-        return
-
-    if isinstance(metrics, dict) and metrics.get("metrics"):
-        # Scrub non-finite floats before stamping: a NaN/Inf metric stat is an
-        # invalid JSON number that would reject the whole apiserver status patch
-        # for this tick, freezing status updates. Mirrors completion.py:431.
-        metrics = scrub_non_finite(metrics)
-        patch.status["liveMetrics"] = metrics
-
-        summary = MetricsSummary.from_metrics(metrics)
-        summary_dict = summary.to_status_dict()
-        if summary_dict:
-            patch.status["liveSummary"] = summary_dict
-
-
-async def _fetch_server_metrics(
-    progress_client: ProgressClient,
-    host: str,
-    jobset_name: str,
-    patch: kopf.Patch,
-) -> None:
-    """Fetch server metrics from controller and stamp them onto the CR patch."""
-    try:
-        server_metrics = await progress_client.get_server_metrics(host)
-    except (TimeoutError, aiohttp.ClientError, OSError) as e:
-        logger.debug(
-            f"Server metrics unavailable for {jobset_name} "
-            f"(endpoint may not be ready yet): {e}"
-        )
-        return
-    except Exception as e:  # noqa: BLE001 - server-metrics endpoint is optional and may return any shape during startup; debug-log and continue
-        logger.debug(
-            f"Server metrics unavailable for {jobset_name} "
-            f"(endpoint may not be ready yet): {e}"
-        )
-        return
-
-    if isinstance(server_metrics, dict) and server_metrics.get("endpoint_summaries"):
-        # Scrub non-finite floats before stamping: a NaN/Inf gauge is an invalid
-        # JSON number that would reject the whole apiserver status patch for this
-        # tick, freezing status updates. Mirrors _fetch_live_metrics above.
-        patch.status["serverMetrics"] = scrub_non_finite(server_metrics)
-
-
 async def _fetch_progress(
     namespace: str,
     jobset_name: str,
@@ -1805,48 +1688,3 @@ async def _fetch_progress(
     the caller still uses it for results-sidecar recovery and controller shutdown.
     """
     return False
-
-
-def _build_phase_progress(stats: CombinedPhaseStats) -> PhaseProgress | None:
-    """Build PhaseProgress from CombinedPhaseStats."""
-    total = stats.total_expected_requests or 0
-    if total == 0 and stats.requests_sent == 0:
-        return None
-
-    elapsed = None
-    if stats.start_ns is not None and stats.last_update_ns is not None:
-        elapsed = round((stats.last_update_ns - stats.start_ns) / 1_000_000_000, 1)
-
-    return PhaseProgress(
-        requests_completed=stats.requests_completed,
-        requests_sent=stats.requests_sent,
-        requests_total=total,
-        requests_cancelled=stats.requests_cancelled,
-        requests_errors=stats.request_errors,
-        requests_in_flight=stats.in_flight_requests,
-        requests_per_second=round(stats.requests_per_second or 0, 2),
-        requests_progress_percent=round(stats.requests_progress_percent or 0, 1),
-        sessions_sent=stats.sent_sessions,
-        sessions_completed=stats.completed_sessions,
-        sessions_cancelled=stats.cancelled_sessions,
-        sessions_in_flight=stats.in_flight_sessions,
-        records_success=stats.success_records,
-        records_error=stats.error_records,
-        records_per_second=round(stats.records_per_second or 0, 2),
-        records_progress_percent=round(stats.records_progress_percent or 0, 1),
-        sending_complete=stats.is_sending_complete,
-        is_requests_complete=stats.is_requests_complete,
-        is_records_complete=stats.is_records_complete,
-        timeout_triggered=stats.timeout_triggered,
-        was_cancelled=stats.was_cancelled,
-        requests_eta_seconds=round(stats.requests_eta_sec)
-        if stats.requests_eta_sec is not None
-        else None,
-        records_eta_seconds=round(stats.records_eta_sec)
-        if stats.records_eta_sec is not None
-        else None,
-        expected_duration_seconds=round(stats.expected_duration_sec, 1)
-        if stats.expected_duration_sec is not None
-        else None,
-        elapsed_time_seconds=elapsed,
-    )
