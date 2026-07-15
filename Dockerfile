@@ -225,7 +225,7 @@ RUN uv sync --active --no-install-project --no-default-groups
 
 # Copy the rest of the application
 COPY --from=wheel-builder /dist /dist
-RUN uv pip install /dist/aiperf-*.whl /dist/aiperf_rust-*.whl \
+RUN uv pip install /dist/aiperf-*.whl /dist/aiperf_runner-*.whl \
     && rm -rf /dist /workspace/pyproject.toml
 
 # Remove setuptools as it is not needed for the runtime image
