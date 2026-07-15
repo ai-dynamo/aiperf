@@ -213,6 +213,7 @@ impl Benchmark {
             prefill_concurrency: None,
             prefill_ramp: None,
             gpu_telemetry_enabled: true,
+            gpu_telemetry_urls: Vec::new(),
             server_metrics_enabled: true,
             server_metrics_formats: None,
             slos: serde_json::Map::new(),

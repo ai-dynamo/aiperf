@@ -90,6 +90,8 @@ pub(crate) struct Inputs {
     pub prefill_concurrency: Option<u32>,
     pub prefill_ramp: Option<f64>,
     pub gpu_telemetry_enabled: bool,
+    /// Custom DCGM URLs.
+    pub gpu_telemetry_urls: Vec<String>,
     pub server_metrics_enabled: bool,
     pub server_metrics_formats: Option<Vec<String>>,
     /// Goodput SLO thresholds (metric -> threshold ms).
@@ -312,6 +314,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         prefill_concurrency: flags.prefill_concurrency,
         prefill_ramp: flags.prefill_concurrency_ramp_duration,
         gpu_telemetry_enabled: !flags.no_gpu_telemetry,
+        gpu_telemetry_urls: flags.gpu_telemetry.clone(),
         server_metrics_enabled: !flags.no_server_metrics,
         server_metrics_formats: (!flags.server_metrics_formats.is_empty())
             .then(|| flags.server_metrics_formats.clone()),
@@ -688,7 +691,9 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         None
     };
     let sidecars = crate::model::telemetry::Sidecars {
-        gpu_telemetry: gpu_enabled.then(crate::model::telemetry::GpuTelemetrySidecar::default_dcgm),
+        gpu_telemetry: gpu_enabled.then(|| {
+            crate::model::telemetry::GpuTelemetrySidecar::default_dcgm(&inputs.gpu_telemetry_urls)
+        }),
         server_metrics: server_enabled.then(|| {
             let mut all_urls = endpoint_urls.clone();
             all_urls.extend(inputs.server_metrics_urls.iter().cloned());
@@ -702,6 +707,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     };
     let mut gpu_cfg = crate::model::telemetry::GpuTelemetryConfig::default();
     gpu_cfg.enabled = inputs.gpu_telemetry_enabled;
+    gpu_cfg.urls = inputs.gpu_telemetry_urls.clone();
     let mut server_cfg = crate::model::telemetry::ServerMetricsConfig::default();
     server_cfg.enabled = inputs.server_metrics_enabled;
     server_cfg.urls = inputs

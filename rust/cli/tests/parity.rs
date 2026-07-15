@@ -87,6 +87,7 @@ const FIXTURES: &[&str] = &[
     "endpoint_extra2",
     "sm_urls",
     "arrival",
+    "gpu_urls",
 ];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).

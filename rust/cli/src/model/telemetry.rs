@@ -218,17 +218,28 @@ pub struct Sidecars {
 }
 
 impl GpuTelemetrySidecar {
-    /// Build the default DCGM sidecar (the enabled-by-default path).
-    pub fn default_dcgm() -> Self {
+    /// Build the default DCGM sidecar (the enabled-by-default path); `extra` are
+    /// custom DCGM URLs appended after the defaults (deduped).
+    pub fn default_dcgm(extra: &[String]) -> Self {
+        let mut urls: Vec<String> = DEFAULT_DCGM_ENDPOINTS
+            .iter()
+            .map(|e| normalize_metrics_url(e))
+            .collect();
+        for u in extra {
+            let n = normalize_metrics_url(u);
+            if !urls.contains(&n) {
+                urls.push(n);
+            }
+        }
         Self {
             collection_interval_ns: COLLECTION_INTERVAL_NS,
             request_timeout_ns: REACHABILITY_TIMEOUT_NS,
             records_path: "gpu_telemetry_export.jsonl".to_string(),
-            sources: DEFAULT_DCGM_ENDPOINTS
-                .iter()
-                .map(|e| GpuSource {
+            sources: urls
+                .into_iter()
+                .map(|url| GpuSource {
                     source_type: "dcgm".to_string(),
-                    url: normalize_metrics_url(e),
+                    url,
                 })
                 .collect(),
         }

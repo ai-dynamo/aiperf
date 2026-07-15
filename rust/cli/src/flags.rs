@@ -110,6 +110,10 @@ pub struct ProfileFlags {
     #[arg(long = "no-gpu-telemetry", default_value_t = false)]
     pub no_gpu_telemetry: bool,
 
+    /// Custom DCGM exporter URLs (`--gpu-telemetry`), repeatable.
+    #[arg(long = "gpu-telemetry", num_args = 1..)]
+    pub gpu_telemetry: Vec<String>,
+
     /// Disable server-metrics collection (`--no-server-metrics`).
     #[arg(long = "no-server-metrics", default_value_t = false)]
     pub no_server_metrics: bool,
