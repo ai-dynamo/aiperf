@@ -73,7 +73,9 @@ use crate::runner_protocol::execute::{
     NativeConversationSourceFactory, build_native_scheduled_phase_plan_with_source_factory,
     load_tokenizer, metrics_config, native_scheduled_resources, phase_seamless_to_next,
 };
-use crate::runner_protocol::graph_execution::{RunnerGraphExecutionEvent, RunnerGraphExecutionEventSink};
+use crate::runner_protocol::graph_execution::{
+    RunnerGraphExecutionEvent, RunnerGraphExecutionEventSink,
+};
 use crate::runner_protocol::graph_input::RunnerGraphInputContext;
 use crate::runner_protocol::graph_phase_runtime::{
     GraphPhaseBackendConfig, PreparedGraphPhaseBackend, RunnerGraphPhaseBackendFactory,
@@ -87,9 +89,8 @@ use crate::runner_protocol::protocol_v2::AuthoredRunSpecV2;
 use crate::runner_protocol::records::{CapturedModelOutput, CapturedRecord};
 use crate::runner_protocol::registry::{
     GraphWorkloadConfigV2, PreparedRunOutcome, PreparedRunnerOperation, RunnerClockKind,
-    RunnerRegistryBuilder, RunnerRunContext, RunnerTransportDescriptor, RunnerTransportFactory,
-    ScheduledWorkloadConfigV2, ValidatedTransportConfig, ValidatedWorkloadConfig,
-    WorkloadRequirements,
+    RunnerRunContext, RunnerTransportDescriptor, RunnerTransportFactory, ScheduledWorkloadConfigV2,
+    ValidatedTransportConfig, ValidatedWorkloadConfig, WorkloadRequirements,
 };
 
 /// Stable runner-registry transport IDs for the in-process Dynamo engine.
@@ -852,9 +853,9 @@ impl RunnerTransportFactory for DynosimTransportFactory {
 /// dispatch to [`prepare_dynosim_scheduled`]/[`prepare_dynosim_graph`]; there is
 /// no per-transport pair object. Direct graph preparation resolves its
 /// authored-input adapter from the coordinator-owned [`RunnerRunContext`].
-pub fn register_dynosim_transport(builder: &mut RunnerRegistryBuilder) -> Result<()> {
-    builder.register_transport(Arc::new(DynosimTransportFactory::offline()))?;
-    builder.register_transport(Arc::new(DynosimTransportFactory::online()))?;
+pub fn register_dynosim_transport(registry: &mut crate::extensions::AiperfRegistry) -> Result<()> {
+    registry.register_transport(Arc::new(DynosimTransportFactory::offline()))?;
+    registry.register_transport(Arc::new(DynosimTransportFactory::online()))?;
     Ok(())
 }
 
@@ -2296,9 +2297,8 @@ pub struct DynosimTraceOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runner_protocol::registry::{
-        BuiltinRunnerRegistryFactory, RunnerRegistryFactory, RunnerTransportFactory,
-    };
+    use crate::extensions::{AiperfRegistryFactory, BuiltinAiperfRegistryFactory};
+    use crate::runner_protocol::registry::RunnerTransportFactory;
 
     fn raw(value: Value) -> Box<RawValue> {
         RawValue::from_string(value.to_string()).unwrap()
@@ -2371,7 +2371,7 @@ mod tests {
 
     #[test]
     fn factory_registration_is_derived_from_the_feature_bearing_registry() {
-        let registry = BuiltinRunnerRegistryFactory.build().unwrap();
+        let registry = BuiltinAiperfRegistryFactory.build().unwrap();
         for (transport_id, clock) in [
             (DYNOSIM_OFFLINE_ID, RunnerClockKind::Sim),
             (DYNOSIM_ONLINE_ID, RunnerClockKind::Real),

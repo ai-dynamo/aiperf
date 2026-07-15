@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::runner_protocol::registry::RunnerRegistry;
+use crate::extensions::AiperfRegistry;
 
 /// One plugins.yaml-shaped catalog entry.
 #[derive(Debug, Serialize)]
@@ -40,11 +40,8 @@ pub struct RunnerCatalog {
 }
 
 impl RunnerCatalog {
-    /// Serialize the exact endpoint and transport registries linked into this binary.
-    pub fn from_registries(
-        runner_registry: &RunnerRegistry,
-        product_registry: &crate::extensions::AiperfRegistry,
-    ) -> Self {
+    /// Serialize the exact endpoint and transport catalog linked into this binary.
+    pub fn from_registry(product_registry: &AiperfRegistry) -> Self {
         let endpoint = product_registry
             .endpoints()
             .descriptors()
@@ -59,7 +56,7 @@ impl RunnerCatalog {
                 )
             })
             .collect();
-        let transport = runner_registry
+        let transport = product_registry
             .transport_descriptors()
             .into_iter()
             .map(|descriptor| {
@@ -97,7 +94,9 @@ fn transport_url_schemes(id: &str) -> &'static [&'static str] {
     }
 }
 
-pub use crate::runner_protocol::sidecar_input::{LiveStreamingSpec, MLflowStreamingSpec, OTelStreamingSpec};
+pub use crate::runner_protocol::sidecar_input::{
+    LiveStreamingSpec, MLflowStreamingSpec, OTelStreamingSpec,
+};
 
 /// Tokenizer source understood by the native dataset composer.
 #[derive(Clone, Debug, Deserialize)]

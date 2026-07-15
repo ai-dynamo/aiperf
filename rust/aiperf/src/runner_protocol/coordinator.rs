@@ -28,8 +28,7 @@ use crate::runner_protocol::protocol_v2::{
 };
 use crate::runner_protocol::redaction::redact_diagnostic;
 use crate::runner_protocol::registry::{
-    PreparedRunFailure, PreparedRunOutcome, RunnerRegistry, RunnerRegistryFactory,
-    RunnerRunContext, validate_endpoint_profiles_v2,
+    PreparedRunFailure, PreparedRunOutcome, RunnerRunContext, validate_endpoint_profiles_v2,
 };
 use crate::runner_protocol::sidecar_input::RunnerSidecarInputAdapterResolver;
 
@@ -59,7 +58,6 @@ pub struct RunnerProcessResultV2 {
 /// scheduling code remain unchanged.
 pub struct RunnerV2Coordinator {
     distribution_id: String,
-    runner_registry: RunnerRegistry,
     product_registry: Arc<AiperfRegistry>,
     execution_factories: RunnerExecutionFactories,
     graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
@@ -72,8 +70,8 @@ impl std::fmt::Debug for RunnerV2Coordinator {
         formatter
             .debug_struct("RunnerV2Coordinator")
             .field("distribution_id", &self.distribution_id)
-            .field("transports", &self.runner_registry.transport_descriptors())
-            .field("workloads", &self.runner_registry.workload_descriptors())
+            .field("transports", &self.product_registry.transport_descriptors())
+            .field("workloads", &self.product_registry.workload_descriptors())
             .finish_non_exhaustive()
     }
 }
@@ -82,7 +80,6 @@ impl RunnerV2Coordinator {
     /// Compose every startup registry exactly once for this child process.
     pub fn new(
         distribution_id: impl Into<String>,
-        runner_registry_factory: &dyn RunnerRegistryFactory,
         product_registry_factory: &dyn AiperfRegistryFactory,
         execution_factories: RunnerExecutionFactories,
         graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
@@ -91,9 +88,8 @@ impl RunnerV2Coordinator {
     ) -> Result<Self> {
         let distribution_id = distribution_id.into();
         validate_distribution_id(&distribution_id)?;
-        let runner_registry = runner_registry_factory
-            .build()
-            .context("composing runner transport/workload registry")?;
+        // One registry of record: transports, workloads, endpoints, samplers, and
+        // loaders all live in the single product registry composed here.
         let product_registry = Arc::new(
             product_registry_factory
                 .build()
@@ -101,7 +97,6 @@ impl RunnerV2Coordinator {
         );
         Ok(Self {
             distribution_id,
-            runner_registry,
             product_registry,
             execution_factories,
             graph_inputs,
@@ -110,9 +105,9 @@ impl RunnerV2Coordinator {
         })
     }
 
-    /// Return the plugins.yaml-shaped catalog from this process's frozen registries.
+    /// Return the plugins.yaml-shaped catalog from this process's frozen registry.
     pub fn catalog(&self) -> RunnerCatalog {
-        RunnerCatalog::from_registries(&self.runner_registry, self.product_registry.as_ref())
+        RunnerCatalog::from_registry(self.product_registry.as_ref())
     }
 
     /// Validate or execute one strict authored envelope through the frozen registries.
@@ -155,7 +150,7 @@ impl RunnerV2Coordinator {
             }
         };
 
-        let selection = match self.runner_registry.validate_selection_for_run(&run) {
+        let selection = match self.product_registry.validate_selection_for_run(&run) {
             Ok(selection) => selection,
             Err(error) => {
                 return failure(
@@ -222,7 +217,7 @@ impl RunnerV2Coordinator {
             }
         };
         if let Err(error) = self
-            .runner_registry
+            .product_registry
             .validate_run(&run, &context, &selection)
         {
             return failure(
@@ -278,7 +273,7 @@ impl RunnerV2Coordinator {
 
         let report_path = run.artifact_target.join("native-v2.json");
         let operation = match self
-            .runner_registry
+            .product_registry
             .prepare_with_context(&run, &context, selection)
         {
             Ok(operation) => operation,
@@ -600,8 +595,7 @@ mod tests {
             "evaluation",
             Vec::new(),
             vec![
-                crate::metrics_core::ReportEndpointProfileIdentity::new("default", "chat")
-                    .unwrap(),
+                crate::metrics_core::ReportEndpointProfileIdentity::new("default", "chat").unwrap(),
             ],
         )
         .unwrap()

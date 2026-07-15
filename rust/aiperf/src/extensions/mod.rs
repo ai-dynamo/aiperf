@@ -14,12 +14,19 @@ use std::error::Error;
 use std::fmt::{self, Display};
 use std::sync::Arc;
 
+mod transactional;
+
+pub(crate) use transactional::commit_on_clone;
+pub use transactional::{DuplicateName, TransactionalRegistry};
+
 use crate::dataset::{
     DatasetError, EndpointResolver as DatasetEndpointResolver, LoaderRegistry, SamplerRegistry,
 };
 use crate::endpoints::{
     Endpoint, EndpointFactory, EndpointId, EndpointRegistry, EndpointRegistryError,
 };
+#[cfg(feature = "runner-protocol")]
+use crate::runner_protocol::registry::{RunnerTransportFactory, RunnerWorkloadFactory};
 
 /// Error returned while constructing or extending an [`AiperfRegistry`].
 #[derive(Debug)]
@@ -119,7 +126,15 @@ pub struct BuiltinAiperfRegistryFactory;
 
 impl AiperfRegistryFactory for BuiltinAiperfRegistryFactory {
     fn build(&self) -> Result<AiperfRegistry, ExtensionError> {
-        AiperfRegistry::builtin()
+        #[allow(unused_mut)]
+        let mut registry = AiperfRegistry::builtin()?;
+        // The runner transport/workload universe is the same catalog of record;
+        // fold the built-in protocol-v2 components into the one product registry
+        // whenever this build links the runner-protocol layer.
+        #[cfg(feature = "runner-protocol")]
+        crate::runner_protocol::registry::install_builtin_runner_components(&mut registry)
+            .map_err(|error| ExtensionError::rejected(format!("{error:#}")))?;
+        Ok(registry)
     }
 }
 
@@ -133,6 +148,15 @@ pub struct AiperfRegistry {
     dataset_formats: LoaderRegistry,
     samplers: SamplerRegistry,
     endpoints: EndpointRegistry,
+    /// Name-keyed protocol-v2 transport factories. Selection resolves a transport
+    /// by id from this one catalog; there is no separate runner registry.
+    #[cfg(feature = "runner-protocol")]
+    pub(crate) transports: TransactionalRegistry<Arc<dyn RunnerTransportFactory>>,
+    /// Name-keyed protocol-v2 workload factories. Any registered workload runs
+    /// over any registered transport; the workload owns transport-specific
+    /// preparation resolved by id.
+    #[cfg(feature = "runner-protocol")]
+    pub(crate) workloads: TransactionalRegistry<Arc<dyn RunnerWorkloadFactory>>,
     extension_names: BTreeSet<String>,
 }
 
@@ -143,6 +167,10 @@ impl AiperfRegistry {
             dataset_formats: LoaderRegistry::with_builtin_formats()?,
             samplers: SamplerRegistry::with_builtin_strategies()?,
             endpoints: EndpointRegistry::builtin()?,
+            #[cfg(feature = "runner-protocol")]
+            transports: TransactionalRegistry::new(),
+            #[cfg(feature = "runner-protocol")]
+            workloads: TransactionalRegistry::new(),
             extension_names: BTreeSet::new(),
         })
     }
@@ -160,16 +188,16 @@ impl AiperfRegistry {
             return Err(ExtensionError::DuplicateExtension(name));
         }
 
-        let mut staged = self.clone();
-        extension.register(&mut staged).map_err(|source| {
-            ExtensionError::ExtensionRegistration {
-                name: name.clone(),
-                source: Box::new(source),
-            }
-        })?;
-        staged.extension_names.insert(name);
-        *self = staged;
-        Ok(())
+        commit_on_clone(self, |staged| {
+            extension
+                .register(staged)
+                .map_err(|source| ExtensionError::ExtensionRegistration {
+                    name: name.clone(),
+                    source: Box::new(source),
+                })?;
+            staged.extension_names.insert(name.clone());
+            Ok(())
+        })
     }
 
     /// Apply an ordered collection of linked extensions transactionally one at a time.

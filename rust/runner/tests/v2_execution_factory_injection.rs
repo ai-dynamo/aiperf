@@ -25,7 +25,6 @@ use aiperf::runner_protocol::graph_input::BuiltinRunnerGraphInputAdapterResolver
 use aiperf::runner_protocol::readiness::{
     NativeHttpReadinessPlanFactory, NativeHttpReadinessTransportFactory, ReadinessTransportFactory,
 };
-use aiperf::runner_protocol::registry::BuiltinRunnerRegistryFactory;
 use aiperf::runner_protocol::sidecar_input::BuiltinRunnerSidecarInputAdapterResolver;
 use aiperf_runner::{
     HttpExecutionBackendConfig, NativeRequestExecutorFactory, NativeRunnerGraphPlacementFactory,
@@ -134,7 +133,6 @@ fn coordinator_with_readiness(
 ) -> RunnerV2Coordinator {
     RunnerV2Coordinator::new(
         DISTRIBUTION_ID,
-        &BuiltinRunnerRegistryFactory,
         &BuiltinAiperfRegistryFactory,
         RunnerExecutionFactories::new(
             http,

@@ -45,14 +45,16 @@ use crate::runner_protocol::graph_execution::GraphTransportKind;
 use crate::runner_protocol::graph_input::RunnerGraphInputContext;
 use crate::runner_protocol::protocol::{ArtifactSpec, PhaseSpec, TokenizerSpec};
 use crate::runner_protocol::protocol_v2::AuthoredRunSpecV2;
-use crate::runner_protocol::readiness::{PreparedOnlineReadiness, ReadinessEndpointProfile, ReadinessPlanInput};
+use crate::runner_protocol::readiness::{
+    PreparedOnlineReadiness, ReadinessEndpointProfile, ReadinessPlanInput,
+};
 use crate::runner_protocol::registry::{
     GRAPH_WORKLOAD_DESCRIPTOR, GraphWorkloadConfigV2, OnlineGrpcTransportConfigV2,
-    OnlineHttpTransportConfigV2, PreparedRunOutcome, PreparedRunnerOperation,
-    RunnerRegistryBuilder, RunnerRunContext, RunnerWorkloadDescriptor, RunnerWorkloadFactory,
-    SCHEDULED_WORKLOAD_DESCRIPTOR, STATIC_ACCURACY_WORKLOAD_DESCRIPTOR, ScheduledWorkloadConfigV2,
-    StaticAccuracyWorkloadConfigV2, ValidatedTransportConfig, ValidatedWorkloadConfig,
-    WorkloadRequirements, inference_workload_requirements, strict_decode, validate_common_workload,
+    OnlineHttpTransportConfigV2, PreparedRunOutcome, PreparedRunnerOperation, RunnerRunContext,
+    RunnerWorkloadDescriptor, RunnerWorkloadFactory, SCHEDULED_WORKLOAD_DESCRIPTOR,
+    STATIC_ACCURACY_WORKLOAD_DESCRIPTOR, ScheduledWorkloadConfigV2, StaticAccuracyWorkloadConfigV2,
+    ValidatedTransportConfig, ValidatedWorkloadConfig, WorkloadRequirements,
+    inference_workload_requirements, strict_decode, validate_common_workload,
 };
 use crate::runner_protocol::turn_execution::RequestExecutorFactory;
 
@@ -92,21 +94,23 @@ use crate::runner_protocol::sidecar_input::{CONTENT_SERVER_SIDECAR_ID, ContentSe
 /// validated transport by id/type. Any registered transport (http, grpc,
 /// dynosim) can drive them; there is no per-transport pair object and no
 /// compatibility predicate.
-pub fn register_online_workloads(builder: &mut RunnerRegistryBuilder) -> Result<()> {
+pub fn register_online_workloads(registry: &mut crate::extensions::AiperfRegistry) -> Result<()> {
     let tokenizers: Arc<dyn OnlineTokenizerSourceResolver> =
         Arc::new(HfHubOnlineTokenizerSourceResolver::default());
-    builder.register_workload(Arc::new(ScheduledWorkloadFactoryV2 {
+    registry.register_workload(Arc::new(ScheduledWorkloadFactoryV2 {
         tokenizers: tokenizers.clone(),
     }))?;
-    builder.register_workload(Arc::new(GraphWorkloadFactoryV2 { tokenizers }))?;
+    registry.register_workload(Arc::new(GraphWorkloadFactoryV2 { tokenizers }))?;
     Ok(())
 }
 
 /// Register the static-accuracy workload (HTTP only) after sidecar parity or an
 /// exact frontend gate is present in the same distribution.
-pub fn register_http_static_accuracy_workload(builder: &mut RunnerRegistryBuilder) -> Result<()> {
+pub fn register_http_static_accuracy_workload(
+    registry: &mut crate::extensions::AiperfRegistry,
+) -> Result<()> {
     register_http_static_accuracy_workload_with_factories(
-        builder,
+        registry,
         Arc::new(HfHubOnlineTokenizerSourceResolver::default()),
         Arc::new(NativeStaticAccuracyEvaluatorFactory),
     )
@@ -119,11 +123,11 @@ pub fn register_http_static_accuracy_workload(builder: &mut RunnerRegistryBuilde
 /// extension point for non-Hugging-Face tokenizer stores or non-local evaluator
 /// processes.
 pub fn register_http_static_accuracy_workload_with_factories(
-    builder: &mut RunnerRegistryBuilder,
+    registry: &mut crate::extensions::AiperfRegistry,
     tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
     evaluator_factory: Arc<dyn StaticAccuracyEvaluatorFactory>,
 ) -> Result<()> {
-    builder.register_workload(Arc::new(StaticAccuracyWorkloadFactoryV2 {
+    registry.register_workload(Arc::new(StaticAccuracyWorkloadFactoryV2 {
         tokenizers,
         evaluator_factory,
     }))
@@ -1406,12 +1410,12 @@ mod tests {
 
     #[test]
     fn registration_adds_only_real_online_workloads() {
-        let mut builder = RunnerRegistryBuilder::new();
+        let mut registry = crate::extensions::AiperfRegistry::builtin().unwrap();
         // Registration proves the executable scheduled/graph/static-accuracy
-        // workloads compose into the builder without a per-transport pair object;
-        // the descriptor-compatible cross-product advertises execution.
-        register_online_workloads(&mut builder).unwrap();
-        register_http_static_accuracy_workload(&mut builder).unwrap();
+        // workloads compose into the one unified registry without a per-transport
+        // pair object; any workload runs over any transport.
+        register_online_workloads(&mut registry).unwrap();
+        register_http_static_accuracy_workload(&mut registry).unwrap();
     }
 
     #[test]

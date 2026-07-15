@@ -17,11 +17,14 @@ use crate::runner_protocol::coordinator::{RunnerProcessResultV2, RunnerV2Coordin
 use crate::runner_protocol::dataset_input::{
     BuiltinRunnerDatasetInputAdapterResolver, RunnerDatasetInputAdapterResolver,
 };
-use crate::runner_protocol::execution_factories::{RunnerExecutionFactories, native_execution_factories};
-use crate::runner_protocol::graph_input::{BuiltinRunnerGraphInputAdapterResolver, RunnerGraphInputAdapterResolver};
+use crate::runner_protocol::execution_factories::{
+    RunnerExecutionFactories, native_execution_factories,
+};
+use crate::runner_protocol::graph_input::{
+    BuiltinRunnerGraphInputAdapterResolver, RunnerGraphInputAdapterResolver,
+};
 use crate::runner_protocol::protocol::RunnerCatalog;
 use crate::runner_protocol::protocol_v2::RunnerEnvelopeV2;
-use crate::runner_protocol::registry::{BuiltinRunnerRegistryFactory, RunnerRegistryFactory};
 use crate::runner_protocol::sidecar_input::{
     BuiltinRunnerSidecarInputAdapterResolver, RunnerSidecarInputAdapterResolver,
 };
@@ -38,10 +41,8 @@ pub struct RunnerApplication {
 
 impl RunnerApplication {
     /// Compose an explicitly linked runner distribution exactly once.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         distribution_id: impl Into<String>,
-        runner_registry_factory: &dyn RunnerRegistryFactory,
         product_registry_factory: &dyn AiperfRegistryFactory,
         execution_factories: RunnerExecutionFactories,
         graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
@@ -51,7 +52,6 @@ impl RunnerApplication {
         let distribution_id = distribution_id.into();
         let coordinator = RunnerV2Coordinator::new(
             distribution_id.clone(),
-            runner_registry_factory,
             product_registry_factory,
             execution_factories,
             graph_inputs,
@@ -68,7 +68,6 @@ impl RunnerApplication {
     pub fn stock(distribution_id: impl Into<String>) -> Result<Self> {
         Self::new(
             distribution_id,
-            &BuiltinRunnerRegistryFactory,
             &BuiltinAiperfRegistryFactory,
             native_execution_factories(),
             Arc::new(BuiltinRunnerGraphInputAdapterResolver::new()),

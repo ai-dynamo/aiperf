@@ -19,7 +19,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use crate::endpoints::{EndpointId, EndpointRegistry, RawEndpointConfig, RequestContentType};
-use crate::extensions::AiperfRegistry;
+use crate::extensions::{AiperfRegistry, DuplicateName};
 use crate::failure::OnFailure;
 use crate::metrics_core::{
     NativeReport, ReportEndpointProfileIdentity, ReportExtensionIdentity, ReportPairRunFacts,
@@ -429,60 +429,31 @@ impl ValidatedRunnerSelection {
     }
 }
 
-/// Mutable, transactionally checked registry construction surface.
-#[derive(Default)]
-pub struct RunnerRegistryBuilder {
-    transports: BTreeMap<String, Arc<dyn RunnerTransportFactory>>,
-    workloads: BTreeMap<String, Arc<dyn RunnerWorkloadFactory>>,
-}
-
-impl RunnerRegistryBuilder {
-    /// Construct an empty registry builder.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
+/// Protocol-v2 transport/workload registration and selection over the one
+/// unified [`AiperfRegistry`].
+///
+/// Transports and workloads are two independent name-keyed sub-registries of the
+/// single product registry: there is no separate runner registry, no pair table,
+/// and no compatibility predicate. Any registered workload runs over any
+/// registered transport, with transport-specific execution resolved inside the
+/// workload at prepare time.
+impl AiperfRegistry {
     /// Register one transport factory, rejecting duplicate IDs.
     pub fn register_transport(&mut self, factory: Arc<dyn RunnerTransportFactory>) -> Result<()> {
         let id = checked_descriptor_id(factory.descriptor().id, "transport")?;
-        if self.transports.contains_key(id.as_str()) {
-            bail!("duplicate runner transport ID {id:?}");
-        }
-        self.transports.insert(id.into_string(), factory);
-        Ok(())
+        self.transports
+            .insert(id.into_string(), factory)
+            .map_err(|DuplicateName(id)| anyhow!("duplicate runner transport ID {id:?}"))
     }
 
     /// Register one workload factory, rejecting duplicate IDs.
     pub fn register_workload(&mut self, factory: Arc<dyn RunnerWorkloadFactory>) -> Result<()> {
         let id = checked_descriptor_id(factory.descriptor().id, "workload")?;
-        if self.workloads.contains_key(id.as_str()) {
-            bail!("duplicate runner workload ID {id:?}");
-        }
-        self.workloads.insert(id.into_string(), factory);
-        Ok(())
+        self.workloads
+            .insert(id.into_string(), factory)
+            .map_err(|DuplicateName(id)| anyhow!("duplicate runner workload ID {id:?}"))
     }
 
-    /// Freeze the complete registry.
-    ///
-    /// There is no pair table and no compatibility predicate to validate: any
-    /// registered workload runs over any registered transport, with
-    /// transport-specific execution resolved inside the workload at prepare time.
-    /// Freeze therefore only seals the two independent registries.
-    pub fn freeze(self) -> Result<RunnerRegistry> {
-        Ok(RunnerRegistry {
-            transports: self.transports,
-            workloads: self.workloads,
-        })
-    }
-}
-
-/// Immutable runner composition used by capabilities, validation, and execute.
-pub struct RunnerRegistry {
-    transports: BTreeMap<String, Arc<dyn RunnerTransportFactory>>,
-    workloads: BTreeMap<String, Arc<dyn RunnerWorkloadFactory>>,
-}
-
-impl RunnerRegistry {
     /// Return transport descriptors in deterministic ID order.
     pub fn transport_descriptors(&self) -> Vec<&'static RunnerTransportDescriptor> {
         self.transports
@@ -648,41 +619,25 @@ fn unknown_component<'a>(
     )
 }
 
-/// Composition seam for the exact transport/workload universe linked into one
-/// runner executable.
-pub trait RunnerRegistryFactory {
-    /// Build and freeze a fresh deterministic registry.
-    fn build(&self) -> Result<RunnerRegistry>;
-}
-
-/// Stock protocol-v2 registry composition.
+/// Install the stock protocol-v2 transport/workload universe into the one
+/// unified [`AiperfRegistry`].
 ///
-/// Optional feature modules register additional transports before the registry
-/// freezes. The transport and workload registries are independent — any
-/// registered workload runs over any registered transport, with no per-cell
-/// object and no compatibility predicate.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct BuiltinRunnerRegistryFactory;
-
-impl RunnerRegistryFactory for BuiltinRunnerRegistryFactory {
-    fn build(&self) -> Result<RunnerRegistry> {
-        let mut builder = RunnerRegistryBuilder::new();
-        builder.register_transport(Arc::new(OnlineGrpcTransportFactoryV2))?;
-        builder.register_transport(Arc::new(OnlineHttpTransportFactoryV2))?;
-        crate::runner_protocol::online_execution::register_online_workloads(&mut builder)?;
-        register_optional_builtin_components(&mut builder)?;
-        builder.freeze()
-    }
-}
-
-fn register_optional_builtin_components(builder: &mut RunnerRegistryBuilder) -> Result<()> {
+/// Optional feature modules register additional transports here. The transport
+/// and workload sub-registries are independent — any registered workload runs
+/// over any registered transport, with no per-cell object and no compatibility
+/// predicate. Called once by [`BuiltinAiperfRegistryFactory`] when this build
+/// links the runner-protocol layer.
+///
+/// [`BuiltinAiperfRegistryFactory`]: crate::extensions::BuiltinAiperfRegistryFactory
+pub fn install_builtin_runner_components(registry: &mut AiperfRegistry) -> Result<()> {
+    registry.register_transport(Arc::new(OnlineGrpcTransportFactoryV2))?;
+    registry.register_transport(Arc::new(OnlineHttpTransportFactoryV2))?;
+    crate::runner_protocol::online_execution::register_online_workloads(registry)?;
     // Feature-bearing modules register their transports here; the workload
-    // registry and the descriptor predicate light up every compatible cell
-    // without a per-cell registration or a mode string branch.
+    // registry lights up every combination without a per-cell registration or a
+    // mode string branch.
     #[cfg(feature = "dynosim")]
-    crate::runner_protocol::offline_execution::register_dynosim_transport(builder)?;
-    #[cfg(not(feature = "dynosim"))]
-    let _ = builder;
+    crate::runner_protocol::offline_execution::register_dynosim_transport(registry)?;
     Ok(())
 }
 
@@ -1403,6 +1358,7 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
+    use crate::extensions::AiperfRegistryFactory;
 
     static TRANSPORT: RunnerTransportDescriptor = RunnerTransportDescriptor {
         id: "acme_remote",
@@ -1540,11 +1496,11 @@ mod tests {
         }
     }
 
-    fn registry() -> RunnerRegistry {
-        let mut builder = RunnerRegistryBuilder::new();
-        builder.register_transport(Arc::new(Transport)).unwrap();
-        builder.register_workload(Arc::new(Workload)).unwrap();
-        builder.freeze().unwrap()
+    fn registry() -> AiperfRegistry {
+        let mut registry = AiperfRegistry::builtin().unwrap();
+        registry.register_transport(Arc::new(Transport)).unwrap();
+        registry.register_workload(Arc::new(Workload)).unwrap();
+        registry
     }
 
     fn component(id: &str, config: Value) -> NamedRunnerComponentSpecV2 {
@@ -1639,9 +1595,9 @@ mod tests {
             .to_string();
         assert!(error.contains("missing") && error.contains("acme_remote"));
 
-        let mut builder = RunnerRegistryBuilder::new();
-        builder.register_transport(Arc::new(Transport)).unwrap();
-        assert!(builder.register_transport(Arc::new(Transport)).is_err());
+        let mut registry = AiperfRegistry::builtin().unwrap();
+        registry.register_transport(Arc::new(Transport)).unwrap();
+        assert!(registry.register_transport(Arc::new(Transport)).is_err());
     }
 
     #[test]
@@ -1801,7 +1757,9 @@ mod tests {
 
     #[test]
     fn builtin_inventory_does_not_claim_protocol_v1_or_library_only_execution() {
-        let registry = BuiltinRunnerRegistryFactory.build().unwrap();
+        let registry = crate::extensions::BuiltinAiperfRegistryFactory
+            .build()
+            .unwrap();
         #[cfg(feature = "dynosim")]
         let expected_transports = vec!["dynosim_offline", "dynosim_online", "grpc", "http"];
         #[cfg(not(feature = "dynosim"))]
@@ -1831,7 +1789,9 @@ mod tests {
 
     #[test]
     fn builtin_factory_configs_fail_closed_before_execution() {
-        let registry = BuiltinRunnerRegistryFactory.build().unwrap();
+        let registry = crate::extensions::BuiltinAiperfRegistryFactory
+            .build()
+            .unwrap();
         let transport = component("http", serde_json::json!({}));
         let workload = component(
             "scheduled",
