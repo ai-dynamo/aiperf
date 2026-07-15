@@ -2083,6 +2083,10 @@ fn prepare_graph_phase(
         session_limit,
         common.requests,
         trace_instances.clone(),
+        // Up-front build: no warmup handoff yet, so the corpus draw starts at 0.
+        // A profiling phase that later pops a handoff rebuilds its source with the
+        // resume cursor in `rebuild_resume_workload`.
+        0,
     )?;
     let seed = phase_rng.derive_seed_or_entropy(namespace::GRAPH_ARRIVAL);
     let intervals = Rc::new(RefCell::new(match phase.request_arrival() {
@@ -2437,11 +2441,15 @@ fn build_warmup_handoff(
 /// registered lane carries its drain-time instance), so Python's "completed at
 /// drain" empty-lane fresh-start (`:1350-1363`) has no native analogue here and
 /// is not modeled. (2) `handoff.corpus_cursor` continuation of a BOUNDED
-/// profiling recycle (`:1297-1300`) is deferred: the native fused-ordinal
-/// [`CyclingGraphTraceSource`] counts sessions and draws templates off one
-/// counter, so seeding the recycle draw without skipping pass-0 templates is not
-/// cleanly expressible at the current fidelity — single-pass profiling ignores
-/// the cursor exactly as Python does.
+/// profiling recycle (`:1297-1300`) IS threaded (DF3): [`rebuild_resume_workload`]
+/// seeds the rebuilt [`CyclingGraphTraceSource`]'s `starting_at` offset with the
+/// cursor when a stop condition exists, so the recycle continues from the
+/// next-undrawn corpus position. Because the native fused-ordinal source has no
+/// separate pass-0 phase (its every draw is one sequential recycle step), the
+/// cursor maps directly onto the draw offset — `template = (ordinal + cursor)
+/// % len` — while the session/request budgets stay anchored to the raw ordinal,
+/// matching Python threading `next_index` independently of its `_can_recycle`
+/// gate. Single-pass (unbounded) profiling keeps cursor `0`, exactly as Python does.
 fn apply_profiling_resume_split(
     original_plans: &[GraphTracePlan],
     phase: &PhaseSpec,
@@ -2497,6 +2505,7 @@ fn build_graph_trace_source(
     session_limit: Option<u64>,
     request_limit: Option<u64>,
     trace_instances: GraphTraceInstanceSequence,
+    start_ordinal: u64,
 ) -> Result<Rc<dyn GraphTraceSource>> {
     Ok(match ModuloCellPartition::from_env() {
         Some(partition) if partition.cell_count() > 1 && request_limit.is_none() => {
@@ -2505,6 +2514,11 @@ fn build_graph_trace_source(
                 cell_count = partition.cell_count(),
                 "graph phase using partitioned trace source for cell"
             );
+            // The bounded profiling recycle resume (`start_ordinal`) is a
+            // single-cell Cycling concern: the partitioned source only serves the
+            // request-unbounded cellular case (`request_limit.is_none()`), where
+            // Python's `recycle_is_bounded` corpus-cursor continuation does not
+            // engage, so a nonzero cursor cannot reach this arm on the product path.
             Rc::new(PartitionedGraphTraceSource::new(
                 plans,
                 session_limit,
@@ -2512,12 +2526,15 @@ fn build_graph_trace_source(
                 partition.cell_count(),
             )?)
         }
-        _ => Rc::new(CyclingGraphTraceSource::with_budgets_and_sequence(
-            plans,
-            session_limit,
-            request_limit,
-            trace_instances,
-        )?),
+        _ => Rc::new(
+            CyclingGraphTraceSource::with_budgets_and_sequence(
+                plans,
+                session_limit,
+                request_limit,
+                trace_instances,
+            )?
+            .starting_at(start_ordinal),
+        ),
     })
 }
 
@@ -2585,11 +2602,27 @@ fn rebuild_resume_workload(
         resume.t_star,
         handoff,
     );
+    // Continue the bounded recycle from where the pressure warmup drained: seed the
+    // corpus draw with the handoff `corpus_cursor` so profiling's first draw serves
+    // the next-undrawn template instead of re-serving the 0th. Gated on a stop
+    // condition (`session_limit`/`request_limit` present) exactly as Python's
+    // `if self._warmup_handoff is not None and recycle_is_bounded` branch
+    // (`graph_ir_replay.py:1297-1300`); the unbounded single-pass profiling keeps
+    // its own cursor (`0`) so a carried cursor cannot hole the cover-the-corpus-once
+    // contract. The session budget stays anchored to the raw ordinal inside the
+    // source, so the cursor governs only template selection.
+    let recycle_bounded = resume.session_limit.is_some() || resume.request_limit.is_some();
+    let start_ordinal = if recycle_bounded {
+        handoff.corpus_cursor
+    } else {
+        0
+    };
     let source = build_graph_trace_source(
         plans,
         resume.session_limit,
         resume.request_limit,
         resume.trace_instances.clone(),
+        start_ordinal,
     )?;
     assemble_graph_workload(
         resume.clock.clone(),
@@ -4171,5 +4204,58 @@ mod tests {
             &foreign,
         );
         assert_eq!(node_ids(&resumed_foreign), node_ids(&base));
+    }
+
+    #[test]
+    fn build_graph_trace_source_resumes_from_corpus_cursor() {
+        // DF3: with a handoff carrying corpus_cursor = k, the rebuilt profiling
+        // source's first draw serves the k-th template (mod corpus), not the 0th,
+        // so profiling continues where the pressure warmup left off.
+        let plans = vec![
+            pressure_one_node_plan("a"),
+            pressure_one_node_plan("b"),
+            pressure_one_node_plan("c"),
+        ];
+        let source = build_graph_trace_source(
+            plans,
+            Some(3),
+            None,
+            GraphTraceInstanceSequence::default(),
+            // corpus_cursor = 4 over a 3-template corpus: first draw is 4 % 3 = 1.
+            4,
+        )
+        .unwrap();
+        let drawn: Vec<String> = std::iter::from_fn(|| {
+            source
+                .next_trace()
+                .unwrap()
+                .map(|plan| plan.trace.id.split_once("::").unwrap().0.to_owned())
+        })
+        .collect();
+        // Continues b -> c -> a; the session budget (3) still counts from 0.
+        assert_eq!(drawn, vec!["b", "c", "a"]);
+    }
+
+    #[test]
+    fn build_graph_trace_source_zero_cursor_is_unchanged() {
+        // HARD no-handoff guard: start_ordinal = 0 draws the 0th template first,
+        // byte-identical to the pre-DF3 build.
+        let plans = vec![pressure_one_node_plan("a"), pressure_one_node_plan("b")];
+        let source = build_graph_trace_source(
+            plans,
+            Some(2),
+            None,
+            GraphTraceInstanceSequence::default(),
+            0,
+        )
+        .unwrap();
+        let drawn: Vec<String> = std::iter::from_fn(|| {
+            source
+                .next_trace()
+                .unwrap()
+                .map(|plan| plan.trace.id.split_once("::").unwrap().0.to_owned())
+        })
+        .collect();
+        assert_eq!(drawn, vec!["a", "b"]);
     }
 }

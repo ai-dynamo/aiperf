@@ -63,6 +63,20 @@ pub struct CyclingGraphTraceSource {
     next: Cell<u64>,
     admitted_requests: Cell<u64>,
     instance_sequence: GraphTraceInstanceSequence,
+    /// Corpus draw offset added to the session ordinal before the modulo pick.
+    ///
+    /// The bounded profiling recycle resumes where a cache-pressure warmup left
+    /// off: the WARMUP -> PROFILING handoff carries the next-undrawn corpus
+    /// position (`corpus_cursor`), and profiling seeds this offset with it so its
+    /// first draw serves template `corpus_cursor % len` instead of re-serving the
+    /// 0th. Ports the `next_index = self._warmup_handoff.corpus_cursor` seed of
+    /// `graph_ir_replay.py::_run_lanes` (`src/aiperf/timing/strategies/
+    /// graph_ir_replay.py:1297-1300`, branch `ajc/aiperf-graph-ir`). The session
+    /// and static-request budgets stay anchored to the raw session ordinal (drawn
+    /// from `0`), mirroring Python's separate `_can_recycle`/`--request-count`
+    /// gates — the cursor governs ONLY which template each draw picks, never how
+    /// many sessions profiling runs. Absent a handoff this is `0` (unchanged).
+    start_ordinal: u64,
 }
 
 /// Run-scoped identity sequence shared by independently prepared graph phases.
@@ -135,7 +149,22 @@ impl CyclingGraphTraceSource {
             next: Cell::new(0),
             admitted_requests: Cell::new(0),
             instance_sequence,
+            start_ordinal: 0,
         })
+    }
+
+    /// Resume the corpus draw from `start_ordinal` (the handoff `corpus_cursor`).
+    ///
+    /// The first `next_trace` then serves template `start_ordinal % len` and the
+    /// cycle continues from there, so the bounded profiling recycle does not
+    /// re-serve the templates a cache-pressure warmup already consumed. Session
+    /// and static-request budgets are unaffected (they count from `0`). Default
+    /// `0` (no builder call) is the byte-unchanged no-handoff path. Port of the
+    /// `next_index = self._warmup_handoff.corpus_cursor` seed in
+    /// `graph_ir_replay.py::_run_lanes` (`:1297-1300`, branch `ajc/aiperf-graph-ir`).
+    pub fn starting_at(mut self, start_ordinal: u64) -> Self {
+        self.start_ordinal = start_ordinal;
+        self
     }
 }
 
@@ -147,7 +176,14 @@ impl GraphTraceSource for CyclingGraphTraceSource {
         }
         let template_count = u64::try_from(self.templates.len())
             .map_err(|_| GraphWorkloadError("graph template count exceeds u64".into()))?;
-        let template_index = usize::try_from(ordinal % template_count)
+        // The corpus draw position is the session ordinal shifted by the handoff
+        // resume cursor; the session-limit gate above stays on the raw ordinal, so
+        // the cursor moves ONLY which template each draw picks (Python threads
+        // `next_index` independently of the `_can_recycle` session gate).
+        let draw = ordinal
+            .checked_add(self.start_ordinal)
+            .ok_or_else(|| GraphWorkloadError("graph resumed draw ordinal exceeds u64".into()))?;
+        let template_index = usize::try_from(draw % template_count)
             .map_err(|_| GraphWorkloadError("graph template index exceeds usize".into()))?;
         let mut plan = self.templates[template_index].clone();
         let requests = u64::try_from(plan.graph.nodes.len()).map_err(|_| {
@@ -859,6 +895,68 @@ mod tests {
         assert_eq!(
             source.next_trace().unwrap().unwrap().trace.id,
             "a::instance-2"
+        );
+        assert!(source.next_trace().unwrap().is_none());
+    }
+
+    #[test]
+    fn cycling_source_resumes_from_start_ordinal() {
+        let mut pool = SegmentPool::new();
+        let handle = intern_message(
+            &mut pool,
+            &OpenAiChatMessage::new("user", "hello"),
+            None,
+            &TiktokenTokenizer::builtin(),
+        )
+        .unwrap();
+        // corpus_cursor = 3 over a 2-template cycle: first draw is template
+        // 3 % 2 = 1 ("b"), NOT the 0th; the session budget still counts from 0.
+        let source = CyclingGraphTraceSource::new(
+            vec![one_node_plan("a", handle), one_node_plan("b", handle)],
+            Some(3),
+        )
+        .unwrap()
+        .starting_at(3);
+        assert_eq!(
+            source.next_trace().unwrap().unwrap().trace.id,
+            "b::instance-0"
+        );
+        assert_eq!(
+            source.next_trace().unwrap().unwrap().trace.id,
+            "a::instance-1"
+        );
+        assert_eq!(
+            source.next_trace().unwrap().unwrap().trace.id,
+            "b::instance-2"
+        );
+        // session_limit (3) is anchored to the raw ordinal, not the shifted draw.
+        assert!(source.next_trace().unwrap().is_none());
+    }
+
+    #[test]
+    fn cycling_source_default_start_ordinal_is_unchanged() {
+        let mut pool = SegmentPool::new();
+        let handle = intern_message(
+            &mut pool,
+            &OpenAiChatMessage::new("user", "hello"),
+            None,
+            &TiktokenTokenizer::builtin(),
+        )
+        .unwrap();
+        // No `starting_at`: byte-identical to the pre-resume behavior — first draw
+        // is the 0th template.
+        let source = CyclingGraphTraceSource::new(
+            vec![one_node_plan("a", handle), one_node_plan("b", handle)],
+            Some(2),
+        )
+        .unwrap();
+        assert_eq!(
+            source.next_trace().unwrap().unwrap().trace.id,
+            "a::instance-0"
+        );
+        assert_eq!(
+            source.next_trace().unwrap().unwrap().trace.id,
+            "b::instance-1"
         );
         assert!(source.next_trace().unwrap().is_none());
     }
