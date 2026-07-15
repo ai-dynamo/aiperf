@@ -19,7 +19,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use crate::endpoints::{EndpointId, EndpointRegistry, RawEndpointConfig, RequestContentType};
-use crate::extensions::{AIPerfRegistry, DuplicateName};
+use crate::extensions::{AIPerfExtension, AIPerfRegistry, DuplicateName, ExtensionError};
 use crate::failure::OnFailure;
 use crate::metrics_core::{
     NativeReport, ReportEndpointProfileIdentity, ReportExtensionIdentity, ReportPairRunFacts,
@@ -619,26 +619,72 @@ fn unknown_component<'a>(
     )
 }
 
-/// Install the stock protocol-v2 transport/workload universe into the one
-/// unified [`AIPerfRegistry`].
+fn extension_rejected(error: anyhow::Error) -> ExtensionError {
+    ExtensionError::rejected(format!("{error:#}"))
+}
+
+/// Built-in native HTTP transport plus the transport-neutral executable
+/// workloads (`scheduled`, `graph`).
 ///
-/// Optional feature modules register additional transports here. The transport
-/// and workload sub-registries are independent — any registered workload runs
-/// over any registered transport, with no per-cell object and no compatibility
-/// predicate. Called once by [`BuiltinAIPerfRegistryFactory`] when this build
-/// links the runner-protocol layer.
+/// The workloads run over any registered transport (http, grpc, dynosim) and
+/// resolve transport-specific execution inside their own prepare, so the stock
+/// distribution registers them once alongside the always-present HTTP path.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HttpExtension;
+
+impl AIPerfExtension for HttpExtension {
+    fn name(&self) -> &str {
+        "aiperf.transport.http"
+    }
+
+    fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError> {
+        registry
+            .register_transport(Arc::new(OnlineHttpTransportFactoryV2))
+            .map_err(extension_rejected)?;
+        crate::runner_protocol::online_execution::register_online_workloads(registry)
+            .map_err(extension_rejected)
+    }
+}
+
+/// Built-in native gRPC transport (Clock-injected Tonic HTTP/2 channels).
 ///
-/// [`BuiltinAIPerfRegistryFactory`]: crate::extensions::BuiltinAIPerfRegistryFactory
-pub fn install_builtin_runner_components(registry: &mut AIPerfRegistry) -> Result<()> {
-    registry.register_transport(Arc::new(OnlineGrpcTransportFactoryV2))?;
-    registry.register_transport(Arc::new(OnlineHttpTransportFactoryV2))?;
-    crate::runner_protocol::online_execution::register_online_workloads(registry)?;
-    // Feature-bearing modules register their transports here; the workload
-    // registry lights up every combination without a per-cell registration or a
-    // mode string branch.
-    #[cfg(feature = "dynosim")]
-    crate::runner_protocol::offline_execution::register_dynosim_transport(registry)?;
-    Ok(())
+/// gRPC is always compiled on this branch (there is no `grpc` Cargo feature),
+/// so this extension is unconditional. The Riva ASR/TTS/NLP endpoint dialects it
+/// serves are registered by [`BuiltinEndpointsExtension`]; were gRPC ever put
+/// behind a feature, they would move here under the same gate.
+///
+/// [`BuiltinEndpointsExtension`]: crate::extensions::BuiltinEndpointsExtension
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GrpcExtension;
+
+impl AIPerfExtension for GrpcExtension {
+    fn name(&self) -> &str {
+        "aiperf.transport.grpc"
+    }
+
+    fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError> {
+        registry
+            .register_transport(Arc::new(OnlineGrpcTransportFactoryV2))
+            .map_err(extension_rejected)
+    }
+}
+
+/// Feature-gated Dynamo co-simulation transports (`dynosim_offline`,
+/// `dynosim_online`).
+#[cfg(feature = "dynosim")]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DynosimExtension;
+
+#[cfg(feature = "dynosim")]
+impl AIPerfExtension for DynosimExtension {
+    fn name(&self) -> &str {
+        "aiperf.transport.dynosim"
+    }
+
+    fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError> {
+        crate::runner_protocol::offline_execution::register_dynosim_transport(registry)
+            .map_err(extension_rejected)
+    }
 }
 
 /// Strict validated config owned by the built-in `http` transport.
@@ -1785,6 +1831,84 @@ mod tests {
                 .collect::<Vec<_>>(),
             expected_workloads
         );
+    }
+
+    #[test]
+    fn capabilities_catalog_auto_derives_from_the_registered_component_set() {
+        use crate::runner_protocol::protocol::RunnerCatalog;
+
+        let registry = crate::extensions::BuiltinAIPerfRegistryFactory
+            .build()
+            .unwrap();
+        let catalog = RunnerCatalog::from_registry(&registry);
+
+        // Transports are exactly the components the composition-root extension
+        // list registered; gating an extension out drops its transport from the
+        // catalog with no separate bookkeeping (dynosim flips the expected set).
+        #[cfg(feature = "dynosim")]
+        let expected_transports = vec!["dynosim_offline", "dynosim_online", "grpc", "http"];
+        #[cfg(not(feature = "dynosim"))]
+        let expected_transports = vec!["grpc", "http"];
+        assert_eq!(
+            catalog
+                .transport
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            expected_transports
+        );
+        assert_eq!(
+            catalog.transport["http"].metadata["url_schemes"],
+            serde_json::json!(["http", "https"])
+        );
+        assert_eq!(
+            catalog.transport["grpc"].metadata["url_schemes"],
+            serde_json::json!(["grpc", "grpcs"])
+        );
+
+        // The endpoint catalog is a pure projection of the frozen endpoint
+        // registry: the catalog keys equal the registry's descriptor IDs one
+        // for one, so a gated-out endpoint dialect vanishes automatically.
+        let mut registry_endpoint_ids = registry
+            .endpoints()
+            .descriptors()
+            .map(|descriptor| descriptor.id.to_owned())
+            .collect::<Vec<_>>();
+        registry_endpoint_ids.sort();
+        assert_eq!(
+            catalog.endpoint.keys().cloned().collect::<Vec<_>>(),
+            registry_endpoint_ids
+        );
+        // Spot-check that the built-in dialect families are all present,
+        // including the gRPC-served Riva endpoints and the KServe factories.
+        for expected in [
+            "chat",
+            "messages",
+            "vllm_generate",
+            "riva_asr",
+            "kserve_v2_infer",
+        ] {
+            assert!(
+                catalog.endpoint.contains_key(expected),
+                "missing endpoint {expected:?} in {:?}",
+                catalog.endpoint.keys().collect::<Vec<_>>()
+            );
+        }
+
+        // Workloads are not part of the plugins.yaml-shaped catalog document,
+        // but they auto-derive from the same registry for internal inventory.
+        assert_eq!(
+            registry
+                .workload_descriptors()
+                .into_iter()
+                .map(|descriptor| descriptor.id)
+                .collect::<Vec<_>>(),
+            vec!["graph", "scheduled"]
+        );
+
+        // The stock build layers only built-in extensions, so the native
+        // report's third-party extension provenance stays empty.
+        assert_eq!(registry.extension_names().count(), 0);
     }
 
     #[test]
