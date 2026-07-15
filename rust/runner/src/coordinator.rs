@@ -26,7 +26,7 @@ use crate::protocol_v2::{
     DeferredCheckV2, RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2,
     RunnerEnvelopeV2, RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
 };
-use crate::redaction::redact_diagnostic;
+use aiperf::runner_protocol::redaction::redact_diagnostic;
 use crate::registry::{
     PreparedRunFailure, PreparedRunOutcome, RunnerRegistry, RunnerRegistryFactory,
     RunnerRunContext, validate_endpoint_profiles_v2,

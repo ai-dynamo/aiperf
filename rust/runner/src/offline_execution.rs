@@ -84,7 +84,7 @@ use crate::online_execution::{
 };
 use crate::protocol::{MetricsSpec, ModelSelectionStrategy, PhaseSpec};
 use crate::protocol_v2::AuthoredRunSpecV2;
-use crate::records::{CapturedModelOutput, CapturedRecord};
+use aiperf::runner_protocol::records::{CapturedModelOutput, CapturedRecord};
 use crate::registry::{
     GraphWorkloadConfigV2, PreparedRunOutcome, PreparedRunnerOperation, RunnerClockKind,
     RunnerRegistryBuilder, RunnerRunContext, RunnerTransportDescriptor, RunnerTransportFactory,

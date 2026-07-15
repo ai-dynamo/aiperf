@@ -114,7 +114,7 @@ use crate::protocol::{
     SyntheticVideoSpec,
 };
 use crate::readiness::{PreparedOnlineReadiness, ReadinessTransportFactory};
-use crate::records::{
+use aiperf::runner_protocol::records::{
     CapturedHttpExchange, CapturedModelOutput, CapturedRecord, InputSession, group_record_errors,
     observe_otel_record, write_inputs_json, write_outputs_json, write_raw_records_jsonl,
     write_records_jsonl,

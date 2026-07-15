@@ -17,6 +17,10 @@
 //! `aiperf` with default features and never compile this layer or its
 //! dependency surface.
 //!
-//! This module is intentionally empty in the scaffold task; the relocation
-//! tasks `git mv` the runner modules in here leaf-first (protocol → registry →
-//! drivers → side-channels) and rewrite their references.
+//! The relocation tasks `git mv` the runner modules in here leaf-first
+//! (protocol → registry → drivers → side-channels) and rewrite their
+//! references.
+
+pub mod distribution_identity;
+pub mod records;
+pub mod redaction;

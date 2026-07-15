@@ -55,7 +55,7 @@ use uuid::Uuid;
 
 use crate::execute::DEFAULT_ENDPOINT_PROFILE_ID;
 use crate::grpc_turn_execution::grpc_sink_with_endpoints;
-use crate::records::{CapturedHttpExchange, CapturedModelOutput, CapturedRecord};
+use aiperf::runner_protocol::records::{CapturedHttpExchange, CapturedModelOutput, CapturedRecord};
 use crate::registry::ValidatedEndpointProfileV2;
 
 /// Transport that a graph endpoint runtime dispatches its prepared turns over.

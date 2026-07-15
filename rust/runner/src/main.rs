@@ -10,7 +10,7 @@ use aiperf_runner::protocol_v2::{
     RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2, RunnerEnvelopeV2,
     RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
 };
-use aiperf_runner::redaction::redact_diagnostic;
+use aiperf::runner_protocol::redaction::redact_diagnostic;
 use aiperf_runner::{RunnerApplication, current_distribution_id};
 use serde::Deserialize;
 use serde_json::{Value, value::RawValue};

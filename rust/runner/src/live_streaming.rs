@@ -27,7 +27,7 @@ use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 use crate::execute::{NativeEndpointPlan, NativeRunSpec};
-use crate::records::{CapturedRecord, record_json_value};
+use aiperf::runner_protocol::records::{CapturedRecord, record_json_value};
 
 const WORKER_CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
 const LIVE_STREAMING_PROTOCOL_VERSION: u32 = 1;

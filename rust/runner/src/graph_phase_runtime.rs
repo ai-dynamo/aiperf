@@ -58,7 +58,7 @@ use crate::graph_execution::{
     RunnerGraphExecutionEvent, RunnerGraphExecutionEventSink,
 };
 use crate::protocol::{AdaptiveControlVariableSpec, PhaseSpec};
-use crate::records::CapturedRecord;
+use aiperf::runner_protocol::records::CapturedRecord;
 
 /// Backend-owned inputs for one already lowered Graph-IR phase.
 pub(crate) struct GraphPhaseBackendConfig {
@@ -1376,7 +1376,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::records::CapturedModelOutput;
+    use aiperf::runner_protocol::records::CapturedModelOutput;
 
     fn wrap_policy_input(root_count: usize) -> GraphInputBundle {
         let plans = (0..root_count)
