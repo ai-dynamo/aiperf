@@ -54,6 +54,8 @@ const FIXTURES: &[&str] = &[
     "file_ds",
     "public_ds",
     "fixed_sched",
+    "rate_constant",
+    "rate_gamma",
 ];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).

@@ -68,6 +68,8 @@ pub(crate) struct Inputs {
     pub sessions: Option<u64>,
     pub concurrency: Option<u32>,
     pub request_rate: Option<f64>,
+    /// Arrival distribution for `request_rate` (`poisson`/`gamma`/`constant`).
+    pub rate_mode: Option<String>,
     pub request_count: Option<u64>,
     pub benchmark_duration: Option<f64>,
     pub grace_period: Option<f64>,
@@ -187,6 +189,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         sessions: num_conversations.map(u64::from),
         concurrency,
         request_rate,
+        rate_mode: flags.request_rate_mode.clone(),
         request_count,
         benchmark_duration,
         grace_period: flags.benchmark_grace_period,
@@ -341,6 +344,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             false,
             inputs.concurrency.unwrap_or(1),
             inputs.request_rate,
+            inputs.rate_mode.as_deref(),
             inputs.concurrency,
             inputs.request_count,
             inputs.sessions,
@@ -356,6 +360,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             true,
             concurrency.unwrap_or(1),
             warmup.rate,
+            None,
             concurrency,
             warmup.requests,
             None,
@@ -442,6 +447,7 @@ fn build_phase(
     exclude_from_results: bool,
     default_concurrency: u32,
     rate: Option<f64>,
+    rate_mode: Option<&str>,
     concurrency: Option<u32>,
     requests: Option<u64>,
     sessions: Option<u64>,
@@ -449,7 +455,16 @@ fn build_phase(
     grace_period: Option<f64>,
 ) -> Phase {
     let kind = if let Some(rate) = rate {
-        PhaseKind::Poisson { rate, concurrency }
+        match rate_mode {
+            Some("gamma") => PhaseKind::Gamma {
+                rate,
+                concurrency,
+                smoothness: None,
+            },
+            Some("constant") => PhaseKind::Constant { rate, concurrency },
+            // Poisson is the default arrival distribution.
+            _ => PhaseKind::Poisson { rate, concurrency },
+        }
     } else {
         PhaseKind::Concurrency {
             concurrency: concurrency.unwrap_or(default_concurrency),

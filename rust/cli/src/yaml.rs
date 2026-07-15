@@ -211,6 +211,7 @@ impl Benchmark {
             sessions: num_conversations.map(u64::from).or(phase.sessions),
             concurrency: phase.concurrency,
             request_rate: phase.rate,
+            rate_mode: None,
             request_count: phase.requests,
             benchmark_duration: phase.duration,
             grace_period: phase.grace_period,

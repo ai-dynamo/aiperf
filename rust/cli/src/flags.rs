@@ -91,6 +91,11 @@ pub struct ProfileFlags {
     #[arg(long = "request-rate")]
     pub request_rate: Option<String>,
 
+    /// Arrival distribution for `--request-rate` (`--request-rate-mode`):
+    /// `poisson` (default), `gamma`, or `constant`.
+    #[arg(long = "request-rate-mode")]
+    pub request_rate_mode: Option<String>,
+
     /// Maximum requests to send (`--request-count`); comma-list ⇒ sweep.
     #[arg(long = "request-count")]
     pub request_count: Option<String>,
