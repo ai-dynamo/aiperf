@@ -5,11 +5,19 @@
 //!
 //! Config v2 accepts shorthand forms (`model:` → `models.items[0]`, `dataset:`
 //! → `datasets[0]`, a flat `phases:` → one phase) and both snake_case and
-//! camelCase keys. Single-word keys are case-identical; multi-word keys carry a
-//! `serde(alias)` for the snake_case spelling. Only the common single-run
-//! synthetic surface is modeled today; unknown keys are ignored (no
-//! `deny_unknown_fields`) and richer keys are added incrementally like the flag
-//! surface, each gated by a golden fixture.
+//! camelCase keys (via `serde(alias)`, matching pydantic's `to_camel`).
+//!
+//! Coverage tracks the flag surface, section by section, each gated by a golden
+//! fixture: endpoint (auth/headers/extra/timeout/connection-reuse/content-type/
+//! session-header/wait-for-model/token-count flags), tokenizer, models.strategy,
+//! top-level `randomSeed`, telemetry (gpu/server-metrics/network-latency), export
+//! sinks (otel/mlflow/wandb), runtime (workers/cells), metrics (slos/slice), the
+//! synthetic dataset (prompts, prefix-prompts, multi-turn, media, sampling), file
+//! datasets, and phases (arrival pattern/rate/smoothness/ramps/prefill/
+//! cancellation/user-centric). Unknown keys are ignored (no `deny_unknown_fields`).
+//!
+//! Deferred (documented, not yet wired): the `warmup`/`profiling` block structure,
+//! the `adaptive_scale` block, fixed-schedule-via-YAML, and public-dataset-via-YAML.
 
 use std::path::PathBuf;
 
