@@ -134,6 +134,48 @@ impl CellularRunKind {
     }
 }
 
+/// Appends one live cross-cell aggregate progress line to
+/// `AIPERF_CELLULAR_HEARTBEAT_LOG` while the run is in flight, so the `aiperf
+/// controller` frontend can tail it and push live `requestsCompleted` into the
+/// AIPerfJob `.status.phases.profiling` (the single-process live lane writes the
+/// same NDJSON shape; a cross-host controller has no single process, so it emits
+/// the running sum of every cell's latest heartbeat counters here instead).
+///
+/// Only the counters are emitted (not the latency sketches the final
+/// `cellular-heartbeat.json` carries): the frontend's progress push reads only
+/// `counters.completed`, and merging sketches on the hot receive path is
+/// needless. Best-effort — no log path (env unset, e.g. a local `--cells` run
+/// whose frontend does not set it) or a transient write error just skips the tick;
+/// the authoritative counts still come from the merged partitions at finalize.
+#[cfg(feature = "velo")]
+fn emit_live_progress(
+    log_path: Option<&Path>,
+    heartbeats: &BTreeMap<u32, MetricsHeartbeat>,
+) {
+    use std::io::Write as _;
+    let Some(path) = log_path else {
+        return;
+    };
+    let (mut issued, mut completed, mut errored) = (0u64, 0u64, 0u64);
+    for heartbeat in heartbeats.values() {
+        issued += heartbeat.counters.issued;
+        completed += heartbeat.counters.completed;
+        errored += heartbeat.counters.errored;
+    }
+    let line = serde_json::json!({
+        "protocol_version": 1,
+        "event": "metrics_heartbeat",
+        "counters": { "issued": issued, "completed": completed, "errored": errored },
+    });
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(file, "{line}");
+    }
+}
+
 /// Runs one benchmark across `cell_count` cells and writes the merged report to
 /// `report_path`. Blocks until every cell ships. Requires the `velo` feature (the
 /// cell transport).
@@ -301,6 +343,11 @@ pub fn run_cellular(
         let mut store_partitions: Vec<ColumnStorePartition> =
             Vec::with_capacity(cell_count as usize);
         let mut heartbeats: BTreeMap<u32, MetricsHeartbeat> = BTreeMap::new();
+        // Live cross-cell progress sink: the frontend sets this to a file it tails
+        // and mirrors into the AIPerfJob CR status while the run is in flight.
+        let live_progress_log = std::env::var_os("AIPERF_CELLULAR_HEARTBEAT_LOG")
+            .filter(|path| !path.is_empty())
+            .map(std::path::PathBuf::from);
         let collected = |records: &[RecordsShardPartition], stores: &[ColumnStorePartition]| {
             records.len() + stores.len()
         };
@@ -312,6 +359,8 @@ pub fn run_cellular(
                     Some(CellMessage::StorePartition(partition)) => store_partitions.push(*partition),
                     Some(CellMessage::Heartbeat { cell_id, heartbeat }) => {
                         heartbeats.insert(cell_id, *heartbeat);
+                        // Emit the running cross-cell aggregate for live CR-status progress.
+                        emit_live_progress(live_progress_log.as_deref(), &heartbeats);
                     }
                     None => bail!(
                         "transport closed with {} of {cell_count} cell partitions",
