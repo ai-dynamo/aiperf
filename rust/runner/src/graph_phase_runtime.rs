@@ -61,7 +61,7 @@ use crate::graph_execution::{
     RunnerGraphExecutionEvent, RunnerGraphExecutionEventSink,
 };
 use crate::graph_input::TStarWindow;
-use crate::protocol::{AdaptiveControlVariableSpec, PhaseSpec};
+use crate::protocol::{AdaptiveControlVariableSpec, PhaseCommonSpec, PhaseSpec};
 use crate::protocol_v2::RunnerFailureStageV2;
 use crate::records::CapturedRecord;
 use crate::registry::PreparedRunFailure;
@@ -241,6 +241,10 @@ struct PreparedGraphPhase {
     adaptive: Option<AdaptiveRunConfig>,
     /// Whether this is the WARMUP phase (gates warmup-failure accounting).
     is_warmup: bool,
+    /// Warmup cache-pressure recycle inputs, present only when the warmup phase
+    /// carried `agentic_cache_warmup_duration`. Drives [`GraphPressureRecycle`]
+    /// in place of the single-pass workload; `None` keeps the warmup unchanged.
+    pressure: Option<PreparedPressureRecycle>,
 }
 
 struct GraphTracePhaseProgress {
@@ -302,6 +306,15 @@ pub(crate) struct GraphLaneLedger {
     instance_to_lane: RefCell<HashMap<String, u64>>,
     executed_node_ids: RefCell<BTreeMap<u64, BTreeSet<String>>>,
     return_wall_us: RefCell<BTreeMap<u64, BTreeMap<String, f64>>>,
+    /// The shared-sampler corpus draw cursor advanced by E3b's pressure recycle:
+    /// the next undrawn corpus position, one past the last template any lane has
+    /// claimed (pass-0 assignment + every recycle draw). Ports the strategy's
+    /// `_pressure_next_index` (`graph_ir_replay.py:504`, advanced in
+    /// `_run_pressure_lanes` at `:1570`), which the teardown handoff stashes so
+    /// profiling's bounded recycle resumes where pressure left off
+    /// (`graph_ir_replay.py:2294` `corpus_cursor=self._pressure_next_index`).
+    /// Inert (`0`) on the no-pressure path; E3c reads it at warmup teardown.
+    corpus_cursor: Cell<u64>,
 }
 
 impl GraphLaneLedger {
@@ -377,6 +390,307 @@ impl GraphLaneLedger {
     #[allow(dead_code)] // Consumed by E3c to iterate live lanes at handoff assembly.
     pub(crate) fn registered_lanes(&self) -> Vec<u64> {
         self.identities.borrow().keys().copied().collect()
+    }
+
+    /// Record the shared-sampler corpus draw cursor after a lane draw.
+    ///
+    /// Driven by [`GraphPressureRecycle`] as it assigns pass-0 lanes and every
+    /// recycle draw, mirroring Python advancing `_pressure_next_index`. The
+    /// last write wins; a single-threaded lane fan-out on the current-thread
+    /// runtime keeps this race-free (each draw increments then stores).
+    pub(crate) fn set_corpus_cursor(&self, cursor: u64) {
+        self.corpus_cursor.set(cursor);
+    }
+
+    /// The next undrawn corpus position (E3c stashes it as `corpus_cursor`).
+    #[allow(dead_code)] // Consumed by E3c's `LaneHandoff.corpus_cursor` stash.
+    pub(crate) fn corpus_cursor(&self) -> u64 {
+        self.corpus_cursor.get()
+    }
+}
+
+/// One recycle-corpus entry: a dispatchable warmup plan plus the identity
+/// members E3a's [`GraphLaneLedger::register_lane`] records for the handoff.
+///
+/// The `plan` is the warmup-rewritten graph (`apply_tstar_split` on the WARMUP
+/// phase), `template_id` is the authored root id (the `instance_id` prefix
+/// before `"::"`), and `t_star_us` is this template's lane-0 `t*` — byte-equal
+/// to the value `apply_tstar_split` sampled when it produced `plan` (see
+/// [`sample_plan_tstar`]).
+struct PressureTemplate {
+    plan: GraphTracePlan,
+    template_id: String,
+    t_star_us: f64,
+}
+
+/// Prepared warmup cache-pressure recycle inputs, carried on the warmup
+/// [`PreparedGraphPhase`] until the phase execution binds a placement + progress.
+///
+/// Present only when the warmup phase carried `agentic_cache_warmup_duration`
+/// (`Some`); `None` leaves the warmup on the unchanged single-pass workload path.
+struct PreparedPressureRecycle {
+    templates: Rc<Vec<PressureTemplate>>,
+    /// Clock-driven pressure budget in nanoseconds (`cache_pressure_duration`).
+    duration_ns: i64,
+    /// Requested concurrent lane count (the CONCURRENCY_BURST warmup width).
+    lane_target: usize,
+    /// `--num-conversations` lane clamp, if any (absent for the auto warmup).
+    session_limit: Option<u64>,
+    /// Whether an explicit phase stop condition exists (governs the corpus
+    /// lane clamp in [`pressure_resolve_lane_count`]); false for the auto warmup.
+    recycle_bounded: bool,
+}
+
+/// Remap a monotonic draw counter to a corpus index.
+///
+/// Port of `graph_ir_replay.py:_draw_index` (`:792`) for the DEFAULT
+/// (`sequential`) `--dataset-sampling-strategy`, which is `x % total`
+/// byte-for-byte. The `shuffle`/`random` seeded-permutation draws are a
+/// deferred refinement here, consistent with the graph runtime not yet carrying
+/// per-lane `t*` decorrelation (see [`apply_tstar_split`]); the current native
+/// fidelity is the sequential draw only.
+fn pressure_draw_index(x: u64, total: usize) -> usize {
+    if total == 0 {
+        return 0;
+    }
+    usize::try_from(x % total as u64).unwrap_or(0)
+}
+
+/// Resolve how many concurrent recycle lanes the pressure stage fans out.
+///
+/// Port of `graph_ir_replay.py:_resolve_lane_count` (`:585`): the lane count is
+/// the phase concurrency, independent of corpus size when recycle is bounded (a
+/// stop condition exists for lanes to recycle toward), clamped by an explicit
+/// `--num-conversations` session cap and — when recycle is UNbounded — to the
+/// corpus size (each lane then covers one corpus position). At least one lane.
+fn pressure_resolve_lane_count(
+    concurrency: usize,
+    total: usize,
+    session_limit: Option<u64>,
+    recycle_bounded: bool,
+) -> usize {
+    let mut lanes = concurrency;
+    if let Some(sessions) = session_limit
+        && sessions > 0
+    {
+        lanes = lanes.min(usize::try_from(sessions).unwrap_or(usize::MAX));
+    }
+    if !recycle_bounded {
+        lanes = lanes.min(total);
+    }
+    lanes.max(1)
+}
+
+/// Resolve the pass-0 lane -> corpus-index map and the resume cursor.
+///
+/// Port of `graph_ir_replay.py:_resolve_pass0_lanes` (`:1577`): walk the corpus
+/// in draw order assigning lane `i` to the next SPAWNABLE template, skipping
+/// unspawnable ones, and return the per-lane corpus indices (length `<= lanes`)
+/// plus the cursor one past the last consumed position so recycle resumes there.
+///
+/// "Spawnable" at the current native fidelity is "the warmup-rewritten plan has
+/// at least one dispatchable node": Python tests spawnability at the lane-salted
+/// `t*` (no live LLM firing => skip), and because the graph runtime bakes a
+/// single lane-0 `t*` into the plan upstream (no per-lane salting yet), a plan
+/// left empty by the warmup rewrite is the native analogue of an unspawnable
+/// lane. At the default `[0, 0]` window every plan is non-empty, so lane `i`
+/// takes corpus index `i` (sequential) byte-for-byte with the prior assignment.
+fn pressure_resolve_pass0_lanes(templates: &[PressureTemplate], lanes: usize) -> (Vec<usize>, u64) {
+    let n = templates.len();
+    if n == 0 {
+        return (Vec::new(), 0);
+    }
+    let mut pass0 = Vec::new();
+    let mut cursor: u64 = 0;
+    // Bound the skip walk to one full corpus pass past the wrap of `lanes` so an
+    // all-unspawnable corpus can't spin (agentx caps at `_target_size + pool`);
+    // we stop at `lanes` hits regardless.
+    let max_cursor = lanes as u64 + n as u64;
+    while pass0.len() < lanes && cursor < max_cursor {
+        let idx = pressure_draw_index(cursor, n);
+        cursor = cursor.saturating_add(1);
+        if !templates[idx].plan.graph.nodes.is_empty() {
+            pass0.push(idx);
+        }
+    }
+    (pass0, cursor)
+}
+
+/// Compute one plan's lane-0 trajectory-start `t*` in microseconds.
+///
+/// Mirrors the per-plan `t*` sample in [`apply_tstar_split`] exactly (same
+/// single-trace [`ParsedGraph`] view, [`trace_duration_us`], and
+/// [`WindowTStarSampler`] at lane `0`), so the value stored in a lane's
+/// [`GraphLaneIdentity`] equals the `t*` that produced the dispatched warmup
+/// plan. The default `[0, 0]` window short-circuits to `0.0` (no RNG draw), the
+/// only currently product-reachable pressure case.
+fn sample_plan_tstar(original_plan: &GraphTracePlan, t_star: TStarWindow) -> f64 {
+    if t_star.start_min_ratio == 0.0 && t_star.start_max_ratio == 0.0 {
+        return 0.0;
+    }
+    let sampler = WindowTStarSampler {
+        start_min_ratio: t_star.start_min_ratio,
+        start_max_ratio: t_star.start_max_ratio,
+        random_seed: t_star.random_seed,
+    };
+    let view_trace = TraceRecord {
+        id: original_plan.trace.id.clone(),
+        graph_ref: None,
+        initial_state: original_plan.trace.initial_state.clone(),
+    };
+    let parsed = ParsedGraph {
+        graph: original_plan.graph.clone(),
+        graphs: std::collections::BTreeMap::new(),
+        traces: vec![view_trace.clone()],
+    };
+    let duration_us = trace_duration_us(&parsed, &view_trace);
+    sampler.sample_t_star(&original_plan.trace.id, 0, duration_us)
+}
+
+/// In-runtime, duration-bounded cache-pressure warmup recycle controller.
+///
+/// The dataflow-native port of the Graph-IR strategy's pressure stage
+/// (`graph_ir_replay.py:accelerated_warmup` `:1440` + `_run_pressure_lanes`
+/// `:1488`): a per-lane recycle loop that, for `duration_ns` on the injected
+/// [`Clock`], keeps `concurrency` lanes replaying the warmup corpus — lane `i`
+/// starts on its pass-0 template and, when its instance drains, draws the next
+/// wrap template from the shared corpus cursor and re-dispatches onto the freed
+/// slot. It REGISTERS each dispatched instance with E3a's
+/// [`GraphLaneLedger::register_lane`] so the executed-node/return-wall ledgers
+/// (populated on the shared drain path via `observe_lane_return`) attribute each
+/// terminal return to its lane, and advances the shared corpus cursor
+/// ([`GraphLaneLedger::set_corpus_cursor`]) for E3c's resume.
+///
+/// It is engaged (constructed) ONLY for the warmup phase carrying
+/// `agentic_cache_warmup_duration`; the no-pressure warmup keeps the unchanged
+/// single-pass [`GraphWorkload`] path. Only the pressure DURATION check and a
+/// consecutive-error backoff gate each lane loop — the `_can_recycle` session
+/// gate is intentionally NOT consulted here (it lives in the profiling
+/// `_run_lanes`, not the pressure loop, `graph_ir_replay.py:1488`). Handoff
+/// assembly and profiling resume are E3c's; this stops at "lanes registered,
+/// ledgers populated, cursor advanced".
+struct GraphPressureRecycle {
+    clock: Rc<dyn Clock>,
+    placement: Rc<dyn TracePlacement>,
+    progress: Rc<GraphPhaseProgress>,
+    templates: Rc<Vec<PressureTemplate>>,
+    duration_ns: i64,
+    lane_target: usize,
+    session_limit: Option<u64>,
+    recycle_bounded: bool,
+    cancelled: Rc<Cell<bool>>,
+}
+
+impl GraphPressureRecycle {
+    /// Latch external cancellation (the phase `stop_issuing` / drain teardown).
+    ///
+    /// Lanes check this each iteration and after each dispatch so the stage
+    /// halts promptly, the analogue of Python's `_past_duration_deadline` +
+    /// `wait_for` cancel cooperative twin (`graph_ir_replay.py:1228`).
+    fn cancel(&self) {
+        self.cancelled.set(true);
+    }
+
+    /// Drive the pressure recycle to its duration budget, then return so the
+    /// phase lifecycle drains the last per-lane instances for the handoff.
+    async fn run(&self) {
+        let n = self.templates.len();
+        if n == 0 {
+            return;
+        }
+        let lanes = pressure_resolve_lane_count(
+            self.lane_target,
+            n,
+            self.session_limit,
+            self.recycle_bounded,
+        );
+        let (pass0, cursor) = pressure_resolve_pass0_lanes(&self.templates, lanes);
+        self.progress.lanes.set_corpus_cursor(cursor);
+        if pass0.is_empty() {
+            return;
+        }
+        // Clock-driven deadline: never `Instant::now`, so the budget holds under
+        // SimClock (each lane checks it after a dispatch, exactly as Python's
+        // `_run_pressure_lanes` checks `_past_duration_deadline`).
+        let deadline_ns = self.clock.now_ns().saturating_add(self.duration_ns);
+        // Shared recycle cursor: one event loop mutates it, so a plain `Cell`
+        // has the atomicity Python's single-loop instance attr had.
+        let next_index = Rc::new(Cell::new(cursor));
+        let (done_tx, mut done_rx) = mpsc::unbounded_channel::<()>();
+        for (lane_index, &start_template) in pass0.iter().enumerate() {
+            let clock = self.clock.clone();
+            let placement = self.placement.clone();
+            let progress = self.progress.clone();
+            let templates = self.templates.clone();
+            let cancelled = self.cancelled.clone();
+            let next_index = next_index.clone();
+            let done_tx = done_tx.clone();
+            let lane = lane_index as u64;
+            tokio::task::spawn_local(async move {
+                let mut template_index = start_template;
+                let mut consecutive_errors: i32 = 0;
+                loop {
+                    if cancelled.get() {
+                        break;
+                    }
+                    let template = &templates[template_index];
+                    // `{template}::{nonce}`: instance identity is the authored
+                    // template plus a fresh nonce (Python `_run_pressure_lanes`
+                    // uses `f"{trace.id}::{uuid4().hex}"`, `:1546`), so every
+                    // recycle is a distinct correlation id.
+                    let instance_id =
+                        format!("{}::{}", template.template_id, Uuid::new_v4().simple());
+                    let mut plan = template.plan.clone();
+                    plan.trace.id = instance_id.clone();
+                    // Register BEFORE dispatch so the instance's terminal node
+                    // returns (drain path -> `observe_lane_return`) attribute to
+                    // this lane; re-registering the lane on recycle overwrites its
+                    // identity while leaving prior instances' ledger rows intact.
+                    progress.lanes.register_lane(
+                        lane,
+                        GraphLaneIdentity {
+                            template_trace_id: template.template_id.clone(),
+                            instance_id: instance_id.clone(),
+                            t_star_us: template.t_star_us,
+                        },
+                    );
+                    progress.admit(&TraceAdmissionInfo {
+                        trace_id: instance_id,
+                        node_count: plan.graph.nodes.len(),
+                        arrival_ns: clock.now_ns(),
+                    });
+                    let result = placement.execute_trace(plan).await;
+                    // A drain-cancel return ends the lane (a fresh instance would
+                    // be rejected instantly); consecutive non-cancel errors back
+                    // off exponentially so a deterministically failing server
+                    // cannot hot-spin adapter builds for the whole duration.
+                    let cancelled_return = matches!(result, Err(TraceError::Cancelled(_)));
+                    match &result {
+                        Ok(()) => consecutive_errors = 0,
+                        Err(TraceError::Cancelled(_)) => {}
+                        Err(_) => consecutive_errors = consecutive_errors.saturating_add(1),
+                    }
+                    if cancelled.get() || cancelled_return || clock.now_ns() >= deadline_ns {
+                        break;
+                    }
+                    if consecutive_errors > 0 {
+                        let backoff_s = (0.25 * 2f64.powi(consecutive_errors)).min(5.0);
+                        let backoff_ns = (backoff_s * 1_000_000_000.0) as i64;
+                        clock.clone().sleep(backoff_ns).await;
+                        if cancelled.get() || clock.now_ns() >= deadline_ns {
+                            break;
+                        }
+                    }
+                    let drawn = next_index.get();
+                    next_index.set(drawn.saturating_add(1));
+                    progress.lanes.set_corpus_cursor(next_index.get());
+                    template_index = pressure_draw_index(drawn, n);
+                }
+                let _ = done_tx.send(());
+            });
+        }
+        drop(done_tx);
+        while done_rx.recv().await.is_some() {}
     }
 }
 
@@ -762,6 +1076,11 @@ struct GraphPhaseExecution {
     drain_stop: Rc<GraphRecordDrainStop>,
     drain_task: RefCell<Option<tokio::task::JoinHandle<()>>>,
     setup_error: Option<String>,
+    /// Warmup cache-pressure recycle, `Some` only for a warmup phase carrying
+    /// `agentic_cache_warmup_duration`. When present, [`execute`](PhaseExecution::execute)
+    /// drives it in place of the single-pass workload and `stop_issuing` latches
+    /// its cancel; `None` leaves the byte-unchanged workload path.
+    pressure_recycle: Option<Rc<GraphPressureRecycle>>,
 }
 
 impl GraphPhaseExecution {
@@ -899,6 +1218,30 @@ impl PhaseExecution for GraphPhaseExecution {
     }
 
     fn execute(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
+        // Warmup cache-pressure recycle path: the in-runtime lane-recycle loop
+        // replaces the single-pass workload for a warmup phase carrying
+        // `agentic_cache_warmup_duration`. The loop is Clock-duration-bounded and
+        // registers each lane's instance into the E3a ledger; a phase failure
+        // still short-circuits. The no-pressure warmup never enters here.
+        if let Some(recycle) = self.pressure_recycle.clone() {
+            let failures = self.failures.clone();
+            return Box::pin(async move {
+                let run = recycle.run();
+                let failed = failures.wait();
+                tokio::pin!(run);
+                tokio::pin!(failed);
+                tokio::select! {
+                    biased;
+                    () = &mut failed => Err(PhaseExecutionError::new(
+                        failures.first().unwrap_or_else(|| "graph warmup cache pressure failed".into())
+                    )),
+                    () = &mut run => match failures.first() {
+                        Some(error) => Err(PhaseExecutionError::new(error)),
+                        None => Ok(()),
+                    },
+                }
+            });
+        }
         let workload = self.workload.clone();
         let context = self.context.clone();
         let controller = self.controller.clone();
@@ -928,6 +1271,9 @@ impl PhaseExecution for GraphPhaseExecution {
     }
 
     fn stop_issuing(&self) {
+        if let Some(recycle) = &self.pressure_recycle {
+            recycle.cancel();
+        }
         self.workload.cancel();
     }
 
@@ -1017,11 +1363,12 @@ struct GraphPhaseExecutionFactory {
 
 impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
     fn create(&self, config: &PhaseConfig, context: PhaseContext) -> Rc<dyn PhaseExecution> {
-        let Some(prepared) = self.phases.borrow_mut().remove(&config.id) else {
+        let Some(mut prepared) = self.phases.borrow_mut().remove(&config.id) else {
             return Rc::new(FailedGraphPhaseExecution {
                 error: format!("graph phase {:?} has no prepared execution plan", config.id),
             });
         };
+        let pressure_prepared = prepared.pressure.take();
         let lanes = Rc::new(GraphLaneLedger::default());
         if prepared.is_warmup {
             *self.warmup_lane_ledger.borrow_mut() = Some(lanes.clone());
@@ -1073,6 +1420,22 @@ impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
             .borrow_mut()
             .remove(&config.id)
             .unwrap_or_default();
+        // Bind the prepared pressure recycle to this phase's placement + progress
+        // (built above). Present only for a warmup phase with a cache-pressure
+        // duration; the sole driver of E3a `register_lane` on the product path.
+        let pressure_recycle = pressure_prepared.map(|prepared_pressure| {
+            Rc::new(GraphPressureRecycle {
+                clock: context.clock(),
+                placement: prepared.placement.clone(),
+                progress: progress.clone(),
+                templates: prepared_pressure.templates,
+                duration_ns: prepared_pressure.duration_ns,
+                lane_target: prepared_pressure.lane_target,
+                session_limit: prepared_pressure.session_limit,
+                recycle_bounded: prepared_pressure.recycle_bounded,
+                cancelled: Rc::new(Cell::new(false)),
+            })
+        });
         Rc::new(GraphPhaseExecution {
             clock: context.clock(),
             context,
@@ -1091,6 +1454,7 @@ impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
             drain_stop: Rc::new(GraphRecordDrainStop::default()),
             drain_task: RefCell::new(None),
             setup_error,
+            pressure_recycle,
         })
     }
 
@@ -1450,6 +1814,17 @@ fn prepare_graph_phase(
     // the unchanged full graph and warmup is empty. Both phases sample the SAME
     // deterministic `t*` per trace, so warmup primes exactly what profiling resumes.
     let phase_plans = apply_tstar_split(&input.plans, phase, t_star);
+    // Warmup cache-pressure recycle: engaged ONLY for the warmup phase carrying
+    // `agentic_cache_warmup_duration` (Python `_init_accelerated_warmup`,
+    // `graph_ir_replay.py:468`). It runs the warmup-rewritten corpus in a
+    // duration-bounded per-lane recycle instead of the single-pass workload; the
+    // no-pressure warmup leaves `pressure` `None` and is byte-unchanged. Built
+    // here (before `phase_plans` moves into the source) from the same warmup
+    // plans the source would cycle, paired with each template's lane-0 `t*`.
+    let pressure = build_pressure_recycle(&phase_plans, &input.plans, phase, common, t_star)
+        .with_context(|| {
+            format!("preparing warmup cache-pressure recycle for phase {phase_index}")
+        })?;
     let source: Rc<dyn GraphTraceSource> = match ModuloCellPartition::from_env() {
         Some(partition) if partition.cell_count() > 1 && common.requests.is_none() => {
             tracing::debug!(
@@ -1568,7 +1943,63 @@ fn prepare_graph_phase(
         failures,
         adaptive,
         is_warmup: common.name == "warmup",
+        pressure,
     })
+}
+
+/// Build the warmup cache-pressure recycle inputs, or `None` when this phase is
+/// not a warmup carrying `agentic_cache_warmup_duration`.
+///
+/// Pairs each warmup-rewritten plan (`warmup_plans`, already `apply_tstar_split`
+/// output for this phase) with its authored template id and lane-0 `t*` sampled
+/// from the ORIGINAL plan (`original_plans`, same order), so a registered lane's
+/// identity carries the exact `t*` that produced the dispatched warmup graph.
+/// The pressure duration comes from the wire `agentic_cache_warmup_duration`
+/// (the strategy's `_cache_pressure_duration_s`), the lane target from the phase
+/// concurrency (the CONCURRENCY_BURST width), and `recycle_bounded` from any
+/// explicit phase stop condition (none on the auto warmup).
+fn build_pressure_recycle(
+    warmup_plans: &[GraphTracePlan],
+    original_plans: &[GraphTracePlan],
+    phase: &PhaseSpec,
+    common: &PhaseCommonSpec,
+    t_star: TStarWindow,
+) -> Result<Option<PreparedPressureRecycle>> {
+    if common.name != "warmup" {
+        return Ok(None);
+    }
+    let Some(duration_s) = common.agentic_cache_warmup_duration else {
+        return Ok(None);
+    };
+    ensure!(
+        duration_s.is_finite() && duration_s > 0.0,
+        "warmup agentic_cache_warmup_duration must be finite and positive"
+    );
+    let duration_ns = i64::try_from(seconds_to_u64_ns(duration_s)?)
+        .context("warmup cache-pressure duration in nanoseconds exceeds i64")?;
+    let templates = warmup_plans
+        .iter()
+        .zip(original_plans.iter())
+        .map(|(warmup_plan, original_plan)| PressureTemplate {
+            plan: warmup_plan.clone(),
+            template_id: warmup_plan.trace.id.clone(),
+            t_star_us: sample_plan_tstar(original_plan, t_star),
+        })
+        .collect::<Vec<_>>();
+    let lane_target = phase.concurrency().unwrap_or(1).max(1);
+    // Only an explicit phase stop condition makes recycle "bounded" (governs the
+    // corpus lane clamp). The auto warmup carries none — the pressure duration
+    // deadline is separate from a phase stop condition, exactly as Python's
+    // `_recycle_has_stop_condition` excludes the pressure `_duration_deadline`.
+    let recycle_bounded =
+        common.duration.is_some() || common.requests.is_some() || common.sessions.is_some();
+    Ok(Some(PreparedPressureRecycle {
+        templates: Rc::new(templates),
+        duration_ns,
+        lane_target,
+        session_limit: common.sessions,
+        recycle_bounded,
+    }))
 }
 
 /// Apply the per-trace trajectory-start (`t*`) snapshot split for one phase.
@@ -2633,5 +3064,243 @@ mod tests {
         assert!(failure.message.contains("trace-a"));
         assert!(failure.message.contains("trace-b"));
         assert!(failure.message.contains("2 trace(s)"));
+    }
+
+    #[test]
+    fn pressure_lane_count_matches_python_resolution() {
+        // recycle_bounded: lane count is the concurrency, independent of corpus.
+        assert_eq!(pressure_resolve_lane_count(8, 2, None, true), 8);
+        // --num-conversations clamps total distinct roots.
+        assert_eq!(pressure_resolve_lane_count(8, 2, Some(3), true), 3);
+        // Unbounded (no stop condition): clamp to the corpus (single pass width).
+        assert_eq!(pressure_resolve_lane_count(8, 2, None, false), 2);
+        // Always at least one lane.
+        assert_eq!(pressure_resolve_lane_count(0, 0, None, true), 1);
+    }
+
+    #[test]
+    fn pressure_draw_index_is_sequential_wrap() {
+        assert_eq!(pressure_draw_index(0, 3), 0);
+        assert_eq!(pressure_draw_index(2, 3), 2);
+        assert_eq!(pressure_draw_index(3, 3), 0);
+        assert_eq!(pressure_draw_index(7, 3), 1);
+        // Degenerate empty corpus never panics.
+        assert_eq!(pressure_draw_index(5, 0), 0);
+    }
+
+    fn pressure_one_node_plan(id: &str) -> GraphTracePlan {
+        use aiperf::graph::model::{GraphRecord, LlmNode, StaticEdge};
+        use std::collections::BTreeMap;
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            "n_0".to_owned(),
+            LlmNode {
+                output: "out".to_owned(),
+                streaming: true,
+                inputs: Vec::new(),
+                min_start_delay_us: None,
+                max_tokens: Some(1),
+                items: Vec::new(),
+                metadata: BTreeMap::new(),
+            },
+        );
+        GraphTracePlan {
+            graph: GraphRecord {
+                nodes,
+                edges: vec![StaticEdge {
+                    source: "START".to_owned(),
+                    target: "n_0".to_owned(),
+                    delay_after_predecessor_us: None,
+                    min_start_delay_us: None,
+                    delay_after_predecessor_start_us: None,
+                    delay_after_predecessor_first_token_us: None,
+                }],
+                ..Default::default()
+            },
+            trace: TraceRecord {
+                id: id.to_owned(),
+                graph_ref: None,
+                initial_state: Default::default(),
+            },
+            arrival_offset_ns: None,
+        }
+    }
+
+    #[test]
+    fn pressure_pass0_lanes_skip_empty_and_report_cursor() {
+        // A 3-template corpus with the middle template rewritten empty
+        // (unspawnable): lane assignment skips it and the cursor advances past
+        // the skip (agentx `_resolve_pass0_lanes` parity).
+        let mut empty = pressure_one_node_plan("b");
+        empty.graph.nodes.clear();
+        let templates = vec![
+            PressureTemplate {
+                plan: pressure_one_node_plan("a"),
+                template_id: "a".into(),
+                t_star_us: 0.0,
+            },
+            PressureTemplate {
+                plan: empty,
+                template_id: "b".into(),
+                t_star_us: 0.0,
+            },
+            PressureTemplate {
+                plan: pressure_one_node_plan("c"),
+                template_id: "c".into(),
+                t_star_us: 0.0,
+            },
+        ];
+        let (pass0, cursor) = pressure_resolve_pass0_lanes(&templates, 2);
+        // Lanes 0 and 1 take templates a (index 0) and c (index 2); b skipped.
+        assert_eq!(pass0, vec![0, 2]);
+        // Cursor is one past the last consumed corpus position (a, b, c walked).
+        assert_eq!(cursor, 3);
+    }
+
+    /// Placement stub that advances the injected clock a fixed amount per
+    /// dispatch (so the pressure deadline is eventually reached under SimClock)
+    /// and records every dispatched instance id.
+    struct RecycleClockPlacement {
+        clock: Rc<dyn aiperf::clock::Clock>,
+        per_trace_ns: i64,
+        dispatched: Rc<RefCell<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait(?Send)]
+    impl aiperf::graph::execution::TracePlacement for RecycleClockPlacement {
+        async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError> {
+            self.dispatched.borrow_mut().push(plan.trace.id.clone());
+            self.clock.clone().sleep(self.per_trace_ns).await;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn pressure_recycle_recycles_beyond_one_corpus_pass_and_registers_lanes() {
+        // A 2-template corpus at concurrency 2 with a duration that fits several
+        // recycles: each lane must draw past the corpus (cursor > corpus size)
+        // and every dispatched instance must register its lane in the ledger.
+        let sim = Rc::new(aiperf::clock::SimClock::new());
+        let clock: Rc<dyn aiperf::clock::Clock> = sim.clone();
+        let dispatched = Rc::new(RefCell::new(Vec::new()));
+        let placement: Rc<dyn aiperf::graph::execution::TracePlacement> =
+            Rc::new(RecycleClockPlacement {
+                clock: clock.clone(),
+                per_trace_ns: 40,
+                dispatched: dispatched.clone(),
+            });
+        let sink = Rc::new(RecordingGraphPhaseProgressSink::default());
+        let failures = Rc::new(GraphPhaseFailures::default());
+        let ledger = Rc::new(GraphLaneLedger::default());
+        let progress = Rc::new(GraphPhaseProgress::new(
+            sink,
+            failures,
+            Rc::new(RefCell::new(GraphWorkloadReport::default())),
+            clock.clone(),
+            ledger.clone(),
+            true,
+            Rc::new(RefCell::new(Vec::new())),
+        ));
+        let templates = Rc::new(vec![
+            PressureTemplate {
+                plan: pressure_one_node_plan("a"),
+                template_id: "a".into(),
+                t_star_us: 0.0,
+            },
+            PressureTemplate {
+                plan: pressure_one_node_plan("b"),
+                template_id: "b".into(),
+                t_star_us: 0.0,
+            },
+        ]);
+        let recycle = Rc::new(GraphPressureRecycle {
+            clock: clock.clone(),
+            placement,
+            progress,
+            templates,
+            duration_ns: 100,
+            lane_target: 2,
+            session_limit: None,
+            recycle_bounded: false,
+            cancelled: Rc::new(Cell::new(false)),
+        });
+        let run_recycle = recycle.clone();
+        let outcome = aiperf::graph::runtime::drive_sim(sim, move |_handle| async move {
+            run_recycle.run().await;
+        });
+        assert!(!outcome.deadlocked);
+
+        // Recycle drew past the two-template corpus: the shared cursor advanced
+        // well beyond the corpus size and more than `corpus` instances ran.
+        assert!(
+            ledger.corpus_cursor() > 2,
+            "corpus cursor {} did not advance past the 2-template corpus",
+            ledger.corpus_cursor()
+        );
+        assert!(
+            dispatched.borrow().len() > 2,
+            "only {} instances dispatched; expected recycle beyond one pass",
+            dispatched.borrow().len()
+        );
+        // Both lanes registered their (recycled) identities in the E3a ledger.
+        assert_eq!(ledger.registered_lanes(), vec![0, 1]);
+        // Every dispatched instance carries the `{template}::{nonce}` identity.
+        assert!(
+            dispatched
+                .borrow()
+                .iter()
+                .all(|id| id.starts_with("a::") || id.starts_with("b::"))
+        );
+    }
+
+    fn warmup_pressure_phase(concurrency: usize, duration: Option<f64>) -> PhaseSpec {
+        let mut value = serde_json::json!({
+            "type": "concurrency",
+            "name": "warmup",
+            "exclude_from_results": true,
+            "concurrency": concurrency,
+        });
+        if let Some(duration) = duration {
+            value["agentic_cache_warmup_duration"] = serde_json::json!(duration);
+        }
+        serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn build_pressure_recycle_engages_only_for_warmup_with_a_duration() {
+        let plans = vec![pressure_one_node_plan("a"), pressure_one_node_plan("b")];
+        let window = TStarWindow::default();
+
+        // Warmup + duration: recycle engaged with concurrency lanes.
+        let phase = warmup_pressure_phase(4, Some(2.0));
+        let prepared = build_pressure_recycle(&plans, &plans, &phase, phase.common(), window)
+            .unwrap()
+            .expect("warmup with cache-pressure duration engages the recycle");
+        assert_eq!(prepared.lane_target, 4);
+        assert_eq!(prepared.templates.len(), 2);
+        assert_eq!(prepared.duration_ns, 2_000_000_000);
+        // Auto warmup carries no explicit phase stop condition.
+        assert!(!prepared.recycle_bounded);
+        // At the default window every lane-0 t* is 0.
+        assert!(prepared.templates.iter().all(|t| t.t_star_us == 0.0));
+
+        // Warmup WITHOUT a duration: no recycle (byte-unchanged single pass).
+        let phase = warmup_pressure_phase(4, None);
+        assert!(
+            build_pressure_recycle(&plans, &plans, &phase, phase.common(), window)
+                .unwrap()
+                .is_none()
+        );
+
+        // Non-warmup phase never engages the recycle even with the field set.
+        let mut profiling = warmup_pressure_phase(4, Some(2.0));
+        if let PhaseSpec::Concurrency { common, .. } = &mut profiling {
+            common.name = "profiling".into();
+        }
+        assert!(
+            build_pressure_recycle(&plans, &plans, &profiling, profiling.common(), window)
+                .unwrap()
+                .is_none()
+        );
     }
 }
