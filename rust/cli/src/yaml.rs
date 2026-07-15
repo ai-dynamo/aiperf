@@ -353,6 +353,7 @@ struct TokenizerSection {
 /// A flat single phase (shorthand) or a list of phases.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
+#[allow(clippy::large_enum_variant)] // single-run keeps one inline phase; not hot
 enum Phases {
     One(PhaseSection),
     Many(Vec<PhaseSection>),
@@ -389,13 +390,6 @@ struct PhaseSection {
     cancellation: Option<CancellationSection>,
     /// User-centric concurrent-user count (`user_centric` phase).
     users: Option<u32>,
-    /// Fixed-schedule auto-offset toggle.
-    #[serde(default, alias = "autoOffset")]
-    auto_offset: Option<bool>,
-    #[serde(default, alias = "startOffset")]
-    start_offset: Option<i64>,
-    #[serde(default, alias = "endOffset")]
-    end_offset: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
