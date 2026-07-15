@@ -153,6 +153,7 @@ pub fn run_cellular(
     let kind = CellularRunKind::detect(envelope);
     kind.validate_phases(envelope, cell_count)?;
     warn_dropped_sidecar_telemetry(envelope);
+    warn_dropped_per_record_artifacts(envelope);
     warn_cellular_approximations(envelope);
     // One shared seed for every cell when the author gave none (else `None` and each
     // cell inherits the authored `run.random_seed` verbatim).
@@ -847,6 +848,56 @@ fn warn_dropped_sidecar_telemetry(envelope: &serde_json::Value) {
     }
 }
 
+/// Warns, once at controller startup, when a cellular run requests any per-record FILE
+/// artifact (`records_path`/`raw_path`/`records_csv_path`/`records_parquet_path`/
+/// `outputs_path`). A cellular run NEVER emits these files, on EITHER retain or
+/// exact-fold: each cell writes its per-record sidecars only into the controller's
+/// throwaway scratch tree (discarded on exit — see `ScratchTreeGuard` / `run_cellular`),
+/// and the cell→controller channel ships only merged metrics (a `Partition` of raw
+/// records or a `StorePartition` of a folded store), never artifact files. The merged
+/// report and the native exporter outputs (genai-perf-v1 JSON/CSV, console.txt,
+/// timeslice, …) ARE produced; the per-record file sidecars are not. Emitting them is
+/// deferred Stage D (a cell→controller artifact-file channel). Surfaced as a loud
+/// runtime warning rather than a silent drop so the operator knows the requested files
+/// will be absent; run without `--cells` to collect them.
+fn warn_dropped_per_record_artifacts(envelope: &serde_json::Value) {
+    let requested = requested_per_record_artifacts(envelope);
+    if !requested.is_empty() {
+        tracing::warn!(
+            artifacts = requested.join(","),
+            "cellular mode does not emit per-record file artifacts (each cell's per-record \
+             sidecars are written to the controller's scratch tree and discarded; only \
+             merged metrics ship back — Stage D wires the cell→controller artifact-file \
+             channel). These files will NOT be produced; the merged report and native \
+             exporter outputs (genai-perf-v1 JSON/CSV, console.txt, timeslice) still are. \
+             Run without --cells to collect the per-record sidecars."
+        );
+    }
+}
+
+/// The per-record FILE artifacts a run requests that a cellular run will NOT emit
+/// (records/raw/CSV/parquet/outputs), read from the envelope's `cfg.artifacts`. Pure
+/// (no logging) so the detection is unit-testable; `warn_dropped_per_record_artifacts`
+/// is the logging wrapper. `inputs_path` is deliberately excluded — it is a per-SESSION
+/// artifact, not a per-record one.
+fn requested_per_record_artifacts(envelope: &serde_json::Value) -> Vec<&'static str> {
+    const ARTIFACTS: [&str; 5] = [
+        "records_path",
+        "raw_path",
+        "records_csv_path",
+        "records_parquet_path",
+        "outputs_path",
+    ];
+    ARTIFACTS
+        .into_iter()
+        .filter(|key| {
+            envelope
+                .pointer(&format!("/run/cfg/artifacts/{key}"))
+                .is_some_and(|value| !value.is_null())
+        })
+        .collect()
+}
+
 /// One shared run seed for every cell when the author gave none, or `None` when
 /// `run.random_seed` is already set (cells then inherit it verbatim). Derived
 /// deterministically from the run identity so every cell composes the *identical*
@@ -1386,6 +1437,49 @@ mod tests {
         assert!(
             (rate_sum - 40.0).abs() < 1e-9,
             "per-cell rates must sum to the authored aggregate, got {rate_sum}"
+        );
+    }
+
+    #[test]
+    fn detects_requested_per_record_artifacts() {
+        // A metrics-only cellular run (no per-record file artifacts) → nothing detected,
+        // so the warn stays silent. `inputs_path` is per-session, not per-record, so it
+        // must NOT trigger the per-record warning either.
+        let metrics_only = serde_json::json!({"run": {"cfg": {"artifacts": {
+            "inputs_path": "inputs.json",
+        }}}});
+        assert!(
+            requested_per_record_artifacts(&metrics_only).is_empty(),
+            "metrics-only (+ per-session inputs.json) must not flag per-record artifacts"
+        );
+        // An empty artifacts object and a wholly absent one are both silent.
+        assert!(requested_per_record_artifacts(&serde_json::json!({})).is_empty());
+
+        // Each per-record file artifact is detected independently.
+        for key in [
+            "records_path",
+            "raw_path",
+            "records_csv_path",
+            "records_parquet_path",
+            "outputs_path",
+        ] {
+            let env = serde_json::json!({"run": {"cfg": {"artifacts": {key: "x"}}}});
+            assert_eq!(
+                requested_per_record_artifacts(&env),
+                vec![key],
+                "{key} should be detected as a per-record file artifact"
+            );
+        }
+
+        // A run requesting several reports them all (order matches the scan order).
+        let many = serde_json::json!({"run": {"cfg": {"artifacts": {
+            "records_path": "profile_export.jsonl",
+            "records_parquet_path": "profile_export.parquet",
+            "outputs_path": "profile_export.json",
+        }}}});
+        assert_eq!(
+            requested_per_record_artifacts(&many),
+            vec!["records_path", "records_parquet_path", "outputs_path"],
         );
     }
 }

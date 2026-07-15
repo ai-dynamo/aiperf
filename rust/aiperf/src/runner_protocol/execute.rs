@@ -917,11 +917,18 @@ fn exact_fold_enabled_by_env() -> bool {
 /// accumulator (exactly like a shard) and ships that folded STORE to the controller
 /// (a `CellMessage::StorePartition`) instead of the full record `Vec`, and the
 /// controller appends every cell's store (`merge_store_partitions`) into the merged
-/// report — the same within-tolerance bar as the in-process sharded merge. A cellular
-/// run that also wants per-record file artifacts stays on retain, because there is no
-/// cell→controller artifact-file channel yet (Stage D): that case is caught by
-/// `wants_per_record_artifacts`, not by `is_cellular`, which is retained as an explicit
-/// input axis but (like `shardable`) deliberately not read here.
+/// report — the same within-tolerance bar as the in-process sharded merge.
+///
+/// A cellular run does NOT emit per-record FILE artifacts (records/raw/CSV/parquet/
+/// outputs) on EITHER path — this gate does not change that. A cellular run that
+/// requests per-record artifacts keeps its cells on retain when `wants_per_record_artifacts`
+/// is set (e.g. a lite build's Parquet), but that only affects each cell's in-scratch
+/// writing: the controller discards every cell's scratch tree and merges only the shipped
+/// metrics, so no per-record file reaches the run's artifact dir regardless of the path
+/// taken. Cellular per-record file emission (a cell→controller artifact-file channel) is
+/// deferred Stage D; the controller warns at startup when such artifacts are requested
+/// (`warn_dropped_per_record_artifacts`). `is_cellular` is retained as an explicit input
+/// axis but (like `shardable`) deliberately not read here — it does not gate exact-fold.
 ///
 /// (The scheduled path never carries a graph dataset — that is a separate executor —
 /// so "not graph" is implicit here.)
@@ -964,9 +971,12 @@ struct ExactFoldInputs {
     /// DELIBERATELY not read by [`exact_fold_eligible`] since Stage C: a metrics-only
     /// cellular run folds into its own dense-LOCAL exact accumulator and ships the
     /// folded STORE (`CellMessage::StorePartition`) to the controller, which appends
-    /// every cell's store into the merged report. A cellular run that also wants
-    /// per-record file artifacts stays on retain (no cell→controller artifact channel
-    /// yet — Stage D), but that is caught by `wants_per_record_artifacts`, not here.
+    /// every cell's store into the merged report. A cellular run NEVER emits per-record
+    /// FILE artifacts on EITHER path — a requested artifact keeps the cell on retain via
+    /// `wants_per_record_artifacts`, but the controller discards every cell's scratch
+    /// tree and merges only shipped metrics, so no per-record file reaches the run
+    /// artifact dir either way. Cellular per-record file emission is deferred Stage D
+    /// (warned at controller startup by `warn_dropped_per_record_artifacts`).
     #[allow(dead_code)]
     is_cellular: bool,
     /// A static/stateful accuracy run: retains records for post-run scoring.
@@ -6678,10 +6688,12 @@ mod tests {
     /// remaining disqualifier independently. Since Stage A the thread-per-core sharded
     /// arm (`shardable`) is accepted, not rejected — a metrics-only sharded run selects
     /// exact-fold. Since Stage C a cellular child (`is_cellular`) is likewise accepted for
-    /// a metrics-only run (it ships its folded store to the controller); only a cellular
-    /// run that ALSO wants a per-record artifact rejects, and that is caught by
-    /// `wants_per_record_artifacts`, not `is_cellular`. (Graph datasets never reach this
-    /// scheduled path, so "not graph" is implicit.)
+    /// a metrics-only run (it ships its folded store to the controller). A cellular run
+    /// that ALSO wants a per-record artifact rejects here via `wants_per_record_artifacts`
+    /// (not `is_cellular`) — but that only keeps the cell on retain; a cellular run emits
+    /// NO per-record FILE artifacts on either path (the controller discards cell scratch;
+    /// Stage D). (Graph datasets never reach this scheduled path, so "not graph" is
+    /// implicit.)
     #[test]
     fn exact_fold_gate_accepts_clean_run_and_rejects_disqualifiers() {
         // A clean single-thread scheduled metrics-only run: every disqualifier false.
