@@ -54,6 +54,9 @@ pub(crate) struct Inputs {
     pub endpoint_type: String,
     pub transport: crate::model::transport::Transport,
     pub streaming: bool,
+    pub timeout_seconds: Option<f64>,
+    pub use_legacy_max_tokens: bool,
+    pub use_server_token_count: bool,
     pub api_key: Option<String>,
     pub headers: std::collections::BTreeMap<String, String>,
     pub tokenizer_name: Option<String>,
@@ -70,6 +73,14 @@ pub(crate) struct Inputs {
     pub request_rate: Option<f64>,
     /// Arrival distribution for `request_rate` (`poisson`/`gamma`/`constant`).
     pub rate_mode: Option<String>,
+    /// Gamma smoothness shape.
+    pub smoothness: Option<f64>,
+    /// Concurrency-ramp duration, seconds.
+    pub concurrency_ramp: Option<f64>,
+    /// Rate-ramp duration, seconds.
+    pub rate_ramp: Option<f64>,
+    /// Post-send cancellation `(rate, delay)`.
+    pub cancellation: Option<(f64, f64)>,
     pub request_count: Option<u64>,
     pub benchmark_duration: Option<f64>,
     pub grace_period: Option<f64>,
@@ -163,6 +174,9 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         endpoint_type,
         transport: Transport::Http,
         streaming: flags.streaming,
+        timeout_seconds: flags.request_timeout_seconds,
+        use_legacy_max_tokens: flags.use_legacy_max_tokens,
+        use_server_token_count: flags.use_server_token_count,
         api_key: flags.api_key.clone(),
         headers: parse_headers(&flags.headers)?,
         tokenizer_name: flags.tokenizer.clone(),
@@ -190,6 +204,16 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         concurrency,
         request_rate,
         rate_mode: flags.request_rate_mode.clone(),
+        smoothness: flags.arrival_smoothness,
+        concurrency_ramp: flags.concurrency_ramp_duration,
+        rate_ramp: flags.request_rate_ramp_duration,
+        cancellation: match (
+            flags.request_cancellation_rate,
+            flags.request_cancellation_delay,
+        ) {
+            (Some(rate), delay) => Some((rate, delay.unwrap_or(0.0))),
+            _ => None,
+        },
         request_count,
         benchmark_duration,
         grace_period: flags.benchmark_grace_period,
@@ -228,9 +252,9 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         urls: inputs.urls.iter().map(|u| normalize_url(u)).collect(),
         endpoint_type: EndpointType(inputs.endpoint_type),
         streaming: inputs.streaming,
-        use_legacy_max_tokens: false,
-        use_server_token_count: false,
-        timeout_seconds: DEFAULT_TIMEOUT_SECONDS,
+        use_legacy_max_tokens: inputs.use_legacy_max_tokens,
+        use_server_token_count: inputs.use_server_token_count,
+        timeout_seconds: inputs.timeout_seconds.unwrap_or(DEFAULT_TIMEOUT_SECONDS),
         connection_reuse: ConnectionReuse::Pooled,
         ssl_verify: true,
         connection_limit: DEFAULT_CONNECTION_LIMIT,
@@ -339,18 +363,25 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             },
         }
     } else {
-        build_phase(
+        let mut phase = build_phase(
             "profiling",
             false,
             inputs.concurrency.unwrap_or(1),
             inputs.request_rate,
             inputs.rate_mode.as_deref(),
+            inputs.smoothness,
             inputs.concurrency,
             inputs.request_count,
             inputs.sessions,
             inputs.benchmark_duration,
             inputs.grace_period,
-        )
+        );
+        phase.common.concurrency_ramp = inputs.concurrency_ramp.map(linear_ramp);
+        phase.common.rate_ramp = inputs.rate_ramp.map(linear_ramp);
+        phase.common.cancellation = inputs
+            .cancellation
+            .map(|(rate, delay)| crate::model::phase::Cancellation { rate, delay });
+        phase
     };
     let mut phases = Vec::new();
     if let Some(warmup) = inputs.warmup {
@@ -360,6 +391,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             true,
             concurrency.unwrap_or(1),
             warmup.rate,
+            None,
             None,
             concurrency,
             warmup.requests,
@@ -448,6 +480,7 @@ fn build_phase(
     default_concurrency: u32,
     rate: Option<f64>,
     rate_mode: Option<&str>,
+    smoothness: Option<f64>,
     concurrency: Option<u32>,
     requests: Option<u64>,
     sessions: Option<u64>,
@@ -459,7 +492,7 @@ fn build_phase(
             Some("gamma") => PhaseKind::Gamma {
                 rate,
                 concurrency,
-                smoothness: None,
+                smoothness,
             },
             Some("constant") => PhaseKind::Constant { rate, concurrency },
             // Poisson is the default arrival distribution.
@@ -501,6 +534,14 @@ fn parse_headers(raw: &[String]) -> anyhow::Result<std::collections::BTreeMap<St
         headers.insert(name.trim().to_string(), value.trim().to_string());
     }
     Ok(headers)
+}
+
+/// A linear ramp of the given duration (the default ramp strategy).
+fn linear_ramp(duration: f64) -> crate::model::phase::Ramp {
+    crate::model::phase::Ramp {
+        duration,
+        strategy: "linear".to_string(),
+    }
 }
 
 /// Count the non-empty lines of a fixed-schedule input file (its entry count).

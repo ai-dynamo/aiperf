@@ -56,6 +56,9 @@ const FIXTURES: &[&str] = &[
     "fixed_sched",
     "rate_constant",
     "rate_gamma",
+    "tuning",
+    "ramp",
+    "cancel",
 ];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).

@@ -75,6 +75,18 @@ pub struct ProfileFlags {
     #[arg(long = "streaming", default_value_t = false)]
     pub streaming: bool,
 
+    /// Per-request timeout, seconds (`--request-timeout-seconds`).
+    #[arg(long = "request-timeout-seconds")]
+    pub request_timeout_seconds: Option<f64>,
+
+    /// Emit legacy `max_tokens` (`--use-legacy-max-tokens`).
+    #[arg(long = "use-legacy-max-tokens", default_value_t = false)]
+    pub use_legacy_max_tokens: bool,
+
+    /// Trust server-reported token counts (`--use-server-token-count`).
+    #[arg(long = "use-server-token-count", default_value_t = false)]
+    pub use_server_token_count: bool,
+
     /// API authentication key (`--api-key`).
     #[arg(long = "api-key")]
     pub api_key: Option<String>,
@@ -95,6 +107,26 @@ pub struct ProfileFlags {
     /// `poisson` (default), `gamma`, or `constant`.
     #[arg(long = "request-rate-mode")]
     pub request_rate_mode: Option<String>,
+
+    /// Gamma burstiness/smoothness shape (`--arrival-smoothness`).
+    #[arg(long = "arrival-smoothness")]
+    pub arrival_smoothness: Option<f64>,
+
+    /// Ramp concurrency over N seconds (`--concurrency-ramp-duration`).
+    #[arg(long = "concurrency-ramp-duration")]
+    pub concurrency_ramp_duration: Option<f64>,
+
+    /// Ramp request rate over N seconds (`--request-rate-ramp-duration`).
+    #[arg(long = "request-rate-ramp-duration")]
+    pub request_rate_ramp_duration: Option<f64>,
+
+    /// Fraction of requests to cancel (`--request-cancellation-rate`).
+    #[arg(long = "request-cancellation-rate")]
+    pub request_cancellation_rate: Option<f64>,
+
+    /// Delay before cancellation, seconds (`--request-cancellation-delay`).
+    #[arg(long = "request-cancellation-delay")]
+    pub request_cancellation_delay: Option<f64>,
 
     /// Maximum requests to send (`--request-count`); comma-list ⇒ sweep.
     #[arg(long = "request-count")]
