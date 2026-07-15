@@ -979,35 +979,19 @@ async def _benchmark_appears_complete(
 ) -> bool:
     """Return True only when there is evidence the benchmark is actually done.
 
-    Checked signals (in order, short-circuiting on first hit):
-        1. Controller ``/api/progress`` reports ``is_complete=True``.
-        2. The control-plane container in the controller pod is terminated.
+    Signal: the control-plane container in the controller pod is terminated. (The
+    former first signal -- polling the controller's ``/api/progress`` for
+    ``is_complete`` -- is retired along with the rest of the mesh poll; completion
+    now arrives on the ``benchmark-complete`` annotation the run pushes, so this
+    orphan-claim gate only needs the pod-terminated fallback for the case where the
+    annotation handler crashed after side effects but before flushing status.)
 
-    Both signals are quick, read-only, and side-effect-free; if neither fires
-    we return False so callers can skip eager completion work (e.g.
-    ``_recover_orphaned_completion_claim``) while the benchmark is still in
-    flight. A return value of False therefore means "no evidence yet, try
-    again next tick" — never "definitely still running".
+    The signal is quick, read-only, and side-effect-free; if it does not fire we
+    return False so callers skip eager completion work (e.g.
+    ``_recover_orphaned_completion_claim``) while the benchmark is still in flight.
+    A return value of False therefore means "no evidence yet, try again next tick" --
+    never "definitely still running". ``key`` is retained for signature stability.
     """
-    host = controller_dns_name(jobset_name, namespace)
-    progress_client = await get_or_create_progress_client(key)
-    try:
-        progress = await progress_client.get_progress(host)
-        if not progress.connection_error and progress.is_complete:
-            return True
-    except (TimeoutError, aiohttp.ClientError, OSError) as e:
-        logger.debug(
-            "progress probe for %s during orphan-claim gate failed: %s",
-            jobset_name,
-            e,
-        )
-    except Exception as e:  # noqa: BLE001 - gate is best-effort; fall through to the pod-status check on any parse/transport error
-        logger.debug(
-            "progress probe for %s during orphan-claim gate failed: %s",
-            jobset_name,
-            e,
-        )
-
     pod = await _get_controller_pod(api, namespace, jobset_name)
     if pod is None:
         # No controller pod. Two scenarios put us here:
@@ -1800,52 +1784,26 @@ async def _fetch_progress(
     *,
     body: dict[str, Any] | None = None,
 ) -> bool:
-    """Fetch progress and live metrics from controller pod.
+    """Retired: the run pushes progress; the operator does not poll for it.
 
-    Returns True if the benchmark is complete (all profiling requests done).
+    Under the native execution model there is no per-run ``/api/progress`` service
+    to poll. The run pod (``aiperf controller``) pushes its live progress straight
+    into its own AIPerfJob ``.status.phases.<phase>`` via
+    ``completion_signal.report_benchmark_progress`` (the same in-cluster push it
+    already used for the completion annotation), and completion arrives on the
+    ``benchmark-complete`` annotation, which ``lifecycle.on_benchmark_complete``
+    turns into the full completion (results fetch + JobSet delete + phase=Completed)
+    via a kopf field watcher. So this function no longer performs the mesh HTTP poll
+    (``progress_client.get_progress`` + the ``.status.phases`` overwrite + the
+    live/server-metrics fetches): those all targeted the retired ZMQ ``api`` service.
+
+    It keeps its signature and always returns ``False`` (never "poll-observed
+    complete") so the surrounding tick orchestration is unchanged and completion
+    flows exclusively through the push/annotation path — identical to how this poll
+    already behaved on the native path, where ``get_progress`` hit a connection error
+    and returned ``False`` every tick. ``progress_client`` stays a parameter because
+    the caller still uses it for results-sidecar recovery and controller shutdown.
     """
-
-    host = controller_dns_name(jobset_name, namespace)
-
-    try:
-        progress = await progress_client.get_progress(host)
-
-        if progress.connection_error:
-            logger.debug(
-                f"Progress API unreachable for {jobset_name}: connection error"
-            )
-            return False
-
-        phases_data: dict[str, Any] = {}
-        for phase, stats in progress.phases.items():
-            if phase_progress := _build_phase_progress(stats):
-                phases_data[phase] = phase_progress.to_k8s_dict()
-
-        if phases_data:
-            patch.status["phases"] = phases_data
-
-        _apply_controller_progress_status(patch, sb, progress, current_phase)
-
-        if progress.error:
-            patch.status["error"] = progress.error
-
-        await _fetch_live_metrics(progress_client, host, jobset_name, patch)
-        await _fetch_server_metrics(progress_client, host, jobset_name, patch)
-
-        # Return completion status for caller to handle. Skip signaling
-        # completion if another path (this or a previous operator run)
-        # has already claimed it: in-process set OR durable annotation.
-        if progress.is_complete and key not in _shutdown_sent:
-            if body is not None and is_completion_claimed(body):
-                _shutdown_sent.add(key)
-                return False
-            return True
-
-    except (TimeoutError, ApiException, aiohttp.ClientError, OSError) as e:
-        logger.warning(f"Failed to fetch progress for {jobset_name}: {e}")
-    except Exception as e:  # noqa: BLE001 - best-effort progress polling; no error here must abort the monitor tick
-        logger.warning(f"Failed to fetch progress for {jobset_name}: {e}")
-
     return False
 
 
