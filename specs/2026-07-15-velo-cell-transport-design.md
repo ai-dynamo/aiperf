@@ -387,3 +387,25 @@ cancellation, ramps, multi-URL) keep their existing warnings.
 6. **Fail-closed:** `cells>1` without the `velo` feature.
 7. **Tests:** unit + port `test_cellular.rs` / `test_graph_cellular.rs` onto the velo `LocalLauncher`.
 8. **Docs:** the §8 updates in the same change.
+
+---
+
+## Addendum — 2026-07-15 — built, and mechanism resolved; superseded going forward by the ultimate spec
+
+This design is now **built** on `velo-connect` and the connection question is **resolved**: mechanism
+A/A′/B is settled by **connect-by-endpoint** — the fork branch `feat/connect-by-endpoint` adds
+`Velo::connect(Endpoint) -> PeerInfo` (address-first `_hello` handshake, response carries
+`peer_info`), and AIPerf's `connect.rs::connect_controller` wraps it with a retry loop. The
+bootstrap-PeerInfo fallback (mechanism B, `serve_bootstrap`) — still present on the older
+`rust-operator` branch — is **superseded** by connect-by-endpoint; do not build new work on it. The
+four-handler velo protocol (`register`/`heartbeat`/`partition`/`store_partition` over rmp raw
+payloads), synchronized START via a velo `EventHandle` (with an AIPerf-side `AtomicU32` count barrier
+— velo has no count-trigger primitive), the `CellLauncher` Local/K8s split, and Stages B–G
+artifact/dataset shipping are all shipped.
+
+The forward north-star — dataset **fan-out** (producer-owned SPMC broadcast, which velo does **not**
+have and must add), the **monotonic phaser** control plane (START generalized to every phase
+transition), the per-request dispatch state machine + `DistributionMiss`, and bounded-memory record
+collection (sketch `StorePartition`) — is specified in
+`2026-07-15-ultimate-cellular-velo-runtime-design.md`, which is authoritative where it revises this
+spec.
