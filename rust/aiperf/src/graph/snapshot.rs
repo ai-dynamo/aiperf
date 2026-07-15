@@ -371,31 +371,38 @@ fn frontier_edges(
     (new_edges, kept_pred_residuals)
 }
 
-/// The per-session chain key a trie node id belongs to.
+/// The per-session chain key a trie node belongs to.
 ///
-/// Both live trie producers mint node ids as `{chain_prefix}_{ordinal}` — one
-/// linear chain per recorded session (the weka walk emits `{trace_id}:{k}` for
-/// the root request list and `r_1_0`/`r_1_1` for a spawned subagent; the dynamo
-/// lowering emits `{session_id}:{k}` per session). Stripping the final
-/// `_`-delimited token recovers the enclosing session chain. Chain identity must
-/// come from node ids because the sidecar-loaded timing plane strips
-/// `metadata["trie"]`, leaving ids + edges as the only chain signal, and the
-/// interval-order edges are cross-chain ordering edges, not session boundaries.
-/// A node id with no `_` forms a defensive singleton chain.
+/// The Rust recorded builders mint node ids with `:` as the ordinal separator
+/// (weka `{scope}:{turn_index}` — `graph/recorded/weka/mod.rs:170`; aiperf_trace
+/// `{chain}:{turn}`; dynamo `{session_id}:{k}`), so a `_`-based id split (Python's
+/// `_chain_key`) does NOT recover the enclosing session chain and would make
+/// every recorded node its own singleton. Instead group by the AUTHORITATIVE
+/// chain identity the trie lowerer stamps into
+/// `metadata["conversation_id"]` (= the weka scope / dynamo `session_id` /
+/// aiperf_trace agent-or-session, written at `graph/recorded/trie/mod.rs:170`),
+/// with `metadata["turn_index"]` as the ordinal.
 ///
-/// Port of `graph_ir_replay.py:106-127` (`_chain_key`). Python uses
-/// `str.rpartition("_")`, which splits on the LAST `_`; `str::rfind('_')` is the
-/// byte-exact equivalent over the id's ASCII segment names.
-fn chain_key(node_id: &str) -> String {
-    match node_id.rfind('_') {
-        Some(idx) => node_id[..idx].to_owned(),
-        None => node_id.to_owned(),
-    }
+/// FALLBACK: a node lacking `metadata["conversation_id"]` (e.g. a synthetic/dag
+/// graph that reaches this path) forms a defensive singleton keyed by its own
+/// id — mirroring Python's no-separator case.
+///
+/// This faithfully achieves the INTENT of `graph_ir_replay.py:106-127`
+/// (`_chain_key`): "recover the enclosing session chain". Python parsed the id
+/// only because its sidecar-loaded timing plane had stripped `metadata["trie"]`,
+/// leaving ids as the sole chain signal; the Rust IR retains `conversation_id`
+/// in metadata, so grouping by it is both robust and correct for the Rust id
+/// scheme.
+fn chain_key(node_id: &str, node: &LlmNode) -> String {
+    node.metadata
+        .get("conversation_id")
+        .and_then(serde_json::Value::as_str)
+        .map_or_else(|| node_id.to_owned(), str::to_owned)
 }
 
 /// Return `{node_id: node}` of each chain-live-at-`t*` boundary turn.
 ///
-/// Chains are the per-session linear paths the trie node ids encode
+/// Chains are the per-session linear paths keyed by `metadata["conversation_id"]`
 /// ([`chain_key`]), ordered by recorded arrival. A chain is LIVE when it has
 /// BOTH a node arriving before `t*` and a node arriving at/after `t*`; its
 /// boundary is the LAST pre-`t*` node. Chains with no pre-`t*` node need no
@@ -414,7 +421,7 @@ pub fn warmup_boundary_nodes(graph: &GraphRecord, t_star_us: f64) -> BTreeMap<St
     let mut chains: BTreeMap<String, Vec<(f64, &str)>> = BTreeMap::new();
     for (nid, node) in &graph.nodes {
         chains
-            .entry(chain_key(nid))
+            .entry(chain_key(nid, node))
             .or_default()
             .push((arrival_offset_us(node), nid.as_str()));
     }
@@ -645,9 +652,12 @@ mod tests {
     // `_warmup_boundary_nodes`, `rewrite_for_warmup`) against a shape-equivalent
     // standalone fixture — see the task-B2 report and `/tmp/warmup_derive.py`.
 
-    /// Node id `{chain}_{ordinal}` with arrival, inputs, optional min-start-delay,
-    /// and optional `max_tokens`, so warmup preservation/clearing is observable.
+    /// Node with `metadata["conversation_id"] = chain`, arrival, inputs, optional
+    /// min-start-delay, and optional `max_tokens`, so warmup preservation/clearing
+    /// is observable. Chain identity comes from the conversation_id metadata (as
+    /// the recorded trie lowerer writes it), NOT the node id's `_`-suffix.
     fn wnode(
+        chain: &str,
         arrival_us: u64,
         inputs: &[&str],
         min_start: Option<f64>,
@@ -656,6 +666,8 @@ mod tests {
         let mut n = node(arrival_us, inputs);
         n.min_start_delay_us = min_start;
         n.max_tokens = max_tokens;
+        n.metadata
+            .insert("conversation_id".to_owned(), json!(chain));
         n
     }
 
@@ -665,29 +677,38 @@ mod tests {
     /// boundary (boundary = chainD_1). Mirrors `/tmp/warmup_derive.py`.
     fn warmup_fixture() -> ParsedGraph {
         let mut nodes = BTreeMap::new();
-        nodes.insert("chainA_0".to_owned(), wnode(0, &[], None, None));
+        nodes.insert("chainA_0".to_owned(), wnode("chainA", 0, &[], None, None));
         nodes.insert(
             "chainA_1".to_owned(),
-            wnode(1_000_000, &["chainA_0_out"], None, None),
+            wnode("chainA", 1_000_000, &["chainA_0_out"], None, None),
         );
         nodes.insert(
             "chainA_2".to_owned(),
-            wnode(2_000_000, &["chainA_1_out"], None, None),
+            wnode("chainA", 2_000_000, &["chainA_1_out"], None, None),
         );
-        nodes.insert("chainB_0".to_owned(), wnode(0, &[], None, None));
+        nodes.insert("chainB_0".to_owned(), wnode("chainB", 0, &[], None, None));
         nodes.insert(
             "chainB_1".to_owned(),
-            wnode(500_000, &["chainB_0_out"], None, None),
+            wnode("chainB", 500_000, &["chainB_0_out"], None, None),
         );
-        nodes.insert("chainC_0".to_owned(), wnode(3_000_000, &[], None, None));
-        nodes.insert("chainD_0".to_owned(), wnode(0, &[], None, None));
+        nodes.insert(
+            "chainC_0".to_owned(),
+            wnode("chainC", 3_000_000, &[], None, None),
+        );
+        nodes.insert("chainD_0".to_owned(), wnode("chainD", 0, &[], None, None));
         nodes.insert(
             "chainD_1".to_owned(),
-            wnode(1_000_000, &["chainD_0_out"], Some(999.0), Some(42)),
+            wnode(
+                "chainD",
+                1_000_000,
+                &["chainD_0_out"],
+                Some(999.0),
+                Some(42),
+            ),
         );
         nodes.insert(
             "chainD_2".to_owned(),
-            wnode(2_000_000, &["chainD_1_out"], None, None),
+            wnode("chainD", 2_000_000, &["chainD_1_out"], None, None),
         );
         ParsedGraph {
             graph: GraphRecord {
@@ -770,6 +791,97 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    /// A recorded-id node: id uses the Rust `:` ordinal separator and carries
+    /// the authoritative chain identity in `metadata["conversation_id"]` (as the
+    /// recorded trie lowerer writes it, `graph/recorded/trie/mod.rs:170`).
+    fn rnode(conversation_id: &str, arrival_us: u64) -> LlmNode {
+        let mut n = node(arrival_us, &[]);
+        n.metadata
+            .insert("conversation_id".to_owned(), json!(conversation_id));
+        n
+    }
+
+    /// One recorded session chain "root" with two `:`-ordinal-id turns straddling
+    /// `t*`: `root:0` (arrival 0, pre-t*) and `root:1` (arrival 2e6, post-t*).
+    /// Both carry `metadata["conversation_id"] = "root"`. The chain is LIVE, so
+    /// its boundary must be the LAST pre-t* node, `root:0`.
+    ///
+    /// Under the OLD `_`-split `chain_key`, `root:0` and `root:1` have no `_`, so
+    /// each became its own singleton chain — neither singleton has both a pre-
+    /// and post-t* member, so the boundary map came back EMPTY (the real-recorded
+    /// warmup never primed). Grouping by `conversation_id` recovers the chain.
+    #[test]
+    fn warmup_boundary_groups_colon_recorded_ids_by_conversation_id() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert("root:0".to_owned(), rnode("root", 0));
+        nodes.insert("root:1".to_owned(), rnode("root", 2_000_000));
+        let g = ParsedGraph {
+            graph: GraphRecord {
+                nodes,
+                edges: Vec::new(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let boundary = warmup_boundary_nodes(&g.graph, 1_000_000.0);
+        assert_eq!(
+            boundary.keys().cloned().collect::<Vec<_>>(),
+            vec!["root:0".to_owned()],
+            "chain 'root' straddles t*; boundary is its last pre-t* node"
+        );
+    }
+
+    /// A nested subagent chain: the subagent's conversation_id is the PARENT
+    /// turn id (`root:1`), and its own turns are `root:1:0` / `root:1:1`. Grouping
+    /// by `conversation_id` metadata (not id-suffix) is what makes this correct —
+    /// an id-suffix split of `root:1:0` on any separator would misgroup it.
+    #[test]
+    fn warmup_boundary_groups_nested_subagent_chain_by_conversation_id() {
+        let mut nodes = BTreeMap::new();
+        // Root chain: single pre-t* node — not live on its own.
+        nodes.insert("root:0".to_owned(), rnode("root", 0));
+        // Subagent chain conversation_id="root:1", straddling t*.
+        nodes.insert("root:1:0".to_owned(), rnode("root:1", 500_000));
+        nodes.insert("root:1:1".to_owned(), rnode("root:1", 3_000_000));
+        let g = ParsedGraph {
+            graph: GraphRecord {
+                nodes,
+                edges: Vec::new(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let boundary = warmup_boundary_nodes(&g.graph, 1_000_000.0);
+        assert_eq!(
+            boundary.keys().cloned().collect::<Vec<_>>(),
+            vec!["root:1:0".to_owned()],
+            "subagent chain 'root:1' straddles t*; boundary is its last pre-t* node"
+        );
+    }
+
+    /// Fallback: a node with NO `conversation_id` metadata (e.g. a synthetic/dag
+    /// graph reaching this path) forms a defensive singleton keyed by its own id,
+    /// mirroring Python's no-separator case. Two such nodes never group, so a lone
+    /// straddle across two DIFFERENT synthetic ids yields no boundary.
+    #[test]
+    fn warmup_boundary_falls_back_to_node_id_without_conversation_id() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert("syn_0".to_owned(), node(0, &[]));
+        nodes.insert("syn_1".to_owned(), node(2_000_000, &[]));
+        let g = ParsedGraph {
+            graph: GraphRecord {
+                nodes,
+                edges: Vec::new(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        // Each is its own singleton chain (no conversation_id, distinct ids), so
+        // neither is live -> empty boundary.
+        let boundary = warmup_boundary_nodes(&g.graph, 1_000_000.0);
+        assert!(boundary.is_empty());
     }
 
     #[test]
