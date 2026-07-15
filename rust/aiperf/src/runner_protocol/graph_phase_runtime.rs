@@ -2430,6 +2430,20 @@ fn build_warmup_handoff(
 struct LaneResumePlan {
     lane: u64,
     plan: GraphTracePlan,
+    /// The exact instance id to stamp on the dispatched trace when this lane
+    /// RESUMES a handoff entry whose template was found in the corpus: the live
+    /// pressure instance's id (`entry.instance_id`). Reusing it verbatim keeps
+    /// the per-instance cache-bust marker (a digest of `trace.id`; see the
+    /// continuity contract on [`crate::graph::warmup_handoff::LaneHandoff::instance_id`],
+    /// `warmup_handoff.rs:39-44`) continuous across warmup->profiling, so the KV
+    /// the pressure stage built at that id transfers instead of cold-prefilling
+    /// behind a fresh marker. `None` for fresh-start lanes, normal pass-0 lanes,
+    /// and the not-in-corpus resume fallback -- those were never primed at a
+    /// pressure id, so they keep the normal per-lane-unique native id and mint a
+    /// fresh marker (Python `_run_instance`, `graph_ir_replay.py:1809-1828`:
+    /// `instance_id = handoff_entry.instance_id` only when the entry survives the
+    /// `trace.id == handoff_entry.template_trace_id` guard, else a fresh nonce).
+    resume_instance_id: Option<String>,
 }
 
 /// Build the PROFILING phase's PER-LANE resume instances from a warmup handoff.
@@ -2518,7 +2532,13 @@ fn build_profiling_resume_lane_plans(
             .copied()
             .unwrap_or_else(|| pressure_draw_index(lane_u64, n));
 
-        let plan = if let Some(entry) = handoff.lanes.get(&lane_u64) {
+        // `resume_instance_id` is set ONLY when the lane resumes a handoff entry
+        // whose template resolved in the corpus (the frontier-chop branch): the
+        // dispatched trace then carries the pressure instance's exact id so the
+        // cache-bust marker stays continuous (Python `_run_instance` reuses
+        // `handoff_entry.instance_id` only after the `trace.id ==
+        // handoff_entry.template_trace_id` guard survives, `:1809-1828`).
+        let (plan, resume_instance_id) = if let Some(entry) = handoff.lanes.get(&lane_u64) {
             // RESUME entry: frontier-chop the resumed template with THIS lane's
             // executed set / return walls / t*. Absent from the corpus → the
             // lane's normal pass-0 assignment (Python `resumed is None`).
@@ -2543,28 +2563,35 @@ fn build_profiling_resume_lane_plans(
                         handoff.drain_end_wall_us,
                         residual_cap_us,
                     );
-                    GraphTracePlan {
+                    let plan = GraphTracePlan {
                         graph: rewritten.graph,
                         trace: original.trace.clone(),
                         arrival_offset_ns: original.arrival_offset_ns,
-                    }
+                    };
+                    (plan, Some(entry.instance_id.clone()))
                 }
-                None => split[base_index].clone(),
+                // Handoff template not in this corpus: fall back to the lane's
+                // normal pass-0 plan and its normal id (Python drops the entry
+                // via the `trace.id != template_trace_id` guard, so the fresh
+                // nonce path applies — no marker continuity to preserve).
+                None => (split[base_index].clone(), None),
             }
         } else if recycle_bounded && lane_u64 < handoff.pressure_lane_count {
             // Empty pressure lane completed at drain: fresh-start it from the
             // shared cursor at full `t*=0` replay (Python `:1352-1364`) instead
-            // of re-running a t* resume the pressure stage already warmed.
+            // of re-running a t* resume the pressure stage already warmed. It was
+            // never primed, so it keeps its normal id / fresh marker.
             let draw = pressure_draw_index(next_index, n);
             next_index = next_index.saturating_add(1);
-            original_plans[draw].clone()
+            (original_plans[draw].clone(), None)
         } else {
-            // Normal pass-0 assignment at the lane's t* window.
-            split[base_index].clone()
+            // Normal pass-0 assignment at the lane's t* window (normal id).
+            (split[base_index].clone(), None)
         };
         lane_plans.push(LaneResumePlan {
             lane: lane_u64,
             plan,
+            resume_instance_id,
         });
     }
 
@@ -2606,10 +2633,26 @@ fn profiling_resolve_pass0_lanes(split: &[GraphTracePlan], lanes: usize) -> (Vec
 /// the prefix is the "every drained lane dispatched at the handoff" set (resume /
 /// fresh-start / pass-0 instances, NOT gated by the session cap — they are
 /// continuations), and the delegate is the bounded recycle that Python's shared
-/// `next_index` cursor drives after them. Each prefix instance is stamped with a
-/// per-lane-unique id (`{template}::resume-lane-{lane}`) so two lanes resuming the
-/// same template stay distinct; the recycle keeps its own `::instance-{n}`
-/// identities from the shared [`GraphTraceInstanceSequence`], a disjoint id space.
+/// `next_index` cursor drives after them.
+///
+/// Instance-id stamping (DF4b, the KV-continuity mechanism):
+/// - A lane RESUMING a handoff entry (template found in corpus) carries the
+///   pressure instance's EXACT id (`entry.instance_id`, in
+///   [`LaneResumePlan::resume_instance_id`]). The per-instance cache-bust marker
+///   is a digest of `trace.id`, so reusing the id keeps the marker continuous
+///   and the KV the pressure stage built transfers instead of cold-prefilling
+///   behind a fresh marker (contract:
+///   [`crate::graph::warmup_handoff::LaneHandoff::instance_id`],
+///   `warmup_handoff.rs:39-44`; Python `graph_ir_replay.py:1809-1820`).
+/// - Fresh-start lanes, normal pass-0 lanes, and the not-in-corpus resume
+///   fallback were NOT primed at a pressure id, so they keep the per-lane-unique
+///   `{template}::resume-lane-{lane}` id (two same-template lanes stay distinct)
+///   and mint a fresh marker.
+///
+/// The recycle keeps its own `::instance-{n}` identities from the shared
+/// [`GraphTraceInstanceSequence`], a disjoint id space. Pressure instance ids are
+/// distinct per lane (each lane minted its own `t-N#L.pK`), so reusing them
+/// cannot collide two prefix instances.
 struct LaneResumeGraphTraceSource {
     prefix: Vec<LaneResumePlan>,
     next_prefix: Cell<usize>,
@@ -2623,7 +2666,12 @@ impl GraphTraceSource for LaneResumeGraphTraceSource {
             self.next_prefix.set(idx + 1);
             let entry = &self.prefix[idx];
             let mut plan = entry.plan.clone();
-            plan.trace.id = format!("{}::resume-lane-{}", plan.trace.id, entry.lane);
+            // Resume lanes reuse the pressure instance's id verbatim for marker
+            // continuity; every other lane keeps the per-lane-unique native id.
+            plan.trace.id = match &entry.resume_instance_id {
+                Some(instance_id) => instance_id.clone(),
+                None => format!("{}::resume-lane-{}", plan.trace.id, entry.lane),
+            };
             return Ok(Some(plan));
         }
         self.recycle.next_trace()
@@ -4398,6 +4446,11 @@ mod tests {
             plan_node_ids(&prefix[0].plan),
             plan_node_ids(&prefix[1].plan)
         );
+        // DF4b: the two lanes carry the two DIFFERENT pressure instance ids, so
+        // each stays KV-continuous with its own pressure instance and the two
+        // resumed instances remain distinct.
+        assert_eq!(prefix[0].resume_instance_id.as_deref(), Some("t::inst-0"));
+        assert_eq!(prefix[1].resume_instance_id.as_deref(), Some("t::inst-1"));
     }
 
     #[test]
@@ -4446,6 +4499,10 @@ mod tests {
         assert_eq!(plan_node_ids(&prefix[1].plan), vec!["n_0".to_owned()]);
         // One fresh-start draw consumed one cursor position.
         assert_eq!(fresh, 1);
+        // DF4b: lane 0 resumed -> carries the pressure id; lane 1 fresh-started
+        // (never primed) -> None, so it keeps its normal per-lane native id.
+        assert_eq!(prefix[0].resume_instance_id.as_deref(), Some("a::inst-0"));
+        assert_eq!(prefix[1].resume_instance_id, None);
     }
 
     #[test]
@@ -4494,6 +4551,10 @@ mod tests {
         );
         assert_eq!(prefix_foreign.len(), 1);
         assert_eq!(plan_node_ids(&prefix_foreign[0].plan), node_ids(&base));
+        // DF4b: a not-in-corpus resume falls back to the normal pass-0 plan and
+        // its normal id (Python drops the entry on the template-id guard), so no
+        // pressure id is reused — there is no matching KV to preserve.
+        assert_eq!(prefix_foreign[0].resume_instance_id, None);
     }
 
     #[test]
@@ -4506,10 +4567,12 @@ mod tests {
             LaneResumePlan {
                 lane: 0,
                 plan: pressure_one_node_plan("t"),
+                resume_instance_id: None,
             },
             LaneResumePlan {
                 lane: 1,
                 plan: pressure_one_node_plan("t"),
+                resume_instance_id: None,
             },
         ];
         let recycle = build_graph_trace_source(
@@ -4536,6 +4599,85 @@ mod tests {
                 "t::instance-1".to_owned(),
             ]
         );
+    }
+
+    #[test]
+    fn lane_resume_source_reuses_pressure_instance_id_for_marker_continuity() {
+        // DF4b HARD guard: a lane resuming a handoff entry dispatches under the
+        // EXACT pressure instance id (`entry.instance_id`), NOT a fresh
+        // `::resume-lane-{lane}` id, so the cache-bust marker (digest of
+        // trace.id) is continuous and the pressure-built KV transfers. Two lanes
+        // on the same template carry the two DIFFERENT pressure instance ids —
+        // still distinct, still KV-continuous each.
+        let prefix = vec![
+            LaneResumePlan {
+                lane: 0,
+                plan: pressure_one_node_plan("t"),
+                resume_instance_id: Some("t::inst-0".to_owned()),
+            },
+            LaneResumePlan {
+                lane: 1,
+                plan: pressure_one_node_plan("t"),
+                resume_instance_id: Some("t::inst-1".to_owned()),
+            },
+        ];
+        let recycle = build_graph_trace_source(
+            vec![pressure_one_node_plan("t")],
+            Some(2),
+            None,
+            GraphTraceInstanceSequence::default(),
+            0,
+        )
+        .unwrap();
+        let source = LaneResumeGraphTraceSource {
+            prefix,
+            next_prefix: Cell::new(0),
+            recycle,
+        };
+        let drawn: Vec<String> =
+            std::iter::from_fn(|| source.next_trace().unwrap().map(|plan| plan.trace.id)).collect();
+        assert_eq!(
+            drawn,
+            vec![
+                "t::inst-0".to_owned(),
+                "t::inst-1".to_owned(),
+                "t::instance-0".to_owned(),
+                "t::instance-1".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn build_profiling_resume_lane_plans_carries_pressure_instance_id() {
+        // DF4b end-to-end: the resume-plan builder stamps the resumed lane's
+        // `resume_instance_id` with the handoff entry's `instance_id` so the
+        // dispatch source can reuse it. Fresh-start / pass-0 lanes stay `None`.
+        let window = TStarWindow::default();
+        let handoff = GraphWarmupHandoff {
+            lanes: BTreeMap::from([(
+                0u64,
+                LaneHandoff {
+                    template_trace_id: "t".to_owned(),
+                    instance_id: "t::inst-0".to_owned(),
+                    t_star_us: 0.0,
+                    executed_node_ids: BTreeSet::from(["n_0".to_owned()]),
+                    return_wall_us: BTreeMap::from([("n_0".to_owned(), 5.0)]),
+                },
+            )]),
+            drain_end_wall_us: 5.0,
+            corpus_cursor: 1,
+            pressure_lane_count: 1,
+        };
+        let (prefix, _) = build_profiling_resume_lane_plans(
+            &tstar_chain_plan(),
+            &named_concurrency_phase("profiling"),
+            window,
+            &handoff,
+            Some(1),
+            true,
+        );
+        assert_eq!(prefix.len(), 1);
+        assert_eq!(prefix[0].resume_instance_id.as_deref(), Some("t::inst-0"));
     }
 
     #[test]
