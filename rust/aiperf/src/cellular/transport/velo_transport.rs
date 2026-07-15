@@ -323,7 +323,10 @@ mod tests {
             .await
             .expect("controller velo");
         let controller_peer = controller_velo.peer_info();
-        let start = controller_velo.event_manager().new_event().expect("start event");
+        let start = controller_velo
+            .event_manager()
+            .new_event()
+            .expect("start event");
         let start_handle = start.handle();
         let spec_for: SpecFor = Arc::new(|cell_id: u32| Some(vec![cell_id as u8, 0xAB]));
         let mut controller =
@@ -377,7 +380,10 @@ mod tests {
             .await
             .expect("controller velo");
         let controller_peer = controller_velo.peer_info();
-        let start = controller_velo.event_manager().new_event().expect("start event");
+        let start = controller_velo
+            .event_manager()
+            .new_event()
+            .expect("start event");
         let start_handle = start.handle();
         let spec_for: SpecFor = Arc::new(|_| Some(vec![1_u8]));
         let mut controller =
@@ -412,7 +418,10 @@ mod tests {
             .await
             .expect("controller velo");
         let controller_peer = controller_velo.peer_info();
-        let start = controller_velo.event_manager().new_event().expect("start event");
+        let start = controller_velo
+            .event_manager()
+            .new_event()
+            .expect("start event");
         let start_handle = start.handle();
         let spec_for: SpecFor = Arc::new(|_| Some(vec![9_u8]));
         let controller =
@@ -433,7 +442,13 @@ mod tests {
         start.trigger().expect("trigger start");
 
         // Both cells' awaits resolve now that START fired.
-        cell_a.await_start(reply_a.start_event).await.expect("A start");
-        cell_b.await_start(reply_b.start_event).await.expect("B start");
+        cell_a
+            .await_start(reply_a.start_event)
+            .await
+            .expect("A start");
+        cell_b
+            .await_start(reply_b.start_event)
+            .await
+            .expect("B start");
     }
 }
