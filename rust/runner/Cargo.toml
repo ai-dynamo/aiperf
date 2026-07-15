@@ -31,8 +31,12 @@ dynamo-full = [
     "dynamo-profile",
 ]
 dynamo-parity = ["dynamo-full", "aiperf/dynamo-parity"]
+# Heap profiling: swaps mimalloc for dhat's tracking allocator; the profiler is
+# flushed at the protocol exit hook (write_json_line) since the runner process::exits.
+dhat-heap = ["dep:dhat"]
 
 [dependencies]
+dhat = { version = "0.3", optional = true }
 aiperf.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
