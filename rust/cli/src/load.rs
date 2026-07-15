@@ -110,6 +110,10 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         parse_single::<f64>("--benchmark-duration", flags.benchmark_duration.as_deref())?;
     let num_conversations =
         parse_single::<u32>("--num-conversations", flags.num_conversations.as_deref())?;
+    reject_sweep("--isl", flags.isl.as_deref())?;
+    reject_sweep("--osl", flags.osl.as_deref())?;
+    let isl_mean = parse_single::<f64>("--isl", flags.isl.as_deref())?;
+    let osl_mean = parse_single::<f64>("--osl", flags.osl.as_deref())?;
 
     let warmup = if flags.warmup_request_count.is_none()
         && flags.warmup_concurrency.is_none()
@@ -132,8 +136,19 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         tokenizer_name: flags.tokenizer.clone(),
         tokenizer_revision: flags.tokenizer_revision.clone(),
         tokenizer_trust: flags.tokenizer_trust_remote_code,
-        isl: default_isl(),
-        osl: None,
+        isl: match isl_mean {
+            Some(mean) => Distribution {
+                mean: Some(mean),
+                stddev: Some(flags.isl_stddev.unwrap_or(0.0)),
+                ..Default::default()
+            },
+            None => default_isl(),
+        },
+        osl: osl_mean.map(|mean| Distribution {
+            mean: Some(mean),
+            stddev: Some(flags.osl_stddev.unwrap_or(0.0)),
+            ..Default::default()
+        }),
         batch_size: 1,
         sampling: "sequential".to_string(),
         entries: num_conversations

@@ -54,6 +54,23 @@ pub struct ProfileFlags {
     #[arg(long = "num-conversations")]
     pub num_conversations: Option<String>,
 
+    /// Synthetic input length mean (`--isl` / `--synthetic-input-tokens-mean`);
+    /// comma ⇒ sweep.
+    #[arg(long = "isl", visible_alias = "synthetic-input-tokens-mean")]
+    pub isl: Option<String>,
+
+    /// Synthetic input length stddev (`--isl-stddev`).
+    #[arg(long = "isl-stddev", visible_alias = "synthetic-input-tokens-stddev")]
+    pub isl_stddev: Option<f64>,
+
+    /// Synthetic output length mean (`--osl` / `--output-tokens-mean`); comma ⇒ sweep.
+    #[arg(long = "osl", visible_alias = "output-tokens-mean")]
+    pub osl: Option<String>,
+
+    /// Synthetic output length stddev (`--osl-stddev`).
+    #[arg(long = "osl-stddev", visible_alias = "output-tokens-stddev")]
+    pub osl_stddev: Option<f64>,
+
     /// Enable streaming responses (`--streaming`).
     #[arg(long = "streaming", default_value_t = false)]
     pub streaming: bool,
