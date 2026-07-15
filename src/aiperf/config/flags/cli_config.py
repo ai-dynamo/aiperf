@@ -1651,6 +1651,28 @@ class CLIConfig(BaseConfig):
         CLIParameter(name=("--synthesis-idle-gap-cap",), group=Groups.SYNTHESIS),
     ] = None
 
+    scenario: Annotated[
+        str | None,
+        Field(
+            description="Lock all benchmark invariants for a named scenario "
+            "(e.g. 'inferencex-agentx-mvp'). Conflicts with the locked "
+            "invariants raise ScenarioLockError at startup unless "
+            "--unsafe-override is also passed. Distinct from the sweep "
+            "``scenarios`` strategy (hand-picked named runs).",
+        ),
+        CLIParameter(name=("--scenario",), group=Groups.SCENARIO),
+    ] = None
+
+    unsafe_override: Annotated[
+        bool,
+        Field(
+            description="Convert scenario lock errors to warnings; stamps "
+            "submission_valid=false in the resolved scenario outcome. No-op "
+            "without --scenario.",
+        ),
+        CLIParameter(name=("--unsafe-override",), group=Groups.SCENARIO),
+    ] = False
+
     trajectory_start_min_ratio: Annotated[
         float | None,
         Field(

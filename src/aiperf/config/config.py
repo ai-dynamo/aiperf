@@ -440,6 +440,30 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         ),
     ]
 
+    scenario: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Lock all benchmark invariants for a named scenario "
+            "(e.g. 'inferencex-agentx-mvp'). Plain data here; the lock is "
+            "applied by the ScenarioResolver step in the pre-bootstrap resolver "
+            "chain (auto-fills defaults, validates, raises ScenarioLockError on "
+            "conflict). Distinct from the sweep ``scenarios`` strategy "
+            "(SweepConfig), which expands hand-picked named runs -- this field "
+            "is a single invariant LOCK, not a sweep.",
+        ),
+    ]
+
+    unsafe_override: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Convert scenario lock errors to warnings; stamps "
+            "submission_valid=false in the resolved scenario outcome. No-op "
+            "without ``scenario``. Plain data; consumed by the ScenarioResolver.",
+        ),
+    ]
+
     trajectory_start_min_ratio: Annotated[
         float,
         Field(
