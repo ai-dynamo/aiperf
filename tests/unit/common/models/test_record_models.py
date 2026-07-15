@@ -17,7 +17,7 @@ from aiperf.common.models.export_models import JsonMetricResult
 class TestProfileResults:
     """Test cases for ProfileResults model."""
 
-    def test_profile_results_with_timeslices(self):
+    def test_profile_results_timeslices_preserves_metric_lookup(self) -> None:
         """Test ProfileResults stores accumulator-backed timeslices."""
         metric_result = MetricResult(
             tag="request_latency",
@@ -58,7 +58,7 @@ class TestProfileResults:
             is metric_result
         )
 
-    def test_profile_results_without_timeslices(self):
+    def test_profile_results_no_timeslices_defaults_to_none(self) -> None:
         """Test ProfileResults works without timeslice results."""
         metric_result = MetricResult(
             tag="request_latency",
@@ -77,7 +77,7 @@ class TestProfileResults:
 
         assert profile_results.timeslices is None
 
-    def test_profile_results_with_empty_timeslices(self):
+    def test_profile_results_empty_timeslices_preserves_empty_list(self) -> None:
         """Test ProfileResults with empty timeslice list."""
         metric_result = MetricResult(
             tag="request_latency",
@@ -97,7 +97,7 @@ class TestProfileResults:
 
         assert profile_results.timeslices == []
 
-    def test_profile_results_with_multiple_timeslices_and_metrics(self):
+    def test_profile_results_multiple_timeslices_maps_metrics_by_tag(self) -> None:
         """Test ProfileResults with multiple timeslices containing multiple metrics."""
         latency_result = MetricResult(
             tag="request_latency",
