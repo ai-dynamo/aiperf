@@ -38,6 +38,7 @@ use crate::execute::{
     execute_prepared_native_plan_uncommitted_with_execution_factories, load_tokenizer,
 };
 use crate::execution_factories::RunnerExecutionFactories;
+use crate::graph_execution::GraphTransportKind;
 use crate::graph_input::RunnerGraphInputContext;
 use crate::protocol::{ArtifactSpec, PhaseSpec, TokenizerSpec};
 use crate::protocol_v2::AuthoredRunSpecV2;
@@ -981,6 +982,9 @@ pub(crate) fn lower_scheduled(
         NativeEndpointPlan::Prepared(context.endpoint_profiles_handle()),
         NativeSidecarPlan::Prepared(context.sidecar_inputs_handle()),
         workload.failure_policy,
+        // Scheduled resolves its transport through the injected
+        // RequestExecutorFactory; this field is inert on the linear path.
+        GraphTransportKind::Http,
     )
 }
 
@@ -1046,6 +1050,9 @@ fn lower_graph(
         NativeEndpointPlan::Prepared(context.endpoint_profiles_handle()),
         NativeSidecarPlan::Prepared(context.sidecar_inputs_handle()),
         workload.failure_policy,
+        // The graph workload is registered only under the HTTP transport today;
+        // the gRPC graph route is composed once the pair layer is removed.
+        GraphTransportKind::Http,
     )
 }
 
@@ -1070,6 +1077,8 @@ fn lower_static_accuracy(
         // Static accuracy has no failure knob today; it inherits the scheduled
         // default (resilient) via `None`.
         None,
+        // Static accuracy runs over HTTP and does not use the graph runtime.
+        GraphTransportKind::Http,
     )
 }
 
@@ -1099,6 +1108,7 @@ fn build_common_plan(
     endpoint: NativeEndpointPlan,
     sidecars: NativeSidecarPlan,
     failure_policy: Option<OnFailure>,
+    transport_kind: GraphTransportKind,
 ) -> Result<NativeRunSpec> {
     Ok(NativeRunSpec {
         benchmark_id: run.identity.benchmark_id.clone(),
@@ -1122,6 +1132,7 @@ fn build_common_plan(
         user_files: run.artifacts.user_files.clone(),
         failure_policy,
         native_otel_enabled: run.export.otel.enabled && run.export.otel.endpoint.is_some(),
+        transport_kind,
     })
 }
 

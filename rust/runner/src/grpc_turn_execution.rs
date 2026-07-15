@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use aiperf::clock::{Clock, RealClock, RealClockAnchor};
+use aiperf::endpoints::PreparedEndpointTable;
 use aiperf::grpc::{GrpcTransportSink, GrpcTransportSinkConfig};
 use aiperf::http::{
     DispatchResult, MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor,
@@ -415,6 +416,37 @@ fn prepare_grpc_sink(
     let endpoints = prepared_endpoints
         .ok_or_else(|| anyhow!("gRPC execution requires a prepared endpoint table factory"))?
         .prepare_worker()?;
+    grpc_sink_with_endpoints(
+        clock,
+        start_ns,
+        base_urls,
+        model,
+        transport,
+        bindings,
+        Rc::new(endpoints),
+    )
+}
+
+/// Assemble a v2 gRPC sink from an already-built worker-local prepared endpoint
+/// table, translating the transport-neutral [`TransportSinkConfig`] into the
+/// gRPC client/reuse/session policy and preparing dense per-endpoint bindings.
+///
+/// This is the shared sink-construction core reused both by the scheduled gRPC
+/// worker path (via [`prepare_grpc_sink`], which resolves the table from a
+/// [`HttpPreparedEndpointTableFactory`]) and by the graph endpoint runtime
+/// factory (which owns its `PreparedEndpointTable` directly). Keeping one core
+/// keeps the gRPC client/reuse/session mapping in a single place.
+///
+/// [`TransportSinkConfig`]: aiperf::http::TransportSinkConfig
+pub(crate) fn grpc_sink_with_endpoints(
+    clock: Rc<dyn Clock>,
+    start_ns: i64,
+    base_urls: &[String],
+    model: String,
+    transport: aiperf::http::TransportSinkConfig,
+    bindings: GrpcBindingRegistry,
+    endpoints: Rc<PreparedEndpointTable>,
+) -> Result<GrpcTransportSink> {
     GrpcTransportSink::new(
         clock,
         start_ns,
@@ -431,7 +463,7 @@ fn prepare_grpc_sink(
         },
         bindings,
     )?
-    .with_prepared_endpoints(Rc::new(endpoints))
+    .with_prepared_endpoints(endpoints)
 }
 
 fn grpc_reuse(reuse: ConnectionReuseStrategy) -> GrpcConnectionReuseStrategy {

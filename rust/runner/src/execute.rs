@@ -93,7 +93,7 @@ use crate::dataset_input::PreparedDatasetInput;
 use crate::execution_factories::RunnerExecutionFactories;
 use crate::gpu_telemetry::GpuTelemetryRun;
 use crate::graph_execution::{
-    PreparedRunnerGraphEndpointRuntimeFactory, RunnerGraphBackendFactory,
+    GraphTransportKind, PreparedRunnerGraphEndpointRuntimeFactory, RunnerGraphBackendFactory,
     RunnerGraphBackendFactoryConfig, RunnerGraphEndpointRuntimeFactory,
     RunnerGraphPlacementFactory,
 };
@@ -224,6 +224,11 @@ pub(crate) struct NativeRunSpec {
     /// post-report sink emits populated `bucket_counts`; otherwise that
     /// projection is skipped entirely (no per-record recompute cost).
     pub(crate) native_otel_enabled: bool,
+    /// Resolved transport (`cfg.transport.type`) the graph execution path builds
+    /// its worker-local dispatchers over. Consumed only when `dataset` is
+    /// [`NativeDatasetPlan::Graph`]; the scheduled path resolves its transport
+    /// through the injected `RequestExecutorFactory` instead and ignores this.
+    pub(crate) transport_kind: GraphTransportKind,
 }
 
 /// Protocol-neutral retention of one run's already decoded sidecar inputs.
@@ -1179,6 +1184,7 @@ async fn execute_graph_native(
             registry.endpoints().clone(),
             profiles.clone(),
             input_token_counter.clone(),
+            request.transport_kind,
         )?)
     };
     let real_clock_anchor = sidecars.real_clock_anchor;
