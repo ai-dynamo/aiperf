@@ -1880,6 +1880,13 @@ mod tests {
         let node = |arrival: u64, inputs: &[&str]| {
             let mut metadata = BTreeMap::new();
             metadata.insert("arrival_offset_us".to_owned(), json!(arrival));
+            // All `n_*` turns belong to one recorded session chain. Real
+            // recorded-graph nodes (weka/dynamo/aiperf_trace) always carry
+            // `metadata["conversation_id"]` (graph/recorded/trie/mod.rs:170),
+            // which `warmup_boundary_nodes` groups chains by; mirror that here
+            // so the `n` chain straddles t* rather than fragmenting into
+            // per-full-id singletons.
+            metadata.insert("conversation_id".to_owned(), json!("n"));
             LlmNode {
                 output: "out".to_owned(),
                 streaming: true,
