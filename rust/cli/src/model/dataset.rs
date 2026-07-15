@@ -69,6 +69,20 @@ pub struct Prompts {
     /// Input-token block size (present when authored).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub block_size: Option<u32>,
+    /// Mixed ISL/OSL sequence distribution (`--seq-dist`; present when authored).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sequence_distribution: Option<Vec<SeqDistEntry>>,
+}
+
+/// One weighted `(isl, osl)` pair of a mixed sequence distribution.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SeqDistEntry {
+    /// Input sequence length distribution.
+    pub isl: Distribution,
+    /// Output sequence length distribution.
+    pub osl: Distribution,
+    /// Mixture probability (percentage, 0–100).
+    pub probability: f64,
 }
 
 /// Synthetic image-generation policy (`synthetic.images`).
@@ -274,6 +288,7 @@ mod tests {
                 num_prefix_prompts: None,
                 prefix_prompt_length: None,
                 block_size: None,
+                sequence_distribution: None,
             },
             prefix_prompts: None,
             images: None,

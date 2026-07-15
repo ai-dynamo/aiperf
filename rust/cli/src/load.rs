@@ -132,6 +132,8 @@ pub(crate) struct Inputs {
     pub export_trace: bool,
     /// Emit the per-request outputs JSON (`artifacts.export_outputs_json`).
     pub export_outputs_json: bool,
+    /// Mixed ISL/OSL sequence distribution (`--seq-dist`).
+    pub sequence_distribution: Option<Vec<crate::model::dataset::SeqDistEntry>>,
     pub batch_size: u32,
     pub sampling: String,
     pub entries: u32,
@@ -404,6 +406,11 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         export_raw,
         export_trace: flags.export_http_trace,
         export_outputs_json: false,
+        sequence_distribution: flags
+            .seq_dist
+            .as_deref()
+            .map(parse_seq_dist)
+            .transpose()?,
         batch_size: flags.batch_size.unwrap_or(1),
         sampling: flags
             .dataset_sampling_strategy
@@ -614,6 +621,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 num_prefix_prompts: None,
                 prefix_prompt_length: None,
                 block_size: inputs.isl_block_size,
+                sequence_distribution: inputs.sequence_distribution.clone(),
             },
             prefix_prompts: inputs.prefix_prompts.clone(),
             images: inputs.image_spec.clone(),
@@ -1214,6 +1222,42 @@ fn build_video_spec(flags: &ProfileFlags) -> Option<VideoSpec> {
 }
 
 /// Parse `--model-selection-strategy`.
+/// Parse a `--seq-dist` string into weighted `(isl, osl)` pairs, mirroring
+/// Python's `DistributionParser` semicolon form: `isl[|std],osl[|std]:prob`
+/// entries separated by `;` (probabilities are percentages).
+pub(crate) fn parse_seq_dist(
+    s: &str,
+) -> anyhow::Result<Vec<crate::model::dataset::SeqDistEntry>> {
+    use crate::model::dataset::{Distribution, SeqDistEntry};
+    let dim = |part: &str| -> anyhow::Result<Distribution> {
+        let (mean, stddev) = match part.split_once('|') {
+            Some((m, sd)) => (m.trim().parse::<f64>()?, sd.trim().parse::<f64>()?),
+            None => (part.trim().parse::<f64>()?, 0.0),
+        };
+        Ok(Distribution {
+            mean: Some(mean),
+            stddev: Some(stddev),
+            ..Default::default()
+        })
+    };
+    s.split(';')
+        .filter(|e| !e.trim().is_empty())
+        .map(|entry| {
+            let (pair, prob) = entry
+                .rsplit_once(':')
+                .ok_or_else(|| anyhow::anyhow!("invalid --seq-dist entry {entry:?}: missing :prob"))?;
+            let (isl, osl) = pair
+                .split_once(',')
+                .ok_or_else(|| anyhow::anyhow!("invalid --seq-dist entry {entry:?}: missing isl,osl"))?;
+            Ok(SeqDistEntry {
+                isl: dim(isl)?,
+                osl: dim(osl)?,
+                probability: prob.trim().parse::<f64>()?,
+            })
+        })
+        .collect()
+}
+
 /// Whether the `AIPERF_METRICS_SKETCH` env var enables sketch retention, matching
 /// pydantic-settings' bool parsing (`1`/`true`/`t`/`yes`/`y`/`on`, case-insensitive)
 /// used by Python's `Environment.METRICS.SKETCH`.

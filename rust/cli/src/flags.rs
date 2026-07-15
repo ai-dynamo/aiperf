@@ -79,6 +79,11 @@ pub struct ProfileFlags {
     #[arg(long = "cells")]
     pub cells: Option<u32>,
 
+    /// Mixed ISL/OSL sequence distribution (`--seq-dist` / `--sequence-distribution`),
+    /// e.g. `256,128:60;512,256:40` (optional stddev: `256|10,128|5:60`).
+    #[arg(long = "seq-dist", visible_alias = "sequence-distribution")]
+    pub seq_dist: Option<String>,
+
     /// Mean turns per session for multi-turn (`--session-turns-mean`).
     #[arg(long = "session-turns-mean")]
     pub session_turns_mean: Option<f64>,

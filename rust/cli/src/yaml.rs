@@ -892,6 +892,7 @@ impl Benchmark {
             export_raw,
             export_trace,
             export_outputs_json,
+            sequence_distribution: None,
             batch_size: batch_size.unwrap_or(1),
             sampling,
             entries,
