@@ -265,6 +265,25 @@ async fn test_cellular_emits_per_record_artifacts_matching_single_cell() {
         cellular.artifacts.raw_records().len(),
         "1-cell and 3-cell must emit the same number of raw per-record rows"
     );
+
+    // inputs.json (always-on per rust_wire) must be emitted by the controller (Stage D)
+    // and be IDENTICAL to the single-cell run's: every cell generates the same full-dataset
+    // inputs.json from the shared seed, so the controller copies one cell's copy verbatim.
+    // Before Stage D it was silently dropped (written only into the discarded scratch tree).
+    let base_inputs = baseline.artifacts.inputs();
+    let cell_inputs = cellular.artifacts.inputs();
+    assert!(
+        !base_inputs.is_null(),
+        "1-cell baseline must emit inputs.json"
+    );
+    assert!(
+        !cell_inputs.is_null(),
+        "3-cell run must emit inputs.json (Stage D controller copy)"
+    );
+    assert_eq!(
+        base_inputs, cell_inputs,
+        "3-cell inputs.json must equal the single-cell run's (identical full-dataset doc)"
+    );
 }
 
 /// Stage C: a `--cells N` metrics-only run with the DEFAULT exact-fold path (each cell

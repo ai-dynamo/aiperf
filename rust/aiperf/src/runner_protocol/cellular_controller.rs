@@ -428,28 +428,33 @@ pub fn run_cellular(
         // above the cell files are complete and controller-local. Concatenate them into
         // the real artifact dir (the per-cell dirs are the "shards") before `_scratch`
         // removes `temp_root` — reusing the Stage B concat (row SET-identical, completion
-        // order accepted). `inputs.json` is NOT concatenated: the native exporter/report
-        // path owns the single controller-generated copy, matching sharded exact-fold.
-        // Cross-host (k8s) pods write to their own filesystem, so their files are not
-        // controller-local; skipped here (warned at startup), shipping them is the
-        // cross-host follow-up.
-        if !is_k8s {
-            let requested = requested_per_record_artifacts(envelope);
-            if !requested.is_empty()
-                && let Some(artifact_dir) = report_path.parent()
-            {
-                let cell_dirs: Vec<PathBuf> = (0..cell_count)
-                    .map(|cell_id| temp_root.join(format!("cell-{cell_id}")))
-                    .collect();
-                // Parse `cfg.artifacts` exactly as the cell's execute path does
-                // (`AuthoredRunSpecV2` — `from_value(...).unwrap_or_default()`), so the
-                // controller reads each artifact's relative path identically to how the
-                // cell wrote it under its cell dir.
-                let artifacts: crate::runner_protocol::protocol::ArtifactSpec = envelope
-                    .pointer("/run/cfg/artifacts")
-                    .cloned()
-                    .and_then(|value| serde_json::from_value(value).ok())
-                    .unwrap_or_default();
+        // order accepted). `inputs.json` is NOT concatenated (it is a single FULL-dataset
+        // document, not per-record rows): every cell generated the identical up-front (S4)
+        // inputs.json over the same resident dataset, so the controller copies ONE cell's
+        // copy verbatim into the real dir (`copy_cell_inputs_json`). inputs.json is
+        // always-on (`rust_wire`), so without this the cellular run would silently drop it
+        // and diverge from the single-cell run / break GenAI-Perf compat. Cross-host (k8s)
+        // pods write to their own filesystem, so their files are not controller-local;
+        // skipped here (warned at startup), shipping them is the cross-host follow-up.
+        if !is_k8s
+            && let Some(artifact_dir) = report_path.parent()
+        {
+            let cell_dirs: Vec<PathBuf> = (0..cell_count)
+                .map(|cell_id| temp_root.join(format!("cell-{cell_id}")))
+                .collect();
+            // Parse `cfg.artifacts` exactly as the cell's execute path does
+            // (`AuthoredRunSpecV2` — `from_value(...).unwrap_or_default()`), so the
+            // controller reads each artifact's relative path identically to how the
+            // cell wrote it under its cell dir.
+            let artifacts: crate::runner_protocol::protocol::ArtifactSpec = envelope
+                .pointer("/run/cfg/artifacts")
+                .cloned()
+                .and_then(|value| serde_json::from_value(value).ok())
+                .unwrap_or_default();
+            // Per-record artifacts (records/raw/CSV/parquet/outputs) are concatenated only
+            // when requested; inputs.json (a single full-dataset doc) is copied whenever a
+            // cell produced one, independent of the per-record request set.
+            if !requested_per_record_artifacts(envelope).is_empty() {
                 crate::runner_protocol::shard_artifacts::concatenate_cell_artifacts(
                     &cell_dirs,
                     artifact_dir,
@@ -457,6 +462,12 @@ pub fn run_cellular(
                 )
                 .context("concatenating per-cell per-record artifacts")?;
             }
+            crate::runner_protocol::shard_artifacts::copy_cell_inputs_json(
+                &cell_dirs,
+                artifact_dir,
+                &artifacts,
+            )
+            .context("copying per-cell inputs.json")?;
         }
 
         // `_scratch` removes `temp_root` on drop.

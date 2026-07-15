@@ -975,12 +975,18 @@ struct ExactFoldInputs {
     /// DELIBERATELY not read by [`exact_fold_eligible`] since Stage C: a metrics-only
     /// cellular run folds into its own dense-LOCAL exact accumulator and ships the
     /// folded STORE (`CellMessage::StorePartition`) to the controller, which appends
-    /// every cell's store into the merged report. A cellular run NEVER emits per-record
-    /// FILE artifacts on EITHER path — a requested artifact keeps the cell on retain via
-    /// `wants_per_record_artifacts`, but the controller discards every cell's scratch
-    /// tree and merges only shipped metrics, so no per-record file reaches the run
-    /// artifact dir either way. Cellular per-record file emission is deferred Stage D
-    /// (warned at controller startup by `warn_dropped_per_record_artifacts`).
+    /// every cell's store into the merged report. Since Stage D a same-host cellular
+    /// child DOES emit per-record FILE artifacts: each cell writes them (streaming lane
+    /// under exact-fold, or the retain batch tail) into its controller-local
+    /// `temp_root/cell-{id}` dir, and the controller CONCATENATES them into the real
+    /// artifact dir at finalize (`shard_artifacts::concatenate_cell_artifacts`), plus
+    /// COPIES one cell's `inputs.json` (`copy_cell_inputs_json`). Only cross-host (k8s)
+    /// pods still drop them (their cell dir lives on their own filesystem, unreachable by
+    /// the controller — warned by `warn_dropped_per_record_artifacts`; cross-host shipping
+    /// is the follow-up). So — like `shardable` — this axis does not force retain: a
+    /// requested per-record artifact keeps the cell on retain via
+    /// `wants_per_record_artifacts` only when the artifact has no streaming lane, exactly
+    /// as the single-process path.
     #[allow(dead_code)]
     is_cellular: bool,
     /// A static/stateful accuracy run: retains records for post-run scoring.

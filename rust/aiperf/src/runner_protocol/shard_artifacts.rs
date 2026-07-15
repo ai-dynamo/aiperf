@@ -169,8 +169,9 @@ pub(crate) fn concatenate_shard_artifacts(
 ///
 /// Cleanup of the cell dirs is owned by the controller's `ScratchTreeGuard` (it removes
 /// the whole `temp_root`), so this fn — unlike [`concatenate_shard_artifacts`] — never
-/// deletes its sources. `inputs.json` is NOT merged here: the controller generates it
-/// once up front from the resident dataset, matching the sharded exact-fold path.
+/// deletes its sources. `inputs.json` is NOT merged here: it is a single FULL-dataset
+/// document (not per-record rows), generated identically by every cell, so the controller
+/// COPIES one cell's copy verbatim via [`copy_cell_inputs_json`] rather than concatenating.
 pub(crate) fn concatenate_cell_artifacts(
     cell_dirs: &[PathBuf],
     artifact_dir: &Path,
@@ -198,6 +199,48 @@ pub(crate) fn concatenate_cell_artifacts(
             &artifact_dir.join(relative),
         )?;
     }
+    Ok(())
+}
+
+/// Copy one cell's `inputs.json` verbatim into the real artifact dir.
+///
+/// Unlike the per-record artifacts, `inputs.json` is a single FULL-dataset document —
+/// the up-front (S4) `write_inputs_json` output over the whole resident dataset — that
+/// every cell generates IDENTICALLY (same dataset, same seed): each cell's
+/// `cell_dir.join(relative)` is byte-identical, so there is nothing to merge. The
+/// controller simply copies the FIRST cell dir that produced the file into
+/// `artifact_dir.join(relative)`, so a cellular run emits the exact same `inputs.json`
+/// as the single-cell run (GenAI-Perf compat, always-on per `rust_wire`). A no-op when
+/// no cell wrote the file (e.g. inputs disabled). Sources are owned by the controller's
+/// `ScratchTreeGuard`, so — like [`concatenate_cell_artifacts`] — this never deletes them.
+pub(crate) fn copy_cell_inputs_json(
+    cell_dirs: &[PathBuf],
+    artifact_dir: &Path,
+    artifacts: &ArtifactSpec,
+) -> Result<()> {
+    let Some(relative) = &artifacts.inputs_path else {
+        return Ok(());
+    };
+    let Some(source) = cell_dirs
+        .iter()
+        .map(|dir| dir.join(relative))
+        .find(|path| path.exists())
+    else {
+        // No cell produced an inputs.json (e.g. inputs export disabled); nothing to copy.
+        return Ok(());
+    };
+    let final_path = artifact_dir.join(relative);
+    if let Some(parent) = final_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating inputs.json directory {}", parent.display()))?;
+    }
+    std::fs::copy(&source, &final_path).with_context(|| {
+        format!(
+            "copying cell inputs.json {} -> {}",
+            source.display(),
+            final_path.display()
+        )
+    })?;
     Ok(())
 }
 
