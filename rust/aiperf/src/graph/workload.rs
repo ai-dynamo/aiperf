@@ -15,7 +15,9 @@ use std::fmt::{self, Display};
 use std::rc::Rc;
 
 use crate::clock::Clock;
-use crate::timing::{IntervalGenerator, SlotGuard, SlotPool};
+use crate::timing::{
+    FirstArrival, IntervalGenerator, SlotGuard, SlotPool, WhenBehind, next_arrival_target,
+};
 use async_trait::async_trait;
 
 use crate::graph::errors::TraceError;
@@ -402,14 +404,24 @@ impl GraphArrivalPolicy for IntervalGraphArrival {
         ordinal: u64,
         _plan: &GraphTracePlan,
     ) -> Result<(), GraphWorkloadError> {
-        let target = if ordinal == 0 {
-            run_start_ns
+        // The (AtStart, KeepAbsolute) arrival policy (see `crate::timing::arrival`):
+        // arrival 0 fires at `run_start` exactly, later arrivals accumulate absolutely
+        // off the prior target with no re-anchor. `prev` reproduces the original
+        // ordinal-keyed first-arrival branch (and its `unwrap_or(run_start)` fallback)
+        // exactly, so the closure draws on precisely the same ticks as before.
+        let prev = if ordinal == 0 {
+            None
         } else {
-            self.next_at_ns
-                .get()
-                .unwrap_or(run_start_ns)
-                .saturating_add(self.generator.borrow_mut().next_interval_ns().max(0))
+            Some(self.next_at_ns.get().unwrap_or(run_start_ns))
         };
+        let target = next_arrival_target(
+            prev,
+            run_start_ns,
+            clock.now_ns(),
+            FirstArrival::AtStart,
+            WhenBehind::KeepAbsolute,
+            || self.generator.borrow_mut().next_interval_ns().max(0),
+        );
         self.next_at_ns.set(Some(target));
         let delay_ns = target.saturating_sub(clock.now_ns());
         clock.sleep(delay_ns).await;

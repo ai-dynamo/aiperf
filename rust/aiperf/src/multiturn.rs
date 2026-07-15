@@ -17,6 +17,7 @@ use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::cellular::partition::ModuloCellPartition;
 use crate::dataset::{
     ConversationSession as NativeConversationSession, Dataset as NativeDataset,
     EndpointRequestMaterializer, Handle, Overrides, Payload, RequestMaterializer, Sampler,
@@ -1064,6 +1065,35 @@ impl NativeDatasetConversationSource {
         samplers: &SamplerRegistry,
         endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
     ) -> Result<Self> {
+        Self::preferred_with_prepared_resolver_for_partition(
+            dataset,
+            model,
+            default_output_tokens,
+            rng_root,
+            samplers,
+            endpoint_resolver,
+            None,
+        )
+    }
+
+    /// Same as [`Self::preferred_with_prepared_resolver`] but with an explicitly
+    /// injected cell partition instead of the process-environment default. `None`
+    /// reads the partition from the env (`AIPERF_CELL_ID`/`_COUNT`) — the
+    /// byte-unchanged default every current caller takes; `Some` restricts this
+    /// source to the partition's owned instances, a per-thread `(cell_id,
+    /// cell_count)` slice the process-global env vars cannot express, for a future
+    /// single-process thread-per-core scheduled run whose `W` sub-cell threads each
+    /// own a distinct partition.
+    #[allow(clippy::too_many_arguments)]
+    pub fn preferred_with_prepared_resolver_for_partition(
+        dataset: NativeDataset,
+        model: impl Into<String>,
+        default_output_tokens: usize,
+        rng_root: RngRoot,
+        samplers: &SamplerRegistry,
+        endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
+        cell_partition: Option<ModuloCellPartition>,
+    ) -> Result<Self> {
         let mut dataset = dataset;
         let primary_model_name = model.into();
         lower_static_messages(
@@ -1087,6 +1117,7 @@ impl NativeDatasetConversationSource {
             Arc::new(EndpointRequestMaterializer),
             Arc::new(TiktokenTokenizer::builtin()),
             default_output_tokens,
+            cell_partition,
         )
     }
 
@@ -1116,6 +1147,30 @@ impl NativeDatasetConversationSource {
         default_output_tokens: usize,
         endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
     ) -> Result<Self> {
+        Self::sequential_with_prepared_resolver_for_partition(
+            dataset,
+            model,
+            default_output_tokens,
+            endpoint_resolver,
+            None,
+        )
+    }
+
+    /// Same as [`Self::sequential_with_prepared_resolver`] but with an explicitly
+    /// injected cell partition instead of the process-environment default. `None`
+    /// reads the partition from the env (`AIPERF_CELL_ID`/`_COUNT`) — the
+    /// byte-unchanged default every current caller takes; `Some` restricts this
+    /// source to the partition's owned instances, a per-thread `(cell_id,
+    /// cell_count)` slice the process-global env vars cannot express, for a future
+    /// single-process thread-per-core scheduled run whose `W` sub-cell threads each
+    /// own a distinct partition.
+    pub fn sequential_with_prepared_resolver_for_partition(
+        dataset: NativeDataset,
+        model: impl Into<String>,
+        default_output_tokens: usize,
+        endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
+        cell_partition: Option<ModuloCellPartition>,
+    ) -> Result<Self> {
         let mut dataset = dataset;
         let primary_model_name = model.into();
         lower_static_messages(
@@ -1135,9 +1190,11 @@ impl NativeDatasetConversationSource {
             Arc::new(EndpointRequestMaterializer),
             Arc::new(TiktokenTokenizer::builtin()),
             default_output_tokens,
+            cell_partition,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn new_with_endpoint(
         dataset: Arc<NativeDataset>,
         sampler: Box<dyn Sampler>,
@@ -1145,13 +1202,22 @@ impl NativeDatasetConversationSource {
         materializer: Arc<dyn RequestMaterializer>,
         response_tokenizer: Arc<dyn TextTokenizer>,
         default_output_tokens: usize,
+        cell_partition: Option<ModuloCellPartition>,
     ) -> Result<Self> {
         if default_output_tokens == 0 {
             bail!("native dataset default output tokens must be positive");
         }
         // A cell of a multi-cell run yields only its owned instances (roadmap S4);
         // the single-process path returns the sampler unchanged (byte-identical).
-        let sampler = crate::dataset::sampler::PartitionedSampler::from_env(sampler);
+        // `None` reads the partition from the process env — the byte-unchanged
+        // default for every current caller; `Some` injects a per-thread partition
+        // the process-global env vars cannot express (thread-per-core scheduled run).
+        let sampler = match cell_partition {
+            None => crate::dataset::sampler::PartitionedSampler::from_env(sampler),
+            Some(partition) => {
+                crate::dataset::sampler::PartitionedSampler::for_partition(sampler, Some(partition))
+            }
+        };
         let metadata = dataset
             .sampleable_metadata()
             .map(|conversation| {

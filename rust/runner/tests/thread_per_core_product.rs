@@ -3,11 +3,16 @@
 
 //! Product proof for native thread-per-core HTTP placement.
 //!
-//! Config v2 resolves one worker count, the runner retains one phase
-//! coordinator and one logical dispatcher, and only prepared HTTP turns cross
-//! the placement seam. This process test proves that three authored workers
-//! become three persistent worker-local transport pools selected in stable
-//! round-robin order while warmup and profiling accounting remains phase-owned.
+//! Config v2 resolves one worker count; for `worker_count > 1` the runner runs
+//! that many self-contained sharded sub-cells (design "a thread is a sub-cell"):
+//! each is its own scheduler + persistent worker-local transport over a `1/W`
+//! slice of the run, and warmup/profiling accounting is merged back phase-owned at
+//! the cell join. This process test proves that three authored workers become
+//! three persistent worker-local connections, each dispatching a balanced,
+//! deterministic-per-topology share of the turns. (Before P3 the runner used a
+//! single coordinator round-robining a shared worker pool; that strict global
+//! order is now a benign per-thread scheduling race, but the per-connection turn
+//! counts remain fixed.)
 
 use std::io::Write;
 use std::net::SocketAddr;
@@ -74,7 +79,7 @@ fn run_child(mut request: Value) -> Output {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn v2_workers_own_transport_pools_below_one_phase_coordinator() {
+async fn v2_sharded_workers_own_persistent_connections_with_balanced_slices() {
     let connection_log = ConnectionLog::default();
     let app = Router::new()
         .route("/v1/chat/completions", post(chat))
@@ -163,19 +168,26 @@ async fn v2_workers_own_transport_pools_below_one_phase_coordinator() {
 
     let peers = connection_log.peers.lock().unwrap().clone();
     assert_eq!(peers.len(), 9, "one server request per authored turn");
-    let worker_peers = &peers[..3];
-    assert!(
-        worker_peers
-            .iter()
-            .enumerate()
-            .all(|(index, peer)| !worker_peers[..index].contains(peer)),
-        "each placement worker must own a distinct persistent connection: {peers:?}"
+
+    // Each of the three sharded sub-cells owns one persistent worker-local
+    // connection (concurrency 1 per thread + HTTP keep-alive), so the run uses
+    // exactly three distinct peers.
+    let distinct: std::collections::BTreeSet<_> = peers.iter().collect();
+    assert_eq!(
+        distinct.len(),
+        3,
+        "worker_count=3 must open exactly three worker-local connections: {peers:?}"
     );
-    for (turn, peer) in peers.iter().enumerate() {
+
+    // Deterministic-per-topology slice: each sub-cell owns `owned_positions` of
+    // warmup(3) and profiling(6) over three threads — 1 warmup + 2 profiling = 3
+    // turns per connection. The global interleaving across threads is a benign
+    // scheduling race, but the per-connection turn counts are fixed.
+    for peer in &distinct {
+        let count = peers.iter().filter(|p| p == peer).count();
         assert_eq!(
-            peer,
-            &worker_peers[turn % worker_peers.len()],
-            "turn {turn} did not follow deterministic round-robin placement: {peers:?}"
+            count, 3,
+            "each worker-local connection must dispatch its balanced 3-turn slice: {peers:?}"
         );
     }
 
@@ -184,11 +196,11 @@ async fn v2_workers_own_transport_pools_below_one_phase_coordinator() {
             .unwrap();
     assert_eq!(
         report["warmup_metrics"]["request_count"]["series"][0]["stats"]["total"], 3.0,
-        "warmup accounting must remain coordinator-owned: {report}"
+        "warmup accounting must sum to the phase budget after the sharded merge: {report}"
     );
     assert_eq!(
         report["metrics"]["request_count"]["series"][0]["stats"]["total"], 6.0,
-        "profiling accounting must remain coordinator-owned: {report}"
+        "profiling accounting must sum to the phase budget after the sharded merge: {report}"
     );
 
     server.abort();

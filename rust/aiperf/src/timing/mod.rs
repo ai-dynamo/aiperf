@@ -19,6 +19,7 @@
 //! - [`url_selection`] — endpoint selection ([`UrlSelector`]).
 //! - [`phase`] — lifecycle, progress, execution, and multi-phase orchestration.
 
+pub mod arrival;
 pub mod cancellation;
 pub mod intervals;
 pub mod phase;
@@ -28,6 +29,7 @@ pub mod stop;
 pub mod url_selection;
 pub mod user_centric;
 
+pub use arrival::{FirstArrival, WhenBehind, next_arrival_target};
 pub use cancellation::{BernoulliFixedDelay, CancellationPolicy, CancellationPolicyError, Phase};
 pub use intervals::{ArrivalPattern, IntervalGenerator, make_interval_generator};
 pub use phase::{

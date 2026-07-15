@@ -329,11 +329,28 @@ def _authored_model_dump(value: Any) -> dict[str, Any]:
     )
 
 
+def _sketch_metrics_enabled() -> bool:
+    """Whether the opt-in bounded-memory sketch metrics mode is active.
+
+    Sourced from ``Environment.METRICS.SKETCH`` (env ``AIPERF_METRICS_SKETCH`` or
+    the ``--sketch-metrics`` flag, which sets the same setting). In this mode the
+    native runner streams each per-record value into a t-digest instead of
+    retaining it, so per-record artifacts and per-row-only outputs are impossible.
+    """
+    return bool(Environment.METRICS.SKETCH)
+
+
 def _authored_metrics(cfg: Any) -> dict[str, Any]:
     """Project authored metric policy into the v2 native request."""
     result: dict[str, Any] = {"slos": dict(cfg.slos or {})}
     if cfg.artifacts.slice_duration is not None:
         result["slice_duration_seconds"] = cfg.artifacts.slice_duration
+    if _sketch_metrics_enabled():
+        # Bounded-memory retention: exact counts/sums/min/max, approximate
+        # percentiles, no per-record values. The runner rejects per-record
+        # artifacts and per-record OTLP under this flag; the frontend drops them
+        # from the projection below so the run stays consistent.
+        result["sketch"] = True
     return result
 
 
@@ -391,6 +408,14 @@ def _authored_artifacts(run: BenchmarkRun) -> dict[str, Any]:
         # only reliable place to drop them is here at the wire choke point. The
         # runner permits ``inputs_path``, so introspection still works.
         for key in ("records_path", "raw_path", "outputs_path", "user_files"):
+            result.pop(key, None)
+        result["trace"] = False
+    if _sketch_metrics_enabled():
+        # Sketch retention keeps no per-record values, so per-record artifacts are
+        # impossible; fail closed by dropping them here (the runner's validate_plan
+        # rejects them defensively). ``inputs_path`` stays — it is built from
+        # dispatch-time request payloads, not retained response records.
+        for key in ("records_path", "raw_path", "outputs_path"):
             result.pop(key, None)
         result["trace"] = False
     return result
@@ -716,7 +741,12 @@ def _export(run: BenchmarkRun) -> dict[str, Any]:
     # ``native_report.export_python_compatibility_reports``). The legacy Python
     # paths return under AIPERF_RUNTIME_NATIVE_EXPORT=0 above.
     otel = _otel_frontend_projection(run)
-    if otel is not None:
+    if otel is not None and not _sketch_metrics_enabled():
+        # The native OTLP sink emits per-record histograms whose bucket counts come
+        # from retained per-record values; sketch retention has none, and the
+        # runner's validate_plan rejects ``native_otel_enabled`` under sketch. Drop
+        # the whole OTLP block so the run stays consistent (aggregate metrics still
+        # export to the JSON/CSV/console sinks).
         result["otel"] = otel
     mlflow = _mlflow_frontend_projection(run)
     if mlflow is not None:

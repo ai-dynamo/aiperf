@@ -735,7 +735,16 @@ async fn execute_worker_command(
             };
             let live_record = context
                 .wants_live_record
-                .then(|| observer.snapshot_record(uuid, 0))
+                .then(|| {
+                    // Metrics-only (sketch) mode moves the record out of the
+                    // observer so its token storage is freed as the run streams;
+                    // every other mode clones it for the end-of-run drain.
+                    if context.consume_record {
+                        observer.drain_terminal_record(uuid, 0)
+                    } else {
+                        observer.snapshot_record(uuid, 0)
+                    }
+                })
                 .flatten();
             WorkerReply {
                 result,
@@ -800,6 +809,7 @@ mod tests {
             requested_output_length: 4,
             metadata: RequestMetricMetadata::default(),
             wants_live_record: false,
+            consume_record: false,
         }
     }
 
