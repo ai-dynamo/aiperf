@@ -179,6 +179,64 @@ fn profile_yaml_config_against_mock_writes_native_report() {
     assert_report_has_records(&report);
 }
 
+#[test]
+#[ignore = "needs sibling aiperf-runner + aiperf-mock-server built in the target dir"]
+fn profile_sweep_against_mock_writes_per_cell_reports() {
+    // A 2-cell concurrency sweep runs both cells and writes an aggregate.
+    let runner = sibling("aiperf-runner");
+    let mock = sibling("aiperf-mock-server");
+    assert!(runner.exists(), "build aiperf-runner first: {runner:?}");
+    assert!(mock.exists(), "build aiperf-mock-server first: {mock:?}");
+
+    let out_dir = tempfile::tempdir().expect("tempdir");
+    let port = free_port();
+    let mut mock_child = Command::new(&mock)
+        .args(["--fast", "--host", "127.0.0.1", "--port", &port.to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn mock");
+    wait_for_port(port, &mut mock_child);
+
+    let status = Command::new(aiperf_bin())
+        .args([
+            "profile",
+            "--model",
+            "Qwen/Qwen3-0.6B",
+            "--url",
+            &format!("127.0.0.1:{port}"),
+            "--endpoint-type",
+            "chat",
+            "--streaming",
+            "--concurrency",
+            "2,4",
+            "--request-count",
+            "6",
+            "--artifact-dir",
+            out_dir.path().to_str().unwrap(),
+        ])
+        .env("AIPERF_RUNNER_BIN", &runner)
+        .status()
+        .expect("spawn aiperf profile sweep");
+    let _ = mock_child.kill();
+    assert!(status.success(), "native sweep run failed: {status}");
+
+    // Both cells produced a report, and the aggregate exists.
+    for dir in ["concurrency_2", "concurrency_4"] {
+        let report = out_dir.path().join(dir).join("native-v2.json");
+        assert!(report.exists(), "missing per-cell report {report:?}");
+        assert_report_has_records(&report);
+    }
+    let agg = out_dir
+        .path()
+        .join("sweep_aggregate")
+        .join("profile_export_aiperf_sweep.json");
+    assert!(agg.exists(), "missing sweep aggregate {agg:?}");
+    let doc: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&agg).unwrap()).expect("aggregate json");
+    assert_eq!(doc["cells"].as_array().unwrap().len(), 2, "2 sweep cells");
+}
+
 /// Assert the native report is a schema-2.0 object with a metrics section.
 fn assert_report_has_records(report: &Path) {
     let bytes = std::fs::read(report).expect("read report");
