@@ -38,6 +38,22 @@ pub struct ProfileFlags {
     #[arg(long = "endpoint-type")]
     pub endpoint_type: Option<String>,
 
+    /// Tokenizer identity (`--tokenizer`); defaults to the primary model.
+    #[arg(long = "tokenizer")]
+    pub tokenizer: Option<String>,
+
+    /// Tokenizer revision / git ref (`--tokenizer-revision`).
+    #[arg(long = "tokenizer-revision")]
+    pub tokenizer_revision: Option<String>,
+
+    /// Trust remote tokenizer code (`--tokenizer-trust-remote-code`).
+    #[arg(long = "tokenizer-trust-remote-code", default_value_t = false)]
+    pub tokenizer_trust_remote_code: bool,
+
+    /// Number of conversations to generate (`--num-conversations`); comma ⇒ sweep.
+    #[arg(long = "num-conversations")]
+    pub num_conversations: Option<String>,
+
     /// Enable streaming responses (`--streaming`).
     #[arg(long = "streaming", default_value_t = false)]
     pub streaming: bool,

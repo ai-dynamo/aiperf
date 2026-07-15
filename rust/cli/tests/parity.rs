@@ -43,6 +43,8 @@ const FIXTURES: &[&str] = &[
     "completions",
     "duration",
     "warmup",
+    "num_conv",
+    "tokenizer",
 ];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).

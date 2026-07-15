@@ -66,6 +66,9 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
     let request_rate = parse_single::<f64>("--request-rate", flags.request_rate.as_deref())?;
     let benchmark_duration =
         parse_single::<f64>("--benchmark-duration", flags.benchmark_duration.as_deref())?;
+    reject_sweep("--num-conversations", flags.num_conversations.as_deref())?;
+    let num_conversations =
+        parse_single::<u32>("--num-conversations", flags.num_conversations.as_deref())?;
 
     let models = Models {
         strategy: ModelStrategy::RoundRobin,
@@ -106,11 +109,17 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
     };
 
     let tokenizer = Tokenizer {
-        // No --tokenizer flag yet: default to the primary model name (Python
-        // uses "builtin" for fake model names — a later refinement).
-        name: primary_model.clone(),
-        revision: "main".to_string(),
-        trust_remote_code: false,
+        // --tokenizer overrides; otherwise the primary model name (Python uses
+        // "builtin" for fake model names — a later refinement).
+        name: flags
+            .tokenizer
+            .clone()
+            .unwrap_or_else(|| primary_model.clone()),
+        revision: flags
+            .tokenizer_revision
+            .clone()
+            .unwrap_or_else(|| "main".to_string()),
+        trust_remote_code: flags.tokenizer_trust_remote_code,
         apply_chat_template: false,
     };
 
@@ -128,10 +137,13 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         },
         sampling: Sampling("sequential".to_string()),
         turn_delay_ratio: 1.0,
-        // The synthetic corpus is sized to the request bound (`entries ==
-        // request_count`); with no request bound it falls back to the default
-        // conversation count (100).
-        entries: Some(request_count.map(|n| n as u32).unwrap_or(DEFAULT_ENTRIES)),
+        // Corpus size: explicit --num-conversations, else the request bound
+        // (`entries == request_count`), else the default conversation count.
+        entries: Some(
+            num_conversations
+                .or(request_count.map(|n| n as u32))
+                .unwrap_or(DEFAULT_ENTRIES),
+        ),
         num_conversations: None,
         turn_delay_ms: None,
     });
@@ -144,6 +156,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         request_rate,
         concurrency,
         request_count,
+        num_conversations.map(u64::from),
         benchmark_duration,
         flags.benchmark_grace_period,
     );
@@ -200,6 +213,7 @@ fn build_phase(
     rate: Option<f64>,
     concurrency: Option<u32>,
     requests: Option<u64>,
+    sessions: Option<u64>,
     duration: Option<f64>,
     grace_period: Option<f64>,
 ) -> Phase {
@@ -216,7 +230,7 @@ fn build_phase(
             exclude_from_results,
             seamless: false,
             requests,
-            sessions: None,
+            sessions,
             duration,
             prefill_concurrency: None,
             grace_period,
@@ -247,6 +261,7 @@ fn build_warmup_phase(flags: &ProfileFlags, profiling_concurrency: Option<u32>) 
         flags.warmup_request_rate,
         concurrency,
         flags.warmup_request_count,
+        None,
         None,
         None,
     ))
