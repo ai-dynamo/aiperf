@@ -435,7 +435,10 @@ pub fn run_cellular(
         // always-on (`rust_wire`), so without this the cellular run would silently drop it
         // and diverge from the single-cell run / break GenAI-Perf compat. Cross-host (k8s)
         // pods write to their own filesystem, so their files are not controller-local;
-        // skipped here (warned at startup), shipping them is the cross-host follow-up.
+        // skipped here (`!is_k8s`) — the SAME product boundary `dropped_cross_host_artifacts`
+        // reports and `warn_dropped_per_record_artifacts` warns about at startup. The
+        // intended cross-host mechanism is shared object storage (see that fn), NOT
+        // bulk-shipping the artifact bytes over the velo control plane.
         if !is_k8s
             && let Some(artifact_dir) = report_path.parent()
         {
@@ -904,34 +907,67 @@ fn warn_dropped_sidecar_telemetry(envelope: &serde_json::Value) {
     }
 }
 
-/// Warns, once at controller startup, when a CROSS-HOST (k8s) cellular run requests a
-/// per-record FILE artifact (`records_path`/`raw_path`/`records_csv_path`/
-/// `records_parquet_path`/`outputs_path`) — the one case Stage D does not yet cover.
+/// The per-record FILE artifacts a cellular run will DROP because the deployment
+/// cannot deliver a cell's files to the controller — empty unless this is a
+/// CROSS-HOST (k8s) run that requested them. This is the documented Stage E product
+/// boundary, and the single source of truth the concat gate (`!is_k8s`) and the
+/// operator warning ([`warn_dropped_per_record_artifacts`]) both derive from, so the
+/// two never drift.
 ///
-/// Same-host (`--cells N` with the local launcher) DOES now emit these files: each cell
-/// runs its ordinary execute path with a controller-local `temp_root/cell-{id}` dir as
-/// its artifact_dir, so it writes its merged per-record artifacts there (streaming lane
-/// under exact-fold, batch tail otherwise), and the controller concatenates them into
-/// the real artifact dir at finalize (`concatenate_cell_artifacts`). Only a k8s pod,
-/// whose cell dir lives on its OWN filesystem rather than the controller's, still drops
-/// them — shipping those bytes over a new `CellMessage` variant is the cross-host
-/// follow-up. Surfaced as a loud warning so a k8s operator knows the requested files
-/// will be absent; run without `--cells`, or same-host, to collect them.
-fn warn_dropped_per_record_artifacts(envelope: &serde_json::Value, is_k8s: bool) {
+/// Same-host (`--cells N`, local launcher) drops nothing: every cell runs its ordinary
+/// execute path with a controller-local `temp_root/cell-{id}` dir as its artifact_dir,
+/// writes its merged per-record artifacts there, and the controller concatenates them
+/// into the real artifact dir at finalize (`concatenate_cell_artifacts`) — so this
+/// returns empty for `!is_k8s` even when files are requested. A k8s pod's cell dir
+/// lives on its OWN pod filesystem, unreachable by the controller, so its per-record
+/// files are dropped.
+///
+/// **Why not ship the bytes over velo (the deliberate boundary, not a TODO).** k8s
+/// cellular is the substrate for the largest distributed runs (300k–1M concurrency in
+/// the project's own durability ramps); per-record artifacts (records.jsonl, one row
+/// per request) scale with total request count and reach tens–hundreds of GB summed
+/// across cells. velo is a control plane, and its transparent large-payload path
+/// (`velo::…::rendezvous::DataStore`, `StageMode::InMemory`; the RDMA arena is a Phase-2
+/// placeholder) buffers each staged payload whole in RAM on BOTH ends — so shipping it
+/// as-is would put the sum of every shard's largest file in the single controller's RAM.
+/// Even hand-rolled sub-threshold chunk-to-disk (which would bound memory) would still
+/// funnel every cell's bulk artifact bytes through one controller node and require that
+/// node to hold the SUM of all shards on local disk — coupling the latency-sensitive
+/// coordination plane (heartbeats + small metric partitions) to a bulk-data plane, and
+/// reinventing, worse, what a shared filesystem provides natively. The intended
+/// cross-host mechanism is **shared object storage** (a ReadWriteMany PVC or S3-style
+/// bucket the operator mounts into every cell pod AND the controller): the cell's
+/// existing local-write path then lands each shard in the shared location and the
+/// controller's existing Stage D concat runs unchanged, with no bulk data on the
+/// control plane.
+fn dropped_cross_host_artifacts(envelope: &serde_json::Value, is_k8s: bool) -> Vec<&'static str> {
     if !is_k8s {
-        // Same-host emits them (see `concatenate_cell_artifacts`); nothing to warn.
-        return;
+        // Same-host concatenates them (`concatenate_cell_artifacts`); nothing dropped.
+        return Vec::new();
     }
-    let requested = requested_per_record_artifacts(envelope);
-    if !requested.is_empty() {
+    requested_per_record_artifacts(envelope)
+}
+
+/// Warns, once at controller startup, when a CROSS-HOST (k8s) cellular run requests a
+/// per-record FILE artifact the controller cannot collect (`records_path`/`raw_path`/
+/// `records_csv_path`/`records_parquet_path`/`outputs_path`). Thin logging wrapper over
+/// the pure [`dropped_cross_host_artifacts`] boundary; the accompanying rationale
+/// (why bulk bytes are NOT shipped over the velo control plane, and that shared object
+/// storage is the intended mechanism) lives on that function.
+fn warn_dropped_per_record_artifacts(envelope: &serde_json::Value, is_k8s: bool) {
+    let dropped = dropped_cross_host_artifacts(envelope, is_k8s);
+    if !dropped.is_empty() {
         tracing::warn!(
-            artifacts = requested.join(","),
-            "cross-host (k8s) cellular mode does not yet ship per-record file artifacts \
-             from cell pods to the controller (each pod writes them to its own \
-             filesystem, unreachable by the controller), so these files will NOT appear \
-             in the run artifact dir. The merged report and native exporter outputs \
-             (genai-perf-v1 JSON/CSV, console.txt, timeslice) still are. A same-host \
-             --cells run DOES emit them; cross-host shipping is a follow-up."
+            artifacts = dropped.join(","),
+            "cross-host (k8s) cellular mode does not collect per-record file artifacts \
+             from cell pods: each pod writes them to its own local filesystem, which the \
+             controller cannot read, so these files will NOT appear in the run artifact \
+             dir. The merged report and native exporter outputs (genai-perf-v1 JSON/CSV, \
+             console.txt, timeslice) ARE still produced. To collect per-record files \
+             across hosts, mount shared object storage (a ReadWriteMany PVC or S3-style \
+             bucket) into every cell pod and the controller so each cell writes its shard \
+             to the shared path; a same-host --cells run also emits them directly. Bulk \
+             artifact bytes are intentionally not streamed over the velo control plane."
         );
     }
 }
@@ -1542,5 +1578,47 @@ mod tests {
             requested_per_record_artifacts(&many),
             vec!["records_path", "records_parquet_path", "outputs_path"],
         );
+    }
+
+    #[test]
+    fn cross_host_artifact_boundary_is_precise() {
+        // Stage E product boundary: the per-record artifact drop is EXACTLY
+        // "cross-host (k8s) run that requested per-record files". `dropped_cross_host_artifacts`
+        // is the single source of truth for both the concat gate (`!is_k8s`) and the operator
+        // warning, so this pins that they can never disagree.
+        let with_files = serde_json::json!({"run": {"cfg": {"artifacts": {
+            "records_path": "profile_export.jsonl",
+            "records_parquet_path": "profile_export.parquet",
+            "outputs_path": "profile_export.json",
+        }}}});
+
+        // Same-host (`!is_k8s`) drops NOTHING even when per-record files are requested:
+        // the controller concatenates each cell's controller-local dir (`concatenate_cell_artifacts`),
+        // so the gate runs and the warn stays silent.
+        assert!(
+            dropped_cross_host_artifacts(&with_files, false).is_empty(),
+            "same-host concatenates per-record artifacts; nothing is dropped"
+        );
+
+        // Cross-host (k8s) with per-record files → exactly those files are dropped (each
+        // pod writes to its own filesystem, unreachable by the controller). Order matches
+        // the scan order so the warn's `artifacts=` field is stable.
+        assert_eq!(
+            dropped_cross_host_artifacts(&with_files, true),
+            vec!["records_path", "records_parquet_path", "outputs_path"],
+            "cross-host drops exactly the requested per-record files"
+        );
+
+        // Cross-host but metrics-only (only the per-session inputs.json) → nothing dropped,
+        // so the k8s warn does NOT fire spuriously on a run that produces no per-record files.
+        let metrics_only = serde_json::json!({"run": {"cfg": {"artifacts": {
+            "inputs_path": "inputs.json",
+        }}}});
+        assert!(
+            dropped_cross_host_artifacts(&metrics_only, true).is_empty(),
+            "cross-host metrics-only run drops no per-record files (inputs.json is per-session)"
+        );
+        // A cross-host run with no artifacts block at all is likewise silent.
+        assert!(dropped_cross_host_artifacts(&serde_json::json!({}), true).is_empty());
     }
 }
