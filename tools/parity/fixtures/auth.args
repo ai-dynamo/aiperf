@@ -1,0 +1,1 @@
+--model M --url 127.0.0.1:8000 --endpoint-type chat --concurrency 1 --request-count 2 --api-key sk-dummy123 --header X-Foo:bar --artifact-dir /tmp/x

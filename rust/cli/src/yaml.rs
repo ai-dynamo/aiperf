@@ -188,6 +188,8 @@ impl Benchmark {
             urls: self.endpoint.url.into_vec(),
             endpoint_type,
             streaming: self.endpoint.streaming,
+            api_key: None,
+            headers: std::collections::BTreeMap::new(),
             tokenizer_name,
             tokenizer_revision,
             tokenizer_trust,

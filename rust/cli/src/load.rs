@@ -53,6 +53,8 @@ pub(crate) struct Inputs {
     pub urls: Vec<String>,
     pub endpoint_type: String,
     pub streaming: bool,
+    pub api_key: Option<String>,
+    pub headers: std::collections::BTreeMap<String, String>,
     pub tokenizer_name: Option<String>,
     pub tokenizer_revision: Option<String>,
     pub tokenizer_trust: bool,
@@ -133,6 +135,8 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         urls: flags.urls.clone(),
         endpoint_type,
         streaming: flags.streaming,
+        api_key: flags.api_key.clone(),
+        headers: parse_headers(&flags.headers)?,
         tokenizer_name: flags.tokenizer.clone(),
         tokenizer_revision: flags.tokenizer_revision.clone(),
         tokenizer_trust: flags.tokenizer_trust_remote_code,
@@ -199,13 +203,13 @@ pub(crate) fn build(inputs: Inputs) -> BenchmarkRun {
         keepalive_timeout: DEFAULT_KEEPALIVE_TIMEOUT,
         download_video_content: false,
         extra: serde_json::Map::new(),
-        headers: std::collections::BTreeMap::new(),
+        headers: inputs.headers,
         http2: false,
         wait_for_model_timeout: 0.0,
         wait_for_model_interval: DEFAULT_WAIT_FOR_MODEL_INTERVAL,
         wait_for_model_mode: WaitForModelMode::Inference,
         path: None,
-        api_key: None,
+        api_key: inputs.api_key,
         session_header: None,
         request_content_type: None,
         template: None,
@@ -335,6 +339,19 @@ fn build_phase(
         },
         kind,
     }
+}
+
+/// Parse repeatable `Name:value` header flags into a map (split on the first
+/// colon; surrounding whitespace on the value trimmed, matching Python).
+fn parse_headers(raw: &[String]) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
+    let mut headers = std::collections::BTreeMap::new();
+    for entry in raw {
+        let (name, value) = entry
+            .split_once(':')
+            .ok_or_else(|| anyhow::anyhow!("invalid --header {entry:?}; expected `Name:value`"))?;
+        headers.insert(name.trim().to_string(), value.trim().to_string());
+    }
+    Ok(headers)
 }
 
 /// Normalize a base URL to include a scheme (Python prepends `http://` when the

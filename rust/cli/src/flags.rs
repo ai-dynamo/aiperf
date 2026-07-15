@@ -75,6 +75,14 @@ pub struct ProfileFlags {
     #[arg(long = "streaming", default_value_t = false)]
     pub streaming: bool,
 
+    /// API authentication key (`--api-key`).
+    #[arg(long = "api-key")]
+    pub api_key: Option<String>,
+
+    /// Custom HTTP headers `Name:value` (`--header` / `-H`), repeatable.
+    #[arg(long = "header", short = 'H')]
+    pub headers: Vec<String>,
+
     /// Concurrent requests to maintain (`--concurrency`); comma-list ⇒ sweep.
     #[arg(long = "concurrency")]
     pub concurrency: Option<String>,
