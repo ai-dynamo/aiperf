@@ -183,11 +183,25 @@ pub fn run_cellular(
     let http_shipping = (is_k8s || force_http)
         && crate::runner_protocol::cellular_cell::http_artifact_shipping_enabled()
         && !crate::runner_protocol::artifact_shipping::shippable_relatives(&artifacts).is_empty();
+    // Stage G: a cross-host cell cannot read a controller-local `file`/`path` dataset
+    // source, so the controller serves it over the SAME HTTP+zstd plane and the cell
+    // recompiles it locally. Only a cross-host (k8s / force) run with a `file`/`path`
+    // dataset and HTTP shipping enabled needs the serve; same-host cells read the
+    // controller-local path directly, and synthetic/inline-records/public need no serve.
+    let dataset_source =
+        crate::runner_protocol::cellular_cell::cellular_file_dataset_path(envelope);
+    let dataset_ship = (is_k8s || force_http)
+        && crate::runner_protocol::cellular_cell::http_artifact_shipping_enabled()
+        && dataset_source.is_some();
+    // The controller's artifact HTTP server carries BOTH per-record uploads (Stage E)
+    // and dataset serving (Stage G); stand it up when either is needed.
+    let need_artifact_server = http_shipping || dataset_ship;
     // The force seam only applies to the same-host launcher (k8s already ships): when
     // true, cells write to their own controller-local `temp_root/cell-{id}` scratch AND
     // ship those files over HTTP to a SEPARATE loopback landing dir, from which the
     // concat reads — so the shipped bytes (not the local writes) feed the merged report.
-    let force_local_http = http_shipping && !is_k8s;
+    // Dataset serving reuses the same loopback bind + injected authority.
+    let force_local_http = need_artifact_server && !is_k8s;
     warn_dropped_sidecar_telemetry(envelope);
     // Warn about DROPPED per-record artifacts only when they genuinely cannot be
     // delivered — cross-host AND HTTP shipping disabled. When HTTP shipping is active
@@ -247,19 +261,42 @@ pub fn run_cellular(
         } else {
             controller_artifact_bind()
         };
-        let artifact_server = if http_shipping {
-            let allowed: std::collections::HashSet<String> =
+        let artifact_server = if need_artifact_server {
+            // Upload allowlist: the run's per-record artifact relatives when Stage E
+            // shipping is active, else empty (a dataset-serve-only run accepts no
+            // uploads, so every POST is rejected).
+            let allowed: std::collections::HashSet<String> = if http_shipping {
                 crate::runner_protocol::artifact_shipping::shippable_relatives(&artifacts)
                     .into_iter()
-                    .collect();
+                    .collect()
+            } else {
+                std::collections::HashSet::new()
+            };
+            // Dataset serve allowlist (Stage G): the run's single `file`/`path` source,
+            // keyed by its file name (the name a cell requests). Empty otherwise.
+            let datasets: std::collections::HashMap<String, PathBuf> = match dataset_source
+                .as_ref()
+                .filter(|_| dataset_ship)
+            {
+                Some(path) => {
+                    let name = path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .context("cellular file dataset path has no file name")?
+                        .to_owned();
+                    std::iter::once((name, path.clone())).collect()
+                }
+                None => std::collections::HashMap::new(),
+            };
             Some(
-                crate::runner_protocol::artifact_shipping::ArtifactUploadServer::start(
+                crate::runner_protocol::artifact_shipping::ArtifactUploadServer::start_with_datasets(
                     artifact_bind,
                     landing_root.clone(),
                     allowed,
+                    datasets,
                 )
                 .await
-                .context("starting cellular artifact upload server")?,
+                .context("starting cellular artifact server")?,
             )
         } else {
             None
@@ -509,7 +546,12 @@ pub fn run_cellular(
         // `temp_root/cell-{id}` is complete. (Same-host cells write their files locally
         // before shipping their velo partition, so the partition-collection loop above
         // is already their barrier.)
-        if let Some(server) = artifact_server.as_ref() {
+        // Only when per-record uploads are active (Stage E): a dataset-serve-only
+        // run (Stage G, no per-record artifacts) never POSTs files or `/done`, so
+        // there is nothing to wait for and the barrier would spuriously time out.
+        if http_shipping
+            && let Some(server) = artifact_server.as_ref()
+        {
             server
                 .wait_for_cells(cell_count, artifact_upload_timeout())
                 .await
@@ -775,19 +817,23 @@ fn build_cell_envelope(
 
 /// Whitelists a cellular run to the shape the cell topology is currently *wired* for:
 /// the shared online-scheduled executor over the `http` transport, on **synthetic,
-/// single-turn** datasets. There is no bespoke HTTP layer — a cell runs the same
-/// `execute.rs` path as any single-process run, differing only by an injected
-/// [`IssuanceAuthority`] and an env-gated records sink (`CellRecordsShipper`). The
-/// partition/issuance seam is transport-neutral; this whitelist reflects wiring
+/// file, or public single-turn** datasets. There is no bespoke HTTP layer — a cell
+/// runs the same `execute.rs` path as any single-process run, differing only by an
+/// injected [`IssuanceAuthority`] and an env-gated records sink (`CellRecordsShipper`).
+/// The partition/issuance seam is transport-neutral; this whitelist reflects wiring
 /// coverage, not an HTTP special case. Two invariants underpin byte parity and each
 /// fails closed here:
 ///
-/// - **Only the online-scheduled executor ships a partition today.** The gRPC, graph,
-///   and offline executors are separate paths that do not yet inject the cell issuer
-///   or ship records, so a `grpc`/`dynosim` transport or a non-synthetic
-///   (`file`/`public`, incl. graph-program) dataset would run an unwired executor and
-///   hang the controller. Threading the same seam through those executors is the
-///   natural extension; until then they are rejected, not silently divergent.
+/// - **Only the online-scheduled executor ships a partition today.** The gRPC and
+///   offline executors are separate paths that do not yet inject the cell issuer or
+///   ship records, so a `grpc`/`dynosim` transport runs an unwired executor and hangs
+///   the controller; it is rejected, not silently divergent. Synthetic, `file`, and
+///   `public` linear datasets ARE wired: synthetic regenerates from the shared seed,
+///   a cross-host `file`/`path` source ships controller->cell over HTTP+zstd (Stage G)
+///   and recompiles deterministically per cell, and `public` URL/HF each cell fetches
+///   itself. Graph programs (dag_jsonl/weka_trace/dynamo_trace) take the whole-trace
+///   partition below. Multi-turn `file` traces (per-conversation partition, like the
+///   graph path) remain a documented follow-up, rejected by the single-turn guard.
 /// - **One sampler draw must equal one dispatched turn.** [`PartitionedSampler`]
 ///   partitions by conversation *draw*, but the issuer stamps a per-*turn* ordinal
 ///   ([`CellularAutonomousIssuer`]); a multi-turn conversation makes the two diverge,
@@ -825,8 +871,11 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
         }
         let kind = dataset.get("type").and_then(serde_json::Value::as_str);
         ensure!(
-            kind == Some("synthetic"),
-            "cellular runs support only synthetic datasets (whose conversations the sampler can partition one-draw-per-turn); got dataset type {kind:?}"
+            matches!(kind, Some("synthetic" | "file" | "public")),
+            "cellular runs support synthetic, file, or public datasets (whose conversations the \
+             sampler can partition one-draw-per-turn); got dataset type {kind:?}. A cross-host \
+             `file`/`path` dataset is shipped controller->cell over HTTP+zstd (Stage G) and \
+             recompiled per cell; inline `records` and `public` URL/HF each cell resolves itself"
         );
         // Single-turn only: `turns` absent defaults to a fixed 1; a fixed `{value: 1}`
         // is the only other single-turn form. Anything else (a larger value or a
@@ -1332,6 +1381,14 @@ mod tests {
             serde_json::json!({"run": {"random_seed": 1, "cfg": {
                 "datasets": [{"type": "synthetic"}],
             }}}),
+            // Stage G: a single-turn `file`/`path` dataset is now accepted — the
+            // controller ships the source cross-host and each cell recompiles it.
+            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "file", "format": "single_turn", "path": "/data/prompts.jsonl"}]}}}),
+            // An inline-records `file` dataset (no path) is accepted — it already
+            // rides in the envelope, so no ship is needed.
+            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "file", "format": "single_turn", "records": []}]}}}),
+            // A `public` dataset is accepted — each cell fetches the URL/HF source itself.
+            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "public"}]}}}),
         ] {
             assert!(
                 validate_cellular_run_shape(&ok).is_ok(),
@@ -1341,14 +1398,14 @@ mod tests {
         // Fail closed on each unsupported aspect (all else valid + seeded):
         for bad in [
             serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "synthetic"}], "transport": {"type": "grpc"}}}}),
-            // A `file` dataset in a NON-graph trace format is still rejected; the graph
-            // formats (dag_jsonl/weka_trace/dynamo_trace) are admitted instead — see
-            // admits_graph_datasets_but_still_rejects_linear_non_synthetic.
-            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "file", "format": "mooncake_trace"}]}}}),
-            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "public"}]}}}),
+            // An unknown dataset type is still rejected (only synthetic/file/public wired).
+            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "agentic"}]}}}),
             serde_json::json!({"run": {"random_seed": 42, "cfg": {}}}),
             serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "synthetic", "turns": {"value": 3}}]}}}),
             serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "synthetic", "turns": {"mean": 2.0, "stddev": 1.0}}]}}}),
+            // A multi-turn `file` dataset (explicit turns > 1) is rejected — the
+            // per-conversation partition is a documented follow-up (Stage G non-goal).
+            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "file", "format": "multi_turn", "path": "/data/t.jsonl", "turns": {"value": 3}}]}}}),
         ] {
             assert!(
                 validate_cellular_run_shape(&bad).is_err(),
@@ -1358,11 +1415,11 @@ mod tests {
     }
 
     #[test]
-    fn admits_graph_datasets_but_still_rejects_linear_non_synthetic() {
+    fn admits_graph_and_linear_file_datasets() {
         // Graph programs (dag_jsonl / weka_trace / dynamo_trace) partition by whole
         // trace via PartitionedGraphTraceSource, so validate_cellular_run_shape admits
-        // them past the synthetic / single-turn guards even though they are `file`
-        // datasets. The http transport ensure is unchanged (graph dispatches HTTP too).
+        // them past the single-turn guard even though they are `file` datasets. The
+        // http transport ensure is unchanged (graph dispatches HTTP too).
         for graph_format in ["dag_jsonl", "weka_trace", "dynamo_trace"] {
             let graph = serde_json::json!({"run": {"cfg": {
                 "transport": {"type": "http"},
@@ -1377,19 +1434,19 @@ mod tests {
                 "is_graph_dataset true for {graph_format}"
             );
         }
-        // A NON-graph linear trace format (mooncake_trace is not one of the three graph
-        // formats) is still a `file` non-synthetic dataset and must stay rejected — the
-        // graph bypass is scoped to exactly the three graph formats.
+        // Stage G: a NON-graph linear trace format (a single-turn `file` dataset) is
+        // now ADMITTED — the controller ships the source cross-host and each cell
+        // recompiles it. It is NOT a graph dataset (takes the scheduled partition).
         let linear = serde_json::json!({"run": {"cfg": {
-            "datasets": [{"type": "file", "format": "mooncake_trace"}],
+            "datasets": [{"type": "file", "format": "mooncake_trace", "path": "/data/t.jsonl"}],
         }}});
         assert!(
-            validate_cellular_run_shape(&linear).is_err(),
-            "should still reject non-graph linear trace"
+            validate_cellular_run_shape(&linear).is_ok(),
+            "should admit single-turn linear file dataset"
         );
         assert!(
             !is_graph_dataset(&linear),
-            "mooncake_trace is not a graph dataset"
+            "mooncake_trace is not a graph dataset (scheduled partition)"
         );
         // is_graph_dataset is false for a synthetic (scheduled) dataset.
         let synthetic = serde_json::json!({"run": {"cfg": {"datasets": [{"type": "synthetic"}]}}});

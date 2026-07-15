@@ -47,7 +47,7 @@
 //! controller address from the same k8s bootstrap/DNS coordinate the velo
 //! controller already publishes (see [`crate::runner_protocol::cellular_controller`]).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Write};
 use std::net::SocketAddr;
 use std::path::{Component, Path, PathBuf};
@@ -58,7 +58,8 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, Path as AxumPath, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::routing::post;
+use axum::response::Response;
+use axum::routing::{get, post};
 use bytes::Bytes;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
@@ -273,6 +274,14 @@ fn validate_artifact_relpath(rel: &str, allowed: &HashSet<String>) -> Result<Pat
 struct UploadState {
     temp_root: PathBuf,
     allowed: HashSet<String>,
+    /// The non-synthetic dataset SOURCE files the controller may serve to cells
+    /// over `GET /dataset/{name}` (Stage G), keyed by the file name a cell
+    /// requests. A cross-host cell cannot read the controller-local dataset path,
+    /// so the controller streams the source over the same HTTP + zstd plane the
+    /// per-record artifact uploads use; the cell then recompiles it locally. Empty
+    /// for a synthetic run (each cell regenerates the dataset from the shared seed)
+    /// and for a same-host run (cells read the controller-local path directly).
+    datasets: HashMap<String, PathBuf>,
     /// The set of cells that have signaled `/done`, published through a
     /// [`watch`] channel. `watch` is version-tracked, so a `send` that lands
     /// between the barrier's set-size check and its `changed().await` bumps the
@@ -303,14 +312,34 @@ impl ArtifactUploadServer {
         temp_root: PathBuf,
         allowed: HashSet<String>,
     ) -> Result<Self> {
+        Self::start_with_datasets(bind, temp_root, allowed, HashMap::new()).await
+    }
+
+    /// Like [`start`](Self::start), plus a map of dataset SOURCE files the server
+    /// may stream to cells over `GET /dataset/{name}` (Stage G, cross-host
+    /// non-synthetic datasets). `datasets` maps the requested file name to the
+    /// controller-local absolute source path; a name absent from the map is served
+    /// `404`, so a cell can only ever fetch a source file the run explicitly
+    /// registered. An empty map disables dataset serving (the same route still
+    /// exists but always `404`s), keeping a synthetic or same-host run unchanged.
+    pub async fn start_with_datasets(
+        bind: SocketAddr,
+        temp_root: PathBuf,
+        allowed: HashSet<String>,
+        datasets: HashMap<String, PathBuf>,
+    ) -> Result<Self> {
         let state = Arc::new(UploadState {
             temp_root,
             allowed,
+            datasets,
             done: watch::Sender::new(HashSet::new()),
         });
         let app = Router::new()
             .route("/cell/{cell_id}/artifact/{*file}", post(upload_artifact))
             .route("/cell/{cell_id}/done", post(cell_done))
+            // Stage G: stream a registered non-synthetic dataset source to a cell
+            // with streaming zstd (the cross-host dataset-ship leg).
+            .route("/dataset/{name}", get(serve_dataset))
             // The body is streamed frame by frame (bounded); lift the default 2 MB
             // request-body cap so a large records.jsonl upload is not truncated.
             .layer(DefaultBodyLimit::disable())
@@ -495,6 +524,64 @@ async fn cell_done(
     StatusCode::OK
 }
 
+/// `GET /dataset/{name}` — stream the registered dataset source file `name`
+/// (Stage G) to the cell with `Content-Encoding: zstd`, bounded memory
+/// ([`FileCompressor`], one [`CHUNK_SIZE`] chunk at a time). A name absent from
+/// the run's dataset allowlist is `404` (a cell can only fetch a source the
+/// controller registered). Mirror of the upload leg in reverse: the whole file is
+/// never resident on either end.
+async fn serve_dataset(
+    State(state): State<Arc<UploadState>>,
+    AxumPath(name): AxumPath<String>,
+) -> Result<Response, (StatusCode, String)> {
+    let path = state
+        .datasets
+        .get(&name)
+        .cloned()
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no dataset source {name:?}")))?;
+
+    // Blocking chunked read + zstd on a blocking task → bounded channel; the axum
+    // response body streams from that channel (whole-file never resident). A read
+    // error mid-stream is forwarded as a stream error, truncating the body so the
+    // cell's decoder fails rather than landing a partial file.
+    let (tx, rx) = mpsc::channel::<Result<Bytes, io::Error>>(4);
+    tokio::task::spawn_blocking(move || match FileCompressor::open(&path) {
+        Ok(mut compressor) => loop {
+            match compressor.next_chunk() {
+                Ok(Some(chunk)) => {
+                    if tx.blocking_send(Ok(Bytes::from(chunk))).is_err() {
+                        break; // receiver dropped (client disconnected)
+                    }
+                }
+                Ok(None) => break,
+                Err(error) => {
+                    let _ = tx.blocking_send(Err(error));
+                    break;
+                }
+            }
+        },
+        Err(error) => {
+            let _ = tx.blocking_send(Err(error));
+        }
+    });
+
+    // The load-bearing HTTP+zstd proof for the dataset leg: one line per served
+    // source, on the shared `aiperf_cellular_artifact` target so a test can raise
+    // just this to `info` without unmuting the whole runner.
+    tracing::info!(
+        target: "aiperf_cellular_artifact",
+        dataset = %name,
+        content_encoding = ZSTD_CONTENT_ENCODING,
+        "served dataset source over HTTP"
+    );
+
+    let body = Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(rx));
+    Response::builder()
+        .header(axum::http::header::CONTENT_ENCODING, ZSTD_CONTENT_ENCODING)
+        .body(body)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
+}
+
 // -- cell-side HTTP client --------------------------------------------------------
 
 /// Ship one cell's per-record artifact files (+ `inputs.json`) to the controller
@@ -617,6 +704,72 @@ where
     // Drain the (small) response body so the connection closes cleanly.
     let _ = response.into_body().collect().await;
     Ok(status)
+}
+
+/// Fetch a controller dataset source over `GET /dataset/{name}` (Stage G) and
+/// stream it to `dest`, decompressing when the response is `Content-Encoding:
+/// zstd`. Bounded memory: response frames flow through a bounded channel into a
+/// blocking streaming decode (`.part` + atomic rename), so a crashed transfer
+/// never leaves a truncated final file — the same discipline as the upload leg.
+///
+/// `authority` is the controller's artifact `host:port`; a same-host cell never
+/// calls this (it reads the controller-local path directly).
+pub async fn fetch_dataset_to_file(authority: &str, name: &str, dest: &Path) -> Result<()> {
+    use http_body_util::{BodyExt, Empty};
+
+    let request = hyper::Request::builder()
+        .method("GET")
+        .uri(format!("/dataset/{name}"))
+        .header(hyper::header::HOST, authority)
+        .body(Empty::<Bytes>::new())
+        .context("building dataset fetch request")?;
+
+    let stream = tokio::net::TcpStream::connect(authority)
+        .await
+        .with_context(|| format!("connecting to dataset server {authority}"))?;
+    let io = hyper_util::rt::TokioIo::new(stream);
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(io)
+        .await
+        .context("dataset HTTP handshake")?;
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+    let response = sender
+        .send_request(request)
+        .await
+        .context("sending dataset request")?;
+    ensure!(
+        response.status().is_success(),
+        "dataset fetch for {name:?} returned HTTP {}",
+        response.status()
+    );
+    let zstd = response
+        .headers()
+        .get(hyper::header::CONTENT_ENCODING)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.eq_ignore_ascii_case(ZSTD_CONTENT_ENCODING))
+        .unwrap_or(false);
+
+    // Response frames → bounded channel → blocking decode/rename task.
+    let (tx, rx) = mpsc::channel::<Bytes>(4);
+    let dest_buf = dest.to_path_buf();
+    let writer = tokio::task::spawn_blocking(move || decode_channel_to_file(rx, &dest_buf, zstd));
+
+    let mut body = response.into_body();
+    while let Some(frame) = body.frame().await {
+        let frame = frame.map_err(|error| anyhow::anyhow!("reading dataset body: {error}"))?;
+        if let Ok(data) = frame.into_data()
+            && tx.send(data).await.is_err()
+        {
+            break; // writer task failed and dropped rx; surface its error below
+        }
+    }
+    drop(tx);
+    match writer.await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(error).with_context(|| format!("writing dataset {name:?}")),
+        Err(join) => bail!("dataset writer task panicked: {join}"),
+    }
 }
 
 // -- allowlist / relative-path derivation -----------------------------------------
@@ -1004,5 +1157,125 @@ mod tests {
         let unknown = upload_one(&authority, 0, "secret.parquet", &src).await;
         assert!(unknown.is_err(), "unallowed artifact must be rejected");
         server.shutdown().await;
+    }
+
+    /// Stage G round-trip: the controller serves a non-synthetic dataset SOURCE
+    /// file over `GET /dataset/{name}` with streaming zstd, a cell downloads it to
+    /// a cell-local path, and the landed bytes are byte-identical to the source.
+    /// An unregistered name is `404` (a cell can only fetch a registered source).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn serve_then_download_round_trips_dataset_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        // A JSONL dataset larger than several chunks so both legs stream across
+        // many bounded windows (not a single read).
+        let src = dir.path().join("prompts.jsonl");
+        let mut file = std::fs::File::create(&src).unwrap();
+        for row in 0..2000 {
+            writeln!(file, "{{\"text\":\"prompt {row} {}\"}}", "y".repeat(40)).unwrap();
+        }
+        drop(file);
+        let source_bytes = std::fs::read(&src).unwrap();
+        assert!(source_bytes.len() > CHUNK_SIZE, "source spans many chunks");
+
+        let mut datasets = HashMap::new();
+        datasets.insert("prompts.jsonl".to_owned(), src.clone());
+        let server = ArtifactUploadServer::start_with_datasets(
+            "127.0.0.1:0".parse().unwrap(),
+            dir.path().join("controller-temp"),
+            HashSet::new(),
+            datasets,
+        )
+        .await
+        .unwrap();
+        let authority = server.local_addr().to_string();
+
+        let dest = dir.path().join("cell").join("prompts.jsonl");
+        fetch_dataset_to_file(&authority, "prompts.jsonl", &dest)
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read(&dest).unwrap(),
+            source_bytes,
+            "downloaded dataset is byte-identical to the source"
+        );
+        assert!(
+            !part_path_for(&dest).exists(),
+            "no lingering .part after atomic rename"
+        );
+
+        // An unregistered source name is rejected (404 → client error).
+        let missing = dir.path().join("cell").join("unknown.jsonl");
+        assert!(
+            fetch_dataset_to_file(&authority, "unknown.jsonl", &missing)
+                .await
+                .is_err(),
+            "an unregistered dataset name must be rejected"
+        );
+
+        server.shutdown().await;
+    }
+
+    /// Compile-equivalence: recompiling the SHIPPED dataset bytes yields the same
+    /// conversation list as compiling the original controller-local file. The
+    /// compiler is a pure function of the file bytes + seed + tokenizer (a file
+    /// source is `std::fs::read` of the path; segments are content-addressed), so
+    /// byte-identical shipped bytes give a byte-identical fixed conversation list —
+    /// the invariant the `PartitionedSampler` slices tile across cells.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn compiled_dataset_matches_between_original_and_shipped_file() {
+        use crate::dataset::{
+            ComposeConfig, DatasetSource, LoadConfig, LoaderRegistry, TiktokenTokenizer,
+        };
+        use crate::rng::RngRoot;
+
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("prompts.jsonl");
+        std::fs::write(
+            &src,
+            b"{\"text\":\"alpha\",\"output_length\":7}\n\
+              {\"text\":\"beta\"}\n\
+              {\"session_id\":\"s\",\"text\":\"gamma\"}\n",
+        )
+        .unwrap();
+
+        let mut datasets = HashMap::new();
+        datasets.insert("prompts.jsonl".to_owned(), src.clone());
+        let server = ArtifactUploadServer::start_with_datasets(
+            "127.0.0.1:0".parse().unwrap(),
+            dir.path().join("controller-temp"),
+            HashSet::new(),
+            datasets,
+        )
+        .await
+        .unwrap();
+        let authority = server.local_addr().to_string();
+        let shipped = dir.path().join("cell").join("prompts.jsonl");
+        fetch_dataset_to_file(&authority, "prompts.jsonl", &shipped)
+            .await
+            .unwrap();
+        server.shutdown().await;
+
+        let compile = |path: &Path| {
+            let path = path.to_path_buf();
+            async move {
+                LoaderRegistry::with_builtin_formats()
+                    .unwrap()
+                    .build_dataset(
+                        Some("single_turn"),
+                        &LoadConfig::new(DatasetSource::Path(path)),
+                        &ComposeConfig::new("model", RngRoot::new(Some(4242))),
+                        &TiktokenTokenizer::builtin(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+        let original = compile(&src).await;
+        let from_shipped = compile(&shipped).await;
+        assert_eq!(
+            original.conversations(),
+            from_shipped.conversations(),
+            "recompiling shipped bytes yields the identical conversation list"
+        );
     }
 }
