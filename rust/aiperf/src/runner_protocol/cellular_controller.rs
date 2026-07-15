@@ -1236,7 +1236,7 @@ fn ensure_single_file_trace_shippable(source: &Path) -> Result<()> {
     ensure!(
         source.is_file(),
         "cross-host cellular graph runs support only a single-file trace; the trace path \
-         {} is not a single readable file (it is a directory or segmented-prefix). Ship a \
+         {} is not a single readable file (directory, segmented-prefix, or missing). Ship a \
          single-file trace, mount a shared volume, or use an inline `records` dataset — \
          multi-file trace shipping is a follow-up",
         source.display()
