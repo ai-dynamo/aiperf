@@ -969,8 +969,10 @@ fn build_adaptive_scale(
         .collect::<anyhow::Result<Vec<_>>>()?;
     Ok(Some(AdaptiveScale {
         control_variable,
-        minimum: flags.adaptive_control_min.unwrap_or(1),
-        maximum,
+        // The flag surface is integer-typed on both bounds (int flags / the
+        // concurrency axis), matching Python's flag-path int serialization.
+        minimum: flags.adaptive_control_min.unwrap_or(1).into(),
+        maximum: maximum.into(),
         assessment_period_seconds: flags.adaptive_assessment_period.unwrap_or(30.0),
         sustain_duration_seconds: sustain,
         min_completed_requests: 1,

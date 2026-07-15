@@ -411,12 +411,55 @@ struct PhaseSection {
     start_offset: Option<i64>,
     #[serde(default, alias = "endOffset")]
     end_offset: Option<i64>,
+    /// Adaptive-scale enable toggle.
+    #[serde(default, alias = "adaptiveScale")]
+    adaptive_scale: bool,
+    #[serde(default, alias = "adaptiveSustainDuration")]
+    adaptive_sustain_duration: Option<f64>,
+    #[serde(default, alias = "adaptiveAssessmentPeriod")]
+    adaptive_assessment_period: Option<f64>,
+    #[serde(default, alias = "adaptiveMinCompletedRequests")]
+    adaptive_min_completed_requests: Option<u64>,
+    #[serde(default, alias = "adaptiveControlVariable")]
+    adaptive_control_variable: Option<String>,
+    #[serde(default, alias = "adaptiveControlMin")]
+    adaptive_control_min: Option<f64>,
+    #[serde(default, alias = "adaptiveControlMax")]
+    adaptive_control_max: Option<f64>,
+    #[serde(default, alias = "adaptiveScaleStrategyType")]
+    adaptive_scale_strategy_type: Option<String>,
+    #[serde(default, alias = "adaptiveScaleStepPolicy")]
+    adaptive_scale_step_policy: Option<String>,
+    #[serde(default, alias = "adaptiveScaleBaseStep")]
+    adaptive_scale_base_step: Option<i64>,
+    #[serde(default, alias = "adaptiveScaleMaxStepMultiplier")]
+    adaptive_scale_max_step_multiplier: Option<i64>,
+    #[serde(default, alias = "adaptiveScaleStepPercent")]
+    adaptive_scale_step_percent: Option<f64>,
+    /// Adaptive-scale SLA filters.
+    #[serde(default)]
+    sla: Vec<SlaFilterSection>,
 }
 
 #[derive(Debug, Deserialize)]
 struct CancellationSection {
     rate: f64,
     delay: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct SlaFilterSection {
+    #[serde(alias = "metricTag")]
+    metric_tag: String,
+    #[serde(default = "default_sla_stat")]
+    stat: String,
+    op: String,
+    threshold: f64,
+}
+
+/// Default SLA statistic (`SLAFilter.stat` default).
+fn default_sla_stat() -> String {
+    "p95".to_string()
 }
 
 impl Benchmark {
@@ -595,6 +638,13 @@ impl Benchmark {
                 .auto_offset
                 .unwrap_or(phase.start_offset.is_none() && phase.end_offset.is_none())
         });
+
+        // Adaptive scale (opt-in via the phase's `adaptive_scale: true`).
+        let adaptive_scale = if phase.adaptive_scale {
+            Some(build_adaptive_yaml(&phase)?)
+        } else {
+            None
+        };
 
         // Synthetic conversation count: num_conversations or an explicit
         // dataset `entries`, else the Python default (never the request bound).
@@ -783,7 +833,7 @@ impl Benchmark {
             image_spec,
             audio_spec,
             video_spec,
-            adaptive_scale: None,
+            adaptive_scale,
             prefix_prompts,
             artifact_dir: artifact_dir
                 .or_else(|| config_artifact_dir.map(PathBuf::from))
@@ -837,6 +887,76 @@ fn extract_prompts(
     };
     let osl = prompts.osl.as_ref().map(clone_num_or_dist);
     (isl, osl, prompts.batch_size, prompts.block_size)
+}
+
+/// Build an [`AdaptiveScale`] from a YAML phase's `adaptive_*` fields, mirroring
+/// `rust_wire._adaptive_scale`. Bounds preserve Python's int-vs-float form: an
+/// explicit config bound is a float, a defaulted/axis-derived bound is an int.
+fn build_adaptive_yaml(
+    phase: &PhaseSection,
+) -> anyhow::Result<crate::model::phase::AdaptiveScale> {
+    use crate::model::phase::{AdaptiveScale, SlaFilter};
+    let sustain = phase.adaptive_sustain_duration.ok_or_else(|| {
+        anyhow::anyhow!("adaptive_scale requires adaptive_sustain_duration")
+    })?;
+    anyhow::ensure!(
+        !phase.sla.is_empty(),
+        "adaptive_scale requires at least one sla filter"
+    );
+    let control_variable = phase
+        .adaptive_control_variable
+        .clone()
+        .unwrap_or_else(|| "concurrency".to_string());
+    // Explicit config bound -> float; else the control axis value -> int.
+    let float_num = |v: f64| {
+        serde_json::Number::from_f64(v).unwrap_or_else(|| serde_json::Number::from(0))
+    };
+    let minimum = match phase.adaptive_control_min {
+        Some(v) => float_num(v),
+        None => serde_json::Number::from(1i64),
+    };
+    let axis_default = match control_variable.as_str() {
+        "request_rate" => phase.rate.map(float_num),
+        "users" => phase.users.map(|u| serde_json::Number::from(i64::from(u))),
+        "prefill_concurrency" => phase
+            .prefill_concurrency
+            .map(|c| serde_json::Number::from(i64::from(c))),
+        _ => phase.concurrency.map(|c| serde_json::Number::from(i64::from(c))),
+    };
+    let maximum = match phase.adaptive_control_max {
+        Some(v) => float_num(v),
+        None => axis_default
+            .ok_or_else(|| anyhow::anyhow!("adaptive_scale could not resolve a maximum"))?,
+    };
+    Ok(AdaptiveScale {
+        control_variable,
+        minimum,
+        maximum,
+        assessment_period_seconds: phase.adaptive_assessment_period.unwrap_or(30.0),
+        sustain_duration_seconds: sustain,
+        min_completed_requests: phase.adaptive_min_completed_requests.unwrap_or(1),
+        strategy_type: phase
+            .adaptive_scale_strategy_type
+            .clone()
+            .unwrap_or_else(|| "ramp_until_fail".to_string()),
+        step_policy: phase
+            .adaptive_scale_step_policy
+            .clone()
+            .unwrap_or_else(|| "sla_margin".to_string()),
+        base_step: phase.adaptive_scale_base_step.unwrap_or(10),
+        max_step_multiplier: phase.adaptive_scale_max_step_multiplier.unwrap_or(4),
+        step_percent: phase.adaptive_scale_step_percent.unwrap_or(25.0),
+        sla_filters: phase
+            .sla
+            .iter()
+            .map(|s| SlaFilter {
+                metric_tag: s.metric_tag.clone(),
+                stat: s.stat.clone(),
+                op: s.op.clone(),
+                threshold: s.threshold,
+            })
+            .collect(),
+    })
 }
 
 /// Build a [`Distribution`] from a parametric YAML dist block (`{mean,stddev,…}`).

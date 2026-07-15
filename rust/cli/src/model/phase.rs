@@ -46,10 +46,13 @@ pub struct SlaFilter {
 pub struct AdaptiveScale {
     /// Controlled axis (`concurrency`/`request_rate`/…).
     pub control_variable: String,
-    /// Lower bound.
-    pub minimum: i64,
-    /// Upper bound.
-    pub maximum: i64,
+    /// Lower bound. A `serde_json::Number` to preserve Python's int-vs-float
+    /// distinction: the defaulted bound serializes as an int (`1`), an explicitly
+    /// authored config bound as a float (`2.0`).
+    pub minimum: serde_json::Number,
+    /// Upper bound (int when derived from the concurrency axis, float when set as
+    /// the config's `adaptive_control_max`).
+    pub maximum: serde_json::Number,
     /// Assessment period, seconds.
     pub assessment_period_seconds: f64,
     /// Sustain duration, seconds.

@@ -1,0 +1,24 @@
+schemaVersion: "2.0"
+benchmark:
+  model: Qwen/Qwen3-0.6B
+  endpoint: {type: chat, url: 127.0.0.1:8000, streaming: true}
+  dataset: {prompts: {isl: 512}}
+  phases:
+    type: concurrency
+    concurrency: 8
+    duration: 30
+    adaptive_scale: true
+    adaptive_sustain_duration: 5
+    adaptive_assessment_period: 20
+    adaptive_control_min: 2
+    adaptive_control_max: 16
+    adaptive_min_completed_requests: 3
+    adaptive_scale_base_step: 5
+    adaptive_scale_max_step_multiplier: 8
+    adaptive_scale_step_percent: 50
+    sla:
+      - metric_tag: request_latency
+        stat: p99
+        op: le
+        threshold: 500
+  artifacts: {dir: /tmp/aiperf-parity/yaml_adaptive}
