@@ -28,8 +28,9 @@ use aiperf::graph::execution::TracePlacement;
 use aiperf::graph::input::GraphInputBundle;
 use aiperf::graph::model::{GraphTracePlan, ParsedGraph, TraceRecord};
 use aiperf::graph::policy::{ContinueRunFailurePolicy, FailFastRunFailurePolicy, RunFailurePolicy};
-use aiperf::graph::snapshot::{chop_trie_at_tstar, rewrite_for_warmup};
+use aiperf::graph::snapshot::{chop_trie_at_frontier, chop_trie_at_tstar, rewrite_for_warmup};
 use aiperf::graph::tstar::{TStarSampler, WindowTStarSampler, trace_duration_us};
+use aiperf::graph::warmup_handoff::{GraphWarmupHandoff, LaneHandoff};
 use aiperf::graph::workload::{
     CyclingGraphTraceSource, GraphArrivalPolicy, GraphTraceInstanceSequence, GraphTraceRunResult,
     GraphTraceSource, GraphWorkload, GraphWorkloadObserver, GraphWorkloadReport,
@@ -212,6 +213,21 @@ fn validate_graph_ramp(phase_index: usize, name: &str, duration: f64) -> Result<
 /// `timing/config.py::_graph_pressure_grace_sec`.
 pub const PRESSURE_DRAIN_GRACE_CAP_SEC: f64 = 300.0;
 
+/// Upper bound in seconds on any single extended-warmup handoff residual delay
+/// (the recorded inter-turn gap minus drain time a resumed profiling frontier
+/// waits before firing; see [`chop_trie_at_frontier`]).
+///
+/// Port of `Environment.GRAPH.HANDOFF_RESIDUAL_CAP` (default `60.0`) in
+/// `src/aiperf/common/environment.py:641` (branch `ajc/aiperf-graph-ir`),
+/// consumed by `graph_ir_replay.py::_graph_at_handoff` as
+/// `cap_s * MICROS_PER_SECOND`. The 60s default matches the recorded idle-gap
+/// cap so a handoff lane cannot park for minutes at the profiling start.
+pub const HANDOFF_RESIDUAL_CAP_SEC: f64 = 60.0;
+
+/// Microseconds per second, the [`Clock`]-ledger scale the warmup handoff walls
+/// (`clock.now_ns() / 1000`) and `chop_trie_at_frontier` residuals share.
+const MICROS_PER_SECOND: f64 = 1_000_000.0;
+
 /// Derive the drain grace (seconds) for a cache-pressure-mode graph warmup.
 ///
 /// Port of `timing/config.py::_graph_pressure_grace_sec`
@@ -245,6 +261,11 @@ struct PreparedGraphPhase {
     /// carried `agentic_cache_warmup_duration`. Drives [`GraphPressureRecycle`]
     /// in place of the single-pass workload; `None` keeps the warmup unchanged.
     pressure: Option<PreparedPressureRecycle>,
+    /// Deferred frontier-resume ingredients for a non-warmup (profiling) phase.
+    /// `Some` for every non-warmup phase; consumed only by the first profiling
+    /// phase that pops a stashed warmup handoff, to rebuild its trace source with
+    /// `chop_trie_at_frontier` plans. `None` for the warmup phase.
+    resume: Option<ProfilingResume>,
 }
 
 struct GraphTracePhaseProgress {
@@ -579,6 +600,12 @@ struct GraphPressureRecycle {
     session_limit: Option<u64>,
     recycle_bounded: bool,
     cancelled: Rc<Cell<bool>>,
+    /// Number of pass-0 lanes this stage launched (`len(pass0_traces)`), stamped
+    /// once [`run`](Self::run) resolves the lane fan-out. E3c's warmup teardown
+    /// reads it as the handoff `pressure_lane_count`. Port of Python
+    /// `self._pressure_lane_count = len(pass0_traces)`
+    /// (`graph_ir_replay.py:1509`). `0` until the stage runs.
+    pressure_lane_count: Cell<u64>,
 }
 
 impl GraphPressureRecycle {
@@ -606,6 +633,10 @@ impl GraphPressureRecycle {
         );
         let (pass0, cursor) = pressure_resolve_pass0_lanes(&self.templates, lanes);
         self.progress.lanes.set_corpus_cursor(cursor);
+        // Record the pass-0 lane fan-out for the E3c warmup handoff before any
+        // lane runs (Python `_pressure_lane_count = len(pass0_traces)`).
+        self.pressure_lane_count
+            .set(u64::try_from(pass0.len()).unwrap_or(u64::MAX));
         if pass0.is_empty() {
             return;
         }
@@ -1081,6 +1112,11 @@ struct GraphPhaseExecution {
     /// drives it in place of the single-pass workload and `stop_issuing` latches
     /// its cancel; `None` leaves the byte-unchanged workload path.
     pressure_recycle: Option<Rc<GraphPressureRecycle>>,
+    /// Consume-once WARMUP -> PROFILING handoff slot, shared with the factory and
+    /// every phase. A warmup phase with a pressure recycle STASHES a
+    /// [`GraphWarmupHandoff`] here at the end of [`finalize`](PhaseExecution::finalize)
+    /// (after its drain completes); non-warmup phases never write it.
+    warmup_handoff: Rc<RefCell<Option<GraphWarmupHandoff>>>,
 }
 
 impl GraphPhaseExecution {
@@ -1307,6 +1343,8 @@ impl PhaseExecution for GraphPhaseExecution {
         let sidecars = self.sidecars.clone();
         let clock = self.clock.clone();
         let progress = self.progress.clone();
+        let pressure_recycle = self.pressure_recycle.clone();
+        let warmup_handoff = self.warmup_handoff.clone();
         Box::pin(async move {
             if let Some(drain) = drain {
                 drain.await.map_err(|error| {
@@ -1340,6 +1378,33 @@ impl PhaseExecution for GraphPhaseExecution {
                     "warmup phase recorded terminal trace failures; aborting before profiling",
                 ));
             }
+            // Extended-warmup handoff stash: the drain above has processed every
+            // pressure return, so the per-lane ledger is complete and `now_ns`
+            // here credits the whole drain wait toward each recorded gap
+            // (agentx `finalize_phase`'s `finalized_at_ns` parity). Only a warmup
+            // phase that RAN the pressure recycle stashes. Completeness gate
+            // (Python `_stash_pressure_handoff`): if any admitted pressure trace
+            // never returned (a cancelled run or finite grace) OR a failure was
+            // recorded, a handoff built from the incomplete ledger would mark
+            // server-executed nodes as not-executed and profiling would REFIRE
+            // them — so skip the stash and let profiling start from the plain
+            // `t*` plans. `progress.traces` empties as each admission completes,
+            // so an empty map is the native `graph_all_returned()` analogue.
+            if progress.is_warmup
+                && let Some(recycle) = &pressure_recycle
+                && progress.traces.borrow().is_empty()
+                && failures.first().is_none()
+            {
+                // Nanoseconds -> microseconds, the same ledger scale
+                // `observe_lane_return` stamps returns on (`now_ns / 1000`).
+                let drain_end_wall_us = clock.now_ns() as f64 / 1_000.0;
+                let handoff = build_warmup_handoff(
+                    &progress.lanes,
+                    recycle.pressure_lane_count.get(),
+                    drain_end_wall_us,
+                );
+                *warmup_handoff.borrow_mut() = Some(handoff);
+            }
             Ok(())
         })
     }
@@ -1359,6 +1424,11 @@ struct GraphPhaseExecutionFactory {
     /// [`create`](Self::create) when the warmup phase's progress is built;
     /// remains `None` for a run with no warmup phase.
     warmup_lane_ledger: Rc<RefCell<Option<Rc<GraphLaneLedger>>>>,
+    /// Consume-once WARMUP -> PROFILING handoff slot (the native
+    /// `GraphPhaseChannel.warmup_handoff`). The warmup phase's `finalize` stashes
+    /// a [`GraphWarmupHandoff`] here after its drain completes; the first
+    /// profiling phase's [`create`](Self::create) pops it (and clears it).
+    warmup_handoff: Rc<RefCell<Option<GraphWarmupHandoff>>>,
 }
 
 impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
@@ -1385,8 +1455,32 @@ impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
         let observer = Rc::new(GraphPhaseWorkloadObserver {
             progress: progress.clone(),
         });
-        let workload = Rc::new(prepared.workload.with_observer(observer));
         let mut setup_error = None;
+        // Consume-once warmup handoff: EVERY create pops the shared slot (the
+        // warmup phase's create runs before any stash, so it pops `None`; the
+        // first profiling create after an extended warmup pops the stashed
+        // handoff; a later phase sees `None` and never a stale re-cut). Port of
+        // `phase/runner.py:416-424` (`warmup_handoff = channel.warmup_handoff;
+        // channel.warmup_handoff = None`). A non-warmup phase with resume
+        // ingredients rebuilds its trace source at the drain frontier; every
+        // other case keeps the byte-unchanged prepared (`chop_trie_at_tstar`)
+        // workload, so the no-pressure path is identical to today.
+        let popped_handoff = self.warmup_handoff.borrow_mut().take();
+        let base_workload = match (prepared.resume.take(), popped_handoff) {
+            (Some(resume), Some(handoff)) => {
+                match rebuild_resume_workload(&resume, prepared.placement.clone(), &handoff) {
+                    Ok(workload) => workload,
+                    Err(error) => {
+                        setup_error = Some(format!(
+                            "building warmup handoff resume workload: {error:#}"
+                        ));
+                        prepared.workload
+                    }
+                }
+            }
+            _ => prepared.workload,
+        };
+        let workload = Rc::new(base_workload.with_observer(observer));
         let mut controller = prepared.controller;
         let adaptive_control_variable = prepared
             .adaptive
@@ -1434,6 +1528,7 @@ impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
                 session_limit: prepared_pressure.session_limit,
                 recycle_bounded: prepared_pressure.recycle_bounded,
                 cancelled: Rc::new(Cell::new(false)),
+                pressure_lane_count: Cell::new(0),
             })
         });
         Rc::new(GraphPhaseExecution {
@@ -1455,6 +1550,7 @@ impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
             drain_task: RefCell::new(None),
             setup_error,
             pressure_recycle,
+            warmup_handoff: self.warmup_handoff.clone(),
         })
     }
 
@@ -1668,6 +1764,11 @@ pub(crate) async fn run_graph_phases(
     // the E3c cache-pressure handoff; the recycle loop (E3b) registers lanes,
     // and the handoff assembly (E3c) reads it here after the warmup phase drains.
     let warmup_lane_ledger: Rc<RefCell<Option<Rc<GraphLaneLedger>>>> = Rc::new(RefCell::new(None));
+    // Consume-once WARMUP -> PROFILING handoff slot (the native
+    // `GraphPhaseChannel.warmup_handoff`): the warmup phase stashes at teardown,
+    // the first profiling phase pops-and-clears at create. `None` on every
+    // no-pressure run.
+    let warmup_handoff: Rc<RefCell<Option<GraphWarmupHandoff>>> = Rc::new(RefCell::new(None));
     let execution_factory: Rc<dyn PhaseExecutionFactory> = Rc::new(GraphPhaseExecutionFactory {
         phases: RefCell::new(prepared),
         sidecars: RefCell::new(sidecars),
@@ -1676,6 +1777,7 @@ pub(crate) async fn run_graph_phases(
         outcome: outcome.clone(),
         warmup_failed_trace_ids: warmup_failed_trace_ids.clone(),
         warmup_lane_ledger: warmup_lane_ledger.clone(),
+        warmup_handoff: warmup_handoff.clone(),
     });
     let phase_observer: Rc<dyn PhaseObserver> = Rc::new(NoopPhaseObserver);
     let runner_factory = Rc::new(ClockPhaseRunnerFactory::new(
@@ -1825,27 +1927,12 @@ fn prepare_graph_phase(
         .with_context(|| {
             format!("preparing warmup cache-pressure recycle for phase {phase_index}")
         })?;
-    let source: Rc<dyn GraphTraceSource> = match ModuloCellPartition::from_env() {
-        Some(partition) if partition.cell_count() > 1 && common.requests.is_none() => {
-            tracing::debug!(
-                cell_id = partition.cell_id(),
-                cell_count = partition.cell_count(),
-                "graph phase using partitioned trace source for cell"
-            );
-            Rc::new(PartitionedGraphTraceSource::new(
-                phase_plans,
-                session_limit,
-                partition.cell_id(),
-                partition.cell_count(),
-            )?)
-        }
-        _ => Rc::new(CyclingGraphTraceSource::with_budgets_and_sequence(
-            phase_plans,
-            session_limit,
-            common.requests,
-            trace_instances,
-        )?),
-    };
+    let source = build_graph_trace_source(
+        phase_plans,
+        session_limit,
+        common.requests,
+        trace_instances.clone(),
+    )?;
     let seed = phase_rng.derive_seed_or_entropy(namespace::GRAPH_ARRIVAL);
     let intervals = Rc::new(RefCell::new(match phase.request_arrival() {
         Some((pattern, rate, smoothness)) => {
@@ -1922,16 +2009,38 @@ fn prepare_graph_phase(
         OnFailure::Abort => Rc::new(FailFastRunFailurePolicy::default()),
         OnFailure::Continue => Rc::new(ContinueRunFailurePolicy),
     };
-    let mut workload = GraphWorkload::new(clock, source, placement.clone())
-        .with_arrival(arrival)
-        .with_run_failure(run_failure);
-    if graph_phase_uses_session_admission(phase) {
-        workload = workload.with_admission(Rc::new(SlotPoolTraceAdmission::new(
-            session_slots
-                .clone()
-                .ok_or_else(|| anyhow!("graph phase requires shared session admission"))?,
-        )));
-    }
+    let uses_admission = graph_phase_uses_session_admission(phase);
+    let is_warmup = common.name == "warmup";
+    // The frontier-resume ingredients are shared (`Rc` clones) with the workload
+    // built here; only a non-warmup phase that later pops a warmup handoff
+    // rebuilds its source, so the arrival/run-failure objects are never used by
+    // two live workloads at once (the discarded prepared workload is dropped).
+    let resume = if is_warmup {
+        None
+    } else {
+        Some(ProfilingResume {
+            original_plans: Rc::new(input.plans.clone()),
+            phase: phase.clone(),
+            t_star,
+            session_limit,
+            request_limit: common.requests,
+            trace_instances,
+            arrival: arrival.clone(),
+            run_failure: run_failure.clone(),
+            uses_admission,
+            session_slots: session_slots.clone(),
+            clock: clock.clone(),
+        })
+    };
+    let workload = assemble_graph_workload(
+        clock,
+        source,
+        placement.clone(),
+        arrival,
+        run_failure,
+        uses_admission,
+        session_slots.clone(),
+    )?;
     Ok(PreparedGraphPhase {
         workload,
         placement,
@@ -1942,8 +2051,9 @@ fn prepare_graph_phase(
         controller,
         failures,
         adaptive,
-        is_warmup: common.name == "warmup",
+        is_warmup,
         pressure,
+        resume,
     })
 }
 
@@ -2080,6 +2190,262 @@ fn apply_tstar_split(
             }
         })
         .collect()
+}
+
+/// A single-trace [`ParsedGraph`] view over one already-resolved plan graph.
+///
+/// The view trace clears `graph_ref` so `resolve_trace_graph` returns this
+/// graph directly (recorded plans carry the resolved graph on the plan, not a
+/// named `graph_ref`) — the same construction [`apply_tstar_split`] and
+/// [`sample_plan_tstar`] build inline; factored so the frontier resume shares it.
+fn single_trace_parsed(plan: &GraphTracePlan) -> ParsedGraph {
+    let view_trace = TraceRecord {
+        id: plan.trace.id.clone(),
+        graph_ref: None,
+        initial_state: plan.trace.initial_state.clone(),
+    };
+    ParsedGraph {
+        graph: plan.graph.clone(),
+        graphs: std::collections::BTreeMap::new(),
+        traces: vec![view_trace],
+    }
+}
+
+/// Assemble the WARMUP -> PROFILING [`GraphWarmupHandoff`] from E3a's per-lane
+/// ledgers plus the pass-0 lane count and the [`Clock`]-derived drain-end wall.
+///
+/// Port of `graph_ir_replay.py::_stash_pressure_handoff`
+/// (`src/aiperf/timing/strategies/graph_ir_replay.py:2231-2299`, branch
+/// `ajc/aiperf-graph-ir`): each live lane's [`LaneHandoff`] is built
+/// field-for-field from that lane's recorded identity (`template_trace_id`,
+/// `instance_id`, `t_star_us`), executed-node set, and return-wall ledger, and
+/// the top-level handoff carries `drain_end_wall_us`, `corpus_cursor`
+/// (`self._pressure_next_index`, `:2294`), and `pressure_lane_count`
+/// (`:2295`). Python derives `executed_node_ids = frozenset(live_walls)` from
+/// the live instance's return-wall keys; the native ledger populates the
+/// executed set and the return-wall map together in `observe_return`, so their
+/// keys agree by construction. Lanes are keyed by index to match E1's
+/// `BTreeMap<u64, LaneHandoff>`; the last identity a lane registered (its live
+/// instance at drain) is the one carried, the `_pressure_live[lane]` analogue.
+///
+/// The pressure-pass-0 boundary-priming wall merge Python performs
+/// (`_priming_instance_ids` under the pass-0 anchor set, `:2280-2283`) is
+/// subsumed here: the native ledger already keys executed nodes and walls by
+/// LANE (not per-instance), so a lane's boundary-priming returns and its
+/// pass-0 pressure returns land in one lane-keyed map — no separate merge.
+fn build_warmup_handoff(
+    lanes: &GraphLaneLedger,
+    pressure_lane_count: u64,
+    drain_end_wall_us: f64,
+) -> GraphWarmupHandoff {
+    let mut lane_map: BTreeMap<u64, LaneHandoff> = BTreeMap::new();
+    for lane in lanes.registered_lanes() {
+        let Some(identity) = lanes.lane_identity(lane) else {
+            continue;
+        };
+        lane_map.insert(
+            lane,
+            LaneHandoff {
+                template_trace_id: identity.template_trace_id,
+                instance_id: identity.instance_id,
+                t_star_us: identity.t_star_us,
+                executed_node_ids: lanes.executed_node_ids(lane),
+                return_wall_us: lanes.return_wall_us(lane),
+            },
+        );
+    }
+    GraphWarmupHandoff {
+        lanes: lane_map,
+        drain_end_wall_us,
+        corpus_cursor: lanes.corpus_cursor(),
+        pressure_lane_count,
+    }
+}
+
+/// Build the PROFILING phase's per-lane resume plans from a warmup handoff.
+///
+/// Starts from the same [`apply_tstar_split`] plans profiling uses WITHOUT a
+/// handoff (so a template no lane resumes is byte-identical to today), then, for
+/// each live lane, replaces the plan whose id matches the lane's resumed
+/// `template_trace_id` with a [`chop_trie_at_frontier`] re-cut using that lane's
+/// executed set, return-wall ledger, and the shared `drain_end_wall_us` (B3).
+/// The residual re-root delays are clamped at [`HANDOFF_RESIDUAL_CAP_SEC`].
+///
+/// Port of `graph_ir_replay.py::_graph_at_handoff`
+/// (`src/aiperf/timing/strategies/graph_ir_replay.py:1975-2018`): lane `i`
+/// resumes `traces_by_id.get(entry.template_trace_id)` via the frontier chop; a
+/// handoff template absent from the corpus falls back to the lane's pass-0 t*
+/// plan (Python `resumed is None` warning path, `:1345`). The native single-pass
+/// selection dispatches each template once in corpus order, so matching by
+/// template id (not lane index) is robust to the sequential pass-0 assignment.
+///
+/// Fidelity notes vs Python: (1) the ledger only ever holds LIVE lanes (each
+/// registered lane carries its drain-time instance), so Python's "completed at
+/// drain" empty-lane fresh-start (`:1350-1363`) has no native analogue here and
+/// is not modeled. (2) `handoff.corpus_cursor` continuation of a BOUNDED
+/// profiling recycle (`:1297-1300`) is deferred: the native fused-ordinal
+/// [`CyclingGraphTraceSource`] counts sessions and draws templates off one
+/// counter, so seeding the recycle draw without skipping pass-0 templates is not
+/// cleanly expressible at the current fidelity — single-pass profiling ignores
+/// the cursor exactly as Python does.
+fn apply_profiling_resume_split(
+    original_plans: &[GraphTracePlan],
+    phase: &PhaseSpec,
+    t_star: TStarWindow,
+    handoff: &GraphWarmupHandoff,
+) -> Vec<GraphTracePlan> {
+    let mut plans = apply_tstar_split(original_plans, phase, t_star);
+    let residual_cap_us = Some(HANDOFF_RESIDUAL_CAP_SEC * MICROS_PER_SECOND);
+    for entry in handoff.lanes.values() {
+        let Some(original) = original_plans
+            .iter()
+            .find(|plan| plan.trace.id == entry.template_trace_id)
+        else {
+            // Handoff template not in the loaded corpus: this lane keeps its
+            // normal pass-0 t* assignment (Python `resumed is None` fallback).
+            continue;
+        };
+        let parsed = single_trace_parsed(original);
+        let executed: HashSet<String> = entry.executed_node_ids.iter().cloned().collect();
+        let return_wall_us: HashMap<String, f64> = entry
+            .return_wall_us
+            .iter()
+            .map(|(node, wall)| (node.clone(), *wall))
+            .collect();
+        let rewritten = chop_trie_at_frontier(
+            &parsed,
+            entry.t_star_us,
+            &executed,
+            &return_wall_us,
+            handoff.drain_end_wall_us,
+            residual_cap_us,
+        );
+        if let Some(slot) = plans
+            .iter_mut()
+            .find(|plan| plan.trace.id == entry.template_trace_id)
+        {
+            slot.graph = rewritten.graph;
+        }
+    }
+    plans
+}
+
+/// Build the cell-aware graph trace source for one phase's plans.
+///
+/// Factored from [`prepare_graph_phase`] so the profiling phase can rebuild its
+/// source at [`create`](PhaseExecutionFactory::create) time (after warmup) with
+/// frontier-resumed plans while sharing the identical cell-partition selection
+/// and the run-scoped [`GraphTraceInstanceSequence`] — instance ordinals are
+/// minted at `next_trace` (dispatch) time, so a source built later still draws
+/// the same run-unique ids.
+fn build_graph_trace_source(
+    plans: Vec<GraphTracePlan>,
+    session_limit: Option<u64>,
+    request_limit: Option<u64>,
+    trace_instances: GraphTraceInstanceSequence,
+) -> Result<Rc<dyn GraphTraceSource>> {
+    Ok(match ModuloCellPartition::from_env() {
+        Some(partition) if partition.cell_count() > 1 && request_limit.is_none() => {
+            tracing::debug!(
+                cell_id = partition.cell_id(),
+                cell_count = partition.cell_count(),
+                "graph phase using partitioned trace source for cell"
+            );
+            Rc::new(PartitionedGraphTraceSource::new(
+                plans,
+                session_limit,
+                partition.cell_id(),
+                partition.cell_count(),
+            )?)
+        }
+        _ => Rc::new(CyclingGraphTraceSource::with_budgets_and_sequence(
+            plans,
+            session_limit,
+            request_limit,
+            trace_instances,
+        )?),
+    })
+}
+
+/// Assemble one graph phase's [`GraphWorkload`] from its resolved parts.
+///
+/// Factored from [`prepare_graph_phase`] so the deferred profiling resume build
+/// shares the exact arrival / run-failure / admission wiring.
+fn assemble_graph_workload(
+    clock: Rc<dyn Clock>,
+    source: Rc<dyn GraphTraceSource>,
+    placement: Rc<dyn TracePlacement>,
+    arrival: Rc<dyn GraphArrivalPolicy>,
+    run_failure: Rc<dyn RunFailurePolicy>,
+    uses_admission: bool,
+    session_slots: Option<Rc<SlotPool>>,
+) -> Result<GraphWorkload> {
+    let mut workload = GraphWorkload::new(clock, source, placement)
+        .with_arrival(arrival)
+        .with_run_failure(run_failure);
+    if uses_admission {
+        workload = workload.with_admission(Rc::new(SlotPoolTraceAdmission::new(
+            session_slots
+                .ok_or_else(|| anyhow!("graph phase requires shared session admission"))?,
+        )));
+    }
+    Ok(workload)
+}
+
+/// Deferred profiling-phase resume ingredients, carried on the profiling
+/// [`PreparedGraphPhase`] so its trace source can be REBUILT with
+/// frontier-resumed plans at [`create`](PhaseExecutionFactory::create) time when
+/// a warmup handoff is present.
+///
+/// Present only for non-warmup phases; absent a stashed handoff the phase uses
+/// its already-prepared (`apply_tstar_split`) workload verbatim — the
+/// no-pressure path is byte-unchanged. Everything here is a cheap `Rc` clone of
+/// a value [`prepare_graph_phase`] already built, except `original_plans` (the
+/// pre-`t*` corpus the frontier chop re-cuts, cloned once per non-warmup phase).
+struct ProfilingResume {
+    original_plans: Rc<Vec<GraphTracePlan>>,
+    phase: PhaseSpec,
+    t_star: TStarWindow,
+    session_limit: Option<u64>,
+    request_limit: Option<u64>,
+    trace_instances: GraphTraceInstanceSequence,
+    arrival: Rc<dyn GraphArrivalPolicy>,
+    run_failure: Rc<dyn RunFailurePolicy>,
+    uses_admission: bool,
+    session_slots: Option<Rc<SlotPool>>,
+    clock: Rc<dyn Clock>,
+}
+
+/// Rebuild the profiling workload with the warmup handoff's frontier-resumed
+/// plans (consume-once path). Shares [`build_graph_trace_source`] /
+/// [`assemble_graph_workload`] with the up-front prepare so the only difference
+/// from the no-pressure path is the per-lane frontier chop.
+fn rebuild_resume_workload(
+    resume: &ProfilingResume,
+    placement: Rc<dyn TracePlacement>,
+    handoff: &GraphWarmupHandoff,
+) -> Result<GraphWorkload> {
+    let plans = apply_profiling_resume_split(
+        &resume.original_plans,
+        &resume.phase,
+        resume.t_star,
+        handoff,
+    );
+    let source = build_graph_trace_source(
+        plans,
+        resume.session_limit,
+        resume.request_limit,
+        resume.trace_instances.clone(),
+    )?;
+    assemble_graph_workload(
+        resume.clock.clone(),
+        source,
+        placement,
+        resume.arrival.clone(),
+        resume.run_failure.clone(),
+        resume.uses_admission,
+        resume.session_slots.clone(),
+    )
 }
 
 fn graph_phase_uses_session_admission(phase: &PhaseSpec) -> bool {
@@ -3223,6 +3589,7 @@ mod tests {
             session_limit: None,
             recycle_bounded: false,
             cancelled: Rc::new(Cell::new(false)),
+            pressure_lane_count: Cell::new(0),
         });
         let run_recycle = recycle.clone();
         let outcome = aiperf::graph::runtime::drive_sim(sim, move |_handle| async move {
@@ -3302,5 +3669,146 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn warmup_handoff_carries_ledger_executed_sets_cursor_and_lane_count() {
+        // E3c handoff assembly: build_warmup_handoff reads each registered lane's
+        // identity + executed set + return-wall ledger, plus the corpus cursor and
+        // the pass-0 lane count, and stamps the Clock-derived drain-end wall.
+        let ledger = GraphLaneLedger::default();
+        ledger.register_lane(0, lane_identity("t", "t::inst-0", 1_000.0));
+        ledger.register_lane(1, lane_identity("u", "u::inst-1", 0.0));
+        ledger.observe_return("t::inst-0", "n_0", 5.0);
+        ledger.observe_return("t::inst-0", "n_1", 9.0);
+        ledger.observe_return("u::inst-1", "n_0", 12.0);
+        ledger.set_corpus_cursor(7);
+
+        let handoff = build_warmup_handoff(&ledger, 2, 100.0);
+        assert_eq!(handoff.corpus_cursor, 7);
+        assert_eq!(handoff.pressure_lane_count, 2);
+        assert_eq!(handoff.drain_end_wall_us, 100.0);
+        assert_eq!(handoff.lanes.len(), 2);
+
+        let lane0 = &handoff.lanes[&0];
+        assert_eq!(lane0.template_trace_id, "t");
+        assert_eq!(lane0.instance_id, "t::inst-0");
+        assert_eq!(lane0.t_star_us, 1_000.0);
+        assert_eq!(
+            lane0.executed_node_ids,
+            BTreeSet::from(["n_0".to_owned(), "n_1".to_owned()])
+        );
+        assert_eq!(
+            lane0.return_wall_us,
+            BTreeMap::from([("n_0".to_owned(), 5.0), ("n_1".to_owned(), 9.0)])
+        );
+        // Executed keys and return-wall keys agree by construction (Python derives
+        // `executed_node_ids = frozenset(live_walls)`).
+        assert_eq!(
+            handoff.lanes[&1].executed_node_ids,
+            BTreeSet::from(["n_0".to_owned()])
+        );
+    }
+
+    #[test]
+    fn profiling_resume_frontier_drops_only_executed_nodes() {
+        // At the default `[0, 0]` window the base profiling split is the full
+        // `n_0 -> n_1 -> n_2` chain; a handoff marking n_0 executed re-cuts lane
+        // 0 via chop_trie_at_frontier so profiling resumes ONLY not-yet-executed
+        // nodes (n_1, n_2) — the frontier-continuity contract.
+        let window = TStarWindow::default();
+        let handoff = GraphWarmupHandoff {
+            lanes: BTreeMap::from([(
+                0u64,
+                LaneHandoff {
+                    template_trace_id: "t".to_owned(),
+                    instance_id: "t::inst-0".to_owned(),
+                    t_star_us: 0.0,
+                    executed_node_ids: BTreeSet::from(["n_0".to_owned()]),
+                    return_wall_us: BTreeMap::from([("n_0".to_owned(), 5.0)]),
+                },
+            )]),
+            drain_end_wall_us: 5.0,
+            corpus_cursor: 1,
+            pressure_lane_count: 1,
+        };
+        let resumed = apply_profiling_resume_split(
+            &tstar_chain_plan(),
+            &named_concurrency_phase("profiling"),
+            window,
+            &handoff,
+        );
+        assert_eq!(node_ids(&resumed), vec!["n_1".to_owned(), "n_2".to_owned()]);
+    }
+
+    #[test]
+    fn profiling_resume_frontier_combines_t_star_and_executed() {
+        // t*=1e6 drops the pre-t* n_0 AND the executed set drops n_1, so only n_2
+        // survives — proving the frontier chop honors both the lane's t* and its
+        // executed ledger together.
+        let window = TStarWindow::default();
+        let handoff = GraphWarmupHandoff {
+            lanes: BTreeMap::from([(
+                0u64,
+                LaneHandoff {
+                    template_trace_id: "t".to_owned(),
+                    instance_id: "t::inst-0".to_owned(),
+                    t_star_us: 1_000_000.0,
+                    executed_node_ids: BTreeSet::from(["n_1".to_owned()]),
+                    return_wall_us: BTreeMap::from([("n_1".to_owned(), 9.0)]),
+                },
+            )]),
+            drain_end_wall_us: 9.0,
+            corpus_cursor: 1,
+            pressure_lane_count: 1,
+        };
+        let resumed = apply_profiling_resume_split(
+            &tstar_chain_plan(),
+            &named_concurrency_phase("profiling"),
+            window,
+            &handoff,
+        );
+        assert_eq!(node_ids(&resumed), vec!["n_2".to_owned()]);
+    }
+
+    #[test]
+    fn profiling_resume_without_matching_lane_equals_tstar_split() {
+        // HARD no-pressure regression guard at the plan layer: an EMPTY handoff
+        // resumes byte-identically to the plain `apply_tstar_split` profiling
+        // plans, and a handoff whose template is not in the loaded corpus leaves
+        // every plan on its normal pass-0 t* assignment.
+        let window = TStarWindow::default();
+        let base = apply_tstar_split(
+            &tstar_chain_plan(),
+            &named_concurrency_phase("profiling"),
+            window,
+        );
+
+        let empty = GraphWarmupHandoff::default();
+        let resumed_empty = apply_profiling_resume_split(
+            &tstar_chain_plan(),
+            &named_concurrency_phase("profiling"),
+            window,
+            &empty,
+        );
+        assert_eq!(node_ids(&resumed_empty), node_ids(&base));
+
+        let foreign = GraphWarmupHandoff {
+            lanes: BTreeMap::from([(
+                0u64,
+                LaneHandoff {
+                    template_trace_id: "not-in-corpus".to_owned(),
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+        let resumed_foreign = apply_profiling_resume_split(
+            &tstar_chain_plan(),
+            &named_concurrency_phase("profiling"),
+            window,
+            &foreign,
+        );
+        assert_eq!(node_ids(&resumed_foreign), node_ids(&base));
     }
 }
