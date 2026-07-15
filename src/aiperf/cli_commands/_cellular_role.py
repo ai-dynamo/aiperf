@@ -210,7 +210,10 @@ class _ControllerProgressReporter:
                 phase="profiling",
                 requests_completed=self._completed,
                 requests_total=self._total,
-                overall_phase="Profiling",
+                # Must be a value in the AIPerfJob CRD .status.phase enum
+                # (Pending/Queued/Initializing/Running/Completed/Failed/Cancelled);
+                # the per-phase name lives in .status.phases.profiling, not here.
+                overall_phase="Running",
             )
 
     def _read_latest_completed(self) -> None:
