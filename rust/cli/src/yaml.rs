@@ -247,6 +247,8 @@ struct EndpointSection {
     request_content_type: Option<String>,
     #[serde(default, alias = "sessionHeader")]
     session_header: Option<String>,
+    /// Custom request path appended to the endpoint URL (`endpoint.path`).
+    path: Option<String>,
     #[serde(default, alias = "waitForModelTimeout")]
     wait_for_model_timeout: Option<f64>,
     #[serde(default, alias = "waitForModelInterval")]
@@ -855,6 +857,7 @@ impl Benchmark {
             turn_delay_ratio,
             turn_delay_ms,
             session_header: self.endpoint.session_header,
+            endpoint_path: self.endpoint.path,
             batch_size: batch_size.unwrap_or(1),
             sampling,
             entries,

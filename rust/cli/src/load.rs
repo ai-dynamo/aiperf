@@ -121,6 +121,8 @@ pub(crate) struct Inputs {
     pub turn_delay_ms: Option<Distribution>,
     /// Per-session affinity header name (`endpoint.session_header`).
     pub session_header: Option<String>,
+    /// Custom request path appended to the endpoint URL (`endpoint.path`).
+    pub endpoint_path: Option<String>,
     pub batch_size: u32,
     pub sampling: String,
     pub entries: u32,
@@ -377,6 +379,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         turn_delay_ratio: flags.session_delay_ratio.unwrap_or(1.0),
         turn_delay_ms,
         session_header: flags.session_header.clone(),
+        endpoint_path: flags.custom_endpoint.clone(),
         batch_size: flags.batch_size.unwrap_or(1),
         sampling: flags
             .dataset_sampling_strategy
@@ -492,7 +495,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         wait_for_model_mode: inputs
             .wait_for_model_mode
             .unwrap_or(WaitForModelMode::Inference),
-        path: None,
+        path: inputs.endpoint_path,
         api_key: inputs.api_key,
         session_header: inputs.session_header,
         request_content_type: inputs.request_content_type,

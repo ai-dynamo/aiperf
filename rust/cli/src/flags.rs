@@ -60,6 +60,11 @@ pub struct ProfileFlags {
     #[arg(long = "num-dataset-entries", visible_alias = "num-prompts")]
     pub num_dataset_entries: Option<String>,
 
+    /// Custom request path appended to the endpoint URL (`--custom-endpoint` /
+    /// `--endpoint`), e.g. `/v2/chat`.
+    #[arg(long = "custom-endpoint", visible_alias = "endpoint")]
+    pub custom_endpoint: Option<String>,
+
     /// Mean turns per session for multi-turn (`--session-turns-mean`).
     #[arg(long = "session-turns-mean")]
     pub session_turns_mean: Option<f64>,
