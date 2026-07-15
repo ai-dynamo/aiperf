@@ -626,6 +626,21 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   Carries the P1 rename pass (DTO/placement/method renames, landed after the
   concurrent bodyplan work committed `http.rs`); the P1 method-fold,
   `inference_dimensions` signature change, and discarded-observer cleanup stay deferred.
+- `specs/2026-07-14-unified-execution-substrate-design.md` — **north-star;
+  Stage 1 built**: one `Dispatcher`, one `WorkerPool`, any workload over any
+  transport. **Stage 1 shipped**: an object-safe `Dispatcher` trait
+  (`dispatch_collect(PreparedTurn)`) implemented once per transport
+  (`TransportSink`/`GrpcTransportSink`); the graph sink holds `Rc<dyn Dispatcher>`;
+  the graph endpoint runtime factory builds an HTTP or gRPC dispatcher from
+  `cfg.transport.type`; and the whole `RunnerPairFactory` layer — `pairs` map,
+  `register_pair`, the pair impls, **and** the `validate_descriptor_compatibility`
+  predicate / `supported_pairs` inventory — is **deleted**. Transports and
+  workloads are two independent registries with **no compatibility gate**; every
+  workload runs over every transport, `prepare`/`validate_run` moved onto the
+  workload factory. Deliverable proven: `transport.type: grpc` + a `dag_jsonl`
+  graph dataset dispatches graph nodes over Tonic (`rust/runner/tests/test_graph_grpc.rs`).
+  Supersedes the `RunnerPairFactory` mechanism of the runner-only execution-surface
+  spec (its 2026-07-14 addendum). Stage 2 (`WorkerPool`/`Session` merge) is design-only.
 - `specs/2026-07-13-segment-unification-design.md` — **segment unification**
   (design): collapse `Turn`'s five body fields (content/messages/raw_payload/
   raw_messages/raw_token_ids) into segment `Handle`s in the one `SegmentPool`;
