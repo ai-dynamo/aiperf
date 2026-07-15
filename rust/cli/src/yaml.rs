@@ -219,6 +219,7 @@ impl Benchmark {
             input_file: None,
             custom_dataset_type: None,
             public_dataset: None,
+            fixed_schedule: None,
             artifact_dir: artifact_dir.unwrap_or_else(|| PathBuf::from("artifacts")),
         })
     }

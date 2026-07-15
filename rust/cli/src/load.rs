@@ -79,6 +79,8 @@ pub(crate) struct Inputs {
     pub custom_dataset_type: Option<String>,
     /// Named public dataset (mutually exclusive with synthetic/file).
     pub public_dataset: Option<String>,
+    /// Fixed-schedule replay (timestamp-driven); carries the auto-offset flag.
+    pub fixed_schedule: Option<bool>,
     pub artifact_dir: PathBuf,
 }
 
@@ -120,6 +122,21 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         parse_single::<f64>("--benchmark-duration", flags.benchmark_duration.as_deref())?;
     let num_conversations =
         parse_single::<u32>("--num-conversations", flags.num_conversations.as_deref())?;
+    // Fixed-schedule replays each timestamped entry once, so the request bound is
+    // the schedule length (the input file's non-empty line count).
+    let (fixed_schedule, request_count) = if flags.fixed_schedule {
+        let path = flags
+            .input_file
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("--fixed-schedule requires --input-file"))?;
+        let count = count_schedule_entries(path)?;
+        (
+            Some(flags.fixed_schedule_auto_offset.unwrap_or(true)),
+            Some(count),
+        )
+    } else {
+        (None, request_count)
+    };
     reject_sweep("--isl", flags.isl.as_deref())?;
     reject_sweep("--osl", flags.osl.as_deref())?;
     let isl_mean = parse_single::<f64>("--isl", flags.isl.as_deref())?;
@@ -178,6 +195,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         input_file: flags.input_file.clone(),
         custom_dataset_type: flags.custom_dataset_type.clone(),
         public_dataset: flags.public_dataset.clone(),
+        fixed_schedule,
         artifact_dir: flags
             .artifact_dir
             .clone()
@@ -267,7 +285,13 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             sampling: Sampling(inputs.sampling.clone()),
             options: serde_json::Map::new(),
             path: Some(absolute_path(path)),
-            entries: Some(inputs.entries),
+            // Fixed-schedule derives the count into the phase's `requests`, not
+            // the dataset's `entries` (which stays unset).
+            entries: if inputs.fixed_schedule.is_some() {
+                None
+            } else {
+                Some(inputs.entries)
+            },
             random_seed: inputs.random_seed,
             osl: inputs.osl.clone(),
         })
@@ -288,17 +312,42 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         })
     };
 
-    let profiling = build_phase(
-        "profiling",
-        false,
-        inputs.concurrency.unwrap_or(1),
-        inputs.request_rate,
-        inputs.concurrency,
-        inputs.request_count,
-        inputs.sessions,
-        inputs.benchmark_duration,
-        inputs.grace_period,
-    );
+    let profiling = if let Some(auto_offset) = inputs.fixed_schedule {
+        Phase {
+            common: PhaseCommon {
+                name: "profiling".to_string(),
+                exclude_from_results: false,
+                seamless: false,
+                requests: inputs.request_count,
+                sessions: None,
+                duration: None,
+                prefill_concurrency: None,
+                grace_period: None,
+                concurrency_ramp: None,
+                prefill_ramp: None,
+                rate_ramp: None,
+                cancellation: None,
+                agentic_cache_warmup_duration: None,
+            },
+            kind: PhaseKind::FixedSchedule {
+                auto_offset,
+                start_offset: None,
+                end_offset: None,
+            },
+        }
+    } else {
+        build_phase(
+            "profiling",
+            false,
+            inputs.concurrency.unwrap_or(1),
+            inputs.request_rate,
+            inputs.concurrency,
+            inputs.request_count,
+            inputs.sessions,
+            inputs.benchmark_duration,
+            inputs.grace_period,
+        )
+    };
     let mut phases = Vec::new();
     if let Some(warmup) = inputs.warmup {
         let concurrency = warmup.concurrency.or(inputs.concurrency);
@@ -437,6 +486,13 @@ fn parse_headers(raw: &[String]) -> anyhow::Result<std::collections::BTreeMap<St
         headers.insert(name.trim().to_string(), value.trim().to_string());
     }
     Ok(headers)
+}
+
+/// Count the non-empty lines of a fixed-schedule input file (its entry count).
+fn count_schedule_entries(path: &std::path::Path) -> anyhow::Result<u64> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("failed to read schedule {}: {e}", path.display()))?;
+    Ok(text.lines().filter(|l| !l.trim().is_empty()).count() as u64)
 }
 
 /// Make a dataset path absolute (Python uses `path.absolute()`: cwd-join without

@@ -131,6 +131,14 @@ pub struct ProfileFlags {
     #[arg(long = "custom-dataset-type")]
     pub custom_dataset_type: Option<String>,
 
+    /// Replay requests by their timestamps (`--fixed-schedule`).
+    #[arg(long = "fixed-schedule", default_value_t = false)]
+    pub fixed_schedule: bool,
+
+    /// Auto-normalize fixed-schedule timestamps (`--fixed-schedule-auto-offset`).
+    #[arg(long = "fixed-schedule-auto-offset")]
+    pub fixed_schedule_auto_offset: Option<bool>,
+
     /// Deterministic random seed (`--random-seed`).
     #[arg(long = "random-seed")]
     pub random_seed: Option<u64>,
