@@ -156,3 +156,17 @@ Stages 2a–2c are the aiperf-v2 substrate merge; Stage 1 is a v1 increment that
 ---
 
 *Cited code is on `ajc/rust-threaded` (P1–P5 base); `graph_execution.rs`/`grpc.rs`/`http.rs` line numbers are from that branch's `rust/runner/src` and `rust/aiperf/src`.*
+
+---
+
+## Addendum — 2026-07-15
+
+*This addendum is authoritative where it conflicts with the body above; the body is preserved as the original append-only record.*
+
+Two structural changes landed on top of Stage 1 (the `Dispatcher` trait + pair-layer deletion recorded in the body already shipped). Neither changes the execution model; both change where code lives and how it is composed.
+
+1. **The v2 layer was relocated into `aiperf::runner_protocol` behind a `runner-protocol` Cargo feature.** The entire protocol / registry / execution-factory / `*_execution`-driver / coordinator / `RunnerApplication` / cellular-controller+cell / control-plane-HTTP / GPU+network+server side-channel surface (~30k lines) moved out of the `aiperf-runner` crate and now lives under `rust/aiperf/src/runner_protocol/` (`mod.rs` + siblings), gated by the new `runner-protocol` feature on the `aiperf` crate. `aiperf-runner` is reduced to a thin (~550-line) process shell: `rust/runner/src/lib.rs` re-exports the relocated composition root and `rust/runner/src/main.rs` is the process/stdio/signal harness (mimalloc install, one-request read, `RunnerApplication` drive, v2-report write). Only `aiperf-runner` enables `runner-protocol`; `aiperf-mock-server`, `e2e`, and other library consumers pull `aiperf` with default features and never compile the v2 layer or its dependency surface.
+
+2. **The category registries were unified into ONE `AIPerfRegistry` / `AIPerfExtension` seam (`aiperf::extensions`).** The single registry now owns endpoints, dataset loaders, samplers, transports, workloads, **exporters, and actuators** — all registered through the one `AIPerfExtension::register(&mut AIPerfRegistry)` seam, each category backed by a shared `TransactionalRegistry<T>`. The stock composition is one ordered `AIPerfRegistry::with_builtin_extensions([...])` list whose only `#[cfg]` is feature-gate lines (the `runner-protocol` HTTP/gRPC extensions and the `runner-protocol`+`dynosim` extension), and `--capabilities` auto-derives its catalog from the registered component set. The `Aiperf*` PascalCase type family was renamed to `AIPerf*` in the same change. The transport×workload pair map and `validate_descriptor_compatibility` / `supported_pairs` predicate were already removed in Stage 1 (see body §Stage 1 and the deleted-pair-layer note); this addendum only folds exporters and actuators into the same single seam.
+
+No behavioral or wire-format change: the same transports, workloads, endpoints, exporters, and actuators are registered and reachable; capabilities output is unchanged except that it derives from the unified registered set. Cited reality: `rust/aiperf/src/extensions/mod.rs`, `rust/aiperf/src/runner_protocol/mod.rs`, `rust/runner/src/lib.rs`, `rust/aiperf/Cargo.toml` (`[features] runner-protocol`).
