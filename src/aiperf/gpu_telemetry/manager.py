@@ -394,7 +394,8 @@ class GPUTelemetryManager(BaseComponentService):
 
         Ensures GPU telemetry captures final state for accurate counter deltas.
         This final scrape provides the end-point values needed for metrics like
-        nvidia_energy_consumption which are computed as (final - baseline).
+        nvidia_energy_consumption and amd_energy_consumption, which are computed
+        as (final - baseline).
 
         Args:
             message: Profile complete command from SystemController

@@ -1895,10 +1895,14 @@ Sum of average GPU power across all reporting GPUs during the profiling phase, i
 
 **Formula:**
 ```python
-# Per GPU: average of gpu_power_usage gauge samples in the profiling window
+# Vendor source fields:
+#   NVIDIA: nvidia_power_usage   (pynvml / DCGM collectors)
+#   AMD:    amd_power             (amdsmi collector)
+#
+# Per GPU: average of the vendor power gauge samples in the profiling window
 # (warmup excluded). Summed across all GPUs that reported valid samples.
 total_gpu_power_w = sum(
-    avg(gpu_power_usage[start_ns:end_ns])
+    avg(vendor_power_field[start_ns:end_ns])
     for gpu in reporting_gpus
 )
 ```
@@ -1907,7 +1911,7 @@ total_gpu_power_w = sum(
 - Unit: watts (`W`).
 - Time-filtered to the profiling-phase window; warmup samples are excluded.
 - Power is a gauge, so the window stays bounded — post-bench idle samples don't drag the average down.
-- Omitted when no GPU reports `gpu_power_usage` in the window.
+- Omitted when no GPU reports `nvidia_power_usage` (NVIDIA) or `amd_power` (AMD) in the window.
 
 ---
 
@@ -1919,12 +1923,16 @@ Sum of energy consumed across all reporting GPUs during the profiling phase, in 
 
 **Formula:**
 ```python
-# Per GPU: delta of the energy_consumption monotonic counter over the
-# profiling window, widened on the end by FINAL_SCRAPE_GRACE_NS so the
-# trailing scrape that lands just after requests_end_ns is captured.
+# Vendor source fields:
+#   NVIDIA: nvidia_energy_consumption   (pynvml / DCGM collectors, in megajoules)
+#   AMD:    amd_energy_consumption       (amdsmi collector, in megajoules)
+#
+# Per GPU: delta of the vendor energy monotonic counter over the profiling
+# window, widened on the end by FINAL_SCRAPE_GRACE_NS so the trailing scrape
+# that lands just after requests_end_ns is captured.
 grace_ns = Environment.GPU.FINAL_SCRAPE_GRACE_NS  # default 666_000_000 (~666 ms)
 total_gpu_energy_j = sum(
-    delta(energy_consumption[start_ns : end_ns + grace_ns])
+    delta(vendor_energy_field[start_ns : end_ns + grace_ns])
     for gpu in reporting_gpus
 )
 # Negative deltas are clamped to 0 to handle counter resets (DCGM restart).
@@ -1934,7 +1942,7 @@ total_gpu_energy_j = sum(
 - Unit: joules (`J`). Source samples are reported in megajoules and converted via `EnergyMetricUnit.MEGAJOULE.joules`.
 - The end-of-window grace is bounded (not open-ended) so cooldown samples and any subsequent-phase samples cannot leak into the delta. Tune via `AIPERF_GPU_FINAL_SCRAPE_GRACE_NS` if you also tune `AIPERF_GPU_COLLECTION_INTERVAL` — keep grace at roughly `2x` the collection cadence.
 - Per-GPU deltas use the nearest non-NaN baseline and the nearest non-NaN final sample; arrays containing transient NaN sensor failures still yield a meaningful delta.
-- Omitted when no GPU reports `energy_consumption` in the window.
+- Omitted when no GPU reports `nvidia_energy_consumption` (NVIDIA) or `amd_energy_consumption` (AMD) in the window.
 
 ---
 
