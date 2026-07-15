@@ -16,10 +16,14 @@ from aiperf.kubernetes.constants import Containers
 from aiperf.kubernetes.enums import RestartPolicy
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset_helpers import (
+    CELL_CONTROLLER_PORT,
+    build_cell_env_vars,
     build_container_args,
     build_container_ports,
     build_env_vars,
     build_health_probe,
+    build_runner_cell_args,
+    build_runner_controller_args,
     build_security_context,
     build_service_probes,
     build_startup_probe,
@@ -473,6 +477,91 @@ class _JobSetManifestBuilder:
             backoff_limit=jobset_config.WORKER_BACKOFF_LIMIT,
             # Workers are ephemeral and must be garbage-collected immediately
             # once the benchmark ends; the outer JobSet carries the real TTL.
+            job_ttl_seconds=None if self.spec.keep_failed_pods else 0,
+            pod_template=self.spec.pod_template,
+            job_id=self.spec.job_id,
+        )
+
+    # ------------------------------------------------------------------ native cellular topology
+
+    def create_cellular_controller_containers(self) -> list[AIPerfContainerSpec]:
+        """Controller pod for a native cellular run: one aiperf-runner in controller
+        mode plus the results-serving sidecar.
+
+        The controller container binds its cell transport on CELL_CONTROLLER_PORT
+        (exposed so the sibling cell pods can dial it over the JobSet headless
+        service), reads the mounted protocol-v2 run envelope, and merges the cells'
+        shards into the single authoritative report + native exports under /results.
+        Unlike the mesh controller there is no ZMQ event-bus proxy, no dataset/
+        timing/records manager, and no API service.
+        """
+        controller = AIPerfContainerSpec(
+            name="controller",
+            image=self.spec.image,
+            image_pull_policy=self.spec.image_pull_policy,
+            # aiperf-runner is the native binary (not the `aiperf` Python CLI the
+            # mesh services used). Exact sub-command/flags are the velo-finalized
+            # placeholder contract in jobset_helpers.build_runner_controller_args.
+            command=["aiperf-runner"],
+            args=build_runner_controller_args(self.spec.cells),
+            env=self._create_env_vars(include_pod_index=False, controller_pod=True),
+            resources=self._resolve_pod_resources("SYSTEM_CONTROLLER"),
+            volume_mounts=build_volume_mounts(self.spec.pod_template),
+            ports=[{"containerPort": CELL_CONTROLLER_PORT, "name": "cell-ctl"}],
+            security_context=build_security_context(self.spec.pod_template),
+        )
+        return [controller, self._create_results_sidecar()]
+
+    def create_cell_containers(self, controller_dns: str) -> list[AIPerfContainerSpec]:
+        """One cell pod: a single aiperf-runner cell slice that ships its shard back."""
+        cell = AIPerfContainerSpec(
+            name="cell",
+            image=self.spec.image,
+            image_pull_policy=self.spec.image_pull_policy,
+            command=["aiperf-runner"],
+            args=build_runner_cell_args(),
+            env=[
+                *self._create_env_vars(include_pod_index=False),
+                *build_cell_env_vars(cells=self.spec.cells, controller_dns=controller_dns),
+            ],
+            resources=self._resolve_pod_resources("WORKER_POD"),
+            volume_mounts=build_volume_mounts(self.spec.pod_template),
+            security_context=build_security_context(self.spec.pod_template),
+        )
+        return [cell]
+
+    def build_cellular_controller_replicated_job(
+        self, volumes: list[dict[str, Any]]
+    ) -> AIPerfReplicatedJobSpec:
+        """Build the controller replicatedJob (1 replica) for a cellular run."""
+        jobset_config = K8sEnvironment.JOBSET
+        return AIPerfReplicatedJobSpec(
+            name="controller",
+            replicas=1,
+            containers=self.create_cellular_controller_containers(),
+            volumes=volumes,
+            restart_policy=RestartPolicy.NEVER,
+            backoff_limit=jobset_config.CONTROLLER_BACKOFF_LIMIT,
+            pod_template=self.spec.pod_template,
+            job_id=self.spec.job_id,
+        )
+
+    def build_cell_replicated_job(
+        self, volumes: list[dict[str, Any]], controller_dns: str
+    ) -> AIPerfReplicatedJobSpec:
+        """Build the cells replicatedJob (`cells` replicas) for a cellular run.
+
+        Each replica is a distinct indexed job, so the job indices tile
+        `0..cells-1` and become each cell's CELL_ID (see build_cell_env_vars).
+        """
+        jobset_config = K8sEnvironment.JOBSET
+        return AIPerfReplicatedJobSpec(
+            name="cells",
+            replicas=self.spec.cells,
+            containers=self.create_cell_containers(controller_dns),
+            volumes=volumes,
+            restart_policy=RestartPolicy.ON_FAILURE,
+            backoff_limit=jobset_config.WORKER_BACKOFF_LIMIT,
             job_ttl_seconds=None if self.spec.keep_failed_pods else 0,
             pod_template=self.spec.pod_template,
             job_id=self.spec.job_id,

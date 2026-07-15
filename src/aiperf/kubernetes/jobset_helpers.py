@@ -170,6 +170,92 @@ def build_container_ports(
     return ports
 
 
+# ---------------------------------------------------------------------------
+# Native cross-pod cellular topology (aiperf-runner controller + cell pods).
+#
+# Replaces the retired Python service mesh: instead of one controller pod of
+# {system_controller, dataset_manager, timing_manager, records_manager, api}
+# services plus worker pods wired over ZMQ, a cellular run is one controller pod
+# (which binds a routable transport and merges shards) and `cells` cell pods
+# (each an aiperf-runner slice that streams its RecordsShardPartition back).
+#
+# The exact runner sub-commands, flags, and cell<->controller bootstrap contract
+# below are PLACEHOLDERS finalized by the ai-dynamo/velo cell-transport work; the
+# operator only owns the pod topology, the config mount, the budget partition
+# (CELL_ID/CELL_COUNT), and the controller address the cells dial. The velo
+# integration replaces the raw TCP CELL_CONTROLLER_ADDR with velo discovery.
+# ---------------------------------------------------------------------------
+
+# Port the controller binds its (routable) cell transport on, and cells dial.
+CELL_CONTROLLER_PORT: int = 7000
+# Env contract the aiperf-runner cell reads for its partition + controller.
+CELL_ID_ENV = "AIPERF_CELL_ID"
+CELL_COUNT_ENV = "AIPERF_CELL_COUNT"
+CELL_CONTROLLER_ADDR_ENV = "AIPERF_CELL_CONTROLLER_ADDR"
+
+
+def _run_config_path() -> str:
+    """Path of the mounted protocol-v2 run envelope (rust_wire output)."""
+    return f"{K8sEnvironment.JOBSET.CONFIG_MOUNT_PATH}/run_config.json"
+
+
+def build_runner_controller_args(cells: int) -> list[str]:
+    """Build the aiperf-runner controller-mode args for the controller pod.
+
+    The controller reads the protocol-v2 run envelope, partitions the budget by
+    `(cell_id, cell_count=cells)`, binds its cell transport on a routable address
+    so the sibling cell pods can dial it, collects one records-shard partition per
+    cell, merges them into the single authoritative report, and runs the native
+    export plane. Flags are the velo-finalized placeholder contract.
+    """
+    return [
+        "--controller",
+        "--cells",
+        str(cells),
+        "--bind",
+        f"0.0.0.0:{CELL_CONTROLLER_PORT}",
+        "--config",
+        _run_config_path(),
+    ]
+
+
+def build_runner_cell_args() -> list[str]:
+    """Build the aiperf-runner cell-mode args for a cell pod.
+
+    The cell derives its budget slice from the full envelope + CELL_ID/CELL_COUNT
+    (build_cell_envelope is pure in `(envelope, cell_id, cell_count)`), runs its
+    slice single-process, and ships its records-shard partition to the controller
+    at CELL_CONTROLLER_ADDR. Flags are the velo-finalized placeholder contract.
+    """
+    return ["--cell-standalone", "--config", _run_config_path()]
+
+
+def build_cell_env_vars(*, cells: int, controller_dns: str) -> list[dict[str, Any]]:
+    """Env for a cell pod: its partition index, the cell count, and the controller.
+
+    CELL_ID is the JobSet job-index of this cell's replicated-job replica (each of
+    the `cells` replicas is a distinct indexed job, so the indices tile
+    `0..cells-1`), sourced from the same `jobset.sigs.k8s.io/job-index` label the
+    mesh used for AIPERF_POD_INDEX. CELL_CONTROLLER_ADDR is the controller pod's
+    stable JobSet DNS name plus the transport port.
+    """
+    return [
+        {
+            "name": CELL_ID_ENV,
+            "valueFrom": {
+                "fieldRef": {
+                    "fieldPath": "metadata.labels['jobset.sigs.k8s.io/job-index']"
+                }
+            },
+        },
+        {"name": CELL_COUNT_ENV, "value": str(cells)},
+        {
+            "name": CELL_CONTROLLER_ADDR_ENV,
+            "value": f"{controller_dns}:{CELL_CONTROLLER_PORT}",
+        },
+    ]
+
+
 def build_env_vars(
     *,
     job_id: str,

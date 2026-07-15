@@ -86,6 +86,14 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
         "'guaranteed' emits requests==limits. "
         "'none' omits the resources block.",
     )
+    cells: int = Field(
+        default=1,
+        ge=1,
+        description="Number of native cellular cell pods for a cross-pod run. Each "
+        "cell is one aiperf-runner slice over a (cell_id, cell_count) budget "
+        "partition; the controller pod merges their shards. cells=1 is a "
+        "single-cell run (still the cellular topology, one cell pod).",
+    )
     worker_replicas: int = Field(default=1, description="Number of worker pods")
     workers_per_pod: int | None = Field(
         default=None,
@@ -240,8 +248,12 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
         controller_dns = controller_dns_name(self.name, self.namespace)
         volumes = build_shared_volumes(self.name, self.pod_template)
 
-        controller_job = builder.build_controller_replicated_job(volumes)
-        worker_job = builder.build_worker_replicated_job(volumes, controller_dns)
+        # Native cross-pod cellular topology: one aiperf-runner controller pod that
+        # binds the cell transport + merges shards, and `cells` cell pods that each
+        # run an aiperf-runner budget slice and stream their shard back. Replaces the
+        # retired Python service mesh (controller-of-services + worker pods over ZMQ).
+        controller_job = builder.build_cellular_controller_replicated_job(volumes)
+        cells_job = builder.build_cell_replicated_job(volumes, controller_dns)
 
         metadata: dict[str, Any] = {
             "name": self.name,
@@ -269,7 +281,7 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
                 },
                 "replicatedJobs": [
                     controller_job.to_k8s_spec(),
-                    worker_job.to_k8s_spec(),
+                    cells_job.to_k8s_spec(),
                 ],
             },
         }
