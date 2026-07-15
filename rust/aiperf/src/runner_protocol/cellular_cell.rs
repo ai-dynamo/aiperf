@@ -182,8 +182,8 @@ impl CellRecordsShipper {
     }
 
     /// Builds this cell's terminal heartbeat from its final records and ships the
-    /// records-shard partition + heartbeat to the controller. Shared by the
-    /// scheduled and graph cell paths, which differ only in how they derive
+    /// records-shard partition + heartbeat to the controller (the RETAIN path). Shared
+    /// by the scheduled and graph cell paths, which differ only in how they derive
     /// `records` and the run-span `epoch_ns`. One end-of-run aggregate (not a
     /// per-tick snapshot); saturation is zero (the run has drained).
     ///
@@ -195,12 +195,9 @@ impl CellRecordsShipper {
         records: Vec<crate::metrics_core::RecordIngest>,
         epoch_ns: i64,
     ) -> Result<()> {
-        use crate::cellular::transport::connect::{
-            BootstrapSource, build_velo, resolve_controller_peer,
-        };
         use crate::cellular::{
-            CellClient, CellMessage, HeartbeatAccumulator, HeartbeatCounters, HeartbeatSaturation,
-            RecordsShardPartition, VeloCellClient,
+            CellMessage, HeartbeatAccumulator, HeartbeatCounters, HeartbeatSaturation,
+            RecordsShardPartition,
         };
 
         let mut heartbeat = HeartbeatAccumulator::new();
@@ -221,6 +218,58 @@ impl CellRecordsShipper {
         };
         let heartbeat = heartbeat.snapshot(epoch_ns, counters, HeartbeatSaturation::default());
         let partition = RecordsShardPartition::new(self.cell_id, records);
+        self.ship(heartbeat, CellMessage::Partition(partition))
+    }
+
+    /// Stage C: ships this cell's folded EXACT column store + a counters-only heartbeat
+    /// (the metrics-only exact-fold path). A cell running exact-fold folded every record
+    /// into its own accumulator and DROPPED the per-record data, so it has no record
+    /// `Vec` to ship — it ships the folded store instead, which the controller appends
+    /// across cells (`merge_store_partitions`) into the merged report.
+    ///
+    /// The heartbeat carries EXACT counters (`issued`/`completed`/`errored`, supplied by
+    /// the caller from the accumulator's record count and the retained errored subset)
+    /// but EMPTY latency sketches: the fold dropped the per-record TTFT/ITL/latency
+    /// samples the sketches need. The heartbeat is a live-lane diagnostic; the
+    /// authoritative percentiles come from the merged store, so empty sketches are honest
+    /// rather than a fidelity loss. The counters keep the controller's
+    /// `cellular-heartbeat.json` sidecar populated (proving the controller path ran).
+    pub fn ship_store(
+        &self,
+        store: crate::metrics_core::store::ColumnStore,
+        counters: crate::cellular::HeartbeatCounters,
+        epoch_ns: i64,
+    ) -> Result<()> {
+        use crate::cellular::{
+            CellMessage, ColumnStorePartition, HeartbeatAccumulator, HeartbeatSaturation,
+        };
+        let heartbeat = HeartbeatAccumulator::new().snapshot(
+            epoch_ns,
+            counters,
+            HeartbeatSaturation::default(),
+        );
+        let partition = ColumnStorePartition::from_store(self.cell_id, store);
+        self.ship(heartbeat, CellMessage::StorePartition(Box::new(partition)))
+    }
+
+    /// Ships one heartbeat then one terminal partition message to the controller over a
+    /// fresh, dedicated velo runtime. Shared by [`ship_records`](Self::ship_records) and
+    /// [`ship_store`](Self::ship_store): they differ only in the heartbeat's sketches and
+    /// whether the terminal message is a records or a store partition.
+    ///
+    /// Blocking by design (called once, off the hot path). The velo async work runs on a
+    /// dedicated thread + runtime so it never touches the caller's (possibly
+    /// `current_thread`) execute runtime.
+    fn ship(
+        &self,
+        heartbeat: crate::cellular::MetricsHeartbeat,
+        terminal: crate::cellular::CellMessage,
+    ) -> Result<()> {
+        use crate::cellular::transport::connect::{
+            BootstrapSource, build_velo, resolve_controller_peer,
+        };
+        use crate::cellular::{CellClient, CellMessage, VeloCellClient};
+
         let coordinate = self.coordinate.clone();
         let cell_id = self.cell_id;
 
@@ -245,7 +294,7 @@ impl CellRecordsShipper {
                     .await
                     .map_err(|error| anyhow::anyhow!("cell {cell_id} ship heartbeat: {error}"))?;
                 client
-                    .send(&CellMessage::Partition(partition))
+                    .send(&terminal)
                     .await
                     .map_err(|error| anyhow::anyhow!("cell {cell_id} ship partition: {error}"))?;
                 Ok(())

@@ -90,6 +90,28 @@ pub(crate) fn concatenate_shard_artifacts(
     artifacts: &ArtifactSpec,
     workers: usize,
 ) -> Result<()> {
+    // Best-effort cleanup of the `.shard-<id>` temp dirs on EVERY exit path, including
+    // an early `?` return from a failed concat below. The success path removes them
+    // loudly (with error context) at the end; this guard is the belt-and-braces for the
+    // error path, where the explicit loop is skipped — without it a failed concat would
+    // leak the per-shard temp tree. On the success path the dirs are already gone, so
+    // the guard's `remove_dir_all` is a no-op.
+    struct ShardTempCleanup<'a> {
+        artifact_dir: &'a Path,
+        workers: usize,
+    }
+    impl Drop for ShardTempCleanup<'_> {
+        fn drop(&mut self) {
+            for id in 0..self.workers {
+                let _ = std::fs::remove_dir_all(shard_dir(self.artifact_dir, id));
+            }
+        }
+    }
+    let _cleanup = ShardTempCleanup {
+        artifact_dir,
+        workers,
+    };
+
     if let Some(relative) = &artifacts.records_path {
         concat_jsonl(
             &shard_paths_for(artifact_dir, relative, workers),

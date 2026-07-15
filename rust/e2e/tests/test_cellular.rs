@@ -155,3 +155,81 @@ async fn test_cellular_matches_single_cell() {
         );
     }
 }
+
+/// Stage C: a `--cells N` metrics-only run with the DEFAULT exact-fold path (each cell
+/// folds its records into its own EXACT store and ships that folded store to the
+/// controller, which appends them) reproduces the same run on the legacy cellular
+/// RETAIN path (`AIPERF_RUNTIME_EXACT_FOLD=0`, cells ship raw record `Vec`s merged in
+/// global dispatch order) for the dataset-deterministic metrics.
+///
+/// Both runs go through the controller (multi-cell), differing ONLY in whether the
+/// cells shipped a folded store or a record `Vec`. The compared metrics are the
+/// INTEGER input/output sequence lengths, whose summary stats (avg/percentiles/min/max/
+/// std) are all order-independent (integer sums are exact regardless of summation
+/// order; std is computed over sorted values), so the concatenated store-merge is
+/// byte-identical to the global-order record-merge for them — while float metrics
+/// (throughput/latency, intentionally not compared) may drift a few ULPs.
+#[tokio::test]
+async fn test_cellular_exact_fold_matches_retain() {
+    let args = |url: &str| {
+        format!(
+            "--model {DEFAULT_MODEL} --url {url} --endpoint-type chat \
+             --request-count 60 --concurrency 6 --cells 3 --random-seed 42 \
+             --synthetic-input-tokens-mean 256 --synthetic-input-tokens-stddev 64 \
+             --output-tokens-mean 8 --output-tokens-stddev 0 --ui simple"
+        )
+    };
+
+    // Default engine: exact-fold — each cell ships a folded CellMessage::StorePartition.
+    let h_fold = AIPerfHarness::new().await;
+    let folded = h_fold.run(&args(&h_fold.mock.url));
+    assert!(
+        folded.success(),
+        "exact-fold cellular run failed: {}",
+        folded.stderr
+    );
+
+    // Legacy retain — each cell ships its raw record Vec, merged in global order.
+    let h_retain = AIPerfHarness::new().await;
+    let retained = h_retain.run_env(
+        &args(&h_retain.mock.url),
+        &[("AIPERF_RUNTIME_EXACT_FOLD", "0")],
+    );
+    assert!(
+        retained.success(),
+        "retain cellular run failed: {}",
+        retained.stderr
+    );
+
+    // Both must have gone through the controller (multi-cell), else this is vacuous.
+    for (label, run) in [("exact-fold", &folded), ("retain", &retained)] {
+        assert!(
+            run.artifacts
+                .find_file("**/cellular-heartbeat.json")
+                .is_some(),
+            "{label} 3-cell run must go through the controller (cellular-heartbeat.json sidecar)"
+        );
+    }
+
+    assert_eq!(
+        folded.artifacts.request_count() as u32,
+        retained.artifacts.request_count() as u32,
+        "exact-fold and retain cellular runs must dispatch the same request count"
+    );
+
+    let fold_json = folded.artifacts.json();
+    let retain_json = retained.artifacts.json();
+    for metric in DETERMINISTIC_METRICS {
+        let fold = &fold_json[metric];
+        let retain = &retain_json[metric];
+        assert!(
+            !retain.is_null(),
+            "retain report missing dataset-deterministic metric {metric}"
+        );
+        assert_eq!(
+            fold, retain,
+            "cellular exact-fold {metric} diverged from the retain path: \
+             fold={fold}  retain={retain}"
+        );
+    }
+}

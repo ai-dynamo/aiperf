@@ -17,8 +17,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::cellular::{
-    MetricsHeartbeat, RecordsShardPartition, TDigest, merge_records_by_concatenation,
-    merge_records_in_global_order,
+    ColumnStorePartition, MetricsHeartbeat, RecordsShardPartition, TDigest,
+    merge_records_by_concatenation, merge_records_in_global_order, merge_store_partitions,
 };
 use crate::metrics_core::report::NativeReport;
 use crate::metrics_core::{ExportContext, MetricsAccumulator, MetricsConfig, PERCENTILES};
@@ -284,34 +284,61 @@ pub fn run_cellular(
         // ship-then-exit race resolves in the cell's favour when both land together.
         let deadline = tokio::time::sleep(collect_timeout());
         tokio::pin!(deadline);
+        // A cell ships EXACTLY ONE terminal partition, of one of two kinds depending on
+        // the mode it ran (the whole run is uniform — every cell got the same envelope
+        // + env, so they never mix): a `Partition` (retain path: raw records for the
+        // byte-exact global-order/concatenation merge) or a `StorePartition` (Stage-C
+        // metrics-only exact-fold: the cell's folded EXACT store, no record Vec). Count
+        // BOTH toward the one-per-cell termination barrier; the merge below dispatches on
+        // which kind arrived.
         let mut partitions: Vec<RecordsShardPartition> = Vec::with_capacity(cell_count as usize);
+        let mut store_partitions: Vec<ColumnStorePartition> =
+            Vec::with_capacity(cell_count as usize);
         let mut heartbeats: BTreeMap<u32, MetricsHeartbeat> = BTreeMap::new();
-        while partitions.len() < cell_count as usize {
+        let collected = |records: &[RecordsShardPartition], stores: &[ColumnStorePartition]| {
+            records.len() + stores.len()
+        };
+        while collected(&partitions, &store_partitions) < cell_count as usize {
             tokio::select! {
                 biased;
                 message = transport.recv() => match message.context("receiving from cell")? {
                     Some(CellMessage::Partition(partition)) => partitions.push(partition),
+                    Some(CellMessage::StorePartition(partition)) => store_partitions.push(*partition),
                     Some(CellMessage::Heartbeat { cell_id, heartbeat }) => {
                         heartbeats.insert(cell_id, *heartbeat);
                     }
                     None => bail!(
                         "transport closed with {} of {cell_count} cell partitions",
-                        partitions.len()
+                        collected(&partitions, &store_partitions)
                     ),
                 },
                 Some(failure) = failure_rx.recv() => bail!("{failure}"),
                 _ = &mut deadline => bail!(
                     "cellular run timed out with {} of {cell_count} cell partitions",
-                    partitions.len()
+                    collected(&partitions, &store_partitions)
                 ),
             }
         }
 
-        // Records-first merge → the single report. Scheduled cells pre-tile a global
-        // dispatch ordinal (merged in that order); graph records carry a LOCAL per-cell
-        // request_index (wall-clock start order), concatenated by cell_id and re-numbered
-        // densely — deterministic-per-topology. The kind selects between the two.
-        let merged = kind.merge(metrics_config, partitions)?;
+        // Merge → the single report. A metrics-only exact-fold run shipped folded stores
+        // (Stage C): append them by cell_id (`merge_store_partitions`) — within-tolerance
+        // (counts/percentiles/min/max exact; sums/means a few ULPs), the same bar the
+        // in-process sharded exact-fold merge meets. Otherwise the cells shipped raw
+        // records: scheduled cells pre-tile a global dispatch ordinal (byte-exact global
+        // order); graph records carry a LOCAL per-cell request_index (concatenated by
+        // cell_id, densely re-numbered). Cells never mix the two kinds in one run.
+        let merged = if !store_partitions.is_empty() {
+            ensure!(
+                partitions.is_empty(),
+                "cellular run mixed folded store partitions with raw record partitions \
+                 ({} store, {} record) — every cell must ship the same kind",
+                store_partitions.len(),
+                partitions.len()
+            );
+            merge_store_partitions(metrics_config, store_partitions)
+        } else {
+            kind.merge(metrics_config, partitions)?
+        };
         let record_count = merged.record_count();
         let summary =
             merged.export_results(&ExportContext::phase(crate::metrics_core::Phase::Profiling));

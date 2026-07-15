@@ -893,11 +893,10 @@ fn exact_fold_enabled_by_env() -> bool {
 ///
 /// - no per-record file artifacts / per-record OTLP (`wants_per_record_artifacts`),
 ///   since those still read the retained records (per-shard streaming writers are
-///   Stage B — a sharded run WITH records/raw/CSV/parquet/outputs stays on retain);
+///   Stage B — a sharded run WITH records/raw/CSV/parquet/outputs streams+concatenates,
+///   so it is metrics-only-eligible; but a lite build without the streaming lane, or the
+///   during-run inputs.json capture, still sets this and stays on retain);
 /// - not sketch mode (sketch has its own bounded fold with a different storage mode);
-/// - not a cellular child (no `AIPERF_CELL_*`): cross-process record shipping to the
-///   controller needs the full retained set the fold-and-drop path does not keep
-///   (cellular exact-fold is Stage C);
 /// - not adaptive, and no live sink / heartbeat lane — all three consume retained or
 ///   per-turn record clones the fold-and-drop path does not keep;
 /// - the env switch is not forcing legacy retain.
@@ -913,6 +912,17 @@ fn exact_fold_enabled_by_env() -> bool {
 /// reordered f64 summation. `shardable` is retained as an explicit input axis but
 /// deliberately not read here (a regression guard against re-adding the disqualifier).
 ///
+/// A cellular child (`AIPERF_CELL_*`) is likewise NO LONGER a disqualifier (Stage C)
+/// for a metrics-only run: the cell folds its records into its own dense-LOCAL exact
+/// accumulator (exactly like a shard) and ships that folded STORE to the controller
+/// (a `CellMessage::StorePartition`) instead of the full record `Vec`, and the
+/// controller appends every cell's store (`merge_store_partitions`) into the merged
+/// report — the same within-tolerance bar as the in-process sharded merge. A cellular
+/// run that also wants per-record file artifacts stays on retain, because there is no
+/// cell→controller artifact-file channel yet (Stage D): that case is caught by
+/// `wants_per_record_artifacts`, not by `is_cellular`, which is retained as an explicit
+/// input axis but (like `shardable`) deliberately not read here.
+///
 /// (The scheduled path never carries a graph dataset — that is a separate executor —
 /// so "not graph" is implicit here.)
 ///
@@ -921,7 +931,6 @@ fn exact_fold_enabled_by_env() -> bool {
 /// type, so a transposed pair silently mis-gated the run).
 fn exact_fold_eligible(inputs: ExactFoldInputs) -> bool {
     !inputs.sketch_mode
-        && !inputs.is_cellular
         && !inputs.has_accuracy
         && !inputs.wants_adaptive_record
         && !inputs.has_live_sink
@@ -943,14 +952,22 @@ struct ExactFoldInputs {
     /// axis but DELIBERATELY not read by [`exact_fold_eligible`] since Stage A: each
     /// shard folds into its own exact accumulator with a LOCAL-dense fold ordinal and
     /// the dense stores concatenate through `append_store`, so a sharded metrics-only
-    /// run selects exact-fold. Kept (with the gate test asserting `shardable: true`
-    /// stays eligible) as a regression guard against re-adding `&& !inputs.shardable`.
-    /// Per-shard artifact files (Stage B) and cellular record shipping (Stage C,
-    /// `is_cellular`) remain the disqualifiers for the sharded topology.
+    /// run selects exact-fold. Since Stage B a sharded run WITH per-record artifacts
+    /// also stays eligible — each shard streams its rows into a per-shard temp file and
+    /// the coordinator concatenates them at finalize; only artifacts with no streaming
+    /// lane (via `wants_per_record_artifacts`) keep a run on retain. Kept (with the gate
+    /// test asserting `shardable: true` stays eligible) as a regression guard against
+    /// re-adding `&& !inputs.shardable`.
     #[allow(dead_code)]
     shardable: bool,
-    /// A cellular child (`AIPERF_CELL_*`): its record shipping to the controller
-    /// needs the full retained record set, which fold-and-drop does not keep.
+    /// A cellular child (`AIPERF_CELL_*`). Retained as an explicit input axis but
+    /// DELIBERATELY not read by [`exact_fold_eligible`] since Stage C: a metrics-only
+    /// cellular run folds into its own dense-LOCAL exact accumulator and ships the
+    /// folded STORE (`CellMessage::StorePartition`) to the controller, which appends
+    /// every cell's store into the merged report. A cellular run that also wants
+    /// per-record file artifacts stays on retain (no cell→controller artifact channel
+    /// yet — Stage D), but that is caught by `wants_per_record_artifacts`, not here.
+    #[allow(dead_code)]
     is_cellular: bool,
     /// A static/stateful accuracy run: retains records for post-run scoring.
     has_accuracy: bool,
@@ -2809,25 +2826,43 @@ async fn execute_native_inner(
             start_ns,
         )
     };
-    // A cell ships its captured records — each carrying the dense global dispatch
-    // ordinal the autonomous issuer stamped — to the controller, which merges every
-    // cell's records in global order into the single authoritative report. Absent
-    // the controller address (the single-process path) this is inert. Fold-and-drop
-    // modes retain no full record set, so cellular record shipping is unsupported there
-    // (a cell partition would ship its merged accumulator instead — a future seam). The
-    // exact-fold gate already rejects the cellular case, so this guard is belt-and-braces.
+    // A cell ships its terminal partition to the controller. Absent the controller
+    // address (the single-process path) this is inert. Two shapes, by mode:
+    // - RETAIN: ship the full captured record `Vec` — each record carries the dense
+    //   global dispatch ordinal the autonomous issuer stamped — which the controller
+    //   merges in global order into the single authoritative report (byte-exact).
+    // - EXACT-FOLD (Stage C): the cell folded every record into `accumulator` and
+    //   dropped them (`captured` holds only the retained errored records), so there is
+    //   no full record `Vec` — ship the folded EXACT STORE instead. The controller
+    //   appends every cell's store (`merge_store_partitions`) into the merged report
+    //   (within-tolerance summary, the same bar as the in-process sharded merge). The
+    //   counters are exact: `issued` is the accumulator's record count, `errored` is the
+    //   retained errored subset, so `completed = issued - errored`.
+    // Sketch mode ships no partition yet (its bounded t-digest store has no cell→
+    // controller merge path), so it stays fail-closed.
     #[cfg(feature = "velo")]
     if let Some(shipper) = crate::runner_protocol::cellular_cell::CellRecordsShipper::from_env() {
-        ensure!(
-            !sketch_mode && !exact_fold,
-            "fold-and-drop metrics modes do not support cellular record shipping yet"
-        );
-        let records: Vec<RecordIngest> = captured
-            .iter()
-            .map(|record| record.ingest.clone())
-            .collect();
         let epoch_ns: i64 = clock.now_ns().saturating_sub(start_ns);
-        shipper.ship_records(records, epoch_ns)?;
+        if exact_fold {
+            let issued = accumulator.record_count() as u64;
+            let errored = captured.len() as u64;
+            let counters = crate::cellular::HeartbeatCounters {
+                issued,
+                completed: issued.saturating_sub(errored),
+                errored,
+            };
+            shipper.ship_store(accumulator.column_store().clone(), counters, epoch_ns)?;
+        } else {
+            ensure!(
+                !sketch_mode,
+                "sketch metrics mode does not support cellular shipping yet"
+            );
+            let records: Vec<RecordIngest> = captured
+                .iter()
+                .map(|record| record.ingest.clone())
+                .collect();
+            shipper.ship_records(records, epoch_ns)?;
+        }
     }
     let gpu_telemetry = sidecars.gpu_telemetry.as_ref();
     let network_latency = sidecars.network_latency.as_ref();
@@ -6642,10 +6677,11 @@ mod tests {
     /// The exact-fold gate accepts a clean scheduled metrics run and rejects every
     /// remaining disqualifier independently. Since Stage A the thread-per-core sharded
     /// arm (`shardable`) is accepted, not rejected — a metrics-only sharded run selects
-    /// exact-fold; a sharded run WITH a per-record artifact still rejects (Stage B) and
-    /// a cellular child still rejects (Stage C). (Graph datasets never reach this
-    /// scheduled path, so "not graph" is implicit; cellular record shipping is covered
-    /// by the `is_cellular` axis.)
+    /// exact-fold. Since Stage C a cellular child (`is_cellular`) is likewise accepted for
+    /// a metrics-only run (it ships its folded store to the controller); only a cellular
+    /// run that ALSO wants a per-record artifact rejects, and that is caught by
+    /// `wants_per_record_artifacts`, not `is_cellular`. (Graph datasets never reach this
+    /// scheduled path, so "not graph" is implicit.)
     #[test]
     fn exact_fold_gate_accepts_clean_run_and_rejects_disqualifiers() {
         // A clean single-thread scheduled metrics-only run: every disqualifier false.
@@ -6681,12 +6717,25 @@ mod tests {
             }),
             "the sharded arm now selects exact-fold (Stage A local-dense fold)"
         );
+        // Stage C: a metrics-only cellular child no longer disqualifies — it folds into
+        // its own dense-LOCAL exact accumulator and ships the folded store to the
+        // controller (`CellMessage::StorePartition`), which appends every cell's store.
         assert!(
-            !exact_fold_eligible(ExactFoldInputs {
+            exact_fold_eligible(ExactFoldInputs {
                 is_cellular: true,
                 ..clean
             }),
-            "a cellular child ships the full retained set (Stage C)"
+            "a metrics-only cellular child now selects exact-fold (Stage C store shipping)"
+        );
+        // A cellular run that ALSO wants a per-record artifact stays on retain (no
+        // cell→controller artifact channel yet — Stage D), caught by the artifact axis.
+        assert!(
+            !exact_fold_eligible(ExactFoldInputs {
+                is_cellular: true,
+                wants_per_record_artifacts: true,
+                ..clean
+            }),
+            "cellular + per-record artifacts stays on retain (Stage D deferred)"
         );
         // Stage B built per-shard artifact files, so records/raw/CSV/parquet/outputs no
         // longer set `wants_per_record_artifacts` (they stream+merge across shards) and a
