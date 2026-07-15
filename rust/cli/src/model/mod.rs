@@ -35,6 +35,7 @@ pub mod export;
 pub mod metrics;
 pub mod models;
 pub mod phase;
+pub mod public_catalog;
 pub mod resolved;
 pub mod runtime;
 pub mod telemetry;

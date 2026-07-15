@@ -77,6 +77,8 @@ pub(crate) struct Inputs {
     pub input_file: Option<PathBuf>,
     /// File dataset format id (`--custom-dataset-type`).
     pub custom_dataset_type: Option<String>,
+    /// Named public dataset (mutually exclusive with synthetic/file).
+    pub public_dataset: Option<String>,
     pub artifact_dir: PathBuf,
 }
 
@@ -175,17 +177,18 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         random_seed: flags.random_seed,
         input_file: flags.input_file.clone(),
         custom_dataset_type: flags.custom_dataset_type.clone(),
+        public_dataset: flags.public_dataset.clone(),
         artifact_dir: flags
             .artifact_dir
             .clone()
             .unwrap_or_else(|| PathBuf::from("artifacts")),
     };
-    Ok(build(inputs))
+    build(inputs)
 }
 
 /// Build the one native run from normalized inputs. This is the single place the
 /// wire defaults live; both the flag and YAML surfaces funnel through here.
-pub(crate) fn build(inputs: Inputs) -> BenchmarkRun {
+pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     let primary_model = inputs.model_names[0].clone();
 
     let models = Models {
@@ -235,8 +238,28 @@ pub(crate) fn build(inputs: Inputs) -> BenchmarkRun {
         apply_chat_template: false,
     };
 
-    let dataset = match &inputs.input_file {
-        Some(path) => Dataset::File(crate::model::dataset::FileDataset {
+    let dataset = if let Some(name) = &inputs.public_dataset {
+        let meta = crate::model::public_catalog::lookup(name)
+            .ok_or_else(|| anyhow::anyhow!("unknown public dataset {name:?}"))?;
+        let mut options = meta.options.clone();
+        if let Some(max) = crate::model::public_catalog::max_conversations(
+            meta,
+            Some(inputs.entries),
+            inputs.request_count,
+        ) {
+            options.insert("max_conversations".to_string(), serde_json::json!(max));
+        }
+        Dataset::Public(crate::model::dataset::PublicDataset {
+            name: name.clone(),
+            format: meta.format.clone(),
+            source: meta.source.clone(),
+            options,
+            sampling: Sampling(inputs.sampling.clone()),
+            entries: Some(inputs.entries),
+            random_seed: inputs.random_seed,
+        })
+    } else if let Some(path) = &inputs.input_file {
+        Dataset::File(crate::model::dataset::FileDataset {
             format: inputs
                 .custom_dataset_type
                 .clone()
@@ -247,8 +270,9 @@ pub(crate) fn build(inputs: Inputs) -> BenchmarkRun {
             entries: Some(inputs.entries),
             random_seed: inputs.random_seed,
             osl: inputs.osl.clone(),
-        }),
-        None => Dataset::Synthetic(Synthetic {
+        })
+    } else {
+        Dataset::Synthetic(Synthetic {
             prompts: Prompts {
                 batch_size: inputs.batch_size,
                 isl: inputs.isl.clone(),
@@ -261,7 +285,7 @@ pub(crate) fn build(inputs: Inputs) -> BenchmarkRun {
             entries: Some(inputs.entries),
             num_conversations: None,
             turn_delay_ms: None,
-        }),
+        })
     };
 
     let profiling = build_phase(
@@ -346,7 +370,7 @@ pub(crate) fn build(inputs: Inputs) -> BenchmarkRun {
         serde_json::json!({}),
     ));
 
-    BenchmarkRun {
+    Ok(BenchmarkRun {
         benchmark_id,
         artifact_dir: inputs.artifact_dir,
         cfg,
@@ -358,7 +382,7 @@ pub(crate) fn build(inputs: Inputs) -> BenchmarkRun {
         variation: None,
         resolved: Resolved::default(),
         variables: serde_json::Map::new(),
-    }
+    })
 }
 
 /// Build one phase from resolved axes. A request rate selects a Poisson arrival

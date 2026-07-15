@@ -113,6 +113,28 @@ pub struct FileDataset {
     pub osl: Option<Distribution>,
 }
 
+/// A named public dataset expanded to explicit source coordinates. Ported from
+/// `_authored_dataset_v2`'s `PublicDataset` branch.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PublicDataset {
+    /// Catalog name (e.g. `sharegpt`).
+    pub name: String,
+    /// Native loader format id.
+    pub format: String,
+    /// Source coordinates (HuggingFace or URL; open bag).
+    pub source: serde_json::Value,
+    /// Loader options (columns/multi_turn/max_conversations).
+    pub options: serde_json::Map<String, serde_json::Value>,
+    /// Sampling order.
+    pub sampling: Sampling,
+    /// Number of dataset entries (present when set).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entries: Option<u32>,
+    /// Deterministic sampling seed (present when set).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub random_seed: Option<u64>,
+}
+
 /// One typed dataset (discriminated by `type`).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -121,6 +143,8 @@ pub enum Dataset {
     Synthetic(Synthetic),
     /// File-backed trace/replay dataset.
     File(FileDataset),
+    /// Named public dataset.
+    Public(PublicDataset),
 }
 
 #[cfg(test)]

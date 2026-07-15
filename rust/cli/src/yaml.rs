@@ -29,7 +29,7 @@ pub fn resolve(
     let file: ConfigFile = serde_yaml::from_str(&text)
         .map_err(|e| anyhow::anyhow!("failed to parse config {}: {e}", path.display()))?;
     let inputs = file.benchmark.into_inputs(artifact_dir)?;
-    Ok(load::build(inputs))
+    load::build(inputs)
 }
 
 /// A string or a list of strings (Config shorthand for single-vs-many).
@@ -218,6 +218,7 @@ impl Benchmark {
             random_seed: None,
             input_file: None,
             custom_dataset_type: None,
+            public_dataset: None,
             artifact_dir: artifact_dir.unwrap_or_else(|| PathBuf::from("artifacts")),
         })
     }

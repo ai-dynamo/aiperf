@@ -119,6 +119,10 @@ pub struct ProfileFlags {
     #[arg(long = "artifact-dir")]
     pub artifact_dir: Option<PathBuf>,
 
+    /// Pre-configured public dataset to download (`--public-dataset`).
+    #[arg(long = "public-dataset")]
+    pub public_dataset: Option<String>,
+
     /// Input trace/dataset file or directory (`--input-file`).
     #[arg(long = "input-file")]
     pub input_file: Option<PathBuf>,

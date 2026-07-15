@@ -52,6 +52,7 @@ const FIXTURES: &[&str] = &[
     "isl_osl",
     "auth",
     "file_ds",
+    "public_ds",
 ];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).
