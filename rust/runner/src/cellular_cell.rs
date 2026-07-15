@@ -88,7 +88,9 @@ pub fn issuance_authority_from_env() -> std::rc::Rc<dyn IssuanceAuthority> {
 /// supplies a partition only when it wants global-ordinal stamping.
 ///
 /// [`DirectIssuanceAuthority`]: aiperf::cellular::DirectIssuanceAuthority
-pub fn issuance_authority_for(partition: ModuloCellPartition) -> std::rc::Rc<dyn IssuanceAuthority> {
+pub fn issuance_authority_for(
+    partition: ModuloCellPartition,
+) -> std::rc::Rc<dyn IssuanceAuthority> {
     std::rc::Rc::new(CellularAutonomousIssuer::new(partition))
 }
 
@@ -129,8 +131,8 @@ pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
     };
     use anyhow::Context;
 
-    let coordinate =
-        std::env::var(CELL_CONTROLLER_ADDR_ENV).context("cell has no AIPERF_CELL_CONTROLLER_ADDR")?;
+    let coordinate = std::env::var(CELL_CONTROLLER_ADDR_ENV)
+        .context("cell has no AIPERF_CELL_CONTROLLER_ADDR")?;
     let cell_id = ModuloCellPartition::from_env()
         .context("cell has no partition env (AIPERF_CELL_ID/_COUNT)")?
         .cell_id();
@@ -160,7 +162,10 @@ impl CellRecordsShipper {
     pub fn from_env() -> Option<Self> {
         let coordinate = std::env::var(CELL_CONTROLLER_ADDR_ENV).ok()?;
         let cell_id = ModuloCellPartition::from_env()?.cell_id();
-        Some(Self { cell_id, coordinate })
+        Some(Self {
+            cell_id,
+            coordinate,
+        })
     }
 
     /// The cell's identifier.

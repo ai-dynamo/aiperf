@@ -63,9 +63,9 @@ pub use shard::{
     merge_store_partitions,
 };
 pub use sketch::TDigest;
+#[cfg(feature = "velo")]
+pub use transport::velo_transport::{SpecFor, VeloCellClient, VeloControllerTransport};
 pub use transport::{
     CellAck, CellClient, CellMessage, CellPartitionShip, CellRegister, CellTransportError,
     ControllerTransport, HANDLER_HEARTBEAT, HANDLER_PARTITION, HANDLER_REGISTER,
 };
-#[cfg(feature = "velo")]
-pub use transport::velo_transport::{SpecFor, VeloCellClient, VeloControllerTransport};

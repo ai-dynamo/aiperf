@@ -33,15 +33,15 @@ use serde::{Deserialize, Serialize};
 use crate::cellular::heartbeat::MetricsHeartbeat;
 use crate::cellular::shard::RecordsShardPartition;
 
-/// The velo-backed cell↔controller transport (cell client + controller
-/// endpoint), gated on the `velo` feature.
-#[cfg(feature = "velo")]
-pub mod velo_transport;
 /// Discovery-free connection seam: velo transport construction + the
 /// bootstrap-PeerInfo exchange that lets a cell reach the controller from one
 /// operator-hardcoded coordinate. Gated on the `velo` feature.
 #[cfg(feature = "velo")]
 pub mod connect;
+/// The velo-backed cell↔controller transport (cell client + controller
+/// endpoint), gated on the `velo` feature.
+#[cfg(feature = "velo")]
+pub mod velo_transport;
 
 /// One self-attributing message from a cell to the controller. A cell sends its
 /// final heartbeat then its partition, and closes; the controller counts partitions

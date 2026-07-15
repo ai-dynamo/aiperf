@@ -56,13 +56,19 @@ async fn main() -> Result<()> {
     let controller = build_tcp_velo().await?;
     controller
         .register_handler(
-            Handler::typed_unary_async("aiperf.cell.register", |ctx: TypedContext<Register>| async move {
-                // Learn the cell's real PeerInfo from the payload so replies route back.
-                let peer: velo::PeerInfo = rmp_serde::from_slice(&ctx.input.cell_peer)
-                    .context("decode cell PeerInfo")?;
-                ctx.msg.register_peer(peer).context("register_peer cell")?;
-                Ok(SpecReply { cell_id: ctx.input.cell_id, ok: true })
-            })
+            Handler::typed_unary_async(
+                "aiperf.cell.register",
+                |ctx: TypedContext<Register>| async move {
+                    // Learn the cell's real PeerInfo from the payload so replies route back.
+                    let peer: velo::PeerInfo = rmp_serde::from_slice(&ctx.input.cell_peer)
+                        .context("decode cell PeerInfo")?;
+                    ctx.msg.register_peer(peer).context("register_peer cell")?;
+                    Ok(SpecReply {
+                        cell_id: ctx.input.cell_id,
+                        ok: true,
+                    })
+                },
+            )
             .build(),
         )
         .context("register handler")?;
@@ -77,7 +83,8 @@ async fn main() -> Result<()> {
     let cell = build_tcp_velo().await?;
     let controller_peer: velo::PeerInfo =
         rmp_serde::from_slice(&controller_peer_bytes).context("decode controller PeerInfo")?;
-    cell.register_peer(controller_peer.clone()).context("register_peer controller")?;
+    cell.register_peer(controller_peer.clone())
+        .context("register_peer controller")?;
 
     let reply: SpecReply = cell
         .typed_unary::<SpecReply>("aiperf.cell.register")
@@ -92,7 +99,10 @@ async fn main() -> Result<()> {
         .await
         .context("register send")?;
 
-    assert!(reply.ok && reply.cell_id == 7, "unexpected reply: {reply:?}");
+    assert!(
+        reply.ok && reply.cell_id == 7,
+        "unexpected reply: {reply:?}"
+    );
     println!("SPIKE RESULT: mechanism B (bootstrap-peerinfo) WORKS — reply {reply:?}");
     Ok(())
 }

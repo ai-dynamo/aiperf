@@ -216,7 +216,9 @@ mod tests {
         let file = dir.path().join("controller-peer.rmp");
         let source = BootstrapSource::File(file.clone());
         let _h = serve_bootstrap(&source, &peer).await.expect("serve file");
-        let got = resolve_controller_peer(&source).await.expect("resolve file");
+        let got = resolve_controller_peer(&source)
+            .await
+            .expect("resolve file");
         assert_eq!(rmp_serde::to_vec(&got).unwrap(), expected);
 
         // Tcp source.
@@ -226,9 +228,13 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         drop(listener);
         let serve_source = BootstrapSource::Tcp(addr.to_string());
-        let _h2 = serve_bootstrap(&serve_source, &peer).await.expect("serve tcp");
+        let _h2 = serve_bootstrap(&serve_source, &peer)
+            .await
+            .expect("serve tcp");
         let fetch_source = BootstrapSource::Tcp(addr.to_string());
-        let got = resolve_controller_peer(&fetch_source).await.expect("resolve tcp");
+        let got = resolve_controller_peer(&fetch_source)
+            .await
+            .expect("resolve tcp");
         assert_eq!(rmp_serde::to_vec(&got).unwrap(), expected);
         let _ = source; // silence unused in case the ephemeral bind path changes
     }

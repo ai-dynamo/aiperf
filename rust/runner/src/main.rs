@@ -127,7 +127,10 @@ fn run_cell() -> ! {
     {
         Ok(bytes) => bytes,
         Err(error) => {
-            tracing::error!(error = format!("{error:#}"), "cell failed to fetch its envelope");
+            tracing::error!(
+                error = format!("{error:#}"),
+                "cell failed to fetch its envelope"
+            );
             std::process::exit(2);
         }
     };

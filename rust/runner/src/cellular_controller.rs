@@ -30,11 +30,13 @@ use crate::cell_launcher::owned_positions;
 // needs the `velo` feature; the validation, budget-slicing, merge, and report
 // assembly below are plain envelope/metric logic reused by the non-velo build.
 #[cfg(feature = "velo")]
-use aiperf::cellular::transport::connect::{BindSpec, BootstrapSource, build_velo, serve_bootstrap};
+use crate::cell_launcher::{CellLaunchContext, select_launcher};
+#[cfg(feature = "velo")]
+use aiperf::cellular::transport::connect::{
+    BindSpec, BootstrapSource, build_velo, serve_bootstrap,
+};
 #[cfg(feature = "velo")]
 use aiperf::cellular::{CellMessage, ControllerTransport, SpecFor, VeloControllerTransport};
-#[cfg(feature = "velo")]
-use crate::cell_launcher::{CellLaunchContext, select_launcher};
 
 /// The outcome of a cellular run: the merged report path plus a live view of the
 /// last heartbeat each cell reported (for diagnostics/logging).

@@ -75,7 +75,10 @@ impl VeloControllerTransport {
                         .map_err(|error| anyhow::anyhow!("register_peer cell: {error}"))?;
                     match spec_for(register.cell_id) {
                         Some(spec) => Ok(Some(Bytes::from(spec))),
-                        None => Err(anyhow::anyhow!("no launch spec for cell {}", register.cell_id)),
+                        None => Err(anyhow::anyhow!(
+                            "no launch spec for cell {}",
+                            register.cell_id
+                        )),
                     }
                 }
             })
@@ -123,7 +126,9 @@ impl VeloControllerTransport {
                     ctx.msg
                         .register_peer(peer)
                         .map_err(|error| anyhow::anyhow!("register_peer shipper: {error}"))?;
-                    let _ = sender.send(Ok(CellMessage::Partition(ship.partition))).await;
+                    let _ = sender
+                        .send(Ok(CellMessage::Partition(ship.partition)))
+                        .await;
                     let ack = rmp_serde::to_vec(&CellAck { ok: true })
                         .map_err(|error| anyhow::anyhow!("encode ack: {error}"))?;
                     Ok(Some(Bytes::from(ack)))
@@ -219,7 +224,9 @@ impl CellClient for VeloCellClient {
                     .map_err(io)?;
                 let ack: CellAck = rmp_serde::from_slice(&reply).map_err(decode)?;
                 if !ack.ok {
-                    return Err(CellTransportError::Io("controller nacked partition".to_owned()));
+                    return Err(CellTransportError::Io(
+                        "controller nacked partition".to_owned(),
+                    ));
                 }
             }
         }
@@ -252,7 +259,9 @@ mod tests {
     async fn cell_registers_ships_heartbeat_and_partition() {
         // Controller: bind velo, expose a spec_for that returns a known spec byte
         // per cell_id.
-        let controller_velo = build_velo(BindSpec::TcpLoopback).await.expect("controller velo");
+        let controller_velo = build_velo(BindSpec::TcpLoopback)
+            .await
+            .expect("controller velo");
         let controller_peer = controller_velo.peer_info();
         let spec_for: SpecFor = Arc::new(|cell_id: u32| Some(vec![cell_id as u8, 0xAB]));
         let mut controller =
@@ -300,7 +309,9 @@ mod tests {
     /// the fresh instance even though it only saw the register instance.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn ship_from_a_fresh_instance_is_acked() {
-        let controller_velo = build_velo(BindSpec::TcpLoopback).await.expect("controller velo");
+        let controller_velo = build_velo(BindSpec::TcpLoopback)
+            .await
+            .expect("controller velo");
         let controller_peer = controller_velo.peer_info();
         let spec_for: SpecFor = Arc::new(|_| Some(vec![1_u8]));
         let mut controller =
