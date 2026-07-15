@@ -112,6 +112,22 @@ pub(crate) fn validate_graph_phases(phases: &[PhaseSpec]) -> Result<()> {
             "graph phase {phase_index} must use concurrency, poisson, gamma, or constant scheduling"
         );
         let common = phase.common();
+        // A cache-pressure warmup (agentic_cache_warmup_duration) whose FOLLOWING
+        // profiling phase is authored `seamless` races the handoff: profiling's
+        // create() pops the handoff slot before the warmup's background finalize()
+        // stashes it, so profiling silently falls back to plain t* (loses the
+        // pressure-resume, refires executed nodes). Reject the combination up
+        // front rather than degrade at runtime.
+        if common.name == "warmup"
+            && common.agentic_cache_warmup_duration.is_some()
+            && phase_seamless_to_next(phases, phase_index)
+        {
+            bail!(
+                "graph phase {phase_index}: cache-pressure warmup (agentic_cache_warmup_duration) \
+                 cannot be seamless into profiling: the warmup->profiling handoff requires the \
+                 warmup drain to complete before profiling prepares"
+            );
+        }
         ensure!(
             common.requests != Some(0) && common.sessions != Some(0),
             "graph phase {phase_index} request/session bounds must be positive when configured"
@@ -2638,6 +2654,41 @@ mod tests {
         );
         // Above the cap clamps to the cap.
         assert_eq!(graph_pressure_grace_sec(None, 10_000.0), 300.0);
+    }
+
+    fn cache_pressure_warmup(seamless_profiling: bool) -> Vec<PhaseSpec> {
+        let warmup: PhaseSpec = serde_json::from_value(serde_json::json!({
+            "type": "concurrency",
+            "name": "warmup",
+            "exclude_from_results": true,
+            "concurrency": 2,
+            "agentic_cache_warmup_duration": 12.5,
+        }))
+        .unwrap();
+        let profiling: PhaseSpec = serde_json::from_value(serde_json::json!({
+            "type": "concurrency",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "concurrency": 2,
+            "seamless": seamless_profiling,
+        }))
+        .unwrap();
+        vec![warmup, profiling]
+    }
+
+    #[test]
+    fn cache_pressure_warmup_seamless_into_profiling_is_rejected() {
+        let error = validate_graph_phases(&cache_pressure_warmup(true)).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("cache-pressure warmup") && message.contains("seamless"),
+            "unexpected error: {message}"
+        );
+    }
+
+    #[test]
+    fn cache_pressure_warmup_non_seamless_profiling_is_accepted() {
+        validate_graph_phases(&cache_pressure_warmup(false)).unwrap();
     }
 
     #[test]

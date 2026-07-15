@@ -218,7 +218,7 @@ fn chop_node_inputs(node: &LlmNode, survivor_out_channels: &BTreeSet<String>) ->
 /// `t*<=0` every node still passes the arrival test, but `executed` nodes are
 /// STILL dropped and their successors re-rooted at residuals.
 ///
-/// Port of `snapshot_chop.py:130-189` (`chop_trie_at_frontier` plus helper
+/// Port of `snapshot_chop.py:130-301` (`chop_trie_at_frontier` plus helper
 /// `_frontier_edges`) from branch `ajc/aiperf-graph-ir`. Signature adaptation:
 /// the Python original takes keyword-only `t_star_us: float`, `executed:
 /// frozenset[str]`, `return_wall_us: dict[str, float]`, `drain_end_wall_us:
