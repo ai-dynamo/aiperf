@@ -874,7 +874,7 @@ fn build_up_front_input_sessions(
 /// Force-disable switch for exact-fold, mirroring the `AIPERF_RUNTIME_*` env toggles
 /// (e.g. `AIPERF_RUNTIME_ENGINE`). Default on; `AIPERF_RUNTIME_EXACT_FOLD` set to
 /// `0`/`false`/`off`/`no` routes the run through the legacy retain path for A/B.
-fn exact_fold_enabled_by_env() -> bool {
+pub(crate) fn exact_fold_enabled_by_env() -> bool {
     match std::env::var("AIPERF_RUNTIME_EXACT_FOLD") {
         Ok(value) => !matches!(
             value.trim().to_ascii_lowercase().as_str(),
