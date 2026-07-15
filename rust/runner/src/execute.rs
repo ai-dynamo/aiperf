@@ -2264,10 +2264,12 @@ async fn execute_native_inner(
         .await;
         // Drain each worker observer's records before shutting the workers down; on
         // the failure path the report is discarded, so an empty drain is fine.
-        // Metrics-only mode already folded and dropped every completed record as it
-        // streamed (the worker moved each out of its observer), so skip the drain —
-        // materializing that Vec would reintroduce the O(records) peak.
-        let drained = if execution_result.is_ok() && !sketch_mode {
+        // Fold-and-drop modes (sketch or exact-fold) already folded and dropped every
+        // completed record as it streamed (the worker moved each out of its observer),
+        // so skip the drain — materializing that Vec would reintroduce the O(records)
+        // peak.
+        let folds_records = sketch_mode || exact_fold;
+        let drained = if execution_result.is_ok() && !folds_records {
             execution_backend.drain_records(capture.clock.now_ns())
         } else {
             Ok(Vec::new())
@@ -2281,15 +2283,19 @@ async fn execute_native_inner(
             .flat_map(|report| report.report.turns.iter())
             .map(|turn| (turn.uuid, turn.issued_offset_ns))
             .collect::<HashMap<_, _>>();
-        // Single-thread finalize: sketch mode folded each record into the capture's
-        // bounded streaming accumulator as the run streamed and dropped it (only
+        // Single-thread finalize: a fold-and-drop mode folded each record into the
+        // capture's streaming accumulator as the run streamed and dropped it (only
         // errored records retained for error grouping); merge that into the report
-        // `accumulator`. The exact path keeps the full record Vec and ingests it.
-        let captured = if sketch_mode {
+        // `accumulator`. Sketch merges a bounded t-digest partition; exact-fold merges
+        // a dense EXACT accumulator whose rows already sit at their absolute
+        // `request_index` slots, so the merged report is byte-identical to the retain
+        // path's dispatch-order re-ingest. The retain path keeps the full record Vec
+        // and ingests it.
+        let captured = if folds_records {
             let (streamed, errored) = capture.take_streamed();
             accumulator
                 .merge(&streamed)
-                .map_err(|error| anyhow!("merging streamed sketch: {error}"))?;
+                .map_err(|error| anyhow!("merging streamed fold-and-drop accumulator: {error}"))?;
             errored
         } else {
             let captured = capture.finish(&issued_times, drained)?;
@@ -2437,13 +2443,14 @@ async fn execute_native_inner(
     // A cell ships its captured records — each carrying the dense global dispatch
     // ordinal the autonomous issuer stamped — to the controller, which merges every
     // cell's records in global order into the single authoritative report. Absent
-    // the controller address (the single-process path) this is inert. Sketch mode
-    // retains no full record set, so cellular record shipping is unsupported there
-    // (a cell partition would ship its merged sketch instead — a future seam).
+    // the controller address (the single-process path) this is inert. Fold-and-drop
+    // modes retain no full record set, so cellular record shipping is unsupported there
+    // (a cell partition would ship its merged accumulator instead — a future seam). The
+    // exact-fold gate already rejects the cellular case, so this guard is belt-and-braces.
     if let Some(shipper) = crate::cellular_cell::CellRecordsShipper::from_env() {
         ensure!(
-            !sketch_mode,
-            "sketch metrics mode does not support cellular record shipping yet"
+            !sketch_mode && !exact_fold,
+            "fold-and-drop metrics modes do not support cellular record shipping yet"
         );
         let records: Vec<RecordIngest> = captured
             .iter()
@@ -5468,6 +5475,7 @@ mod tests {
             false,
             false,
             false,
+            false,
         );
         let (a, b, c) = facts();
         // Dispatch order A, B, C.
@@ -5543,7 +5551,7 @@ mod tests {
             let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
             let config = MetricsConfig::default();
             let capture =
-                RunCapture::new(clock.clone(), 0, config.clone(), false, false, false, false);
+                RunCapture::new(clock.clone(), 0, config.clone(), false, false, false, false, false);
             let (a, b, c) = facts();
             register_identity(&capture, "corr-a", 0, ReplayTerminalStatus::Completed, &a);
             register_identity(&capture, "corr-b", 1, ReplayTerminalStatus::Completed, &b);
@@ -5623,6 +5631,7 @@ mod tests {
             clock.clone(),
             0,
             MetricsConfig::default(),
+            false,
             false,
             false,
             false,
