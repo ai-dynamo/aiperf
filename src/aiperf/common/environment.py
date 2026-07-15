@@ -281,6 +281,24 @@ class _RuntimeSettings(BaseSettings):
         "verification, mirroring AIPERF_RUNTIME_ENGINE=python. Reversible.",
     )
 
+    EXACT_FOLD: bool = Field(
+        default=True,
+        description="Whether the native aiperf-runner folds each completed record's "
+        "metric scalars into the EXACT accumulator (keeping exact NaN-sparse columns "
+        "for exact percentiles/timeslices/series) and drops the heavy per-record data "
+        "during the run, instead of retaining every record until end-of-run. When true "
+        "(default) an eligible run — the single-thread scheduled online path with a "
+        "supported dataset shape and no adaptive, live-sink, heartbeat, accuracy, "
+        "cellular, sketch, or sharded disqualifier — streams its per-record artifacts "
+        "and folds-and-drops, bounding coordinator peak memory; every other run falls back unchanged "
+        "to the retain-then-batch path. This is purely a memory optimization: the "
+        "report and all artifacts are byte-identical to the retain path. Set "
+        "AIPERF_RUNTIME_EXACT_FOLD=0 (also off/false/no) to force the legacy retain "
+        "path for A/B verification, mirroring AIPERF_RUNTIME_ENGINE=python. Read only "
+        "by the runner (no wire projection): unlike sketch, exact-fold retains exact "
+        "per-record values, so it needs no artifact-path stripping. Reversible.",
+    )
+
 
 class _RngSettings(BaseSettings):
     """Selects which random-number backend seeds AIPerf's reproducible streams.

@@ -808,12 +808,11 @@ fn validate_plan(request: &NativeRunSpec) -> Result<()> {
 /// (the run then falls to the retain path, which warns and skips the artifact).
 fn wants_per_record_artifacts(
     artifacts: &crate::protocol::ArtifactSpec,
-    native_otel_enabled: bool,
     inputs_need_retain: bool,
 ) -> bool {
     // Per-record OTLP folds at completion (S3) and outputs.json streams through the
-    // lane at completion (S4), so neither forces the retain path any longer.
-    let _ = native_otel_enabled;
+    // lane at completion (S4), so neither forces the retain path any longer — the
+    // now-dead `native_otel_enabled` parameter was dropped (S3/S5 cleanup).
     #[cfg(feature = "parquet")]
     let parquet_needs_retain = false;
     #[cfg(not(feature = "parquet"))]
@@ -922,7 +921,10 @@ fn exact_fold_enabled_by_env() -> bool {
 /// - the single-thread scheduled path (`!shardable`), where the lone capture uses the
 ///   `DirectIssuanceAuthority` and stamps dense `0..N` absolute ordinals — the sharded
 ///   arm's per-shard `CellularAutonomousIssuer` stamps STRIDED ordinals whose sparse
-///   per-shard store the accumulator-to-accumulator merge cannot absorb (that is S5);
+///   per-shard store the accumulator-to-accumulator merge cannot absorb, and its
+///   per-shard artifact files are not yet concatenated at merge; sharded exact-fold is
+///   a deferred follow-up (S5 shipped Parts 2–3 only — see the S5 report), so the
+///   sharded arm stays on the correct-but-unbounded retain path;
 /// - not a cellular child (no `AIPERF_CELL_*`), for the same dense-ordinal reason and
 ///   because cellular record shipping needs the full retained set;
 /// - not adaptive, and no live sink / heartbeat lane — all three consume retained or
@@ -931,25 +933,53 @@ fn exact_fold_enabled_by_env() -> bool {
 ///
 /// (The scheduled path never carries a graph dataset — that is a separate executor —
 /// so "not graph" is implicit here.)
-#[allow(clippy::too_many_arguments)]
-fn exact_fold_eligible(
+///
+/// The disqualifiers are carried as a named-field [`ExactFoldInputs`] struct rather
+/// than eight positional `bool`s (S1 review: boolean-blindness — every argument was
+/// the same type, so a transposed pair silently mis-gated the run).
+fn exact_fold_eligible(inputs: ExactFoldInputs) -> bool {
+    !inputs.sketch_mode
+        && !inputs.shardable
+        && !inputs.is_cellular
+        && !inputs.has_accuracy
+        && !inputs.wants_adaptive_record
+        && !inputs.has_live_sink
+        && !inputs.has_heartbeat
+        && !inputs.wants_per_record_artifacts
+}
+
+/// Named disqualifiers for the exact-fold eligibility gate ([`exact_fold_eligible`]).
+///
+/// Each field is a reason the run must stay on the legacy retain-then-batch path; the
+/// gate is eligible only when every field is `false`. Named fields (vs the former
+/// eight positional `bool` parameters) make each call site self-documenting and a
+/// transposed pair a compile error rather than a silent mis-gate.
+#[derive(Clone, Copy, Debug)]
+struct ExactFoldInputs {
+    /// Sketch storage mode: has its own bounded t-digest fold path.
     sketch_mode: bool,
+    /// The thread-per-core sharded arm (`workers > 1`): its per-shard
+    /// `CellularAutonomousIssuer` stamps STRIDED global ordinals whose sparse
+    /// per-shard store the dense accumulator merge cannot absorb, and per-shard
+    /// artifact files are not yet concatenated at merge — sharded exact-fold is a
+    /// deferred follow-up (S5), so the sharded arm stays on the retain path.
     shardable: bool,
+    /// A cellular child (`AIPERF_CELL_*`): its record shipping to the controller
+    /// needs the full retained record set, which fold-and-drop does not keep.
     is_cellular: bool,
+    /// A static/stateful accuracy run: retains records for post-run scoring.
     has_accuracy: bool,
+    /// Adaptive scale: samples retained per-turn records per control window.
     wants_adaptive_record: bool,
+    /// A Python live sink is attached: reads a per-record clone the fold drops.
     has_live_sink: bool,
+    /// The single-process cellular heartbeat lane is enabled: also reads the
+    /// per-record clone.
     has_heartbeat: bool,
+    /// A per-record file artifact (records/raw/CSV/parquet on a lite build) or the
+    /// during-run inputs.json capture still needs the retained records
+    /// ([`wants_per_record_artifacts`]).
     wants_per_record_artifacts: bool,
-) -> bool {
-    !sketch_mode
-        && !shardable
-        && !is_cellular
-        && !has_accuracy
-        && !wants_adaptive_record
-        && !has_live_sink
-        && !has_heartbeat
-        && !wants_per_record_artifacts
 }
 
 struct PreparedAccuracy {
@@ -1923,11 +1953,13 @@ pub(crate) async fn execute_scheduled_shard(
         // driven once-per-cell on the main thread.
         false,
         shared.wants_adaptive_record,
-        // The thread-per-core sharded arm folds per shard into the sketch/exact
-        // accumulator but stamps STRIDED global ordinals (its CellularAutonomousIssuer
-        // is sparse within a shard), so the exact-fold dense-column path is not valid
-        // here — it stays on the retain/sketch shard path. Sharded exact-fold is a
-        // later task (S5).
+        // The thread-per-core sharded arm folds per shard into the sketch accumulator
+        // but stamps STRIDED global ordinals (its CellularAutonomousIssuer is sparse
+        // within a shard), so the exact-fold dense-column path is not valid here — it
+        // stays on the retain/sketch shard path. Sharded exact-fold (per-shard EXACT
+        // accumulator with local dense ordinals + per-shard artifact-file
+        // concatenation at merge) is a deferred follow-up: S5 shipped only the gate/
+        // fallback confirmation and cleanups, not the sharded fold. See the S5 report.
         false,
         crate::cellular_cell::issuance_authority_for(partition),
         shared.phase_ordinal_bases.clone(),
@@ -2210,20 +2242,19 @@ async fn execute_native_inner(
             .any(|phase| matches!(phase, PhaseSpec::FixedSchedule { .. }));
     let inputs_need_retain = request.artifacts.inputs_path.is_some() && !inputs_up_front_ok;
     let exact_fold = exact_fold_enabled_by_env()
-        && exact_fold_eligible(
+        && exact_fold_eligible(ExactFoldInputs {
             sketch_mode,
             shardable,
-            ModuloCellPartition::from_env().is_some(),
-            accuracy.is_some(),
+            is_cellular: ModuloCellPartition::from_env().is_some(),
+            has_accuracy: accuracy.is_some(),
             wants_adaptive_record,
-            live_sink.is_some(),
-            HeartbeatLane::enabled_by_env(),
-            wants_per_record_artifacts(
+            has_live_sink: live_sink.is_some(),
+            has_heartbeat: HeartbeatLane::enabled_by_env(),
+            wants_per_record_artifacts: wants_per_record_artifacts(
                 &request.artifacts,
-                request.native_otel_enabled,
                 inputs_need_retain,
             ),
-        );
+        });
     // Per-record OTLP folded at completion by the exact-fold capture (task S3); the
     // retain/sharded arms leave this `None` and fold their retained records post-run.
     let mut folded_otel: Option<OtelRecordAccumulator> = None;
@@ -2491,6 +2522,20 @@ async fn execute_native_inner(
         // materializer dispatch uses, so it is byte-identical to the disabled during-run
         // capture. The retain path keeps the during-run capture (`take_input_sessions`).
         let input_sessions = if exact_fold && request.artifacts.inputs_path.is_some() {
+            // Exact-fold emits a FULL-dataset inputs.json (every conversation in the
+            // resident dataset), matching the Python frontend's up-front inputs export,
+            // whereas the legacy during-run capture records ONLY the conversations a run
+            // actually dispatched. The two agree for a full-coverage run, but a
+            // partial-coverage run (a request-bounded phase that stops before touching
+            // every conversation) yields a strictly larger inputs.json under exact-fold.
+            // Surface that cross-mode difference once rather than leaving it silent — it
+            // runs exactly once per run (single-thread finalize).
+            tracing::info!(
+                "exact-fold inputs.json is generated up front from the full resident \
+                 dataset (Python-aligned), not the legacy dispatched-only capture; a \
+                 partial-coverage run therefore lists every conversation, not just the \
+                 dispatched subset"
+            );
             build_up_front_input_sessions(
                 &dataset,
                 source_factory.as_ref(),
@@ -2521,7 +2566,7 @@ async fn execute_native_inner(
         // only request-bounded phases — the shapes a sub-cell can partition. The
         // `shardable` gate already forces `exact_fold` false here: the sharded arm folds
         // per shard with STRIDED ordinals, so exact-fold (dense single-thread ordinals)
-        // is not selected — that is task S5.
+        // is not selected — sharded exact-fold is deferred (S5 shipped Parts 2–3 only).
         // Once-per-cell on the main thread, before the sub-cell threads spawn.
         create_run_artifacts(&request)?;
         sidecars.activate_live_streaming().await;
@@ -5407,24 +5452,29 @@ mod tests {
     fn exact_fold_gate_accepts_streamed_artifacts_and_rejects_retained_ones() {
         use crate::protocol::ArtifactSpec;
 
-        let eligible = |artifacts: &ArtifactSpec, native_otel: bool, inputs_need_retain: bool| {
-            exact_fold_eligible(
-                false, // sketch_mode
-                false, // shardable
-                false, // is_cellular
-                false, // has_accuracy
-                false, // wants_adaptive_record
-                false, // has_live_sink
-                false, // has_heartbeat
-                wants_per_record_artifacts(artifacts, native_otel, inputs_need_retain),
-            )
+        let eligible = |artifacts: &ArtifactSpec, inputs_need_retain: bool| {
+            exact_fold_eligible(ExactFoldInputs {
+                sketch_mode: false,
+                shardable: false,
+                is_cellular: false,
+                has_accuracy: false,
+                wants_adaptive_record: false,
+                has_live_sink: false,
+                has_heartbeat: false,
+                wants_per_record_artifacts: wants_per_record_artifacts(
+                    artifacts,
+                    inputs_need_retain,
+                ),
+            })
         };
 
         // No artifacts at all: eligible (the S1 baseline).
-        assert!(eligible(&ArtifactSpec::default(), false, false));
+        assert!(eligible(&ArtifactSpec::default(), false));
 
         // Streamed artifacts (records / raw / CSV, alone or together, trace on): still
-        // eligible now that the lane writes them.
+        // eligible now that the lane writes them. (Per-record OTLP folds at completion
+        // since S3 and no longer participates in `wants_per_record_artifacts` — its
+        // former `native_otel_enabled` parameter was dropped in S5.)
         let streamed = ArtifactSpec {
             records_path: Some("profile_export.jsonl".into()),
             raw_path: Some("profile_export_raw.jsonl".into()),
@@ -5432,11 +5482,7 @@ mod tests {
             trace: true,
             ..ArtifactSpec::default()
         };
-        assert!(eligible(&streamed, false, false));
-
-        // Per-record OTLP (native_otel_enabled) folds at completion (S3), so it no
-        // longer disqualifies — even alongside the streamed artifacts.
-        assert!(eligible(&streamed, true, false));
+        assert!(eligible(&streamed, false));
 
         // The Parquet sidecar streams under the `parquet` feature (S3), so it no longer
         // disqualifies; on a lite build it still needs the retain path.
@@ -5446,12 +5492,12 @@ mod tests {
         };
         #[cfg(feature = "parquet")]
         assert!(
-            eligible(&parquet, false, false),
+            eligible(&parquet, false),
             "parquet streams under the parquet feature"
         );
         #[cfg(not(feature = "parquet"))]
         assert!(
-            !eligible(&parquet, false, false),
+            !eligible(&parquet, false),
             "a lite build cannot stream parquet, so it disqualifies exact-fold"
         );
 
@@ -5461,7 +5507,7 @@ mod tests {
             ..ArtifactSpec::default()
         };
         assert!(
-            eligible(&outputs, false, false),
+            eligible(&outputs, false),
             "outputs.json streams at completion (S4)"
         );
 
@@ -5472,11 +5518,11 @@ mod tests {
             ..ArtifactSpec::default()
         };
         assert!(
-            eligible(&inputs, false, false),
+            eligible(&inputs, false),
             "up-front-feasible inputs.json no longer disqualifies (S4)"
         );
         assert!(
-            !eligible(&inputs, false, true),
+            !eligible(&inputs, true),
             "a live-reply multi-turn dataset keeps inputs.json on the retain path"
         );
     }
@@ -6476,41 +6522,76 @@ mod tests {
     /// by the `is_cellular` axis.)
     #[test]
     fn exact_fold_gate_accepts_clean_run_and_rejects_disqualifiers() {
-        // sketch, shardable, cellular, accuracy, adaptive, live_sink, heartbeat, artifacts
+        // A clean single-thread scheduled metrics-only run: every disqualifier false.
+        let clean = ExactFoldInputs {
+            sketch_mode: false,
+            shardable: false,
+            is_cellular: false,
+            has_accuracy: false,
+            wants_adaptive_record: false,
+            has_live_sink: false,
+            has_heartbeat: false,
+            wants_per_record_artifacts: false,
+        };
         assert!(
-            exact_fold_eligible(false, false, false, false, false, false, false, false),
+            exact_fold_eligible(clean),
             "a clean single-thread scheduled metrics-only run is eligible"
         );
+        // Each disqualifier, toggled on in isolation, must reject the fold.
         assert!(
-            !exact_fold_eligible(true, false, false, false, false, false, false, false),
+            !exact_fold_eligible(ExactFoldInputs {
+                sketch_mode: true,
+                ..clean
+            }),
             "sketch mode has its own fold path"
         );
         assert!(
-            !exact_fold_eligible(false, true, false, false, false, false, false, false),
-            "the sharded arm stamps strided ordinals (S5)"
+            !exact_fold_eligible(ExactFoldInputs {
+                shardable: true,
+                ..clean
+            }),
+            "the sharded arm stamps strided ordinals (S5 deferred)"
         );
         assert!(
-            !exact_fold_eligible(false, false, true, false, false, false, false, false),
+            !exact_fold_eligible(ExactFoldInputs {
+                is_cellular: true,
+                ..clean
+            }),
             "a cellular child ships the full retained set"
         );
         assert!(
-            !exact_fold_eligible(false, false, false, true, false, false, false, false),
+            !exact_fold_eligible(ExactFoldInputs {
+                has_accuracy: true,
+                ..clean
+            }),
             "accuracy stays on the retain path"
         );
         assert!(
-            !exact_fold_eligible(false, false, false, false, true, false, false, false),
+            !exact_fold_eligible(ExactFoldInputs {
+                wants_adaptive_record: true,
+                ..clean
+            }),
             "adaptive samples retained records"
         );
         assert!(
-            !exact_fold_eligible(false, false, false, false, false, true, false, false),
+            !exact_fold_eligible(ExactFoldInputs {
+                has_live_sink: true,
+                ..clean
+            }),
             "the live sink reads per-record clones"
         );
         assert!(
-            !exact_fold_eligible(false, false, false, false, false, false, true, false),
+            !exact_fold_eligible(ExactFoldInputs {
+                has_heartbeat: true,
+                ..clean
+            }),
             "the heartbeat lane reads per-record clones"
         );
         assert!(
-            !exact_fold_eligible(false, false, false, false, false, false, false, true),
+            !exact_fold_eligible(ExactFoldInputs {
+                wants_per_record_artifacts: true,
+                ..clean
+            }),
             "per-record artifacts still read the retained records"
         );
     }
