@@ -607,6 +607,11 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
                 and phase.requests is None
                 and phase.duration is None
                 and phase.sessions is None
+                # The recorded-graph cache-pressure warmup is self-bounding: its
+                # sole deadline is agentic_cache_warmup_duration, and a generic
+                # stop cap would cancel the cache-pressure recycle. Treat that
+                # duration as the phase's stop condition.
+                and phase.agentic_cache_warmup_duration is None
             ):
                 raise ValueError(
                     f"Phase '{phase.name}': at least one of "

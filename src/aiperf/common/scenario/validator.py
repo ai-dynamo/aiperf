@@ -56,18 +56,40 @@ _WEKA_GRAPH_LOADER = "weka_trace"
 
 
 def _is_weka_workload(run: BenchmarkRun) -> bool:
-    """True when a resolved dataset is a weka graph workload.
+    """True when the run targets a weka graph workload.
 
     On ajc/rust a graph workload is selected by dataset FORMAT, not a timing
-    mode. ``DatasetResolver`` (earlier in the resolver chain) populates
-    ``run.resolved.dataset_types`` with the detected ``CustomDatasetType`` per
-    file dataset; a weka input resolves to ``CustomDatasetType.WEKA_TRACE``. We
-    match by string value so this stays independent of the dynamic-enum import.
+    mode. Two detection signals, in preference order:
+
+    1. ``run.resolved.dataset_types`` — populated by ``DatasetResolver`` with
+       the detected ``CustomDatasetType`` per file dataset; a weka input
+       resolves to ``CustomDatasetType.WEKA_TRACE``. This is the signal when
+       the resolver chain ran.
+    2. ``run.cfg.datasets[*].format`` — the direct-pair execute path
+       (``rust_executor``) never runs ``DatasetResolver``, so ``dataset_types``
+       is empty there. Fall back to the explicitly-set ``weka_trace`` format on
+       any configured ``FileDataset`` (what ``--custom-dataset-type weka-trace``
+       lands on ``run.cfg``). ``format`` defaults to ``single_turn``, so an
+       explicit-set check (``model_fields_set``) is required to avoid matching
+       an unset default.
+
+    Both match by string value so this stays independent of the dynamic-enum
+    import.
     """
     dataset_types = getattr(run.resolved, "dataset_types", None)
-    if not dataset_types:
-        return False
-    return any(str(dt) == _WEKA_GRAPH_LOADER for dt in dataset_types.values())
+    if dataset_types and any(
+        str(dt) == _WEKA_GRAPH_LOADER for dt in dataset_types.values()
+    ):
+        return True
+    for ds in getattr(run.cfg, "datasets", ()):
+        fmt = getattr(ds, "format", None)
+        if (
+            fmt is not None
+            and str(fmt) == _WEKA_GRAPH_LOADER
+            and "format" in getattr(ds, "model_fields_set", set())
+        ):
+            return True
+    return False
 
 
 def apply_scenario(run: BenchmarkRun) -> ScenarioOutcome:

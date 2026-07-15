@@ -2142,10 +2142,12 @@ class CLIConfig(BaseConfig):
             description="Extended cache-pressure warmup duration in seconds for "
             "recorded-graph (agentic/weka) replay. When set, the native runner "
             "drives cache-pressure warmup traffic for this many seconds to prime "
-            "the server's prefix/KV cache before profiling begins. Sets "
-            "agentic_cache_warmup_duration on the warmup phase; requires a warmup "
-            "trigger (--warmup-request-count / --num-warmup-sessions / "
-            "--warmup-duration) so a warmup phase exists to carry it.",
+            "the server's prefix/KV cache before profiling begins. This flag is "
+            "self-triggering: it auto-builds a self-bounding CONCURRENCY_BURST "
+            "warmup phase carrying only this duration. Do NOT combine it with a "
+            "manual warmup trigger (--warmup-request-count / --num-warmup-sessions "
+            "/ --warmup-duration); a session/request/duration cap cancels the "
+            "cache-pressure recycle and is rejected.",
         ),
         CLIParameter(
             name=("--agentic-cache-warmup-duration",),
