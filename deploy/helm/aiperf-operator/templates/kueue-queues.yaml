@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+{{- if .Values.kueue.createQueues }}
+{{- if .Capabilities.APIVersions.Has "kueue.x-k8s.io/v1beta1" }}
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ResourceFlavor
+metadata:
+  name: {{ .Values.kueue.flavorName }}
+  labels:
+    {{- include "aiperf-operator.labels" . | nindent 4 }}
+---
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ClusterQueue
+metadata:
+  name: {{ .Values.kueue.clusterQueueName }}
+  labels:
+    {{- include "aiperf-operator.labels" . | nindent 4 }}
+spec:
+  namespaceSelector: {}
+  resourceGroups:
+    - coveredResources: ["cpu", "memory"{{- if .Values.kueue.resources.gpu }}, "nvidia.com/gpu"{{- end }}]
+      flavors:
+        - name: {{ .Values.kueue.flavorName }}
+          resources:
+            - name: cpu
+              nominalQuota: {{ .Values.kueue.resources.cpu | quote }}
+            - name: memory
+              nominalQuota: {{ .Values.kueue.resources.memory | quote }}
+            {{- if .Values.kueue.resources.gpu }}
+            - name: nvidia.com/gpu
+              nominalQuota: {{ .Values.kueue.resources.gpu | quote }}
+            {{- end }}
+---
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: LocalQueue
+metadata:
+  name: {{ .Values.kueue.localQueueName }}
+  namespace: {{ .Values.benchmarkNamespace.name }}
+  labels:
+    {{- include "aiperf-operator.labels" . | nindent 4 }}
+spec:
+  clusterQueue: {{ .Values.kueue.clusterQueueName }}
+{{- end }}
+{{- end }}

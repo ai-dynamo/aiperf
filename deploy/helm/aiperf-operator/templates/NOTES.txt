@@ -1,0 +1,62 @@
+AIPerf Operator has been installed!
+
+1. Verify the operator is running:
+   kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "aiperf-operator.name" . }}
+
+2. Create a benchmark job:
+   cat <<EOF | kubectl apply -f -
+   apiVersion: aiperf.nvidia.com/v1alpha1
+   kind: AIPerfJob
+   metadata:
+     name: my-benchmark
+     namespace: {{ .Values.benchmarkNamespace.name }}
+   spec:
+     # Deployment fields use camelCase (K8s convention)
+     image: {{ include "aiperf-operator.defaultJobImage" . }}
+
+     # Benchmark config lives under spec.benchmark in snake_case
+     # (identical to AIPerf CLI YAML config files)
+     benchmark:
+       models: [your-model]
+       endpoint:
+         urls:
+           - http://your-inference-server:8000/v1/chat/completions
+         type: chat
+       datasets:
+         - name: main
+           type: synthetic
+       phases:
+         - name: profiling
+           type: concurrency
+           concurrency: 1
+           requests: 10
+   EOF
+
+3. Monitor with the live dashboard:
+   aiperf kube watch my-benchmark
+
+   Or with kubectl:
+   kubectl get aiperfjob my-benchmark -n {{ .Values.benchmarkNamespace.name }} -w
+
+4. View detailed status:
+   kubectl describe aiperfjob my-benchmark -n {{ .Values.benchmarkNamespace.name }}
+
+5. Retrieve results:
+   aiperf kube results my-benchmark
+
+   The operator's HTTP API (jobs, sweeps, results, dashboard, metrics) is
+   reachable in-cluster at:
+       http://{{ include "aiperf-operator.fullname" . }}.{{ .Release.Namespace }}:{{ .Values.resultsServer.port }}
+   Out-of-cluster, port-forward and curl /api/v1/jobs:
+       kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "aiperf-operator.fullname" . }} 8081:{{ .Values.resultsServer.port }}
+       curl http://localhost:8081/api/v1/jobs
+
+{{- if .Values.storage.enabled }}
+
+   Results are also stored on the operator PVC at: {{ .Values.storage.mountPath }}/<job-id>/
+{{- end }}
+
+6. Run preflight checks against the cluster:
+   aiperf kube preflight --image {{ include "aiperf-operator.defaultJobImage" . }}
+
+For more information, visit: https://github.com/nvidia/aiperf
