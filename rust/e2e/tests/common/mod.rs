@@ -332,12 +332,18 @@ impl AIPerfHarness {
 }
 
 /// Send SIGINT to the child so aiperf's handler can flush partial artifacts.
+#[cfg(unix)]
 fn cancel_child(child: &std::process::Child) {
     use nix::sys::signal::{Signal, kill};
     use nix::unistd::Pid;
     let pid = Pid::from_raw(child.id() as i32);
     let _ = kill(pid, Signal::SIGINT);
 }
+
+/// Non-unix stub: no POSIX SIGINT, so the caller falls through to the hard
+/// `child.kill()` escalation. Keeps the crate compiling on windows-msvc.
+#[cfg(not(unix))]
+fn cancel_child(_child: &std::process::Child) {}
 
 /// Resolve the Python interpreter: `$VIRTUAL_ENV/bin/python`, else `python3`.
 fn python_binary() -> String {

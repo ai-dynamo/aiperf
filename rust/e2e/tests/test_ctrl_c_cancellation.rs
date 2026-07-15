@@ -162,12 +162,18 @@ fn run_with_sigint(
 }
 
 /// Send SIGINT to the child so aiperf's handler can flush partial artifacts.
+#[cfg(unix)]
 fn send_sigint(child: &std::process::Child) {
     use nix::sys::signal::{Signal, kill};
     use nix::unistd::Pid;
     let pid = Pid::from_raw(child.id() as i32);
     let _ = kill(pid, Signal::SIGINT);
 }
+
+/// Windows lacks POSIX SIGINT; the graceful-cancel test early-returns there, so
+/// this stub is never invoked at runtime — it exists only so the crate compiles.
+#[cfg(not(unix))]
+fn send_sigint(_child: &std::process::Child) {}
 
 /// Ctrl+C triggers graceful cancellation, writes all output files, and sets
 /// was_cancelled=True.
