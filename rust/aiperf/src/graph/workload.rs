@@ -24,6 +24,7 @@ use crate::graph::errors::TraceError;
 use crate::graph::execution::TracePlacement;
 pub use crate::graph::model::GraphTracePlan;
 use crate::graph::policy::{ContinueRunFailurePolicy, RunFailurePolicy};
+use crate::graph::tstar::PermutationDraw;
 
 /// Stateful root-trace selection seam.
 pub trait GraphTraceSource {
@@ -63,6 +64,32 @@ pub struct CyclingGraphTraceSource {
     next: Cell<u64>,
     admitted_requests: Cell<u64>,
     instance_sequence: GraphTraceInstanceSequence,
+    /// Corpus draw offset added to the session ordinal before the modulo pick.
+    ///
+    /// The bounded profiling recycle resumes where a cache-pressure warmup left
+    /// off: the WARMUP -> PROFILING handoff carries the next-undrawn corpus
+    /// position (`corpus_cursor`), and profiling seeds this offset with it so its
+    /// first draw serves template `corpus_cursor % len` instead of re-serving the
+    /// 0th. Ports the `next_index = self._warmup_handoff.corpus_cursor` seed of
+    /// `graph_ir_replay.py::_run_lanes` (`src/aiperf/timing/strategies/
+    /// graph_ir_replay.py:1297-1300`, branch `ajc/aiperf-graph-ir`). The session
+    /// and static-request budgets stay anchored to the raw session ordinal (drawn
+    /// from `0`), mirroring Python's separate `_can_recycle`/`--request-count`
+    /// gates — the cursor governs ONLY which template each draw picks, never how
+    /// many sessions profiling runs. Absent a handoff this is `0` (unchanged).
+    start_ordinal: u64,
+    /// Strategy-aware corpus-index remap for the profiling recycle draw.
+    ///
+    /// `Sequential` (the default, [`PermutationDraw::sequential`]) returns
+    /// `draw % len` — byte-for-byte the historic cursor-with-wrap pick. A
+    /// `Shuffle`/`Random` draw threads the run's `t_star_random_seed` so the
+    /// template pick continues the SAME per-pass seeded permutation the pressure
+    /// stage draws under: `graph_ir_replay.py:_draw_index` is the single choke
+    /// point for the pressure fan-out AND "the profiling recycle draw", so a
+    /// freed profiling lane never re-serves a template the pressure stage already
+    /// replayed under a different order (`graph_ir_replay.py:_draw_index`,
+    /// lines 792-820, branch `ajc/aiperf-graph-ir`).
+    draw: PermutationDraw,
 }
 
 /// Run-scoped identity sequence shared by independently prepared graph phases.
@@ -135,7 +162,39 @@ impl CyclingGraphTraceSource {
             next: Cell::new(0),
             admitted_requests: Cell::new(0),
             instance_sequence,
+            start_ordinal: 0,
+            draw: PermutationDraw::sequential(),
         })
+    }
+
+    /// Resume the corpus draw from `start_ordinal` (the handoff `corpus_cursor`).
+    ///
+    /// The first `next_trace` then serves template `start_ordinal % len` and the
+    /// cycle continues from there, so the bounded profiling recycle does not
+    /// re-serve the templates a cache-pressure warmup already consumed. Session
+    /// and static-request budgets are unaffected (they count from `0`). Default
+    /// `0` (no builder call) is the byte-unchanged no-handoff path. Port of the
+    /// `next_index = self._warmup_handoff.corpus_cursor` seed in
+    /// `graph_ir_replay.py::_run_lanes` (`:1297-1300`, branch `ajc/aiperf-graph-ir`).
+    pub fn starting_at(mut self, start_ordinal: u64) -> Self {
+        self.start_ordinal = start_ordinal;
+        self
+    }
+
+    /// Route the recycle template pick through a strategy-aware draw.
+    ///
+    /// `Sequential` (`shuffled = false`) leaves `next_trace` byte-identical to
+    /// the historic `draw % len` pick. A `Shuffle`/`Random` draw
+    /// (`shuffled = true`) picks `perm[draw / len][draw % len]` under a per-pass
+    /// permutation seeded from `base_seed` (the run's `t_star_random_seed`), so
+    /// the profiling recycle continues the SAME per-pass permutation contract the
+    /// pressure stage draws under (`graph_ir_replay.py:_draw_index`, the single
+    /// choke point for both the pressure fan-out and the profiling recycle draw,
+    /// lines 792-820, branch `ajc/aiperf-graph-ir`). Default `sequential` (no
+    /// builder call) is the byte-unchanged product path.
+    pub fn with_sampling(mut self, shuffled: bool, base_seed: u64) -> Self {
+        self.draw = PermutationDraw::new(shuffled, base_seed);
+        self
     }
 }
 
@@ -145,10 +204,17 @@ impl GraphTraceSource for CyclingGraphTraceSource {
         if self.session_limit.is_some_and(|limit| ordinal >= limit) {
             return Ok(None);
         }
-        let template_count = u64::try_from(self.templates.len())
-            .map_err(|_| GraphWorkloadError("graph template count exceeds u64".into()))?;
-        let template_index = usize::try_from(ordinal % template_count)
-            .map_err(|_| GraphWorkloadError("graph template index exceeds usize".into()))?;
+        // The corpus draw position is the session ordinal shifted by the handoff
+        // resume cursor; the session-limit gate above stays on the raw ordinal, so
+        // the cursor moves ONLY which template each draw picks (Python threads
+        // `next_index` independently of the `_can_recycle` session gate).
+        let draw = ordinal
+            .checked_add(self.start_ordinal)
+            .ok_or_else(|| GraphWorkloadError("graph resumed draw ordinal exceeds u64".into()))?;
+        // Strategy-aware remap (`graph_ir_replay.py:_draw_index`): Sequential is
+        // `draw % len` (unchanged); Shuffle/Random is `perm[draw / len][draw % len]`
+        // under the same per-pass permutation the pressure stage draws.
+        let template_index = self.draw.index(draw, self.templates.len());
         let mut plan = self.templates[template_index].clone();
         let requests = u64::try_from(plan.graph.nodes.len()).map_err(|_| {
             GraphWorkloadError("graph template static node count exceeds u64".into())
@@ -200,6 +266,16 @@ pub struct PartitionedGraphTraceSource {
     cell_id: u64,
     cell_count: u64,
     next_local: Cell<u64>,
+    /// Strategy-aware corpus-index remap keyed on the GLOBAL session ordinal.
+    ///
+    /// `Sequential` (the default) is `global_ordinal % len` — the historic
+    /// interleave pick, byte-unchanged. Under `Shuffle`/`Random` each cell draws
+    /// `perm[global / len][global % len]`; because the union of all cells' global
+    /// ordinals is the contiguous `0..N`, each per-pass permutation is still
+    /// covered exactly once across the cells, so the deterministic-per-topology
+    /// cover-the-corpus-once contract holds and equals a single-cell cycling run
+    /// under the identical draw (`graph_ir_replay.py:_draw_index`).
+    draw: PermutationDraw,
 }
 
 impl PartitionedGraphTraceSource {
@@ -235,7 +311,20 @@ impl PartitionedGraphTraceSource {
             cell_id: u64::from(cell_id),
             cell_count: u64::from(cell_count),
             next_local: Cell::new(0),
+            draw: PermutationDraw::sequential(),
         })
+    }
+
+    /// Route the interleave template pick through a strategy-aware draw.
+    ///
+    /// See [`CyclingGraphTraceSource::with_sampling`]: `Sequential`
+    /// (`shuffled = false`) is the byte-unchanged `global_ordinal % len` pick;
+    /// `Shuffle`/`Random` picks the same per-pass seeded permutation the pressure
+    /// stage and the single-cell cycler draw, keyed on the global ordinal so the
+    /// per-topology cover-the-corpus-once union is preserved.
+    pub fn with_sampling(mut self, shuffled: bool, base_seed: u64) -> Self {
+        self.draw = PermutationDraw::new(shuffled, base_seed);
+        self
     }
 }
 
@@ -252,10 +341,7 @@ impl GraphTraceSource for PartitionedGraphTraceSource {
         {
             return Ok(None);
         }
-        let template_count = u64::try_from(self.templates.len())
-            .map_err(|_| GraphWorkloadError("graph template count exceeds u64".into()))?;
-        let template_index = usize::try_from(global_ordinal % template_count)
-            .map_err(|_| GraphWorkloadError("graph template index exceeds usize".into()))?;
+        let template_index = self.draw.index(global_ordinal, self.templates.len());
         let mut plan = self.templates[template_index].clone();
         plan.trace.id = format!("{}::instance-{global_ordinal}", plan.trace.id);
         self.next_local.set(local.checked_add(1).ok_or_else(|| {
@@ -863,6 +949,152 @@ mod tests {
         assert!(source.next_trace().unwrap().is_none());
     }
 
+    #[test]
+    fn cycling_source_resumes_from_start_ordinal() {
+        let mut pool = SegmentPool::new();
+        let handle = intern_message(
+            &mut pool,
+            &OpenAiChatMessage::new("user", "hello"),
+            None,
+            &TiktokenTokenizer::builtin(),
+        )
+        .unwrap();
+        // corpus_cursor = 3 over a 2-template cycle: first draw is template
+        // 3 % 2 = 1 ("b"), NOT the 0th; the session budget still counts from 0.
+        let source = CyclingGraphTraceSource::new(
+            vec![one_node_plan("a", handle), one_node_plan("b", handle)],
+            Some(3),
+        )
+        .unwrap()
+        .starting_at(3);
+        assert_eq!(
+            source.next_trace().unwrap().unwrap().trace.id,
+            "b::instance-0"
+        );
+        assert_eq!(
+            source.next_trace().unwrap().unwrap().trace.id,
+            "a::instance-1"
+        );
+        assert_eq!(
+            source.next_trace().unwrap().unwrap().trace.id,
+            "b::instance-2"
+        );
+        // session_limit (3) is anchored to the raw ordinal, not the shifted draw.
+        assert!(source.next_trace().unwrap().is_none());
+    }
+
+    #[test]
+    fn cycling_source_default_start_ordinal_is_unchanged() {
+        let mut pool = SegmentPool::new();
+        let handle = intern_message(
+            &mut pool,
+            &OpenAiChatMessage::new("user", "hello"),
+            None,
+            &TiktokenTokenizer::builtin(),
+        )
+        .unwrap();
+        // No `starting_at`: byte-identical to the pre-resume behavior — first draw
+        // is the 0th template.
+        let source = CyclingGraphTraceSource::new(
+            vec![one_node_plan("a", handle), one_node_plan("b", handle)],
+            Some(2),
+        )
+        .unwrap();
+        assert_eq!(
+            source.next_trace().unwrap().unwrap().trace.id,
+            "a::instance-0"
+        );
+        assert_eq!(
+            source.next_trace().unwrap().unwrap().trace.id,
+            "b::instance-1"
+        );
+        assert!(source.next_trace().unwrap().is_none());
+    }
+
+    #[test]
+    fn cycling_source_shuffle_matches_draw_permutation_and_covers_each_pass() {
+        // (b) Shuffle: the profiling recycle `next_trace` template order equals
+        // `draw_permutation(base, pass, total)[offset]` (`_draw_index` for the
+        // profiling recycle draw), and every full pass covers each template once.
+        use crate::graph::tstar::draw_permutation;
+        let handle = sample_handle();
+        let letters = ["a", "b", "c", "d", "e"];
+        let total = letters.len();
+        let templates: Vec<GraphTracePlan> =
+            letters.iter().map(|id| one_node_plan(id, handle)).collect();
+        let base_seed = 0u64;
+        // Two full passes over the 5-template corpus.
+        let source = CyclingGraphTraceSource::new(templates, Some(2 * total as u64))
+            .unwrap()
+            .with_sampling(true, base_seed);
+        let drawn: Vec<String> = std::iter::from_fn(|| {
+            source
+                .next_trace()
+                .unwrap()
+                .map(|plan| plan.trace.id.split_once("::").unwrap().0.to_owned())
+        })
+        .collect();
+        for pass in 0u64..2 {
+            let perm = draw_permutation(base_seed, pass, total);
+            let mut seen = Vec::new();
+            for offset in 0..total {
+                let drawn_letter = &drawn[pass as usize * total + offset];
+                assert_eq!(drawn_letter, letters[perm[offset]]);
+                seen.push(perm[offset]);
+            }
+            seen.sort_unstable();
+            assert_eq!(seen, (0..total).collect::<Vec<_>>(), "pass {pass} coverage");
+        }
+    }
+
+    #[test]
+    fn cycling_source_shuffle_continues_pressure_shared_sampler_order() {
+        // (c) Shared-sampler-with-pressure: a freed profiling lane that resumes at
+        // corpus cursor `k` (`starting_at(k)`) serves the SAME template the shared
+        // `PermutationDraw` (the pressure stage's remap) yields for counter `k+i`,
+        // so profiling never re-serves a template the pressure stage replayed
+        // under a different order. Both route through the identical remap on the
+        // identical `(base_seed, total)`.
+        let handle = sample_handle();
+        let letters = ["a", "b", "c", "d", "e"];
+        let total = letters.len();
+        let templates: Vec<GraphTracePlan> =
+            letters.iter().map(|id| one_node_plan(id, handle)).collect();
+        let base_seed = 7u64;
+        let start = 3u64;
+        let source = CyclingGraphTraceSource::new(templates, Some(total as u64))
+            .unwrap()
+            .starting_at(start)
+            .with_sampling(true, base_seed);
+        // The reference sampler the pressure stage draws from on the same counter.
+        let pressure = PermutationDraw::new(true, base_seed);
+        for i in 0..total as u64 {
+            let id = source.next_trace().unwrap().unwrap().trace.id;
+            let letter = id.split_once("::").unwrap().0;
+            let expected = letters[pressure.index(start + i, total)];
+            assert_eq!(letter, expected, "counter {}", start + i);
+        }
+    }
+
+    #[test]
+    fn cycling_source_sequential_default_ignores_seed_and_is_byte_unchanged() {
+        // (a) HARD guard: default (no `with_sampling`) and an explicit
+        // `Sequential` draw (even with a nonzero seed) both keep `draw % len`.
+        let handle = sample_handle();
+        let templates = || vec![one_node_plan("a", handle), one_node_plan("b", handle)];
+        let default_source = CyclingGraphTraceSource::new(templates(), Some(3)).unwrap();
+        let sequential_source = CyclingGraphTraceSource::new(templates(), Some(3))
+            .unwrap()
+            .with_sampling(false, 999);
+        for _ in 0..3 {
+            assert_eq!(
+                default_source.next_trace().unwrap().unwrap().trace.id,
+                sequential_source.next_trace().unwrap().unwrap().trace.id
+            );
+        }
+        assert!(default_source.next_trace().unwrap().is_none());
+    }
+
     fn sample_handle() -> crate::dataset::Handle {
         let mut pool = SegmentPool::new();
         intern_message(
@@ -934,6 +1166,60 @@ mod tests {
                 .collect::<Vec<_>>(),
             (0..10).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn partitioned_shuffle_union_matches_single_cell_cycling_shuffle() {
+        // Under Shuffle the cellular union still covers the corpus once per pass:
+        // each cell draws `perm[global/len][global%len]` on its interleaved global
+        // ordinals, and the union (contiguous 0..cap) reproduces exactly the
+        // single-cell shuffle cycling sequence — the deterministic-per-topology
+        // contract, preserved by routing both through the shared `PermutationDraw`.
+        let handle = sample_handle();
+        let letters = ["a", "b", "c", "d", "e"];
+        let templates = || {
+            letters
+                .iter()
+                .map(|id| one_node_plan(id, handle))
+                .collect::<Vec<_>>()
+        };
+        let base_seed = 3u64;
+        let cap = 10u64;
+        // Single-cell shuffle cycler = the reference global order.
+        let single = CyclingGraphTraceSource::new(templates(), Some(cap))
+            .unwrap()
+            .with_sampling(true, base_seed);
+        let mut reference: BTreeMap<u64, String> = BTreeMap::new();
+        while let Some(plan) = single.next_trace().unwrap() {
+            let (letter, ord) = plan.trace.id.split_once("::instance-").unwrap();
+            reference.insert(ord.parse().unwrap(), letter.to_owned());
+        }
+        // The three cells' interleaved draws, keyed by global ordinal, must equal
+        // that reference exactly (same template at each global ordinal).
+        let mut union: BTreeMap<u64, String> = BTreeMap::new();
+        for cell_id in 0..3u32 {
+            let source = PartitionedGraphTraceSource::new(templates(), Some(cap), cell_id, 3)
+                .unwrap()
+                .with_sampling(true, base_seed);
+            while let Some(plan) = source.next_trace().unwrap() {
+                let (letter, ord) = plan.trace.id.split_once("::instance-").unwrap();
+                union.insert(ord.parse().unwrap(), letter.to_owned());
+            }
+        }
+        assert_eq!(union, reference);
+        // And each full pass covers every template once (music-shuffle contract).
+        for pass in 0u64..(cap / letters.len() as u64) {
+            let mut seen: Vec<&String> = (0..letters.len() as u64)
+                .map(|o| &union[&(pass * letters.len() as u64 + o)])
+                .collect();
+            seen.sort();
+            let mut expected: Vec<&str> = letters.to_vec();
+            expected.sort();
+            assert_eq!(
+                seen.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                expected
+            );
+        }
     }
 
     #[test]

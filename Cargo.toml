@@ -11,6 +11,9 @@ members = [
     "rust/runner",
     "rust/mock-server",
     "rust/e2e",
+    # pyo3 cdylib compiled into the single interned `aiperf` wheel (aiperf._native);
+    # the full-fat aiperf-runner rides along as interned package data.
+    "rust/pyext",
 ]
 
 [workspace.package]

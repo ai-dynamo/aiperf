@@ -9,7 +9,7 @@ use prometheus::{
 };
 
 #[allow(non_snake_case)]
-pub struct AiperfMockMetrics {
+pub struct AIPerfMockMetrics {
     pub registry: Registry,
 
     pub REQUESTS_TOTAL: IntCounterVec,
@@ -37,7 +37,7 @@ fn b(buckets: &[f64]) -> Vec<f64> {
     buckets.to_vec()
 }
 
-impl AiperfMockMetrics {
+impl AIPerfMockMetrics {
     pub fn new() -> Self {
         let registry = Registry::new();
 
@@ -888,7 +888,7 @@ impl DynamoComponentMetrics {
 }
 
 pub struct AllMetrics {
-    pub aiperf: AiperfMockMetrics,
+    pub aiperf: AIPerfMockMetrics,
     pub vllm: VllmMetrics,
     pub sglang: SglangMetrics,
     pub trtllm: TrtllmMetrics,
@@ -900,7 +900,7 @@ pub struct AllMetrics {
 impl AllMetrics {
     pub fn new() -> Self {
         Self {
-            aiperf: AiperfMockMetrics::new(),
+            aiperf: AIPerfMockMetrics::new(),
             vllm: VllmMetrics::new(),
             sglang: SglangMetrics::new(),
             trtllm: TrtllmMetrics::new(),
@@ -917,7 +917,7 @@ impl Default for AllMetrics {
     }
 }
 
-impl Default for AiperfMockMetrics {
+impl Default for AIPerfMockMetrics {
     fn default() -> Self {
         Self::new()
     }

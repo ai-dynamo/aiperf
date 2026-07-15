@@ -27,7 +27,7 @@ use super::content::CorpusContentSynthesizer;
 use super::source::load_aiperf_documents;
 use super::trie::{BlockTag, RecordedRequest, graph_plan, lower_recorded_graph};
 use super::{RecordedTraceError, RecordedTraceInputConfig};
-use schema::{AiperfCall, AiperfTrace, parse_trace};
+use schema::{AIPerfCall, AIPerfTrace, parse_trace};
 
 /// Parse, reconstruct, and lower an `aiperf.trace.v1` source exactly once.
 pub async fn compile_aiperf_trace_input(
@@ -113,7 +113,7 @@ pub async fn compile_aiperf_trace_input(
 /// full `block_size` blocks plus each segment's partial-tail remainder — so the
 /// reconstruction honors the real per-segment length rather than rounding every
 /// tail up to a whole block.
-fn flatten_trace(trace: &AiperfTrace) -> Result<Vec<RecordedRequest>, RecordedTraceError> {
+fn flatten_trace(trace: &AIPerfTrace) -> Result<Vec<RecordedRequest>, RecordedTraceError> {
     let block_size = trace.block_size;
     let node_ids: Vec<String> = assign_node_ids(trace);
     let mut requests = Vec::with_capacity(trace.calls.len());
@@ -232,12 +232,12 @@ fn flatten_trace(trace: &AiperfTrace) -> Result<Vec<RecordedRequest>, RecordedTr
 
 /// Assign `"{chain}:{turn}"` node ids: `chain` = `agent_id` (else session id),
 /// `turn` = per-chain counter in call order.
-fn assign_node_ids(trace: &AiperfTrace) -> Vec<String> {
+fn assign_node_ids(trace: &AIPerfTrace) -> Vec<String> {
     let mut turn_by_chain: HashMap<String, usize> = HashMap::new();
     trace
         .calls
         .iter()
-        .map(|call: &AiperfCall| {
+        .map(|call: &AIPerfCall| {
             let chain = call
                 .agent_id
                 .map_or_else(|| trace.id.clone(), |agent| agent.to_string());

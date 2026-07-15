@@ -12,7 +12,7 @@ use aiperf::endpoints::{
     PreparedRequest, RawEndpointConfig, ReadinessPolicy, RequestRecord, ResponseData,
     ServerResponse, Turn,
 };
-use aiperf::extensions::{AiperfExtension, AiperfRegistry, AiperfRegistryFactory, ExtensionError};
+use aiperf::extensions::{AIPerfExtension, AIPerfRegistry, AIPerfRegistryFactory, ExtensionError};
 use aiperf::rng::RngRoot;
 
 struct ExternalSampler {
@@ -176,12 +176,12 @@ impl PreparedEndpoint for ExternalPreparedEndpoint {
     }
 }
 
-impl AiperfExtension for ExternalExtension {
+impl AIPerfExtension for ExternalExtension {
     fn name(&self) -> &str {
         "external-test"
     }
 
-    fn register(&self, registry: &mut AiperfRegistry) -> Result<(), ExtensionError> {
+    fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError> {
         registry
             .samplers_mut()
             .register(ExternalSamplerFactory { name: "external" })?;
@@ -192,20 +192,20 @@ impl AiperfExtension for ExternalExtension {
 
 struct ExternalRegistryFactory;
 
-impl AiperfRegistryFactory for ExternalRegistryFactory {
-    fn build(&self) -> Result<AiperfRegistry, ExtensionError> {
-        AiperfRegistry::builtin()?.with_extensions([&ExternalExtension as &dyn AiperfExtension])
+impl AIPerfRegistryFactory for ExternalRegistryFactory {
+    fn build(&self) -> Result<AIPerfRegistry, ExtensionError> {
+        AIPerfRegistry::builtin()?.with_extensions([&ExternalExtension as &dyn AIPerfExtension])
     }
 }
 
 struct PartiallyFailingExtension;
 
-impl AiperfExtension for PartiallyFailingExtension {
+impl AIPerfExtension for PartiallyFailingExtension {
     fn name(&self) -> &str {
         "partial"
     }
 
-    fn register(&self, registry: &mut AiperfRegistry) -> Result<(), ExtensionError> {
+    fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError> {
         registry.register_endpoint_factory(ExternalEndpointFactory)?;
         registry
             .samplers_mut()
@@ -229,7 +229,7 @@ fn metadata() -> Vec<ConversationMetadata> {
 
 #[test]
 fn linked_extension_registers_and_resolves_a_trait_implementation() {
-    let mut registry = AiperfRegistry::builtin().unwrap();
+    let mut registry = AIPerfRegistry::builtin().unwrap();
     registry.register_extension(&ExternalExtension).unwrap();
 
     let mut sampler = registry
@@ -296,7 +296,7 @@ fn custom_distribution_builds_its_registry_through_the_factory_seam() {
 
 #[test]
 fn duplicate_extension_name_is_rejected() {
-    let mut registry = AiperfRegistry::builtin().unwrap();
+    let mut registry = AIPerfRegistry::builtin().unwrap();
     registry.register_extension(&ExternalExtension).unwrap();
 
     let error = registry.register_extension(&ExternalExtension).unwrap_err();
@@ -305,7 +305,7 @@ fn duplicate_extension_name_is_rejected() {
 
 #[test]
 fn failed_extension_does_not_leak_earlier_registrations() {
-    let mut registry = AiperfRegistry::builtin().unwrap();
+    let mut registry = AIPerfRegistry::builtin().unwrap();
     let error = registry
         .register_extension(&PartiallyFailingExtension)
         .unwrap_err();

@@ -331,6 +331,34 @@ mod tests {
         assert_eq!(nodes[1].end(), 63.0);
     }
 
+    // Tri-state cap parity vs Python `ActiveIdleWarp` / `resolve_idle_gap_cap`
+    // (`segment_ir/trie_content.py` `ActiveIdleWarp.__init__`/`map`,
+    // `adapters/shared/idle_gap.py`): `None` disables (raw passthrough), an
+    // over-cap idle gap collapses to the cap, and a sub-cap gap is untouched.
+    #[test]
+    fn idle_warp_tri_state_matches_python_cap_semantics() {
+        // Over-cap gap: intervals (0,2),(100,101); idle 100-2=98 > 60 cap,
+        // excess 98-60=38 → b warps 100-38=62 (Python `map` shift 38).
+        let mut over = vec![node("a", 0, 0.0, 2.0), node("b", 1, 100.0, 1.0)];
+        apply_idle_warp(&mut over, Some(60.0));
+        assert_eq!(over[0].warped_start, 0.0);
+        assert_eq!(over[1].warped_start, 62.0);
+
+        // `None` disables warping: warped_start stays the raw start_seconds
+        // (Python sets `node.warped_start = node.request.t`; Rust leaves the
+        // TrieNode's construction-time `warped_start = start_seconds`).
+        let mut disabled = vec![node("a", 0, 0.0, 2.0), node("b", 1, 100.0, 1.0)];
+        apply_idle_warp(&mut disabled, None);
+        assert_eq!(disabled[0].warped_start, 0.0);
+        assert_eq!(disabled[1].warped_start, 100.0);
+
+        // Sub-cap gap: idle 50-2=48 <= 60 cap → no cut, raw passthrough.
+        let mut under = vec![node("a", 0, 0.0, 2.0), node("b", 1, 50.0, 1.0)];
+        apply_idle_warp(&mut under, Some(60.0));
+        assert_eq!(under[0].warped_start, 0.0);
+        assert_eq!(under[1].warped_start, 50.0);
+    }
+
     #[test]
     fn interval_frontier_keeps_concurrent_predecessors_and_binds_latest_end() {
         let mut nodes = vec![

@@ -42,9 +42,10 @@ velo = ["aiperf/velo"]
 
 [dependencies]
 # Declared directly (not via workspace inheritance) so the runner can opt out of
-# aiperf's default features and re-enable them per runner feature — this is what
-# lets `--no-default-features` produce a lite build that drops parquet/dynosim.
-aiperf = { path = "../aiperf", default-features = false }
+# aiperf's default features and re-enable them per runner feature. The
+# `runner-protocol` feature hosts the relocated v2/execution layer that the
+# runner shell drives.
+aiperf = { path = "../aiperf", default-features = false, features = ["runner-protocol"] }
 anyhow.workspace = true
 async-trait.workspace = true
 base64.workspace = true

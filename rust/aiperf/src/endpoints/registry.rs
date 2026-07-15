@@ -630,6 +630,18 @@ impl EndpointRegistryBuilder {
     /// Construct the stock built-in endpoint catalog.
     pub fn with_builtins() -> Result<Self, EndpointRegistryError> {
         let mut builder = Self::new();
+        builder.register_builtins()?;
+        Ok(builder)
+    }
+
+    /// Register the stock built-in endpoint dialects into an existing builder.
+    ///
+    /// Shared by [`Self::with_builtins`] and the built-in endpoint
+    /// `AIPerfExtension` so both compose the identical frozen catalog (the
+    /// builder keys entries in a `BTreeMap`, so registration order does not
+    /// affect the frozen result).
+    pub fn register_builtins(&mut self) -> Result<(), EndpointRegistryError> {
+        let builder = self;
         builder.register_endpoint(ChatEndpoint)?;
         builder.register_endpoint(CompletionsEndpoint)?;
         builder.register_endpoint(ResponsesEndpoint)?;
@@ -668,7 +680,7 @@ impl EndpointRegistryBuilder {
         builder.register_factory(RivaNaturalQueryFactory)?;
         builder.register_factory(RivaAnalyzeIntentFactory)?;
         builder.register_factory(RivaAnalyzeEntitiesFactory)?;
-        Ok(builder)
+        Ok(())
     }
 
     /// Register an immutable legacy endpoint through the stateless factory.

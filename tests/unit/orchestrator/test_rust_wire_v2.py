@@ -487,6 +487,23 @@ def test_trajectory_knobs_default_to_disabled_on_synthesis(tmp_path: Path) -> No
     assert synthesis["trajectory_start_max_ratio"] == 0.0
     # run.random_seed is 17 in the shared fixture.
     assert synthesis["t_star_random_seed"] == 17
+    # The resolved dataset-sampling strategy rides the synthesis block; the trace
+    # default is `sequential` (byte-unchanged native cursor draw).
+    assert synthesis["dataset_sampling_strategy"] == "sequential"
+
+
+def test_shuffle_sampling_strategy_reaches_the_synthesis_block(tmp_path: Path) -> None:
+    # A resolved `shuffle` dataset-sampling strategy is projected onto the
+    # recorded-graph synthesis block so the native graph phase runtime routes
+    # its recycle draws through the seeded permutation instead of the cursor.
+    from aiperf.plugin.enums import DatasetSamplingStrategy
+
+    run = _recorded_run(tmp_path)
+    object.__setattr__(
+        run.cfg.datasets[0], "sampling", DatasetSamplingStrategy.SHUFFLE
+    )
+    synthesis = dump_benchmark_run(run)["cfg"]["datasets"][0]["synthesis"]
+    assert synthesis["dataset_sampling_strategy"] == "shuffle"
 
 
 def test_scenario_trajectory_and_warmup_knobs_reach_the_wire(tmp_path: Path) -> None:

@@ -38,7 +38,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -323,20 +323,28 @@ fn bool_column<I: Iterator<Item = Option<bool>>>(values: I) -> ArrayRef {
     Arc::new(BooleanArray::from_iter(values)) as ArrayRef
 }
 
-/// Write the record batch to Parquet with Snappy compression and file-level
-/// key-value metadata mirroring the schema metadata.
-fn write_parquet(path: &Path, schema: Arc<Schema>, batch: &RecordBatch) -> Result<()> {
-    let file = File::create(path)
-        .with_context(|| format!("creating per-record parquet {}", path.display()))?;
+/// Snappy compression + file-level key-value metadata mirroring the schema
+/// metadata. Shared by the one-shot [`write_parquet`] and the incremental
+/// [`StreamingPerRecordParquetWriter`] so both files carry identical
+/// `aiperf.units`/`aiperf.schema_version`/`aiperf.version` metadata and codec.
+fn writer_properties(schema: &Arc<Schema>) -> WriterProperties {
     let kv: Vec<KeyValue> = schema
         .metadata()
         .iter()
         .map(|(key, value)| KeyValue::new(key.clone(), value.clone()))
         .collect();
-    let props = WriterProperties::builder()
+    WriterProperties::builder()
         .set_compression(Compression::SNAPPY)
         .set_key_value_metadata(Some(kv))
-        .build();
+        .build()
+}
+
+/// Write the record batch to Parquet with Snappy compression and file-level
+/// key-value metadata mirroring the schema metadata.
+fn write_parquet(path: &Path, schema: Arc<Schema>, batch: &RecordBatch) -> Result<()> {
+    let file = File::create(path)
+        .with_context(|| format!("creating per-record parquet {}", path.display()))?;
+    let props = writer_properties(&schema);
     let mut writer = ArrowWriter::try_new(file, schema, Some(props))
         .context("constructing per-record parquet arrow writer")?;
     writer
@@ -345,6 +353,244 @@ fn write_parquet(path: &Path, schema: Arc<Schema>, batch: &RecordBatch) -> Resul
     writer
         .close()
         .context("finalizing per-record parquet file")?;
+    Ok(())
+}
+
+/// Default row-group row bound for the incremental streaming writer. Each buffer
+/// of up to this many rows is flushed as one Parquet row group and dropped, so
+/// peak writer memory is O(bound) rather than O(records).
+pub const DEFAULT_ROW_GROUP_ROWS: usize = 4096;
+
+/// Incremental, bounded-memory sibling of [`write_per_record_parquet`].
+///
+/// The one-shot [`write_per_record_parquet`] columnarizes ALL rows into one
+/// in-memory `RecordBatch`, which requires the caller to retain every record
+/// until run end. This writer instead buffers a bounded window of
+/// [`PerRecordRow`]s, flushes each full window as one Parquet **row group** via a
+/// held-open [`ArrowWriter`], and clears the buffer — so a fold-and-drop caller
+/// can push each record at completion and immediately drop it, bounding peak
+/// memory at the buffer size.
+///
+/// The emitted schema, per-metric column set, Snappy codec, and file metadata are
+/// byte-for-byte the same builders [`write_per_record_parquet`] uses; only the
+/// physical row-group chunking differs (an internal detail with no bearing on the
+/// logical row set — see the parity test). Rows are appended in the order they are
+/// pushed (completion order for the fold path), which is the accepted decision for
+/// streamed per-record artifacts.
+///
+/// File creation is lazy: an instance that is finished without a single pushed row
+/// leaves no file, matching [`write_per_record_parquet`]'s empty-rows contract.
+pub struct StreamingPerRecordParquetWriter {
+    path: PathBuf,
+    schema: Arc<Schema>,
+    columns: Vec<PerRecordMetricColumn>,
+    include_trace: bool,
+    buffer: Vec<PerRecordRow>,
+    row_group_rows: usize,
+    writer: Option<ArrowWriter<File>>,
+}
+
+impl StreamingPerRecordParquetWriter {
+    /// Build a streaming writer for `path` over the ordered metric `columns`
+    /// (typically [`record_metric_columns`]); `include_trace` toggles the trailing
+    /// `trace_*` columns (schema-affecting, so it must match how rows are built).
+    /// `row_group_rows` bounds each row group; it is clamped to at least 1. No file
+    /// is created until the first row is flushed.
+    pub fn new(
+        path: PathBuf,
+        columns: Vec<PerRecordMetricColumn>,
+        include_trace: bool,
+        row_group_rows: usize,
+    ) -> Self {
+        let schema = build_schema(&columns, include_trace);
+        Self {
+            path,
+            schema,
+            columns,
+            include_trace,
+            buffer: Vec::new(),
+            row_group_rows: row_group_rows.max(1),
+            writer: None,
+        }
+    }
+
+    /// Append one row, flushing a row group once the buffer reaches the bound.
+    pub fn push(&mut self, row: PerRecordRow) -> Result<()> {
+        self.buffer.push(row);
+        if self.buffer.len() >= self.row_group_rows {
+            self.flush_row_group()?;
+        }
+        Ok(())
+    }
+
+    /// Flush the buffered rows as one row group and clear the buffer. Creates the
+    /// file + [`ArrowWriter`] on the first non-empty flush. A no-op when the buffer
+    /// is empty, so it is safe to call on `finish` with nothing pending.
+    fn flush_row_group(&mut self) -> Result<()> {
+        if self.buffer.is_empty() {
+            return Ok(());
+        }
+        if self.writer.is_none() {
+            if let Some(parent) = self.path.parent() {
+                std::fs::create_dir_all(parent).with_context(|| {
+                    format!("creating per-record parquet directory {}", parent.display())
+                })?;
+            }
+            let file = File::create(&self.path)
+                .with_context(|| format!("creating per-record parquet {}", self.path.display()))?;
+            let props = writer_properties(&self.schema);
+            self.writer = Some(
+                ArrowWriter::try_new(file, self.schema.clone(), Some(props)).with_context(
+                    || {
+                        format!(
+                            "constructing streaming per-record parquet writer {}",
+                            self.path.display()
+                        )
+                    },
+                )?,
+            );
+        }
+        let batch = build_record_batch(
+            &self.schema,
+            &self.buffer,
+            &self.columns,
+            self.include_trace,
+        )?;
+        let writer = self
+            .writer
+            .as_mut()
+            .expect("writer created above on first flush");
+        writer.write(&batch).with_context(|| {
+            format!(
+                "writing streaming per-record parquet row group {}",
+                self.path.display()
+            )
+        })?;
+        // `ArrowWriter::write` coalesces successive batches into a row group sized by
+        // `max_row_group_size` (default ~1M rows), so without an explicit flush every
+        // buffered window would land in ONE row group and defeat the bounded-memory
+        // goal. Flushing here closes the current row group, so each buffered window is
+        // its own group and the encoded column pages for it can be released.
+        writer.flush().with_context(|| {
+            format!(
+                "flushing streaming per-record parquet row group {}",
+                self.path.display()
+            )
+        })?;
+        self.buffer.clear();
+        Ok(())
+    }
+
+    /// Flush the final partial buffer and close the file. A writer that never saw a
+    /// row leaves no file (matching the batch writer's empty-rows contract).
+    pub fn finish(mut self) -> Result<()> {
+        self.flush_row_group()?;
+        if let Some(writer) = self.writer.take() {
+            writer.close().with_context(|| {
+                format!(
+                    "finalizing streaming per-record parquet file {}",
+                    self.path.display()
+                )
+            })?;
+        }
+        Ok(())
+    }
+}
+
+/// Concatenate several per-shard per-record Parquet files into one combined file.
+///
+/// Stage B (sharded exact-fold): each thread-per-core shard streams its own
+/// [`StreamingPerRecordParquetWriter`] to a per-shard temp file, so the coordinator
+/// must fuse those into the single final `profile_export.parquet`. Because every
+/// shard file was produced by the same [`build_schema`]/[`writer_properties`]
+/// builders (identical `columns` and `include_trace`), they share one schema and
+/// one `aiperf.units`/`aiperf.schema_version`/`aiperf.version` metadata set; this
+/// reader-to-writer copy reads each shard's row groups back as [`RecordBatch`]es and
+/// re-emits them into a fresh combined file carrying that same schema and file KV
+/// metadata. Row order across shards is completion order (the accepted streamed
+/// decision) — the logical row SET is the union of the shard rows, which is exactly
+/// the batch writer over the union produces (proven by the Stage B shard-concat
+/// parity test).
+///
+/// Only shard paths that exist are read (a shard that saw no displayable row left no
+/// file, matching the empty-rows contract); if NONE exist, no combined file is
+/// written (the whole run had zero displayable rows). The combined file's schema and
+/// KV metadata are taken from the first existing shard file, so the empty-tail
+/// (`ARROW:schema` + `aiperf.*`) round-trips unchanged.
+pub fn concat_per_record_parquet(shard_paths: &[PathBuf], final_path: &Path) -> Result<()> {
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+
+    let existing: Vec<&PathBuf> = shard_paths.iter().filter(|path| path.exists()).collect();
+    if existing.is_empty() {
+        return Ok(());
+    }
+    if let Some(parent) = final_path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "creating combined per-record parquet directory {}",
+                parent.display()
+            )
+        })?;
+    }
+    let mut writer: Option<ArrowWriter<File>> = None;
+    for shard in existing {
+        let file = File::open(shard)
+            .with_context(|| format!("opening shard per-record parquet {}", shard.display()))?;
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file).with_context(|| {
+            format!(
+                "reading shard per-record parquet metadata {}",
+                shard.display()
+            )
+        })?;
+        // Every shard shares one schema + KV metadata (same columns/include_trace);
+        // seed the combined writer from the first shard so its `ARROW:schema` and
+        // `aiperf.*` file metadata round-trip verbatim.
+        if writer.is_none() {
+            let schema = builder.schema().clone();
+            let out = File::create(final_path).with_context(|| {
+                format!(
+                    "creating combined per-record parquet {}",
+                    final_path.display()
+                )
+            })?;
+            let props = writer_properties(&schema);
+            writer = Some(
+                ArrowWriter::try_new(out, schema, Some(props)).with_context(|| {
+                    format!(
+                        "constructing combined per-record parquet writer {}",
+                        final_path.display()
+                    )
+                })?,
+            );
+        }
+        let reader = builder.build().with_context(|| {
+            format!(
+                "opening shard per-record parquet reader {}",
+                shard.display()
+            )
+        })?;
+        let sink = writer.as_mut().expect("writer seeded on first shard");
+        for batch in reader {
+            let batch = batch.with_context(|| {
+                format!("reading shard per-record parquet batch {}", shard.display())
+            })?;
+            sink.write(&batch).with_context(|| {
+                format!(
+                    "writing combined per-record parquet batch {}",
+                    final_path.display()
+                )
+            })?;
+        }
+    }
+    writer
+        .expect("at least one existing shard seeded the writer")
+        .close()
+        .with_context(|| {
+            format!(
+                "finalizing combined per-record parquet {}",
+                final_path.display()
+            )
+        })?;
     Ok(())
 }
 
@@ -487,6 +733,218 @@ mod tests {
 
         // No trace columns when include_trace is false.
         assert!(batch.schema().index_of("trace_duration_ns").is_err());
+    }
+
+    /// Read a Parquet file back as a single coalesced `RecordBatch` (batch size >=
+    /// row count coalesces across row groups), returning the number of physical row
+    /// groups, the one batch, and the file metadata. Used to compare the streaming
+    /// writer against the one-shot writer independent of row-group chunking.
+    fn read_coalesced(path: &Path) -> (usize, RecordBatch, HashMap<String, String>) {
+        let file = File::open(path).unwrap();
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file).unwrap();
+        let num_row_groups = builder.metadata().num_row_groups();
+        let total_rows: usize = builder
+            .metadata()
+            .row_groups()
+            .iter()
+            .map(|rg| rg.num_rows() as usize)
+            .sum();
+        let metadata: HashMap<String, String> = builder
+            .metadata()
+            .file_metadata()
+            .key_value_metadata()
+            .map(|kv| {
+                kv.iter()
+                    .filter_map(|entry| entry.value.clone().map(|value| (entry.key.clone(), value)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut reader = builder.with_batch_size(total_rows.max(1)).build().unwrap();
+        let batch = reader.next().unwrap().unwrap();
+        assert!(
+            reader.next().is_none(),
+            "batch_size >= total rows must coalesce to a single batch"
+        );
+        (num_row_groups, batch, metadata)
+    }
+
+    /// A larger deterministic slice: `n` alternating success/cancelled rows with
+    /// distinct session numbers, so a small row-group bound forces several groups.
+    fn sample_rows(n: usize) -> Vec<PerRecordRow> {
+        (0..n)
+            .map(|i| {
+                let mut row = if i % 2 == 0 {
+                    success_row()
+                } else {
+                    cancelled_row()
+                };
+                row.session_num = i as u64;
+                row.x_request_id = format!("req-{i}");
+                row
+            })
+            .collect()
+    }
+
+    /// The streaming writer and the one-shot writer produce the identical schema,
+    /// file metadata, and logical row SET (not byte-identity — the streaming file
+    /// has several row groups where the one-shot has one). This is the S3 parity
+    /// oracle in the absence of a Python byte oracle.
+    fn assert_streaming_matches_batch(rows: &[PerRecordRow], bound: usize, include_trace: bool) {
+        let columns = record_metric_columns();
+        let dir = tempfile::tempdir().unwrap();
+        let stream_path = dir.path().join("stream.parquet");
+        let batch_path = dir.path().join("batch.parquet");
+
+        let mut writer = StreamingPerRecordParquetWriter::new(
+            stream_path.clone(),
+            columns.clone(),
+            include_trace,
+            bound,
+        );
+        for row in rows {
+            writer.push(row.clone()).unwrap();
+        }
+        writer.finish().unwrap();
+
+        write_per_record_parquet(&batch_path, rows, &columns, include_trace).unwrap();
+
+        let (stream_groups, stream_batch, stream_meta) = read_coalesced(&stream_path);
+        let (batch_groups, batch_batch, batch_meta) = read_coalesced(&batch_path);
+
+        // The one-shot writer emits a single row group; the streaming writer emits
+        // ceil(rows / bound) groups. For the multi-group cases this proves the
+        // buffered flush actually chunked.
+        assert_eq!(batch_groups, 1, "one-shot writer emits one row group");
+        assert_eq!(
+            stream_groups,
+            rows.len().div_ceil(bound),
+            "streaming writer emits one row group per buffered window"
+        );
+
+        // Identical schema (fields + metadata), identical file KV metadata, identical
+        // logical rows in identical order.
+        assert_eq!(stream_batch.schema(), batch_batch.schema());
+        assert_eq!(stream_meta, batch_meta);
+        assert_eq!(stream_batch.num_rows(), batch_batch.num_rows());
+        for (name, stream_col, batch_col) in stream_batch
+            .schema()
+            .fields()
+            .iter()
+            .zip(stream_batch.columns())
+            .zip(batch_batch.columns())
+            .map(|((field, s), b)| (field.name(), s, b))
+        {
+            assert_eq!(
+                stream_col.to_data(),
+                batch_col.to_data(),
+                "column {name} differs between streaming and one-shot writers"
+            );
+        }
+    }
+
+    #[test]
+    fn streaming_matches_batch_multiple_row_groups() {
+        // bound 2 over 5 rows -> 3 row groups (2, 2, 1) exercising a trailing
+        // partial flush.
+        assert_streaming_matches_batch(&sample_rows(5), 2, false);
+        assert_streaming_matches_batch(&sample_rows(5), 2, true);
+    }
+
+    #[test]
+    fn streaming_matches_batch_single_partial_batch() {
+        // Fewer rows than the bound -> one partial row group flushed on finish.
+        assert_streaming_matches_batch(&sample_rows(3), 4096, false);
+    }
+
+    #[test]
+    fn streaming_matches_batch_exact_multiple_of_bound() {
+        // rows is an exact multiple of the bound -> every group full, nothing left
+        // for the finish flush.
+        assert_streaming_matches_batch(&sample_rows(4), 2, false);
+    }
+
+    /// Stage B: streaming disjoint shard slices through per-shard writers then
+    /// concatenating them yields the identical schema, file KV metadata, and logical
+    /// row SET as one batch writer over the union — proving the coordinator's
+    /// per-shard parquet fusion is set-equivalent to the retain path. A shard with no
+    /// rows leaves no file and contributes nothing; an all-empty set writes no file.
+    #[test]
+    fn concat_shards_matches_batch_over_union() {
+        let columns = record_metric_columns();
+        let dir = tempfile::tempdir().unwrap();
+        let rows = sample_rows(7);
+        // Three disjoint shard slices, one deliberately empty (no file).
+        let shard_slices: [&[PerRecordRow]; 3] = [&rows[0..3], &[], &rows[3..7]];
+        let mut shard_paths = Vec::new();
+        for (id, slice) in shard_slices.iter().enumerate() {
+            let path = dir.path().join(format!("shard-{id}.parquet"));
+            let mut writer =
+                StreamingPerRecordParquetWriter::new(path.clone(), columns.clone(), false, 2);
+            for row in *slice {
+                writer.push(row.clone()).unwrap();
+            }
+            writer.finish().unwrap();
+            shard_paths.push(path);
+        }
+        // The empty shard left no file.
+        assert!(
+            !shard_paths[1].exists(),
+            "an empty shard leaves no parquet file"
+        );
+
+        let combined = dir.path().join("combined.parquet");
+        concat_per_record_parquet(&shard_paths, &combined).unwrap();
+
+        let batch_path = dir.path().join("batch.parquet");
+        write_per_record_parquet(&batch_path, &rows, &columns, false).unwrap();
+
+        let (_, combined_batch, combined_meta) = read_coalesced(&combined);
+        let (_, batch_batch, batch_meta) = read_coalesced(&batch_path);
+
+        assert_eq!(combined_batch.schema(), batch_batch.schema());
+        assert_eq!(combined_meta, batch_meta);
+        assert_eq!(combined_batch.num_rows(), batch_batch.num_rows());
+
+        // Row SET parity: key each row by session_num (unique per sample row) and
+        // compare the request-latency cell, independent of cross-shard row order.
+        let latency_by_session = |batch: &RecordBatch| -> BTreeMap<i64, Option<i64>> {
+            let session = column::<Int64Array>(batch, "session_num");
+            let latency = column::<Float64Array>(batch, "request_latency");
+            (0..batch.num_rows())
+                .map(|i| {
+                    let value = latency.is_valid(i).then(|| latency.value(i) as i64);
+                    (session.value(i), value)
+                })
+                .collect()
+        };
+        assert_eq!(
+            latency_by_session(&combined_batch),
+            latency_by_session(&batch_batch)
+        );
+    }
+
+    /// An all-empty shard set (every shard saw zero rows) writes no combined file,
+    /// matching the batch writer's empty-rows contract.
+    #[test]
+    fn concat_all_empty_shards_writes_no_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = vec![
+            dir.path().join("shard-0.parquet"),
+            dir.path().join("shard-1.parquet"),
+        ];
+        let combined = dir.path().join("combined.parquet");
+        concat_per_record_parquet(&missing, &combined).unwrap();
+        assert!(!combined.exists());
+    }
+
+    #[test]
+    fn streaming_empty_writes_no_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stream.parquet");
+        let writer =
+            StreamingPerRecordParquetWriter::new(path.clone(), record_metric_columns(), false, 2);
+        writer.finish().unwrap();
+        assert!(!path.exists(), "a streamed run with no rows leaves no file");
     }
 
     #[test]

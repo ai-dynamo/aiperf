@@ -31,7 +31,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::cellular::heartbeat::MetricsHeartbeat;
-use crate::cellular::shard::RecordsShardPartition;
+use crate::cellular::shard::{ColumnStorePartition, RecordsShardPartition};
 
 /// Discovery-free connection seam: velo transport construction + the
 /// bootstrap-PeerInfo exchange that lets a cell reach the controller from one
@@ -59,6 +59,16 @@ pub enum CellMessage {
     /// The cell's records-shard partition, sent once at run end. The partition
     /// carries its own `cell_id`.
     Partition(RecordsShardPartition),
+    /// The cell's pre-accumulated column-store partition, sent once at run end in
+    /// place of [`Partition`] when the cell ran metrics-only exact-fold (Stage C): it
+    /// folded its records into its own EXACT accumulator and dropped them, so it has
+    /// no record `Vec` to ship — it ships the folded store instead. The controller
+    /// appends every cell's store ([`merge_store_partitions`](crate::cellular::merge_store_partitions))
+    /// into the merged report (within-tolerance summary, not byte-exact — see
+    /// [`ColumnStorePartition`]). The partition carries its own `cell_id`. Boxed (like
+    /// [`Heartbeat`](Self::Heartbeat)) so this — the largest variant by far, a whole
+    /// folded store — does not inflate every slot of the controller's message channel.
+    StorePartition(Box<ColumnStorePartition>),
 }
 
 /// velo handler name: cell → controller registration. The reply carries the
@@ -70,6 +80,11 @@ pub const HANDLER_HEARTBEAT: &str = "aiperf.cell.heartbeat";
 /// velo handler name: cell → controller records-shard partition ship (unary; the
 /// reply is an rmp [`CellAck`]).
 pub const HANDLER_PARTITION: &str = "aiperf.cell.partition";
+/// velo handler name: cell → controller column-store partition ship (unary; the
+/// reply is an rmp [`CellAck`]). The Stage-C exact-fold sibling of
+/// [`HANDLER_PARTITION`]: a metrics-only cell ships its folded store, not a record
+/// `Vec`.
+pub const HANDLER_STORE_PARTITION: &str = "aiperf.cell.store_partition";
 
 /// The cell's registration request: its `cell_id` plus its own serialized
 /// `velo::PeerInfo` (rmp-encoded) so the controller can `register_peer` it and
@@ -94,6 +109,19 @@ pub struct CellPartitionShip {
     pub cell_peer: Vec<u8>,
     /// The cell's records-shard partition.
     pub partition: RecordsShardPartition,
+}
+
+/// A cell's column-store partition ship — the Stage-C exact-fold sibling of
+/// [`CellPartitionShip`]. Carries the shipping velo instance's own serialized
+/// `velo::PeerInfo` (rmp-encoded) alongside the folded store so the controller can
+/// `register_peer` it and route the ack back (the cell ships from a *fresh* velo
+/// instance the controller has not yet seen).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CellStorePartitionShip {
+    /// `rmp_serde`-encoded `velo::PeerInfo` of the shipping cell instance.
+    pub cell_peer: Vec<u8>,
+    /// The cell's folded column-store partition.
+    pub partition: ColumnStorePartition,
 }
 
 /// Generic controller acknowledgement reply (rmp), returned from the partition

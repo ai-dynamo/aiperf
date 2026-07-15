@@ -19,7 +19,12 @@
 //!     `MIX_MULT_R`, `XSHIFT`.
 //!   - `numpy/random/_pcg64.pyx` + `numpy/random/src/pcg64/pcg64.{c,h}`:
 //!     `pcg64_set_seed`, `pcg_setseq_128_srandom_r`, `pcg_setseq_128_step_r`,
-//!     `pcg_output_xsl_rr_128_64`, and `PCG_DEFAULT_MULTIPLIER_128`.
+//!     `pcg_output_xsl_rr_128_64`, `pcg64_next32`, and
+//!     `PCG_DEFAULT_MULTIPLIER_128`.
+//!   - `numpy/random/_generator.pyx`: `Generator.permutation` (`arange` +
+//!     `shuffle`) and `Generator.shuffle` -> `_shuffle_raw` Fisher-Yates.
+//!   - `numpy/random/src/distributions/distributions.c`: `random_interval`
+//!     masked-rejection bounded-integer draw (uint32 branch).
 //!
 //! `default_rng(int_seed)` == `SeedSequence(int_seed)` -> `generate_state(4,
 //! uint64)` -> PCG64 128-bit state/increment split -> XSL-RR 128->64 output.
@@ -59,6 +64,13 @@ pub struct NumpyPcg64 {
     state: u128,
     /// The 128-bit (odd) LCG increment.
     inc: u128,
+    /// Whether `uinteger` holds a buffered high-32 word, mirroring
+    /// `pcg64_state.has_uint32` (`pcg64.h`). Freshly seeded generators start
+    /// with an empty buffer, matching `default_rng`.
+    has_uint32: bool,
+    /// The buffered high-32 word consumed by the next [`NumpyPcg64::next_u32`]
+    /// call, mirroring `pcg64_state.uinteger` (`pcg64.h`).
+    uinteger: u32,
 }
 
 impl NumpyPcg64 {
@@ -97,6 +109,8 @@ impl NumpyPcg64 {
         let mut g = NumpyPcg64 {
             state: 0,
             inc: (initseq << 1) | 1,
+            has_uint32: false,
+            uinteger: 0,
         };
         g.step();
         g.state = g.state.wrapping_add(initstate);
@@ -122,6 +136,70 @@ impl NumpyPcg64 {
         let rot = (self.state >> 122) as u32;
         let xored = ((self.state >> 64) as u64) ^ (self.state as u64);
         xored.rotate_right(rot)
+    }
+
+    /// Draw the next raw 32-bit word, matching numpy's `pcg64_next32`
+    /// (`pcg64.h`): return the buffered high-32 word if present, otherwise draw
+    /// a fresh 64-bit word, return its low 32 bits, and buffer the high 32 bits
+    /// for the next call.
+    fn next_u32(&mut self) -> u32 {
+        if self.has_uint32 {
+            self.has_uint32 = false;
+            return self.uinteger;
+        }
+        let next = self.next_u64();
+        self.has_uint32 = true;
+        self.uinteger = (next >> 32) as u32;
+        (next & 0xffff_ffff) as u32
+    }
+
+    /// Draw a uniform integer in `[0, max]` (inclusive) via numpy's masked
+    /// rejection sampler `random_interval` (`distributions.c`): build the
+    /// smallest `2^k - 1` mask `>= max`, then reject `next_u32() & mask` until
+    /// it is `<= max`. Only the `max <= 0xffff_ffff` (uint32) branch is used,
+    /// which is exactly the branch Fisher-Yates shuffle indices take.
+    fn random_interval_u32(&mut self, max: u32) -> u32 {
+        if max == 0 {
+            return 0;
+        }
+        // Smallest bit mask >= max.
+        let mut mask = max;
+        mask |= mask >> 1;
+        mask |= mask >> 2;
+        mask |= mask >> 4;
+        mask |= mask >> 8;
+        mask |= mask >> 16;
+        loop {
+            let value = self.next_u32() & mask;
+            if value <= max {
+                return value;
+            }
+        }
+    }
+
+    /// Reproduce `np.random.default_rng(seed).permutation(n)` exactly for an
+    /// integer argument: `arange(n)` shuffled in place by numpy's Fisher-Yates
+    /// (`_generator.pyx` `permutation` -> `shuffle` -> `_shuffle_raw`):
+    /// `for i in reversed(1..n): j = random_interval(i); swap(x[i], x[j])`.
+    ///
+    /// Indices never exceed `n - 1`, so the draw stays on `random_interval`'s
+    /// uint32 branch; `n` beyond `u32::MAX` is not supported (and never arises
+    /// for dataset sampling).
+    pub fn permutation(&mut self, n: usize) -> Vec<usize> {
+        let mut x: Vec<usize> = (0..n).collect();
+        self.shuffle(&mut x);
+        x
+    }
+
+    /// In-place Fisher-Yates shuffle matching numpy's 1-d `shuffle` fast path
+    /// (`_generator.pyx` `_shuffle_raw`): draws each swap partner with
+    /// [`NumpyPcg64::random_interval_u32`]. `slice.len()` must fit in `u32`.
+    pub fn shuffle<T>(&mut self, x: &mut [T]) {
+        let n = x.len();
+        for i in (1..n).rev() {
+            let j = self.random_interval_u32(i as u32) as usize;
+            x.swap(i, j);
+        }
     }
 
     /// Draw the next double in [0, 1), matching numpy's `pcg64_double`:
@@ -248,6 +326,79 @@ mod tests {
             14_708_796_524_633_321_433,
         ];
         assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn permutation_matches_numpy_default_rng() {
+        // Python (numpy 2.5.1):
+        //   np.random.default_rng(SEED).permutation(N)
+        // Covers n=0,1,2, a prime (17), sizes >64 (100, 200) to exercise the
+        // masked-rejection mask width, and multiple seeds.
+        let cases: &[(u64, usize, &[usize])] = &[
+            (12345, 0, &[]),
+            (12345, 1, &[0]),
+            (12345, 2, &[0, 1]),
+            (12345, 5, &[4, 3, 0, 2, 1]),
+            (12345, 8, &[4, 3, 0, 2, 1, 6, 7, 5]),
+            (
+                12345,
+                17,
+                &[11, 12, 10, 16, 6, 4, 1, 15, 7, 3, 8, 0, 2, 9, 5, 14, 13],
+            ),
+            (
+                12345,
+                100,
+                &[
+                    32, 6, 97, 84, 0, 44, 34, 60, 92, 19, 93, 73, 51, 47, 14, 59, 86, 83, 3, 58,
+                    41, 54, 70, 69, 33, 7, 95, 30, 48, 12, 63, 23, 82, 72, 62, 28, 53, 87, 17, 80,
+                    57, 26, 76, 31, 38, 1, 52, 96, 20, 81, 71, 11, 8, 74, 91, 43, 27, 77, 88, 40,
+                    24, 56, 36, 85, 65, 35, 5, 9, 61, 55, 64, 50, 42, 78, 66, 90, 79, 22, 18, 4,
+                    37, 75, 10, 15, 25, 45, 68, 49, 99, 39, 67, 98, 46, 16, 2, 89, 21, 94, 13, 29,
+                ],
+            ),
+            (
+                999,
+                100,
+                &[
+                    47, 42, 57, 50, 97, 26, 49, 86, 48, 77, 35, 78, 19, 34, 63, 76, 68, 82, 10, 70,
+                    55, 83, 17, 72, 12, 46, 94, 75, 43, 71, 9, 1, 33, 29, 99, 27, 74, 64, 31, 8,
+                    20, 22, 66, 36, 5, 38, 52, 51, 53, 60, 37, 65, 93, 88, 32, 89, 84, 39, 23, 18,
+                    41, 3, 81, 61, 85, 25, 7, 69, 15, 59, 24, 90, 30, 40, 73, 62, 54, 58, 2, 4, 45,
+                    6, 56, 67, 87, 21, 16, 14, 79, 92, 0, 28, 13, 80, 96, 98, 44, 91, 95, 11,
+                ],
+            ),
+            (
+                7,
+                200,
+                &[
+                    0, 43, 7, 144, 151, 21, 5, 2, 120, 71, 57, 100, 160, 156, 28, 159, 145, 192,
+                    115, 164, 182, 20, 174, 55, 191, 103, 80, 54, 35, 173, 117, 4, 190, 65, 140,
+                    108, 78, 41, 193, 163, 147, 36, 89, 45, 92, 118, 75, 93, 130, 49, 127, 58, 123,
+                    9, 142, 198, 6, 170, 126, 40, 178, 102, 197, 12, 64, 152, 114, 96, 111, 70,
+                    168, 172, 199, 195, 23, 106, 53, 32, 101, 177, 167, 51, 19, 83, 88, 194, 154,
+                    166, 135, 62, 25, 10, 60, 74, 119, 125, 67, 1, 73, 39, 138, 16, 37, 87, 196,
+                    15, 90, 68, 56, 155, 129, 61, 42, 176, 97, 46, 121, 91, 76, 44, 14, 50, 132,
+                    24, 26, 150, 77, 48, 187, 18, 148, 104, 116, 22, 17, 134, 136, 175, 85, 29, 13,
+                    105, 157, 180, 128, 34, 86, 185, 124, 84, 131, 79, 8, 158, 189, 113, 165, 47,
+                    181, 11, 186, 27, 63, 109, 184, 137, 3, 110, 82, 59, 99, 183, 107, 161, 141,
+                    179, 30, 81, 146, 31, 162, 133, 122, 72, 33, 94, 143, 38, 112, 52, 153, 69,
+                    171, 66, 95, 98, 188, 149, 169, 139,
+                ],
+            ),
+        ];
+        for (seed, n, expected) in cases {
+            let mut g = NumpyPcg64::from_u64_seed(*seed);
+            assert_eq!(&g.permutation(*n), expected, "seed={seed} n={n}");
+        }
+    }
+
+    #[test]
+    fn shuffle_matches_permutation() {
+        // `shuffle` on `arange(n)` is the fast path `permutation` uses.
+        let mut a = NumpyPcg64::from_u64_seed(12345);
+        let mut data: Vec<usize> = (0..8).collect();
+        a.shuffle(&mut data);
+        assert_eq!(data, vec![4, 3, 0, 2, 1, 6, 7, 5]);
     }
 
     #[test]

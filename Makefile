@@ -16,7 +16,7 @@
 
 
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
-		test coverage clean install install-app install-runtime rust-wheel docker docker-run first-time-setup \
+		test coverage clean install install-app bundle-runner wheel docker docker-run first-time-setup \
 		ci-install check-mock-server-install \
 		test-verbose setup-venv install-mock-server test-ci test-all \
 		integration-tests integration-tests-ci integration-tests-verbose integration-tests-ci-macos \
@@ -150,16 +150,24 @@ coverage: #? run the tests and generate an html coverage report.
 
 install: install-app install-mock-server #? install the project and mock server in editable mode.
 
-install-app: #? install the project in editable mode.
+install-app: bundle-runner #? install the project in editable mode (with the interned runner).
 	$(activate_venv) && uv pip install -e ".[dev]"
 
-install-runtime: #? build and install the native aiperf-runner into the venv (maturin, online-only).
-	$(activate_venv) && uv pip install "maturin[patchelf]" \
-		&& cd rust/runner && maturin develop --release
+# RUNNER_FEATURES selects the runner profile, mirroring the Dockerfile's
+# AIPERF_RUNNER_PROFILE knob. Default (empty) = full-fat crate defaults
+# (dynosim + parquet), which needs the sibling dynamo-aiperf-native checkout.
+# Online-only (no dynosim, no sibling):
+#   make bundle-runner RUNNER_FEATURES="--no-default-features --features parquet"
+RUNNER_FEATURES ?=
+bundle-runner: #? build the aiperf-runner (RUNNER_FEATURES-selectable) and intern it at src/aiperf/_bin/ for packaging.
+	cargo build --release -p aiperf-runner $(RUNNER_FEATURES)
+	mkdir -p src/aiperf/_bin
+	cp target/release/aiperf-runner src/aiperf/_bin/aiperf-runner
+	chmod +x src/aiperf/_bin/aiperf-runner
 
-rust-wheel: #? build the release aiperf-runner wheel (online-only manylinux) into dist/.
+wheel: bundle-runner #? build the single interned aiperf wheel (maturin, manylinux) into dist/.
 	$(activate_venv) && uv pip install "maturin[patchelf]" \
-		&& cd rust/runner && maturin build --release --out ../../dist
+		&& maturin build --release --out dist
 
 docker: #? build the docker image.
 	docker build -t $(DOCKER_IMAGE_NAME):$(DOCKER_IMAGE_TAG) $(args) .

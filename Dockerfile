@@ -89,27 +89,43 @@ ENV PATH="/root/.cargo/bin:${PATH}" \
     PROTOC=/usr/bin/protoc
 RUN uv pip install --python "${VIRTUAL_ENV}/bin/python" "maturin[patchelf]"
 
-# The runner's default `dynosim` feature path-depends on the external
-# ai-dynamo/dynamo repo. Fetch it adjacent to the workspace at a pinned rev,
+# Runner feature profile selected at build time:
+#   offline (default) — full-fat: crate default features `dynosim` + `parquet`.
+#                       Needs the sibling dynamo-aiperf-native checkout (cloned
+#                       below) and ships the offline/online Dynamo replay transports.
+#   online            — HTTP/gRPC + parquet only (`--no-default-features
+#                       --features parquet`); no dynosim, no sibling checkout.
+# The container build passes this via --build-arg AIPERF_RUNNER_PROFILE (see
+# .github/workflows/nightly.yml); the wheel-artifact extraction uses the default.
+ARG AIPERF_RUNNER_PROFILE=offline
+
+# The `dynosim` feature path-depends on the external ai-dynamo/dynamo repo. For
+# the offline profile, fetch it adjacent to the workspace at a pinned rev,
 # mirroring how ai-dynamo stages its external native deps (nixl/ucx/gdrcopy are
 # git-cloned at ARG-pinned refs in its wheel_builder). rust/aiperf/Cargo.toml
 # resolves `../../../../../dynamo-aiperf-native/lib/mocker`, which from
 # /workspace/rust/aiperf lands at /dynamo-aiperf-native — hence the target dir.
 # REF is pinned to an exact SHA (shallow fetch-by-rev) for a reproducible build;
 # a branch name also works. Override REPO/REF to build against a different tree.
+# The online profile disables dynosim, so the checkout is skipped entirely.
 ARG DYNAMO_AIPERF_NATIVE_REPO=https://github.com/ai-dynamo/dynamo.git
 ARG DYNAMO_AIPERF_NATIVE_REF=14e2cf76b04736e9b99412dfbe76cf1af45ae67a
-RUN git init -q /dynamo-aiperf-native \
-    && git -C /dynamo-aiperf-native remote add origin "${DYNAMO_AIPERF_NATIVE_REPO}" \
-    && git -C /dynamo-aiperf-native fetch --depth 1 origin "${DYNAMO_AIPERF_NATIVE_REF}" \
-    && git -C /dynamo-aiperf-native checkout -q FETCH_HEAD
+RUN if [ "${AIPERF_RUNNER_PROFILE}" = "offline" ]; then \
+        git init -q /dynamo-aiperf-native \
+        && git -C /dynamo-aiperf-native remote add origin "${DYNAMO_AIPERF_NATIVE_REPO}" \
+        && git -C /dynamo-aiperf-native fetch --depth 1 origin "${DYNAMO_AIPERF_NATIVE_REF}" \
+        && git -C /dynamo-aiperf-native checkout -q FETCH_HEAD; \
+    else \
+        echo "AIPERF_RUNNER_PROFILE=${AIPERF_RUNNER_PROFILE}: skipping dynamo-aiperf-native checkout"; \
+    fi
 
-# Copy the frontend sources plus the Rust workspace the runner wheel compiles.
-# The runner wheel's pyproject.toml is co-located with its crate in rust/runner.
-# src/ is copied to /workspace/src (not flattened) so the real repo layout is
-# preserved: the Rust build `include_bytes!`/`include_str!`s a few Python-tree
-# assets via `rust/aiperf/src/...→ src/aiperf/dataset/generator/assets/...`, and
-# hatchling still auto-detects the src-layout frontend package.
+# Copy the frontend sources plus the Rust workspace the interned wheel compiles.
+# The single wheel's pyproject.toml is the repo-root one (maturin backend,
+# rust/pyext cdylib + interned aiperf-runner). src/ is copied to /workspace/src
+# (not flattened) so the real repo layout is preserved: the Rust build
+# `include_bytes!`/`include_str!`s a few Python-tree assets via
+# `rust/aiperf/src/...→ src/aiperf/dataset/generator/assets/...`, and maturin's
+# `python-source = "src"` packages the src-layout frontend.
 COPY pyproject.toml README.md LICENSE ATTRIBUTIONS.md /workspace/
 COPY src /workspace/src
 COPY Cargo.toml Cargo.lock /workspace/
@@ -118,13 +134,22 @@ COPY Cargo.toml Cargo.lock /workspace/
 COPY .cargo /workspace/.cargo
 COPY rust /workspace/rust
 
-# Build the Python frontend wheel, then compile the native runner wheel with
-# maturin directly (ai-dynamo's model): a direct `maturin build` runs its built-in
-# auditwheel repair to emit a manylinux-tagged wheel with the default feature set
-# (includes dynosim → offline/online Dynamo replay). `uv build` is not used for the
-# runner because it forces `--auditwheel skip`, producing a bare linux_x86_64 tag.
-RUN uv build --wheel --out-dir /dist \
-    && cd /workspace/rust/runner \
+# Build the native runner (lto=fat) per AIPERF_RUNNER_PROFILE, intern it as
+# package data, then build the ONE maturin wheel. maturin compiles the
+# rust/pyext `aiperf._native` cdylib, packages `src/aiperf`, includes the
+# interned `aiperf/_bin/aiperf-runner`, and runs its built-in auditwheel repair
+# to emit a manylinux-tagged wheel. `bindings = "bin"` is not used (illegal with
+# `[project.scripts] aiperf`); the runner rides along as package data instead.
+RUN cd /workspace \
+    && case "${AIPERF_RUNNER_PROFILE}" in \
+         offline) RUNNER_FEATURES="" ;; \
+         online)  RUNNER_FEATURES="--no-default-features --features parquet" ;; \
+         *) echo "unknown AIPERF_RUNNER_PROFILE='${AIPERF_RUNNER_PROFILE}' (expected 'offline' or 'online')" >&2; exit 1 ;; \
+       esac \
+    && cargo build --release -p aiperf-runner ${RUNNER_FEATURES} \
+    && mkdir -p src/aiperf/_bin \
+    && cp target/release/aiperf-runner src/aiperf/_bin/aiperf-runner \
+    && chmod +x src/aiperf/_bin/aiperf-runner \
     && maturin build --release --out /dist
 
 # Export-only stage: scratch-based so `docker buildx build --target
@@ -223,9 +248,11 @@ RUN mkdir -p /app /app/artifacts /app/.cache \
 COPY pyproject.toml .
 RUN uv sync --active --no-install-project --no-default-groups
 
-# Copy the rest of the application
+# Copy the rest of the application. The single interned wheel carries both the
+# Python frontend and the native aiperf-runner (package data) — no separate
+# aiperf_rust/aiperf-runner wheel.
 COPY --from=wheel-builder /dist /dist
-RUN uv pip install /dist/aiperf-*.whl /dist/aiperf_runner-*.whl \
+RUN uv pip install /dist/aiperf-*.whl \
     && rm -rf /dist /workspace/pyproject.toml
 
 # Remove setuptools as it is not needed for the runtime image

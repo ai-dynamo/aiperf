@@ -98,11 +98,12 @@ fn synthesis() -> Value {
 /// straddles the midpoint `t*`: at least one node lands in WARMUP and one in
 /// PROFILING.
 ///
-/// The record id carries an underscore (`warmup_trace`) so every turn's lowered
-/// node id (`warmup_trace:<turn>`) shares a common `chain_key`
-/// (`aiperf::graph::snapshot::warmup_boundary_nodes` groups per-session chains
-/// on the id prefix before the last `_`); a chain live across `t*` then yields a
-/// non-empty warmup boundary that actually dispatches.
+/// Every turn's lowered node (`warmup_trace:<turn>`) carries the same
+/// `metadata["conversation_id"]` (the weka scope, stamped by the recorded trie
+/// lowerer at `graph/recorded/trie/mod.rs:170`), which
+/// `aiperf::graph::snapshot::warmup_boundary_nodes` groups per-session chains
+/// by; a chain live across `t*` then yields a non-empty warmup boundary that
+/// actually dispatches.
 fn weka_dataset() -> Value {
     let request = |t: f64| {
         json!({

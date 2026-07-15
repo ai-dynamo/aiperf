@@ -61,6 +61,10 @@ tests/scripts/.chaos_runs/
 # Rust build artifacts
 target/
 
+# Interned native runner bundled into the aiperf wheel by `make bundle-runner`
+# (maturin `include` glob). Built artifact — never committed.
+src/aiperf/_bin/
+
 # Node.js dependencies
 node_modules/
 
@@ -74,3 +78,5 @@ apps/architecture-atlas/playwright-report/
 
 # cargo build output for ad-hoc deploy targets
 .deploy-target*/
+
+dynamo-aiperf-native
