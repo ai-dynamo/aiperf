@@ -1519,6 +1519,26 @@ async fn execute_graph_native(
     let graph_exact_fold = exact_fold_enabled_by_env()
         && graph_exact_fold_eligible(&request.artifacts, request.metrics.sketch);
 
+    // INVARIANT (task G1): unlike the scheduled `exact_fold_eligible` gate, the graph
+    // gate ([`graph_exact_fold_eligible`]) does NOT disqualify on a live sink /
+    // per-record OTLP / heartbeat lane — because the graph execution path wires NONE of
+    // them: `validate_graph_request` rejects the live-streaming extension, the graph
+    // path never accumulates per-record OTLP histograms (`native_otel_enabled` is unread
+    // here), and no heartbeat lane is constructed on the graph path. Those consumers all
+    // read a per-record clone the exact-fold fold-and-drop pass below discards, so wiring
+    // one while exact-fold stays active would silently empty it. This debug tripwire
+    // fires the moment such a consumer is added on the graph path, forcing the
+    // disqualifier to be threaded into `graph_exact_fold_eligible` in lockstep.
+    debug_assert!(
+        !graph_exact_fold
+            || (!request.native_otel_enabled
+                && request.sidecars.live_streaming().ok().flatten().is_none()
+                && !HeartbeatLane::enabled_by_env()),
+        "graph exact-fold drops per-record data, but a live-sink / per-record OTLP / \
+         heartbeat consumer that reads it is now wired on the graph path — thread the \
+         disqualifier into graph_exact_fold_eligible before shipping"
+    );
+
     let gpu_telemetry = sidecars.gpu_telemetry.as_ref();
     let network_latency = sidecars.network_latency.as_ref();
     let server_metrics = sidecars.server_metrics.as_ref();

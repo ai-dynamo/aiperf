@@ -193,6 +193,14 @@ pub fn run_cellular(
     let dataset_ship = (is_k8s || force_http)
         && crate::runner_protocol::cellular_cell::http_artifact_shipping_enabled()
         && dataset_source.is_some();
+    // Fail closed BEFORE standing up the serve plane: the single-file Stage G plane
+    // cannot carry a graph trace whose `path` is a directory or segmented-prefix. Reject
+    // such a cross-host run with a clear message rather than shipping a directory as one
+    // file (a corrupt/half transfer). A scheduled `file`/`path` dataset always points at a
+    // single file, so this is inert for it (multi-file shipping is a follow-up).
+    if dataset_ship && let Some(source) = dataset_source.as_ref() {
+        ensure_single_file_trace_shippable(source)?;
+    }
     // The controller's artifact HTTP server carries BOTH per-record uploads (Stage E)
     // and dataset serving (Stage G); stand it up when either is needed.
     let need_artifact_server = http_shipping || dataset_ship;
@@ -1205,6 +1213,37 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
+/// Fail closed when a cross-host cellular run's dataset source cannot ride the
+/// single-file Stage G plane.
+///
+/// Stage G serves ONE, name-keyed file (`file_name()` -> one serve-map entry -> one
+/// `fetch_dataset_to_file`), which covers every scheduled `file`/`path` dataset and a
+/// single-file graph trace (`dag_jsonl`, or a `weka_trace`/`dynamo_trace` that is one
+/// file). A graph trace `path`, however, may instead be a DIRECTORY or a
+/// segmented-prefix — multiple shard files under one stem (`graph_input.rs` accepts
+/// "a file, directory, or segmented-prefix path"). The single-file serve/fetch plane
+/// cannot carry those, so rather than silently shipping a directory as one file (a
+/// corrupt/half transfer), reject the run here with a clear message. Multi-file /
+/// manifest trace shipping is a follow-up; a shared volume or inline `records` are the
+/// current cross-host paths for a multi-file trace.
+///
+/// Only called when the run is genuinely cross-host and shipping-enabled
+/// (`dataset_ship`), where the controller holds the source locally, so `is_file()` is a
+/// reliable single-readable-file probe. A non-graph `file`/`path` dataset always points
+/// at a single file, so this is a no-op for it; the check earns its keep on the graph
+/// formats.
+fn ensure_single_file_trace_shippable(source: &Path) -> Result<()> {
+    ensure!(
+        source.is_file(),
+        "cross-host cellular graph runs support only a single-file trace; the trace path \
+         {} is not a single readable file (it is a directory or segmented-prefix). Ship a \
+         single-file trace, mount a shared volume, or use an inline `records` dataset — \
+         multi-file trace shipping is a follow-up",
+        source.display()
+    );
+    Ok(())
+}
+
 /// Phase `type`s whose dispatch count is exactly the `requests` budget and whose
 /// turns are drawn one at a time through the (partitionable) sampler — the only
 /// shapes cellular can partition. The trace-driven types (`fixed_schedule`,
@@ -1886,6 +1925,45 @@ mod tests {
         assert!(
             validate_cellular_run_shape(&retain_single).is_ok(),
             "single-turn on the retain path is unaffected"
+        );
+    }
+
+    /// Stage G fail-closed: a cross-host cellular graph run whose trace path is a single
+    /// readable file is shippable; a DIRECTORY or a segmented-prefix (no file at the exact
+    /// path) is rejected — the single-file serve/fetch plane cannot carry it, and we must
+    /// not silently ship a directory as one file. (Multi-file trace shipping is a follow-up.)
+    #[test]
+    fn rejects_directory_and_prefix_trace_cross_host() {
+        let tmp = tempfile::TempDir::new().unwrap();
+
+        // A single-file trace (e.g. one-file dag_jsonl / weka_trace) is shippable.
+        let file = tmp.path().join("trace.dag.jsonl");
+        std::fs::write(&file, b"{}\n").unwrap();
+        assert!(
+            ensure_single_file_trace_shippable(&file).is_ok(),
+            "a single readable trace file must be shippable over Stage G"
+        );
+
+        // A DIRECTORY trace path (weka_trace/dynamo_trace shard dir) fails closed.
+        let dir = tmp.path().join("shards");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("part-0.jsonl"), b"{}\n").unwrap();
+        let dir_err = ensure_single_file_trace_shippable(&dir)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            dir_err.contains("single-file trace"),
+            "directory trace path must be rejected with the single-file message; got {dir_err}"
+        );
+
+        // A segmented-PREFIX path — no file exists at the exact stem, only `stem.N`
+        // shards beside it — also fails closed (not a single readable file).
+        let prefix = tmp.path().join("segmented");
+        std::fs::write(tmp.path().join("segmented.0"), b"{}\n").unwrap();
+        std::fs::write(tmp.path().join("segmented.1"), b"{}\n").unwrap();
+        assert!(
+            ensure_single_file_trace_shippable(&prefix).is_err(),
+            "a segmented-prefix trace path (no file at the exact path) must be rejected"
         );
     }
 
