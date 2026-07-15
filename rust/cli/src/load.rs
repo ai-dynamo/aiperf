@@ -1001,7 +1001,7 @@ fn parse_sla_filter(s: &str) -> anyhow::Result<SlaFilter> {
 }
 
 /// A default synthetic media dimension (`{value: 512}`) used when unset.
-fn default_media_dim() -> Distribution {
+pub(crate) fn default_media_dim() -> Distribution {
     Distribution {
         value: Some(512.0),
         ..Default::default()

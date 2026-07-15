@@ -263,6 +263,60 @@ struct DatasetSection {
     /// Inter-turn delay cap, seconds (file/trace datasets).
     #[serde(default, alias = "interTurnDelayCapSeconds")]
     inter_turn_delay_cap_seconds: Option<f64>,
+    /// Synthetic image generation (`synthetic.images`).
+    images: Option<ImageSection>,
+    /// Synthetic audio generation (`synthetic.audio`).
+    audio: Option<AudioSection>,
+    /// Synthetic video generation (`synthetic.video`).
+    video: Option<VideoSection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ImageSection {
+    #[serde(default, alias = "batchSize")]
+    batch_size: Option<u32>,
+    width: Option<DistFields>,
+    height: Option<DistFields>,
+    format: Option<String>,
+    source: Option<String>,
+    #[serde(default, alias = "sourceSampling")]
+    source_sampling: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AudioSection {
+    #[serde(default, alias = "batchSize")]
+    batch_size: Option<u32>,
+    length: Option<DistFields>,
+    format: Option<String>,
+    /// Sample rates (raw config units; not converted, unlike the flag path).
+    #[serde(default, alias = "sampleRates")]
+    sample_rates: Option<Vec<f64>>,
+    depths: Option<Vec<u32>>,
+    channels: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct VideoSection {
+    #[serde(default, alias = "batchSize")]
+    batch_size: Option<u32>,
+    duration: Option<f64>,
+    fps: Option<u32>,
+    width: Option<u32>,
+    height: Option<u32>,
+    format: Option<String>,
+    codec: Option<String>,
+    #[serde(default, alias = "synthType")]
+    synth_type: Option<String>,
+    audio: Option<VideoAudioSection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct VideoAudioSection {
+    channels: Option<u32>,
+    depth: Option<u32>,
+    #[serde(default, alias = "sampleRate")]
+    sample_rate: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -382,6 +436,57 @@ impl Benchmark {
                 pool_size: p.pool_size,
             },
         );
+
+        // Synthetic media (present when the block is authored; defaults mirror
+        // the flag builders, but sample rates stay raw like the config path).
+        let image_spec =
+            dataset
+                .as_ref()
+                .and_then(|d| d.images.as_ref())
+                .map(|i| crate::model::dataset::ImageSpec {
+                    batch_size: i.batch_size.unwrap_or(1),
+                    format: i.format.clone().unwrap_or_else(|| "jpeg".to_string()),
+                    height: i.height.as_ref().map(dist_from).unwrap_or_else(load::default_media_dim),
+                    width: i.width.as_ref().map(dist_from).unwrap_or_else(load::default_media_dim),
+                    source: i.source.clone().unwrap_or_else(|| "noise".to_string()),
+                    source_sampling: i
+                        .source_sampling
+                        .clone()
+                        .unwrap_or_else(|| "random-with-replacement".to_string()),
+                });
+        let audio_spec =
+            dataset
+                .as_ref()
+                .and_then(|d| d.audio.as_ref())
+                .map(|a| crate::model::dataset::AudioSpec {
+                    batch_size: a.batch_size.unwrap_or(1),
+                    channels: a.channels.unwrap_or(1),
+                    depths: a.depths.clone().unwrap_or_else(|| vec![16]),
+                    format: a.format.clone().unwrap_or_else(|| "wav".to_string()),
+                    length: a.length.as_ref().map(dist_from).unwrap_or_else(load::default_media_dim),
+                    sample_rates: a.sample_rates.clone().unwrap_or_else(|| vec![16.0]),
+                });
+        let video_spec = dataset.as_ref().and_then(|d| d.video.as_ref()).map(|v| {
+            let va = v.audio.as_ref();
+            crate::model::dataset::VideoSpec {
+                audio: crate::model::dataset::VideoAudio {
+                    channels: va.and_then(|a| a.channels).unwrap_or(0),
+                    depth: va.and_then(|a| a.depth).unwrap_or(16),
+                    sample_rate: va.and_then(|a| a.sample_rate).unwrap_or(44.1),
+                },
+                batch_size: v.batch_size.unwrap_or(1),
+                codec: v.codec.clone().unwrap_or_else(|| "libvpx-vp9".to_string()),
+                duration: v.duration.unwrap_or(1.0),
+                format: v.format.clone().unwrap_or_else(|| "webm".to_string()),
+                fps: v.fps.unwrap_or(4),
+                synth_type: v
+                    .synth_type
+                    .clone()
+                    .unwrap_or_else(|| "moving_shapes".to_string()),
+                width: v.width,
+                height: v.height,
+            }
+        });
 
         // Sampling order applies to both synthetic and file datasets.
         let sampling = dataset
@@ -592,9 +697,9 @@ impl Benchmark {
             slice_duration,
             isl_block_size,
             sketch_metrics: false,
-            image_spec: None,
-            audio_spec: None,
-            video_spec: None,
+            image_spec,
+            audio_spec,
+            video_spec,
             adaptive_scale: None,
             prefix_prompts,
             artifact_dir: artifact_dir

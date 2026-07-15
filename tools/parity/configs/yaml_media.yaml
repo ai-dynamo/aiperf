@@ -1,0 +1,20 @@
+schemaVersion: "2.0"
+benchmark:
+  model: Qwen/Qwen3-0.6B
+  endpoint: {type: chat, url: 127.0.0.1:8000}
+  dataset:
+    type: synthetic
+    prompts: {isl: 512}
+    images:
+      batch_size: 2
+      width: {mean: 256, stddev: 10}
+      height: {mean: 256, stddev: 10}
+    audio:
+      batch_size: 1
+      length: {mean: 3, stddev: 0}
+    video:
+      batch_size: 1
+      duration: 5
+      fps: 24
+  phases: {type: concurrency, requests: 5, concurrency: 2}
+  artifacts: {dir: /tmp/aiperf-parity/media}
