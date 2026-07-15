@@ -34,6 +34,7 @@ const PORTED_CFG_SECTIONS: &[&str] = &[
     "gpu_telemetry",
     "server_metrics",
     "network_latency",
+    "slos",
     "sidecars",
 ];
 
@@ -66,6 +67,9 @@ const FIXTURES: &[&str] = &[
     "warmup_extra",
     "no_telemetry",
     "sm_formats",
+    "goodput",
+    "netlat_fixed",
+    "netlat_probe",
 ];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).
@@ -94,12 +98,12 @@ fn fixture_args(name: &str) -> Vec<String> {
 /// golden, and that it deserializes as valid runner input.
 fn assert_matches_golden(fixture: &str, built: &serde_json::Value, golden: &serde_json::Value) {
     for section in PORTED_CFG_SECTIONS {
-        let want = &golden["run"]["cfg"][section];
-        assert!(!want.is_null(), "[{fixture}] golden missing cfg.{section}");
+        // A conditional section (e.g. `slos`) is null/absent on both sides for
+        // fixtures that don't exercise it; `null == null` passes.
         assert_eq!(
-            &built["cfg"][section], want,
-            "[{fixture}] cfg.{section} diverges\n got: {:#}\nwant: {want:#}",
-            built["cfg"][section]
+            &built["cfg"][section], &golden["run"]["cfg"][section],
+            "[{fixture}] cfg.{section} diverges\n got: {:#}\nwant: {:#}",
+            built["cfg"][section], golden["run"]["cfg"][section]
         );
     }
     for field in PORTED_RUN_FIELDS {

@@ -82,6 +82,12 @@ pub(crate) struct Inputs {
     pub gpu_telemetry_enabled: bool,
     pub server_metrics_enabled: bool,
     pub server_metrics_formats: Option<Vec<String>>,
+    /// Goodput SLO thresholds (metric -> threshold ms).
+    pub slos: serde_json::Map<String, serde_json::Value>,
+    /// Fixed mean network RTT, milliseconds.
+    pub network_latency_mean: Option<f64>,
+    /// Automatic RTT probe with an optional ping interval (seconds).
+    pub network_latency_probe: Option<f64>,
     pub api_key: Option<String>,
     pub headers: std::collections::BTreeMap<String, String>,
     pub tokenizer_name: Option<String>,
@@ -261,6 +267,11 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         server_metrics_enabled: !flags.no_server_metrics,
         server_metrics_formats: (!flags.server_metrics_formats.is_empty())
             .then(|| flags.server_metrics_formats.clone()),
+        slos: parse_goodput(flags.goodput.as_deref())?,
+        network_latency_mean: flags.network_latency_mean,
+        network_latency_probe: flags
+            .network_latency_automatic
+            .then(|| flags.network_latency_ping_interval.unwrap_or(1.0)),
         api_key: flags.api_key.clone(),
         headers: parse_headers(&flags.headers)?,
         tokenizer_name: flags.tokenizer.clone(),
@@ -542,6 +553,24 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     // server-metrics scraping are enabled by default and independently toggled.
     let gpu_enabled = inputs.gpu_telemetry_enabled && !is_dynosim;
     let server_enabled = inputs.server_metrics_enabled && !is_dynosim;
+    // Network-latency calibration: fixed mean or automatic probe (disabled by
+    // default). Lowered into a sidecar mirroring `_network_latency`.
+    let mut network_latency_cfg = crate::model::telemetry::NetworkLatencyConfig::default();
+    let network_latency_sidecar = if is_dynosim {
+        None
+    } else if let Some(mean_ms) = inputs.network_latency_mean {
+        network_latency_cfg.enabled = true;
+        network_latency_cfg.mean_ms = Some(mean_ms);
+        Some(crate::model::telemetry::NetworkLatencySidecar::fixed(
+            mean_ms,
+        ))
+    } else if let Some(ping) = inputs.network_latency_probe {
+        network_latency_cfg.enabled = true;
+        network_latency_cfg.ping_interval = ping;
+        Some(crate::model::telemetry::NetworkLatencySidecar::probe(ping))
+    } else {
+        None
+    };
     let sidecars = crate::model::telemetry::Sidecars {
         gpu_telemetry: gpu_enabled.then(crate::model::telemetry::GpuTelemetrySidecar::default_dcgm),
         server_metrics: server_enabled.then(|| {
@@ -552,6 +581,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 None => sc,
             }
         }),
+        network_latency: network_latency_sidecar,
     };
     let mut gpu_cfg = crate::model::telemetry::GpuTelemetryConfig::default();
     gpu_cfg.enabled = inputs.gpu_telemetry_enabled;
@@ -566,7 +596,11 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         tokenizer: Some(tokenizer),
         transport: Some(inputs.transport),
         runtime: Some(Runtime::default()),
-        metrics: Some(Metrics::default()),
+        metrics: Some(Metrics {
+            slos: inputs.slos.clone(),
+            ..Metrics::default()
+        }),
+        slos: (!inputs.slos.is_empty()).then(|| inputs.slos.clone()),
         artifacts: Some(Artifacts {
             trace: false,
             inputs_path: "inputs.json".to_string(),
@@ -578,7 +612,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         export: None,
         gpu_telemetry: Some(gpu_cfg),
         server_metrics: Some(server_cfg),
-        network_latency: Some(crate::model::telemetry::NetworkLatencyConfig::default()),
+        network_latency: Some(network_latency_cfg),
         sidecars: Some(sidecars),
     };
 
@@ -673,6 +707,26 @@ fn parse_headers(raw: &[String]) -> anyhow::Result<std::collections::BTreeMap<St
         headers.insert(name.trim().to_string(), value.trim().to_string());
     }
     Ok(headers)
+}
+
+/// Parse `--goodput` (`metric:threshold` space-separated) into an SLO map.
+fn parse_goodput(
+    value: Option<&str>,
+) -> anyhow::Result<serde_json::Map<String, serde_json::Value>> {
+    let mut slos = serde_json::Map::new();
+    let Some(value) = value else {
+        return Ok(slos);
+    };
+    for entry in value.split_whitespace() {
+        let (metric, threshold) = entry.split_once(':').ok_or_else(|| {
+            anyhow::anyhow!("invalid --goodput entry {entry:?}; expected metric:threshold")
+        })?;
+        let threshold: f64 = threshold
+            .parse()
+            .map_err(|e| anyhow::anyhow!("invalid --goodput threshold in {entry:?}: {e}"))?;
+        slos.insert(metric.to_string(), serde_json::json!(threshold));
+    }
+    Ok(slos)
 }
 
 /// Parse `--connection-reuse-strategy`.

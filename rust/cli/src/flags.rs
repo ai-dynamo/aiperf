@@ -286,6 +286,22 @@ pub struct ProfileFlags {
     #[arg(long = "random-seed")]
     pub random_seed: Option<u64>,
 
+    /// Goodput SLO thresholds, `metric:ms` space-separated (`--goodput`).
+    #[arg(long = "goodput")]
+    pub goodput: Option<String>,
+
+    /// Fixed mean network RTT, milliseconds (`--network-latency-mean`).
+    #[arg(long = "network-latency-mean")]
+    pub network_latency_mean: Option<f64>,
+
+    /// Enable automatic RTT calibration (`--network-latency-automatic`).
+    #[arg(long = "network-latency-automatic", default_value_t = false)]
+    pub network_latency_automatic: bool,
+
+    /// RTT probe ping interval, seconds (`--network-latency-ping-interval`).
+    #[arg(long = "network-latency-ping-interval")]
+    pub network_latency_ping_interval: Option<f64>,
+
     /// YAML configuration file (`--config` / `-f`).
     #[arg(long = "config", short = 'f')]
     pub config_file: Option<PathBuf>,

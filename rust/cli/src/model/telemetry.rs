@@ -153,6 +153,56 @@ pub struct ServerMetricsSidecar {
     pub parquet_wire_path: Option<String>,
 }
 
+/// The RTT-calibration probe (`_network_latency` automatic branch).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NetworkLatencyProbe {
+    /// Ping interval, nanoseconds.
+    pub ping_interval_ns: u64,
+    /// TCP connect timeout, nanoseconds.
+    pub connect_timeout_ns: u64,
+    /// Completion top-up timeout, nanoseconds.
+    pub complete_topup_timeout_ns: u64,
+    /// Minimum successful samples.
+    pub min_successful_samples: u64,
+    /// Output-relative records path.
+    pub records_path: String,
+}
+
+/// The lowered `sidecars.network_latency` block (fixed mean or a probe).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NetworkLatencySidecar {
+    /// Fixed mean RTT, nanoseconds (fixed-mean mode).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mean_rtt_ns: Option<u64>,
+    /// RTT probe (automatic mode).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe: Option<NetworkLatencyProbe>,
+}
+
+impl NetworkLatencySidecar {
+    /// Build a fixed-mean sidecar (`--network-latency-mean` ms → ns).
+    pub fn fixed(mean_ms: f64) -> Self {
+        Self {
+            mean_rtt_ns: Some((mean_ms / 1000.0 * 1e9).round() as u64),
+            probe: None,
+        }
+    }
+
+    /// Build a probe sidecar (`--network-latency-automatic`).
+    pub fn probe(ping_interval_seconds: f64) -> Self {
+        Self {
+            mean_rtt_ns: None,
+            probe: Some(NetworkLatencyProbe {
+                ping_interval_ns: (ping_interval_seconds * 1e9).round() as u64,
+                connect_timeout_ns: 5_000_000_000,
+                complete_topup_timeout_ns: 3_000_000_000,
+                min_successful_samples: 5,
+                records_path: "profile_export_network_latency.jsonl".to_string(),
+            }),
+        }
+    }
+}
+
 /// The lowered `cfg.sidecars` block.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Sidecars {
@@ -162,6 +212,9 @@ pub struct Sidecars {
     /// Server-metrics sidecar (present when enabled).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_metrics: Option<ServerMetricsSidecar>,
+    /// Network-latency sidecar (present when enabled).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_latency: Option<NetworkLatencySidecar>,
 }
 
 impl GpuTelemetrySidecar {

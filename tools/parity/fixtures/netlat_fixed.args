@@ -1,0 +1,1 @@
+--model Qwen/Qwen3-0.6B --url 127.0.0.1:8000 --endpoint-type chat --streaming --concurrency 1 --request-count 2 --artifact-dir /tmp/x --network-latency-mean 5

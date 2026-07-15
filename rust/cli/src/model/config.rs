@@ -53,6 +53,9 @@ pub struct BenchmarkConfig {
     /// Native metrics policy (`cfg.metrics`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metrics: Option<Metrics>,
+    /// Goodput SLO thresholds (`cfg.slos`, metric→threshold; open bag).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slos: Option<serde_json::Map<String, serde_json::Value>>,
     /// Native output policy (`cfg.artifacts`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artifacts: Option<Artifacts>,
