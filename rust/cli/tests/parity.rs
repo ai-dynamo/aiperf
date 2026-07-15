@@ -132,3 +132,18 @@ fn loader_reproduces_goldens() {
         );
     }
 }
+
+#[test]
+fn yaml_config_reproduces_golden() {
+    // The native YAML surface must reproduce the same consumed sections as
+    // Python's resolve_config for a config file.
+    let golden = load_golden("yaml_basic");
+    let cfg = std::path::Path::new("../../tools/parity/configs/basic.yaml");
+    let run = aiperf_cli::yaml::resolve(
+        cfg,
+        Some(std::path::PathBuf::from("/tmp/aiperf-parity/yaml_basic")),
+    )
+    .expect("yaml resolves");
+    let built = serde_json::to_value(&run).expect("serialize built run");
+    assert_matches_golden("yaml_basic", &built, &golden);
+}

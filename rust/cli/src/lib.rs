@@ -20,3 +20,4 @@ pub mod load;
 pub mod model;
 pub mod profile;
 pub mod runner_install;
+pub mod yaml;

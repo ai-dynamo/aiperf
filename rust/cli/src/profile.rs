@@ -9,7 +9,7 @@
 //! rejected with a clear error by the loader.
 
 use crate::model::{Operation, RunnerRequest};
-use crate::{delegate, execute, flags::ProfileFlags, load, runner_install};
+use crate::{execute, flags::ProfileFlags, load, runner_install, yaml};
 
 /// Run `aiperf profile <args>` natively. Returns the process exit code.
 pub fn run(args: &[String]) -> anyhow::Result<i32> {
@@ -22,16 +22,12 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         }
     };
 
-    // YAML config parsing is not yet native; hand the whole invocation to Python
-    // so `-f config.yaml` keeps working through the front door.
-    if flags.config_file.is_some() {
-        tracing::info!("delegating YAML-config profile run to the Python frontend");
-        let mut argv = vec!["profile".to_string()];
-        argv.extend_from_slice(args);
-        return delegate::exec_python(&argv);
-    }
-
-    let run = load::resolve(&flags)?;
+    // A YAML `--config` uses the native YAML surface; otherwise the flag surface.
+    // Both funnel through `load::build` into the one native run.
+    let run = match &flags.config_file {
+        Some(path) => yaml::resolve(path, flags.artifact_dir.clone())?,
+        None => load::resolve(&flags)?,
+    };
     let request = RunnerRequest::new(Operation::Execute, run);
     let payload = serde_json::to_vec(&request)
         .map_err(|e| anyhow::anyhow!("failed to serialize the runner request: {e}"))?;

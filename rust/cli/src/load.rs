@@ -1,18 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Pre-translation: parse `profile` flags (+ YAML, later) into the native
+//! Pre-translation: parse `profile` flags or a YAML config into the native
 //! [`BenchmarkRun`].
 //!
 //! This is the reverse of Python's `rust_wire` projection: instead of lowering a
 //! domain config into a wire dict, it builds the one native object (which *is*
-//! the wire request) directly from the CLI surface. All the mapping — URL scheme
-//! normalization, model→tokenizer defaulting, phase construction, unit handling,
-//! and the resolved-defaults baseline — lives here.
+//! the wire request) directly from the input surface. Both surfaces normalize to
+//! [`Inputs`] and share one [`build`] core, so the wire defaults live in exactly
+//! one place. The flag surface lives here; the YAML surface lives in
+//! [`crate::yaml`].
 //!
-//! Defaults are the Python single-run synthetic defaults (proven byte-exact
-//! against `tools/parity/golden/minimal_chat.request.json`). YAML merge and the
-//! full flag surface are added incrementally; today this handles the CLI-only
-//! synthetic path.
+//! Defaults are the Python single-run synthetic defaults, proven byte-exact
+//! against the golden vectors in `tools/parity/golden/`.
+
+use std::path::PathBuf;
 
 use crate::flags::ProfileFlags;
 use crate::model::artifacts::Artifacts;
@@ -27,28 +28,70 @@ use crate::model::transport::Transport;
 use crate::model::{BenchmarkConfig, BenchmarkRun, Resolved};
 
 // Python single-run synthetic defaults (see `src/aiperf/config/endpoint.py`,
-// `dataset/*`), proven against the minimal_chat golden.
+// `dataset/*`), proven against the goldens.
 const DEFAULT_TIMEOUT_SECONDS: f64 = 21600.0;
 const DEFAULT_CONNECTION_LIMIT: u32 = 2500;
 const DEFAULT_KEEPALIVE_TIMEOUT: f64 = 300.0;
 const DEFAULT_WAIT_FOR_MODEL_INTERVAL: f64 = 5.0;
 const DEFAULT_ISL_MEAN: f64 = 550.0;
 /// Default synthetic conversation count when no request bound is given.
-const DEFAULT_ENTRIES: u32 = 100;
+pub(crate) const DEFAULT_ENTRIES: u32 = 100;
+
+/// A leading warmup phase's axes.
+pub(crate) struct Warmup {
+    /// Warmup concurrency (inherits profiling concurrency when `None`).
+    pub concurrency: Option<u32>,
+    /// Warmup request rate (Poisson when set).
+    pub rate: Option<f64>,
+    /// Warmup request bound.
+    pub requests: Option<u64>,
+}
+
+/// Normalized inputs both surfaces (flags / YAML) resolve to before building.
+pub(crate) struct Inputs {
+    pub model_names: Vec<String>,
+    pub urls: Vec<String>,
+    pub endpoint_type: String,
+    pub streaming: bool,
+    pub tokenizer_name: Option<String>,
+    pub tokenizer_revision: Option<String>,
+    pub tokenizer_trust: bool,
+    pub isl: Distribution,
+    pub osl: Option<Distribution>,
+    pub batch_size: u32,
+    pub sampling: String,
+    pub entries: u32,
+    /// Profiling-phase session bound (from `num_conversations`).
+    pub sessions: Option<u64>,
+    pub concurrency: Option<u32>,
+    pub request_rate: Option<f64>,
+    pub request_count: Option<u64>,
+    pub benchmark_duration: Option<f64>,
+    pub grace_period: Option<f64>,
+    pub warmup: Option<Warmup>,
+    pub artifact_dir: PathBuf,
+}
+
+/// The default synthetic ISL distribution (`{mean, stddev}`), used when no
+/// explicit distribution is authored.
+pub(crate) fn default_isl() -> Distribution {
+    Distribution {
+        mean: Some(DEFAULT_ISL_MEAN),
+        stddev: Some(0.0),
+        ..Default::default()
+    }
+}
 
 /// Resolve `profile` flags into one native run, or a clear error.
 ///
 /// Rejects multi-run (any comma-list sweep axis) since multi-run/orchestration
-/// is deferred. YAML config files are not yet merged (returns an error if one is
-/// supplied, so the caller can delegate to Python).
+/// is deferred.
 pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
-    if flags.config_file.is_some() {
-        anyhow::bail!("YAML config files are not yet supported by the native path");
-    }
     reject_sweep("--concurrency", flags.concurrency.as_deref())?;
     reject_sweep("--request-count", flags.request_count.as_deref())?;
     reject_sweep("--request-rate", flags.request_rate.as_deref())?;
     reject_sweep("--benchmark-duration", flags.benchmark_duration.as_deref())?;
+    reject_sweep("--num-conversations", flags.num_conversations.as_deref())?;
 
     anyhow::ensure!(
         !flags.model_names.is_empty(),
@@ -60,19 +103,65 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         .clone()
         .ok_or_else(|| anyhow::anyhow!("--endpoint-type is required"))?;
 
-    let primary_model = flags.model_names[0].clone();
     let concurrency = parse_single::<u32>("--concurrency", flags.concurrency.as_deref())?;
     let request_count = parse_single::<u64>("--request-count", flags.request_count.as_deref())?;
     let request_rate = parse_single::<f64>("--request-rate", flags.request_rate.as_deref())?;
     let benchmark_duration =
         parse_single::<f64>("--benchmark-duration", flags.benchmark_duration.as_deref())?;
-    reject_sweep("--num-conversations", flags.num_conversations.as_deref())?;
     let num_conversations =
         parse_single::<u32>("--num-conversations", flags.num_conversations.as_deref())?;
 
+    let warmup = if flags.warmup_request_count.is_none()
+        && flags.warmup_concurrency.is_none()
+        && flags.warmup_request_rate.is_none()
+    {
+        None
+    } else {
+        Some(Warmup {
+            concurrency: flags.warmup_concurrency,
+            rate: flags.warmup_request_rate,
+            requests: flags.warmup_request_count,
+        })
+    };
+
+    let inputs = Inputs {
+        model_names: flags.model_names.clone(),
+        urls: flags.urls.clone(),
+        endpoint_type,
+        streaming: flags.streaming,
+        tokenizer_name: flags.tokenizer.clone(),
+        tokenizer_revision: flags.tokenizer_revision.clone(),
+        tokenizer_trust: flags.tokenizer_trust_remote_code,
+        isl: default_isl(),
+        osl: None,
+        batch_size: 1,
+        sampling: "sequential".to_string(),
+        entries: num_conversations
+            .or(request_count.map(|n| n as u32))
+            .unwrap_or(DEFAULT_ENTRIES),
+        sessions: num_conversations.map(u64::from),
+        concurrency,
+        request_rate,
+        request_count,
+        benchmark_duration,
+        grace_period: flags.benchmark_grace_period,
+        warmup,
+        artifact_dir: flags
+            .artifact_dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("artifacts")),
+    };
+    Ok(build(inputs))
+}
+
+/// Build the one native run from normalized inputs. This is the single place the
+/// wire defaults live; both the flag and YAML surfaces funnel through here.
+pub(crate) fn build(inputs: Inputs) -> BenchmarkRun {
+    let primary_model = inputs.model_names[0].clone();
+
     let models = Models {
         strategy: ModelStrategy::RoundRobin,
-        items: flags
+        items: inputs
             .model_names
             .iter()
             .map(|name| ModelItem {
@@ -83,9 +172,9 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
     };
 
     let endpoint = Endpoint {
-        urls: flags.urls.iter().map(|u| normalize_url(u)).collect(),
-        endpoint_type: EndpointType(endpoint_type),
-        streaming: flags.streaming,
+        urls: inputs.urls.iter().map(|u| normalize_url(u)).collect(),
+        endpoint_type: EndpointType(inputs.endpoint_type),
+        streaming: inputs.streaming,
         use_legacy_max_tokens: false,
         use_server_token_count: false,
         timeout_seconds: DEFAULT_TIMEOUT_SECONDS,
@@ -109,60 +198,54 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
     };
 
     let tokenizer = Tokenizer {
-        // --tokenizer overrides; otherwise the primary model name (Python uses
-        // "builtin" for fake model names — a later refinement).
-        name: flags
-            .tokenizer
-            .clone()
-            .unwrap_or_else(|| primary_model.clone()),
-        revision: flags
+        name: inputs.tokenizer_name.unwrap_or(primary_model),
+        revision: inputs
             .tokenizer_revision
-            .clone()
             .unwrap_or_else(|| "main".to_string()),
-        trust_remote_code: flags.tokenizer_trust_remote_code,
+        trust_remote_code: inputs.tokenizer_trust,
         apply_chat_template: false,
     };
 
     let dataset = Dataset::Synthetic(Synthetic {
         prompts: Prompts {
-            batch_size: 1,
-            isl: Distribution {
-                mean: Some(DEFAULT_ISL_MEAN),
-                stddev: Some(0.0),
-                ..Default::default()
-            },
-            osl: None,
+            batch_size: inputs.batch_size,
+            isl: inputs.isl,
+            osl: inputs.osl,
             num_prefix_prompts: None,
             prefix_prompt_length: None,
         },
-        sampling: Sampling("sequential".to_string()),
+        sampling: Sampling(inputs.sampling),
         turn_delay_ratio: 1.0,
-        // Corpus size: explicit --num-conversations, else the request bound
-        // (`entries == request_count`), else the default conversation count.
-        entries: Some(
-            num_conversations
-                .or(request_count.map(|n| n as u32))
-                .unwrap_or(DEFAULT_ENTRIES),
-        ),
+        entries: Some(inputs.entries),
         num_conversations: None,
         turn_delay_ms: None,
     });
 
-    // The profiling phase, plus an optional leading warmup phase.
     let profiling = build_phase(
         "profiling",
         false,
-        concurrency.unwrap_or(1),
-        request_rate,
-        concurrency,
-        request_count,
-        num_conversations.map(u64::from),
-        benchmark_duration,
-        flags.benchmark_grace_period,
+        inputs.concurrency.unwrap_or(1),
+        inputs.request_rate,
+        inputs.concurrency,
+        inputs.request_count,
+        inputs.sessions,
+        inputs.benchmark_duration,
+        inputs.grace_period,
     );
     let mut phases = Vec::new();
-    if let Some(phase) = build_warmup_phase(flags, concurrency) {
-        phases.push(phase);
+    if let Some(warmup) = inputs.warmup {
+        let concurrency = warmup.concurrency.or(inputs.concurrency);
+        phases.push(build_phase(
+            "warmup",
+            true,
+            concurrency.unwrap_or(1),
+            warmup.rate,
+            concurrency,
+            warmup.requests,
+            None,
+            None,
+            None,
+        ));
     }
     phases.push(profiling);
 
@@ -183,14 +266,9 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         phases: Some(phases),
     };
 
-    let artifact_dir = flags
-        .artifact_dir
-        .clone()
-        .unwrap_or_else(|| std::path::PathBuf::from("artifacts"));
-
-    Ok(BenchmarkRun {
+    BenchmarkRun {
         benchmark_id: uuid::Uuid::new_v4().simple().to_string()[..12].to_string(),
-        artifact_dir,
+        artifact_dir: inputs.artifact_dir,
         cfg,
         cli_command: None,
         label: String::new(),
@@ -200,7 +278,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         variation: None,
         resolved: Resolved::default(),
         variables: serde_json::Map::new(),
-    })
+    }
 }
 
 /// Build one phase from resolved axes. A request rate selects a Poisson arrival
@@ -244,32 +322,9 @@ fn build_phase(
     }
 }
 
-/// Build a leading warmup phase when any warmup axis is set. Warmup inherits the
-/// profiling concurrency unless `--warmup-concurrency` overrides it.
-fn build_warmup_phase(flags: &ProfileFlags, profiling_concurrency: Option<u32>) -> Option<Phase> {
-    if flags.warmup_request_count.is_none()
-        && flags.warmup_concurrency.is_none()
-        && flags.warmup_request_rate.is_none()
-    {
-        return None;
-    }
-    let concurrency = flags.warmup_concurrency.or(profiling_concurrency);
-    Some(build_phase(
-        "warmup",
-        true,
-        concurrency.unwrap_or(1),
-        flags.warmup_request_rate,
-        concurrency,
-        flags.warmup_request_count,
-        None,
-        None,
-        None,
-    ))
-}
-
 /// Normalize a base URL to include a scheme (Python prepends `http://` when the
 /// user omits one, e.g. `127.0.0.1:8000` → `http://127.0.0.1:8000`).
-fn normalize_url(url: &str) -> String {
+pub(crate) fn normalize_url(url: &str) -> String {
     if url.contains("://") {
         url.to_string()
     } else {
