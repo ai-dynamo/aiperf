@@ -265,7 +265,9 @@ struct TransportSection {
 struct EndpointSection {
     #[serde(rename = "type")]
     endpoint_type: Option<String>,
-    /// Optional: DynoSim endpoints carry no URL (the sentinel is injected).
+    /// Endpoint URL(s); `url:` (single/list) or plural `urls:`. Optional:
+    /// DynoSim endpoints carry no URL (the sentinel is injected).
+    #[serde(alias = "urls")]
     url: Option<StringOrVec>,
     #[serde(default)]
     streaming: bool,
