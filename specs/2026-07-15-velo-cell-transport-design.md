@@ -41,7 +41,11 @@ unchanged**. Only the *wire*, the *launch mechanism*, and the *registration/barr
 5. **Local subprocess launcher survives, over velo** — `--cells N` on one host and the existing
    e2e tests keep spawning subprocesses, but they speak velo (UDS on Unix, TCP-loopback on
    Windows), so the same velo code runs locally and in-cluster.
-6. **Feature-gated** behind a `velo` cargo feature. Official upstream velo only — **no fork**.
+6. **Feature-gated** behind a `velo` cargo feature. **`ai-dynamo/main` lineage only — never the
+   legacy fork.** A small upstream patch is acceptable *only* as a PR against `ai-dynamo/main`
+   (see §4.2): if the connection mechanism needs one, author it upstream and temporarily pin Cargo
+   to the PR `rev` until it merges. The zero-patch bootstrap mechanism (§4.2 mechanism B) is the
+   guaranteed fallback that needs no velo change at all.
 
 ### Non-goals
 
@@ -94,7 +98,8 @@ velo as the wire.
 
 ## 3. Velo facts this design relies on (official `ai-dynamo/main`, tag `v0.5.0`, commit `c53fea2`)
 
-Verified against `/tmp/velo-main` (a checkout of `ai-dynamo/main`). **No fork; no velo change.**
+Verified against `/tmp/velo-main` (a checkout of `ai-dynamo/main`). Zero velo change is the
+baseline (mechanism B); any change is a PR against `ai-dynamo/main`, never a fork.
 
 - **One crate.** `velo = { git = "https://github.com/ai-dynamo/velo.git", tag = "v0.5.0",
   default-features = false }` yields TCP + UDS transports (never feature-gated), filesystem
@@ -184,33 +189,50 @@ becomes a thin async velo client the cell drives after `register`.
 The bespoke `encode_frame` / `read_frame` / length-prefix / `MAX_FRAME_LEN` plumbing is deleted;
 velo owns framing.
 
-### 4.2 Identity & connection — zero discovery, zero fork
+### 4.2 Identity & connection — zero discovery (`ai-dynamo/main` only)
 
 The **only** a-priori fact is the controller's DNS:port (operator-injected env
-`AIPERF_CELL_CONTROLLER_ADDR`, unchanged name). Flow:
+`AIPERF_CELL_CONTROLLER_ADDR`, unchanged name). velo targets peers by a random per-run
+`InstanceId`, so reaching the controller from DNS:port alone needs one of three mechanisms,
+resolved by a first-implementation spike behind a single `resolve_controller_peer()` seam. **All
+three are zero-discovery** (no etcd/NATS/velo-discovery backend); a velo change, if any, is a PR
+against `ai-dynamo/main`, never the legacy fork:
 
-1. Controller builds `Velo` with its transport **bound to the known port** (fixed
-   `TcpTransportBuilder::new().bind_addr(SocketAddr)` for k8s; UDS/loopback for local). It knows
-   only its own bind address.
-2. Each cell builds `Velo` (ephemeral bind), constructs the controller `PeerInfo` from the
-   hardcoded DNS:port with a **placeholder `InstanceId`** (`PeerInfo::new(placeholder,
-   WorkerAddress::from the tcp endpoint)`), and `register_peer`s it.
-3. Cell calls `aiperf.cell.register` with its **real `peer_info()`** + `cell_id`. Dispatch is by
-   handler name (placeholder dst ignored); the controller `register_peer`s the cell so it can
-   reach back, and replies with the `CellLaunchSpec`.
+- **A — placeholder-address, zero patch.** The cell constructs the controller `PeerInfo` from the
+  hardcoded DNS:port with a **placeholder `InstanceId`** using existing public velo API,
+  `register_peer`s it, and calls `register` with its real `peer_info()` in the payload. Verified
+  viable by velo's dispatch (by handler name, dst id ignored — `dispatcher.rs:231`) and reply
+  routing (by the request's `ResponseId` worker id — `dispatcher.rs:316`); the only open question
+  is whether a public constructor for a `WorkerAddress` from `host:port` exists
+  (`WorkerAddressBuilder` is currently `crate`-internal).
+- **A′ — placeholder-address, small upstream patch.** Same as A, enabled by a **small PR against
+  `ai-dynamo/main`** (e.g. re-export `WorkerAddressBuilder` / add `WorkerAddress::tcp(addr)`, or an
+  injectable `VeloBuilder::instance_id`). Cargo pins to the PR `rev` until it merges. Chosen over B
+  only if genuinely small and useful upstream.
+- **B — bootstrap-PeerInfo fetch, zero patch (guaranteed fallback).** The controller serves its
+  real, fully-public, serde `peer_info()` bytes at a bootstrap port on the hardcoded DNS; the cell
+  fetches + `register_peer`s them. Needs no velo change at all.
+
+Flow (identical regardless of mechanism):
+
+1. Controller builds `Velo` bound to the known port (fixed `bind_addr` for k8s; UDS/loopback for
+   local); knows only its own bind address.
+2. Each cell builds `Velo` (ephemeral bind) and obtains the controller `PeerInfo` via
+   `resolve_controller_peer()` (mechanism A/A′/B), then `register_peer`s it.
+3. Cell calls `aiperf.cell.register` with its **real `peer_info()`** + `cell_id`; the controller
+   `register_peer`s the cell (so it can reach back) and replies with the `CellLaunchSpec`.
 4. Cell applies the spec (sets the same `AIPERF_CELL_*` env the stdin path set today) and runs the
    ordinary single-process execute path.
-5. Controller **barrier**: distinct registered `cell_id`s reach `cell_count`, then the run
-   proceeds. A cell that never registers is caught by the launcher's failure watcher (local child
-   exit; k8s pod failure) — same fail-loud direction as today's `select!` against child exit.
+5. Controller **barrier**: distinct registered `cell_id`s reach `cell_count`. A cell that never
+   registers is caught by the launcher's failure watcher (local child exit) or a registration
+   timeout (k8s) — fail loud, never hang.
 
-**Verification spike (implementation step 1):** a standalone test — two `Velo` instances where the
-"controller" knows only its own bind addr and the "cell" knows only the controller addr — proving
-a placeholder-addressed `typed_unary` + payload `peer_info` handoff round-trips (request delivered,
-reply received). **Fallback if velo rejects placeholder-addressed sends:** the controller serves
-its real `PeerInfo` bytes at the hardcoded port via a ~30-line one-shot channel the cell reads
-before the velo handshake (still zero discovery, zero fork). The dispatch/reply code inspected
-above makes the placeholder path the expected outcome.
+**Verification spike (implementation step 1):** two `Velo` instances where the "controller" knows
+only its own bind addr and the "cell" knows only the controller addr — land the cleanest of
+A/A′/B end-to-end. B (bootstrap-PeerInfo fetch) is the guaranteed fallback and needs no velo
+change; A/A′ are preferred when viable. The dispatch/reply code inspected above (dispatch by
+handler name, reply by request `ResponseId`) makes A workable if a public `WorkerAddress`-from-addr
+constructor exists, and A′ makes it so with a small `ai-dynamo/main` PR.
 
 ### 4.3 Launch abstraction (`CellLauncher` trait)
 
@@ -331,8 +353,10 @@ cancellation, ramps, multi-URL) keep their existing warnings.
 
 ## 9. Risks & open questions
 
-1. **Placeholder-addressed send (primary risk).** Mitigated by the step-1 spike; bootstrap-file
-   fallback if velo rejects it. Both are zero-discovery / zero-fork.
+1. **Placeholder-addressed send (primary risk).** Mitigated by the step-1 spike choosing among
+   A / A′ / B; mechanism B (bootstrap-PeerInfo fetch) is the guaranteed zero-velo-change fallback.
+   A′ (a small `ai-dynamo/main` PR) is acceptable but adds a temporary Cargo `rev` pin until it
+   merges. All zero-discovery; none touch a fork.
 2. **Streaming endpoint advertisement (v0.5.0 default TCP stream listener).** Each velo instance
    binds an extra `0.0.0.0:0` stream listener by default. Benign for messenger-only use; if a pod
    must not open it, pin via `stream_bind_addr`. Confirm no port-exhaustion concern at large N.
