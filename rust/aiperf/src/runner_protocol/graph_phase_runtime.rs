@@ -603,16 +603,26 @@ fn pressure_resolve_lane_count(
 /// plus the cursor one past the last consumed position so recycle resumes there.
 ///
 /// "Spawnable" at the current native fidelity is "the warmup-rewritten plan has
-/// at least one dispatchable node": Python tests spawnability at the lane-salted
-/// `t*` (no live LLM firing => skip), and because the graph runtime bakes a
-/// single lane-0 `t*` into the plan upstream (no per-lane salting yet), a plan
-/// left empty by the warmup rewrite is the native analogue of an unspawnable
-/// lane. At the default `[0, 0]` window every plan is non-empty, so lane `i`
-/// takes corpus index `i` (sequential) byte-for-byte with the prior assignment.
+/// at least one dispatchable node". Python tests spawnability at the candidate's
+/// TARGET RANK's lane-salted `t*` (`_is_spawnable(trace, rank)`, rank advances
+/// only on a hit), and per-lane salting IS built (DF1b/DF6:
+/// [`sample_lane_tstar`] / [`pressure_plan_for_lane`]), so a candidate is judged
+/// against the lane-`rank`-salted warmup graph it will ACTUALLY dispatch — NOT
+/// lane 0's prebuilt plan. This closes DF6's spawnability divergence: a template
+/// non-empty at lane 0's `t*` but EMPTY at a higher lane's `t*` is no longer
+/// "consumed" by that lane (which would then dispatch empty and fail `admit` with
+/// "contains no dispatchable nodes"). The rewritten graph is cached by
+/// `(template_index, rank)` (shared with the dispatch loop's `_lane_plans`), so
+/// the spawnability check and the eventual dispatch re-rewrite once. At the
+/// default `[0, 0]` window every lane collapses to `t*=0` and the warmup graph is
+/// the prebuilt lane-0 plan, so lane `i` takes corpus index `i` (sequential)
+/// byte-for-byte with the prior assignment.
 fn pressure_resolve_pass0_lanes(
     templates: &[PressureTemplate],
     lanes: usize,
     draw: &PressureDraw,
+    t_star: TStarWindow,
+    cache: &RefCell<HashMap<(usize, u64), GraphTracePlan>>,
 ) -> (Vec<usize>, u64) {
     let n = templates.len();
     if n == 0 {
@@ -627,7 +637,13 @@ fn pressure_resolve_pass0_lanes(
     while pass0.len() < lanes && cursor < max_cursor {
         let idx = draw.index(cursor, n);
         cursor = cursor.saturating_add(1);
-        if !templates[idx].plan.graph.nodes.is_empty() {
+        // Judge spawnability at the candidate's TARGET rank (== the lane it would
+        // dispatch on), so the salted `t*` here is the one the lane dispatches at
+        // (Python `_is_spawnable(trace, rank)` with `rank = len(pass0)`).
+        let rank = u64::try_from(pass0.len()).unwrap_or(u64::MAX);
+        let lane_t_star_us = sample_lane_tstar(&templates[idx], rank, t_star);
+        let plan = pressure_plan_for_lane(templates, idx, rank, lane_t_star_us, t_star, cache);
+        if !plan.graph.nodes.is_empty() {
             pass0.push(idx);
         }
     }
@@ -669,15 +685,70 @@ fn sample_plan_tstar(original_plan: &GraphTracePlan, t_star: TStarWindow) -> f64
 /// early return and via `sample_t_star`'s `hi <= lo` short-circuit — so lane
 /// fan-out adds no `t*` divergence on the working default-window profiling path.
 fn sample_lane_tstar(template: &PressureTemplate, lane: u64, t_star: TStarWindow) -> f64 {
+    lane_salted_tstar(
+        &template.template_id,
+        template.t_star_us,
+        template.duration_us,
+        lane,
+        t_star,
+    )
+}
+
+/// The lane-salted `t*` draw shared by the WARMUP ([`sample_lane_tstar`]) and
+/// PROFILING ([`profiling_sample_lane_tstar`]) per-lane planners.
+///
+/// Direct port of `graph_ir_replay.py:_plan_for_lane`/`_lane_source` +
+/// `graph_ir_source.py:_sample_t_star` (branch `ajc/aiperf-graph-ir`): lane `0`
+/// (and the default `[0, 0]` window, whose every lane collapses to `t*=0`) reuses
+/// the prebuilt lane-0 `t*` (`lane_0_tstar_us`, byte-identical to the single-pass
+/// plan); a higher lane draws a DISTINCT `sha256(seed:template_id:lane)`-salted
+/// `t*` anchored to the ORIGINAL plan's replayable span (`duration_us`). Factored
+/// so the warmup boundary rewrite and the profiling frontier chop of the SAME
+/// `(template, lane)` share ONE `t*` — the identity a lane records and the graph
+/// it dispatches can never diverge.
+fn lane_salted_tstar(
+    template_id: &str,
+    lane_0_tstar_us: f64,
+    duration_us: f64,
+    lane: u64,
+    t_star: TStarWindow,
+) -> f64 {
     if lane == 0 || (t_star.start_min_ratio == 0.0 && t_star.start_max_ratio == 0.0) {
-        return template.t_star_us;
+        return lane_0_tstar_us;
     }
     let sampler = WindowTStarSampler {
         start_min_ratio: t_star.start_min_ratio,
         start_max_ratio: t_star.start_max_ratio,
         random_seed: t_star.random_seed,
     };
-    sampler.sample_t_star(&template.template_id, lane, template.duration_us)
+    sampler.sample_t_star(template_id, lane, duration_us)
+}
+
+/// Resolve one PROFILING lane's trajectory-start `t*` in microseconds.
+///
+/// The [`GraphTracePlan`] analogue of [`sample_lane_tstar`]
+/// (`graph_ir_replay.py:_plan_for_lane`, lines 743-791): the profiling side holds
+/// the corpus as `original_plans` rather than [`PressureTemplate`]s, so the salt
+/// inputs are read off the plan directly — `original_plan.trace.id` is the
+/// template id (identical to the warmup template's `template_id`, which is the
+/// warmup rewrite's `trace.id` == the original trace id) and
+/// [`plan_trace_duration_us`] is the same span [`sample_lane_tstar`] anchors to.
+/// The returned value is therefore BYTE-IDENTICAL to the warmup lane `t*` for the
+/// same `(template, lane)`, so warmup priming and profiling resume of one lane
+/// agree on the snapshot instant. Lane 0 / default `[0, 0]` window reuse the
+/// lane-0 `t*` ([`sample_plan_tstar`]).
+fn profiling_sample_lane_tstar(
+    original_plan: &GraphTracePlan,
+    lane: u64,
+    t_star: TStarWindow,
+) -> f64 {
+    lane_salted_tstar(
+        &original_plan.trace.id,
+        sample_plan_tstar(original_plan, t_star),
+        plan_trace_duration_us(original_plan),
+        lane,
+        t_star,
+    )
 }
 
 /// Resolve the per-lane WARMUP GRAPH a recycle dispatch primes on `lane`.
@@ -719,6 +790,52 @@ fn pressure_plan_for_lane(
         graph: rewritten.graph,
         trace: template.original_plan.trace.clone(),
         arrival_offset_ns: template.original_plan.arrival_offset_ns,
+    };
+    cache.borrow_mut().insert(key, plan.clone());
+    plan
+}
+
+/// Resolve the per-lane PROFILING PLAN a pass-0 profiling lane dispatches.
+///
+/// The [`GraphTracePlan`] frontier-chop analogue of [`pressure_plan_for_lane`]
+/// (`graph_ir_replay.py:_run_instance`, lines 1837-1840: `plan =
+/// _plan_for_lane(trace, lane_index)` for a pass-0, no-handoff, non-fresh-start
+/// lane): lane `0` (and the default `[0, 0]` window) reuse the prebuilt lane-0
+/// profiling split (`split[template_index]`, byte-identical to the pre-DF6
+/// assignment). A higher lane on an ACTIVE window re-chops the ORIGINAL graph at
+/// ITS OWN lane-salted `t*` ([`chop_trie_at_tstar`] at
+/// [`profiling_sample_lane_tstar`]) — the SAME instant its warmup lane primed and
+/// its [`GraphLaneIdentity`] records — instead of dispatching lane 0's post-`t*`
+/// frontier. Cached by `(template_index, lane)` so the pass-0 spawnability scan
+/// ([`profiling_resolve_pass0_lanes`]) and the eventual dispatch re-chop once.
+fn profiling_plan_for_lane(
+    original_plans: &[GraphTracePlan],
+    split: &[GraphTracePlan],
+    template_index: usize,
+    lane: u64,
+    t_star: TStarWindow,
+    cache: &RefCell<HashMap<(usize, u64), GraphTracePlan>>,
+) -> GraphTracePlan {
+    // Lane 0, or the default window (every lane `t*=0`): dispatch the prebuilt
+    // lane-0 profiling split verbatim — no per-lane divergence, no cache entry.
+    if lane == 0 || (t_star.start_min_ratio == 0.0 && t_star.start_max_ratio == 0.0) {
+        return split[template_index].clone();
+    }
+    let key = (template_index, lane);
+    if let Some(cached) = cache.borrow().get(&key) {
+        return cached.clone();
+    }
+    // Re-chop the ORIGINAL (pre-split) graph at the lane's own `t*`, the same
+    // `chop_trie_at_tstar` [`apply_tstar_split`] applied for lane 0 — just at the
+    // lane-salted instant instead of lane 0's.
+    let original = &original_plans[template_index];
+    let lane_t_star_us = profiling_sample_lane_tstar(original, lane, t_star);
+    let parsed = single_trace_parsed(original);
+    let rewritten = chop_trie_at_tstar(&parsed, lane_t_star_us);
+    let plan = GraphTracePlan {
+        graph: rewritten.graph,
+        trace: original.trace.clone(),
+        arrival_offset_ns: original.arrival_offset_ns,
     };
     cache.borrow_mut().insert(key, plan.clone());
     plan
@@ -820,7 +937,17 @@ impl GraphPressureRecycle {
         // per-lane recycle below (`_draw_index`); one instance so `Shuffle`/
         // `Random` permutations are cached across every draw of this stage.
         let draw = Rc::new(PressureDraw::from_window(self.t_star));
-        let (pass0, cursor) = pressure_resolve_pass0_lanes(&self.templates, lanes, &draw);
+        // Per-lane warmup-graph cache shared across the pass-0 spawnability scan
+        // AND every lane task, the native `_lane_plans`
+        // (`graph_ir_replay.py:_plan_for_lane`, lines 743-772): a lane's warmup
+        // graph re-primed at its salted `t*` is computed once per
+        // `(template_index, lane)` and reused, so judging spawnability at a lane's
+        // `t*` and later dispatching that lane share ONE rewrite. A plain
+        // `Rc<RefCell<_>>` has the single-loop atomicity Python's instance attr had.
+        let lane_plans: Rc<RefCell<HashMap<(usize, u64), GraphTracePlan>>> =
+            Rc::new(RefCell::new(HashMap::new()));
+        let (pass0, cursor) =
+            pressure_resolve_pass0_lanes(&self.templates, lanes, &draw, self.t_star, &lane_plans);
         self.progress.lanes.set_corpus_cursor(cursor);
         // Record the pass-0 lane fan-out for the E3c warmup handoff before any
         // lane runs (Python `_pressure_lane_count = len(pass0_traces)`).
@@ -836,14 +963,6 @@ impl GraphPressureRecycle {
         // Shared recycle cursor: one event loop mutates it, so a plain `Cell`
         // has the atomicity Python's single-loop instance attr had.
         let next_index = Rc::new(Cell::new(cursor));
-        // Per-lane warmup-graph cache shared across every lane task, the native
-        // `_lane_plans` (`graph_ir_replay.py:_plan_for_lane`, lines 743-772): a
-        // higher lane's re-primed warmup graph is computed once per
-        // `(template_index, lane)` and reused across recycle passes. A plain
-        // `Rc<RefCell<_>>` has the single-loop atomicity Python's instance attr
-        // had (one event loop mutates it).
-        let lane_plans: Rc<RefCell<HashMap<(usize, u64), GraphTracePlan>>> =
-            Rc::new(RefCell::new(HashMap::new()));
         let (done_tx, mut done_rx) = mpsc::unbounded_channel::<()>();
         for (lane_index, &start_template) in pass0.iter().enumerate() {
             let clock = self.clock.clone();
@@ -2365,12 +2484,15 @@ fn build_pressure_recycle(
 /// sample the identical deterministic `t*` per trace (same window, seed, trace
 /// id, and lane), so warmup primes exactly the prefix profiling resumes from.
 ///
-/// Lane index: the base single-pass product selection dispatches each root
-/// template once, matching Python's first/only lane (`0`). The trace source mints
-/// per-instance ids only AFTER this seam, so recycled-corpus per-lane `t*`
-/// decorrelation is a future refinement; lane `0` is correct for the one-pass
-/// case. Mirrors `graph_ir_source.py:_plan_trace` selecting the chop vs the
-/// warmup rewrite per phase.
+/// Lane index: this seam samples each root template's LANE-0 `t*` — the base
+/// single-pass product selection dispatches each root once, matching Python's
+/// first/only lane (`0`). Per-lane `t*` decorrelation IS built (DF1b/DF6): the
+/// recycle/resume paths re-sample and re-rewrite a higher lane at its own salted
+/// `t*` via [`pressure_plan_for_lane`] (warmup) and [`profiling_plan_for_lane`]
+/// (profiling), so this lane-0 split is the shared anchor those per-lane planners
+/// reuse for lane 0 and the default window. Mirrors
+/// `graph_ir_source.py:_plan_trace` selecting the chop vs the warmup rewrite per
+/// phase.
 fn apply_tstar_split(
     plans: &[GraphTracePlan],
     phase: &PhaseSpec,
@@ -2576,12 +2698,26 @@ fn build_profiling_resume_lane_plans(
     // fallback, and the fresh-start recycle draw below (`_draw_index`).
     let draw = PressureDraw::from_window(t_star);
 
+    // Per-lane frontier-chop cache shared across the pass-0 spawnability scan AND
+    // the per-lane assignment loop (the profiling `_lane_plans`,
+    // `graph_ir_replay.py:_plan_for_lane`): a lane's plan re-chopped at its salted
+    // `t*` is computed once per `(template_index, lane)`, so judging spawnability
+    // at a lane's `t*` and later dispatching that lane share ONE chop.
+    let chop_cache: RefCell<HashMap<(usize, u64), GraphTracePlan>> = RefCell::new(HashMap::new());
+
     // Lane count: `_resolve_lane_count` (phase concurrency clamped) resolves the
     // pass-0 lanes, then `max(len(pass0), pressure_lane_count)` honors every
     // drained pressure lane (`graph_ir_replay.py:1287-1295`).
     let concurrency = phase.concurrency().unwrap_or(n);
     let lane_target = pressure_resolve_lane_count(concurrency, n, session_limit, recycle_bounded);
-    let (pass0, pass0_cursor) = profiling_resolve_pass0_lanes(&split, lane_target, &draw);
+    let (pass0, pass0_cursor) = profiling_resolve_pass0_lanes(
+        original_plans,
+        &split,
+        lane_target,
+        &draw,
+        t_star,
+        &chop_cache,
+    );
     let lanes = pass0
         .len()
         .max(usize::try_from(handoff.pressure_lane_count).unwrap_or(usize::MAX));
@@ -2646,10 +2782,22 @@ fn build_profiling_resume_lane_plans(
                     (plan, Some(entry.instance_id.clone()))
                 }
                 // Handoff template not in this corpus: fall back to the lane's
-                // normal pass-0 plan and its normal id (Python drops the entry
-                // via the `trace.id != template_trace_id` guard, so the fresh
-                // nonce path applies — no marker continuity to preserve).
-                None => (split[base_index].clone(), None),
+                // normal pass-0 plan (chopped at THIS lane's salted `t*`, DF6) and
+                // its normal id (Python `_run_instance` drops the entry via the
+                // `trace.id != handoff_entry.template_trace_id` guard, then plans
+                // `_plan_for_lane(trace, lane)` — the lane-salted pass-0 plan, not
+                // lane 0's; no marker continuity to preserve).
+                None => (
+                    profiling_plan_for_lane(
+                        original_plans,
+                        &split,
+                        base_index,
+                        lane_u64,
+                        t_star,
+                        &chop_cache,
+                    ),
+                    None,
+                ),
             }
         } else if recycle_bounded && lane_u64 < handoff.pressure_lane_count {
             // Empty pressure lane completed at drain: fresh-start it from the
@@ -2660,8 +2808,23 @@ fn build_profiling_resume_lane_plans(
             next_index = next_index.saturating_add(1);
             (original_plans[draw_index].clone(), None)
         } else {
-            // Normal pass-0 assignment at the lane's t* window (normal id).
-            (split[base_index].clone(), None)
+            // Normal pass-0 assignment at THIS lane's salted `t*` (DF6): each
+            // pass-0 profiling lane chops the ORIGINAL graph at its own lane `t*`
+            // (Python `_run_instance` -> `_plan_for_lane(trace, lane_index)` for a
+            // pass-0, no-handoff, non-fresh-start lane, `graph_ir_replay.py:1837`),
+            // not lane 0's split — consistent with the warmup/handoff `t*` for
+            // this lane. Normal id.
+            (
+                profiling_plan_for_lane(
+                    original_plans,
+                    &split,
+                    base_index,
+                    lane_u64,
+                    t_star,
+                    &chop_cache,
+                ),
+                None,
+            )
         };
         lane_plans.push(LaneResumePlan {
             lane: lane_u64,
@@ -2677,15 +2840,25 @@ fn build_profiling_resume_lane_plans(
 ///
 /// The [`GraphTracePlan`] analogue of [`pressure_resolve_pass0_lanes`]: walk the
 /// corpus in draw order (`graph_ir_replay.py:_resolve_pass0_lanes`, `:1577`)
-/// assigning lane `i` to the next SPAWNABLE template (a plan the t* split left
-/// with at least one dispatchable node), skipping empties, and return the per-lane
-/// corpus indices (length `<= lanes`) plus the cursor one past the last consumed
-/// position. At the default `[0, 0]` window every plan is non-empty, so lane `i`
-/// takes corpus index `i` sequentially.
+/// assigning lane `i` to the next SPAWNABLE template (a plan whose lane-`i`
+/// frontier chop has at least one dispatchable node), skipping empties, and return
+/// the per-lane corpus indices (length `<= lanes`) plus the cursor one past the
+/// last consumed position. Python judges spawnability at the candidate's TARGET
+/// RANK's lane-salted `t*` (`_is_spawnable(trace, rank)`); per-lane salting is
+/// built (DF1b/DF6: [`profiling_plan_for_lane`]), so the check re-chops each
+/// candidate at the lane-`rank` `t*` it will DISPATCH at rather than lane 0's
+/// split — a template non-empty at lane 0 but empty at a higher lane is not
+/// consumed there. The chop is cached by `(template_index, rank)` (shared with the
+/// dispatch loop) so the scan and dispatch re-chop once. At the default `[0, 0]`
+/// window every lane collapses to `t*=0` and reuses `split[idx]`, so lane `i`
+/// takes corpus index `i` sequentially byte-for-byte with the prior assignment.
 fn profiling_resolve_pass0_lanes(
+    original_plans: &[GraphTracePlan],
     split: &[GraphTracePlan],
     lanes: usize,
     draw: &PressureDraw,
+    t_star: TStarWindow,
+    cache: &RefCell<HashMap<(usize, u64), GraphTracePlan>>,
 ) -> (Vec<usize>, u64) {
     let n = split.len();
     if n == 0 {
@@ -2697,7 +2870,12 @@ fn profiling_resolve_pass0_lanes(
     while pass0.len() < lanes && cursor < max_cursor {
         let idx = draw.index(cursor, n);
         cursor = cursor.saturating_add(1);
-        if !split[idx].graph.nodes.is_empty() {
+        // Judge spawnability at the candidate's TARGET rank (== the lane it would
+        // dispatch on), the same `t*` the lane dispatches at (Python
+        // `_is_spawnable(trace, rank)` with `rank = len(pass0)`).
+        let rank = u64::try_from(pass0.len()).unwrap_or(u64::MAX);
+        let plan = profiling_plan_for_lane(original_plans, split, idx, rank, t_star, cache);
+        if !plan.graph.nodes.is_empty() {
             pass0.push(idx);
         }
     }
@@ -4048,8 +4226,10 @@ mod tests {
                 original_plan: pressure_one_node_plan("c"),
             },
         ];
-        let draw = PressureDraw::from_window(TStarWindow::default());
-        let (pass0, cursor) = pressure_resolve_pass0_lanes(&templates, 2, &draw);
+        let window = TStarWindow::default();
+        let draw = PressureDraw::from_window(window);
+        let cache: RefCell<HashMap<(usize, u64), GraphTracePlan>> = RefCell::new(HashMap::new());
+        let (pass0, cursor) = pressure_resolve_pass0_lanes(&templates, 2, &draw, window, &cache);
         // Lanes 0 and 1 take templates a (index 0) and c (index 2); b skipped.
         assert_eq!(pass0, vec![0, 2]);
         // Cursor is one past the last consumed corpus position (a, b, c walked).
@@ -4282,6 +4462,277 @@ mod tests {
         assert!(
             cache.borrow().is_empty(),
             "default window must never cache a per-lane rewrite"
+        );
+    }
+
+    /// A single 2-turn recorded chain whose two turns arrive at `1e6` and `2e6`
+    /// us. `warmup_boundary_nodes` primes a chain ONLY when `t*` straddles its
+    /// arrivals (some turn `< t*` AND some turn `>= t*`), so this chain's warmup
+    /// rewrite is NON-EMPTY exactly for `t*` in `(1e6, 2e6]` and EMPTY below `1e6`
+    /// — the straddle-sensitive fixture DF6's per-lane spawnability needs.
+    fn two_turn_chain_plan() -> GraphTracePlan {
+        use crate::graph::model::{ChannelRequirement, GraphRecord, LlmNode, StaticEdge};
+        use serde_json::json;
+        use std::collections::BTreeMap;
+
+        let node = |arrival: u64, inputs: &[&str]| {
+            let mut metadata = BTreeMap::new();
+            metadata.insert("arrival_offset_us".to_owned(), json!(arrival));
+            metadata.insert("conversation_id".to_owned(), json!("n"));
+            LlmNode {
+                output: "out".to_owned(),
+                streaming: true,
+                inputs: inputs
+                    .iter()
+                    .map(|c| ChannelRequirement {
+                        channel: (*c).to_owned(),
+                        count: Default::default(),
+                    })
+                    .collect(),
+                min_start_delay_us: None,
+                max_tokens: None,
+                items: Vec::new(),
+                metadata,
+            }
+        };
+        let edge = |source: &str, target: &str| StaticEdge {
+            source: source.to_owned(),
+            target: target.to_owned(),
+            delay_after_predecessor_us: None,
+            min_start_delay_us: None,
+            delay_after_predecessor_start_us: None,
+            delay_after_predecessor_first_token_us: None,
+        };
+        let mut nodes = BTreeMap::new();
+        nodes.insert("n_0".to_owned(), node(1_000_000, &[]));
+        nodes.insert("n_1".to_owned(), node(2_000_000, &["n_0_out"]));
+        let graph = GraphRecord {
+            nodes,
+            edges: vec![edge("START", "n_0"), edge("n_0", "n_1"), edge("n_1", "END")],
+            ..Default::default()
+        };
+        GraphTracePlan {
+            graph,
+            trace: TraceRecord {
+                id: "t".to_owned(),
+                graph_ref: None,
+                initial_state: Default::default(),
+            },
+            arrival_offset_ns: None,
+        }
+    }
+
+    /// Build the warmup [`PressureTemplate`] for one root at `window`, exactly as
+    /// [`build_pressure_recycle`] does (lane-0 warmup rewrite as `plan`, full
+    /// pre-warmup graph as `original_plan`, lane-0 `t*`/duration from the original).
+    fn pressure_template_for(original: GraphTracePlan, window: TStarWindow) -> PressureTemplate {
+        let lane0_t_star = sample_plan_tstar(&original, window);
+        let parsed = single_trace_parsed(&original);
+        let warmup = rewrite_for_warmup(&parsed, lane0_t_star);
+        PressureTemplate {
+            plan: GraphTracePlan {
+                graph: warmup.graph,
+                trace: original.trace.clone(),
+                arrival_offset_ns: original.arrival_offset_ns,
+            },
+            template_id: original.trace.id.clone(),
+            t_star_us: lane0_t_star,
+            duration_us: plan_trace_duration_us(&original),
+            original_plan: original,
+        }
+    }
+
+    #[test]
+    fn pressure_resolve_pass0_judges_spawnability_at_each_lane_tstar() {
+        // DF6: `_resolve_pass0_lanes` judges each candidate at its TARGET RANK's
+        // lane-salted t* (Python `_is_spawnable(trace, rank)`), NOT lane 0's
+        // prebuilt plan. Over an active window the straddle-sensitive 2-turn chain
+        // is non-empty at some lane t* and EMPTY at others, so a template
+        // dispatchable at lane 0 can be empty at a higher lane. Judging at the
+        // lane's own t* means that lane never "consumes" (and then dispatches
+        // empty in `admit`) such a template. Deterministically pick a base seed
+        // where the single template is spawnable at lane 0 but EMPTY at lane 1.
+        let base = |seed| TStarWindow {
+            start_min_ratio: 0.1,
+            start_max_ratio: 0.9,
+            random_seed: seed,
+            ..Default::default()
+        };
+        let empty_at = |template: &PressureTemplate, lane: u64, window: TStarWindow| -> bool {
+            let cache: RefCell<HashMap<(usize, u64), GraphTracePlan>> =
+                RefCell::new(HashMap::new());
+            let templates = std::slice::from_ref(template);
+            let t = sample_lane_tstar(template, lane, window);
+            pressure_plan_for_lane(templates, 0, lane, t, window, &cache)
+                .graph
+                .nodes
+                .is_empty()
+        };
+        let seed = (0u64..10_000)
+            .find(|&s| {
+                let w = base(s);
+                let template = pressure_template_for(two_turn_chain_plan(), w);
+                !empty_at(&template, 0, w) && empty_at(&template, 1, w)
+            })
+            .expect("a base seed with lane 0 spawnable but lane 1 empty must exist");
+        let window = base(seed);
+        let templates = vec![pressure_template_for(two_turn_chain_plan(), window)];
+        let cache: RefCell<HashMap<(usize, u64), GraphTracePlan>> = RefCell::new(HashMap::new());
+        let draw = PressureDraw::from_window(window);
+        let (pass0, cursor) = pressure_resolve_pass0_lanes(&templates, 2, &draw, window, &cache);
+
+        // Lane 1 would dispatch EMPTY at its own t*, so the resolve does NOT
+        // consume the template for it (the pre-DF6 lane-0 judge WOULD have
+        // returned `[0, 0]` and dispatched an empty lane 1 -> spurious "contains
+        // no dispatchable nodes" in `admit`). Only lane 0 survives.
+        assert_eq!(
+            pass0,
+            vec![0],
+            "empty-at-lane-1 template must not fill lane 1"
+        );
+        // The skip walk exhausts its bounded budget (`lanes + n` = 3).
+        assert_eq!(cursor, 3);
+        // Invariant: every assigned lane is non-empty at ITS OWN t*.
+        for (lane, &idx) in pass0.iter().enumerate() {
+            let l = lane as u64;
+            let t = sample_lane_tstar(&templates[idx], l, window);
+            assert!(
+                !pressure_plan_for_lane(&templates, idx, l, t, window, &cache)
+                    .graph
+                    .nodes
+                    .is_empty(),
+                "lane {l} assigned a template it dispatches empty at"
+            );
+        }
+    }
+
+    #[test]
+    fn pressure_resolve_pass0_default_window_is_byte_unchanged() {
+        // HARD guard: at the default `[0, 0]` window spawnability collapses to
+        // "the prebuilt lane-0 warmup plan is non-empty" for every lane, so the
+        // resolve is byte-identical to the pre-DF6 lane-0 judge. A 3-template
+        // corpus with an empty middle template skips it and reports the same
+        // cursor as `pressure_pass0_lanes_skip_empty_and_report_cursor`.
+        let mut empty = pressure_one_node_plan("b");
+        empty.graph.nodes.clear();
+        let templates = vec![
+            PressureTemplate {
+                plan: pressure_one_node_plan("a"),
+                template_id: "a".into(),
+                t_star_us: 0.0,
+                duration_us: 0.0,
+                original_plan: pressure_one_node_plan("a"),
+            },
+            PressureTemplate {
+                plan: empty,
+                template_id: "b".into(),
+                t_star_us: 0.0,
+                duration_us: 0.0,
+                original_plan: pressure_one_node_plan("b"),
+            },
+            PressureTemplate {
+                plan: pressure_one_node_plan("c"),
+                template_id: "c".into(),
+                t_star_us: 0.0,
+                duration_us: 0.0,
+                original_plan: pressure_one_node_plan("c"),
+            },
+        ];
+        let window = TStarWindow::default();
+        let draw = PressureDraw::from_window(window);
+        let cache: RefCell<HashMap<(usize, u64), GraphTracePlan>> = RefCell::new(HashMap::new());
+        let (pass0, cursor) = pressure_resolve_pass0_lanes(&templates, 2, &draw, window, &cache);
+        assert_eq!(pass0, vec![0, 2]);
+        assert_eq!(cursor, 3);
+        // Default window judges via the prebuilt lane-0 plan, so no per-lane
+        // rewrite is cached.
+        assert!(cache.borrow().is_empty(), "default window must not cache");
+    }
+
+    #[test]
+    fn profiling_plan_for_lane_chops_higher_lanes_at_their_own_tstar() {
+        // DF6: a pass-0 PROFILING lane chops the ORIGINAL graph at ITS OWN
+        // lane-salted t* (the same instant its warmup lane primed / its identity
+        // records), not lane 0's split. `graph_ir_replay.py:_run_instance` 1837:
+        // `plan = _plan_for_lane(trace, lane_index)`.
+        let window = TStarWindow {
+            start_min_ratio: 0.2,
+            start_max_ratio: 0.8,
+            random_seed: 0,
+            ..Default::default()
+        };
+        let original = tstar_chain_plan().remove(0);
+        let originals = vec![original.clone()];
+        // Profiling `split` = lane-0 frontier chop (what `apply_tstar_split`
+        // produces for the profiling phase).
+        let lane0_t = sample_plan_tstar(&original, window);
+        let split = vec![GraphTracePlan {
+            graph: chop_trie_at_tstar(&single_trace_parsed(&original), lane0_t).graph,
+            trace: original.trace.clone(),
+            arrival_offset_ns: original.arrival_offset_ns,
+        }];
+        let cache: RefCell<HashMap<(usize, u64), GraphTracePlan>> = RefCell::new(HashMap::new());
+
+        // Lane 0 reuses the lane-0 split verbatim; never caches.
+        let lane0 = profiling_plan_for_lane(&originals, &split, 0, 0, window, &cache);
+        assert_eq!(plan_node_ids(&lane0), plan_node_ids(&split[0]));
+        assert!(cache.borrow().is_empty(), "lane 0 must not cache a chop");
+
+        // A higher lane's plan equals `chop_trie_at_tstar` at the SAME t* the lane
+        // records (`profiling_sample_lane_tstar`), and is BYTE-IDENTICAL to the
+        // warmup lane t* for the same template+lane (shared salt).
+        let lane1_t = profiling_sample_lane_tstar(&original, 1, window);
+        assert_eq!(
+            lane1_t,
+            sample_lane_tstar(&pressure_template_for(original.clone(), window), 1, window),
+            "profiling and warmup lane t* must agree for the same (template, lane)"
+        );
+        let expected = chop_trie_at_tstar(&single_trace_parsed(&original), lane1_t).graph;
+        let lane1 = profiling_plan_for_lane(&originals, &split, 0, 1, window, &cache);
+        assert_eq!(
+            plan_node_ids(&lane1),
+            expected.nodes.keys().cloned().collect::<Vec<_>>()
+        );
+        assert_eq!(cache.borrow().len(), 1);
+        // Repeat pass reuses the cache.
+        let lane1_again = profiling_plan_for_lane(&originals, &split, 0, 1, window, &cache);
+        assert_eq!(plan_node_ids(&lane1_again), plan_node_ids(&lane1));
+        assert_eq!(cache.borrow().len(), 1, "repeat pass must reuse the cache");
+
+        // Real divergence: over the window SOME lane chops a DIFFERENT frontier
+        // than lane 0.
+        let lane0_nodes = plan_node_ids(&lane0);
+        let diverged = (1..32u64).any(|lane| {
+            let plan = profiling_plan_for_lane(&originals, &split, 0, lane, window, &cache);
+            plan_node_ids(&plan) != lane0_nodes
+        });
+        assert!(
+            diverged,
+            "no higher profiling lane chopped a distinct frontier"
+        );
+    }
+
+    #[test]
+    fn profiling_plan_for_lane_default_window_is_lane0_split_for_every_lane() {
+        // HARD guard: the default `[0, 0]` window collapses every lane to t*=0, so
+        // each lane reuses the lane-0 split with NO cache population (the
+        // product/default path is byte-unchanged).
+        let window = TStarWindow::default();
+        let original = tstar_chain_plan().remove(0);
+        let originals = vec![original.clone()];
+        let split = apply_tstar_split(&originals, &named_concurrency_phase("profiling"), window);
+        let cache: RefCell<HashMap<(usize, u64), GraphTracePlan>> = RefCell::new(HashMap::new());
+        for lane in 0..5u64 {
+            let plan = profiling_plan_for_lane(&originals, &split, 0, lane, window, &cache);
+            assert_eq!(
+                plan_node_ids(&plan),
+                plan_node_ids(&split[0]),
+                "default window lane {lane} must reuse the lane-0 split"
+            );
+        }
+        assert!(
+            cache.borrow().is_empty(),
+            "default window must never cache a per-lane chop"
         );
     }
 
