@@ -33,7 +33,7 @@ dynamo-full = [
 dynamo-parity = ["dynamo-full", "aiperf/dynamo-parity"]
 
 [dependencies]
-aiperf.workspace = true
+aiperf = { path = "../aiperf", default-features = false, features = ["runner-protocol"] }
 anyhow.workspace = true
 async-trait.workspace = true
 base64.workspace = true
