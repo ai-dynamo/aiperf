@@ -8,10 +8,13 @@ from typing import TYPE_CHECKING, Any
 
 from aiperf.accuracy.models import (
     ACCURACY_OVERALL_TAG,
+    ACCURACY_RECORD_CORRECT_KEY,
+    ACCURACY_RECORD_UNPARSED_KEY,
     ACCURACY_UNPARSED_TAG,
     accuracy_task_tag,
     accuracy_unparsed_task_tag,
 )
+from aiperf.common.enums import MetricConsoleGroup
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import MetricResult
@@ -78,13 +81,13 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
                 "on_dataset_configured must be called before process_result"
             )
         metrics = record_data.metrics
-        correct = metrics.get("accuracy.correct")
+        correct = metrics.get(ACCURACY_RECORD_CORRECT_KEY)
         if correct is None:
             return
 
         task = self._tasks[record_data.metadata.session_num % len(self._tasks)]
         is_correct = float(correct) >= 0.5
-        is_unparsed = float(metrics.get("accuracy.unparsed", 0.0)) >= 0.5
+        is_unparsed = float(metrics.get(ACCURACY_RECORD_UNPARSED_KEY, 0.0)) >= 0.5
 
         self._overall_total += 1
         if is_correct:
@@ -121,6 +124,10 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
                     count=self._overall_total,
                     current=overall_acc,
                     sum=self._overall_correct,
+                    # Rendered by the dedicated Accuracy Benchmark Results table,
+                    # not the main LLM metrics table (a ratio has no avg/p99/etc,
+                    # so it would show as a row of N/A there).
+                    console_group=MetricConsoleGroup.NONE,
                 )
             )
 
@@ -136,6 +143,7 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
                     count=total,
                     current=acc,
                     sum=correct,
+                    console_group=MetricConsoleGroup.NONE,
                 )
             )
 
@@ -148,6 +156,7 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
                     count=self._overall_total,
                     current=self._overall_unparsed / self._overall_total,
                     sum=self._overall_unparsed,
+                    console_group=MetricConsoleGroup.NONE,
                 )
             )
 
@@ -162,6 +171,7 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
                     count=total,
                     current=unparsed / total if total > 0 else 0.0,
                     sum=unparsed,
+                    console_group=MetricConsoleGroup.NONE,
                 )
             )
 

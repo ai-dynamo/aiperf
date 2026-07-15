@@ -1512,6 +1512,13 @@ accuracy_grader:
       "####" marker when present). Compares numerically so "24" and "24.0"
       match. Pure-regex; no lighteval install required.
 
+  mmlu_pro:
+    class: aiperf.accuracy.graders.mmlu_pro:MMLUProGrader
+    description: |
+      MMLU-Pro grader. Extracts the final A-J letter from chain-of-thought
+      output via the upstream 3-tier cascade ("answer is (X)" ->
+      "Answer: X" -> last lone A-J letter). No optional dependencies.
+
 # =============================================================================
 # Accuracy Benchmarks
 # =============================================================================
@@ -1527,6 +1534,18 @@ accuracy_benchmark:
     metadata:
       default_grader: multiple_choice
       default_n_shots: 5
+
+  mmlu_pro:
+    class: aiperf.accuracy.benchmarks.mmlu_pro:MMLUProBenchmark
+    description: |
+      MMLU-Pro benchmark (TIGER-Lab/MMLU-Pro): 14 categories, up to 10 options
+      (A-J), chain-of-thought prompting at parity with the TIGER-AI-Lab
+      evaluate_from_api.py reference. Answer extracted via the "The answer is
+      (X)" cascade.
+    metadata:
+      default_grader: mmlu_pro
+      default_n_shots: 5
+      default_enable_cot: true
 
   aime:
     class: aiperf.accuracy.benchmarks.aime:AIMEBenchmark

@@ -793,6 +793,13 @@ class MetricFlags(Flag):
     timestamped trace run with --no-fixed-schedule), where schedule-fidelity metrics would be
     meaningless."""
 
+    DISABLE_ON_ACCURACY = 1 << 19
+    """Metrics that should not be computed when accuracy benchmarking mode is
+    enabled. Accuracy benchmarks set ``max_tokens`` as a generation ceiling that
+    the model is expected to stop well under (chain-of-thought answers finish
+    early), so metrics that assume ``max_tokens`` is a target — notably the
+    OSL-mismatch family — are meaningless there and only produce noise."""
+
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""
         # Bitwise AND will return the input flags only if all of the given flags are present.
