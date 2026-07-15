@@ -35,13 +35,8 @@ dynamo-full = [
     "dynamo-profile",
 ]
 dynamo-parity = ["dynamo-full", "aiperf/dynamo-parity"]
-# Heap profiling: swaps mimalloc for dhat's tracking allocator; the profiler is
-# flushed at the protocol exit hook (write_json_line) since the runner process::exits.
-dhat-heap = ["dep:dhat"]
 
 [dependencies]
-# Optional heap-profiling allocator, enabled by the `dhat-heap` feature.
-dhat = { version = "0.3", optional = true }
 # Declared directly (not via workspace inheritance) so the runner can opt out of
 # aiperf's default features and re-enable them per runner feature — this is what
 # lets `--no-default-features` produce a lite build that drops parquet/dynosim.
