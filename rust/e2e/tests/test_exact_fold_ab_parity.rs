@@ -52,7 +52,7 @@ mod common;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use arrow::array::{Array, Float64Array, Int64Array};
+use arrow::array::{Array, Float64Array, Int64Array, StringArray};
 use common::*;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use serde_json::{Value, json};
@@ -177,7 +177,10 @@ fn sorted<T, F: Fn(&T) -> String>(items: &[T], f: F) -> Vec<String> {
 
 /// Read every row of a Parquet file: (schema column names, row count, and the
 /// deterministic-column value set). The deterministic columns are the seeded
-/// dataset facts that must match across runs; wall-clock metric columns are ignored.
+/// dataset facts that must match across runs — session identity
+/// (`session_num`/`conversation_id`/`turn_index`) plus the seeded token metrics
+/// (`input_sequence_length`/`output_sequence_length`/`reasoning_token_count`);
+/// wall-clock/UUID columns are ignored.
 fn read_parquet_projection(path: &Path) -> (Vec<String>, usize, BTreeSet<String>) {
     let file = std::fs::File::open(path).expect("open parquet");
     let builder = ParquetRecordBatchReaderBuilder::try_new(file).expect("parquet reader builder");
@@ -188,12 +191,31 @@ fn read_parquet_projection(path: &Path) -> (Vec<String>, usize, BTreeSet<String>
     let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
 
     let sess_idx = schema.index_of("session_num").expect("session_num column");
+    let conv_idx = schema
+        .index_of("conversation_id")
+        .expect("conversation_id column");
+    let turn_idx = schema.index_of("turn_index").expect("turn_index column");
     let isl_idx = schema
         .index_of("input_sequence_length")
         .expect("input_sequence_length column");
     let osl_idx = schema
         .index_of("output_sequence_length")
         .expect("output_sequence_length column");
+    let reasoning_idx = schema
+        .index_of("reasoning_token_count")
+        .expect("reasoning_token_count column");
+
+    // `null` rendering for the nullable dataset columns (conversation_id may be
+    // absent for a single-turn synthetic session; reasoning_token_count is null when
+    // the backend exposes no reasoning) so a present-vs-absent difference between the
+    // two runs still diverges the SET.
+    let opt_f64 = |a: &Float64Array, i: usize| -> String {
+        if a.is_null(i) {
+            "null".to_string()
+        } else {
+            a.value(i).to_string()
+        }
+    };
 
     let mut set = BTreeSet::new();
     for b in &batches {
@@ -202,6 +224,16 @@ fn read_parquet_projection(path: &Path) -> (Vec<String>, usize, BTreeSet<String>
             .as_any()
             .downcast_ref::<Int64Array>()
             .expect("session_num Int64");
+        let conv = b
+            .column(conv_idx)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("conversation_id Utf8");
+        let turn = b
+            .column(turn_idx)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("turn_index Int64");
         let isl = b
             .column(isl_idx)
             .as_any()
@@ -212,16 +244,128 @@ fn read_parquet_projection(path: &Path) -> (Vec<String>, usize, BTreeSet<String>
             .as_any()
             .downcast_ref::<Float64Array>()
             .expect("output_sequence_length Float64");
+        let reasoning = b
+            .column(reasoning_idx)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .expect("reasoning_token_count Float64");
         for i in 0..b.num_rows() {
+            let conv_cell = if conv.is_null(i) {
+                "null".to_string()
+            } else {
+                conv.value(i).to_string()
+            };
             set.insert(format!(
-                "{}|{}|{}",
+                "{}|{}|{}|{}|{}|{}",
                 sess.value(i),
+                conv_cell,
+                turn.value(i),
                 isl.value(i),
-                osl.value(i)
+                osl.value(i),
+                opt_f64(reasoning, i),
             ));
         }
     }
     (names, rows, set)
+}
+
+/// Split one RFC4180 CSV line into fields, honoring the runner's `csv_escape`
+/// quoting (`rust/runner/src/records.rs`): a field is double-quoted when it contains
+/// a comma/quote/newline, and an embedded quote is doubled (`""`). Parsing here (vs a
+/// naive `split(',')`) keeps the projection robust if a serialization regression
+/// pushed a comma into a cell.
+fn parse_csv_line(line: &str) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut cur = String::new();
+    let mut in_quotes = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if in_quotes {
+            if c == '"' {
+                if chars.peek() == Some(&'"') {
+                    cur.push('"');
+                    chars.next();
+                } else {
+                    in_quotes = false;
+                }
+            } else {
+                cur.push(c);
+            }
+        } else if c == '"' {
+            in_quotes = true;
+        } else if c == ',' {
+            fields.push(std::mem::take(&mut cur));
+        } else {
+            cur.push(c);
+        }
+    }
+    fields.push(cur);
+    fields
+}
+
+/// The dataset-deterministic records-CSV columns compared across the two runs:
+/// session identity, phase, cancellation flag, the seeded ISL/OSL/reasoning token
+/// metrics (headers follow `RecordMetricColumn::csv_display_name` — `{Header}
+/// ({unit})`), and the error triple. Excludes the wall-clock/UUID columns
+/// (`x_request_id`, `x_correlation_id`, the `*_ns` timestamps) and the timing
+/// metrics (latency/TTFT/ITL/throughput) that legitimately differ between two online
+/// runs.
+const CSV_DETERMINISTIC_COLUMNS: &[&str] = &[
+    "session_num",
+    "conversation_id",
+    "turn_index",
+    "benchmark_phase",
+    "was_cancelled",
+    "Input Sequence Length (tokens)",
+    "Output Sequence Length (tokens)",
+    "Reasoning Token Count (tokens)",
+    "error_code",
+    "error_type",
+    "error_message",
+];
+
+/// Read the records CSV as (header line, data-row count, sorted deterministic-column
+/// projection SET). The streaming CSV writer is a distinct code path from the legacy
+/// batch writer, so comparing this projected SET (not just header + row count) closes
+/// the gap where a serialization regression preserving header+count would otherwise
+/// pass, mirroring the `records.jsonl` SET comparison.
+fn read_records_csv_projection(r: &RunResult) -> (String, usize, Vec<String>) {
+    let p = r
+        .artifacts
+        .find_file("**/profile_export_records.csv")
+        .expect("records csv");
+    let text = std::fs::read_to_string(&p).unwrap();
+    let mut it = text.lines();
+    let header_line = it.next().unwrap_or_default().to_string();
+    let header = parse_csv_line(&header_line);
+    let col_idx: Vec<usize> = CSV_DETERMINISTIC_COLUMNS
+        .iter()
+        .map(|name| {
+            header
+                .iter()
+                .position(|c| c == name)
+                .unwrap_or_else(|| panic!("records CSV missing column {name}: {header:?}"))
+        })
+        .collect();
+
+    let mut set = Vec::new();
+    let mut rows = 0usize;
+    for line in it {
+        if line.trim().is_empty() {
+            continue;
+        }
+        rows += 1;
+        let fields = parse_csv_line(line);
+        let projected: Vec<&str> = col_idx
+            .iter()
+            .map(|&i| fields.get(i).map(String::as_str).unwrap_or(""))
+            // ASCII unit separator: an unambiguous join delimiter that cannot appear
+            // in the projected cells, so the concatenation is collision-free.
+            .collect();
+        set.push(projected.join("\u{1f}"));
+    }
+    set.sort();
+    (header_line, rows, set)
 }
 
 /// The A/B parity proof: exact-fold (default) vs legacy retain produce the same
@@ -342,26 +486,24 @@ async fn test_exact_fold_matches_legacy_retain_end_to_end() {
         "raw.jsonl request-payload SET diverged between exact-fold and legacy"
     );
 
-    // 5) records CSV — identical header and identical data-row count.
-    let csv_lines = |r: &RunResult| -> (String, usize) {
-        let p = r
-            .artifacts
-            .find_file("**/profile_export_records.csv")
-            .expect("records csv");
-        let text = std::fs::read_to_string(&p).unwrap();
-        let mut it = text.lines();
-        let header = it.next().unwrap_or_default().to_string();
-        let rows = it.filter(|l| !l.trim().is_empty()).count();
-        (header, rows)
-    };
-    let (ceh, cer) = csv_lines(&exact);
-    let (clh, clr) = csv_lines(&legacy);
+    // 5) records CSV — identical header, identical data-row count, AND identical
+    //    dataset-deterministic content SET (order-independent). The streaming CSV
+    //    writer is a distinct code path from the legacy batch writer, so a
+    //    serialization regression preserving header + count could otherwise pass
+    //    undetected; the projected-SET comparison closes that gap, mirroring the
+    //    records.jsonl SET check above.
+    let (ceh, cer, ces) = read_records_csv_projection(&exact);
+    let (clh, clr, cls) = read_records_csv_projection(&legacy);
     assert_eq!(ceh, clh, "records CSV header diverged");
     assert_eq!(
         cer, ENTRIES as usize,
         "records CSV must have one row per record"
     );
     assert_eq!(cer, clr, "records CSV row count diverged");
+    assert_eq!(
+        ces, cls,
+        "records CSV deterministic content SET diverged between exact-fold and legacy"
+    );
 
     // 6) outputs.json — same deterministic (identity + generated text) SET.
     let outputs = |r: &RunResult| -> Vec<Value> {
@@ -402,7 +544,8 @@ async fn test_exact_fold_matches_legacy_retain_end_to_end() {
     assert_eq!(pe.1, pl.1, "parquet row count diverged");
     assert_eq!(
         pe.2, pl.2,
-        "parquet deterministic-column (session/ISL/OSL) SET diverged"
+        "parquet deterministic-column (session/conversation/turn/ISL/OSL/reasoning) \
+         SET diverged"
     );
 }
 
