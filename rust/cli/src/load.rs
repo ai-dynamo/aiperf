@@ -56,10 +56,14 @@ pub(crate) struct Warmup {
     pub sessions: Option<u64>,
     /// Warmup prefill concurrency.
     pub prefill_concurrency: Option<u32>,
+    /// Warmup arrival distribution for `rate` (`poisson`/`gamma`/`constant`).
+    pub rate_mode: Option<String>,
     /// Warmup concurrency-ramp duration.
     pub concurrency_ramp: Option<f64>,
     /// Warmup rate-ramp duration.
     pub rate_ramp: Option<f64>,
+    /// Warmup prefill-concurrency-ramp duration.
+    pub prefill_ramp: Option<f64>,
     /// Warmup duration bound.
     pub duration: Option<f64>,
     /// Warmup grace period.
@@ -313,8 +317,10 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
             requests: flags.warmup_request_count,
             sessions: flags.num_warmup_sessions,
             prefill_concurrency: flags.warmup_prefill_concurrency,
+            rate_mode: flags.warmup_arrival_pattern.clone(),
             concurrency_ramp: flags.warmup_concurrency_ramp_duration,
             rate_ramp: flags.warmup_request_rate_ramp_duration,
+            prefill_ramp: flags.warmup_prefill_concurrency_ramp_duration,
             duration: flags.warmup_duration,
             grace_period: flags.warmup_grace_period,
         })
@@ -724,7 +730,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             true,
             concurrency.unwrap_or(1),
             warmup.rate,
-            None,
+            warmup.rate_mode.as_deref(),
             None,
             concurrency,
             warmup.requests,
@@ -735,6 +741,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         wp.common.prefill_concurrency = warmup.prefill_concurrency;
         wp.common.concurrency_ramp = warmup.concurrency_ramp.map(linear_ramp);
         wp.common.rate_ramp = warmup.rate_ramp.map(linear_ramp);
+        wp.common.prefill_ramp = warmup.prefill_ramp.map(linear_ramp);
         phases.push(wp);
     }
     phases.push(profiling);

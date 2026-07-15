@@ -120,6 +120,16 @@ pub struct ProfileFlags {
     #[arg(long = "warmup-prefill-concurrency")]
     pub warmup_prefill_concurrency: Option<u32>,
 
+    /// Warmup arrival distribution (`--warmup-arrival-pattern`;
+    /// `poisson`/`gamma`/`constant`).
+    #[arg(long = "warmup-arrival-pattern")]
+    pub warmup_arrival_pattern: Option<String>,
+
+    /// Warmup prefill-concurrency-ramp duration
+    /// (`--warmup-prefill-concurrency-ramp-duration`).
+    #[arg(long = "warmup-prefill-concurrency-ramp-duration")]
+    pub warmup_prefill_concurrency_ramp_duration: Option<f64>,
+
     /// Warmup concurrency-ramp duration (`--warmup-concurrency-ramp-duration`).
     #[arg(long = "warmup-concurrency-ramp-duration")]
     pub warmup_concurrency_ramp_duration: Option<f64>,

@@ -674,8 +674,14 @@ impl Benchmark {
             requests: w.requests,
             sessions: w.sessions,
             prefill_concurrency: w.prefill_concurrency,
+            rate_mode: w
+                .phase_type
+                .as_deref()
+                .filter(|t| matches!(*t, "poisson" | "gamma" | "constant"))
+                .map(str::to_string),
             concurrency_ramp: w.concurrency_ramp,
             rate_ramp: w.rate_ramp,
+            prefill_ramp: w.prefill_ramp,
             duration: w.duration,
             grace_period: w.grace_period,
         });
