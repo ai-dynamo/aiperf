@@ -1,0 +1,520 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Wide, per-request Parquet sidecar to `profile_export.jsonl`.
+//!
+//! The runner already writes a row-oriented per-request JSONL
+//! (`rust/runner/src/records.rs::write_records_jsonl` → `profile_export.jsonl`),
+//! one object per request with the shape `{metadata, metrics{tag:{value,unit}},
+//! trace_data?, error}`. That shape is fine for streaming/replay but awkward for
+//! analytical queries over millions of records. This module writes a **columnar
+//! mirror** of that same data: one Parquet row per request, one nullable
+//! `Float64` column per catalog record-metric, so a run can be analyzed
+//! column-wise without reshaping the JSONL.
+//!
+//! # Crate boundary
+//! The runner has no direct `arrow`/`parquet` dependency (it only forwards the
+//! `parquet` feature to this crate), and the metric [`CATALOG`] lives here, so the
+//! columnar assembly lives here. The runner maps each of its `CapturedRecord`s
+//! into the crate-neutral [`PerRecordRow`] and calls [`write_per_record_parquet`];
+//! no metric or error logic is duplicated across the boundary.
+//!
+//! # Schema (self-describing, no byte-parity oracle)
+//! There is no Python per-record Parquet exporter — this is greenfield, so byte
+//! identity is not a target. The target is a correct, stable, self-describing
+//! schema: fixed metadata head, one metric column per [`record_metric_columns`]
+//! entry (catalog order, null when the request produced no finite value), fixed
+//! error tail, and — only when `include_trace` — flat `trace_*` HTTP-timing
+//! columns (mirroring the JSONL's conditional `trace_data`). Per-metric units are
+//! constant, so they live in the `aiperf.units` file metadata rather than a
+//! redundant per-row column.
+//!
+//! # Extension seam
+//! The wide row and the metric-column derivation are the extension points: a new
+//! record-metric automatically becomes a column via [`record_metric_columns`]
+//! (which reuses the exact catalog filter the JSONL writer uses), and a new
+//! metadata/trace field is a new fixed column here plus one mapping line in the
+//! runner.
+
+use std::collections::{BTreeMap, HashMap};
+use std::fs::File;
+use std::path::Path;
+use std::sync::Arc;
+
+use anyhow::{Context, Result};
+use arrow::array::{ArrayRef, BooleanArray, Float64Array, Int64Array, StringArray};
+use arrow::datatypes::{DataType, Field, Schema};
+use arrow::record_batch::RecordBatch;
+use parquet::arrow::ArrowWriter;
+use parquet::basic::Compression;
+use parquet::file::metadata::KeyValue;
+use parquet::file::properties::WriterProperties;
+
+// The per-record metric column set is shared with the records CSV writer and is
+// derived from the catalog, so it lives (ungated) in `metrics_core`. Re-exported
+// here under the `PerRecordMetricColumn` name the sink historically used.
+pub use crate::metrics_core::RecordMetricColumn as PerRecordMetricColumn;
+pub use crate::metrics_core::record_metric_columns;
+
+/// Schema version stamped into the file's key-value metadata.
+const SCHEMA_VERSION: &str = "1.0";
+
+/// Flat HTTP-timing fields mirroring `records.rs::trace_value`. Present on a
+/// [`PerRecordRow`] only when trace capture is enabled; every field is nullable in
+/// the emitted columns.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PerRecordTrace {
+    pub stream_setup_ns: Option<i64>,
+    pub blocked_ns: Option<i64>,
+    pub dns_lookup_ns: Option<i64>,
+    pub connecting_ns: Option<i64>,
+    pub sending_ns: Option<i64>,
+    pub waiting_ns: Option<i64>,
+    pub receiving_ns: Option<i64>,
+    pub duration_ns: Option<i64>,
+    pub connection_reused: Option<bool>,
+    pub data_sent_bytes: Option<i64>,
+    pub data_received_bytes: Option<i64>,
+    pub chunks_sent: Option<i64>,
+    pub chunks_received: Option<i64>,
+}
+
+/// One request's wide row prior to columnarization.
+///
+/// Crate-neutral: the runner fills this from its `CapturedRecord` (metadata +
+/// projected metrics + classified error), and this module owns the arrow/parquet
+/// assembly. `metrics` maps a catalog metric tag to its finite value; a tag absent
+/// from the map becomes a null cell in that metric's column, matching the JSONL's
+/// metric-absence semantics.
+#[derive(Debug, Clone, Default)]
+pub struct PerRecordRow {
+    pub session_num: u64,
+    pub x_request_id: String,
+    pub x_correlation_id: String,
+    pub conversation_id: Option<String>,
+    pub turn_index: u32,
+    pub credit_issued_ns: Option<i64>,
+    pub request_start_ns: i64,
+    pub request_ack_ns: Option<i64>,
+    pub request_end_ns: i64,
+    /// Serialized [`crate::metrics_core::Phase`] (`"warmup"` / `"profiling"`).
+    pub benchmark_phase: &'static str,
+    pub was_cancelled: bool,
+    pub cancellation_time_ns: Option<i64>,
+    /// HTTP or pseudo-status code; `Some(499)` for post-send cancellation.
+    pub error_code: Option<u16>,
+    /// Stable error type mirrored from the JSONL row.
+    pub error_type: Option<&'static str>,
+    pub error_message: Option<String>,
+    /// Metric tag → finite value. Missing tag ⇒ null cell in that column.
+    pub metrics: BTreeMap<String, f64>,
+    /// Flat HTTP timing; `Some` only when trace capture is enabled.
+    pub trace: Option<PerRecordTrace>,
+}
+
+/// Constant `worker_id` column value, matching the JSONL metadata.
+const WORKER_ID: &str = "rust-0";
+/// Constant `record_processor_id` column value, matching the JSONL metadata.
+const RECORD_PROCESSOR_ID: &str = "aiperf-runner";
+
+/// Write the wide per-record Parquet file.
+///
+/// `columns` is the ordered metric column set (typically [`record_metric_columns`]);
+/// `include_trace` toggles the trailing `trace_*` columns (schema-affecting, so it
+/// must match how the rows were built). An empty `rows` writes no file (mirroring
+/// the server-metrics Parquet sink's no-rows behavior). Snappy compression matches
+/// the sibling server-metrics sink.
+pub fn write_per_record_parquet(
+    path: &Path,
+    rows: &[PerRecordRow],
+    columns: &[PerRecordMetricColumn],
+    include_trace: bool,
+) -> Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!("creating per-record parquet directory {}", parent.display())
+        })?;
+    }
+    let schema = build_schema(columns, include_trace);
+    let batch = build_record_batch(&schema, rows, columns, include_trace)?;
+    write_parquet(path, schema, &batch)
+        .with_context(|| format!("writing per-record parquet {}", path.display()))
+}
+
+/// Build the arrow schema: fixed metadata head, metric columns, error tail, and
+/// (when requested) the trace tail. All metric/error/trace/optional columns are
+/// nullable. The `aiperf.units` and `aiperf.schema_version` metadata is attached
+/// here.
+fn build_schema(columns: &[PerRecordMetricColumn], include_trace: bool) -> Arc<Schema> {
+    let mut fields = vec![
+        Field::new("session_num", DataType::Int64, false),
+        Field::new("x_request_id", DataType::Utf8, false),
+        Field::new("x_correlation_id", DataType::Utf8, false),
+        Field::new("conversation_id", DataType::Utf8, true),
+        Field::new("turn_index", DataType::Int64, false),
+        Field::new("credit_issued_ns", DataType::Int64, true),
+        Field::new("request_start_ns", DataType::Int64, false),
+        Field::new("request_ack_ns", DataType::Int64, true),
+        Field::new("request_end_ns", DataType::Int64, false),
+        Field::new("worker_id", DataType::Utf8, false),
+        Field::new("record_processor_id", DataType::Utf8, false),
+        Field::new("benchmark_phase", DataType::Utf8, false),
+        Field::new("was_cancelled", DataType::Boolean, false),
+        Field::new("cancellation_time_ns", DataType::Int64, true),
+    ];
+    for column in columns {
+        fields.push(Field::new(&column.tag, DataType::Float64, true));
+    }
+    fields.extend([
+        Field::new("error_code", DataType::Int64, true),
+        Field::new("error_type", DataType::Utf8, true),
+        Field::new("error_message", DataType::Utf8, true),
+    ]);
+    if include_trace {
+        for name in TRACE_INT_COLUMNS {
+            fields.push(Field::new(*name, DataType::Int64, true));
+        }
+        fields.push(Field::new(
+            "trace_connection_reused",
+            DataType::Boolean,
+            true,
+        ));
+    }
+
+    Arc::new(Schema::new_with_metadata(fields, build_metadata(columns)))
+}
+
+/// Int64 trace columns in emission order. `trace_connection_reused` (Boolean) is
+/// appended after these by the schema/batch builders.
+const TRACE_INT_COLUMNS: &[&str] = &[
+    "trace_stream_setup_ns",
+    "trace_blocked_ns",
+    "trace_dns_lookup_ns",
+    "trace_connecting_ns",
+    "trace_sending_ns",
+    "trace_waiting_ns",
+    "trace_receiving_ns",
+    "trace_duration_ns",
+    "trace_data_sent_bytes",
+    "trace_data_received_bytes",
+    "trace_chunks_sent",
+    "trace_chunks_received",
+];
+
+/// File key-value metadata: schema version, crate version, and the constant
+/// per-metric units map (units are per-metric constant, so they belong here rather
+/// than in a redundant per-row column).
+fn build_metadata(columns: &[PerRecordMetricColumn]) -> HashMap<String, String> {
+    let units: BTreeMap<&str, &str> = columns
+        .iter()
+        .map(|column| (column.tag.as_str(), column.unit.as_str()))
+        .collect();
+    let mut metadata = HashMap::new();
+    metadata.insert(
+        "aiperf.schema_version".to_string(),
+        SCHEMA_VERSION.to_string(),
+    );
+    metadata.insert(
+        "aiperf.version".to_string(),
+        env!("CARGO_PKG_VERSION").to_string(),
+    );
+    metadata.insert(
+        "aiperf.units".to_string(),
+        serde_json::to_string(&units).unwrap_or_else(|_| "{}".to_string()),
+    );
+    metadata
+}
+
+/// Columnarize the rows against the schema, in the schema's column order.
+fn build_record_batch(
+    schema: &Arc<Schema>,
+    rows: &[PerRecordRow],
+    columns: &[PerRecordMetricColumn],
+    include_trace: bool,
+) -> Result<RecordBatch> {
+    let mut arrays: Vec<ArrayRef> = Vec::with_capacity(schema.fields().len());
+
+    arrays.push(int_column(rows.iter().map(|r| Some(r.session_num as i64))));
+    arrays.push(string_column(
+        rows.iter().map(|r| Some(r.x_request_id.clone())),
+    ));
+    arrays.push(string_column(
+        rows.iter().map(|r| Some(r.x_correlation_id.clone())),
+    ));
+    arrays.push(string_column(
+        rows.iter().map(|r| r.conversation_id.clone()),
+    ));
+    arrays.push(int_column(rows.iter().map(|r| Some(r.turn_index as i64))));
+    arrays.push(int_column(rows.iter().map(|r| r.credit_issued_ns)));
+    arrays.push(int_column(rows.iter().map(|r| Some(r.request_start_ns))));
+    arrays.push(int_column(rows.iter().map(|r| r.request_ack_ns)));
+    arrays.push(int_column(rows.iter().map(|r| Some(r.request_end_ns))));
+    arrays.push(string_column(
+        rows.iter().map(|_| Some(WORKER_ID.to_string())),
+    ));
+    arrays.push(string_column(
+        rows.iter().map(|_| Some(RECORD_PROCESSOR_ID.to_string())),
+    ));
+    arrays.push(string_column(
+        rows.iter().map(|r| Some(r.benchmark_phase.to_string())),
+    ));
+    arrays.push(bool_column(rows.iter().map(|r| Some(r.was_cancelled))));
+    arrays.push(int_column(rows.iter().map(|r| r.cancellation_time_ns)));
+
+    for column in columns {
+        arrays.push(float_column(
+            rows.iter().map(|r| r.metrics.get(&column.tag).copied()),
+        ));
+    }
+
+    arrays.push(int_column(rows.iter().map(|r| r.error_code.map(i64::from))));
+    arrays.push(string_column(
+        rows.iter().map(|r| r.error_type.map(str::to_string)),
+    ));
+    arrays.push(string_column(rows.iter().map(|r| r.error_message.clone())));
+
+    if include_trace {
+        // Absent trace ⇒ null across every trace column for that row.
+        let trace_int = |select: fn(&PerRecordTrace) -> Option<i64>| -> ArrayRef {
+            int_column(rows.iter().map(|r| r.trace.as_ref().and_then(select)))
+        };
+        arrays.push(trace_int(|t| t.stream_setup_ns));
+        arrays.push(trace_int(|t| t.blocked_ns));
+        arrays.push(trace_int(|t| t.dns_lookup_ns));
+        arrays.push(trace_int(|t| t.connecting_ns));
+        arrays.push(trace_int(|t| t.sending_ns));
+        arrays.push(trace_int(|t| t.waiting_ns));
+        arrays.push(trace_int(|t| t.receiving_ns));
+        arrays.push(trace_int(|t| t.duration_ns));
+        arrays.push(trace_int(|t| t.data_sent_bytes));
+        arrays.push(trace_int(|t| t.data_received_bytes));
+        arrays.push(trace_int(|t| t.chunks_sent));
+        arrays.push(trace_int(|t| t.chunks_received));
+        arrays.push(bool_column(
+            rows.iter()
+                .map(|r| r.trace.as_ref().and_then(|t| t.connection_reused)),
+        ));
+    }
+
+    RecordBatch::try_new(schema.clone(), arrays)
+        .context("assembling per-record parquet record batch")
+}
+
+/// Build a nullable UTF-8 column.
+fn string_column<I: Iterator<Item = Option<String>>>(values: I) -> ArrayRef {
+    Arc::new(StringArray::from_iter(values)) as ArrayRef
+}
+
+/// Build a nullable Int64 column.
+fn int_column<I: Iterator<Item = Option<i64>>>(values: I) -> ArrayRef {
+    Arc::new(Int64Array::from_iter(values)) as ArrayRef
+}
+
+/// Build a nullable Float64 column.
+fn float_column<I: Iterator<Item = Option<f64>>>(values: I) -> ArrayRef {
+    Arc::new(Float64Array::from_iter(values)) as ArrayRef
+}
+
+/// Build a nullable Boolean column.
+fn bool_column<I: Iterator<Item = Option<bool>>>(values: I) -> ArrayRef {
+    Arc::new(BooleanArray::from_iter(values)) as ArrayRef
+}
+
+/// Write the record batch to Parquet with Snappy compression and file-level
+/// key-value metadata mirroring the schema metadata.
+fn write_parquet(path: &Path, schema: Arc<Schema>, batch: &RecordBatch) -> Result<()> {
+    let file = File::create(path)
+        .with_context(|| format!("creating per-record parquet {}", path.display()))?;
+    let kv: Vec<KeyValue> = schema
+        .metadata()
+        .iter()
+        .map(|(key, value)| KeyValue::new(key.clone(), value.clone()))
+        .collect();
+    let props = WriterProperties::builder()
+        .set_compression(Compression::SNAPPY)
+        .set_key_value_metadata(Some(kv))
+        .build();
+    let mut writer = ArrowWriter::try_new(file, schema, Some(props))
+        .context("constructing per-record parquet arrow writer")?;
+    writer
+        .write(batch)
+        .context("writing per-record parquet batch")?;
+    writer
+        .close()
+        .context("finalizing per-record parquet file")?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow::array::{Array, BooleanArray, Float64Array, Int64Array, StringArray};
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+
+    fn read_back(path: &Path) -> (RecordBatch, HashMap<String, String>) {
+        let file = File::open(path).unwrap();
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file).unwrap();
+        let metadata: HashMap<String, String> = builder
+            .metadata()
+            .file_metadata()
+            .key_value_metadata()
+            .map(|kv| {
+                kv.iter()
+                    .filter_map(|entry| entry.value.clone().map(|value| (entry.key.clone(), value)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut reader = builder.build().unwrap();
+        let batch = reader.next().unwrap().unwrap();
+        (batch, metadata)
+    }
+
+    fn column<'a, T: 'static>(batch: &'a RecordBatch, name: &str) -> &'a T {
+        let idx = batch.schema().index_of(name).unwrap();
+        batch
+            .column(idx)
+            .as_any()
+            .downcast_ref::<T>()
+            .expect("column type mismatch")
+    }
+
+    fn success_row() -> PerRecordRow {
+        PerRecordRow {
+            session_num: 7,
+            x_request_id: "req-7".into(),
+            x_correlation_id: "session-7".into(),
+            conversation_id: Some("conv-7".into()),
+            turn_index: 1,
+            request_start_ns: 1_000_000,
+            request_end_ns: 11_000_000,
+            benchmark_phase: "profiling",
+            metrics: BTreeMap::from([
+                ("request_latency".to_string(), 10.0),
+                ("time_to_first_token".to_string(), 5.0),
+            ]),
+            ..PerRecordRow::default()
+        }
+    }
+
+    fn cancelled_row() -> PerRecordRow {
+        PerRecordRow {
+            session_num: 3,
+            x_request_id: "req-3".into(),
+            x_correlation_id: "session-3".into(),
+            turn_index: 0,
+            request_start_ns: 1_000_000,
+            request_end_ns: 5_000_000,
+            benchmark_phase: "profiling",
+            was_cancelled: true,
+            cancellation_time_ns: Some(5_000_000),
+            error_code: Some(499),
+            error_type: Some("RequestCancellationError"),
+            error_message: Some("request was cancelled by benchmark policy".into()),
+            // Deliberately missing request_latency to exercise null metric cells.
+            metrics: BTreeMap::from([("error_isl".to_string(), 128.0)]),
+            ..PerRecordRow::default()
+        }
+    }
+
+    #[test]
+    fn metric_columns_match_the_jsonl_record_filter() {
+        let columns = record_metric_columns();
+        let tags: Vec<&str> = columns.iter().map(|c| c.tag.as_str()).collect();
+        // Common per-record metrics are present; hidden/aggregate ones are not.
+        assert!(tags.contains(&"request_latency"));
+        assert!(tags.contains(&"time_to_first_token"));
+        // request_count is an aggregate (not a Record metric) — never a column.
+        assert!(!tags.contains(&"request_count"));
+        // Every metric carries a non-empty unit for the aiperf.units metadata.
+        assert!(columns.iter().all(|c| !c.unit.is_empty()));
+    }
+
+    #[test]
+    fn empty_rows_writes_no_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("profile_export.parquet");
+        write_per_record_parquet(&path, &[], &record_metric_columns(), false).unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn wide_schema_values_nulls_and_units_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("profile_export.parquet");
+        let columns = record_metric_columns();
+        write_per_record_parquet(&path, &[success_row(), cancelled_row()], &columns, false)
+            .unwrap();
+
+        let (batch, metadata) = read_back(&path);
+        assert_eq!(batch.num_rows(), 2);
+
+        // Fixed metadata columns.
+        let session = column::<Int64Array>(&batch, "session_num");
+        assert_eq!(session.value(0), 7);
+        assert_eq!(session.value(1), 3);
+        let phase = column::<StringArray>(&batch, "benchmark_phase");
+        assert_eq!(phase.value(0), "profiling");
+        let worker = column::<StringArray>(&batch, "worker_id");
+        assert_eq!(worker.value(0), "rust-0");
+        let conv = column::<StringArray>(&batch, "conversation_id");
+        assert!(conv.is_valid(0));
+        assert!(conv.is_null(1));
+        let cancelled = column::<BooleanArray>(&batch, "was_cancelled");
+        assert!(!cancelled.value(0));
+        assert!(cancelled.value(1));
+
+        // Metric columns: present ⇒ value, absent ⇒ null.
+        let latency = column::<Float64Array>(&batch, "request_latency");
+        assert_eq!(latency.value(0), 10.0);
+        assert!(latency.is_null(1), "cancelled row has no request_latency");
+
+        // Error tail.
+        let code = column::<Int64Array>(&batch, "error_code");
+        assert!(code.is_null(0));
+        assert_eq!(code.value(1), 499);
+        let etype = column::<StringArray>(&batch, "error_type");
+        assert!(etype.is_null(0));
+        assert_eq!(etype.value(1), "RequestCancellationError");
+
+        // File metadata.
+        assert_eq!(metadata.get("aiperf.schema_version").unwrap(), "1.0");
+        let units: BTreeMap<String, String> =
+            serde_json::from_str(metadata.get("aiperf.units").unwrap()).unwrap();
+        assert_eq!(units.get("request_latency").map(String::as_str), Some("ms"));
+
+        // No trace columns when include_trace is false.
+        assert!(batch.schema().index_of("trace_duration_ns").is_err());
+    }
+
+    #[test]
+    fn trace_columns_present_and_nullable_when_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("profile_export.parquet");
+        let mut with_trace = success_row();
+        with_trace.trace = Some(PerRecordTrace {
+            duration_ns: Some(9_000_000),
+            connection_reused: Some(true),
+            data_received_bytes: Some(4096),
+            ..PerRecordTrace::default()
+        });
+        // Second row has no trace ⇒ all trace columns null.
+        write_per_record_parquet(
+            &path,
+            &[with_trace, cancelled_row()],
+            &record_metric_columns(),
+            true,
+        )
+        .unwrap();
+
+        let (batch, _) = read_back(&path);
+        let duration = column::<Int64Array>(&batch, "trace_duration_ns");
+        assert_eq!(duration.value(0), 9_000_000);
+        assert!(duration.is_null(1));
+        let reused = column::<BooleanArray>(&batch, "trace_connection_reused");
+        assert!(reused.value(0));
+        assert!(reused.is_null(1));
+    }
+}

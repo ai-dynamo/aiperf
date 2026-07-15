@@ -1,0 +1,3647 @@
+[
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4651010859974282656
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4706518535971929953
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4649310061152184016
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4704699290904559457
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4650469882262086191
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4706115088157858011
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4649039572296085784
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4704369104312642670
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4650966274445135879
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4706491323124550328
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4649287768387610628
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4704672078057179832
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4650151977579282923
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4705727020918107927
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4648880619954684150
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4704175070692767628
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4639211673836035306
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4694360074973295371
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4644357577020663610
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4699647736560209091
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4639037771919704325
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4694147792360586655
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4644314101541580865
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4699594665907031912
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4650611289629209801
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4706274657587486072
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4649110275979647588
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4704455412520115576
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647379389406935128
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702547241679046132
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647441549310377004
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702585181073236730
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4642732723289099486
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4697956321195678842
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4645237839383929656
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4700722275577867837
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 0,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4648857141338874809
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4704146410273078491
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4648233201834480092
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4703384765370252910
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4643259336995645394
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4698307111529669275
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4645381523104732137
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4700897670744863054
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4639562917740608075
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4694788839505244553
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4644445387996806803
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4699754927693196386
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4644952428815017058
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4700373874004488201
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4646228069014417969
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4701844531478535170
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4651750735679423948
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4706970120264618730
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4649679999004754662
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4705150875197248234
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4645426155274853015
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4700952153374405141
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4646464932244335948
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4701989101321014405
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4648795653489907134
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4704071351863694122
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4648202457909996255
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4703347236165560725
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4638982260051349431
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4694080028849411247
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4644300223574492142
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4699577725029238060
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4651119868259072680
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4706585069348876989
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4649364565294579028
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4704765824281506493
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 1,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4637475488989254497
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4692992739468409364
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4644077546709262956
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4699305902683987589
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4636716793425442786
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4692308525171093304
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4643982709763786492
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4699190134928279015
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4648278016352212163
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4703439470592093816
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647943639341148770
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4703031295529760572
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-0",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4648733398966780017
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4703995357572767465
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4648171330648432696
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4703309239020097396
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4648871759851937569
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4704164255137657056
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4648240511091011472
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4703393687802542192
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4635258543551571396
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4690528434993027642
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4643800428529552568
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4698967623656020807
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "t-1#0",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4631503294840002658
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4686938349667172963
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4643499817548371334
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4698600666891883558
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 0,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647597494030343696
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702680362176732026
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647550601622081288
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702651741322079677
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 1,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.0,
+    "max": 0.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4646626949797583712
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702087988987791605
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647065329505701296
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.25,
+    "max": 0.75,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702355554727609466
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4652007308841189376
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 1.0,
+    "max": 1.0,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4707126720094797824
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 0.0,
+    "t_star_us_bits": 0
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 1000.0,
+    "t_star_us_bits": 4647503709213818880
+  },
+  {
+    "base_seed": 42,
+    "trace_id": "conv-9",
+    "lane": 5,
+    "min": 0.5,
+    "max": 0.5,
+    "duration_us": 5000000.0,
+    "t_star_us_bits": 4702623120467427328
+  }
+]

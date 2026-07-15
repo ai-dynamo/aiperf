@@ -84,14 +84,6 @@ const RESERVED_NAMES: &[&str] = &[
     "bucket_count",
 ];
 
-/// Server-metrics Parquet export policy.
-#[derive(Debug, Clone, Default, serde::Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct ParquetExportConfig {
-    /// Emit `server_metrics_export.parquet`.
-    pub enabled: bool,
-}
-
 /// The server-metrics Parquet [`Exporter`].
 pub struct ParquetExporter;
 

@@ -17,6 +17,17 @@ pub struct MockServerConfig {
     #[arg(long, env = "MOCK_SERVER_HOST", default_value = "127.0.0.1")]
     pub host: String,
 
+    /// Optional KServe Open Inference Protocol (OIP) v2 gRPC listener port. When
+    /// set, a second listener serves the KServe `GRPCInferenceService`
+    /// (`ModelInfer`, `ModelStreamInfer`, `ModelReady`, `ServerLive`,
+    /// `ServerReady`) over h2c on `--host:<this>`, mirroring ai-dynamo's
+    /// frontend so AIPerf's native gRPC KServe client has a mock target. The
+    /// HTTP frontend on `--port` is unchanged. Unset (the default) means no gRPC
+    /// listener starts. Not supported together with `--processes > 1` (the L4
+    /// balancer is HTTP-only): gRPC is warned-and-skipped in that mode.
+    #[arg(long, env = "MOCK_SERVER_GRPC_PORT")]
+    pub grpc_port: Option<u16>,
+
     /// Tokio worker-thread count. `0` (the default) means auto = nproc; any
     /// explicit value, including `1`, is honored verbatim.
     #[arg(short = 'w', long, env = "MOCK_SERVER_WORKERS", default_value_t = 0)]
@@ -486,6 +497,7 @@ mod tests {
         let cfg = MockServerConfig::default();
         assert_eq!(cfg.port, 8000);
         assert_eq!(cfg.host, "127.0.0.1");
+        assert_eq!(cfg.grpc_port, None);
         assert_eq!(cfg.processes, 1);
         assert_eq!(cfg.workers, 0);
         assert_eq!(cfg.ttft, 20.0);

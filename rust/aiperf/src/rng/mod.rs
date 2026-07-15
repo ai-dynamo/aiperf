@@ -15,6 +15,7 @@ pub mod error;
 pub mod generator;
 pub mod hash_id;
 pub mod namespace;
+pub mod numpy_pcg64;
 
 pub use derive::{RngRoot, derive_seed_parts, derive_seed_u64};
 pub use dist::{

@@ -346,6 +346,14 @@ impl Composer for SyntheticComposer {
                 conversation.turns.push(turn);
             }
             conversations.push(conversation);
+            // Streaming build: each conversation's prompts/media are interned into
+            // `segments` and its heavy intermediates dropped before the next, so a
+            // throttled progress line is the only per-conversation work retained.
+            crate::dataset::dataset::report_build_progress(
+                "synthetic",
+                conversation_index + 1,
+                shape.entries,
+            );
         }
         Ok(conversations)
     }

@@ -559,6 +559,17 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   fail-closed (`rust_wire`, `validate_plan`), and the online path folds+drops each finalized
   record (`RunCapture::finish_fold_into`). Bounds the accumulator/coordinator finalize;
   online-path peak RSS still gated by per-worker record retention until drain (follow-up).
+  Opt-in per-record sidecars: the `artifacts.records` format list takes `jsonl`, `csv`, and
+  `parquet` (any subset, e.g. `records: [jsonl, csv, parquet]`). `parquet` writes a wide
+  `profile_export.parquet` (one row per request, one nullable column per catalog record-metric,
+  `aiperf.units` file metadata, `trace_*` columns when `artifacts.trace`); `csv` writes a flat
+  `profile_export_records.csv` (metadata + a `{tag}_value`/`{tag}_unit` pair per metric +
+  `error_code`/`error_type`/`error_message`, `trace_*` when trace on), ported from the legacy
+  Python `RecordExportCsvResultsProcessor`. Runner-owned (not `Exporter`s over `NativeReport`):
+  `rust/runner/src/records.rs::write_records_{parquet,csv}` drive the writers at the scheduled +
+  graph callsites over the shared `aiperf::metrics_core::record_metric_columns`; parquet is gated
+  on the `parquet` feature (a lite runner warns/skips), CSV is stdlib. Both are force-disabled on
+  the DynoSim/sketch paths.
 - `specs/2026-07-11-aiperf-rust-endpoints-design.md` — **built + implementation/
   token-native addenda**: every tier-1 and tier-2 dialect plus the open PR-1113
   `vllm_generate` factory is implemented behind trait-backed prepared endpoints,
@@ -626,6 +637,21 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   Carries the P1 rename pass (DTO/placement/method renames, landed after the
   concurrent bodyplan work committed `http.rs`); the P1 method-fold,
   `inference_dimensions` signature change, and discarded-observer cleanup stay deferred.
+- `specs/2026-07-14-unified-execution-substrate-design.md` — **the S5 endgame**
+  (design, not built): unify scheduled + graph so any `Workload` runs over any
+  transport, finally enabling `grpc + graph`. Stage 1 (shippable now on
+  `ajc/rust-threaded`) extracts one object-safe `Dispatcher` trait from the
+  identical HTTP/gRPC `dispatch_collect`, `dyn`-ifies the graph sink's concrete
+  `Rc<TransportSink>` (`graph_execution.rs:243`), adds a gRPC arm to the graph
+  endpoint runtime, and **deletes the `RunnerPairFactory` abstraction entirely**
+  (`pairs` map, `register_pair`, the `*Pair` objects) — moving `prepare` onto the
+  workload factory and composing transport × workload inline via the existing
+  descriptor predicate, so `grpc+graph` falls out with no `*Pair` cell object (`M =
+  OpenAiChatMessage` stays; wire dialect ≠ transport). Stage 2 folds the two placement backends + two
+  workload drivers into one `WorkerPool`/`Session` substrate (a flat scheduled turn
+  = a 1-node `Trace`), built on P3's `run_sharded_scheduled` template + P5's
+  `next_arrival_target` pacer + the `OnFailure` enum, reducing the transport axis to
+  a single `Dispatcher` registry. Realizes cellular §S5.
 - `specs/2026-07-13-segment-unification-design.md` — **segment unification**
   (design): collapse `Turn`'s five body fields (content/messages/raw_payload/
   raw_messages/raw_token_ids) into segment `Handle`s in the one `SegmentPool`;
