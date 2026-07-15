@@ -476,7 +476,7 @@ pub fn run_cellular(
         // is already their barrier.)
         if let Some(server) = artifact_server.as_ref() {
             server
-                .wait_for_cells(cell_count, collect_timeout())
+                .wait_for_cells(cell_count, artifact_upload_timeout())
                 .await
                 .context("waiting for cellular artifact uploads")?;
         }
@@ -604,6 +604,23 @@ fn collect_timeout() -> std::time::Duration {
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(7200);
+    std::time::Duration::from_secs(secs)
+}
+
+/// The deadline for the Stage E artifact-upload barrier ([`ArtifactUploadServer::
+/// wait_for_cells`](crate::runner_protocol::artifact_shipping::ArtifactUploadServer::wait_for_cells)),
+/// distinct from [`collect_timeout`]. By the time this barrier runs every cell has
+/// already shipped its velo partition (metrics), so only the per-record artifact
+/// bytes remain in flight — a few minutes is ample, and a much tighter bound than
+/// the whole-run `collect_timeout` (default 2h). Env-overridable
+/// (`AIPERF_CELL_ARTIFACT_UPLOAD_TIMEOUT`, seconds; default 5 minutes), so a cell
+/// that dies mid-upload fails the run in minutes rather than hours.
+#[cfg(feature = "velo")]
+fn artifact_upload_timeout() -> std::time::Duration {
+    let secs = std::env::var("AIPERF_CELL_ARTIFACT_UPLOAD_TIMEOUT")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(300);
     std::time::Duration::from_secs(secs)
 }
 

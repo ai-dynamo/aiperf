@@ -60,7 +60,7 @@ use axum::extract::{DefaultBodyLimit, Path as AxumPath, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::post;
 use bytes::Bytes;
-use tokio::sync::{Mutex, Notify, mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 
@@ -273,8 +273,14 @@ fn validate_artifact_relpath(rel: &str, allowed: &HashSet<String>) -> Result<Pat
 struct UploadState {
     temp_root: PathBuf,
     allowed: HashSet<String>,
-    done: Mutex<HashSet<u32>>,
-    done_notify: Notify,
+    /// The set of cells that have signaled `/done`, published through a
+    /// [`watch`] channel. `watch` is version-tracked, so a `send` that lands
+    /// between the barrier's set-size check and its `changed().await` bumps the
+    /// version and wakes the waiter anyway — unlike a bare [`tokio::sync::Notify`]
+    /// (whose `notify_waiters()` stores no permit), which could drop that wakeup
+    /// and hang the barrier until the upload timeout. See
+    /// [`ArtifactUploadServer::wait_for_cells`].
+    done: watch::Sender<HashSet<u32>>,
 }
 
 /// The controller-side HTTP server cells POST their zstd-compressed artifact files
@@ -300,8 +306,7 @@ impl ArtifactUploadServer {
         let state = Arc::new(UploadState {
             temp_root,
             allowed,
-            done: Mutex::new(HashSet::new()),
-            done_notify: Notify::new(),
+            done: watch::Sender::new(HashSet::new()),
         });
         let app = Router::new()
             .route("/cell/{cell_id}/artifact/{*file}", post(upload_artifact))
@@ -346,21 +351,34 @@ impl ArtifactUploadServer {
         cell_count: u32,
         timeout: std::time::Duration,
     ) -> Result<()> {
+        // A `watch` receiver is version-tracked: `borrow_and_update` marks the
+        // currently-seen version, and `changed()` returns immediately if a cell's
+        // `/done` bumped the version since — even one that landed between the
+        // set-size check and the `.await`. That closes the lost-wakeup race a bare
+        // `Notify::notify_waiters()` (no stored permit) would open, where the final
+        // cell's notification fired before the barrier registered a waiter and the
+        // run then hung until the timeout despite every upload succeeding.
+        let mut rx = self.state.done.subscribe();
         let wait = async {
             loop {
-                {
-                    let done = self.state.done.lock().await;
-                    if done.len() >= cell_count as usize {
-                        return;
-                    }
+                if rx.borrow_and_update().len() >= cell_count as usize {
+                    return;
                 }
-                self.state.done_notify.notified().await;
+                if rx.changed().await.is_err() {
+                    // All senders dropped (server shutting down): no further cell can
+                    // signal, so stop waiting and let the caller's completeness check
+                    // (concat over the landed dirs) decide.
+                    return;
+                }
             }
         };
         tokio::time::timeout(timeout, wait).await.map_err(|_| {
-            let done = self.state.done.try_lock().map(|d| d.len()).unwrap_or(0);
+            let done = self.state.done.borrow();
+            let missing: Vec<u32> = (0..cell_count).filter(|id| !done.contains(id)).collect();
             anyhow::anyhow!(
-                "artifact upload barrier timed out with {done} of {cell_count} cells done"
+                "artifact upload barrier timed out after {timeout:?} with {} of {cell_count} \
+                 cells done (missing cells: {missing:?})",
+                done.len(),
             )
         })
     }
@@ -441,8 +459,12 @@ async fn cell_done(
     State(state): State<Arc<UploadState>>,
     AxumPath(cell_id): AxumPath<u32>,
 ) -> StatusCode {
-    state.done.lock().await.insert(cell_id);
-    state.done_notify.notify_waiters();
+    // `send_modify` mutates the set and bumps the watch version even when no
+    // receiver is currently parked, so a barrier that has not yet registered still
+    // observes this cell on its next `borrow_and_update` — the wakeup cannot be lost.
+    state.done.send_modify(|done| {
+        done.insert(cell_id);
+    });
     StatusCode::OK
 }
 
@@ -720,6 +742,88 @@ mod tests {
         sink.write_chunk(&payload[400..]).unwrap();
         sink.finish().unwrap();
         assert_eq!(std::fs::read(&dest).unwrap(), payload);
+    }
+
+    /// Deterministic lost-wakeup regression: fill the barrier to completion (every
+    /// cell's `/done` recorded) BEFORE any waiter registers, then assert
+    /// `wait_for_cells` returns promptly rather than blocking until the timeout.
+    ///
+    /// With the previous `Notify::notify_waiters()` barrier this deadlocked: the
+    /// final cell's notification fired with no waiter parked and was dropped, so the
+    /// barrier blocked for the whole timeout despite every upload having landed. The
+    /// `watch`-based barrier is version-tracked, so the pre-completed state is
+    /// observed on the first `borrow_and_update` and the wait returns immediately.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn wait_for_cells_returns_when_completed_before_waiter_registers() {
+        use std::time::{Duration, Instant};
+
+        let root = tempfile::tempdir().unwrap();
+        let server = ArtifactUploadServer::start(
+            "127.0.0.1:0".parse().unwrap(),
+            root.path().to_path_buf(),
+            HashSet::new(),
+        )
+        .await
+        .unwrap();
+
+        let cell_count = 3u32;
+        // Complete the barrier up-front, exactly as concurrent `cell_done` handlers
+        // would have — the wakeups all fire before the waiter below exists.
+        server.state.done.send_modify(|done| {
+            for id in 0..cell_count {
+                done.insert(id);
+            }
+        });
+
+        // A generous timeout: if the wakeup were lost the wait would block the full
+        // 30s; the assertion proves it returns near-instantly instead.
+        let start = Instant::now();
+        server
+            .wait_for_cells(cell_count, Duration::from_secs(30))
+            .await
+            .expect("barrier must release when all cells completed before the waiter registered");
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "wait_for_cells returned after {:?}, i.e. blocked on a lost wakeup",
+            start.elapsed()
+        );
+
+        server.shutdown().await;
+    }
+
+    /// The barrier times out (rather than hanging forever) when a cell never posts
+    /// `/done`, and the error names the missing cell so an operator can see which pod
+    /// died mid-upload.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn wait_for_cells_times_out_and_names_missing_cells() {
+        use std::time::Duration;
+
+        let root = tempfile::tempdir().unwrap();
+        let server = ArtifactUploadServer::start(
+            "127.0.0.1:0".parse().unwrap(),
+            root.path().to_path_buf(),
+            HashSet::new(),
+        )
+        .await
+        .unwrap();
+
+        // Two of three cells finish; cell 2 never does.
+        server.state.done.send_modify(|done| {
+            done.insert(0);
+            done.insert(1);
+        });
+
+        let error = server
+            .wait_for_cells(3, Duration::from_millis(200))
+            .await
+            .expect_err("barrier must time out when a cell never signals done");
+        let message = error.to_string();
+        assert!(
+            message.contains("2 of 3") && message.contains('2'),
+            "timeout error should report progress and the missing cell: {message}"
+        );
+
+        server.shutdown().await;
     }
 
     /// End-to-end in-process integration (no k8s): stand up the controller upload
