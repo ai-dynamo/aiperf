@@ -703,6 +703,10 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     // off (mirrors `_authored_sidecars`); other transports keep the default
     // GPU-telemetry + server-metrics scraping.
     let is_dynosim = inputs.transport.is_dynosim();
+    // Sketch mode is enabled by the `--sketch-metrics` flag OR the
+    // `AIPERF_METRICS_SKETCH` env var (Python reads it via
+    // `Environment.METRICS.SKETCH`, so both surfaces must honor it).
+    let sketch_metrics = inputs.sketch_metrics || env_sketch_enabled();
     // DynoSim forces all sidecars off; otherwise GPU-telemetry and
     // server-metrics scraping are enabled by default and independently toggled.
     let gpu_enabled = inputs.gpu_telemetry_enabled && !is_dynosim;
@@ -766,7 +770,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         metrics: Some(Metrics {
             slos: inputs.slos.clone(),
             slice_duration_seconds: inputs.slice_duration,
-            sketch: inputs.sketch_metrics.then_some(true),
+            sketch: sketch_metrics.then_some(true),
         }),
         slos: (!inputs.slos.is_empty()).then(|| inputs.slos.clone()),
         artifacts: Some(Artifacts {
@@ -775,7 +779,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             // Sketch retention keeps no per-record values, and DynoSim emits its
             // own backend Dynamo artifacts, so both drop the per-record JSONL
             // (mirrors `_authored_artifacts`, which pops it and forces trace off).
-            records_path: (!inputs.sketch_metrics && !is_dynosim)
+            records_path: (!sketch_metrics && !is_dynosim)
                 .then(|| "profile_export.jsonl".to_string()),
             ..Default::default()
         }),
@@ -800,7 +804,11 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         input_config,
         serde_json::json!({}),
     );
-    if let Some(url) = &inputs.otel_url {
+    // Sketch retention keeps no per-record values, so the per-record OTLP sink is
+    // suppressed (mirrors `rust_wire`, which drops otel under sketch).
+    if let Some(url) = &inputs.otel_url
+        && !sketch_metrics
+    {
         export.otel = Some(crate::model::export::OtelExport::build(
             url,
             &benchmark_id,
@@ -1154,6 +1162,24 @@ fn build_video_spec(flags: &ProfileFlags) -> Option<VideoSpec> {
 }
 
 /// Parse `--model-selection-strategy`.
+/// Whether the `AIPERF_METRICS_SKETCH` env var enables sketch retention, matching
+/// pydantic-settings' bool parsing (`1`/`true`/`t`/`yes`/`y`/`on`, case-insensitive)
+/// used by Python's `Environment.METRICS.SKETCH`.
+fn env_sketch_enabled() -> bool {
+    std::env::var("AIPERF_METRICS_SKETCH")
+        .map(|v| is_truthy_env(&v))
+        .unwrap_or(false)
+}
+
+/// Parse a pydantic-settings-style boolean env value (`1`/`true`/`t`/`yes`/`y`/
+/// `on`, case-insensitive, surrounding whitespace ignored).
+pub(crate) fn is_truthy_env(v: &str) -> bool {
+    matches!(
+        v.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "t" | "yes" | "y" | "on"
+    )
+}
+
 pub(crate) fn parse_model_strategy(s: &str) -> anyhow::Result<ModelStrategy> {
     Ok(match s {
         "round_robin" => ModelStrategy::RoundRobin,
@@ -1253,5 +1279,20 @@ where
             .parse::<T>()
             .map(Some)
             .map_err(|e| anyhow::anyhow!("invalid value for {flag}: {v} ({e})")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_truthy_env;
+
+    #[test]
+    fn truthy_env_matches_pydantic() {
+        for t in ["1", "true", "TRUE", "t", "yes", "Y", "on", "  On  "] {
+            assert!(is_truthy_env(t), "{t:?} should be truthy");
+        }
+        for f in ["0", "false", "no", "off", "", "2", "enabled"] {
+            assert!(!is_truthy_env(f), "{f:?} should be falsy");
+        }
     }
 }
