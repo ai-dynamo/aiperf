@@ -78,6 +78,39 @@ pub fn seed_for_trace_lane(base_seed: u64, trace_id: &str, lane: u64) -> u64 {
     u64::from_be_bytes(low8)
 }
 
+/// Derive a per-pass RNG seed for the shuffle/random dataset-sampling draw.
+///
+/// Byte-exact port of `graph_ir_replay.py:_seed_for_draw_pass` (lines 205-216,
+/// branch `ajc/aiperf-graph-ir`): SHA-256 the ASCII string
+/// `"{base_seed}:dataset-draw:{pass_index}"` and take the low 8 bytes
+/// big-endian. This mirrors [`seed_for_trace_lane`]'s derivation so each recycle
+/// pass re-permutes under a distinct-yet-deterministic seed drawn from the run's
+/// `t_star_random_seed`: the same base seed + pass index always yields the same
+/// permutation (cross-run reproducibility), while different passes decorrelate.
+pub fn seed_for_draw_pass(base_seed: u64, pass_index: u64) -> u64 {
+    let mut hasher = Sha256::new();
+    hasher.update(format!("{base_seed}:dataset-draw:{pass_index}").as_bytes());
+    let digest = hasher.finalize();
+    let mut low8 = [0u8; 8];
+    low8.copy_from_slice(&digest[..8]);
+    u64::from_be_bytes(low8)
+}
+
+/// Return the seeded permutation of `range(total)` for one draw pass.
+///
+/// Byte-exact port of `graph_ir_replay.py:_draw_permutation` (lines 837-855,
+/// branch `ajc/aiperf-graph-ir`): a pass-salted numpy RNG
+/// ([`seed_for_draw_pass`] -> `np.random.default_rng` -> in-place Fisher-Yates
+/// `shuffle`, reproduced by [`NumpyPcg64::permutation`]) permutes `range(total)`
+/// without replacement. Each pass of `total` draws covers every index exactly
+/// once, then a fresh seeded permutation begins — the music-shuffle contract the
+/// conversation-plane `ShuffleSampler` provides. Callers cache the result per
+/// `(total, pass_index)`; the derivation is pure, so caching is a pure
+/// optimization (the permutation is identical whether cached or recomputed).
+pub fn draw_permutation(base_seed: u64, pass_index: u64, total: usize) -> Vec<usize> {
+    NumpyPcg64::from_u64_seed(seed_for_draw_pass(base_seed, pass_index)).permutation(total)
+}
+
 /// Return the trace's intrinsic wall-clock span in microseconds.
 ///
 /// Port of `graph/analysis/snapshot.py:65` (`trace_duration_us`): the largest
@@ -149,6 +182,28 @@ mod tests {
         assert_eq!(seed_for_trace_lane(0, "trace-7", 0), 5561269195474234662);
         // "42:abc:3"
         assert_eq!(seed_for_trace_lane(42, "abc", 3), 12694478397425876729);
+    }
+
+    #[test]
+    fn draw_pass_seed_matches_python_sha256_low8_be() {
+        // python3 -c "import hashlib; print(int.from_bytes(
+        //   hashlib.sha256(b'0:dataset-draw:0').digest()[:8],'big'))"
+        assert_eq!(seed_for_draw_pass(0, 0), 14221486954297044610);
+        assert_eq!(seed_for_draw_pass(0, 1), 10278907799327951431);
+        assert_eq!(seed_for_draw_pass(42, 3), 991418308715691445);
+    }
+
+    #[test]
+    fn draw_permutation_matches_numpy_and_covers_every_index_once() {
+        // python: list(np.random.default_rng(_seed_for_draw_pass(0, p)).permutation(5))
+        assert_eq!(draw_permutation(0, 0, 5), vec![4, 3, 0, 2, 1]);
+        assert_eq!(draw_permutation(0, 1, 5), vec![1, 2, 0, 4, 3]);
+        // Distinct per-pass seed => pass 1 differs from pass 0.
+        assert_ne!(draw_permutation(0, 0, 5), draw_permutation(0, 1, 5));
+        // A full pass is a permutation: every index in [0, total) exactly once.
+        let mut sorted = draw_permutation(0, 0, 5);
+        sorted.sort_unstable();
+        assert_eq!(sorted, vec![0, 1, 2, 3, 4]);
     }
 
     #[test]

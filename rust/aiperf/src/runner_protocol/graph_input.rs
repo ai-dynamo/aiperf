@@ -53,8 +53,57 @@ pub struct TStarWindow {
     pub start_min_ratio: f64,
     /// Upper window bound as a fraction of each trace's replayable span.
     pub start_max_ratio: f64,
-    /// Base RNG seed salted per `(trace_id, lane)` by the sampler.
+    /// Base RNG seed salted per `(trace_id, lane)` by the sampler, and the base
+    /// seed for the shuffle/random dataset-sampling draw (`_seed_for_draw_pass`).
     pub random_seed: u64,
+    /// Resolved dataset-sampling strategy governing WHICH corpus template a
+    /// freed recycle lane serves. `Sequential` (the default) keeps the historic
+    /// `x % total` cursor draw; `Shuffle`/`Random` route through a per-pass
+    /// seeded permutation. See [`GraphSamplingStrategy`].
+    pub sampling_strategy: GraphSamplingStrategy,
+}
+
+/// Resolved dataset-sampling strategy for the recorded-graph recycle draw.
+///
+/// Port of the `sequential`/`shuffle`/`random` values of the Python
+/// `DatasetSamplingStrategy` dynamic enum (`aiperf/plugin/enums.py:53`), as
+/// consumed by `graph_ir_replay.py:_draw_index`/`_draw_is_shuffled`
+/// (lines 792-834, branch `ajc/aiperf-graph-ir`). `Random` coerces to `Shuffle`
+/// (without-replacement) semantics: each lane recycle is a single corpus pass,
+/// so with-replacement `random` would duplicate/omit templates within a pass;
+/// coercing to shuffle keeps coverage exact (`random == shuffle` in this
+/// context). Extension seam: a new sampling policy adds a variant here plus its
+/// draw branch, never a hardcoded mode string elsewhere.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GraphSamplingStrategy {
+    /// Historic cursor-with-wrap draw (`x % total`); byte-unchanged default.
+    #[default]
+    Sequential,
+    /// Per-pass seeded permutation (without replacement).
+    Shuffle,
+    /// Coerced to [`GraphSamplingStrategy::Shuffle`] (see type docs).
+    Random,
+}
+
+impl GraphSamplingStrategy {
+    /// Parse a wire strategy string, defaulting unknown/absent values to
+    /// [`GraphSamplingStrategy::Sequential`] so an older or partial wire request
+    /// keeps the byte-unchanged sequential draw. Matches the Python enum values
+    /// `sequential`/`shuffle`/`random` (`aiperf/plugin/enums.py:54`).
+    pub fn parse(value: Option<&str>) -> Self {
+        match value {
+            Some("shuffle") => Self::Shuffle,
+            Some("random") => Self::Random,
+            _ => Self::Sequential,
+        }
+    }
+
+    /// True iff the strategy permutes (shuffle / random). Port of
+    /// `graph_ir_replay.py:_draw_is_shuffled` (lines 821-834): `sequential`
+    /// (and any unknown value) take the byte-identical `x % total` draw.
+    pub fn is_shuffled(self) -> bool {
+        matches!(self, Self::Shuffle | Self::Random)
+    }
 }
 
 /// Canonical result retained after one selected graph-input adapter load.
@@ -587,6 +636,9 @@ fn prepare_recorded_file(
             start_min_ratio: value.trajectory_start_min_ratio,
             start_max_ratio: value.trajectory_start_max_ratio,
             random_seed: value.t_star_random_seed,
+            sampling_strategy: GraphSamplingStrategy::parse(
+                value.dataset_sampling_strategy.as_deref(),
+            ),
         });
     let corpus = PromptCorpus::parse(
         synthesis

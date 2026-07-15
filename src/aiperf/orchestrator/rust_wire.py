@@ -266,6 +266,13 @@ def _authored_dataset_v2(run: BenchmarkRun, dataset: Any) -> dict[str, Any]:
             # compression, while an absent field selects the 60s default.
             synthesis["idle_gap_cap_seconds"] = dataset.synthesis.idle_gap_cap_seconds
             _project_trajectory_knobs(synthesis, run)
+            # Resolved dataset-sampling strategy governs WHICH recorded-graph
+            # template a freed recycle lane serves in the native graph phase
+            # runtime (`_draw_index`). It rides the synthesis block beside the
+            # trajectory-start knobs because the runner binds every recorded knob
+            # through `RecordedTraceInputConfig`. `sequential` (the trace default)
+            # keeps the byte-unchanged cursor draw.
+            synthesis["dataset_sampling_strategy"] = str(dataset.sampling)
             result["synthesis"] = synthesis
         if dataset.path is not None:
             path = dataset.path.expanduser()

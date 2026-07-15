@@ -29,7 +29,7 @@ use crate::graph::input::GraphInputBundle;
 use crate::graph::model::{GraphTracePlan, ParsedGraph, TraceRecord};
 use crate::graph::policy::{ContinueRunFailurePolicy, FailFastRunFailurePolicy, RunFailurePolicy};
 use crate::graph::snapshot::{chop_trie_at_frontier, chop_trie_at_tstar, rewrite_for_warmup};
-use crate::graph::tstar::{TStarSampler, WindowTStarSampler, trace_duration_us};
+use crate::graph::tstar::{TStarSampler, WindowTStarSampler, draw_permutation, trace_duration_us};
 use crate::graph::warmup_handoff::{GraphWarmupHandoff, LaneHandoff};
 use crate::graph::workload::{
     CyclingGraphTraceSource, GraphArrivalPolicy, GraphTraceInstanceSequence, GraphTraceRunResult,
@@ -494,19 +494,80 @@ struct PreparedPressureRecycle {
     t_star: TStarWindow,
 }
 
-/// Remap a monotonic draw counter to a corpus index.
+/// Remap a monotonic draw counter to a corpus index under the SEQUENTIAL
+/// strategy: `x % total`, byte-for-byte the historical cursor-with-wrap draw.
 ///
-/// Port of `graph_ir_replay.py:_draw_index` (`:792`) for the DEFAULT
-/// (`sequential`) `--dataset-sampling-strategy`, which is `x % total`
-/// byte-for-byte. The `shuffle`/`random` seeded-permutation draws are a
-/// deferred refinement here, consistent with the graph runtime not yet carrying
-/// per-lane `t*` decorrelation (see [`apply_tstar_split`]); the current native
-/// fidelity is the sequential draw only.
+/// This is the `sequential` branch of `graph_ir_replay.py:_draw_index` (`:792`);
+/// [`PressureDraw::index`] dispatches to it for `Sequential` and to a per-pass
+/// seeded permutation for `Shuffle`/`Random`. Kept as a standalone function so
+/// the sequential path stays trivially auditable and the parity test below can
+/// pin it directly.
 fn pressure_draw_index(x: u64, total: usize) -> usize {
     if total == 0 {
         return 0;
     }
     usize::try_from(x % total as u64).unwrap_or(0)
+}
+
+/// Strategy-aware corpus-index draw shared by every graph recycle draw site.
+///
+/// Faithful port of `graph_ir_replay.py:_draw_index`/`_draw_permutation`
+/// (lines 792-855, branch `ajc/aiperf-graph-ir`): the single choke point every
+/// cross-trace draw in the pressure/profiling lane fan-out + recycle routes
+/// through, so `--dataset-sampling-strategy` governs WHICH template a freed lane
+/// serves without changing the draw COUNTERS (only the counter -> index remap
+/// changes). `Sequential` (the default) returns `x % total` unchanged;
+/// `Shuffle`/`Random` map `x` to `perm[pass][x % total]` where `pass = x / total`,
+/// each pass drawing a distinct seeded permutation ([`draw_permutation`]).
+///
+/// The permutation is cached per `(total, pass_index)` in a `RefCell` (single
+/// event-loop mutation, matching Python's per-instance `_draw_perm_cache`); the
+/// cache is a pure optimization since [`draw_permutation`] is deterministic.
+struct PressureDraw {
+    /// Whether the resolved strategy permutes (shuffle/random) vs. sequential.
+    shuffled: bool,
+    /// Base seed for `_seed_for_draw_pass` (the run's `t_star_random_seed`).
+    base_seed: u64,
+    /// Per-`(total, pass_index)` permutation cache (`_draw_perm_cache`).
+    cache: RefCell<HashMap<(usize, u64), Rc<Vec<usize>>>>,
+}
+
+impl PressureDraw {
+    /// Build the draw from a resolved `t*` window: the strategy governs the
+    /// remap, the window's seed salts the per-pass permutation.
+    fn from_window(t_star: TStarWindow) -> Self {
+        Self {
+            shuffled: t_star.sampling_strategy.is_shuffled(),
+            base_seed: t_star.random_seed,
+            cache: RefCell::new(HashMap::new()),
+        }
+    }
+
+    /// Remap draw counter `x` to a corpus index in `[0, total)`.
+    fn index(&self, x: u64, total: usize) -> usize {
+        if total == 0 {
+            return 0;
+        }
+        if !self.shuffled {
+            return pressure_draw_index(x, total);
+        }
+        let total_u64 = total as u64;
+        let pass_index = x / total_u64;
+        let offset = usize::try_from(x % total_u64).unwrap_or(0);
+        self.permutation(pass_index, total)[offset]
+    }
+
+    /// Return the cached seeded permutation of `range(total)` for a draw pass,
+    /// building it once per `(total, pass_index)` (`_draw_permutation`).
+    fn permutation(&self, pass_index: u64, total: usize) -> Rc<Vec<usize>> {
+        let key = (total, pass_index);
+        if let Some(cached) = self.cache.borrow().get(&key) {
+            return cached.clone();
+        }
+        let perm = Rc::new(draw_permutation(self.base_seed, pass_index, total));
+        self.cache.borrow_mut().insert(key, perm.clone());
+        perm
+    }
 }
 
 /// Resolve how many concurrent recycle lanes the pressure stage fans out.
@@ -548,7 +609,11 @@ fn pressure_resolve_lane_count(
 /// left empty by the warmup rewrite is the native analogue of an unspawnable
 /// lane. At the default `[0, 0]` window every plan is non-empty, so lane `i`
 /// takes corpus index `i` (sequential) byte-for-byte with the prior assignment.
-fn pressure_resolve_pass0_lanes(templates: &[PressureTemplate], lanes: usize) -> (Vec<usize>, u64) {
+fn pressure_resolve_pass0_lanes(
+    templates: &[PressureTemplate],
+    lanes: usize,
+    draw: &PressureDraw,
+) -> (Vec<usize>, u64) {
     let n = templates.len();
     if n == 0 {
         return (Vec::new(), 0);
@@ -560,7 +625,7 @@ fn pressure_resolve_pass0_lanes(templates: &[PressureTemplate], lanes: usize) ->
     // we stop at `lanes` hits regardless.
     let max_cursor = lanes as u64 + n as u64;
     while pass0.len() < lanes && cursor < max_cursor {
-        let idx = pressure_draw_index(cursor, n);
+        let idx = draw.index(cursor, n);
         cursor = cursor.saturating_add(1);
         if !templates[idx].plan.graph.nodes.is_empty() {
             pass0.push(idx);
@@ -751,7 +816,11 @@ impl GraphPressureRecycle {
             self.session_limit,
             self.recycle_bounded,
         );
-        let (pass0, cursor) = pressure_resolve_pass0_lanes(&self.templates, lanes);
+        // Strategy-aware corpus-index draw shared by the pass-0 resolve and the
+        // per-lane recycle below (`_draw_index`); one instance so `Shuffle`/
+        // `Random` permutations are cached across every draw of this stage.
+        let draw = Rc::new(PressureDraw::from_window(self.t_star));
+        let (pass0, cursor) = pressure_resolve_pass0_lanes(&self.templates, lanes, &draw);
         self.progress.lanes.set_corpus_cursor(cursor);
         // Record the pass-0 lane fan-out for the E3c warmup handoff before any
         // lane runs (Python `_pressure_lane_count = len(pass0_traces)`).
@@ -784,6 +853,7 @@ impl GraphPressureRecycle {
             let cancelled = self.cancelled.clone();
             let next_index = next_index.clone();
             let lane_plans = lane_plans.clone();
+            let draw = draw.clone();
             let done_tx = done_tx.clone();
             let t_star = self.t_star;
             let lane = lane_index as u64;
@@ -865,7 +935,7 @@ impl GraphPressureRecycle {
                     let drawn = next_index.get();
                     next_index.set(drawn.saturating_add(1));
                     progress.lanes.set_corpus_cursor(next_index.get());
-                    template_index = pressure_draw_index(drawn, n);
+                    template_index = draw.index(drawn, n);
                 }
                 let _ = done_tx.send(());
             });
@@ -2501,12 +2571,16 @@ fn build_profiling_resume_lane_plans(
     // `original_plans` directly (Python recycles run fresh t*=0 templates).
     let split = apply_tstar_split(original_plans, phase, t_star);
 
+    // Strategy-aware corpus-index draw shared by pass-0 resolve, the index-safe
+    // fallback, and the fresh-start recycle draw below (`_draw_index`).
+    let draw = PressureDraw::from_window(t_star);
+
     // Lane count: `_resolve_lane_count` (phase concurrency clamped) resolves the
     // pass-0 lanes, then `max(len(pass0), pressure_lane_count)` honors every
     // drained pressure lane (`graph_ir_replay.py:1287-1295`).
     let concurrency = phase.concurrency().unwrap_or(n);
     let lane_target = pressure_resolve_lane_count(concurrency, n, session_limit, recycle_bounded);
-    let (pass0, pass0_cursor) = profiling_resolve_pass0_lanes(&split, lane_target);
+    let (pass0, pass0_cursor) = profiling_resolve_pass0_lanes(&split, lane_target, &draw);
     let lanes = pass0
         .len()
         .max(usize::try_from(handoff.pressure_lane_count).unwrap_or(usize::MAX));
@@ -2530,7 +2604,7 @@ fn build_profiling_resume_lane_plans(
         let base_index = pass0
             .get(lane)
             .copied()
-            .unwrap_or_else(|| pressure_draw_index(lane_u64, n));
+            .unwrap_or_else(|| draw.index(lane_u64, n));
 
         // `resume_instance_id` is set ONLY when the lane resumes a handoff entry
         // whose template resolved in the corpus (the frontier-chop branch): the
@@ -2581,9 +2655,9 @@ fn build_profiling_resume_lane_plans(
             // shared cursor at full `t*=0` replay (Python `:1352-1364`) instead
             // of re-running a t* resume the pressure stage already warmed. It was
             // never primed, so it keeps its normal id / fresh marker.
-            let draw = pressure_draw_index(next_index, n);
+            let draw_index = draw.index(next_index, n);
             next_index = next_index.saturating_add(1);
-            (original_plans[draw].clone(), None)
+            (original_plans[draw_index].clone(), None)
         } else {
             // Normal pass-0 assignment at the lane's t* window (normal id).
             (split[base_index].clone(), None)
@@ -2607,7 +2681,11 @@ fn build_profiling_resume_lane_plans(
 /// corpus indices (length `<= lanes`) plus the cursor one past the last consumed
 /// position. At the default `[0, 0]` window every plan is non-empty, so lane `i`
 /// takes corpus index `i` sequentially.
-fn profiling_resolve_pass0_lanes(split: &[GraphTracePlan], lanes: usize) -> (Vec<usize>, u64) {
+fn profiling_resolve_pass0_lanes(
+    split: &[GraphTracePlan],
+    lanes: usize,
+    draw: &PressureDraw,
+) -> (Vec<usize>, u64) {
     let n = split.len();
     if n == 0 {
         return (Vec::new(), 0);
@@ -2616,7 +2694,7 @@ fn profiling_resolve_pass0_lanes(split: &[GraphTracePlan], lanes: usize) -> (Vec
     let mut cursor: u64 = 0;
     let max_cursor = lanes as u64 + n as u64;
     while pass0.len() < lanes && cursor < max_cursor {
-        let idx = pressure_draw_index(cursor, n);
+        let idx = draw.index(cursor, n);
         cursor = cursor.saturating_add(1);
         if !split[idx].graph.nodes.is_empty() {
             pass0.push(idx);
@@ -2970,6 +3048,7 @@ mod tests {
     use std::rc::Rc;
 
     use crate::adaptive_core::{SharedWindowSampler, TumblingWindowSampler};
+    use crate::runner_protocol::graph_input::GraphSamplingStrategy;
     use crate::dataset::SegmentPool;
     use crate::graph::errors::TraceError;
     use crate::graph::model::{GraphRecord, GraphTracePlan, TraceRecord};
@@ -3178,6 +3257,7 @@ mod tests {
             start_min_ratio: 0.5,
             start_max_ratio: 0.5,
             random_seed: 0,
+            ..Default::default()
         };
         let split = apply_tstar_split(
             &tstar_chain_plan(),
@@ -3195,6 +3275,7 @@ mod tests {
             start_min_ratio: 0.5,
             start_max_ratio: 0.5,
             random_seed: 0,
+            ..Default::default()
         };
         let split = apply_tstar_split(
             &tstar_chain_plan(),
@@ -3952,11 +4033,79 @@ mod tests {
                 original_plan: pressure_one_node_plan("c"),
             },
         ];
-        let (pass0, cursor) = pressure_resolve_pass0_lanes(&templates, 2);
+        let draw = PressureDraw::from_window(TStarWindow::default());
+        let (pass0, cursor) = pressure_resolve_pass0_lanes(&templates, 2, &draw);
         // Lanes 0 and 1 take templates a (index 0) and c (index 2); b skipped.
         assert_eq!(pass0, vec![0, 2]);
         // Cursor is one past the last consumed corpus position (a, b, c walked).
         assert_eq!(cursor, 3);
+    }
+
+    #[test]
+    fn pressure_draw_sequential_default_is_byte_unchanged() {
+        // Default / Sequential window: `PressureDraw::index` == `x % total` at
+        // every counter (byte-for-byte the historical cursor-with-wrap draw).
+        let draw = PressureDraw::from_window(TStarWindow::default());
+        for x in 0u64..20 {
+            for total in 1usize..7 {
+                assert_eq!(draw.index(x, total), pressure_draw_index(x, total));
+            }
+        }
+        // Degenerate empty corpus never panics.
+        assert_eq!(draw.index(5, 0), 0);
+    }
+
+    #[test]
+    fn pressure_draw_shuffle_matches_seeded_permutation_and_covers_each_pass() {
+        // Shuffle window: `index(x)` == `draw_permutation(base, x/total, total)[x%total]`,
+        // a full pass covers every index exactly once, and pass 1 differs from
+        // pass 0 (distinct per-pass seed). Base seed threaded via the window.
+        let window = TStarWindow {
+            start_min_ratio: 0.0,
+            start_max_ratio: 0.0,
+            random_seed: 0,
+            sampling_strategy: GraphSamplingStrategy::Shuffle,
+        };
+        let draw = PressureDraw::from_window(window);
+        let total = 5usize;
+        for pass in 0u64..2 {
+            let expected = draw_permutation(0, pass, total);
+            let mut seen = Vec::new();
+            for offset in 0..total as u64 {
+                let x = pass * total as u64 + offset;
+                let idx = draw.index(x, total);
+                assert_eq!(idx, expected[offset as usize]);
+                seen.push(idx);
+            }
+            seen.sort_unstable();
+            assert_eq!(seen, (0..total).collect::<Vec<_>>());
+        }
+        // Distinct per-pass seed => the first draw of pass 1 differs from pass 0.
+        assert_ne!(
+            draw.index(0, total),
+            draw.index(total as u64, total),
+            "pass 1 permutation must differ from pass 0"
+        );
+    }
+
+    #[test]
+    fn pressure_draw_random_coerces_to_shuffle() {
+        // `Random` coerces to `Shuffle` (without-replacement): identical draws.
+        let base = TStarWindow {
+            start_min_ratio: 0.0,
+            start_max_ratio: 0.0,
+            random_seed: 7,
+            sampling_strategy: GraphSamplingStrategy::Shuffle,
+        };
+        let rand = TStarWindow {
+            sampling_strategy: GraphSamplingStrategy::Random,
+            ..base
+        };
+        let shuffle_draw = PressureDraw::from_window(base);
+        let random_draw = PressureDraw::from_window(rand);
+        for x in 0u64..15 {
+            assert_eq!(shuffle_draw.index(x, 4), random_draw.index(x, 4));
+        }
     }
 
     #[test]
@@ -3970,6 +4119,7 @@ mod tests {
             start_min_ratio: 0.2,
             start_max_ratio: 0.8,
             random_seed: 0,
+            ..Default::default()
         };
         let sampler = WindowTStarSampler {
             start_min_ratio: window.start_min_ratio,
@@ -4049,6 +4199,7 @@ mod tests {
             start_min_ratio: 0.2,
             start_max_ratio: 0.8,
             random_seed: 0,
+            ..Default::default()
         };
         let template = tstar_chain_pressure_template(window);
         let templates = vec![template.clone()];
