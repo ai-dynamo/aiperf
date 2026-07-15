@@ -1345,6 +1345,290 @@ impl ConversationSource for NativeDatasetConversationSource {
     }
 }
 
+/// One fully preformatted profiling turn: everything the dispatch path pulls
+/// from the resident `Dataset`/`SegmentStore` for a single-turn profiling
+/// request, captured up front so a store-free source can reproduce a byte- and
+/// metrics-identical [`TurnToSend`].
+///
+/// This is the owned-bytes counterpart to the store-resident materialization in
+/// [`NativeSessionBackend::materialize`]: the fields mirror exactly what that
+/// method reads out of a [`crate::dataset::MaterializedRequest`] and the
+/// authored [`TurnMetadata`] to build a `TurnToSend`. The one deliberately
+/// deferred field is the runtime session correlation id, which is minted per
+/// runtime session at sampling time; [`Self::to_turn_to_send`] splices in the
+/// owner's id (or the captured accuracy id when present), matching the
+/// `request_correlation_id` rule at the store-backed construction site.
+///
+/// Constructed only by
+/// [`Dataset::prebuild_profiling_dispatch`](crate::dataset::Dataset::prebuild_profiling_dispatch)
+/// for datasets that pass
+/// [`qualifies_for_prebuilt_free`](crate::dataset::Dataset::qualifies_for_prebuilt_free);
+/// trace-hash, token-native, and raw-body turns are excluded by that gate, so
+/// the corresponding `TurnToSend` fields are always absent here.
+#[derive(Clone, Debug)]
+pub struct PreparedTurn {
+    /// Effective wire model resolved during materialization.
+    pub effective_model: String,
+    /// Captured accuracy correlation id, when the conversation carried one. When
+    /// absent the runtime session id is used for `request_correlation_id`.
+    pub accuracy_correlation_id: Option<String>,
+    /// Zero-based authored turn index (always `0` for a single-turn prebuild).
+    pub turn_index: usize,
+    /// Total turns the runtime session will send (always `1` here).
+    pub num_turns: usize,
+    /// Final input-token count after the run's input-token counting policy.
+    pub input_length: usize,
+    /// Requested output-token cap after endpoint/default resolution.
+    pub max_output_tokens: usize,
+    /// Fully materialized request body ready to clone onto the wire.
+    pub request_body: Bytes,
+    /// Per-turn HTTP headers.
+    pub request_headers: BTreeMap<String, String>,
+    /// Per-turn URL query parameters.
+    pub request_parameters: BTreeMap<String, String>,
+    /// Endpoint path selected by the endpoint resolver.
+    pub endpoint_path: Option<String>,
+    /// Prepared endpoint identity used for execution.
+    pub endpoint: TurnEndpoint,
+    /// Whether this endpoint returns an SSE stream.
+    pub streaming: bool,
+    /// Audio duration propagated into ASR metrics.
+    pub audio_duration_seconds: Option<f64>,
+    /// Absolute trace timestamp for this turn, if any.
+    pub timestamp_ms: Option<f64>,
+    /// Relative delay for this turn, if any.
+    pub delay_ms: Option<f64>,
+}
+
+impl PreparedTurn {
+    /// Assemble a [`TurnToSend`] identical to the store-backed one for this turn,
+    /// cloning the preformatted bytes and copying the captured ancillaries. The
+    /// owning [`SampledSession`] supplies the per-session identity that is not
+    /// known until sampling; every metrics-relevant field (body, input length,
+    /// headers, parameters, model, output cap, streaming) is copied verbatim.
+    fn to_turn_to_send(&self, owner: &SampledSession) -> TurnToSend {
+        // Store-backed rule (multiturn.rs materialize): the correlation id sent to
+        // the backend is the accuracy identity when the conversation carried one,
+        // otherwise the runtime session id minted at sampling time.
+        let request_correlation_id = self
+            .accuracy_correlation_id
+            .clone()
+            .unwrap_or_else(|| owner.x_correlation_id.clone());
+        TurnToSend {
+            uuid: Uuid::new_v4(),
+            effective_model: Some(self.effective_model.clone()),
+            conversation_id: owner.conversation_id.clone(),
+            x_correlation_id: owner.x_correlation_id.clone(),
+            request_correlation_id,
+            turn_index: self.turn_index,
+            num_turns: self.num_turns,
+            input_length: self.input_length,
+            max_output_tokens: self.max_output_tokens,
+            messages: Vec::new(),
+            request_body: Some(self.request_body.clone()),
+            request_headers: self.request_headers.clone(),
+            request_parameters: self.request_parameters.clone(),
+            endpoint_path: self.endpoint_path.clone(),
+            endpoint: self.endpoint.clone(),
+            streaming: self.streaming,
+            audio_duration_seconds: self.audio_duration_seconds,
+            timestamp_ms: self.timestamp_ms,
+            delay_ms: self.delay_ms,
+            // Excluded by the qualification gate: a prebuilt-and-freed turn never
+            // carries simulator trace identities or token-native handles, and its
+            // content is ordinary benchmark content.
+            trace_hash_ids: None,
+            raw_token_ids: None,
+            data_policy: TurnDataPolicy::ordinary(),
+            cancel_after_ns: None,
+            url_index: None,
+            session: owner.clone(),
+        }
+    }
+}
+
+/// One preformatted runtime session: all of a conversation's prepared turns.
+///
+/// Single-turn for now (the store-free dispatch path only targets single-turn
+/// static runs), but modeled as a `Vec` so a later multi-turn extension reuses
+/// the same type without a breaking change.
+#[derive(Clone, Debug)]
+pub struct PreparedSession {
+    /// Authored conversation/template identifier.
+    pub session_id: String,
+    /// Ordered prepared turns for this conversation.
+    pub turns: Vec<PreparedTurn>,
+}
+
+/// Store-free [`RuntimeSessionBackend`] over one preformatted session.
+///
+/// Holds no `Arc<Dataset>` / `Arc<dyn SegmentStore>`: turn production clones the
+/// owned prepared bytes and copies the captured ancillaries. Single-turn only —
+/// continuation/live-reply construction fails closed.
+#[derive(Debug)]
+struct PreformattedSessionBackend {
+    prepared: Rc<PreparedSession>,
+}
+
+impl RuntimeSessionBackend for PreformattedSessionBackend {
+    fn available_turns(&self) -> usize {
+        self.prepared.turns.len()
+    }
+
+    fn build_first_turn(
+        &self,
+        owner: &SampledSession,
+        _max_turns: Option<usize>,
+    ) -> Result<TurnToSend> {
+        // Single-turn: `num_turns` is fixed at prebuild time, so a caller cap is
+        // irrelevant and intentionally ignored.
+        let turn = self.prepared.turns.first().ok_or_else(|| {
+            anyhow!(
+                "preformatted session {:?} has no prepared turns",
+                self.prepared.session_id
+            )
+        })?;
+        Ok(turn.to_turn_to_send(owner))
+    }
+
+    fn next_metadata(&self, _turn_index: usize) -> Result<TurnMetadata> {
+        bail!("preformatted conversation source is single-turn only")
+    }
+
+    fn build_next_turn(
+        &self,
+        _owner: &SampledSession,
+        _current: &TurnToSend,
+        _response: TurnResponse,
+    ) -> Result<TurnToSend> {
+        bail!("preformatted conversation source cannot build a continuation turn")
+    }
+}
+
+/// Store-free [`ConversationSource`] backed by preformatted profiling turns.
+///
+/// Produced from [`Dataset::prebuild_profiling_dispatch`](crate::dataset::Dataset::prebuild_profiling_dispatch)
+/// output; it retains only owned [`PreparedSession`] bytes and a sampler, so the
+/// resident `Dataset`/`SegmentStore` can be dropped before dispatch. Its turn
+/// production is byte- and metrics-identical to
+/// [`NativeDatasetConversationSource`] for the same single-turn profiling turn.
+pub struct PreformattedConversationSource {
+    metadata: Vec<ConversationMetadata>,
+    sessions_by_id: HashMap<String, Rc<PreparedSession>>,
+    sampler: Box<dyn Sampler>,
+}
+
+impl fmt::Debug for PreformattedConversationSource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PreformattedConversationSource")
+            .field("sessions", &self.sessions_by_id.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl PreformattedConversationSource {
+    /// Build a source over preformatted sessions with an injected sampler.
+    ///
+    /// Rejects an empty session set or any non-single-turn session. The
+    /// [`ConversationMetadata`] projection is derived from the prepared turns so
+    /// the source needs no residual dataset reference; its `input_length` is the
+    /// counted dispatch value (this projection feeds strategy setup and request
+    /// counting, not the dispatch body).
+    pub fn new(sessions: Vec<PreparedSession>, sampler: Box<dyn Sampler>) -> Result<Self> {
+        if sessions.is_empty() {
+            bail!("preformatted conversation source requires at least one session");
+        }
+        for session in &sessions {
+            if session.turns.len() != 1 {
+                bail!(
+                    "preformatted conversation source is single-turn only; session {:?} has {} turns",
+                    session.session_id,
+                    session.turns.len()
+                );
+            }
+        }
+        let metadata = sessions
+            .iter()
+            .map(|session| ConversationMetadata {
+                conversation_id: session.session_id.clone(),
+                turns: session
+                    .turns
+                    .iter()
+                    .map(|turn| TurnMetadata {
+                        timestamp_ms: turn.timestamp_ms,
+                        delay_ms: turn.delay_ms,
+                        trace_hash_ids: None,
+                        prompt_text: String::new(),
+                        input_length: turn.input_length,
+                        max_output_tokens: turn.max_output_tokens,
+                    })
+                    .collect(),
+            })
+            .collect();
+        let sessions_by_id = sessions
+            .into_iter()
+            .map(|session| (session.session_id.clone(), Rc::new(session)))
+            .collect();
+        Ok(Self {
+            metadata,
+            sessions_by_id,
+            sampler,
+        })
+    }
+
+    /// Build a source with insertion-order sampling over the prepared sessions,
+    /// mirroring a sequential-sampler dataset run.
+    pub fn sequential(sessions: Vec<PreparedSession>) -> Result<Self> {
+        let ids = sessions
+            .iter()
+            .map(|session| crate::dataset::SessionId::from(session.session_id.as_str()))
+            .collect();
+        let sampler = SequentialSampler::new(ids)
+            .map_err(|error| anyhow!("preformatted sampler: {error}"))?;
+        Self::new(sessions, Box::new(sampler))
+    }
+
+    fn build_session(
+        &self,
+        conversation_id: &str,
+        x_correlation_id: String,
+    ) -> Result<SampledSession> {
+        let prepared = self
+            .sessions_by_id
+            .get(conversation_id)
+            .cloned()
+            .ok_or_else(|| {
+                anyhow!("preformatted source has no conversation {conversation_id:?}")
+            })?;
+        Ok(SampledSession {
+            conversation_id: conversation_id.to_string(),
+            x_correlation_id,
+            backend: Rc::new(PreformattedSessionBackend { prepared }),
+        })
+    }
+}
+
+impl ConversationSource for PreformattedConversationSource {
+    fn conversations(&self) -> &[ConversationMetadata] {
+        &self.metadata
+    }
+
+    fn next(&mut self, x_correlation_id: Option<String>) -> Result<SampledSession> {
+        let id = self.sampler.next();
+        let x_correlation_id = x_correlation_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+        self.build_session(id.as_str(), x_correlation_id)
+    }
+
+    fn session_for(
+        &self,
+        conversation_id: &str,
+        x_correlation_id: String,
+    ) -> Result<SampledSession> {
+        self.build_session(conversation_id, x_correlation_id)
+    }
+}
+
 /// Lock-free-by-serialization counters for a single issuer loop.
 #[derive(Default)]
 pub struct CreditCounter {
@@ -1920,5 +2204,137 @@ mod tests {
         .err()
         .unwrap();
         assert!(error.to_string().contains("unknown sampler strategy"));
+    }
+
+    #[tokio::test]
+    async fn preformatted_source_matches_store_backed_turn() {
+        let dataset = LoaderRegistry::with_builtin_formats()
+            .unwrap()
+            .build_dataset(
+                Some("single_turn"),
+                &LoadConfig::new(DatasetSource::Inline(
+                    json!([{"text":"hello world"},{"text":"a different prompt"}]),
+                )),
+                &ComposeConfig::new("model", RngRoot::new(Some(11))),
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+
+        // Store-backed source lowers its own copy of the dataset internally.
+        let native = prepared_chat_source(dataset.clone(), "model", 16);
+
+        // Prebuild over a copy lowered exactly the way the online source lowers,
+        // through an identically configured `chat` prepared endpoint.
+        let registry = crate::endpoints::EndpointRegistry::builtin().unwrap();
+        let endpoint_id = EndpointId::new("chat").unwrap();
+        let endpoint = registry
+            .prepare(
+                &endpoint_id,
+                crate::endpoints::RawEndpointConfig {
+                    streaming: true,
+                    use_server_token_count: true,
+                    ..crate::endpoints::RawEndpointConfig::default()
+                },
+            )
+            .unwrap();
+        let mut table = PreparedEndpointTable::new();
+        let key = table.push(endpoint).unwrap();
+        let resolver = PreparedEndpointTableResolver::single(
+            Rc::new(table),
+            PreparedEndpointReference {
+                key,
+                endpoint_id: endpoint_id.clone(),
+            },
+        )
+        .unwrap();
+
+        let mut lowered = dataset;
+        {
+            let resolved = resolver.resolve(None).unwrap();
+            if let Some(lowerer) =
+                ShapeLowerer::for_descriptor_id(resolved.endpoint.descriptor().id)
+            {
+                lowered.lower_messages_for_endpoint(&lowerer).unwrap();
+            }
+            lowered
+                .precompute_body_plans(resolved.endpoint, "model")
+                .unwrap();
+        }
+        let lowered = Arc::new(lowered);
+        let prepared = lowered
+            .prebuild_profiling_dispatch(&resolver, "model", &AuthoredInputTokenCounter, 16)
+            .unwrap();
+        let preformatted = PreformattedConversationSource::sequential(prepared).unwrap();
+
+        // Same conversation, same runtime correlation id: sampling is bypassed so
+        // the two turns must be byte- and metrics-identical.
+        let id = native.conversations()[0].conversation_id.clone();
+        let native_turn = native
+            .session_for(&id, "runtime-correlation".into())
+            .unwrap()
+            .build_first_turn(Some(1))
+            .unwrap();
+        let preformatted_turn = preformatted
+            .session_for(&id, "runtime-correlation".into())
+            .unwrap()
+            .build_first_turn(Some(1))
+            .unwrap();
+
+        assert_eq!(
+            native_turn.request_body, preformatted_turn.request_body,
+            "request body byte-parity"
+        );
+        assert_eq!(native_turn.input_length, preformatted_turn.input_length);
+        assert_eq!(
+            native_turn.request_headers,
+            preformatted_turn.request_headers
+        );
+        assert_eq!(
+            native_turn.request_parameters,
+            preformatted_turn.request_parameters
+        );
+        assert_eq!(
+            native_turn.effective_model,
+            preformatted_turn.effective_model
+        );
+        assert_eq!(
+            native_turn.max_output_tokens,
+            preformatted_turn.max_output_tokens
+        );
+        assert_eq!(native_turn.streaming, preformatted_turn.streaming);
+        assert_eq!(
+            native_turn.request_correlation_id,
+            preformatted_turn.request_correlation_id
+        );
+        assert_eq!(native_turn.endpoint_path, preformatted_turn.endpoint_path);
+        assert_eq!(native_turn.num_turns, preformatted_turn.num_turns);
+        assert_eq!(native_turn.turn_index, preformatted_turn.turn_index);
+        assert_eq!(native_turn.timestamp_ms, preformatted_turn.timestamp_ms);
+        assert_eq!(native_turn.delay_ms, preformatted_turn.delay_ms);
+        let TurnEndpoint::Prepared(native_reference) = &native_turn.endpoint;
+        let TurnEndpoint::Prepared(preformatted_reference) = &preformatted_turn.endpoint;
+        assert_eq!(native_reference.key, preformatted_reference.key);
+        assert_eq!(
+            native_reference.endpoint_id,
+            preformatted_reference.endpoint_id
+        );
+
+        // The single-turn contract: no continuation turn exists.
+        let credit = IssuedCredit::from_turn(0, 0, &preformatted_turn);
+        assert!(
+            preformatted
+                .next_turn(
+                    &credit,
+                    TurnResponse {
+                        text: String::new(),
+                        assistant_message: None,
+                        completion_tokens: None,
+                        terminal: ReplayTerminalStatus::Completed,
+                    },
+                )
+                .unwrap()
+                .is_none()
+        );
     }
 }

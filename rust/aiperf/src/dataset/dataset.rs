@@ -495,6 +495,145 @@ impl Dataset {
             self.metadata.default_context_mode,
         )
     }
+
+    /// Whether every conversation is safe to preformat up front and dispatch
+    /// from owned bytes after the resident store is freed.
+    ///
+    /// Conservative gate for the store-free profiling path (see
+    /// [`prebuild_profiling_dispatch`](Dataset::prebuild_profiling_dispatch)): it
+    /// qualifies only when EVERY conversation is single-turn, uses a static
+    /// context mode (`MessageArrayWithResponses` / `DeltasWithResponses`, where the
+    /// assembled turn never depends on a live reply), is not a graph/DAG
+    /// conversation, and whose one turn carries no per-turn `endpoint` override, no
+    /// complete raw body, no token-native `raw_token_ids`, and no simulator
+    /// trace-hash identity. This is the [`precompute_body_plans`] static-turn
+    /// eligibility plus a single-turn requirement; anything the gate cannot prove
+    /// safe from the dataset (including a store read error) returns `false` so the
+    /// caller keeps the store-resident path. Non-graph/non-adaptive execution is
+    /// enforced by callers; an empty dataset returns `false` (nothing to prebuild).
+    pub fn qualifies_for_prebuilt_free(&self) -> bool {
+        if self.conversations.is_empty() {
+            return false;
+        }
+        let store = self.segments.as_ref();
+        self.conversations.iter().all(|conversation| {
+            conversation.turns.len() == 1
+                && conversation.dag.is_none()
+                && matches!(
+                    self.context_mode(conversation),
+                    ConversationContextMode::MessageArrayWithResponses
+                        | ConversationContextMode::DeltasWithResponses
+                )
+                && conversation.turns.iter().all(|turn| {
+                    turn.endpoint.is_none()
+                        && turn.trace_hash_ids.is_none()
+                        // A store read error is treated as not-qualifying: the gate
+                        // never widens eligibility on an unreadable handle.
+                        && raw_body_handle(turn, store).is_ok_and(|handle| handle.is_none())
+                        && token_ids_handle(turn, store).is_ok_and(|handle| handle.is_none())
+                })
+        })
+    }
+
+    /// Preformat the profiling-phase dispatch request for every conversation, so
+    /// a store-free source can dispatch from owned bytes and the resident
+    /// `Dataset`/`SegmentStore` can then be dropped.
+    ///
+    /// One eager pass over the resident store: each conversation's single turn is
+    /// materialized through the SAME
+    /// [`materialize_prepared`](crate::dataset::RequestMaterializer::materialize_prepared)
+    /// the live dispatch path uses (`EndpointRequestMaterializer`, profiling phase,
+    /// no dispatch overrides), so the captured [`PreparedTurn::request_body`] is
+    /// byte-identical to a live profiling dispatch. Input-token accounting reuses
+    /// the run's [`InputTokenCounter`](crate::multiturn::InputTokenCounter) against
+    /// the materialized body, exactly as
+    /// [`NativeSessionBackend`](crate::multiturn::NativeDatasetConversationSource)
+    /// does; the qualification gate excludes trace-hash / raw-token / raw-body
+    /// turns, so the authored-length branch never applies here.
+    ///
+    /// Intended for datasets that pass
+    /// [`qualifies_for_prebuilt_free`](Dataset::qualifies_for_prebuilt_free) (which
+    /// callers check first). Run after endpoint-bind lowering
+    /// ([`lower_messages_for_endpoint`](Dataset::lower_messages_for_endpoint) +
+    /// [`precompute_body_plans`](Dataset::precompute_body_plans)) so it observes the
+    /// same segment store dispatch sees. Takes `&Arc<Self>` because per-turn
+    /// materialization binds a [`ConversationSession`] to a shared dataset handle.
+    pub fn prebuild_profiling_dispatch(
+        self: &Arc<Self>,
+        endpoint_resolver: &dyn crate::multiturn::PreparedTurnEndpointResolver,
+        primary_model_name: &str,
+        input_token_counter: &dyn crate::multiturn::InputTokenCounter,
+        default_output_tokens: usize,
+    ) -> Result<Vec<crate::multiturn::PreparedSession>> {
+        use crate::dataset::materialize::Overrides;
+        use crate::dataset::request::{ConversationSession, EndpointRequestMaterializer};
+        use crate::multiturn::{PreparedSession, PreparedTurn, TurnEndpoint};
+
+        // The gate rejects per-turn endpoint overrides, so the default binding is
+        // the only endpoint every turn dispatches through — resolve it once.
+        let resolved = endpoint_resolver
+            .resolve(None)
+            .map_err(|error| DatasetError::Validation(error.to_string()))?;
+        let endpoint = resolved.endpoint;
+        let reference = resolved.reference;
+
+        let mut sessions = Vec::with_capacity(self.conversations.len());
+        for conversation in self.conversations.iter() {
+            let session_id = conversation.session_id.clone();
+            let mut session = ConversationSession::new(self.clone(), session_id.clone())?;
+            session.advance_to(0)?;
+            let materialized = session.materialize_prepared(
+                &EndpointRequestMaterializer,
+                endpoint,
+                primary_model_name,
+                CreditPhase::Profiling,
+                &Overrides::new(),
+            )?;
+            // Mirror NativeSessionBackend::materialize: the dispatched input length
+            // is the run's counting policy applied to the exact materialized body.
+            let input_tokens = input_token_counter
+                .count_prepared_input_tokens(
+                    endpoint,
+                    &materialized.body,
+                    materialized.input_tokens,
+                )
+                .map_err(|error| DatasetError::Validation(error.to_string()))?;
+            let input_length = usize::try_from(input_tokens).map_err(|_| {
+                DatasetError::Validation("materialized input token count exceeds usize".into())
+            })?;
+            let max_output_tokens = materialized
+                .max_tokens
+                .map(|tokens| tokens as usize)
+                .unwrap_or(default_output_tokens);
+            let accuracy_correlation_id = materialized
+                .accuracy
+                .as_ref()
+                .map(|accuracy| accuracy.correlation_id.as_str().to_string());
+            let timing = &conversation.turns[0];
+            let prepared_turn = PreparedTurn {
+                effective_model: materialized.model,
+                accuracy_correlation_id,
+                turn_index: 0,
+                num_turns: 1,
+                input_length,
+                max_output_tokens,
+                request_body: materialized.body,
+                request_headers: materialized.headers,
+                request_parameters: materialized.parameters,
+                endpoint_path: materialized.endpoint_path,
+                endpoint: TurnEndpoint::Prepared(reference.clone()),
+                streaming: materialized.streaming,
+                audio_duration_seconds: materialized.audio_duration_seconds,
+                timestamp_ms: timing.timestamp_ms,
+                delay_ms: timing.delay_ms,
+            };
+            sessions.push(PreparedSession {
+                session_id: session_id.as_str().to_string(),
+                turns: vec![prepared_turn],
+            });
+        }
+        Ok(sessions)
+    }
 }
 
 fn validate_conversation_handles(
@@ -1225,5 +1364,257 @@ mod tests {
             error.contains("combines raw_payload with formatted content"),
             "unexpected error: {error}"
         );
+    }
+
+    // --- store-free profiling prebuild: gate + body byte-parity ---
+
+    use crate::dataset::segment::Role;
+    use crate::multiturn::{AuthoredInputTokenCounter, PreparedEndpointReference};
+
+    fn message_handle(pool: &mut SegmentPool) -> Handle {
+        pool.intern_message(
+            None,
+            "user",
+            Bytes::from_static(br#"{"role":"user","content":"hi"}"#),
+            vec![1_u32].into_boxed_slice(),
+        )
+        .unwrap()
+    }
+
+    /// One static single-turn message conversation, the qualifying shape.
+    fn static_message_conversation(id: &str, handle: Handle) -> Conversation {
+        let mut conversation = Conversation::new(id);
+        conversation.turns.push(Turn {
+            input_tokens: 1,
+            body: Turn::dispatch_body(None, None, &[handle]),
+            ..Turn::default()
+        });
+        conversation
+    }
+
+    fn static_dataset(conversations: Vec<Conversation>, store: Arc<dyn SegmentStore>) -> Dataset {
+        Dataset::new(
+            conversations,
+            store,
+            "sequential",
+            ConversationContextMode::MessageArrayWithResponses,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn qualifies_for_static_single_turn_message_dataset() {
+        let mut pool = SegmentPool::new();
+        let handle = message_handle(&mut pool);
+        let store: Arc<dyn SegmentStore> = Arc::new(pool.freeze());
+        let dataset = static_dataset(
+            vec![
+                static_message_conversation("a", handle),
+                static_message_conversation("b", handle),
+            ],
+            store,
+        );
+        assert!(dataset.qualifies_for_prebuilt_free());
+    }
+
+    #[test]
+    fn empty_dataset_does_not_qualify() {
+        let pool = SegmentPool::new();
+        let store: Arc<dyn SegmentStore> = Arc::new(pool.freeze());
+        let dataset = static_dataset(Vec::new(), store);
+        assert!(!dataset.qualifies_for_prebuilt_free());
+    }
+
+    #[test]
+    fn multi_turn_dataset_does_not_qualify() {
+        let mut pool = SegmentPool::new();
+        let handle = message_handle(&mut pool);
+        let store: Arc<dyn SegmentStore> = Arc::new(pool.freeze());
+        let mut conversation = static_message_conversation("multi", handle);
+        conversation.turns.push(Turn {
+            input_tokens: 1,
+            body: Turn::dispatch_body(None, None, &[handle]),
+            ..Turn::default()
+        });
+        assert!(!static_dataset(vec![conversation], store).qualifies_for_prebuilt_free());
+    }
+
+    #[test]
+    fn without_responses_context_mode_does_not_qualify() {
+        let mut pool = SegmentPool::new();
+        let handle = message_handle(&mut pool);
+        let store: Arc<dyn SegmentStore> = Arc::new(pool.freeze());
+        // MessageArrayWithoutResponses merges live replies before dispatch, so a
+        // turn is not safe to preformat and free.
+        let dataset = Dataset::new(
+            vec![static_message_conversation("a", handle)],
+            store,
+            "sequential",
+            ConversationContextMode::MessageArrayWithoutResponses,
+        )
+        .unwrap();
+        assert!(!dataset.qualifies_for_prebuilt_free());
+    }
+
+    #[test]
+    fn dag_conversation_does_not_qualify() {
+        let mut pool = SegmentPool::new();
+        let handle = message_handle(&mut pool);
+        let store: Arc<dyn SegmentStore> = Arc::new(pool.freeze());
+        let mut conversation = static_message_conversation("root", handle);
+        conversation.dag = Some(DagMetadata {
+            branches: smallvec::smallvec![],
+            is_root: true,
+            agent_depth: 0,
+            parent_conversation_id: None,
+            root_conversation_id: SessionId::from("root"),
+        });
+        assert!(!static_dataset(vec![conversation], store).qualifies_for_prebuilt_free());
+    }
+
+    #[test]
+    fn per_turn_endpoint_override_does_not_qualify() {
+        let mut pool = SegmentPool::new();
+        let handle = message_handle(&mut pool);
+        let store: Arc<dyn SegmentStore> = Arc::new(pool.freeze());
+        let mut conversation = static_message_conversation("override", handle);
+        conversation.turns[0].endpoint = Some("chat".into());
+        assert!(!static_dataset(vec![conversation], store).qualifies_for_prebuilt_free());
+    }
+
+    #[test]
+    fn raw_body_turn_does_not_qualify() {
+        let mut pool = SegmentPool::new();
+        let raw = pool
+            .intern_raw(None, Bytes::from_static(br#"{"messages":[]}"#))
+            .unwrap();
+        let store: Arc<dyn SegmentStore> = Arc::new(pool.freeze());
+        let mut conversation = Conversation::new("raw");
+        conversation.turns.push(Turn {
+            input_tokens: 1,
+            body: Turn::dispatch_body(Some(raw), None, &[]),
+            ..Turn::default()
+        });
+        assert!(!static_dataset(vec![conversation], store).qualifies_for_prebuilt_free());
+    }
+
+    #[test]
+    fn token_native_turn_does_not_qualify() {
+        let mut pool = SegmentPool::new();
+        let token = pool.intern_token_ids(None, [1_u32, 2, 3]).unwrap();
+        let store: Arc<dyn SegmentStore> = Arc::new(pool.freeze());
+        let mut conversation = Conversation::new("tokens");
+        conversation.turns.push(Turn {
+            role: Some(Role::new("user")),
+            input_tokens: 3,
+            body: Turn::dispatch_body(None, Some(token), &[]),
+            ..Turn::default()
+        });
+        assert!(!static_dataset(vec![conversation], store).qualifies_for_prebuilt_free());
+    }
+
+    /// Build the `chat` prepared endpoint used by the online scheduled path.
+    fn prepared_chat_resolver() -> crate::multiturn::PreparedEndpointTableResolver {
+        use crate::endpoints::{EndpointId, EndpointRegistry, RawEndpointConfig};
+        let registry = EndpointRegistry::builtin().unwrap();
+        let endpoint_id = EndpointId::new("chat").unwrap();
+        let endpoint = registry
+            .prepare(
+                &endpoint_id,
+                RawEndpointConfig {
+                    streaming: true,
+                    use_server_token_count: true,
+                    ..RawEndpointConfig::default()
+                },
+            )
+            .unwrap();
+        let mut table = crate::endpoints::PreparedEndpointTable::new();
+        let key = table.push(endpoint).unwrap();
+        crate::multiturn::PreparedEndpointTableResolver::single(
+            std::rc::Rc::new(table),
+            PreparedEndpointReference { key, endpoint_id },
+        )
+        .unwrap()
+    }
+
+    /// Apply the endpoint-bind lowering the online source applies, so a prebuild
+    /// observes the same segment store dispatch sees.
+    fn lower_for_chat(
+        dataset: &mut Dataset,
+        resolver: &crate::multiturn::PreparedEndpointTableResolver,
+    ) {
+        use crate::multiturn::PreparedTurnEndpointResolver;
+        let resolved = resolver.resolve(None).unwrap();
+        if let Some(lowerer) = ShapeLowerer::for_descriptor_id(resolved.endpoint.descriptor().id) {
+            dataset.lower_messages_for_endpoint(&lowerer).unwrap();
+        }
+        dataset
+            .precompute_body_plans(resolved.endpoint, "model")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn prebuild_body_matches_materialize_prepared() {
+        use crate::dataset::materialize::Overrides;
+        use crate::dataset::request::{ConversationSession, EndpointRequestMaterializer};
+        use crate::dataset::{
+            ComposeConfig, DatasetSource, LoadConfig, LoaderRegistry, TiktokenTokenizer,
+        };
+        use crate::multiturn::PreparedTurnEndpointResolver;
+        use crate::rng::RngRoot;
+        use serde_json::json;
+
+        let mut dataset = LoaderRegistry::with_builtin_formats()
+            .unwrap()
+            .build_dataset(
+                Some("single_turn"),
+                &LoadConfig::new(DatasetSource::Inline(
+                    json!([{"text":"hello world"},{"text":"a different prompt"}]),
+                )),
+                &ComposeConfig::new("model", RngRoot::new(Some(3))),
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+        let resolver = prepared_chat_resolver();
+        lower_for_chat(&mut dataset, &resolver);
+        let dataset = Arc::new(dataset);
+
+        let prepared = dataset
+            .prebuild_profiling_dispatch(&resolver, "model", &AuthoredInputTokenCounter, 16)
+            .unwrap();
+        assert_eq!(prepared.len(), dataset.conversations().len());
+
+        for session in &prepared {
+            let mut store_session = ConversationSession::new(
+                dataset.clone(),
+                SessionId::from(session.session_id.as_str()),
+            )
+            .unwrap();
+            store_session.advance_to(0).unwrap();
+            let resolved = resolver.resolve(None).unwrap();
+            let materialized = store_session
+                .materialize_prepared(
+                    &EndpointRequestMaterializer,
+                    resolved.endpoint,
+                    "model",
+                    CreditPhase::Profiling,
+                    &Overrides::new(),
+                )
+                .unwrap();
+            let turn = &session.turns[0];
+            assert_eq!(turn.request_body, materialized.body, "body byte-parity");
+            assert_eq!(turn.request_headers, materialized.headers, "headers parity");
+            assert_eq!(
+                turn.request_parameters, materialized.parameters,
+                "parameters parity"
+            );
+            assert_eq!(
+                turn.input_length as u64, materialized.input_tokens,
+                "input token parity"
+            );
+            assert_eq!(turn.effective_model, materialized.model, "model parity");
+            assert!(turn.streaming, "chat endpoint configured streaming");
+        }
     }
 }
