@@ -8,6 +8,7 @@
 //! finite-to-`+inf` boundary never computes `inf - inf`.
 
 use crate::metrics_core::MetricValue;
+use crate::metrics_core::store::TagSketch;
 use rustc_hash::FxHashMap;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -41,6 +42,42 @@ pub struct DistributionStats {
 }
 
 impl DistributionStats {
+    /// Builds report statistics from a bounded-memory [`TagSketch`] instead of the
+    /// full value vector. Count, sum, average, min, and max stay exact; the standard
+    /// deviation is the streaming Welford estimate; the percentiles are the
+    /// t-digest's approximation of the same linear-interpolation band
+    /// [`linear_distribution`] computes exactly. Returns `None` for an empty sketch,
+    /// mirroring the exact path.
+    pub fn from_sketch(tag: impl Into<String>, sketch: &TagSketch, ddof: usize) -> Option<Self> {
+        let count = sketch.count();
+        if count == 0 {
+            return None;
+        }
+        let count = count as usize;
+        let sum = sketch.sum();
+        let avg = sum / count as f64;
+        let quantile_points = PERCENTILES
+            .iter()
+            .map(|percentile| *percentile as f64 / 100.0)
+            .collect::<Vec<_>>();
+        let mut percentiles = BTreeMap::new();
+        for (percentile, value) in PERCENTILES.iter().zip(sketch.quantiles(&quantile_points)) {
+            if let Some(value) = value {
+                percentiles.insert(*percentile, MetricValue::from_f64(value, false));
+            }
+        }
+        Some(Self {
+            tag: tag.into(),
+            avg: MetricValue::from_f64(avg, false),
+            min: MetricValue::from_f64(sketch.min(), false),
+            max: MetricValue::from_f64(sketch.max(), false),
+            std: Some(sketch.std(ddof)),
+            sum: MetricValue::from_f64(sum, false),
+            count,
+            percentiles,
+        })
+    }
+
     /// Builds an empty distribution for a tag.
     pub fn empty(tag: impl Into<String>) -> Self {
         Self {

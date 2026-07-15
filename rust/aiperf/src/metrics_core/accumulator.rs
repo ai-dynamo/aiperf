@@ -14,11 +14,11 @@ use crate::metrics_core::catalog::{
 use crate::metrics_core::ingest::{InferenceDimensions, RecordIngest};
 use crate::metrics_core::kernel::{DistributionStats, linear_distribution, nearest_distribution};
 use crate::metrics_core::sidecar::SidecarMetric;
-use crate::metrics_core::store::{ColumnStore, ListMetricBackend};
+use crate::metrics_core::store::{ColumnStore, ListMetricBackend, MetricsStorageMode};
 use crate::metrics_core::sweepline::{IclSeries, SweepLineCurves, SweepMetricResult};
 use crate::metrics_core::units::{Unit, UnitConversionError};
 use crate::metrics_core::value::MetricValue;
-use crate::metrics_core::window::ExportContext;
+use crate::metrics_core::window::{ExportContext, Phase};
 use rustc_hash::FxHashMap;
 use serde::Serialize;
 use std::borrow::Cow;
@@ -135,6 +135,10 @@ pub struct MetricsConfig {
     /// which sets `TokenCounts.input = usage.prompt_tokens` (tokenizer-free); output
     /// is already server-authoritative in the accumulator regardless.
     pub use_server_token_count: bool,
+    /// Per-record retention mode. [`MetricsStorageMode::Sketch`] streams each value
+    /// into a bounded-memory t-digest instead of retaining it, trading exact
+    /// percentiles for O(1) memory. Off by default.
+    pub storage_mode: MetricsStorageMode,
 }
 
 impl Default for MetricsConfig {
@@ -146,6 +150,7 @@ impl Default for MetricsConfig {
             osl_mismatch_threshold_pct: DEFAULT_OSL_MISMATCH_THRESHOLD_PCT,
             osl_mismatch_max_tokens: DEFAULT_OSL_MISMATCH_MAX_TOKENS,
             use_server_token_count: false,
+            storage_mode: MetricsStorageMode::Exact,
         }
     }
 }
@@ -428,7 +433,7 @@ impl MetricsAccumulator {
         // Forces one-time catalog validation; the topo order is cached for reuse.
         LazyLock::force(&DERIVED_TOPO_ORDER);
         Self {
-            store: ColumnStore::new(),
+            store: ColumnStore::with_storage_mode(config.storage_mode),
             config,
             network_rtt_ns: None,
             injected_scalars: FxHashMap::default(),
@@ -479,21 +484,33 @@ impl MetricsAccumulator {
         record: &RecordIngest,
         token_arrivals_ns: &[i64],
     ) {
-        let row = match record.request_index {
-            Some(row) => {
-                self.store
-                    .insert_record_at_with_token_arrivals(row, record, token_arrivals_ns);
-                row
+        // Sketch mode ignores the authored absolute request index: it processes each
+        // record into a fresh row-0 scratch, harvests it into the phase-keyed
+        // sketch, then clears the row so memory stays O(1) in the record count.
+        let sketch_mode = self.store.sketch().is_some();
+        let row = if sketch_mode {
+            self.store
+                .push_record_with_token_arrivals(record, token_arrivals_ns)
+        } else {
+            match record.request_index {
+                Some(row) => {
+                    self.store
+                        .insert_record_at_with_token_arrivals(row, record, token_arrivals_ns);
+                    row
+                }
+                None => self
+                    .store
+                    .push_record_with_token_arrivals(record, token_arrivals_ns),
             }
-            None => self
-                .store
-                .push_record_with_token_arrivals(record, token_arrivals_ns),
         };
-        if record.errored || record.canceled {
-            return;
+        if !record.errored && !record.canceled {
+            self.compute_record_metrics(row);
+            self.compute_good_request(row);
         }
-        self.compute_record_metrics(row);
-        self.compute_good_request(row);
+        if sketch_mode {
+            self.store.harvest_row_to_sketch(row, record.phase);
+            self.store.clear_rows();
+        }
     }
 
     /// Replaces the current SLO set. Thresholds must already be in native units.
@@ -555,6 +572,9 @@ impl MetricsAccumulator {
 
     /// Summarizes a phase or time context, including sweeps and configured timeslices.
     pub fn export_results(&self, context: &ExportContext) -> AccumulatorSummary {
+        if self.store.sketch().is_some() {
+            return self.export_results_sketch(context);
+        }
         let mask = self.store.mask_for(context);
         if !mask.iter().any(|selected| *selected) {
             return AccumulatorSummary::new();
@@ -575,6 +595,105 @@ impl MetricsAccumulator {
             inference_series,
             sidecar_metrics: BTreeMap::new(),
         }
+    }
+
+    /// Summarizes a context from the bounded-memory sketch columns.
+    ///
+    /// Only phase separation survives a merged sketch, so per-row-only outputs are
+    /// dropped: no timeslices (they need per-record timestamps), no inference series
+    /// (they need per-record model/endpoint partitioning), no sweep curves, no
+    /// error-adjusted (`adj_*`) bands, and no per-record network-adjusted
+    /// distributions. Counts, sums, averages, min/max, and rate derivations stay
+    /// exact; percentiles are t-digest approximations.
+    fn export_results_sketch(&self, context: &ExportContext) -> AccumulatorSummary {
+        let results = self.compute_result_map_sketch(context.phase);
+        AccumulatorSummary {
+            results,
+            timeslices: Vec::new(),
+            inference_series: Vec::new(),
+            sidecar_metrics: BTreeMap::new(),
+        }
+    }
+
+    fn compute_result_map_sketch(
+        &self,
+        phase: Option<Phase>,
+    ) -> BTreeMap<String, MetricResult> {
+        let sketch = self
+            .store
+            .sketch()
+            .expect("compute_result_map_sketch requires sketch storage");
+        let mut scalars = FxHashMap::<MetricTag, f64>::default();
+        let mut results = BTreeMap::new();
+
+        for spec in CATALOG
+            .iter()
+            .filter(|spec| spec.kind != MetricType::Derived)
+        {
+            let Some(tag_sketch) = sketch.resolve(phase, spec.tag) else {
+                continue;
+            };
+            if tag_sketch.count() == 0 {
+                continue;
+            }
+            match spec.kind {
+                MetricType::Record => {
+                    scalars.insert(spec.tag, tag_sketch.sum());
+                    if let Some(stats) =
+                        DistributionStats::from_sketch(spec.tag.as_str(), &tag_sketch, 0)
+                    {
+                        let result = MetricResult::distribution_from_spec(spec, stats);
+                        results.insert(result.tag.clone(), result);
+                    }
+                }
+                MetricType::Aggregate => {
+                    let scalar = aggregate_from_sketch(
+                        &tag_sketch,
+                        spec.aggregation.unwrap_or(AggregationKind::Sum),
+                    );
+                    scalars.insert(spec.tag, scalar);
+                    let result =
+                        MetricResult::scalar_from_spec(spec, MetricValue::from_f64(scalar, false));
+                    results.insert(result.tag.clone(), result);
+                }
+                MetricType::Derived => unreachable!(),
+            }
+        }
+
+        for (tag, value) in &self.injected_scalars {
+            if let Some(value) = value.as_f64() {
+                scalars.insert(*tag, value);
+            }
+            let result = MetricResult::scalar(*tag, *value);
+            results.insert(result.tag.clone(), result);
+        }
+
+        // Phase contexts carry no window bounds, so rate derivations use the exact
+        // benchmark duration derived from the min/max timestamp aggregates.
+        let observation_duration_ns = observation_duration(&scalars, None, None);
+        for &tag in DERIVED_TOPO_ORDER.iter() {
+            let Some(spec) = spec_for(tag) else {
+                continue;
+            };
+            if spec.kind != MetricType::Derived || scalars.contains_key(&tag) || is_injected(tag) {
+                continue;
+            }
+            if let Some(value) = derive_scalar(tag, &scalars, observation_duration_ns) {
+                scalars.insert(tag, value);
+                let result =
+                    MetricResult::scalar_from_spec(spec, MetricValue::from_f64(value, false));
+                results.insert(result.tag.clone(), result);
+            }
+        }
+
+        // The per-record network-adjusted distributions cannot be reconstructed
+        // from a merged sketch, but the run-level RTT scalar still stands.
+        if let Some(rtt_ns) = self.network_rtt_ns {
+            let result =
+                MetricResult::scalar(MetricTag::NetworkRtt, MetricValue::from_f64(rtt_ns, false));
+            results.insert(result.tag.clone(), result);
+        }
+        results
     }
 
     fn compute_results_and_curves(
@@ -1275,6 +1394,16 @@ fn aggregate_values(values: &[f64], kind: AggregationKind) -> f64 {
     }
 }
 
+/// Reduces one tag's sketch to its aggregate scalar, matching [`aggregate_values`]
+/// but reading the sketch's exact running sum/min/max instead of a value vector.
+fn aggregate_from_sketch(sketch: &crate::metrics_core::store::TagSketch, kind: AggregationKind) -> f64 {
+    match kind {
+        AggregationKind::Sum => sketch.sum(),
+        AggregationKind::Max => sketch.max(),
+        AggregationKind::Min => sketch.min(),
+    }
+}
+
 fn observation_duration(
     scalars: &FxHashMap<MetricTag, f64>,
     window_start_ns: Option<i64>,
@@ -1517,6 +1646,150 @@ mod tests {
             ..UsageMetrics::default()
         };
         record
+    }
+
+    /// Deterministic pseudo-random unit values (a small LCG — no wall clock).
+    fn lcg_stream(seed: u64) -> impl FnMut() -> f64 {
+        let mut state = seed;
+        move || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        }
+    }
+
+    fn latency_record(index: i64, latency_ms: f64) -> RecordIngest {
+        let start = 1_000_000_000 + index * 2_000_000;
+        let end = start + (latency_ms * 1_000_000.0) as i64;
+        successful_record(start, end)
+    }
+
+    fn sketch_accumulator() -> MetricsAccumulator {
+        MetricsAccumulator::with_config(MetricsConfig {
+            storage_mode: MetricsStorageMode::Sketch { compression: 100.0 },
+            ..MetricsConfig::default()
+        })
+    }
+
+    #[test]
+    fn sketch_mode_keeps_counts_sums_extrema_exact_and_percentiles_close() {
+        let mut next = lcg_stream(0xC0FFEE);
+        let mut exact = MetricsAccumulator::new();
+        let mut sketch = sketch_accumulator();
+        for index in 0..20_000 {
+            // Integer-nanosecond latencies keep the f64 running sum order-independent,
+            // so the sketch's arrival-order sum is bitwise identical to the exact
+            // absolute-row-order sum below 2^53.
+            let record = latency_record(index, 50.0 + next() * 500.0);
+            exact.process_record(&record);
+            sketch.process_record(&record);
+        }
+        let exact_summary = exact.summarize();
+        let sketch_summary = sketch.summarize();
+
+        assert_eq!(
+            exact_summary.finite_value(MetricTag::RequestCount),
+            sketch_summary.finite_value(MetricTag::RequestCount)
+        );
+        assert_eq!(
+            exact_summary.finite_value(MetricTag::RequestThroughput),
+            sketch_summary.finite_value(MetricTag::RequestThroughput),
+            "rate derivations stay exact from the exact min/max timestamp aggregates"
+        );
+
+        let exact_latency = exact_summary
+            .result(MetricTag::RequestLatency)
+            .unwrap()
+            .distribution()
+            .unwrap();
+        let sketch_latency = sketch_summary
+            .result(MetricTag::RequestLatency)
+            .unwrap()
+            .distribution()
+            .unwrap();
+        assert_eq!(exact_latency.count, sketch_latency.count);
+        assert_eq!(exact_latency.sum, sketch_latency.sum);
+        assert_eq!(exact_latency.avg, sketch_latency.avg);
+        assert_eq!(exact_latency.min, sketch_latency.min);
+        assert_eq!(exact_latency.max, sketch_latency.max);
+        assert!(sketch_latency.std.is_some());
+
+        // Percentiles are t-digest approximations; the latency band spans ~500 ms so
+        // 1% of range is ~5 ms. Allow a small absolute + relative tolerance.
+        for percentile in crate::metrics_core::PERCENTILES {
+            let exact_value = exact_latency
+                .percentiles
+                .get(&percentile)
+                .copied()
+                .and_then(MetricValue::as_f64)
+                .unwrap();
+            let sketch_value = sketch_latency
+                .percentiles
+                .get(&percentile)
+                .copied()
+                .and_then(MetricValue::as_f64)
+                .unwrap();
+            assert!(
+                (exact_value - sketch_value).abs() <= 5.0 + exact_value.abs() * 0.02,
+                "p{percentile}: exact {exact_value:.4} vs sketch {sketch_value:.4}"
+            );
+        }
+    }
+
+    #[test]
+    fn sketch_partitions_merge_associatively() {
+        let mut next = lcg_stream(0xABCDEF);
+        let mut whole = sketch_accumulator();
+        let mut shards = [sketch_accumulator(), sketch_accumulator(), sketch_accumulator()];
+        for index in 0..12_000i64 {
+            let record = latency_record(index, 10.0 + next() * 200.0);
+            whole.process_record(&record);
+            shards[(index % 3) as usize].process_record(&record);
+        }
+        let mut merged = sketch_accumulator();
+        for shard in &shards {
+            merged.merge(shard).unwrap();
+        }
+
+        let whole_summary = whole.summarize();
+        let merged_summary = merged.summarize();
+        assert_eq!(
+            whole_summary.finite_value(MetricTag::RequestCount),
+            merged_summary.finite_value(MetricTag::RequestCount)
+        );
+        let whole_latency = whole_summary
+            .result(MetricTag::RequestLatency)
+            .unwrap()
+            .distribution()
+            .unwrap();
+        let merged_latency = merged_summary
+            .result(MetricTag::RequestLatency)
+            .unwrap()
+            .distribution()
+            .unwrap();
+        assert_eq!(whole_latency.count, merged_latency.count);
+        assert_eq!(whole_latency.min, merged_latency.min);
+        assert_eq!(whole_latency.max, merged_latency.max);
+        assert_eq!(whole_latency.sum, merged_latency.sum);
+        for percentile in crate::metrics_core::PERCENTILES {
+            let whole_value = whole_latency
+                .percentiles
+                .get(&percentile)
+                .copied()
+                .and_then(MetricValue::as_f64)
+                .unwrap();
+            let merged_value = merged_latency
+                .percentiles
+                .get(&percentile)
+                .copied()
+                .and_then(MetricValue::as_f64)
+                .unwrap();
+            assert!(
+                (whole_value - merged_value).abs() <= 5.0 + whole_value.abs() * 0.04,
+                "p{percentile}: whole {whole_value:.4} vs merged {merged_value:.4}"
+            );
+        }
     }
 
     #[test]

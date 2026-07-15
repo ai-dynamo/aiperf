@@ -8,6 +8,7 @@
 //! first-appearance codes. The sparse-column and query semantics and the exact
 //! CSR list replay are implemented in this module.
 
+use crate::cellular::sketch::TDigest;
 use crate::metrics_core::catalog::MetricTag;
 use crate::metrics_core::ingest::{HttpTrace, InferenceDimensions, RecordIngest, UsageMetrics};
 use crate::metrics_core::value::MetricValue;
@@ -135,6 +136,11 @@ impl NumericColumn {
         if self.values.len() < rows {
             self.values.resize(rows, f64::NAN);
         }
+    }
+
+    /// Drops every row while retaining the backing allocation (sketch-mode reuse).
+    fn clear(&mut self) {
+        self.values.clear();
     }
 }
 
@@ -483,6 +489,214 @@ fn category_hash<T: Hash + ?Sized>(value: &T) -> u64 {
     hasher.finish()
 }
 
+/// Selects how a [`ColumnStore`] retains per-record metric values.
+///
+/// Exact retention keeps every value for exact percentiles at the cost of memory
+/// linear in the record count. Sketch retention streams each Record-metric value
+/// into a bounded-memory t-digest (approximate percentiles; exact count/sum/min/max)
+/// so memory stays O(1) in the record count — the opt-in high-request-rate mode.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MetricsStorageMode {
+    /// Retain every per-record value (exact percentiles, O(records) memory).
+    Exact,
+    /// Stream each value into a per-tag t-digest sketch (approximate percentiles,
+    /// exact count/sum/min/max, O(1) memory).
+    Sketch {
+        /// t-digest compression (δ); larger keeps more centroids, finer quantiles.
+        compression: f64,
+    },
+}
+
+impl Default for MetricsStorageMode {
+    fn default() -> Self {
+        Self::Exact
+    }
+}
+
+/// One tag's streaming aggregate: a t-digest for approximate percentiles plus an
+/// exact running count/sum/min/max and a Welford mean/M2 for the standard
+/// deviation. Every scalar except the percentiles is exact; the percentiles track
+/// the exact linear-interpolation band to well under a percent on broad
+/// distributions (see the t-digest convergence test in `cellular::sketch`).
+///
+/// The running sum is summed in record-arrival order rather than the exact path's
+/// absolute-row order, so an integer-valued metric's sum is bitwise identical while
+/// a float metric's sum may differ by a few ULPs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TagSketch {
+    digest: TDigest,
+    sum: f64,
+    count: u64,
+    min: f64,
+    max: f64,
+    mean: f64,
+    m2: f64,
+}
+
+impl TagSketch {
+    /// Builds an empty sketch with an explicit t-digest compression.
+    fn with_compression(compression: f64) -> Self {
+        Self {
+            digest: TDigest::with_compression(compression),
+            sum: 0.0,
+            count: 0,
+            min: f64::INFINITY,
+            max: f64::NEG_INFINITY,
+            mean: 0.0,
+            m2: 0.0,
+        }
+    }
+
+    /// Ingests one finite value, updating every exact aggregate and the digest.
+    fn add(&mut self, value: f64) {
+        if !value.is_finite() {
+            return;
+        }
+        self.count += 1;
+        let delta = value - self.mean;
+        self.mean += delta / self.count as f64;
+        let delta2 = value - self.mean;
+        self.m2 += delta * delta2;
+        self.sum += value;
+        if value < self.min {
+            self.min = value;
+        }
+        if value > self.max {
+            self.max = value;
+        }
+        self.digest.add(value);
+    }
+
+    /// Merges another shard's sketch: exact aggregates combine by the parallel
+    /// (Chan) Welford update and the digests merge associatively.
+    fn merge(&mut self, other: &TagSketch) {
+        if other.count == 0 {
+            return;
+        }
+        if self.count == 0 {
+            *self = other.clone();
+            return;
+        }
+        let (count_a, count_b) = (self.count as f64, other.count as f64);
+        let total = count_a + count_b;
+        let delta = other.mean - self.mean;
+        self.mean += delta * count_b / total;
+        self.m2 += other.m2 + delta * delta * count_a * count_b / total;
+        self.count += other.count;
+        self.sum += other.sum;
+        if other.min < self.min {
+            self.min = other.min;
+        }
+        if other.max > self.max {
+            self.max = other.max;
+        }
+        self.digest.merge(&other.digest);
+    }
+
+    /// The number of ingested values.
+    pub fn count(&self) -> u64 {
+        self.count
+    }
+
+    /// The exact record-arrival-order sum of ingested values.
+    pub fn sum(&self) -> f64 {
+        self.sum
+    }
+
+    /// The exact minimum ingested value (`+inf` when empty).
+    pub fn min(&self) -> f64 {
+        self.min
+    }
+
+    /// The exact maximum ingested value (`-inf` when empty).
+    pub fn max(&self) -> f64 {
+        self.max
+    }
+
+    /// The standard deviation with the given delta-degrees-of-freedom, from the
+    /// streaming Welford M2 (population std at `ddof == 0`).
+    pub fn std(&self, ddof: usize) -> f64 {
+        let denom = (self.count as usize).saturating_sub(ddof);
+        if denom == 0 {
+            0.0
+        } else {
+            (self.m2 / denom as f64).sqrt()
+        }
+    }
+
+    /// Estimates several quantiles (each `q` in `[0, 1]`) from the digest.
+    pub fn quantiles(&self, quantiles: &[f64]) -> Vec<Option<f64>> {
+        self.digest.quantiles(quantiles)
+    }
+}
+
+/// Per-`(phase, tag)` streaming sketches — the bounded-memory replacement for the
+/// exact numeric columns. Phase separation preserves the warmup/profiling phase
+/// mask the exact path applies over rows, and the whole structure merges
+/// associatively so cell partitions combine the same way single-process workers do.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SketchColumns {
+    compression: f64,
+    tags: FxHashMap<(Phase, u16), TagSketch>,
+}
+
+impl SketchColumns {
+    /// Builds an empty sketch column set with the given digest compression.
+    pub fn new(compression: f64) -> Self {
+        Self {
+            compression,
+            tags: FxHashMap::default(),
+        }
+    }
+
+    /// Ingests one finite value for a `(phase, tag)`.
+    pub fn add(&mut self, phase: Phase, tag: MetricTag, value: f64) {
+        let compression = self.compression;
+        self.tags
+            .entry((phase, tag.index() as u16))
+            .or_insert_with(|| TagSketch::with_compression(compression))
+            .add(value);
+    }
+
+    /// Returns the sketch for one `(phase, tag)`, if any value was ingested.
+    pub fn tag(&self, phase: Phase, tag: MetricTag) -> Option<&TagSketch> {
+        self.tags.get(&(phase, tag.index() as u16))
+    }
+
+    /// Resolves a tag sketch for an optional phase context: a specific phase
+    /// returns that phase's sketch; `None` merges every phase's sketch for the tag.
+    pub fn resolve(&self, phase: Option<Phase>, tag: MetricTag) -> Option<TagSketch> {
+        let index = tag.index() as u16;
+        match phase {
+            Some(phase) => self.tags.get(&(phase, index)).cloned(),
+            None => {
+                let mut merged: Option<TagSketch> = None;
+                for ((_, tag_index), sketch) in &self.tags {
+                    if *tag_index != index {
+                        continue;
+                    }
+                    match &mut merged {
+                        Some(accumulated) => accumulated.merge(sketch),
+                        None => merged = Some(sketch.clone()),
+                    }
+                }
+                merged
+            }
+        }
+    }
+
+    /// Merges another shard's sketch columns into this one.
+    pub fn merge(&mut self, other: &SketchColumns) {
+        for (key, sketch) in &other.tags {
+            let compression = self.compression;
+            self.tags
+                .entry(*key)
+                .or_insert_with(|| TagSketch::with_compression(compression))
+                .merge(sketch);
+        }
+    }
+}
+
 /// Absolute-request-index-aligned metric and metadata columns.
 ///
 /// Derives `Clone`/serde so a worker's store can be exported as a serializable,
@@ -523,6 +737,12 @@ pub struct ColumnStore<B: ListMetricBackend = RaggedSeries> {
     numeric_present: Vec<MetricTag>,
     ragged: Vec<Option<B>>,
     ragged_present: Vec<MetricTag>,
+    // Bounded-memory sketch retention. `Some` only under
+    // [`MetricsStorageMode::Sketch`]; the accumulator then uses the row columns as
+    // a transient single-record scratch, harvesting each finished record into this
+    // sketch and clearing the rows so memory stays O(1) in the record count.
+    #[serde(default)]
+    sketch: Option<SketchColumns>,
 }
 
 impl<B: ListMetricBackend> Default for ColumnStore<B> {
@@ -552,6 +772,7 @@ impl<B: ListMetricBackend> Default for ColumnStore<B> {
             numeric_present: Vec::new(),
             ragged: (0..MetricTag::COUNT).map(|_| None).collect(),
             ragged_present: Vec::new(),
+            sketch: None,
         }
     }
 }
@@ -562,11 +783,95 @@ impl<B: ListMetricBackend> ColumnStore<B> {
         Self::default()
     }
 
+    /// Builds an empty column store honoring the requested retention mode.
+    ///
+    /// Under [`MetricsStorageMode::Sketch`] the store allocates the per-tag sketch
+    /// columns; the row columns then serve only as a one-record scratch that the
+    /// accumulator harvests and clears.
+    pub fn with_storage_mode(mode: MetricsStorageMode) -> Self {
+        let mut store = Self::default();
+        if let MetricsStorageMode::Sketch { compression } = mode {
+            store.sketch = Some(SketchColumns::new(compression));
+        }
+        store
+    }
+
+    /// Returns the bounded-memory sketch columns when the store is in sketch mode.
+    pub fn sketch(&self) -> Option<&SketchColumns> {
+        self.sketch.as_ref()
+    }
+
+    /// Harvests one populated row's finite metric values into the sketch columns,
+    /// keyed by `phase`, so the row storage can then be cleared. A no-op when the
+    /// store is not in sketch mode.
+    pub fn harvest_row_to_sketch(&mut self, row: usize, phase: Phase) {
+        let Some(mut sketch) = self.sketch.take() else {
+            return;
+        };
+        for &tag in &self.numeric_present {
+            if let Some(column) = &self.numeric[tag.index()]
+                && let Some(value) = column.get(row)
+            {
+                sketch.add(phase, tag, value);
+            }
+        }
+        if !self.ragged_present.is_empty() {
+            let mut mask = vec![false; self.row_count()];
+            if let Some(slot) = mask.get_mut(row) {
+                *slot = true;
+            }
+            for &tag in &self.ragged_present {
+                if let Some(backend) = &self.ragged[tag.index()] {
+                    for value in backend.values_for_mask(&mask) {
+                        sketch.add(phase, tag, value);
+                    }
+                }
+            }
+        }
+        self.sketch = Some(sketch);
+    }
+
+    /// Clears every row-addressed column and categorical interner while retaining
+    /// the sketch columns and allocated capacity. Used between records in sketch
+    /// mode so the transient row scratch never grows.
+    pub fn clear_rows(&mut self) {
+        self.occupied.clear();
+        self.occupied_count = 0;
+        self.start_ns.clear();
+        self.end_ns.clear();
+        self.generation_start_ns.clear();
+        self.observed_output_sequence_length.clear();
+        self.session_nums.clear();
+        self.turn_indices.clear();
+        self.phase_codes.clear();
+        self.correlation_codes.clear();
+        self.dimension_codes.clear();
+        self.worker_codes.clear();
+        self.conversation_codes.clear();
+        self.errored.clear();
+        self.canceled.clear();
+        self.phases = CategoryInterner::default();
+        self.correlations = CategoryInterner::default();
+        self.dimensions = CategoryInterner::default();
+        self.workers = CategoryInterner::default();
+        self.conversations = CategoryInterner::default();
+        for column in self.numeric.iter_mut().flatten() {
+            column.clear();
+        }
+        for backend in self.ragged.iter_mut().flatten() {
+            *backend = B::default();
+        }
+    }
+
     /// Prepares every index-aligned column for an absolute request-slot span.
     ///
     /// Subsequent inserts still decide which slots are occupied; this only
-    /// removes per-record vector growth from known-size ingestion paths.
+    /// removes per-record vector growth from known-size ingestion paths. A no-op
+    /// in sketch mode, where the store never retains more than one record.
     pub fn prepare_request_slots(&mut self, rows: usize) {
+        if self.sketch.is_some() {
+            return;
+        }
         self.ensure_row_count(rows);
         for backend in self.ragged.iter_mut().flatten() {
             backend.prepare_rows(rows);
@@ -625,6 +930,11 @@ impl<B: ListMetricBackend> ColumnStore<B> {
     /// Categorical codes are re-interned in append order, numeric absence remains
     /// index-aligned, and list-valued record indices are shifted exactly once.
     pub fn append_store(&mut self, other: &Self) {
+        // Sketch partitions merge associatively; a sketch-mode store retains no
+        // rows, so this is the whole merge on that path.
+        if let (Some(sketch), Some(other_sketch)) = (self.sketch.as_mut(), other.sketch.as_ref()) {
+            sketch.merge(other_sketch);
+        }
         let row_offset = self.row_count();
         let other_rows = other.row_count();
         if other_rows == 0 {
