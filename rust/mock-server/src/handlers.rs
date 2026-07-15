@@ -75,17 +75,21 @@ fn maybe_inject_error(state: &AppState) -> Option<AppError> {
 }
 
 /// Shared context for a tokenized LLM request.
-struct RequestCtx {
-    request_id: String,
-    model: String,
-    tokenized: TokenizedText,
-    usage: Usage,
-    latency_sim: LatencySimulator,
-    start: Instant,
+///
+/// `pub(crate)` so alternative front doors (e.g. the KServe gRPC service in
+/// [`crate::grpc`]) reuse the exact tokenize → usage → latency/prefix-cache head
+/// the HTTP handlers use, rather than re-deriving it.
+pub(crate) struct RequestCtx {
+    pub(crate) request_id: String,
+    pub(crate) model: String,
+    pub(crate) tokenized: TokenizedText,
+    pub(crate) usage: Usage,
+    pub(crate) latency_sim: LatencySimulator,
+    pub(crate) start: Instant,
 }
 
 impl RequestCtx {
-    fn build(
+    pub(crate) fn build(
         request_id_prefix: &str,
         req_gen: &GenRequest<'_>,
         _endpoint: &str,

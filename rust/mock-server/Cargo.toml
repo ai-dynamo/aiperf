@@ -20,6 +20,13 @@ aiperf = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# Native KServe OIP v2 gRPC target. The `server` feature adds tonic's h2/hyper
+# server plane on top of the workspace's client-only feature set; the KServe
+# prost message types are reused from `aiperf::transport_grpc::proto` (no
+# build-time protoc / tonic-build anywhere in the workspace).
+tonic = { workspace = true, features = ["server"] }
+prost = { workspace = true }
+http = "1"
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = { workspace = true }
