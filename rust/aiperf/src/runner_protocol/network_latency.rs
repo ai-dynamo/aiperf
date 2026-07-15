@@ -15,16 +15,16 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::rc::Rc;
 
-use aiperf::clock::Clock;
-use aiperf::network_latency::{
+use crate::clock::Clock;
+use crate::network_latency::{
     NetworkLatencyAccumulator, NetworkLatencyProbe, NetworkLatencyTarget, TcpConnectProbe,
 };
-use aiperf::phase_runtime::ScheduledPhaseSidecar;
+use crate::phase_runtime::ScheduledPhaseSidecar;
 use anyhow::{Context, Result, ensure};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
-use crate::protocol::{NetworkLatencyProbeSpec, NetworkLatencySpec};
+use crate::runner_protocol::protocol::{NetworkLatencyProbeSpec, NetworkLatencySpec};
 
 /// Run-owned fixed or actively measured RTT calibration.
 pub(crate) struct NetworkLatencyRun {
@@ -142,7 +142,7 @@ trait NetworkLatencyArtifactSink {
     fn write(
         &self,
         path: &Path,
-        samples: &[aiperf::network_latency::NetworkLatencySample],
+        samples: &[crate::network_latency::NetworkLatencySample],
     ) -> Result<()>;
 }
 
@@ -152,7 +152,7 @@ impl NetworkLatencyArtifactSink for JsonlNetworkLatencyArtifactSink {
     fn write(
         &self,
         path: &Path,
-        samples: &[aiperf::network_latency::NetworkLatencySample],
+        samples: &[crate::network_latency::NetworkLatencySample],
     ) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).with_context(|| {
@@ -227,12 +227,12 @@ impl NetworkLatencySidecar {
 }
 
 impl ScheduledPhaseSidecar for NetworkLatencySidecar {
-    fn start(&self) -> aiperf::timing::LocalPhaseFuture<Result<()>> {
+    fn start(&self) -> crate::timing::LocalPhaseFuture<Result<()>> {
         let state = self.state.clone();
         Box::pin(async move { state.start().await })
     }
 
-    fn finish(&self) -> aiperf::timing::LocalPhaseFuture<Result<()>> {
+    fn finish(&self) -> crate::timing::LocalPhaseFuture<Result<()>> {
         let state = self.state.clone();
         Box::pin(async move { state.finish().await })
     }

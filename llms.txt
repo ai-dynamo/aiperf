@@ -31,15 +31,17 @@ purpose for each, so an agent knows which file to open for a given question.
 
 Python projects one side-effect-free authored protocol-v2 request and sends it
 to `aiperf-runner`; there is no Python protocol-v1 resolver, conversion, or
-fallback. The runner exact-image-preflights the requested transport/workload pair
-and direct-loads its one registered adapter. It drives **ONLINE-real** over
+fallback. The runner exact-image-preflights the requested transport and workload
+and direct-loads their registered adapters (any workload runs over any transport;
+there is no pair map or compatibility gate). It drives **ONLINE-real** over
 native HTTP or gRPC (including KServe OIP and NVIDIA Riva ASR/TTS/NLP) and
 **ONLINE-mock** over HTTP through one `{transport,
 clock}` seam. The base image registers HTTP scheduled/graph/static-accuracy/
 agentic and native gRPC scheduled execution. **OFFLINE-mock** is product-
 reachable through the same Python Config-v2 path when the runner is built with
 the non-default `dynosim` feature; that image adds `dynosim_offline` and
-`dynosim_online` scheduled and graph pairs. Unregistered pairs fail closed.
+`dynosim_online` scheduled and graph execution. Unregistered transports or
+workloads fail closed.
 The open `vllm_generate` endpoint is token-native end to end: its descriptor
 requires validated raw IDs, `aiperf-dataset` stores them as content-addressed
 handles and generates synthetic IDs without decoding text, online HTTP maps
@@ -99,13 +101,13 @@ native segments and HTTP bodies under that canonical stream.
 | `aiperf-server-metrics` | Prometheus/OpenMetrics producer: routing/fallback/auto-disable, exact counter/histogram boundaries, gauge distributions, histogram estimator, units, and vLLM/SGLang atlas, plus its own self-contained exposition parser | `src/source.rs`, `src/parser.rs`, `src/accumulator.rs`, `src/histogram.rs`, `src/atlas.rs`, `src/units.rs` |
 | `aiperf-network-latency` | Fresh TCP-connect RTT calibration: target discovery, DNS fallback, Clock deadlines, nonfatal samples, per-target population stats, and flat-mean delivery | `src/probe.rs`, `src/accumulator.rs`, `src/model.rs` |
 | `aiperf-accuracy` | transport-free provider-neutral evaluator control plane: strict evaluator-worker protocol v2 DTOs, open factory/availability registry, factory-owned config/public projections, dedicated-control-FD supervision, launch attestation, Bubblewrap process-tree isolation/quiescence, and FD-relative artifact sealing. Legacy static `AccuracyEvaluator`, stateful `AgenticEvaluator`, and `PythonEvaluator` remain for exact-parity migration; deliberately no Rust benchmark builders, graders, hidden-test decoder, code executor, dataset client, or dispatch path. | `src/provider.rs`, `src/provider_protocol.rs`, `src/supervisor.rs`, `src/isolation.rs`, `src/artifacts.rs`, `src/metadata_projection.rs`, `src/score_projection.rs`, `src/protocol.rs`, `src/worker.rs` |
-| `aiperf-extensions` | cycle-free compile-time composition: aggregate `AiperfRegistry`, transactional `AiperfExtension` application, and typed dataset/sampler/endpoint registries; the runner freezes the linked registry with its resolvers and pair factories into one immutable application, while accuracy remains directly injected | `src/lib.rs` |
+| `aiperf-extensions` (module `aiperf::extensions`) | cycle-free compile-time composition: ONE unified `AIPerfRegistry` and its single `AIPerfExtension` seam own endpoints, dataset loaders, samplers, transports, workloads, exporters, and actuators over a shared `TransactionalRegistry<T>`; the stock set is one ordered `with_builtin_extensions([...])` list whose only `#[cfg]` is feature-gate lines, and `--capabilities` auto-derives from it. No pair factories or compatibility predicate; `RunnerApplication` freezes the linked registry with its resolvers into one immutable application, while accuracy remains directly injected | `rust/aiperf/src/extensions/` |
 | `aiperf-endpoints` | trait-backed wire dialects plus the open registry foundation: validated `EndpointId`, co-located descriptors (including representation requirements), identity-free raw/effective policy, deterministic factories/aliases, dense worker-local prepared bindings, readiness policy, and compile-once raw/template state. Runner-v2-only families include nine KServe factories, nine NVIDIA Riva ASR/TTS/NLP factories, and PR-1113 `vllm_generate` exact token arrays/non-text output data, without adding a closed enum variant | `src/registry.rs`, `src/config.rs`, `src/kserve.rs`, `src/vllm_generate.rs`, `src/riva.rs`, `src/anthropic.rs`, `src/endpoints.rs`, `src/tier2/flexible.rs`, `tests/kserve.rs`, `tests/vllm_generate.rs`, `tests/riva.rs` |
 | `aiperf-transport-http` | the Clock-injected hyper transport plus object-safe endpoint binding (canonical JSON ↔ HTTP URL/body/lifecycle and HTTP/SSE response decoding); h1/h2c/UDS, rustls, trace timing, send-complete cancellation, and reuse strategies | `src/transport/endpoint_binding.rs`, `src/client/`, `src/transport/`, `src/sse/`, `src/models/` |
 | `aiperf-transport-grpc` | Clock-injected raw Tonic transport with an open endpoint-binding registry, exact checked-in KServe DTOs and reference-grounded Riva Prost DTOs, OIP typed/raw tensor conversion, Riva ASR/TTS/NLP codecs, grpc/grpcs TLS, unary/server/bidirectional streaming, optional readiness, native status/trace facts, pooled/never/sticky channels, and post-send cancellation | `src/binding.rs`, `src/codec.rs`, `src/riva_binding.rs`, `src/riva_codec.rs`, `src/riva_proto.rs`, `src/transport.rs`, `src/models.rs`, `src/proto.rs`, `src/raw_codec.rs` |
 | `aiperf-graph` | Backend-neutral Graph-IR dataflow over the unified segment store, canonical DAG plus WEKA/Dynamo recorded-trace compilation/lowering, trait-backed root/arrival/admission/placement/failure policy, shared phase-lifecycle adaptation, ramps/adaptive controls, placement-wide cancellation/prefill updates, DES drivers, worker-local native metrics merged once at join, and the trajectory-snapshot (t*) + warmup-priming subsystem (per-trace seeded t* draw via `numpy_pcg64`, profiling/warmup/handoff trie chops, lane-0 baseline fidelity, Python config-lock) | `src/input.rs`, `src/dag_source.rs`, `src/lowering.rs`, `src/recorded/`, `src/tstar.rs`, `src/snapshot.rs`, `src/warmup_handoff.rs`, `src/workload.rs`, `src/placement.rs`, `src/runtime.rs`, `src/executor.rs`, `src/materialize.rs`, `src/transport_bench.rs` |
-| `aiperf-runner` | sole strict Rust executable: Python always sends exact-image-bound protocol-v2 `validate`/`execute`; the runner is protocol-v2-only, advertises `protocol_versions: [2]`, and rejects any non-v2 request as a v2 failure envelope. One immutable linked `RunnerApplication` owns capabilities, one runner-owned identity-dispatched graph-input resolver, other input resolvers, factories, and coordinators; the v2 graph path uses that resolver and direct compiler. Its frozen pair registry direct-loads one prepared operation. The base image registers HTTP scheduled/graph/static-accuracy/agentic and native gRPC scheduled; `dynosim` adds `dynosim_offline`/`dynosim_online` scheduled/graph | `src/application.rs`, `src/main.rs`, `src/protocol_v2.rs`, `src/registry.rs`, `src/graph_input.rs`, `src/execute.rs`, `src/online_execution.rs`, `src/offline_execution.rs`, `src/agentic_execution.rs`, `src/grpc_execution.rs`, `src/grpc_turn_execution.rs`, `src/graph_phase_runtime.rs`, `src/graph_execution.rs` |
-| `aiperf` | library-only load-generation runtime composed by `aiperf-runner`: prepared HTTP/gRPC sinks, online paced/scheduled/adaptive/static-accuracy paths, the provider-neutral evaluation workload/typed host registry/fair arbiter/ledger/Clock retry/scoped proxy/report join, legacy stateful agentic seams, and the feature-gated offline implementation | `src/evaluation.rs`, `src/evaluation/`, `src/grpc.rs`, `src/http.rs`, `src/agentic.rs`, `src/dynosim.rs`, `src/phase_runtime.rs`, `src/ancillary.rs`, `src/metrics.rs`, `src/accuracy.rs`, `src/scheduled.rs`, `src/report.rs` |
+| `aiperf-runner` | sole strict Rust executable, now a thin (~550-line) process shell: `lib.rs` re-exports the v2 composition root that lives in `aiperf::runner_protocol` (feature `runner-protocol`) and `main.rs` is the process/stdio/signal harness. Python always sends exact-image-bound protocol-v2 `validate`/`execute`; the runner is protocol-v2-only, advertises `protocol_versions: [2]`, and rejects any non-v2 request as a v2 failure envelope. The immutable linked `RunnerApplication` owns capabilities, the identity-dispatched graph-input resolver, other input resolvers, factories, and coordinators; its frozen transport and workload registries (no pair map) direct-load one prepared operation. The base image registers HTTP scheduled/graph/static-accuracy/agentic and native gRPC scheduled; `dynosim` adds `dynosim_offline`/`dynosim_online` scheduled/graph | `rust/runner/src/{main.rs,lib.rs}`; the v2 modules (`application.rs`, `protocol_v2.rs`, `registry.rs`, `graph_input.rs`, `execute.rs`, the `*_execution.rs` drivers, `graph_phase_runtime.rs`) now live under `rust/aiperf/src/runner_protocol/` |
+| `aiperf` | library-only load-generation runtime composed by `aiperf-runner`: prepared HTTP/gRPC sinks, online paced/scheduled/adaptive/static-accuracy paths, the provider-neutral evaluation workload/typed host registry/fair arbiter/ledger/Clock retry/scoped proxy/report join, legacy stateful agentic seams, and the feature-gated offline implementation; it also owns the single `AIPerfRegistry`/`AIPerfExtension` seam (`src/extensions/`) and, behind the `runner-protocol` feature, hosts the relocated v2 layer `aiperf::runner_protocol` (protocol/registry, execution factories and drivers, coordinator, `RunnerApplication`, cellular controller/cell, control-plane HTTP, and the GPU/network/server side-channels) that only `aiperf-runner` enables | `src/extensions/`, `src/runner_protocol/`, `src/evaluation.rs`, `src/evaluation/`, `src/grpc.rs`, `src/http.rs`, `src/agentic.rs`, `src/dynosim.rs`, `src/phase_runtime.rs`, `src/ancillary.rs`, `src/metrics.rs`, `src/accuracy.rs`, `src/scheduled.rs`, `src/report.rs` |
 
 Deps: `aiperf` → {`aiperf-accuracy`, `aiperf-adaptive`,
 `aiperf-dataset`, `aiperf-endpoints`, `aiperf-graph`, `aiperf-metrics`,
@@ -644,21 +646,21 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   Carries the P1 rename pass (DTO/placement/method renames, landed after the
   concurrent bodyplan work committed `http.rs`); the P1 method-fold,
   `inference_dimensions` signature change, and discarded-observer cleanup stay deferred.
-- `specs/2026-07-14-unified-execution-substrate-design.md` — **the S5 endgame**
-  (design, not built): unify scheduled + graph so any `Workload` runs over any
-  transport, finally enabling `grpc + graph`. Stage 1 (shippable now on
-  `ajc/rust-threaded`) extracts one object-safe `Dispatcher` trait from the
-  identical HTTP/gRPC `dispatch_collect`, `dyn`-ifies the graph sink's concrete
-  `Rc<TransportSink>` (`graph_execution.rs:243`), adds a gRPC arm to the graph
-  endpoint runtime, and **deletes the `RunnerPairFactory` abstraction entirely**
-  (`pairs` map, `register_pair`, the `*Pair` objects) — moving `prepare` onto the
-  workload factory and composing transport × workload inline via the existing
-  descriptor predicate, so `grpc+graph` falls out with no `*Pair` cell object (`M =
-  OpenAiChatMessage` stays; wire dialect ≠ transport). Stage 2 folds the two placement backends + two
-  workload drivers into one `WorkerPool`/`Session` substrate (a flat scheduled turn
-  = a 1-node `Trace`), built on P3's `run_sharded_scheduled` template + P5's
-  `next_arrival_target` pacer + the `OnFailure` enum, reducing the transport axis to
-  a single `Dispatcher` registry. Realizes cellular §S5.
+- `specs/2026-07-14-unified-execution-substrate-design.md` — **north-star;
+  Stage 1 built**: one `Dispatcher`, one `WorkerPool`, any workload over any
+  transport. **Stage 1 shipped**: an object-safe `Dispatcher` trait
+  (`dispatch_collect(PreparedTurn)`) implemented once per transport
+  (`TransportSink`/`GrpcTransportSink`); the graph sink holds `Rc<dyn Dispatcher>`;
+  the graph endpoint runtime factory builds an HTTP or gRPC dispatcher from
+  `cfg.transport.type`; and the whole `RunnerPairFactory` layer — `pairs` map,
+  `register_pair`, the pair impls, **and** the `validate_descriptor_compatibility`
+  predicate / `supported_pairs` inventory — is **deleted**. Transports and
+  workloads are two independent registries with **no compatibility gate**; every
+  workload runs over every transport, `prepare`/`validate_run` moved onto the
+  workload factory. Deliverable proven: `transport.type: grpc` + a `dag_jsonl`
+  graph dataset dispatches graph nodes over Tonic (`rust/runner/tests/test_graph_grpc.rs`).
+  Supersedes the `RunnerPairFactory` mechanism of the runner-only execution-surface
+  spec (its 2026-07-14 addendum). Stage 2 (`WorkerPool`/`Session` merge) is design-only.
 - `specs/2026-07-13-segment-unification-design.md` — **segment unification**
   (design): collapse `Turn`'s five body fields (content/messages/raw_payload/
   raw_messages/raw_token_ids) into segment `Handle`s in the one `SegmentPool`;

@@ -5,7 +5,7 @@
 //!
 //! Python's convergence and detailed-aggregation consumers read the
 //! `MetricRecordInfo` shape. Rust retains that wire shape, but every value is
-//! produced by the same [`aiperf::metrics_core::MetricsAccumulator`] used for
+//! produced by the same [`crate::metrics_core::MetricsAccumulator`] used for
 //! native-v2 aggregation.
 
 use std::collections::BTreeMap;
@@ -13,12 +13,12 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
-use aiperf::export::otel::{OtelRecordAccumulator, classify_spec_error_type};
-use aiperf::metrics_core::{
+use crate::export::otel::{OtelRecordAccumulator, classify_spec_error_type};
+use crate::metrics_core::{
     CATALOG, MetricFlags, MetricType, MetricsAccumulator, MetricsConfig, Phase, RecordIngest,
     ReportError,
 };
-use aiperf::transport_http::models::{
+use crate::transport_http::models::{
     ErrorKind, RequestRecord, Response, SseFieldName, SseMessage, TextResponse,
 };
 use anyhow::{Context, Result};
@@ -28,27 +28,27 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 /// Identity retained beside a native metric ingestion record.
-pub(crate) struct CapturedRecord {
-    pub(crate) uuid: Uuid,
-    pub(crate) x_correlation_id: String,
-    pub(crate) output: CapturedModelOutput,
-    pub(crate) raw: Option<CapturedHttpExchange>,
-    pub(crate) ingest: RecordIngest,
+pub struct CapturedRecord {
+    pub uuid: Uuid,
+    pub x_correlation_id: String,
+    pub output: CapturedModelOutput,
+    pub raw: Option<CapturedHttpExchange>,
+    pub ingest: RecordIngest,
 }
 
 /// Endpoint-normalized text retained for processed-output artifacts.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct CapturedModelOutput {
+pub struct CapturedModelOutput {
     /// User-visible assistant content, excluding provider reasoning.
-    pub(crate) response_text: Option<String>,
+    pub response_text: Option<String>,
     /// Provider-emitted reasoning content, when exposed separately.
-    pub(crate) reasoning_text: Option<String>,
+    pub reasoning_text: Option<String>,
 }
 
 impl CapturedModelOutput {
     /// Preserve the structured endpoint split, falling back to the legacy flat
     /// text only for backends that do not expose normalized visible content.
-    pub(crate) fn from_parts(
+    pub fn from_parts(
         flattened_text: &str,
         visible_text: Option<&str>,
         reasoning_text: Option<&str>,
@@ -69,11 +69,11 @@ fn non_empty_text(text: &str) -> Option<String> {
 }
 
 /// Exact HTTP facts retained only when Config v2 requests raw artifacts.
-pub(crate) struct CapturedHttpExchange {
+pub struct CapturedHttpExchange {
     /// Canonical JSON payload before multipart/media transport preparation.
-    pub(crate) request_payload: Vec<u8>,
+    pub request_payload: Vec<u8>,
     /// Exact terminal transport record.
-    pub(crate) record: RequestRecord,
+    pub record: RequestRecord,
 }
 
 #[derive(Serialize)]
@@ -133,7 +133,7 @@ struct ClassifiedRecordError {
 
 /// Classify a captured record's terminal error.
 ///
-/// The exact transport [`ErrorDetails`](aiperf::transport_http::models::ErrorDetails)
+/// The exact transport [`ErrorDetails`](crate::transport_http::models::ErrorDetails)
 /// is preferred when raw artifacts retained it, so a real HTTP status and kind
 /// survive. Otherwise the code and stable type are derived from the record's
 /// terminal disposition: post-send cancellation is HTTP 499
@@ -189,7 +189,7 @@ fn error_kind_type_name(kind: ErrorKind) -> &'static str {
 /// Python native-report projection reads from the report `errors` array. Only
 /// profiling-phase records are grouped so the summary matches the profiling
 /// `error_request_count`.
-pub(crate) fn group_record_errors(records: &[CapturedRecord]) -> Vec<ReportError> {
+pub fn group_record_errors(records: &[CapturedRecord]) -> Vec<ReportError> {
     let mut grouped: BTreeMap<(Option<u16>, &'static str, String), usize> = BTreeMap::new();
     for captured in records
         .iter()
@@ -279,7 +279,7 @@ const OUTPUT_METRICS: &[&str] = &[
 
 /// Serialize one record row (compact JSON + trailing newline) into `writer`,
 /// exactly as [`write_records_jsonl`] emits each line. Shared by the batch writer
-/// and the streaming [`crate::record_lane::RecordArtifactLane`] so both are
+/// and the streaming [`crate::runner_protocol::record_lane::RecordArtifactLane`] so both are
 /// byte-identical for the same record.
 pub(crate) fn write_record_jsonl_row(
     writer: &mut dyn Write,
@@ -295,7 +295,7 @@ pub(crate) fn write_record_jsonl_row(
 }
 
 /// Write finalized request metrics in deterministic arrival order.
-pub(crate) fn write_records_jsonl(
+pub fn write_records_jsonl(
     path: &Path,
     records: &[CapturedRecord],
     config: &MetricsConfig,
@@ -324,7 +324,7 @@ pub(crate) fn write_records_jsonl(
 /// exact same [`record_metrics`] projection and [`classify_record_error`]
 /// classification (no logic is duplicated), so the Parquet metric columns and
 /// error triple agree with the JSONL row for the same record. The columnar
-/// assembly lives in [`aiperf::export::per_record_parquet`] because the runner has
+/// assembly lives in [`crate::export::per_record_parquet`] because the runner has
 /// no direct `arrow`/`parquet` dependency. `include_trace` mirrors the JSONL's
 /// conditional `trace_data`, appending flat `trace_*` columns.
 #[cfg(feature = "parquet")]
@@ -334,7 +334,7 @@ pub(crate) fn write_records_parquet(
     config: &MetricsConfig,
     include_trace: bool,
 ) -> Result<()> {
-    use aiperf::export::per_record_parquet::{record_metric_columns, write_per_record_parquet};
+    use crate::export::per_record_parquet::{record_metric_columns, write_per_record_parquet};
 
     let columns = record_metric_columns();
     let rows: Vec<_> = records
@@ -357,15 +357,15 @@ fn phase_str(phase: Phase) -> &'static str {
 /// Map one [`CapturedRecord`] into the crate-neutral wide Parquet row.
 ///
 /// Shared by the batch [`write_records_parquet`] and the streaming
-/// [`crate::record_lane::RecordArtifactLane`] so both produce the identical wide
+/// [`crate::runner_protocol::record_lane::RecordArtifactLane`] so both produce the identical wide
 /// row for the same record.
 #[cfg(feature = "parquet")]
 pub(crate) fn per_record_parquet_row(
     captured: &CapturedRecord,
     config: &MetricsConfig,
     include_trace: bool,
-) -> aiperf::export::per_record_parquet::PerRecordRow {
-    use aiperf::export::per_record_parquet::{PerRecordRow, PerRecordTrace};
+) -> crate::export::per_record_parquet::PerRecordRow {
+    use crate::export::per_record_parquet::{PerRecordRow, PerRecordTrace};
 
     let record = &captured.ingest;
     let metrics = record_metrics(captured, config)
@@ -498,10 +498,10 @@ fn csv_opt_u64(value: Option<u64>) -> String {
 /// Build the records CSV header line (no trailing newline): fixed metadata
 /// columns, one column per catalog record-metric (`{Header} ({unit})`), the error
 /// triple, then the optional flat `trace_*` columns. Shared by [`write_records_csv`]
-/// and the streaming [`crate::record_lane::RecordArtifactLane`] so both emit the
+/// and the streaming [`crate::runner_protocol::record_lane::RecordArtifactLane`] so both emit the
 /// exact same header bytes.
 pub(crate) fn record_csv_header(include_trace: bool) -> String {
-    use aiperf::metrics_core::record_metric_columns;
+    use crate::metrics_core::record_metric_columns;
 
     let columns = record_metric_columns();
     let mut header: Vec<String> = CSV_METADATA_COLUMNS
@@ -530,7 +530,7 @@ pub(crate) fn record_csv_row(
     config: &MetricsConfig,
     include_trace: bool,
 ) -> Option<String> {
-    use aiperf::metrics_core::record_metric_columns;
+    use crate::metrics_core::record_metric_columns;
 
     let columns = record_metric_columns();
     let metrics = record_metrics(captured, config);
@@ -661,7 +661,7 @@ pub(crate) fn write_records_csv(
 /// Live extension workers consume this exact object while the post-run JSONL
 /// writer above consumes the same private row builder. This keeps streaming
 /// and persisted records on one Rust-owned metric projection.
-pub(crate) fn record_json_value(
+pub fn record_json_value(
     captured: &CapturedRecord,
     config: &MetricsConfig,
     include_trace: bool,
@@ -679,8 +679,9 @@ pub(crate) fn record_json_value(
 /// structured transport error is reconstructed from aggregate metrics.
 /// Serialize one raw request/response row (compact JSON + trailing newline) into
 /// `writer`, exactly as [`write_raw_records_jsonl`] emits each line. Shared by the
-/// batch writer and the streaming [`crate::record_lane::RecordArtifactLane`] so both
-/// are byte-identical for the same record. The captured request payload is validated
+/// batch writer and the streaming
+/// [`crate::runner_protocol::record_lane::RecordArtifactLane`] so both are
+/// byte-identical for the same record. The captured request payload is validated
 /// through [`RawValue`] here (preserving its original bytes verbatim), matching the
 /// batch writer.
 pub(crate) fn write_raw_record_jsonl_row(
@@ -705,7 +706,7 @@ pub(crate) fn write_raw_record_jsonl_row(
         .context("writing raw record export row newline")
 }
 
-pub(crate) fn write_raw_records_jsonl(path: &Path, records: &[CapturedRecord]) -> Result<()> {
+pub fn write_raw_records_jsonl(path: &Path, records: &[CapturedRecord]) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating raw record directory {}", parent.display()))?;
@@ -731,11 +732,11 @@ pub(crate) fn write_raw_records_jsonl(path: &Path, records: &[CapturedRecord]) -
 /// body per dispatched turn, so we retain those bytes (deduplicated per
 /// `(conversation_id, turn_index)`) and serialize them here without a
 /// decode-then-encode round-trip.
-pub(crate) struct InputSession {
+pub struct InputSession {
     /// Conversation/session identity — mirrors legacy `SessionPayloads.session_id`.
-    pub(crate) session_id: String,
+    pub session_id: String,
     /// One canonical request body per turn, ordered by turn index.
-    pub(crate) payloads: Vec<Box<RawValue>>,
+    pub payloads: Vec<Box<RawValue>>,
 }
 
 #[derive(Serialize)]
@@ -757,7 +758,7 @@ struct InputsSessionRow<'a> {
 /// the runner sent for that turn. Consumers (integration harness, GenAI-Perf
 /// compatibility) read multimodal presence directly from
 /// `payloads[].messages[].content[]`.
-pub(crate) fn write_inputs_json(path: &Path, sessions: &[InputSession]) -> Result<()> {
+pub fn write_inputs_json(path: &Path, sessions: &[InputSession]) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating inputs export directory {}", parent.display()))?;
@@ -862,7 +863,7 @@ pub(crate) fn outputs_entry_indented(
 /// into one post-run write because the native runner already owns every
 /// finalized record. Schema 1.1 keeps provider reasoning separate from
 /// user-visible response text.
-pub(crate) fn write_outputs_json(
+pub fn write_outputs_json(
     path: &Path,
     records: &[CapturedRecord],
     config: &MetricsConfig,
@@ -1037,7 +1038,7 @@ fn text_response_value(response: &TextResponse) -> Value {
     })
 }
 
-fn error_value(error: &aiperf::transport_http::models::ErrorDetails) -> Value {
+fn error_value(error: &crate::transport_http::models::ErrorDetails) -> Value {
     json!({
         "code": error.code,
         "type": error_kind_type_name(error.kind),
@@ -1074,7 +1075,7 @@ fn native_error_value(record: &RecordIngest) -> Option<Value> {
 /// `error.type` attribute; successful records contribute no `error.type` and
 /// only successful records carry the semconv-mapped metrics, so errored requests
 /// never reach a mapped histogram.
-pub(crate) fn observe_otel_record(
+pub fn observe_otel_record(
     accumulator: &mut OtelRecordAccumulator,
     captured: &CapturedRecord,
     config: &MetricsConfig,
@@ -1144,7 +1145,7 @@ fn trace_value(record: &RecordIngest) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aiperf::metrics_core::{Phase, TokenCounts};
+    use crate::metrics_core::{Phase, TokenCounts};
 
     #[test]
     fn captured_output_prefers_structured_visible_and_reasoning_text() {

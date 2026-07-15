@@ -14,35 +14,36 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use aiperf::clock::{Clock, RealClock, RealClockAnchor};
-use aiperf::dataset::{Handle, Payload, SegmentStore};
-use aiperf::endpoints::{
+use crate::clock::{Clock, RealClock, RealClockAnchor};
+use crate::dataset::{Handle, Payload, SegmentStore};
+use crate::endpoints::{
     CreditPhase, EndpointId, EndpointKey, EndpointRegistry, PreparedEndpointTable, PreparedRequest,
     Turn,
 };
-use aiperf::failure::OnFailure;
-use aiperf::graph::errors::TraceError;
-use aiperf::graph::execution::{LocalGraphTraceExecutionBackend, TracePlacement};
-use aiperf::graph::materialize::SegmentItemsMaterializer;
-use aiperf::graph::model::{GraphTracePlan, LlmNode};
-use aiperf::graph::placement::{
+use crate::failure::OnFailure;
+use crate::graph::errors::TraceError;
+use crate::graph::execution::{LocalGraphTraceExecutionBackend, TracePlacement};
+use crate::graph::materialize::SegmentItemsMaterializer;
+use crate::graph::model::{GraphTracePlan, LlmNode};
+use crate::graph::placement::{
     GraphPlacementError, ThreadPerCoreTracePlacement, TracePlacementFactory,
 };
-use aiperf::graph::policy::{
+use crate::graph::policy::{
     AbortTraceNodeFailurePolicy, CancellationNodePolicy, CompositeNodeDispatchPolicy,
     NodeDispatchPolicy, NodeFailurePolicy, PrefillSlotNodePolicy, ResilientNodeFailurePolicy,
 };
-use aiperf::graph::sink::{GraphDispatchOptions, GraphReply, GraphSink};
-use aiperf::graph::wire::OpenAiChatMessage;
-use aiperf::http::{
-    HttpRequest, HttpRequestDispatcher, PreparedEndpointReference, PreparedHttpEndpoint,
-    PreparedTurn, TransportSink, TransportSinkConfig,
+use crate::graph::sink::{GraphDispatchOptions, GraphReply, GraphSink};
+use crate::graph::wire::OpenAiChatMessage;
+use crate::http::{
+    Dispatcher, HttpRequest, PreparedEndpointReference, PreparedHttpEndpoint, PreparedTurn,
+    TransportSink, TransportSinkConfig,
 };
-use aiperf::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
-use aiperf::metrics_core::{InferenceDimensions, MetricsConfig, Phase};
-use aiperf::multiturn::InputTokenCounter;
-use aiperf::rng::{RngRoot, namespace};
-use aiperf::timing::{BernoulliFixedDelay, SlotPool};
+use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
+use crate::metrics_core::{InferenceDimensions, MetricsConfig, Phase};
+use crate::multiturn::InputTokenCounter;
+use crate::rng::{RngRoot, namespace};
+use crate::timing::{BernoulliFixedDelay, SlotPool};
+use crate::transport_grpc::GrpcBindingRegistry;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -52,9 +53,30 @@ use serde_json::{Map, Value};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::execute::DEFAULT_ENDPOINT_PROFILE_ID;
-use crate::records::{CapturedHttpExchange, CapturedModelOutput, CapturedRecord};
-use crate::registry::ValidatedEndpointProfileV2;
+use crate::runner_protocol::execute::DEFAULT_ENDPOINT_PROFILE_ID;
+use crate::runner_protocol::grpc_turn_execution::grpc_sink_with_endpoints;
+use crate::runner_protocol::records::{CapturedHttpExchange, CapturedModelOutput, CapturedRecord};
+use crate::runner_protocol::registry::ValidatedEndpointProfileV2;
+
+/// Transport that a graph endpoint runtime dispatches its prepared turns over.
+///
+/// Selected from the run's resolved transport (`cfg.transport.type`). Graph
+/// scheduling, body materialization, and metrics are transport-blind; only the
+/// worker-local dispatcher construction in
+/// [`PreparedRunnerGraphEndpointRuntimeFactory::prepare_worker`] branches on it.
+/// A future `PreparedTurn` transport (e.g. WebSocket) adds one variant plus one
+/// construction arm and nothing else in the graph runtime changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GraphTransportKind {
+    /// Clock-injected hyper HTTP/SSE dispatch (`TransportSink`).
+    Http,
+    /// Clock-injected Tonic gRPC dispatch (`GrpcTransportSink`).
+    ///
+    /// Production routing selects this arm when the graph workload resolves a
+    /// gRPC transport by id/type (`online_execution::lower_graph`), so `grpc +
+    /// graph` dispatches graph nodes over Tonic.
+    Grpc,
+}
 
 /// Composition seam for whole-trace graph execution placement.
 ///
@@ -235,6 +257,10 @@ pub(crate) trait RunnerGraphEndpointRuntimeFactory: Send + Sync {
 
 pub(crate) trait RunnerGraphEndpointRuntime {
     fn materialize(&self, input: GraphEndpointRequest) -> Result<GraphEndpointDispatch>;
+
+    /// Transport the worker-local dispatchers were built over. Used to prove the
+    /// gRPC arm was taken without downcasting the erased `Rc<dyn Dispatcher>`.
+    fn kind(&self) -> GraphTransportKind;
 }
 
 pub(crate) struct GraphEndpointRequest {
@@ -254,7 +280,7 @@ pub(crate) struct GraphEndpointRequest {
 }
 
 pub(crate) struct GraphEndpointDispatch {
-    transport: Rc<TransportSink>,
+    transport: Rc<dyn Dispatcher>,
     request: HttpRequest,
     endpoint: PreparedHttpEndpoint,
     input_tokens: u64,
@@ -266,14 +292,17 @@ pub(crate) struct PreparedRunnerGraphEndpointRuntimeFactory {
     registry: EndpointRegistry,
     profiles: Arc<Vec<ValidatedEndpointProfileV2>>,
     input_token_counter: Arc<dyn InputTokenCounter>,
+    transport_kind: GraphTransportKind,
 }
 
 impl PreparedRunnerGraphEndpointRuntimeFactory {
-    /// Bind one normalized profile plan to the process's frozen registry.
+    /// Bind one normalized profile plan to the process's frozen registry over
+    /// the run's resolved transport (`transport_kind`).
     pub(crate) fn new(
         registry: EndpointRegistry,
         profiles: Arc<Vec<ValidatedEndpointProfileV2>>,
         input_token_counter: Arc<dyn InputTokenCounter>,
+        transport_kind: GraphTransportKind,
     ) -> Result<Self> {
         for profile in profiles.iter() {
             let descriptor = registry.resolve_factory(&profile.endpoint_id)?.descriptor();
@@ -288,6 +317,7 @@ impl PreparedRunnerGraphEndpointRuntimeFactory {
             registry,
             profiles,
             input_token_counter,
+            transport_kind,
         })
     }
 }
@@ -314,44 +344,63 @@ impl RunnerGraphEndpointRuntimeFactory for PreparedRunnerGraphEndpointRuntimeFac
                     })?;
                 keys[usize::from(streaming)] = table.push(endpoint)?;
             }
-            let transport = TransportSink::new_multi_configured(
-                clock.clone(),
-                run_origin_ns,
-                &profile.config.urls,
-                model,
-                TransportSinkConfig {
+            staged.push(StagedGraphProfile {
+                profile_id: profile.profile_id.clone(),
+                endpoint_id: profile.endpoint_id.clone(),
+                keys,
+                urls: profile.config.urls.clone(),
+                transport_config: TransportSinkConfig {
                     client: profile.client.clone(),
                     connection_reuse: profile.connection_reuse,
                     session_header: profile.session_header.clone(),
                 },
-            )?;
-            staged.push((
-                profile.profile_id.clone(),
-                PreparedGraphProfile {
-                    endpoint_id: profile.endpoint_id.clone(),
-                    keys,
-                    transport,
-                    url_count: profile.config.urls.len(),
-                },
-            ));
+                url_count: profile.config.urls.len(),
+            });
         }
         let table = Rc::new(table);
+        // gRPC needs one dense binding table shared across every profile's sink;
+        // HTTP needs no bindings at all, so only build it on the gRPC arm.
+        let bindings = match self.transport_kind {
+            GraphTransportKind::Http => None,
+            GraphTransportKind::Grpc => Some(GrpcBindingRegistry::builtin()?),
+        };
         let profiles = staged
             .into_iter()
-            .map(|(profile_id, profile)| {
-                (
-                    profile_id,
+            .map(|profile| {
+                let transport: Rc<dyn Dispatcher> = match self.transport_kind {
+                    GraphTransportKind::Http => Rc::new(
+                        TransportSink::new_multi_configured(
+                            clock.clone(),
+                            run_origin_ns,
+                            &profile.urls,
+                            model,
+                            profile.transport_config,
+                        )?
+                        .with_prepared_endpoints(table.clone()),
+                    ),
+                    GraphTransportKind::Grpc => Rc::new(grpc_sink_with_endpoints(
+                        clock.clone(),
+                        run_origin_ns,
+                        &profile.urls,
+                        model.to_string(),
+                        profile.transport_config,
+                        bindings
+                            .clone()
+                            .expect("gRPC bindings prepared for the gRPC transport arm"),
+                        table.clone(),
+                    )?),
+                };
+                Ok((
+                    profile.profile_id,
                     PreparedGraphProfileRuntime {
                         endpoint_id: profile.endpoint_id,
                         keys: profile.keys,
-                        transport: Rc::new(
-                            profile.transport.with_prepared_endpoints(table.clone()),
-                        ),
+                        transport,
                         url_count: profile.url_count,
                     },
-                )
+                ))
             })
-            .collect::<BTreeMap<_, _>>();
+            .collect::<Result<BTreeMap<_, _>>>()?;
         ensure!(
             profiles.contains_key(DEFAULT_ENDPOINT_PROFILE_ID),
             "default endpoint profile {DEFAULT_ENDPOINT_PROFILE_ID:?} was not prepared"
@@ -361,21 +410,27 @@ impl RunnerGraphEndpointRuntimeFactory for PreparedRunnerGraphEndpointRuntimeFac
             profiles,
             default_profile_id: DEFAULT_ENDPOINT_PROFILE_ID.into(),
             input_token_counter: self.input_token_counter.clone(),
+            transport_kind: self.transport_kind,
         }))
     }
 }
 
-struct PreparedGraphProfile {
+/// Per-profile inputs staged after endpoint preparation but before the
+/// worker-local dispatcher is built (the dispatcher construction is deferred so
+/// both transport arms share the finalized `Rc<PreparedEndpointTable>`).
+struct StagedGraphProfile {
+    profile_id: String,
     endpoint_id: EndpointId,
     keys: [EndpointKey; 2],
-    transport: TransportSink,
+    urls: Vec<String>,
+    transport_config: TransportSinkConfig,
     url_count: usize,
 }
 
 struct PreparedGraphProfileRuntime {
     endpoint_id: EndpointId,
     keys: [EndpointKey; 2],
-    transport: Rc<TransportSink>,
+    transport: Rc<dyn Dispatcher>,
     url_count: usize,
 }
 
@@ -384,9 +439,14 @@ struct PreparedRunnerGraphEndpointRuntime {
     profiles: BTreeMap<String, PreparedGraphProfileRuntime>,
     default_profile_id: String,
     input_token_counter: Arc<dyn InputTokenCounter>,
+    transport_kind: GraphTransportKind,
 }
 
 impl RunnerGraphEndpointRuntime for PreparedRunnerGraphEndpointRuntime {
+    fn kind(&self) -> GraphTransportKind {
+        self.transport_kind
+    }
+
     fn materialize(&self, input: GraphEndpointRequest) -> Result<GraphEndpointDispatch> {
         let profile_id = input
             .selector
@@ -508,7 +568,7 @@ pub(crate) struct GraphCancellationConfig {
     pub(crate) delay_seconds: f64,
     /// Phase-local cancellation root; workers derive independent indexed roots.
     pub(crate) rng_root: RngRoot,
-    pub(crate) phase: aiperf::timing::Phase,
+    pub(crate) phase: crate::timing::Phase,
 }
 
 /// Native runner factory installed into whole-trace placement.
@@ -533,6 +593,11 @@ impl TracePlacementFactory for RunnerGraphBackendFactory {
             .endpoint_runtime_factory
             .prepare_worker(clock.clone(), self.config.run_origin_ns, &self.config.model)
             .map_err(|error| GraphPlacementError(error.to_string()))?;
+        tracing::debug!(
+            worker_id,
+            transport = ?endpoint_runtime.kind(),
+            "prepared graph worker endpoint runtime"
+        );
 
         let mut policies = Vec::<Rc<dyn NodeDispatchPolicy>>::new();
         let prefill_slots = if let Some(limit) = self.config.prefill_concurrency {
@@ -811,7 +876,7 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
         } = dispatch;
         let uuid = request.uuid;
         let dimensions: InferenceDimensions =
-            HttpRequestDispatcher::inference_dimensions(transport.as_ref(), &request);
+            Dispatcher::inference_dimensions(transport.as_ref(), &request);
         self.observer.register_metadata(
             uuid,
             RequestMetricMetadata {
@@ -848,7 +913,7 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
                     model,
                     endpoint,
                     endpoint_aware: true,
-                    data_policy: aiperf::multiturn::TurnDataPolicy::ordinary(),
+                    data_policy: crate::multiturn::TurnDataPolicy::ordinary(),
                 },
                 self.observer.as_ref(),
                 &|_| {
@@ -993,7 +1058,7 @@ fn terminal_graph_nodes(plan: &GraphTracePlan) -> HashSet<String> {
         .graph
         .edges
         .iter()
-        .filter(|edge| edge.target != aiperf::graph::model::END_NODE_ID)
+        .filter(|edge| edge.target != crate::graph::model::END_NODE_ID)
         .map(|edge| edge.source.as_str())
         .collect::<HashSet<_>>();
     plan.graph
@@ -1039,14 +1104,14 @@ fn uniquify_dynamo_session_headers(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aiperf::clock::SimClock;
-    use aiperf::endpoints::{
+    use crate::clock::SimClock;
+    use crate::endpoints::{
         ChatEndpoint, EffectiveEndpointConfig, Endpoint, EndpointDescriptor, EndpointFactory,
         EndpointRegistry, EndpointRegistryBuilder, EndpointResult, PreparedEndpoint,
         RawEndpointConfig, StatelessEndpointFactory,
     };
-    use aiperf::multiturn::AuthoredInputTokenCounter;
-    use aiperf::transport_http::models::ConnectionReuseStrategy;
+    use crate::multiturn::AuthoredInputTokenCounter;
+    use crate::transport_http::models::ConnectionReuseStrategy;
 
     #[derive(Debug)]
     struct PreparedOnlyChatFactory;
@@ -1077,24 +1142,28 @@ mod tests {
 
         let factory = PreparedRunnerGraphEndpointRuntimeFactory::new(
             registry,
-            Arc::new(vec![crate::registry::ValidatedEndpointProfileV2 {
-                profile_id: "default".into(),
-                endpoint_id: EndpointId::new("chat").unwrap(),
-                config: RawEndpointConfig {
-                    urls: vec!["http://127.0.0.1:1".into()],
-                    streaming: true,
-                    ..RawEndpointConfig::default()
+            Arc::new(vec![
+                crate::runner_protocol::registry::ValidatedEndpointProfileV2 {
+                    profile_id: "default".into(),
+                    endpoint_id: EndpointId::new("chat").unwrap(),
+                    config: RawEndpointConfig {
+                        urls: vec!["http://127.0.0.1:1".into()],
+                        streaming: true,
+                        ..RawEndpointConfig::default()
+                    },
+                    connection_reuse: ConnectionReuseStrategy::Pooled,
+                    client: Default::default(),
+                    session_header: None,
                 },
-                connection_reuse: ConnectionReuseStrategy::Pooled,
-                client: Default::default(),
-                session_header: None,
-            }]),
+            ]),
             Arc::new(AuthoredInputTokenCounter),
+            GraphTransportKind::Http,
         )
         .unwrap();
         let runtime = factory
             .prepare_worker(Rc::new(SimClock::new()), 0, "fixture-model")
             .unwrap();
+        assert_eq!(runtime.kind(), GraphTransportKind::Http);
         let dispatch = runtime
             .materialize(GraphEndpointRequest {
                 selector: None,
@@ -1126,21 +1195,90 @@ mod tests {
     }
 
     #[test]
+    fn prepared_graph_runtime_builds_a_grpc_dispatcher_when_selected() {
+        // A gRPC-bindable endpoint (kserve v2 infer) prepares over the gRPC arm:
+        // `prepare_worker` succeeds only because a real GrpcTransportSink with
+        // dense gRPC bindings was assembled — the HTTP arm never touches the
+        // gRPC binding registry. The `kind()` probe confirms it downcast-free.
+        let factory = PreparedRunnerGraphEndpointRuntimeFactory::new(
+            EndpointRegistry::builtin().unwrap(),
+            Arc::new(vec![
+                crate::runner_protocol::registry::ValidatedEndpointProfileV2 {
+                    profile_id: "default".into(),
+                    endpoint_id: EndpointId::new("kserve_v2_infer").unwrap(),
+                    config: RawEndpointConfig {
+                        urls: vec!["grpc://127.0.0.1:1".into()],
+                        ..RawEndpointConfig::default()
+                    },
+                    connection_reuse: ConnectionReuseStrategy::Pooled,
+                    client: Default::default(),
+                    session_header: None,
+                },
+            ]),
+            Arc::new(AuthoredInputTokenCounter),
+            GraphTransportKind::Grpc,
+        )
+        .unwrap();
+        let runtime = factory
+            .prepare_worker(Rc::new(SimClock::new()), 0, "fixture-model")
+            .unwrap();
+        assert_eq!(runtime.kind(), GraphTransportKind::Grpc);
+    }
+
+    #[test]
+    fn prepared_graph_grpc_runtime_rejects_endpoints_without_a_grpc_binding() {
+        // Negative control proving the gRPC arm genuinely prepares bindings: the
+        // standard `chat` endpoint has no gRPC binding, so the gRPC arm must fail
+        // at binding preparation (the HTTP arm would accept it).
+        let factory = PreparedRunnerGraphEndpointRuntimeFactory::new(
+            EndpointRegistry::builtin().unwrap(),
+            Arc::new(vec![
+                crate::runner_protocol::registry::ValidatedEndpointProfileV2 {
+                    profile_id: "default".into(),
+                    endpoint_id: EndpointId::new("chat").unwrap(),
+                    config: RawEndpointConfig {
+                        urls: vec!["grpc://127.0.0.1:1".into()],
+                        ..RawEndpointConfig::default()
+                    },
+                    connection_reuse: ConnectionReuseStrategy::Pooled,
+                    client: Default::default(),
+                    session_header: None,
+                },
+            ]),
+            Arc::new(AuthoredInputTokenCounter),
+            GraphTransportKind::Grpc,
+        )
+        .unwrap();
+        let Err(error) = factory.prepare_worker(Rc::new(SimClock::new()), 0, "fixture-model")
+        else {
+            panic!("gRPC graph runtime accepted an endpoint with no gRPC binding")
+        };
+        let rendered = format!("{error:#}").to_ascii_lowercase();
+        assert!(
+            rendered.contains("grpc") || rendered.contains("binding"),
+            "unexpected error building gRPC graph runtime: {error:#}"
+        );
+    }
+
+    #[test]
     fn prepared_graph_runtime_rejects_dataset_only_raw_token_requirements() {
         let result = PreparedRunnerGraphEndpointRuntimeFactory::new(
             EndpointRegistry::builtin().unwrap(),
-            Arc::new(vec![crate::registry::ValidatedEndpointProfileV2 {
-                profile_id: "default".into(),
-                endpoint_id: EndpointId::new("vllm_generate").unwrap(),
-                config: RawEndpointConfig {
-                    urls: vec!["http://127.0.0.1:1".into()],
-                    ..RawEndpointConfig::default()
+            Arc::new(vec![
+                crate::runner_protocol::registry::ValidatedEndpointProfileV2 {
+                    profile_id: "default".into(),
+                    endpoint_id: EndpointId::new("vllm_generate").unwrap(),
+                    config: RawEndpointConfig {
+                        urls: vec!["http://127.0.0.1:1".into()],
+                        ..RawEndpointConfig::default()
+                    },
+                    connection_reuse: ConnectionReuseStrategy::Pooled,
+                    client: Default::default(),
+                    session_header: None,
                 },
-                connection_reuse: ConnectionReuseStrategy::Pooled,
-                client: Default::default(),
-                session_header: None,
-            }]),
+            ]),
             Arc::new(AuthoredInputTokenCounter),
+            GraphTransportKind::Http,
         );
 
         let Err(error) = result else {

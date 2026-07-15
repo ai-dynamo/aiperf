@@ -94,8 +94,8 @@ backend**.
 | Crate | Role | Depends on |
 |---|---|---|
 | `loadgen-core` | The `{transport}` seam + trace collector. Zero engine/HTTP deps. | — |
-| `aiperf` | Library-only runtime: clocks, transports, endpoints, datasets, RNG, timing/scheduling, graph engine, metrics, exporters, adaptive, accuracy, side-channel telemetry, cellular, dynosim. 16 former `aiperf-*` crates are now modules. **No binary.** | `loadgen-core` (+ optional `dynamo-mocker` under `dynosim`) |
-| `aiperf-runner` | The sole strict Rust executable Python launches. Protocol-v2 only. Frozen registries, input resolvers, execution factories, report persistence, cellular controller/cell. | `aiperf`, `loadgen-core` |
+| `aiperf` | Library-only runtime: clocks, transports, endpoints, datasets, RNG, timing/scheduling, graph engine, metrics, exporters, adaptive, accuracy, side-channel telemetry, cellular, dynosim. 16 former `aiperf-*` crates are now modules. Owns the single unified `AIPerfRegistry`/`AIPerfExtension` seam (`extensions`) and — behind the `runner-protocol` Cargo feature — hosts the relocated v2 layer `runner_protocol` (protocol/registry, execution factories and `*_execution` drivers, `RunnerV2Coordinator`/`RunnerApplication`, cellular controller/cell, control-plane HTTP, GPU/network/server side-channels). **No binary.** | `loadgen-core` (+ optional `dynamo-mocker` under `dynosim`) |
+| `aiperf-runner` | The sole strict Rust executable Python launches, now a thin (~550-line) process shell: `lib.rs` re-exports the v2 composition root (relocated into `aiperf::runner_protocol`, feature `runner-protocol`) and `main.rs` is the process/stdio/signal harness. Protocol-v2 only. | `aiperf` (with `runner-protocol`), `loadgen-core` |
 | `aiperf-mock-server` | Standalone online test/benchmark inference target (OpenAI/Anthropic/TGI/…); launched independently, **not** in the runner dep graph. | `aiperf` (only for `aiperf::rng`) |
 
 `aiperf/src/lib.rs` declares the module universe: `clock`, `transport_http`, `transport_grpc`,
@@ -104,7 +104,18 @@ backend**.
 `cellular`, `extensions`, plus the composition modules `http`, `grpc`, `run`, `scheduled`,
 `scheduler`, `phase_runtime`, `workload`, `request_rate`, `user_centric`, `multiturn`,
 `fixed_schedule`, `body_plan`, `failure`, `report`, `metrics`, `export`, `adaptive`, `accuracy`,
-`ancillary`, and the feature-gated `dynosim` and `aic_runtime`.
+`ancillary`, the feature-gated `dynosim` and `aic_runtime`, and the feature-gated
+`runner_protocol` (the relocated v2 protocol/registry/execution layer, gated on
+`runner-protocol`; only `aiperf-runner` enables it).
+
+> **Note (2026-07-15):** §A.5 and the double-dispatch / `RunnerPairFactory` /
+> `supported_pairs` narrative below predate two changes and are being reconciled: Stage 1
+> deleted the transport×workload pair layer (any workload runs over any transport, no
+> compatibility gate), and the v2 layer was relocated from the `aiperf-runner` crate into
+> `aiperf::runner_protocol` (feature `runner-protocol`) with all category registries
+> unified under one `AIPerfRegistry`/`AIPerfExtension` seam (endpoints, loaders, samplers,
+> transports, workloads, exporters, actuators). Ground registry/pair claims in
+> `rust/aiperf/src/extensions/mod.rs` and `rust/aiperf/src/runner_protocol/`.
 
 ---
 
@@ -216,9 +227,9 @@ becomes a typed failure, never a bare crash — Python always sees one JSONL lin
 
 #### A.3 `application.rs` / `coordinator.rs` — frozen composition & the `handle()` pipeline
 - `RunnerApplication::stock(distribution_id)` composes the built-in universe once:
-  `BuiltinRunnerRegistryFactory`, `BuiltinAiperfRegistryFactory`, `native_execution_factories()`,
+  `BuiltinRunnerRegistryFactory`, `BuiltinAIPerfRegistryFactory`, `native_execution_factories()`,
   and the three built-in input-adapter resolvers (graph/dataset/sidecar).
-- `RunnerV2Coordinator` holds the frozen runner registry, `Arc<AiperfRegistry>` product
+- `RunnerV2Coordinator` holds the frozen runner registry, `Arc<AIPerfRegistry>` product
   registry, `RunnerExecutionFactories`, and the input resolvers. `handle()` runs the 10-step
   pipeline in §3, returning `RunnerProcessResultV2 {response, exit_code}`.
 - `persist_prepared_report` — refuses an existing `native-v2.json`, writes atomically via
@@ -704,7 +715,7 @@ crosses a `dyn` boundary it is object-safe, where it is hot-path it is monomorph
 |---|---|
 | Time | `Clock` (RealClock / SimClock) |
 | Dispatch/measure | `Dispatchable`, `RequestSink<R>`, `RequestObserver` |
-| Runner composition | `RunnerRegistryFactory`, `RunnerTransportFactory`, `RunnerWorkloadFactory`, `RunnerPairFactory`, `PreparedRunnerOperation`, `PreparedReportCommit`, `AiperfRegistryFactory`, `AiperfExtension` |
+| Runner composition | `RunnerRegistryFactory`, `RunnerTransportFactory`, `RunnerWorkloadFactory`, `RunnerPairFactory`, `PreparedRunnerOperation`, `PreparedReportCommit`, `AIPerfRegistryFactory`, `AIPerfExtension` |
 | Execution placement | `RequestExecutorFactory`/`RequestExecutor`, `RunnerGraphPlacementFactory`, `OnlineReadinessPlanFactory`, `ReadinessTransportFactory`, `ControlPlaneHttpProviderFactory` |
 | Inputs | `RunnerGraphInputAdapterResolver`, `RunnerDatasetInputAdapterResolver`, `RunnerSidecarInputAdapterResolver`, `OnlineTokenizerSourceResolver` |
 | HTTP | `ConnectionManager`, `DnsResolver`/`HostLookup`, `SseMessageFilter`/`SseMessageHandler`, `HttpEndpointBinding`, `RequestExecutor`, `TurnDispatcher` |

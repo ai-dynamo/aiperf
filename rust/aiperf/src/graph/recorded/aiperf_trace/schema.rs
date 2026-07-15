@@ -18,16 +18,16 @@ const SCHEMA_TAG: &str = "aiperf.trace.v1";
 
 /// One parsed session trace.
 #[derive(Debug)]
-pub(super) struct AiperfTrace {
+pub(super) struct AIPerfTrace {
     pub id: String,
     pub block_size: usize,
-    pub segments: Vec<AiperfSegment>,
-    pub calls: Vec<AiperfCall>,
+    pub segments: Vec<AIPerfSegment>,
+    pub calls: Vec<AIPerfCall>,
 }
 
 /// A pooled message segment: its role and the opaque block ids it covers.
 #[derive(Debug)]
-pub(super) struct AiperfSegment {
+pub(super) struct AIPerfSegment {
     pub role: String,
     pub hash_ids: Vec<i128>,
     pub tokens: usize,
@@ -35,7 +35,7 @@ pub(super) struct AiperfSegment {
 
 /// One model call: pooled prompt segments + response, timing, usage, and graph.
 #[derive(Debug)]
-pub(super) struct AiperfCall {
+pub(super) struct AIPerfCall {
     pub segment_refs: Vec<usize>,
     /// Pooled segments that make up the response. A response may span multiple
     /// segments (e.g. an assistant turn plus its tool-call segments), so this is a
@@ -49,13 +49,13 @@ pub(super) struct AiperfCall {
     pub agent_id: Option<u64>,
     pub parent_agent_id: Option<u64>,
     pub previous_ref: Option<usize>,
-    pub compaction: Option<AiperfCompaction>,
+    pub compaction: Option<AIPerfCompaction>,
     pub output_tokens: Option<usize>,
 }
 
 /// A compaction edge: this turn reset (summarized) the context of `prior_ref`.
 #[derive(Debug)]
-pub(super) struct AiperfCompaction {
+pub(super) struct AIPerfCompaction {
     pub prior_ref: Option<usize>,
     pub prior_segments: Option<usize>,
 }
@@ -142,7 +142,7 @@ struct CompactionWire {
 }
 
 /// Strictly parse one `aiperf.trace.v1` object.
-pub(super) fn parse_trace(value: Value) -> Result<AiperfTrace, RecordedTraceError> {
+pub(super) fn parse_trace(value: Value) -> Result<AIPerfTrace, RecordedTraceError> {
     let wire: TraceWire = serde_json::from_value(value)
         .map_err(|error| RecordedTraceError(format!("invalid aiperf.trace.v1 object: {error}")))?;
     let _ = (
@@ -167,7 +167,7 @@ pub(super) fn parse_trace(value: Value) -> Result<AiperfTrace, RecordedTraceErro
     let segments = wire
         .segments
         .into_iter()
-        .map(|seg| AiperfSegment {
+        .map(|seg| AIPerfSegment {
             role: seg.role,
             hash_ids: seg.hash_ids.into_iter().map(i128::from).collect(),
             tokens: seg.tokens,
@@ -177,7 +177,7 @@ pub(super) fn parse_trace(value: Value) -> Result<AiperfTrace, RecordedTraceErro
     let calls = wire
         .inference_calls
         .into_iter()
-        .map(|call| AiperfCall {
+        .map(|call| AIPerfCall {
             segment_refs: call.segment_refs,
             response_refs: if call.response_refs.is_empty() {
                 call.response_ref.into_iter().collect()
@@ -192,7 +192,7 @@ pub(super) fn parse_trace(value: Value) -> Result<AiperfTrace, RecordedTraceErro
             agent_id: call.agent_id,
             parent_agent_id: call.parent_agent_id,
             previous_ref: call.previous_ref,
-            compaction: call.compaction.map(|c| AiperfCompaction {
+            compaction: call.compaction.map(|c| AIPerfCompaction {
                 prior_ref: c.prior_ref,
                 prior_segments: c.prior_segments,
             }),
@@ -200,7 +200,7 @@ pub(super) fn parse_trace(value: Value) -> Result<AiperfTrace, RecordedTraceErro
         })
         .collect();
 
-    Ok(AiperfTrace {
+    Ok(AIPerfTrace {
         id: wire.session_id.to_string(),
         block_size: wire.block_size,
         segments,

@@ -7,13 +7,13 @@
 //! pod). It runs the ordinary online scheduled execution over its budget slice,
 //! but with the `CellularAutonomousIssuer` assigning dense global dispatch
 //! ordinals from its `(cell_id, cell_count)` partition, and it ships its captured
-//! records to the controller over the velo [`transport`](aiperf::cellular::transport)
+//! records to the controller over the velo [`transport`](crate::cellular::transport)
 //! seam instead of writing a report. The controller re-ingests every cell's
 //! records in global ordinal order for the single authoritative `native-v2.json`.
 //!
 //! Cell behaviour is injected through environment variables so the ordinary
-//! execute path is reused unchanged: [`CELL_ID_ENV`](aiperf::cellular::partition::CELL_ID_ENV)
-//! / [`CELL_COUNT_ENV`](aiperf::cellular::partition::CELL_COUNT_ENV) select the
+//! execute path is reused unchanged: [`CELL_ID_ENV`](crate::cellular::partition::CELL_ID_ENV)
+//! / [`CELL_COUNT_ENV`](crate::cellular::partition::CELL_COUNT_ENV) select the
 //! issuer's partition, [`CELL_CONTROLLER_ADDR_ENV`] carries the controller's
 //! bootstrap coordinate, and [`CELL_PHASE_ORDINAL_BASES_ENV`] carries each phase's
 //! global ordinal base. The launcher sets them on the child; the cell fetches its
@@ -24,18 +24,18 @@
 //! short-lived runtime (fetch on the caller's runtime; ship on a dedicated thread),
 //! so a velo instance is never shared across the cell's thread-per-core execute
 //! runtime. Because the ship uses a fresh velo instance, the partition ship carries
-//! that instance's `PeerInfo` (see `aiperf::cellular::CellPartitionShip`).
+//! that instance's `PeerInfo` (see `crate::cellular::CellPartitionShip`).
 
 use std::collections::HashMap;
 
-use aiperf::cellular::partition::CellPartition;
-use aiperf::cellular::{CellularAutonomousIssuer, IssuanceAuthority, ModuloCellPartition};
-use aiperf::metrics_core::Phase;
+use crate::cellular::partition::CellPartition;
+use crate::cellular::{CellularAutonomousIssuer, IssuanceAuthority, ModuloCellPartition};
+use crate::metrics_core::Phase;
 use anyhow::Result;
 
 /// Env var carrying the controller's bootstrap coordinate (`file:PATH` locally,
 /// `tcp://HOST:PORT` in k8s) — where a cell fetches the controller's `PeerInfo`.
-/// The cell id and count live in [`aiperf::cellular::partition`]'s env vars.
+/// The cell id and count live in [`crate::cellular::partition`]'s env vars.
 pub const CELL_CONTROLLER_ADDR_ENV: &str = "AIPERF_CELL_CONTROLLER_ADDR";
 
 /// Env var carrying the per-phase global ordinal bases as JSON (`{name: base}`), so a
@@ -74,11 +74,11 @@ fn phase_from_name(name: &str) -> Option<Phase> {
 /// [`ModuloCellPartition::from_env`]), so the single-process default stays
 /// byte-unchanged.
 ///
-/// [`DirectIssuanceAuthority`]: aiperf::cellular::DirectIssuanceAuthority
+/// [`DirectIssuanceAuthority`]: crate::cellular::DirectIssuanceAuthority
 pub fn issuance_authority_from_env() -> std::rc::Rc<dyn IssuanceAuthority> {
     match ModuloCellPartition::from_env() {
         Some(partition) => std::rc::Rc::new(CellularAutonomousIssuer::new(partition)),
-        None => std::rc::Rc::new(aiperf::cellular::DirectIssuanceAuthority::new()),
+        None => std::rc::Rc::new(crate::cellular::DirectIssuanceAuthority::new()),
     }
 }
 
@@ -87,7 +87,7 @@ pub fn issuance_authority_from_env() -> std::rc::Rc<dyn IssuanceAuthority> {
 /// Always the autonomous issuer (never [`DirectIssuanceAuthority`]): a caller
 /// supplies a partition only when it wants global-ordinal stamping.
 ///
-/// [`DirectIssuanceAuthority`]: aiperf::cellular::DirectIssuanceAuthority
+/// [`DirectIssuanceAuthority`]: crate::cellular::DirectIssuanceAuthority
 pub fn issuance_authority_for(
     partition: ModuloCellPartition,
 ) -> std::rc::Rc<dyn IssuanceAuthority> {
@@ -101,8 +101,8 @@ pub fn issuance_authority_for(
 /// is a co-located launcher (UDS on unix, loopback elsewhere). `role` disambiguates
 /// the cell's fetch vs ship velo instances so their UDS paths do not collide.
 #[cfg(feature = "velo")]
-fn cell_bind(coordinate: &str, role: &str) -> aiperf::cellular::transport::connect::BindSpec {
-    use aiperf::cellular::transport::connect::BindSpec;
+fn cell_bind(coordinate: &str, role: &str) -> crate::cellular::transport::connect::BindSpec {
+    use crate::cellular::transport::connect::BindSpec;
     if coordinate.starts_with("tcp://") {
         return BindSpec::TcpBind("0.0.0.0:0".parse().expect("valid ephemeral bind addr"));
     }
@@ -125,8 +125,8 @@ fn cell_bind(coordinate: &str, role: &str) -> aiperf::cellular::transport::conne
 /// runtime; the velo instance is dropped on return.
 #[cfg(feature = "velo")]
 pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
-    use aiperf::cellular::VeloCellClient;
-    use aiperf::cellular::transport::connect::{
+    use crate::cellular::VeloCellClient;
+    use crate::cellular::transport::connect::{
         BootstrapSource, build_velo, resolve_controller_peer,
     };
     use anyhow::Context;
@@ -192,13 +192,13 @@ impl CellRecordsShipper {
     /// (possibly `current_thread`) execute runtime.
     pub fn ship_records(
         &self,
-        records: Vec<aiperf::metrics_core::RecordIngest>,
+        records: Vec<crate::metrics_core::RecordIngest>,
         epoch_ns: i64,
     ) -> Result<()> {
-        use aiperf::cellular::transport::connect::{
+        use crate::cellular::transport::connect::{
             BootstrapSource, build_velo, resolve_controller_peer,
         };
-        use aiperf::cellular::{
+        use crate::cellular::{
             CellClient, CellMessage, HeartbeatAccumulator, HeartbeatCounters, HeartbeatSaturation,
             RecordsShardPartition, VeloCellClient,
         };
@@ -207,7 +207,7 @@ impl CellRecordsShipper {
         let mut completed = 0_u64;
         let mut errored = 0_u64;
         for record in &records {
-            crate::heartbeat_lane::observe_ingest(&mut heartbeat, record);
+            crate::runner_protocol::heartbeat_lane::observe_ingest(&mut heartbeat, record);
             if record.errored || record.canceled {
                 errored += 1;
             } else {

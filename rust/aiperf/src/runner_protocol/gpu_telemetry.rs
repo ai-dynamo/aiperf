@@ -15,22 +15,24 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::rc::Rc;
 
-use aiperf::clock::Clock;
-use aiperf::gpu_telemetry::{
+use crate::clock::Clock;
+use crate::gpu_telemetry::{
     DcgmTelemetrySource, GpuBoundarySnapshot, GpuMetricKind, GpuPhaseBoundary,
     GpuTelemetryAccumulator, GpuTelemetryCollector, GpuTelemetryRecord, GpuTelemetrySummary,
     PythonGpuTelemetryConfig, PythonGpuTelemetrySource, RuntimeGpuMetricSpec,
 };
-use aiperf::metrics_core::Unit;
-use aiperf::phase_runtime::ScheduledPhaseSidecar;
-use aiperf::transport_http::config::ClientConfig;
-use aiperf::transport_http::transport::http_transport::HttpTransport;
+use crate::metrics_core::Unit;
+use crate::phase_runtime::ScheduledPhaseSidecar;
+use crate::transport_http::config::ClientConfig;
+use crate::transport_http::transport::http_transport::HttpTransport;
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
-use crate::protocol::{GpuTelemetrySourceSpec, GpuTelemetrySpec, GpuTelemetryUnitSpec};
+use crate::runner_protocol::protocol::{
+    GpuTelemetrySourceSpec, GpuTelemetrySpec, GpuTelemetryUnitSpec,
+};
 
 /// Run-owned GPU telemetry state and its profiling-phase sidecar.
 pub(crate) struct GpuTelemetryRun {
@@ -269,7 +271,7 @@ impl GpuTelemetrySidecar {
 }
 
 impl ScheduledPhaseSidecar for GpuTelemetrySidecar {
-    fn start(&self) -> aiperf::timing::LocalPhaseFuture<Result<()>> {
+    fn start(&self) -> crate::timing::LocalPhaseFuture<Result<()>> {
         let state = self.state.clone();
         Box::pin(async move { state.start().await })
     }
@@ -282,7 +284,7 @@ impl ScheduledPhaseSidecar for GpuTelemetrySidecar {
         self.state.phase_end_ns.set(Some(timestamp_ns));
     }
 
-    fn finish(&self) -> aiperf::timing::LocalPhaseFuture<Result<()>> {
+    fn finish(&self) -> crate::timing::LocalPhaseFuture<Result<()>> {
         let state = self.state.clone();
         Box::pin(async move { state.finish().await })
     }

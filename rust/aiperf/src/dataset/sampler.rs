@@ -91,10 +91,18 @@ impl SamplerRegistry {
     /// Register the native random, sequential, and shuffle strategies.
     pub fn with_builtin_strategies() -> Result<Self> {
         let mut registry = Self::new();
-        registry.register(RandomSamplerFactory)?;
-        registry.register(SequentialSamplerFactory)?;
-        registry.register(ShuffleSamplerFactory)?;
+        registry.register_builtin_strategies()?;
         Ok(registry)
+    }
+
+    /// Register the native random, sequential, and shuffle strategies into an
+    /// existing registry. Shared by [`Self::with_builtin_strategies`] and the
+    /// built-in sampler `AIPerfExtension` so both compose the identical set.
+    pub fn register_builtin_strategies(&mut self) -> Result<()> {
+        self.register(RandomSamplerFactory)?;
+        self.register(SequentialSamplerFactory)?;
+        self.register(ShuffleSamplerFactory)?;
+        Ok(())
     }
 
     /// Register one factory, rejecting duplicate normalized names.

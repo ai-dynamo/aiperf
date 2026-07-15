@@ -14,25 +14,25 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::rc::Rc;
 
-use aiperf::clock::Clock;
-use aiperf::metrics_core::{
+use crate::clock::Clock;
+use crate::metrics_core::{
     Phase, ReportServerMetricsEndpointInfo, ReportServerMetricsMetadata,
     ReportServerMetricsPhaseRange,
 };
-use aiperf::phase_runtime::ScheduledPhaseSidecar;
-use aiperf::server_metrics::{
+use crate::phase_runtime::ScheduledPhaseSidecar;
+use crate::server_metrics::{
     MetricSample, PrometheusHttpSource, PrometheusMetricType, ServerMetricsAccumulator,
     ServerMetricsPhaseBoundary, ServerMetricsRecord, ServerMetricsScrapeMode,
     ServerMetricsScrapeOutcome, ServerMetricsSource, ServerMetricsSummary,
 };
-use aiperf::transport_http::config::ClientConfig;
-use aiperf::transport_http::transport::http_transport::HttpTransport;
+use crate::transport_http::config::ClientConfig;
+use crate::transport_http::transport::http_transport::HttpTransport;
 use anyhow::{Context, Result, ensure};
 use serde_json::{Map, Value, json};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
-use crate::protocol::ServerMetricsSpec;
+use crate::runner_protocol::protocol::ServerMetricsSpec;
 
 /// Run-owned server telemetry shared by phase-specific lifecycle adapters.
 pub(crate) struct ServerMetricsRun {
@@ -386,7 +386,7 @@ impl ServerMetricsPhaseSidecar {
 }
 
 impl ScheduledPhaseSidecar for ServerMetricsPhaseSidecar {
-    fn start(&self) -> aiperf::timing::LocalPhaseFuture<Result<()>> {
+    fn start(&self) -> crate::timing::LocalPhaseFuture<Result<()>> {
         let sidecar = self.clone();
         Box::pin(async move { sidecar.start_inner().await })
     }
@@ -399,7 +399,7 @@ impl ScheduledPhaseSidecar for ServerMetricsPhaseSidecar {
         self.phase_end_ns.set(Some(timestamp_ns));
     }
 
-    fn finish(&self) -> aiperf::timing::LocalPhaseFuture<Result<()>> {
+    fn finish(&self) -> crate::timing::LocalPhaseFuture<Result<()>> {
         let sidecar = self.clone();
         Box::pin(async move { sidecar.finish_inner().await })
     }
@@ -549,7 +549,7 @@ mod tests {
             benchmark_phase: Some(Phase::Profiling),
             metrics: BTreeMap::from([(
                 "queue".to_string(),
-                aiperf::server_metrics::MetricFamily {
+                crate::server_metrics::MetricFamily {
                     metric_type: PrometheusMetricType::Gauge,
                     description: "Queued requests".to_string(),
                     samples: vec![MetricSample::Scalar {

@@ -12,10 +12,10 @@
 //! `current_thread` runtime + `LocalSet`, its own `workers == 1` transport sink
 //! (so the scheduler and transport are co-located and the old per-request
 //! `mpsc`/`oneshot`/`Notify` hop to a transport-worker pool is *gone*), its own
-//! [`RunCapture`](crate::execute), and its own injected
-//! [`IssuanceAuthority`](aiperf::cellular::IssuanceAuthority) stamping **global**
+//! [`RunCapture`](crate::runner_protocol::execute), and its own injected
+//! [`IssuanceAuthority`](crate::cellular::IssuanceAuthority) stamping **global**
 //! two-level ordinals. The `workers == 1` path stays byte-unchanged on the
-//! original single-thread code in [`crate::execute`].
+//! original single-thread code in [`crate::runner_protocol::execute`].
 //!
 //! # The two-level `(cell × thread)` partition
 //!
@@ -23,7 +23,7 @@
 //! `(0, 1)`); within it, thread `t` of `W` owns a nested slice. The design note
 //! writes this partition as `(c*W + t, cells*W)`, but that flat index does **not**
 //! nest inside the controller's per-cell envelope: when this process is a
-//! controller child, [`build_cell_envelope`](crate::cellular_controller) has
+//! controller child, [`build_cell_envelope`](crate::runner_protocol::cellular_controller) has
 //! **already** sliced each phase's `requests`/`concurrency`/`rate` to cell `c`'s
 //! round-robin share of the global stream (`i % cells == c`), and each thread must
 //! draw a subset of *that* share, not of the whole global stream. The unique
@@ -42,7 +42,7 @@
 //! would overflow its residue class. For a single process (`cells == 1`) the two
 //! formulas coincide (`0 + 1*t == 0*W + t == t`, modulus `W`), so this correction
 //! only matters for the multi-process (`cells > 1`) grid — verified against
-//! [`owned_positions`](crate::cellular_controller) below.
+//! [`owned_positions`](crate::runner_protocol::cell_launcher) below.
 //!
 //! # Per-thread workload slicing (slice by `W`, not `cells*W`)
 //!
@@ -54,14 +54,14 @@
 //! - `concurrency`/`prefill_concurrency → owned_positions(cap, t, W).max(1)`;
 //! - `rate → cell_rate / W`.
 //!
-//! This is exactly [`build_cell_envelope`](crate::cellular_controller)'s per-cell
+//! This is exactly [`build_cell_envelope`](crate::runner_protocol::cellular_controller)'s per-cell
 //! arithmetic, re-applied one level down. The key invariant proven below:
 //! slicing the cell's already-sliced `requests` by `owned_positions(·, t, W)`
 //! yields per-thread dispatch counts that **equal** `owned_positions(global, c +
 //! cells*t, cells*W)`, so each thread `(c, t)` stamps exactly the ordinals of its
 //! residue class `c + cells*t (mod cells*W)` and the union across every cell and
 //! thread is a permutation of `0..total` — the precondition
-//! [`merge_records_in_global_order`](aiperf::cellular) tiles on.
+//! [`merge_records_in_global_order`](crate::cellular) tiles on.
 //!
 //! # Per-phase ordinal bases (`cells == 1`)
 //!
@@ -71,7 +71,7 @@
 //! child receives the bases in `AIPERF_CELL_PHASE_ORDINAL_BASES`; a single process
 //! has no such env var, so [`compute_phase_ordinal_bases`] derives them from the
 //! phase `requests` budgets (mirroring
-//! [`crate::cellular_controller::phase_ordinal_bases`]) and every thread's
+//! [`crate::runner_protocol::cellular_controller::phase_ordinal_bases`]) and every thread's
 //! `RunCapture` is injected with the same partition-independent map.
 //!
 //! # Once-per-cell vs per-thread (D5)
@@ -84,16 +84,16 @@
 
 use std::sync::Arc;
 
-use aiperf::clock::Clock;
-use aiperf::metrics_core::Phase;
-use aiperf::phase_runtime::ScheduledPhaseSidecar;
+use crate::clock::Clock;
+use crate::metrics_core::Phase;
+use crate::phase_runtime::ScheduledPhaseSidecar;
 use anyhow::{Context, Result, anyhow, bail};
 
-use crate::cell_launcher::owned_positions;
-use crate::execute::{
+use crate::runner_protocol::cell_launcher::owned_positions;
+use crate::runner_protocol::execute::{
     ScheduledShardOutcome, ShardRecords, ShardedShared, execute_scheduled_shard, metrics_phase,
 };
-use crate::protocol::PhaseSpec;
+use crate::runner_protocol::protocol::PhaseSpec;
 
 /// This thread's nested two-level dataset/ordinal partition within the run.
 ///
@@ -107,7 +107,7 @@ pub(crate) fn two_level_partition(
     cells: u32,
     thread_id: usize,
     workers: u32,
-) -> Result<aiperf::cellular::ModuloCellPartition> {
+) -> Result<crate::cellular::ModuloCellPartition> {
     let thread_id = u32::try_from(thread_id)
         .map_err(|_| anyhow!("thread id {thread_id} exceeds the cell grid index width"))?;
     let index = cell_id
@@ -120,20 +120,20 @@ pub(crate) fn two_level_partition(
     let modulus = cells
         .checked_mul(workers)
         .ok_or_else(|| anyhow!("cell grid modulus cells*workers overflow"))?;
-    aiperf::cellular::ModuloCellPartition::new(index, modulus)
+    crate::cellular::ModuloCellPartition::new(index, modulus)
         .map_err(|error| anyhow!("building thread-per-core partition: {error}"))
 }
 
 /// One thread's copy of a phase with its `requests`/`concurrency`/`rate` sliced to
 /// this thread's `1/W` share of the **cell's** budget (never `1/(cells*W)` — the
 /// cell envelope is already cell-sliced for a controller child; see the module
-/// docs). Mirrors [`build_cell_envelope`](crate::cellular_controller) one level
+/// docs). Mirrors [`build_cell_envelope`](crate::runner_protocol::cellular_controller) one level
 /// down: round-robin `owned_positions` for the request budget and the admission
 /// caps (floored to 1 so every thread makes progress when a cap `< W`), and an
 /// even `rate / W` split of the arrival rate (the accepted aggregate-offered-rate
 /// approximation, now at thread granularity). `user_centric`/`fixed_schedule`
 /// phases are returned unchanged: they are trace-driven and rejected upstream for
-/// `workers > 1` (see [`crate::execute`]'s sharded branch), so they never reach a
+/// `workers > 1` (see [`crate::runner_protocol::execute`]'s sharded branch), so they never reach a
 /// worker.
 pub(crate) fn slice_phase_for_thread(
     phase: &PhaseSpec,
@@ -194,7 +194,7 @@ pub(crate) fn slice_phase_for_thread(
 
 /// Slice a phase's shared `requests` budget and `prefill_concurrency` cap in place.
 fn slice_common(
-    common: &mut crate::protocol::PhaseCommonSpec,
+    common: &mut crate::runner_protocol::protocol::PhaseCommonSpec,
     owned_budget: &impl Fn(u64) -> u64,
     owned_cap: &impl Fn(usize) -> usize,
 ) {
@@ -209,11 +209,11 @@ fn slice_common(
 /// Each phase's global ordinal base for a single-process (`cells == 1`) sharded
 /// run, keyed by metric phase — the turns the run's prior phases dispatch, so a
 /// phase's base is the running sum of prior phases' `requests`. Mirrors
-/// [`crate::cellular_controller::phase_ordinal_bases`] over the typed phase specs.
+/// [`crate::runner_protocol::cellular_controller::phase_ordinal_bases`] over the typed phase specs.
 ///
 /// A controller child instead reads the (global, already-correct) bases from
 /// `AIPERF_CELL_PHASE_ORDINAL_BASES`; recomputing them here from a cell's *local*
-/// sliced `requests` would understate them, so [`crate::execute`]'s sharded branch
+/// sliced `requests` would understate them, so [`crate::runner_protocol::execute`]'s sharded branch
 /// prefers the env map when present and only falls back to this for a lone
 /// process.
 pub(crate) fn compute_phase_ordinal_bases(
@@ -340,7 +340,7 @@ pub(crate) async fn run_sharded_scheduled(
 /// Build and run one sub-cell thread's entire scheduled pipeline to completion.
 ///
 /// Each thread owns a fresh `current_thread` runtime + `LocalSet` (the graph
-/// thread-per-core model, `aiperf::graph::placement`) so its whole `!Send` stack —
+/// thread-per-core model, `crate::graph::placement`) so its whole `!Send` stack —
 /// clock, transport, capture, dispatcher, `SlotPool`s, plans — is thread-local and
 /// contends nothing on the hot path.
 fn run_worker_thread(shared: &ShardedShared, worker_id: usize) -> Result<ScheduledShardOutcome> {
@@ -394,7 +394,7 @@ fn merge_shards(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aiperf::cellular::CellPartition;
+    use crate::cellular::CellPartition;
 
     /// The two-level partition nests inside the cell's ownership AND the union
     /// across every cell and thread tiles the global `cells*W` residue space — the

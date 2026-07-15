@@ -98,6 +98,12 @@ fn capabilities_emit_plugins_shaped_catalog() {
 
 #[test]
 fn graph_dataset_selects_graph_path_before_execution() {
+    // `grpc + graph` is now admitted at selection (any workload runs over any
+    // transport — no pair object, no compatibility predicate). The graph
+    // workload resolves the gRPC transport and reaches run-level validation,
+    // which fails here because the authored `chat` endpoint over `http://` has no
+    // gRPC binding — proving the graph path was selected and validated before any
+    // execution, not rejected at selection.
     let output = run(&graph_grpc_request("validate"));
     let response = one_json_line(&output.stdout);
 
@@ -109,13 +115,13 @@ fn graph_dataset_selects_graph_path_before_execution() {
     assert_eq!(response["completeness"], "static");
     assert_eq!(
         response["errors"][0]["code"],
-        "invalid_transport_workload_selection"
+        "invalid_transport_workload_run"
     );
     assert!(
         response["errors"][0]["message"]
             .as_str()
             .unwrap()
-            .contains("graph")
+            .contains("gRPC binding")
     );
 }
 

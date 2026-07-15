@@ -1796,6 +1796,121 @@ mod tests {
         }
     }
 
+    /// Stage A within-tolerance bar for the in-process sharded exact-fold summary.
+    ///
+    /// Counts, min, max, and percentiles are order-independent set operations over the
+    /// merged value multiset, so they must be BIT-EXACT after the append-only shard
+    /// merge. Sums and derived means depend on f64 summation order — which the
+    /// local-dense concat reorders relative to a single dispatch-order ingest — so they
+    /// need match only within a tiny relative epsilon.
+    const SHARD_MERGE_REL_EPSILON: f64 = 1e-9;
+
+    fn assert_within_rel_epsilon(reference: f64, candidate: f64, label: &str) {
+        let tolerance = SHARD_MERGE_REL_EPSILON * reference.abs().max(1.0);
+        assert!(
+            (reference - candidate).abs() <= tolerance,
+            "{label}: reference {reference} vs merged {candidate} exceeds relative \
+             epsilon {SHARD_MERGE_REL_EPSILON}"
+        );
+    }
+
+    /// Reusable tolerance comparison for one distribution: counts/min/max/percentiles
+    /// EXACT; sum/avg within [`SHARD_MERGE_REL_EPSILON`].
+    fn assert_distribution_within_tolerance(
+        reference: &crate::metrics_core::DistributionStats,
+        merged: &crate::metrics_core::DistributionStats,
+        tag: MetricTag,
+    ) {
+        assert_eq!(reference.count, merged.count, "{tag:?} count must be exact");
+        assert_eq!(reference.min, merged.min, "{tag:?} min must be exact");
+        assert_eq!(reference.max, merged.max, "{tag:?} max must be exact");
+        for percentile in crate::metrics_core::PERCENTILES {
+            let r = reference.percentiles.get(&percentile).copied();
+            let m = merged.percentiles.get(&percentile).copied();
+            assert_eq!(r, m, "{tag:?} p{percentile} must be exact");
+        }
+        if let (Some(r), Some(m)) = (reference.sum.as_f64(), merged.sum.as_f64()) {
+            assert_within_rel_epsilon(r, m, &format!("{tag:?} sum"));
+        }
+        if let (Some(r), Some(m)) = (reference.avg.as_f64(), merged.avg.as_f64()) {
+            assert_within_rel_epsilon(r, m, &format!("{tag:?} avg"));
+        }
+    }
+
+    /// The Stage A shard merge: several dense per-shard EXACT accumulators, each fed a
+    /// disjoint set of records at LOCAL-dense `request_index` slots (the local fold
+    /// ordinal the sharded exact-fold worker stamps), merged through
+    /// `MetricsAccumulator::merge` (`append_store`), yield a summary within tolerance of
+    /// a single accumulator fed every record in global order. Counts and percentiles
+    /// stay exact; sums/means fall within the relative epsilon.
+    #[test]
+    fn sharded_exact_fold_merge_is_within_tolerance_of_single_ingest() {
+        let shard_count = 4usize;
+        let total = 8_000i64;
+        let mut next = lcg_stream(0x5EED_A11CE);
+
+        // Reference: one exact accumulator fed every record in global order (each row
+        // pushed to a dense global slot).
+        let mut reference = MetricsAccumulator::new();
+        // Per-shard EXACT accumulators, each stamped with a LOCAL-dense `0..N_shard`
+        // request index so its store is dense and `append_store` accepts it.
+        let mut shards: Vec<MetricsAccumulator> = (0..shard_count)
+            .map(|_| MetricsAccumulator::new())
+            .collect();
+        let mut shard_next = vec![0usize; shard_count];
+
+        for index in 0..total {
+            let record = latency_record(index, 50.0 + next() * 500.0);
+            reference.process_record(&record);
+            let shard = (index as usize) % shard_count;
+            let mut shard_record = record;
+            shard_record.request_index = Some(shard_next[shard]);
+            shard_next[shard] += 1;
+            shards[shard].process_record(&shard_record);
+        }
+
+        let mut merged = MetricsAccumulator::new();
+        for shard in &shards {
+            merged.merge(shard).unwrap();
+        }
+
+        let reference_summary = reference.summarize();
+        let merged_summary = merged.summarize();
+
+        // Counts are the strict correctness invariant: a dropped or double-counted
+        // record moves them.
+        assert_eq!(
+            reference_summary.finite_value(MetricTag::RequestCount),
+            Some(total as f64),
+        );
+        assert_eq!(
+            reference_summary.finite_value(MetricTag::RequestCount),
+            merged_summary.finite_value(MetricTag::RequestCount),
+            "merged count must equal the single-ingest count exactly",
+        );
+        // Rates derive from the exact count and exact min/max timestamp aggregates, so
+        // they stay exact across the reorder.
+        assert_eq!(
+            reference_summary.finite_value(MetricTag::RequestThroughput),
+            merged_summary.finite_value(MetricTag::RequestThroughput),
+            "throughput derives from exact aggregates and stays exact",
+        );
+
+        for tag in [
+            MetricTag::RequestLatency,
+            MetricTag::InterTokenLatency,
+            MetricTag::OutputSequenceLength,
+        ] {
+            let reference_distribution = reference_summary
+                .result(tag)
+                .unwrap()
+                .distribution()
+                .unwrap();
+            let merged_distribution = merged_summary.result(tag).unwrap().distribution().unwrap();
+            assert_distribution_within_tolerance(reference_distribution, merged_distribution, tag);
+        }
+    }
+
     #[test]
     fn summary_keeps_scalar_join_access_and_full_distributions() {
         let mut accumulator = MetricsAccumulator::new();

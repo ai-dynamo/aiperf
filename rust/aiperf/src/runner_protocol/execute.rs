@@ -9,28 +9,28 @@ use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use aiperf::accuracy::{
+use crate::accuracy::{
     AccuracyDataset, AccuracyRecordProcessor, accuracy_report_errors, grade_accuracy_responses,
     load_evaluator_problems_with_grader,
 };
-use aiperf::accuracy_core::{
+use crate::accuracy_core::{
     AccuracyEvaluator, EvaluatorLoadConfig, EvaluatorLoadResult, PythonEvaluator,
     WorkerProcessConfig,
 };
-use aiperf::adaptive::{
+use crate::adaptive::{
     AdaptiveControlVariable, AdaptiveRunConfig, AdaptiveStepConfig, build_adaptive_with_origins,
     positive_seconds_to_ns,
 };
-use aiperf::adaptive_core::{
+use crate::adaptive_core::{
     AdaptiveScale, CorrelationContext, SharedWindowSampler, SlaFilter, UserTarget,
 };
-use aiperf::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
-use aiperf::cellular::{CellPartition, IssuanceAuthority, ModuloCellPartition};
-use aiperf::clock::{Clock, RealClock, RealClockAnchor};
-use aiperf::content_server::{
+use crate::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
+use crate::cellular::{CellPartition, IssuanceAuthority, ModuloCellPartition};
+use crate::clock::{Clock, RealClock, RealClockAnchor};
+use crate::content_server::{
     ContentServerConfig, ContentServerFactory, ContentServerRuntime, NativeContentServerFactory,
 };
-use aiperf::dataset::{
+use crate::dataset::{
     ComposeConfig, Dataset, DatasetSource, HuggingFaceTokenizer, LoadConfig, ModelId,
     ModelSelector, ModelSelectorFactory, RandomModelSelectorFactory,
     RoundRobinModelSelectorFactory, SourceImageSampling, SyntheticAudioConfig,
@@ -40,71 +40,75 @@ use aiperf::dataset::{
     SyntheticVideoConfig, SyntheticVideoFormat, SyntheticVideoPattern, TextTokenizer,
     TiktokenEncoding, TiktokenTokenizer, TracePromptStoragePolicy, TraceSynthesisConfig,
 };
-use aiperf::endpoints::{EndpointKey, EndpointRegistry, PreparedEndpointTable};
-use aiperf::export::otel::OtelRecordAccumulator;
-use aiperf::extensions::AiperfRegistry;
-use aiperf::failure::OnFailure;
-use aiperf::fixed_schedule::{
+use crate::endpoints::{EndpointKey, EndpointRegistry, PreparedEndpointTable};
+use crate::export::otel::OtelRecordAccumulator;
+use crate::extensions::AIPerfRegistry;
+use crate::failure::OnFailure;
+use crate::fixed_schedule::{
     DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload,
 };
-use aiperf::graph::input::GraphInputBundle;
-use aiperf::http::{
+use crate::graph::input::GraphInputBundle;
+use crate::http::{
     MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor, TransportSinkConfig,
 };
-use aiperf::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
-use aiperf::metrics_core::{
+use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
+use crate::metrics_core::{
     CATALOG, ExportContext, InferenceDimensions, MetricTag, MetricsAccumulator, MetricsConfig,
     NativeReport, Phase as MetricsPhase, RecordIngest, ReportRunInfo, ReportSummary, RunOutcome,
     SloThreshold,
 };
-use aiperf::multiturn::{
+use crate::multiturn::{
     AuthoredInputTokenCounter, ConversationSource, EndpointInputTokenCounter, InputTokenCounter,
     IssuedCredit, NativeDatasetConversationSource, PreparedEndpointReference,
     PreparedEndpointTableResolver, PreparedTurnEndpointResolver, TurnToSend,
 };
-use aiperf::phase_runtime::{
+use crate::phase_runtime::{
     RampScheduledPhaseController, ScheduledPhaseController, ScheduledPhasePlan,
     ScheduledPhaseResources, ScheduledPhaseSidecar, ScheduledRuntimeExtension,
     ScheduledRuntimeExtensionParts, SlotPoolPhaseResources, run_scheduled_phases,
 };
-use aiperf::request_rate::RequestRateWorkload;
-use aiperf::rng::{
+use crate::request_rate::RequestRateWorkload;
+use crate::rng::{
     EmpiricalPoint, PeakEntry, RandomGenerator, RngRoot, SamplingDistribution,
     SequenceLengthDistribution, SequenceLengthPair, namespace,
 };
-use aiperf::scheduled::{
+use crate::scheduled::{
     IssuanceGate, ScheduledAncillaryPolicies, TurnDispatchOutcome, TurnDispatcher,
     TurnRecordProcessor, Workload,
 };
-use aiperf::timing::{
+use crate::timing::{
     BernoulliFixedDelay, CancellationPolicy, ExponentialRamp, GracePeriod, LinearRamp,
     NoopPhaseObserver, PhaseConfig, PhaseKind, PhaseObserver, PoissonRamp, RampDriver,
     RampStrategy, RamperConfig, RoundRobinUrlSelector, SlotPool, StopConfig, UrlSelector,
     make_interval_generator,
 };
-use aiperf::user_centric::{UserCentricConfig, UserCentricWorkload};
+use crate::user_centric::{UserCentricConfig, UserCentricWorkload};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use async_trait::async_trait;
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::RequestObserver;
 use uuid::Uuid;
 
-use crate::dataset_input::PreparedDatasetInput;
-use crate::execution_factories::RunnerExecutionFactories;
-use crate::gpu_telemetry::GpuTelemetryRun;
-use crate::graph_execution::{
-    PreparedRunnerGraphEndpointRuntimeFactory, RunnerGraphBackendFactory,
+use crate::runner_protocol::dataset_input::PreparedDatasetInput;
+use crate::runner_protocol::execution_factories::RunnerExecutionFactories;
+use crate::runner_protocol::gpu_telemetry::GpuTelemetryRun;
+use crate::runner_protocol::graph_execution::{
+    GraphTransportKind, PreparedRunnerGraphEndpointRuntimeFactory, RunnerGraphBackendFactory,
     RunnerGraphBackendFactoryConfig, RunnerGraphEndpointRuntimeFactory,
     RunnerGraphPlacementFactory,
 };
-use crate::graph_phase_runtime::{
+use crate::runner_protocol::graph_phase_runtime::{
     GraphPhaseBackendConfig, PreparedGraphPhaseBackend, RunnerGraphPhaseBackendFactory,
     run_graph_phases, validate_graph_phases,
 };
-use crate::heartbeat_lane::{CompositePhaseObserver, HeartbeatLane, HeartbeatPhaseObserver};
-use crate::live_streaming::{LiveResultsSink, PythonLiveStreamingRun, live_phase_observer};
-use crate::network_latency::NetworkLatencyRun;
-use crate::protocol::{
+use crate::runner_protocol::heartbeat_lane::{
+    CompositePhaseObserver, HeartbeatLane, HeartbeatPhaseObserver,
+};
+use crate::runner_protocol::live_streaming::{
+    LiveResultsSink, PythonLiveStreamingRun, live_phase_observer,
+};
+use crate::runner_protocol::network_latency::NetworkLatencyRun;
+use crate::runner_protocol::protocol::{
     AdaptiveControlVariableSpec, AdaptiveScaleSpec, AdaptiveStepPolicySpec, DistributionSpec,
     FileDatasetSpec, MetricsSpec, ModelSelectionStrategy, ModelsSpec, PhaseSpec,
     PublicDatasetSourceSpec, PublicDatasetSpec, RampSpec, RampStrategySpec,
@@ -113,27 +117,27 @@ use crate::protocol::{
     SyntheticPrefixPromptsSpec, SyntheticVideoFormatSpec, SyntheticVideoPatternSpec,
     SyntheticVideoSpec,
 };
-use crate::readiness::{PreparedOnlineReadiness, ReadinessTransportFactory};
-use crate::record_lane::RecordArtifactLane;
-use crate::records::{
+use crate::runner_protocol::readiness::{PreparedOnlineReadiness, ReadinessTransportFactory};
+use crate::runner_protocol::record_lane::RecordArtifactLane;
+use crate::runner_protocol::records::{
     CapturedHttpExchange, CapturedModelOutput, CapturedRecord, InputSession, group_record_errors,
     observe_otel_record, write_inputs_json, write_outputs_json, write_raw_records_jsonl,
     write_records_csv, write_records_jsonl,
 };
-use crate::registry::ValidatedEndpointProfileV2;
-use crate::server_metrics::ServerMetricsRun;
-use crate::sidecar_input::{
+use crate::runner_protocol::registry::ValidatedEndpointProfileV2;
+use crate::runner_protocol::server_metrics::ServerMetricsRun;
+use crate::runner_protocol::sidecar_input::{
     CONTENT_SERVER_SIDECAR_ID, ContentServerSpec, GPU_TELEMETRY_SIDECAR_ID, GpuTelemetrySpec,
     LIVE_STREAMING_SIDECAR_ID, LiveStreamingSpec, NETWORK_LATENCY_SIDECAR_ID, NetworkLatencySpec,
     PreparedSidecarInputs, SERVER_METRICS_SIDECAR_ID, ServerMetricsSpec,
 };
-use crate::turn_execution::{
+use crate::runner_protocol::turn_execution::{
     HttpExecutionBackendConfig, HttpPreparedEndpointTableFactory, RequestExecutorFactory,
 };
 
 type PhaseRuntimeParts = (
     Rc<dyn Workload>,
-    Rc<RefCell<Box<dyn aiperf::timing::IntervalGenerator>>>,
+    Rc<RefCell<Box<dyn crate::timing::IntervalGenerator>>>,
     Option<Rc<SlotPool>>,
     Option<Rc<SlotPool>>,
     bool,
@@ -210,12 +214,12 @@ pub(crate) struct NativeRunSpec {
     pub(crate) models: ModelsSpec,
     pub(crate) endpoint: NativeEndpointPlan,
     pub(crate) dataset: NativeDatasetPlan,
-    pub(crate) tokenizer: crate::protocol::TokenizerSpec,
+    pub(crate) tokenizer: crate::runner_protocol::protocol::TokenizerSpec,
     pub(crate) phases: Vec<PhaseSpec>,
     pub(crate) metrics: MetricsSpec,
-    pub(crate) artifacts: crate::protocol::ArtifactSpec,
+    pub(crate) artifacts: crate::runner_protocol::protocol::ArtifactSpec,
     pub(crate) sidecars: NativeSidecarPlan,
-    pub(crate) user_files: Vec<crate::protocol_v2::UserFileSpecV2>,
+    pub(crate) user_files: Vec<crate::runner_protocol::protocol_v2::UserFileSpecV2>,
     /// Optional configured run-failure behavior. `None` lets each execution
     /// path apply its historical default at the point of use
     /// ([`OnFailure::scheduled_or_default`] / [`OnFailure::graph_or_default`]).
@@ -225,6 +229,11 @@ pub(crate) struct NativeRunSpec {
     /// post-report sink emits populated `bucket_counts`; otherwise that
     /// projection is skipped entirely (no per-record recompute cost).
     pub(crate) native_otel_enabled: bool,
+    /// Resolved transport (`cfg.transport.type`) the graph execution path builds
+    /// its worker-local dispatchers over. Consumed only when `dataset` is
+    /// [`NativeDatasetPlan::Graph`]; the scheduled path resolves its transport
+    /// through the injected `RequestExecutorFactory` instead and ignores this.
+    pub(crate) transport_kind: GraphTransportKind,
 }
 
 /// Protocol-neutral retention of one run's already decoded sidecar inputs.
@@ -463,66 +472,33 @@ pub(crate) struct NativeGraphDatasetPlan {
     pub(crate) random_seed: Option<u64>,
     pub(crate) default_output_tokens: usize,
     pub(crate) allow_dataset_wrap: bool,
-    pub(crate) t_star_window: crate::graph_input::TStarWindow,
+    pub(crate) t_star_window: crate::runner_protocol::graph_input::TStarWindow,
 }
 
-/// Execute a plan whose graph input, if present, is already fully prepared.
+/// Execute a protocol-v2 plan through a transport-selected request executor.
 ///
-/// Protocol-v2 pair preparation uses this entry point. Its signature omits a
-/// graph-input resolver on purpose: once the selected adapter has returned a
-/// canonical [`GraphInputBundle`], the execution harness cannot load or
-/// reinterpret the authored source a second time.
-pub(crate) fn execute_prepared_native_plan_uncommitted_with_factories(
+/// The workload resolves the transport's turn-placement factory by
+/// `transport_id` (HTTP vs gRPC `RequestExecutorFactory`) and passes it here
+/// with an optional readiness plan (present only for transports that expose a
+/// readiness control plane). The graph placement and its `transport_kind` arm
+/// are resolved from the shared factories, so both scheduled and graph plans run
+/// over either transport through one entry point. Graph input, if present, is
+/// already fully prepared: once the workload has returned a canonical
+/// `GraphInputBundle`, the harness cannot reinterpret the authored source again.
+pub(crate) fn execute_prepared_native_plan_uncommitted_selected(
     plan: NativeRunSpec,
-    transport_factory: Arc<dyn RequestExecutorFactory>,
-    graph_placement: &dyn RunnerGraphPlacementFactory,
-    registry: &AiperfRegistry,
-) -> Result<NativeReport> {
-    execute_prepared_native_plan_uncommitted_with_all_factories(
-        plan,
-        transport_factory,
-        graph_placement,
-        registry,
-        &BuiltinNativeSidecarResourceFactory,
-    )
-}
-
-/// Execute a protocol-v2 plan through the exact coordinator-frozen factories.
-///
-/// Readiness was already expanded into an immutable endpoint-owned plan during
-/// pair preparation. Activation happens on the run-owned Clock before the
-/// exclusive artifact target is created.
-pub(crate) fn execute_prepared_native_plan_uncommitted_with_execution_factories(
-    plan: NativeRunSpec,
+    request_executor: Arc<dyn RequestExecutorFactory>,
     factories: &RunnerExecutionFactories,
-    registry: &AiperfRegistry,
-    readiness: Box<dyn PreparedOnlineReadiness>,
+    registry: &AIPerfRegistry,
+    readiness: Option<Box<dyn PreparedOnlineReadiness>>,
 ) -> Result<NativeReport> {
     execute_prepared_native_plan_uncommitted_with_runtime_factories(
         plan,
-        factories.http_handle(),
+        request_executor,
         factories.graph(),
         registry,
         &BuiltinNativeSidecarResourceFactory,
-        Some((readiness, factories.readiness_transport())),
-    )
-}
-
-/// Execute one fully prepared plan with sidecar resource construction injected.
-pub(crate) fn execute_prepared_native_plan_uncommitted_with_all_factories(
-    plan: NativeRunSpec,
-    transport_factory: Arc<dyn RequestExecutorFactory>,
-    graph_placement: &dyn RunnerGraphPlacementFactory,
-    registry: &AiperfRegistry,
-    sidecar_factory: &dyn NativeSidecarResourceFactory,
-) -> Result<NativeReport> {
-    execute_prepared_native_plan_uncommitted_with_runtime_factories(
-        plan,
-        transport_factory,
-        graph_placement,
-        registry,
-        sidecar_factory,
-        None,
+        readiness.map(|readiness| (readiness, factories.readiness_transport())),
     )
 }
 
@@ -530,7 +506,7 @@ fn execute_prepared_native_plan_uncommitted_with_runtime_factories(
     plan: NativeRunSpec,
     transport_factory: Arc<dyn RequestExecutorFactory>,
     graph_placement: &dyn RunnerGraphPlacementFactory,
-    registry: &AiperfRegistry,
+    registry: &AIPerfRegistry,
     sidecar_factory: &dyn NativeSidecarResourceFactory,
     readiness: Option<(
         Box<dyn PreparedOnlineReadiness>,
@@ -558,7 +534,7 @@ fn execute_prepared_native_plan_uncommitted_with_runtime_factories(
 
 fn materialize_user_files(
     artifact_dir: &Path,
-    files: &[crate::protocol_v2::UserFileSpecV2],
+    files: &[crate::runner_protocol::protocol_v2::UserFileSpecV2],
 ) -> Result<()> {
     if files.is_empty() {
         return Ok(());
@@ -739,10 +715,10 @@ fn validate_plan(request: &NativeRunSpec) -> Result<()> {
         );
         let has_jsonl = spec
             .formats
-            .contains(&crate::protocol::ServerMetricsFormatSpec::Jsonl);
+            .contains(&crate::runner_protocol::protocol::ServerMetricsFormatSpec::Jsonl);
         let has_parquet = spec
             .formats
-            .contains(&crate::protocol::ServerMetricsFormatSpec::Parquet);
+            .contains(&crate::runner_protocol::protocol::ServerMetricsFormatSpec::Parquet);
         ensure!(
             has_jsonl == spec.jsonl_path.is_some(),
             "server metrics jsonl_path must be present exactly when JSONL is selected"
@@ -807,7 +783,7 @@ fn validate_plan(request: &NativeRunSpec) -> Result<()> {
 /// it, so a requested Parquet sidecar still disqualifies exact-fold on a lite build
 /// (the run then falls to the retain path, which warns and skips the artifact).
 fn wants_per_record_artifacts(
-    artifacts: &crate::protocol::ArtifactSpec,
+    artifacts: &crate::runner_protocol::protocol::ArtifactSpec,
     inputs_need_retain: bool,
 ) -> bool {
     // Per-record OTLP folds at completion (S3) and outputs.json streams through the
@@ -825,15 +801,15 @@ fn wants_per_record_artifacts(
 ///
 /// A conversation is reproducible up front unless it is BOTH multi-turn AND captures
 /// live model replies into its later turns — context modes
-/// [`DeltasWithoutResponses`](aiperf::dataset::ConversationContextMode::DeltasWithoutResponses)
+/// [`DeltasWithoutResponses`](crate::dataset::ConversationContextMode::DeltasWithoutResponses)
 /// or
-/// [`MessageArrayWithoutResponses`](aiperf::dataset::ConversationContextMode::MessageArrayWithoutResponses)
+/// [`MessageArrayWithoutResponses`](crate::dataset::ConversationContextMode::MessageArrayWithoutResponses)
 /// with more than one turn — because a later turn's body then splices the live reply.
 /// This mirrors the per-conversation rule in
 /// [`NativeDatasetConversationSource::build_input_payloads`] so the cheap gate check
 /// and the actual generation agree.
 fn dataset_supports_up_front_inputs(dataset: &Dataset) -> bool {
-    use aiperf::dataset::ConversationContextMode;
+    use crate::dataset::ConversationContextMode;
     dataset.conversations().iter().all(|conversation| {
         conversation.turns.len() <= 1
             || !matches!(
@@ -916,30 +892,35 @@ fn exact_fold_enabled_by_env() -> bool {
 /// legacy retain path holds records for. It is selected only when ALL hold:
 ///
 /// - no per-record file artifacts / per-record OTLP (`wants_per_record_artifacts`),
-///   since those still read the retained records (streaming writers are S2–S4);
+///   since those still read the retained records (per-shard streaming writers are
+///   Stage B — a sharded run WITH records/raw/CSV/parquet/outputs stays on retain);
 /// - not sketch mode (sketch has its own bounded fold with a different storage mode);
-/// - the single-thread scheduled path (`!shardable`), where the lone capture uses the
-///   `DirectIssuanceAuthority` and stamps dense `0..N` absolute ordinals — the sharded
-///   arm's per-shard `CellularAutonomousIssuer` stamps STRIDED ordinals whose sparse
-///   per-shard store the accumulator-to-accumulator merge cannot absorb, and its
-///   per-shard artifact files are not yet concatenated at merge; sharded exact-fold is
-///   a deferred follow-up (S5 shipped Parts 2–3 only — see the S5 report), so the
-///   sharded arm stays on the correct-but-unbounded retain path;
-/// - not a cellular child (no `AIPERF_CELL_*`), for the same dense-ordinal reason and
-///   because cellular record shipping needs the full retained set;
+/// - not a cellular child (no `AIPERF_CELL_*`): cross-process record shipping to the
+///   controller needs the full retained set the fold-and-drop path does not keep
+///   (cellular exact-fold is Stage C);
 /// - not adaptive, and no live sink / heartbeat lane — all three consume retained or
 ///   per-turn record clones the fold-and-drop path does not keep;
 /// - the env switch is not forcing legacy retain.
+///
+/// The thread-per-core sharded arm (`workers > 1`) is NO LONGER a disqualifier
+/// (Stage A): each shard folds into its OWN exact accumulator stamped with a
+/// LOCAL-dense `0..N_shard` fold ordinal (its per-capture `fold_dispatch_next`
+/// counter, independent of the `CellularAutonomousIssuer`'s strided GLOBAL ordinal
+/// used only on the retain path), so the shards' dense stores concatenate through the
+/// existing `append_store` merge. The merged summary is WITHIN NUMERICAL TOLERANCE of
+/// the sharded-retain summary — counts, min/max, and percentiles stay exact (they are
+/// order-independent set operations); sums/means/rates may drift a few ULPs from the
+/// reordered f64 summation. `shardable` is retained as an explicit input axis but
+/// deliberately not read here (a regression guard against re-adding the disqualifier).
 ///
 /// (The scheduled path never carries a graph dataset — that is a separate executor —
 /// so "not graph" is implicit here.)
 ///
 /// The disqualifiers are carried as a named-field [`ExactFoldInputs`] struct rather
-/// than eight positional `bool`s (S1 review: boolean-blindness — every argument was
-/// the same type, so a transposed pair silently mis-gated the run).
+/// than positional `bool`s (S1 review: boolean-blindness — every argument was the same
+/// type, so a transposed pair silently mis-gated the run).
 fn exact_fold_eligible(inputs: ExactFoldInputs) -> bool {
     !inputs.sketch_mode
-        && !inputs.shardable
         && !inputs.is_cellular
         && !inputs.has_accuracy
         && !inputs.wants_adaptive_record
@@ -958,11 +939,15 @@ fn exact_fold_eligible(inputs: ExactFoldInputs) -> bool {
 struct ExactFoldInputs {
     /// Sketch storage mode: has its own bounded t-digest fold path.
     sketch_mode: bool,
-    /// The thread-per-core sharded arm (`workers > 1`): its per-shard
-    /// `CellularAutonomousIssuer` stamps STRIDED global ordinals whose sparse
-    /// per-shard store the dense accumulator merge cannot absorb, and per-shard
-    /// artifact files are not yet concatenated at merge — sharded exact-fold is a
-    /// deferred follow-up (S5), so the sharded arm stays on the retain path.
+    /// The thread-per-core sharded arm (`workers > 1`). Retained as an explicit input
+    /// axis but DELIBERATELY not read by [`exact_fold_eligible`] since Stage A: each
+    /// shard folds into its own exact accumulator with a LOCAL-dense fold ordinal and
+    /// the dense stores concatenate through `append_store`, so a sharded metrics-only
+    /// run selects exact-fold. Kept (with the gate test asserting `shardable: true`
+    /// stays eligible) as a regression guard against re-adding `&& !inputs.shardable`.
+    /// Per-shard artifact files (Stage B) and cellular record shipping (Stage C,
+    /// `is_cellular`) remain the disqualifiers for the sharded topology.
+    #[allow(dead_code)]
     shardable: bool,
     /// A cellular child (`AIPERF_CELL_*`): its record shipping to the controller
     /// needs the full retained record set, which fold-and-drop does not keep.
@@ -1187,7 +1172,7 @@ async fn prepare_and_execute_native(
     request: NativeRunSpec,
     transport_factory: Arc<dyn RequestExecutorFactory>,
     graph_placement: &dyn RunnerGraphPlacementFactory,
-    registry: &AiperfRegistry,
+    registry: &AIPerfRegistry,
     sidecar_factory: &dyn NativeSidecarResourceFactory,
     readiness: Option<(
         Box<dyn PreparedOnlineReadiness>,
@@ -1251,7 +1236,7 @@ async fn execute_native(
     sidecars: &mut PreparedNativeSidecarResources,
     transport_factory: Arc<dyn RequestExecutorFactory>,
     graph_placement: &dyn RunnerGraphPlacementFactory,
-    registry: &AiperfRegistry,
+    registry: &AIPerfRegistry,
 ) -> Result<NativeReport> {
     if matches!(request.dataset, NativeDatasetPlan::Graph(_)) {
         ensure!(
@@ -1268,7 +1253,7 @@ async fn execute_scheduled_native(
     accuracy: Option<&mut PreparedAccuracy>,
     sidecars: &mut PreparedNativeSidecarResources,
     transport_factory: Arc<dyn RequestExecutorFactory>,
-    registry: &AiperfRegistry,
+    registry: &AIPerfRegistry,
 ) -> Result<NativeReport> {
     execute_native_inner(request, accuracy, sidecars, transport_factory, registry).await
 }
@@ -1301,7 +1286,7 @@ struct OnlineGraphPhaseBackendFactory<'a> {
     model: String,
     default_max_tokens: usize,
     endpoint_runtime_factory: Arc<dyn RunnerGraphEndpointRuntimeFactory>,
-    segments: Arc<dyn aiperf::dataset::SegmentStore>,
+    segments: Arc<dyn crate::dataset::SegmentStore>,
     metrics: MetricsConfig,
     raw_enabled: bool,
     on_failure: OnFailure,
@@ -1342,7 +1327,7 @@ async fn execute_graph_native(
     request: NativeRunSpec,
     sidecars: &PreparedNativeSidecarResources,
     graph_placement: &dyn RunnerGraphPlacementFactory,
-    registry: &AiperfRegistry,
+    registry: &AIPerfRegistry,
 ) -> Result<NativeReport> {
     let graph = match &request.dataset {
         NativeDatasetPlan::Graph(graph) => graph,
@@ -1379,6 +1364,7 @@ async fn execute_graph_native(
             registry.endpoints().clone(),
             profiles.clone(),
             input_token_counter.clone(),
+            request.transport_kind,
         )?)
     };
     let real_clock_anchor = sidecars.real_clock_anchor;
@@ -1457,7 +1443,7 @@ async fn execute_graph_native(
     // the controller's throwaway scratch artifact_dir and is discarded. Absent the
     // controller address (the single-process path) this is inert.
     #[cfg(feature = "velo")]
-    if let Some(shipper) = crate::cellular_cell::CellRecordsShipper::from_env() {
+    if let Some(shipper) = crate::runner_protocol::cellular_cell::CellRecordsShipper::from_env() {
         let records: Vec<RecordIngest> = captured
             .iter()
             .map(|record| record.ingest.clone())
@@ -1608,7 +1594,7 @@ fn write_records_parquet_artifact(
     let path = artifact_path(&request.artifact_dir, parquet_path, "records_parquet_path")?;
     #[cfg(feature = "parquet")]
     {
-        crate::records::write_records_parquet(
+        crate::runner_protocol::records::write_records_parquet(
             &path,
             captured,
             metrics_config,
@@ -1763,7 +1749,7 @@ pub(crate) struct ShardedShared {
     /// worker-local prepared table and (`Rc`) coordinator resolver from it.
     pub(crate) table_factory: Arc<NativePreparedEndpointTableFactory>,
     /// Cloned sampler registry (the source factory borrows it per thread).
-    pub(crate) samplers: aiperf::dataset::SamplerRegistry,
+    pub(crate) samplers: crate::dataset::SamplerRegistry,
     /// The composed dataset every thread partitions.
     pub(crate) dataset: Dataset,
     /// Effective primary model.
@@ -1796,6 +1782,12 @@ pub(crate) struct ShardedShared {
     pub(crate) inputs_enabled: bool,
     /// Whether an adaptive phase needs each completed turn's terminal record.
     pub(crate) wants_adaptive_record: bool,
+    /// Whether this sharded run selected exact-fold (Stage A): each worker capture
+    /// folds every completed record into its own EXACT accumulator (stamped with a
+    /// LOCAL-dense fold ordinal) and drops the heavy per-record data mid-run, so the
+    /// coordinator merges bounded per-shard accumulators instead of retaining every
+    /// record. `false` keeps the sharded arm on the correct-but-unbounded retain path.
+    pub(crate) exact_fold: bool,
     /// Run-failure discipline.
     pub(crate) on_failure: OnFailure,
     /// The shared monotonic real-clock origin; each thread builds a reactor-local
@@ -1816,16 +1808,18 @@ pub(crate) struct ShardedShared {
 
 /// A sub-cell thread's finished records: kept exactly (retained for the report
 /// ingest + per-record artifacts) or folded into a bounded per-shard accumulator and
-/// dropped (sketch mode). Folding is the cells-48 memory fix — RAM is
-/// O(shards × sketch), flat in record count, instead of O(all records).
+/// dropped (sketch OR Stage A exact-fold). Folding is the cells-48 memory fix — RAM is
+/// O(shards × accumulator), flat in record count, instead of O(all records).
 pub(crate) enum ShardRecords {
     /// Exact mode: every record retained, each stamped with its global two-level
     /// dispatch ordinal. The report tail ingests them and per-record artifacts read
     /// them.
     Retained(Vec<CapturedRecord>),
-    /// Sketch mode: records streamed into this shard's bounded accumulator and
-    /// dropped; only errored records survive for the report's error grouping. Shards
-    /// merge accumulator-to-accumulator (associative), never by concatenating records.
+    /// Fold-and-drop mode (sketch OR Stage A exact-fold): records streamed into this
+    /// shard's bounded accumulator and dropped; only errored records survive for the
+    /// report's error grouping. Shards merge accumulator-to-accumulator, never by
+    /// concatenating records — sketch merges an associative t-digest partition, exact-
+    /// fold concatenates the shard's dense LOCAL-ordinal store through `append_store`.
     Folded {
         accumulator: MetricsAccumulator,
         errored: Vec<CapturedRecord>,
@@ -1855,8 +1849,9 @@ impl ShardRecords {
                     errored: eb,
                 },
             ) => {
-                a.merge(&b)
-                    .map_err(|error| anyhow!("merging sharded sketch partitions: {error}"))?;
+                a.merge(&b).map_err(|error| {
+                    anyhow!("merging sharded fold-and-drop partitions: {error}")
+                })?;
                 ea.extend(eb);
             }
             _ => bail!(
@@ -1872,7 +1867,8 @@ impl ShardRecords {
 /// report tail folds across threads. `Send` so it crosses the worker join.
 #[derive(Default)]
 pub(crate) struct ScheduledShardOutcome {
-    /// This thread's records — retained (exact) or folded-and-dropped (sketch).
+    /// This thread's records — retained (retain path) or folded-and-dropped (sketch
+    /// or Stage A exact-fold).
     pub(crate) records: ShardRecords,
     /// This thread's `inputs.json` sessions (disjoint conversation ids across
     /// threads, so the union needs only a re-sort by session id).
@@ -1923,7 +1919,7 @@ pub(crate) async fn execute_scheduled_shard(
     // sampler (which instances it draws) and the issuer (which global ordinals it
     // stamps), so `within*(cells*W) + index == instance` holds and the ordinals
     // tile 0..total.
-    let partition = crate::sharded_scheduled::two_level_partition(
+    let partition = crate::runner_protocol::sharded_scheduled::two_level_partition(
         shared.cell_id,
         shared.cells,
         thread_id,
@@ -1953,15 +1949,20 @@ pub(crate) async fn execute_scheduled_shard(
         // driven once-per-cell on the main thread.
         false,
         shared.wants_adaptive_record,
-        // The thread-per-core sharded arm folds per shard into the sketch accumulator
-        // but stamps STRIDED global ordinals (its CellularAutonomousIssuer is sparse
-        // within a shard), so the exact-fold dense-column path is not valid here — it
-        // stays on the retain/sketch shard path. Sharded exact-fold (per-shard EXACT
-        // accumulator with local dense ordinals + per-shard artifact-file
-        // concatenation at merge) is a deferred follow-up: S5 shipped only the gate/
-        // fallback confirmation and cleanups, not the sharded fold. See the S5 report.
-        false,
-        crate::cellular_cell::issuance_authority_for(partition),
+        // Stage A: when the run selected exact-fold, each worker capture folds every
+        // completed record into its OWN exact accumulator and drops the heavy
+        // per-record data mid-run. The fold ordinal comes from this capture's private
+        // `fold_dispatch_next` counter (`assign_fold_ordinal` at `begin`), which is
+        // LOCAL-dense `0..N_shard` — NOT the STRIDED global ordinal the
+        // `CellularAutonomousIssuer` stamps on the retain path (`global_ordinal`, used
+        // only in `patch_joined_ingest`). So each shard's store is dense and the shards
+        // concatenate through `append_store` at merge, yielding a summary within
+        // numerical tolerance of the retain path (counts/percentiles exact, sums/means
+        // a few ULPs). Per-record artifact files (Stage B) and cellular shipping
+        // (Stage C) still keep those runs on retain via the eligibility gate, so
+        // `exact_fold` is `false` there.
+        shared.exact_fold,
+        crate::runner_protocol::cellular_cell::issuance_authority_for(partition),
         shared.phase_ordinal_bases.clone(),
     ));
     let resolver = shared.table_factory.coordinator_resolver()?;
@@ -1976,7 +1977,11 @@ pub(crate) async fn execute_scheduled_shard(
         .phases
         .iter()
         .map(|phase| {
-            crate::sharded_scheduled::slice_phase_for_thread(phase, thread_id, shared.workers)
+            crate::runner_protocol::sharded_scheduled::slice_phase_for_thread(
+                phase,
+                thread_id,
+                shared.workers,
+            )
         })
         .collect();
 
@@ -2044,10 +2049,11 @@ pub(crate) async fn execute_scheduled_shard(
     }
     .await;
 
-    // Metrics-only mode already folded every completed record on the fly (the worker
-    // moved each out of its observer as it streamed), so there is nothing left to
-    // drain and materializing that Vec would reintroduce the O(records) peak.
-    let drained = if execution_result.is_ok() && !capture.metrics_only {
+    // Fold-and-drop modes (sketch or Stage A exact-fold) already folded every completed
+    // record on the fly (the worker moved each out of its observer as it streamed), so
+    // there is nothing left to drain and materializing that Vec would reintroduce the
+    // O(records) peak. Only the retain path drains.
+    let drained = if execution_result.is_ok() && !capture.folds_records() {
         execution_backend.drain_records(clock.now_ns())
     } else {
         Ok(Vec::new())
@@ -2061,11 +2067,14 @@ pub(crate) async fn execute_scheduled_shard(
         .flat_map(|report| report.report.turns.iter())
         .map(|turn| (turn.uuid, turn.issued_offset_ns))
         .collect::<HashMap<_, _>>();
-    // Sketch mode folded each completed record into this shard's own bounded
-    // accumulator as it streamed and dropped it (only errored records retained);
-    // exact mode keeps the full record Vec. Shards merge accumulator-to-accumulator
-    // downstream, so the coordinator never holds O(all records) in sketch mode.
-    let records = if capture.metrics_only {
+    // A fold-and-drop mode folded each completed record into this shard's own bounded
+    // accumulator as it streamed and dropped it (only errored records retained): sketch
+    // keeps a t-digest partition, Stage A exact-fold keeps a dense EXACT accumulator
+    // whose rows sit at their LOCAL-dense fold ordinals. The retain path keeps the full
+    // record Vec. Shards merge accumulator-to-accumulator (`append_store` concatenates
+    // the dense exact stores) downstream, so the coordinator never holds O(all records)
+    // in either fold mode.
+    let records = if capture.folds_records() {
         let (accumulator, errored) = capture.take_streamed();
         ShardRecords::Folded {
             accumulator,
@@ -2093,7 +2102,7 @@ async fn execute_native_inner(
     mut accuracy: Option<&mut PreparedAccuracy>,
     sidecars: &mut PreparedNativeSidecarResources,
     transport_factory: Arc<dyn RequestExecutorFactory>,
-    registry: &AiperfRegistry,
+    registry: &AIPerfRegistry,
 ) -> Result<NativeReport> {
     let live_sink = sidecars.live_sink();
     let rng_root = RngRoot::new(request.random_seed);
@@ -2203,7 +2212,7 @@ async fn execute_native_inner(
     // finalize (fold vs ingest) and the cellular record-shipping guard below.
     let sketch_mode = matches!(
         metrics_config.storage_mode,
-        aiperf::metrics_core::MetricsStorageMode::Sketch { .. }
+        crate::metrics_core::MetricsStorageMode::Sketch { .. }
     );
     let shardable = request.workers > 1
         && accuracy.is_none()
@@ -2575,10 +2584,12 @@ async fn execute_native_inner(
     } else {
         // ==================== THREAD-PER-CORE SHARDED PATH ====================
         // `shardable` above guarantees workers > 1, no static-accuracy scoring, and
-        // only request-bounded phases — the shapes a sub-cell can partition. The
-        // `shardable` gate already forces `exact_fold` false here: the sharded arm folds
-        // per shard with STRIDED ordinals, so exact-fold (dense single-thread ordinals)
-        // is not selected — sharded exact-fold is deferred (S5 shipped Parts 2–3 only).
+        // only request-bounded phases — the shapes a sub-cell can partition. Stage A:
+        // `exact_fold` may be true here (a metrics-only sharded run selects it); each
+        // worker capture then folds into its own exact accumulator with a LOCAL-dense
+        // fold ordinal, and the coordinator merges those dense stores via `append_store`
+        // below. Per-record artifacts (Stage B) and cellular children (Stage C) keep
+        // `exact_fold` false through the eligibility gate.
         // Once-per-cell on the main thread, before the sub-cell threads spawn.
         create_run_artifacts(&request)?;
         sidecars.activate_live_streaming().await;
@@ -2599,9 +2610,9 @@ async fn execute_native_inner(
         // A controller child already carries the global phase ordinal bases in the
         // env; a lone process computes them from its (global == local) phase
         // budgets so profiling ordinals never collide with warmup's `[0, W)` block.
-        let env_bases = crate::cellular_cell::phase_ordinal_bases_from_env();
+        let env_bases = crate::runner_protocol::cellular_cell::phase_ordinal_bases_from_env();
         let phase_ordinal_bases = if env_bases.is_empty() {
-            crate::sharded_scheduled::compute_phase_ordinal_bases(&request.phases)?
+            crate::runner_protocol::sharded_scheduled::compute_phase_ordinal_bases(&request.phases)?
         } else {
             env_bases
         };
@@ -2637,6 +2648,7 @@ async fn execute_native_inner(
             raw_enabled: request.artifacts.raw_path.is_some(),
             inputs_enabled: request.artifacts.inputs_path.is_some(),
             wants_adaptive_record,
+            exact_fold,
             on_failure: OnFailure::scheduled_or_default(request.failure_policy),
             real_clock_anchor,
             start_ns,
@@ -2648,7 +2660,7 @@ async fn execute_native_inner(
         // Build the once-per-cell profiling-phase side-channel sidecars on the main
         // thread; the sharded runtime drives them over the run window while the
         // sub-cell threads execute (a worker thread never scrapes telemetry).
-        let mut profiling_sidecars: Vec<Rc<dyn aiperf::phase_runtime::ScheduledPhaseSidecar>> =
+        let mut profiling_sidecars: Vec<Rc<dyn crate::phase_runtime::ScheduledPhaseSidecar>> =
             Vec::new();
         if let Some(server_metrics) = sidecars.server_metrics.as_ref() {
             profiling_sidecars.push(server_metrics.sidecar(MetricsPhase::Profiling));
@@ -2661,18 +2673,19 @@ async fn execute_native_inner(
         {
             profiling_sidecars.push(sidecar);
         }
-        let outcome = crate::sharded_scheduled::run_sharded_scheduled(
+        let outcome = crate::runner_protocol::sharded_scheduled::run_sharded_scheduled(
             shared,
             profiling_sidecars,
             clock.clone(),
         )
         .await?;
-        // Exact shards return retained records to ingest into the report accumulator;
-        // sketch shards already folded into per-shard accumulators that merge_shards
-        // combined, so merge that into the report accumulator and keep only the errored
-        // records for error grouping. Peak coordinator memory is bounded by the mode:
-        // O(records) exact (inherent — per-record artifacts need them), O(shards ×
-        // sketch) sketch.
+        // Retain-path shards return the full record Vec to ingest into the report
+        // accumulator; fold-and-drop shards (sketch or Stage A exact-fold) already
+        // folded into per-shard accumulators that merge_shards combined via
+        // `append_store`, so merge that into the report accumulator and keep only the
+        // errored records for error grouping. Peak coordinator memory is bounded by the
+        // mode: O(records) on the retain path (per-record artifacts need them),
+        // O(shards × accumulator) for both fold modes.
         let captured = match outcome.records {
             ShardRecords::Retained(records) => {
                 for record in &records {
@@ -2685,7 +2698,10 @@ async fn execute_native_inner(
                 errored,
             } => {
                 accumulator.merge(&shard_accumulator).map_err(|error| {
-                    anyhow!("merging sharded sketch partition into the report accumulator: {error}")
+                    anyhow!(
+                        "merging sharded fold-and-drop partition into the report \
+                         accumulator: {error}"
+                    )
                 })?;
                 errored
             }
@@ -2706,7 +2722,7 @@ async fn execute_native_inner(
     // (a cell partition would ship its merged accumulator instead — a future seam). The
     // exact-fold gate already rejects the cellular case, so this guard is belt-and-braces.
     #[cfg(feature = "velo")]
-    if let Some(shipper) = crate::cellular_cell::CellRecordsShipper::from_env() {
+    if let Some(shipper) = crate::runner_protocol::cellular_cell::CellRecordsShipper::from_env() {
         ensure!(
             !sketch_mode && !exact_fold,
             "fold-and-drop metrics modes do not support cellular record shipping yet"
@@ -2924,7 +2940,7 @@ type NativeEndpointExecutionParts<'a> = (
 
 struct PreparedNativeConversationSourceFactory<'a> {
     endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
-    samplers: &'a aiperf::dataset::SamplerRegistry,
+    samplers: &'a crate::dataset::SamplerRegistry,
     /// The dataset instance partition this source draws, or `None` to read the
     /// process-global partition from the environment. `None` is the byte-unchanged
     /// default for the coordinator (single-process) and multi-process cell paths;
@@ -3113,7 +3129,7 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
             let resources: Rc<dyn ScheduledPhaseResources> =
                 Rc::new(SlotPoolPhaseResources::new(phase_session.clone(), None));
             let intervals = Rc::new(RefCell::new(make_interval_generator(
-                aiperf::timing::ArrivalPattern::ConcurrencyBurst,
+                crate::timing::ArrivalPattern::ConcurrencyBurst,
                 None,
                 None,
                 arrival_seed,
@@ -3150,7 +3166,7 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
             let workload =
                 Rc::new(FixedScheduleWorkload::new(source, schedule_source)?) as Rc<dyn Workload>;
             let intervals = Rc::new(RefCell::new(make_interval_generator(
-                aiperf::timing::ArrivalPattern::ConcurrencyBurst,
+                crate::timing::ArrivalPattern::ConcurrencyBurst,
                 None,
                 None,
                 arrival_seed,
@@ -3161,7 +3177,7 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
                 None,
                 None,
                 false,
-                Rc::new(aiperf::phase_runtime::NoopScheduledPhaseResources),
+                Rc::new(crate::phase_runtime::NoopScheduledPhaseResources),
                 None,
             )
         }
@@ -3202,7 +3218,7 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
 }
 
 pub(crate) async fn build_synthetic_dataset(
-    registry: &AiperfRegistry,
+    registry: &AIPerfRegistry,
     spec: &SyntheticDatasetSpec,
     models: &ModelsSpec,
     rng_root: RngRoot,
@@ -3262,7 +3278,7 @@ fn compose_config(models: &ModelsSpec, rng_root: RngRoot) -> Result<ComposeConfi
 }
 
 pub(crate) async fn build_file_dataset(
-    registry: &AiperfRegistry,
+    registry: &AIPerfRegistry,
     spec: &FileDatasetSpec,
     models: &ModelsSpec,
     run_rng_root: RngRoot,
@@ -3338,7 +3354,7 @@ pub(crate) async fn build_file_dataset(
 }
 
 pub(crate) async fn build_public_dataset(
-    registry: &AiperfRegistry,
+    registry: &AIPerfRegistry,
     spec: &PublicDatasetSpec,
     models: &ModelsSpec,
     rng_root: RngRoot,
@@ -3669,20 +3685,20 @@ pub(crate) fn metrics_config(
             .find(|metric| metric.tag.as_str() == name)
             .ok_or_else(|| anyhow!("SLO metric {name:?} is not in the native metric catalog"))?;
         ensure!(
-            metric.kind == aiperf::metrics_core::MetricType::Record
+            metric.kind == crate::metrics_core::MetricType::Record
                 && !metric
                     .flags
-                    .contains(aiperf::metrics_core::MetricFlags::NO_INDIVIDUAL_RECORDS),
+                    .contains(crate::metrics_core::MetricFlags::NO_INDIVIDUAL_RECORDS),
             "SLO metric {name:?} does not produce one value per request"
         );
         slos.push(SloThreshold::from_display(metric.tag, *value)?);
     }
     let storage_mode = if spec.sketch {
-        aiperf::metrics_core::MetricsStorageMode::Sketch {
-            compression: aiperf::metrics_core::SKETCH_DEFAULT_COMPRESSION,
+        crate::metrics_core::MetricsStorageMode::Sketch {
+            compression: crate::metrics_core::SKETCH_DEFAULT_COMPRESSION,
         }
     } else {
-        aiperf::metrics_core::MetricsStorageMode::Exact
+        crate::metrics_core::MetricsStorageMode::Exact
     };
     Ok(MetricsConfig {
         slice_duration_ns,
@@ -3771,9 +3787,9 @@ fn ancillary_policies(
         cancellation_policy,
         url_selector,
         phase: if spec.common().name == "warmup" {
-            aiperf::timing::Phase::Warmup
+            crate::timing::Phase::Warmup
         } else {
-            aiperf::timing::Phase::Profiling
+            crate::timing::Phase::Profiling
         },
     })
 }
@@ -3820,7 +3836,7 @@ impl RampActuatorRngRoots {
 fn ramp_controller(
     spec: &PhaseSpec,
     clock: Rc<dyn Clock>,
-    intervals: Rc<RefCell<Box<dyn aiperf::timing::IntervalGenerator>>>,
+    intervals: Rc<RefCell<Box<dyn crate::timing::IntervalGenerator>>>,
     session_slots: Option<Rc<SlotPool>>,
     prefill_slots: Option<Rc<SlotPool>>,
     rng_root: RngRoot,
@@ -3871,7 +3887,7 @@ fn ramp_controller(
         }));
     }
     if drivers.is_empty() {
-        Ok(Rc::new(aiperf::phase_runtime::NoopScheduledPhaseController))
+        Ok(Rc::new(crate::phase_runtime::NoopScheduledPhaseController))
     } else {
         Ok(Rc::new(RampScheduledPhaseController::new(drivers)))
     }
@@ -3882,7 +3898,7 @@ fn adaptive_runtime_extension(
     phase: &PhaseSpec,
     benchmark_id: &str,
     artifact_dir: &Path,
-    intervals: Rc<RefCell<Box<dyn aiperf::timing::IntervalGenerator>>>,
+    intervals: Rc<RefCell<Box<dyn crate::timing::IntervalGenerator>>>,
     session_slots: Option<Rc<SlotPool>>,
     prefill_slots: Option<Rc<SlotPool>>,
     user_target: Option<Rc<dyn UserTarget>>,
@@ -4042,7 +4058,7 @@ pub(crate) fn integer_adaptive_bound(value: f64, label: &str) -> Result<usize> {
 
 struct AdaptiveRuntimeExtension {
     config: AdaptiveRunConfig,
-    intervals: Rc<RefCell<Box<dyn aiperf::timing::IntervalGenerator>>>,
+    intervals: Rc<RefCell<Box<dyn crate::timing::IntervalGenerator>>>,
     session_slots: Option<Rc<SlotPool>>,
     prefill_slots: Option<Rc<SlotPool>>,
     user_target: Option<Rc<dyn UserTarget>>,
@@ -4143,7 +4159,7 @@ impl ScheduledPhaseController for AdaptiveScheduledPhaseController {
         Ok(())
     }
 
-    fn stop(&self) -> aiperf::timing::LocalPhaseFuture<Result<()>> {
+    fn stop(&self) -> crate::timing::LocalPhaseFuture<Result<()>> {
         self.scale.deactivate();
         let assessment = self.assessment.borrow_mut().take();
         let scale = self.scale.clone();
@@ -4175,7 +4191,7 @@ impl ScheduledPhaseController for AdaptiveScheduledPhaseController {
         })
     }
 
-    fn wait_until_stop(&self) -> aiperf::timing::LocalPhaseFuture<()> {
+    fn wait_until_stop(&self) -> crate::timing::LocalPhaseFuture<()> {
         let scale = self.scale.clone();
         Box::pin(async move { scale.wait_until_stop_sending().await })
     }
@@ -4228,9 +4244,9 @@ impl ModelSelectorFactory for WeightedModelSelectorFactory {
         &self,
         models: &[ModelId],
         _root: RngRoot,
-    ) -> aiperf::dataset::Result<Box<dyn ModelSelector>> {
+    ) -> crate::dataset::Result<Box<dyn ModelSelector>> {
         if models.len() != self.weights.len() || models.is_empty() {
-            return Err(aiperf::dataset::DatasetError::Validation(
+            return Err(crate::dataset::DatasetError::Validation(
                 "weighted model values and weights must have the same non-zero length".into(),
             ));
         }
@@ -4241,7 +4257,7 @@ impl ModelSelectorFactory for WeightedModelSelectorFactory {
             .all(|weight| weight.is_finite() && *weight >= 0.0)
             || !(0.99..=1.01).contains(&total)
         {
-            return Err(aiperf::dataset::DatasetError::Validation(
+            return Err(crate::dataset::DatasetError::Validation(
                 "weighted model weights must be finite, non-negative, and sum to 1.0 (+/-0.01)"
                     .into(),
             ));
@@ -4465,7 +4481,7 @@ impl RunCapture {
             wants_live_sink_record,
             wants_adaptive_record,
             exact_fold,
-            crate::cellular_cell::issuance_authority_from_env(),
+            crate::runner_protocol::cellular_cell::issuance_authority_from_env(),
         )
     }
 
@@ -4473,10 +4489,10 @@ impl RunCapture {
     /// issuer instead of the process-environment default. A future single-process
     /// thread-per-core scheduled run builds one `RunCapture` per sub-cell thread,
     /// each with a per-thread issuer (see
-    /// [`issuance_authority_for`](crate::cellular_cell::issuance_authority_for))
+    /// [`issuance_authority_for`](crate::runner_protocol::cellular_cell::issuance_authority_for))
     /// whose `(cell_id, cell_count)` partition the process-global env vars cannot
     /// express. [`Self::new`] delegates here with the env default
-    /// ([`issuance_authority_from_env`](crate::cellular_cell::issuance_authority_from_env))
+    /// ([`issuance_authority_from_env`](crate::runner_protocol::cellular_cell::issuance_authority_from_env))
     /// so every current call site is byte-unchanged. The per-phase ordinal bases
     /// still come from the environment — they carry no partition — matching `new`.
     #[allow(clippy::too_many_arguments)]
@@ -4504,7 +4520,7 @@ impl RunCapture {
             wants_adaptive_record,
             exact_fold,
             issuance,
-            crate::cellular_cell::phase_ordinal_bases_from_env(),
+            crate::runner_protocol::cellular_cell::phase_ordinal_bases_from_env(),
         )
     }
 
@@ -4516,7 +4532,7 @@ impl RunCapture {
     /// threads still need each phase's global base so profiling ordinals do not
     /// collide with warmup's `[0, W)` block. The sharded runtime computes the
     /// bases from the phase `requests` budgets (mirroring
-    /// [`crate::cellular_controller::phase_ordinal_bases`]) and injects the same
+    /// [`crate::runner_protocol::cellular_controller::phase_ordinal_bases`]) and injects the same
     /// map into every thread's capture. A controller child instead reuses the
     /// controller-provided env bases (they are already global and
     /// partition-independent, identical across a cell's threads);
@@ -4540,7 +4556,7 @@ impl RunCapture {
         // exact mode never touches the streaming fields.
         let metrics_only = matches!(
             config.storage_mode,
-            aiperf::metrics_core::MetricsStorageMode::Sketch { .. }
+            crate::metrics_core::MetricsStorageMode::Sketch { .. }
         );
         // Sketch and exact-fold are mutually exclusive: sketch keeps the bounded
         // t-digest, exact-fold keeps exact NaN-sparse columns. The caller only sets
@@ -4846,7 +4862,7 @@ impl RunCapture {
         &self,
         uuid: Uuid,
         request_payload: Vec<u8>,
-        record: aiperf::transport_http::models::RequestRecord,
+        record: crate::transport_http::models::RequestRecord,
     ) -> Result<()> {
         if !self.raw_enabled {
             return Ok(());
@@ -5447,7 +5463,7 @@ impl TurnDispatcher for ConfiguredDispatcher {
 
 #[cfg(test)]
 mod tests {
-    use aiperf::clock::SimClock;
+    use crate::clock::SimClock;
     use serde_json::json;
 
     use super::*;
@@ -5462,7 +5478,7 @@ mod tests {
     /// cfg.)
     #[test]
     fn exact_fold_gate_accepts_streamed_artifacts_and_rejects_retained_ones() {
-        use crate::protocol::ArtifactSpec;
+        use crate::runner_protocol::protocol::ArtifactSpec;
 
         let eligible = |artifacts: &ArtifactSpec, inputs_need_retain: bool| {
             exact_fold_eligible(ExactFoldInputs {
@@ -5588,27 +5604,27 @@ mod tests {
 
         assert_eq!(
             roots.concurrency(),
-            phase_root.derive_root(aiperf::rng::namespace::TIMING_RAMP_CONCURRENCY)
+            phase_root.derive_root(crate::rng::namespace::TIMING_RAMP_CONCURRENCY)
         );
         assert_eq!(
             roots.prefill_concurrency(),
-            phase_root.derive_root(aiperf::rng::namespace::TIMING_RAMP_PREFILL_CONCURRENCY)
+            phase_root.derive_root(crate::rng::namespace::TIMING_RAMP_PREFILL_CONCURRENCY)
         );
         assert_eq!(
             roots.request_rate(),
-            phase_root.derive_root(aiperf::rng::namespace::TIMING_RAMP_REQUEST_RATE)
+            phase_root.derive_root(crate::rng::namespace::TIMING_RAMP_REQUEST_RATE)
         );
 
         let curve_seeds = [
             roots
                 .request_rate()
-                .derive_seed(aiperf::rng::namespace::TIMING_RAMP_POISSON),
+                .derive_seed(crate::rng::namespace::TIMING_RAMP_POISSON),
             roots
                 .prefill_concurrency()
-                .derive_seed(aiperf::rng::namespace::TIMING_RAMP_POISSON),
+                .derive_seed(crate::rng::namespace::TIMING_RAMP_POISSON),
             roots
                 .concurrency()
-                .derive_seed(aiperf::rng::namespace::TIMING_RAMP_POISSON),
+                .derive_seed(crate::rng::namespace::TIMING_RAMP_POISSON),
         ];
         assert!(curve_seeds.iter().all(Option::is_some));
         assert_ne!(curve_seeds[0], curve_seeds[1]);
@@ -5616,7 +5632,7 @@ mod tests {
         assert_ne!(curve_seeds[1], curve_seeds[2]);
         assert_ne!(
             roots.concurrency(),
-            phase_root.derive_root(aiperf::rng::namespace::TIMING_RAMP_POISSON),
+            phase_root.derive_root(crate::rng::namespace::TIMING_RAMP_POISSON),
             "the phase must not pre-derive the curve-local Poisson namespace"
         );
     }
@@ -5733,7 +5749,7 @@ mod tests {
                 }]
             }
         }));
-        let registry = AiperfRegistry::builtin().unwrap();
+        let registry = AIPerfRegistry::builtin().unwrap();
         let dataset = build_synthetic_dataset(
             &registry,
             &spec,
@@ -5741,7 +5757,7 @@ mod tests {
             RngRoot::new(Some(73)),
             &TiktokenTokenizer::builtin(),
             false,
-            Arc::new(aiperf::dataset::NativeSyntheticMediaGeneratorFactory::default()),
+            Arc::new(crate::dataset::NativeSyntheticMediaGeneratorFactory::default()),
             false,
         )
         .await
@@ -5766,7 +5782,7 @@ mod tests {
                 "query_tokens": {"value": 4.0}
             }
         }));
-        let registry = AiperfRegistry::builtin().unwrap();
+        let registry = AIPerfRegistry::builtin().unwrap();
         let dataset = build_synthetic_dataset(
             &registry,
             &spec,
@@ -5774,7 +5790,7 @@ mod tests {
             RngRoot::new(Some(3)),
             &TiktokenTokenizer::builtin(),
             true,
-            Arc::new(aiperf::dataset::NativeSyntheticMediaGeneratorFactory::default()),
+            Arc::new(crate::dataset::NativeSyntheticMediaGeneratorFactory::default()),
             false,
         )
         .await
@@ -5790,9 +5806,9 @@ mod tests {
     #[test]
     fn user_files_write_exact_pre_rendered_utf8_after_artifact_creation() {
         let artifact_dir = tempfile::tempdir().unwrap();
-        let files = vec![crate::protocol_v2::UserFileSpecV2 {
+        let files = vec![crate::runner_protocol::protocol_v2::UserFileSpecV2 {
             path: "nested/run.json".into(),
-            format: crate::protocol_v2::UserFileFormatV2::Json,
+            format: crate::runner_protocol::protocol_v2::UserFileFormatV2::Json,
             content: "{\n  \"count\": 7\n}".into(),
         }];
 
@@ -5812,9 +5828,9 @@ mod tests {
         let artifact_dir = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
         symlink(outside.path(), artifact_dir.path().join("escape")).unwrap();
-        let files = vec![crate::protocol_v2::UserFileSpecV2 {
+        let files = vec![crate::runner_protocol::protocol_v2::UserFileSpecV2 {
             path: "escape/owned.txt".into(),
-            format: crate::protocol_v2::UserFileFormatV2::Text,
+            format: crate::runner_protocol::protocol_v2::UserFileFormatV2::Text,
             content: "must-not-write".into(),
         }];
 
@@ -6403,7 +6419,7 @@ mod tests {
             let mut ingest = RecordIngest::minimal(1_000_000, end_ns, phase);
             ingest.first_token_ns = Some(3_000_000);
             ingest.token_arrival_ns = vec![3_000_000, 5_000_000, end_ns];
-            ingest.tokens = aiperf::metrics_core::TokenCounts {
+            ingest.tokens = crate::metrics_core::TokenCounts {
                 input: Some(isl),
                 output: Some(osl),
                 requested_output: Some(osl),
@@ -6528,8 +6544,11 @@ mod tests {
         assert!(!retain.wants_live_record());
     }
 
-    /// The exact-fold gate accepts a clean single-thread scheduled metrics run and
-    /// rejects every disqualifier independently. (Graph datasets never reach this
+    /// The exact-fold gate accepts a clean scheduled metrics run and rejects every
+    /// remaining disqualifier independently. Since Stage A the thread-per-core sharded
+    /// arm (`shardable`) is accepted, not rejected — a metrics-only sharded run selects
+    /// exact-fold; a sharded run WITH a per-record artifact still rejects (Stage B) and
+    /// a cellular child still rejects (Stage C). (Graph datasets never reach this
     /// scheduled path, so "not graph" is implicit; cellular record shipping is covered
     /// by the `is_cellular` axis.)
     #[test]
@@ -6557,19 +6576,32 @@ mod tests {
             }),
             "sketch mode has its own fold path"
         );
+        // Stage A: the thread-per-core sharded arm no longer disqualifies — a
+        // metrics-only `workers > 1` run folds each shard into its own exact
+        // accumulator with a LOCAL-dense fold ordinal and merges via `append_store`.
         assert!(
-            !exact_fold_eligible(ExactFoldInputs {
+            exact_fold_eligible(ExactFoldInputs {
                 shardable: true,
                 ..clean
             }),
-            "the sharded arm stamps strided ordinals (S5 deferred)"
+            "the sharded arm now selects exact-fold (Stage A local-dense fold)"
         );
         assert!(
             !exact_fold_eligible(ExactFoldInputs {
                 is_cellular: true,
                 ..clean
             }),
-            "a cellular child ships the full retained set"
+            "a cellular child ships the full retained set (Stage C)"
+        );
+        // A sharded run WITH a per-record artifact still rejects (Stage B): per-shard
+        // artifact-file concatenation is not yet built, so it stays on retain.
+        assert!(
+            !exact_fold_eligible(ExactFoldInputs {
+                shardable: true,
+                wants_per_record_artifacts: true,
+                ..clean
+            }),
+            "a sharded run with a per-record artifact stays on retain (Stage B)"
         );
         assert!(
             !exact_fold_eligible(ExactFoldInputs {

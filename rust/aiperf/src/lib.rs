@@ -43,6 +43,12 @@ pub mod scheduler;
 pub mod user_centric;
 pub mod workload;
 
+// The v2 protocol / registry / execution layer relocated out of `aiperf-runner`
+// so there can eventually be one registry in `aiperf`. Gated by `runner-protocol`
+// so `mock-server` and other library consumers skip it entirely.
+#[cfg(feature = "runner-protocol")]
+pub mod runner_protocol;
+
 // Modules absorbed from the formerly-standalone aiperf-* library crates.
 pub mod accuracy_core;
 pub mod adaptive_core;

@@ -4,8 +4,8 @@
 //! Statically linked extension composition for native AIPerf.
 //!
 //! Rust does not discover trait implementations automatically. A distribution
-//! links ordinary Cargo dependencies, constructs one [`AiperfRegistry`], and
-//! explicitly applies their [`AiperfExtension`] implementations before starting
+//! links ordinary Cargo dependencies, constructs one [`AIPerfRegistry`], and
+//! explicitly applies their [`AIPerfExtension`] implementations before starting
 //! any runtime or worker. The resulting implementation universe is fixed by the
 //! build; there is no manifest scanning, dynamic import, or stable-library ABI.
 
@@ -14,14 +14,24 @@ use std::error::Error;
 use std::fmt::{self, Display};
 use std::sync::Arc;
 
+mod transactional;
+
+pub(crate) use transactional::commit_on_clone;
+pub use transactional::{DuplicateName, TransactionalRegistry};
+
+use crate::adaptive::ActuatorRegistry;
 use crate::dataset::{
     DatasetError, EndpointResolver as DatasetEndpointResolver, LoaderRegistry, SamplerRegistry,
 };
 use crate::endpoints::{
-    Endpoint, EndpointFactory, EndpointId, EndpointRegistry, EndpointRegistryError,
+    Endpoint, EndpointFactory, EndpointId, EndpointRegistry, EndpointRegistryBuilder,
+    EndpointRegistryError,
 };
+use crate::export::ExporterRegistry;
+#[cfg(feature = "runner-protocol")]
+use crate::runner_protocol::registry::{RunnerTransportFactory, RunnerWorkloadFactory};
 
-/// Error returned while constructing or extending an [`AiperfRegistry`].
+/// Error returned while constructing or extending an [`AIPerfRegistry`].
 #[derive(Debug)]
 pub enum ExtensionError {
     /// A dataset-format, sampler, or endpoint registry rejected an entry.
@@ -95,31 +105,138 @@ impl From<EndpointRegistryError> for ExtensionError {
 /// Implementations should contain no run state. Registration executes once in
 /// the application composition root, before clocks, transports, or workers are
 /// constructed.
-pub trait AiperfExtension {
+pub trait AIPerfExtension {
     /// Stable package-level name used for duplicate detection and diagnostics.
     fn name(&self) -> &str;
 
     /// Add this package's implementations through the typed category registries.
-    fn register(&self, registry: &mut AiperfRegistry) -> Result<(), ExtensionError>;
+    fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError>;
 }
 
 /// Composition-root seam that constructs one frozen registry universe.
 ///
-/// Stock runners use [`BuiltinAiperfRegistryFactory`]. A custom statically
+/// Stock runners use [`BuiltinAIPerfRegistryFactory`]. A custom statically
 /// linked runner can inject its own factory and apply an explicit ordered set
-/// of [`AiperfExtension`] values without changing benchmark execution code.
-pub trait AiperfRegistryFactory {
+/// of [`AIPerfExtension`] values without changing benchmark execution code.
+pub trait AIPerfRegistryFactory {
     /// Build the registry used by capabilities, validation, and execution.
-    fn build(&self) -> Result<AiperfRegistry, ExtensionError>;
+    fn build(&self) -> Result<AIPerfRegistry, ExtensionError>;
 }
 
 /// Factory for the stock in-tree registry set.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct BuiltinAiperfRegistryFactory;
+pub struct BuiltinAIPerfRegistryFactory;
 
-impl AiperfRegistryFactory for BuiltinAiperfRegistryFactory {
-    fn build(&self) -> Result<AiperfRegistry, ExtensionError> {
-        AiperfRegistry::builtin()
+impl AIPerfRegistryFactory for BuiltinAIPerfRegistryFactory {
+    fn build(&self) -> Result<AIPerfRegistry, ExtensionError> {
+        // The whole stock distribution is ONE ordered list of per-component
+        // built-in [`AIPerfExtension`] values applied over an empty base. The
+        // only conditional compilation here is the feature-gate line on each
+        // optional extension: gating a component out of this list removes it
+        // from the registry and therefore from the auto-derived `--capabilities`
+        // catalog with no separate bookkeeping.
+        //
+        // Built-in extensions are applied through [`with_builtin_extensions`],
+        // which composes their implementations without recording provenance
+        // names: the native report's `run.extensions` array is reserved for
+        // third-party add-ons layered on top of the stock build.
+        //
+        // [`with_builtin_extensions`]: AIPerfRegistry::with_builtin_extensions
+        AIPerfRegistry::empty_or_base().with_builtin_extensions([
+            &BuiltinLoadersExtension as &dyn AIPerfExtension,
+            &BuiltinSamplersExtension,
+            &BuiltinEndpointsExtension,
+            &BuiltinExportersExtension,
+            &BuiltinActuatorsExtension,
+            #[cfg(feature = "runner-protocol")]
+            &crate::runner_protocol::registry::HttpExtension,
+            #[cfg(feature = "runner-protocol")]
+            &crate::runner_protocol::registry::GrpcExtension,
+            #[cfg(all(feature = "runner-protocol", feature = "dynosim"))]
+            &crate::runner_protocol::registry::DynosimExtension,
+        ])
+    }
+}
+
+/// Built-in dataset-format loaders (`synthetic`, `sharegpt`, recorded traces, …).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BuiltinLoadersExtension;
+
+impl AIPerfExtension for BuiltinLoadersExtension {
+    fn name(&self) -> &str {
+        "aiperf.builtin.loaders"
+    }
+
+    fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError> {
+        registry.dataset_formats.register_builtin_formats()?;
+        Ok(())
+    }
+}
+
+/// Built-in conversation samplers (`random`, `sequential`, `shuffle`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BuiltinSamplersExtension;
+
+impl AIPerfExtension for BuiltinSamplersExtension {
+    fn name(&self) -> &str {
+        "aiperf.builtin.samplers"
+    }
+
+    fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError> {
+        registry.samplers.register_builtin_strategies()?;
+        Ok(())
+    }
+}
+
+/// Built-in endpoint dialects (OpenAI/Anthropic/KServe/Riva and the raw/template
+/// factories).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BuiltinEndpointsExtension;
+
+impl AIPerfExtension for BuiltinEndpointsExtension {
+    fn name(&self) -> &str {
+        "aiperf.builtin.endpoints"
+    }
+
+    fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError> {
+        registry.extend_endpoints(EndpointRegistryBuilder::register_builtins)
+    }
+}
+
+/// Built-in post-report exporter sinks (genai-perf v1 JSON/CSV, server-metrics,
+/// timeslice, accuracy, parquet, console, OTLP, MLflow, W&B) in canonical emit
+/// order.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BuiltinExportersExtension;
+
+impl AIPerfExtension for BuiltinExportersExtension {
+    fn name(&self) -> &str {
+        "aiperf.builtin.exporters"
+    }
+
+    fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError> {
+        registry
+            .exporters
+            .register_builtins()
+            .map_err(|error| ExtensionError::rejected(error.to_string()))
+    }
+}
+
+/// Built-in adaptive control-variable actuator factories (`concurrency`,
+/// `prefill_concurrency`, `request_rate`, `users`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BuiltinActuatorsExtension;
+
+impl AIPerfExtension for BuiltinActuatorsExtension {
+    fn name(&self) -> &str {
+        "aiperf.builtin.actuators"
+    }
+
+    fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError> {
+        registry
+            .actuators
+            .register_builtins()
+            .map_err(|error| ExtensionError::rejected(error.to_string()))
     }
 }
 
@@ -129,22 +246,66 @@ impl AiperfRegistryFactory for BuiltinAiperfRegistryFactory {
 /// stores, and materializers intentionally remain constructor arguments rather
 /// than entries in this name-based catalog.
 #[derive(Clone)]
-pub struct AiperfRegistry {
+pub struct AIPerfRegistry {
     dataset_formats: LoaderRegistry,
     samplers: SamplerRegistry,
     endpoints: EndpointRegistry,
+    /// Name-keyed, explicitly ordered post-report exporter sinks. Populated by
+    /// [`BuiltinExportersExtension`]; consumed by the report-persistence call
+    /// sites (`persist_prepared_report`, the cellular controller).
+    exporters: ExporterRegistry,
+    /// Id-keyed adaptive control-variable actuator factories. Populated by
+    /// [`BuiltinActuatorsExtension`]; the online adaptive construction path reads
+    /// the same built-in set through [`ActuatorRegistry::with_builtin_actuators`].
+    actuators: ActuatorRegistry,
+    /// Name-keyed protocol-v2 transport factories. Selection resolves a transport
+    /// by id from this one catalog; there is no separate runner registry.
+    #[cfg(feature = "runner-protocol")]
+    pub(crate) transports: TransactionalRegistry<Arc<dyn RunnerTransportFactory>>,
+    /// Name-keyed protocol-v2 workload factories. Any registered workload runs
+    /// over any registered transport; the workload owns transport-specific
+    /// preparation resolved by id.
+    #[cfg(feature = "runner-protocol")]
+    pub(crate) workloads: TransactionalRegistry<Arc<dyn RunnerWorkloadFactory>>,
     extension_names: BTreeSet<String>,
 }
 
-impl AiperfRegistry {
-    /// Construct the complete native in-tree registry set.
-    pub fn builtin() -> Result<Self, ExtensionError> {
-        Ok(Self {
-            dataset_formats: LoaderRegistry::with_builtin_formats()?,
-            samplers: SamplerRegistry::with_builtin_strategies()?,
-            endpoints: EndpointRegistry::builtin()?,
+impl AIPerfRegistry {
+    /// Construct the empty base with every category registry unpopulated.
+    ///
+    /// This is the composition-root starting point: built-in and third-party
+    /// [`AIPerfExtension`] values populate the category registries from here.
+    /// It contributes nothing to the registered set and no provenance names.
+    pub fn empty_or_base() -> Self {
+        Self {
+            dataset_formats: LoaderRegistry::new(),
+            samplers: SamplerRegistry::new(),
+            endpoints: EndpointRegistryBuilder::new().freeze(),
+            exporters: ExporterRegistry::new(),
+            actuators: ActuatorRegistry::new(),
+            #[cfg(feature = "runner-protocol")]
+            transports: TransactionalRegistry::new(),
+            #[cfg(feature = "runner-protocol")]
+            workloads: TransactionalRegistry::new(),
             extension_names: BTreeSet::new(),
-        })
+        }
+    }
+
+    /// Construct the complete native in-tree category registry set.
+    ///
+    /// This is the stock loaders/samplers/endpoints universe with empty
+    /// transport/workload sub-registries; it is the base a custom distribution
+    /// layers additional [`AIPerfExtension`] values on top of. The built-in
+    /// components are applied through [`Self::with_builtin_extensions`] so this
+    /// base contributes zero provenance names.
+    pub fn builtin() -> Result<Self, ExtensionError> {
+        Self::empty_or_base().with_builtin_extensions([
+            &BuiltinLoadersExtension as &dyn AIPerfExtension,
+            &BuiltinSamplersExtension,
+            &BuiltinEndpointsExtension,
+            &BuiltinExportersExtension,
+            &BuiltinActuatorsExtension,
+        ])
     }
 
     /// Apply one linked extension transactionally.
@@ -153,32 +314,73 @@ impl AiperfRegistry {
     /// leave earlier entries from the same extension visible.
     pub fn register_extension(
         &mut self,
-        extension: &dyn AiperfExtension,
+        extension: &dyn AIPerfExtension,
+    ) -> Result<(), ExtensionError> {
+        self.register_extension_inner(extension, true)
+    }
+
+    /// Apply one built-in extension transactionally without recording a
+    /// provenance name.
+    ///
+    /// Built-in components are baked into the stock distribution rather than
+    /// layered on top of it, so the native report's `run.extensions` array (fed
+    /// by [`Self::extension_names`]) stays empty for the built-in build. The
+    /// staging and duplicate-component rejection are otherwise identical to
+    /// [`Self::register_extension`].
+    fn register_builtin_extension(
+        &mut self,
+        extension: &dyn AIPerfExtension,
+    ) -> Result<(), ExtensionError> {
+        self.register_extension_inner(extension, false)
+    }
+
+    fn register_extension_inner(
+        &mut self,
+        extension: &dyn AIPerfExtension,
+        record_name: bool,
     ) -> Result<(), ExtensionError> {
         let name = validate_extension_name(extension.name())?;
         if self.extension_names.contains(&name) {
             return Err(ExtensionError::DuplicateExtension(name));
         }
 
-        let mut staged = self.clone();
-        extension.register(&mut staged).map_err(|source| {
-            ExtensionError::ExtensionRegistration {
-                name: name.clone(),
-                source: Box::new(source),
+        commit_on_clone(self, |staged| {
+            extension
+                .register(staged)
+                .map_err(|source| ExtensionError::ExtensionRegistration {
+                    name: name.clone(),
+                    source: Box::new(source),
+                })?;
+            if record_name {
+                staged.extension_names.insert(name.clone());
             }
-        })?;
-        staged.extension_names.insert(name);
-        *self = staged;
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Apply an ordered collection of linked extensions transactionally one at a time.
     pub fn with_extensions<'a>(
         mut self,
-        extensions: impl IntoIterator<Item = &'a dyn AiperfExtension>,
+        extensions: impl IntoIterator<Item = &'a dyn AIPerfExtension>,
     ) -> Result<Self, ExtensionError> {
         for extension in extensions {
             self.register_extension(extension)?;
+        }
+        Ok(self)
+    }
+
+    /// Apply an ordered collection of built-in extensions transactionally.
+    ///
+    /// Like [`Self::with_extensions`] but the applied names are not recorded in
+    /// [`Self::extension_names`]; use this for the stock in-tree component set
+    /// so the native report's `run.extensions` array stays reserved for
+    /// third-party add-ons.
+    pub fn with_builtin_extensions<'a>(
+        mut self,
+        extensions: impl IntoIterator<Item = &'a dyn AIPerfExtension>,
+    ) -> Result<Self, ExtensionError> {
+        for extension in extensions {
+            self.register_builtin_extension(extension)?;
         }
         Ok(self)
     }
@@ -208,6 +410,16 @@ impl AiperfRegistry {
         &self.endpoints
     }
 
+    /// Registered post-report exporter sinks in canonical emit order.
+    pub fn exporters(&self) -> &ExporterRegistry {
+        &self.exporters
+    }
+
+    /// Registered adaptive control-variable actuator factories.
+    pub fn actuators(&self) -> &ActuatorRegistry {
+        &self.actuators
+    }
+
     /// Register one statically linked endpoint factory during startup.
     ///
     /// A new frozen value replaces the old catalog only after the descriptor
@@ -216,8 +428,22 @@ impl AiperfRegistry {
     where
         F: EndpointFactory + 'static,
     {
+        self.extend_endpoints(|builder| builder.register_factory(factory))
+    }
+
+    /// Register several endpoint factories over one clone/freeze cycle.
+    ///
+    /// An extension mutates a fresh builder cloned from the current frozen
+    /// catalog and installs the atomically re-frozen result only after every
+    /// descriptor and alias passes collision validation. This is the batched
+    /// form of [`Self::register_endpoint_factory`], avoiding one freeze per
+    /// factory when a built-in extension contributes the whole dialect set.
+    pub fn extend_endpoints(
+        &mut self,
+        register: impl FnOnce(&mut EndpointRegistryBuilder) -> Result<(), EndpointRegistryError>,
+    ) -> Result<(), ExtensionError> {
         let mut builder = self.endpoints.to_builder();
-        builder.register_factory(factory)?;
+        register(&mut builder)?;
         self.endpoints = builder.freeze();
         Ok(())
     }

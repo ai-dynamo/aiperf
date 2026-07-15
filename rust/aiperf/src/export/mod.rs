@@ -16,8 +16,9 @@
 //! compatibility sink (genai-perf v1 JSON/CSV), a telemetry emitter (OTLP/HTTP
 //! metrics), or a run tracker (MLflow, W&B). Each declares [`Exporter::enabled`]
 //! against the typed [`ExportConfig`] and writes/uploads in [`Exporter::export`].
-//! Adding a destination is a new module + one entry in [`registry`]; nothing in
-//! the runner call site changes.
+//! Adding a destination is a new module + one registration in
+//! [`ExporterRegistry::with_builtin_exporters`]; nothing in the runner call site
+//! changes.
 //!
 //! # Failure discipline
 //! The native-v2 report is the authority and is already committed before any
@@ -28,8 +29,11 @@
 //! `export` and the operator reads the warning; the run's success is pinned to
 //! the committed report, not to compat/telemetry side outputs.
 
+use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::Arc;
 
+use crate::extensions::DuplicateName;
 use crate::metrics_core::NativeReport;
 
 pub mod accuracy_csv;
@@ -108,8 +112,8 @@ pub struct ExportConfig {
 
 /// One output format or destination for the finalized native-v2 report.
 ///
-/// Object-safe (`&dyn Exporter`) so the [`registry`] is a heterogeneous static
-/// list. The call site is synchronous with no ambient tokio runtime (the
+/// Object-safe (`&dyn Exporter`) so the [`ExporterRegistry`] is a heterogeneous
+/// static list. The call site is synchronous with no ambient tokio runtime (the
 /// execution runtime is already torn down by the time the report is committed),
 /// so a sink needing async network I/O drives its own short-lived
 /// `current_thread` runtime internally.
@@ -132,50 +136,176 @@ pub trait Exporter {
     ) -> anyhow::Result<()>;
 }
 
-/// The frozen static exporter list, assembled once per run. Order is
-/// local-file writers first, then network uploaders (so uploaded artifact
-/// bundles observe the on-disk files). Registering a sink is one line here.
-fn registry() -> Vec<Box<dyn Exporter>> {
-    vec![
-        // Local-file writers first (so uploaders below see the on-disk files).
-        Box::new(genai_perf::GenaiPerfV1Exporter),
-        Box::new(server_metrics::ServerMetricsExporter),
-        Box::new(timeslice::TimesliceExporter),
-        Box::new(accuracy_csv::AccuracyCsvExporter),
-        #[cfg(feature = "parquet")]
-        Box::new(parquet::ParquetExporter),
-        Box::new(console_txt::ConsoleTxtExporter),
-        // Network / deferred uploaders.
-        Box::new(otel::OtelExporter),
-        Box::new(mlflow::MlflowExporter),
-        Box::new(wandb::WandbExporter),
-    ]
+/// Emit-order band for the local-file writers. Every sink in this band runs
+/// before any sink in [`ORDER_UPLOADER`] so the network uploaders below observe
+/// the on-disk files (§6 of the exporters design). The per-sink offsets keep the
+/// intra-band order stable and leave gaps for a future extension to slot into.
+const ORDER_FILE_WRITER: u32 = 0;
+/// Emit-order band for the network / deferred uploaders, run after every
+/// local-file writer has produced its on-disk artifact.
+const ORDER_UPLOADER: u32 = 1_000;
+
+/// One exporter plus its explicit emit-order key.
+#[derive(Clone)]
+struct OrderedExporter {
+    /// Ascending sort key; ties break on [`Exporter::name`] for determinism.
+    order: u32,
+    /// Shared thread-safe (`Arc<… + Send + Sync>`) so the registry stays [`Clone`]
+    /// (which the transactional staging of the enclosing [`AIPerfRegistry`]
+    /// requires) and keeps that aggregate `Send + Sync` alongside its transport /
+    /// workload factories; the exporters themselves are stateless.
+    exporter: Arc<dyn Exporter + Send + Sync>,
 }
 
-/// Run every enabled exporter over the finalized report. Best-effort: an
-/// exporter error is logged and does not abort the run (the native-v2 report is
-/// the committed authority). Returns the number of exporters that ran without
-/// error, for the caller's provenance/telemetry.
-pub fn run_exporters(report: &NativeReport, artifact_dir: &Path, cfg: &ExportConfig) -> usize {
-    let mut succeeded = 0usize;
-    for exporter in registry() {
-        if !exporter.enabled(cfg) {
-            continue;
-        }
-        match exporter.export(report, artifact_dir, cfg) {
-            Ok(()) => {
-                succeeded += 1;
-                tracing::debug!(exporter = exporter.name(), "exporter completed");
-            }
-            Err(error) => {
-                tracing::warn!(
-                    exporter = exporter.name(),
-                    "exporter failed (native-v2 report is unaffected): {error:#}"
-                );
-            }
+/// Name-keyed, explicitly ordered registry of report exporters.
+///
+/// The emit order is LOAD-BEARING: local-file writers must run before network
+/// uploaders so an uploaded artifact bundle observes the on-disk files. Each
+/// entry therefore carries an explicit `order` key that decouples registration
+/// order from emit order — a later extension can slot a sink into the correct
+/// band without depending on insertion position. Names are unique (keyed by
+/// [`Exporter::name`]); a duplicate registration is rejected.
+///
+/// [`Clone`] (via shared `Arc` exporters) so it can be a field of the
+/// transactionally staged [`AIPerfRegistry`](crate::extensions::AIPerfRegistry),
+/// which the `BuiltinExportersExtension` populates.
+#[derive(Clone)]
+pub struct ExporterRegistry {
+    entries: BTreeMap<String, OrderedExporter>,
+}
+
+impl ExporterRegistry {
+    /// Construct an empty registry.
+    pub fn new() -> Self {
+        Self {
+            entries: BTreeMap::new(),
         }
     }
-    succeeded
+
+    /// Register one exporter under `order`, rejecting a name already present.
+    ///
+    /// Lower `order` values emit first; ties break on [`Exporter::name`].
+    pub fn register(
+        &mut self,
+        order: u32,
+        exporter: Arc<dyn Exporter + Send + Sync>,
+    ) -> Result<(), DuplicateName> {
+        let name = exporter.name().to_string();
+        if self.entries.contains_key(&name) {
+            return Err(DuplicateName(name));
+        }
+        self.entries
+            .insert(name, OrderedExporter { order, exporter });
+        Ok(())
+    }
+
+    /// Populate the complete native in-tree exporter set into this registry in
+    /// canonical emit order: local-file writers first, then network uploaders.
+    ///
+    /// This is the single source of truth for the built-in exporter set; both the
+    /// [`Self::with_builtin_exporters`] convenience constructor and the
+    /// `BuiltinExportersExtension` that folds these sinks into the unified
+    /// [`AIPerfRegistry`](crate::extensions::AIPerfRegistry) delegate here.
+    pub fn register_builtins(&mut self) -> Result<(), DuplicateName> {
+        // Local-file writers (so the uploaders below see the on-disk files). The
+        // server-metrics Parquet sink is gated behind the `parquet` feature: a
+        // lite/online-only build drops `arrow`/`parquet` and leaves the slot empty
+        // (its `cfg.export.parquet` block still decodes but is inert).
+        let mut builtins: Vec<(u32, Arc<dyn Exporter + Send + Sync>)> = vec![
+            (ORDER_FILE_WRITER, Arc::new(genai_perf::GenaiPerfV1Exporter)),
+            (
+                ORDER_FILE_WRITER + 1,
+                Arc::new(server_metrics::ServerMetricsExporter),
+            ),
+            (
+                ORDER_FILE_WRITER + 2,
+                Arc::new(timeslice::TimesliceExporter),
+            ),
+            (
+                ORDER_FILE_WRITER + 3,
+                Arc::new(accuracy_csv::AccuracyCsvExporter),
+            ),
+        ];
+        #[cfg(feature = "parquet")]
+        builtins.push((ORDER_FILE_WRITER + 4, Arc::new(parquet::ParquetExporter)));
+        builtins.extend([
+            (
+                ORDER_FILE_WRITER + 5,
+                Arc::new(console_txt::ConsoleTxtExporter) as Arc<dyn Exporter + Send + Sync>,
+            ),
+            // Network / deferred uploaders.
+            (ORDER_UPLOADER, Arc::new(otel::OtelExporter)),
+            (ORDER_UPLOADER + 1, Arc::new(mlflow::MlflowExporter)),
+            (ORDER_UPLOADER + 2, Arc::new(wandb::WandbExporter)),
+        ]);
+        for (order, exporter) in builtins {
+            self.register(order, exporter)?;
+        }
+        Ok(())
+    }
+
+    /// Construct the complete native in-tree exporter set in canonical emit
+    /// order: local-file writers first, then network uploaders.
+    pub fn with_builtin_exporters() -> Self {
+        let mut registry = Self::new();
+        registry
+            .register_builtins()
+            .expect("built-in exporter names are unique");
+        registry
+    }
+
+    /// Exporters in emit order: ascending `order`, [`Exporter::name`] as the
+    /// deterministic tie-break.
+    pub fn iter(&self) -> impl Iterator<Item = &dyn Exporter> {
+        let mut ordered: Vec<&OrderedExporter> = self.entries.values().collect();
+        ordered.sort_by(|a, b| {
+            a.order
+                .cmp(&b.order)
+                .then_with(|| a.exporter.name().cmp(b.exporter.name()))
+        });
+        ordered
+            .into_iter()
+            .map(|entry| entry.exporter.as_ref() as &dyn Exporter)
+    }
+
+    /// Run every enabled exporter over the finalized report in emit order.
+    /// Best-effort: an exporter error is logged and does not abort the run (the
+    /// native-v2 report is the committed authority). Returns the number of
+    /// exporters that ran without error, for provenance/telemetry.
+    pub fn run(&self, report: &NativeReport, artifact_dir: &Path, cfg: &ExportConfig) -> usize {
+        let mut succeeded = 0usize;
+        for exporter in self.iter() {
+            if !exporter.enabled(cfg) {
+                continue;
+            }
+            match exporter.export(report, artifact_dir, cfg) {
+                Ok(()) => {
+                    succeeded += 1;
+                    tracing::debug!(exporter = exporter.name(), "exporter completed");
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        exporter = exporter.name(),
+                        "exporter failed (native-v2 report is unaffected): {error:#}"
+                    );
+                }
+            }
+        }
+        succeeded
+    }
+}
+
+impl Default for ExporterRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Run every enabled built-in exporter over the finalized report. Thin wrapper
+/// over [`ExporterRegistry::with_builtin_exporters`] + [`ExporterRegistry::run`]
+/// for the runner call sites that emit the stock exporter set.
+pub fn run_exporters(report: &NativeReport, artifact_dir: &Path, cfg: &ExportConfig) -> usize {
+    ExporterRegistry::with_builtin_exporters().run(report, artifact_dir, cfg)
 }
 
 #[cfg(test)]
@@ -185,7 +315,7 @@ mod tests {
     #[test]
     fn absent_export_block_decodes_to_all_disabled() {
         let cfg = ExportConfig::default();
-        for exporter in registry() {
+        for exporter in ExporterRegistry::with_builtin_exporters().iter() {
             assert!(
                 !exporter.enabled(&cfg),
                 "{} should be disabled by default",
@@ -200,5 +330,61 @@ mod tests {
         let report = NativeReport::new(&summary, None);
         let dir = std::env::temp_dir();
         assert_eq!(run_exporters(&report, &dir, &ExportConfig::default()), 0);
+    }
+
+    /// The emit order is byte-for-byte load-bearing: every local-file writer must
+    /// run before every network uploader so an uploaded bundle observes the
+    /// on-disk files. Guard both the exact canonical sequence and the band split.
+    #[test]
+    fn builtin_exporter_emit_order_is_preserved() {
+        let names: Vec<&str> = ExporterRegistry::with_builtin_exporters()
+            .iter()
+            .map(Exporter::name)
+            .collect();
+
+        let file_writers = [
+            "genai_perf_v1",
+            "server_metrics",
+            "timeslice",
+            "accuracy_csv",
+            "server_metrics_parquet",
+            "console_txt",
+        ];
+        let uploaders = ["otel", "mlflow", "wandb"];
+        let expected: Vec<&str> = file_writers
+            .iter()
+            .chain(uploaders.iter())
+            .copied()
+            .collect();
+        assert_eq!(names, expected, "canonical exporter emit order drifted");
+
+        // Regression guard for the band split independent of the exact sequence:
+        // the last file writer must precede the first uploader.
+        let last_writer = file_writers
+            .iter()
+            .map(|name| names.iter().position(|n| n == name).unwrap())
+            .max()
+            .unwrap();
+        let first_uploader = uploaders
+            .iter()
+            .map(|name| names.iter().position(|n| n == name).unwrap())
+            .min()
+            .unwrap();
+        assert!(
+            last_writer < first_uploader,
+            "a network uploader was ordered before a local-file writer"
+        );
+    }
+
+    #[test]
+    fn duplicate_exporter_name_is_rejected() {
+        let mut registry = ExporterRegistry::new();
+        registry
+            .register(0, Arc::new(genai_perf::GenaiPerfV1Exporter))
+            .unwrap();
+        let error = registry
+            .register(5, Arc::new(genai_perf::GenaiPerfV1Exporter))
+            .unwrap_err();
+        assert_eq!(error, DuplicateName("genai_perf_v1".to_owned()));
     }
 }

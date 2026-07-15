@@ -15,9 +15,9 @@ use std::process::Stdio;
 use std::rc::Rc;
 use std::time::Duration;
 
-use aiperf::clock::Clock;
-use aiperf::metrics_core::MetricsConfig;
-use aiperf::timing::{PhaseBranchStats, PhaseConfig, PhaseObserver, PhaseStats};
+use crate::clock::Clock;
+use crate::metrics_core::MetricsConfig;
+use crate::timing::{PhaseBranchStats, PhaseConfig, PhaseObserver, PhaseStats};
 use anyhow::{Context, Result, anyhow, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -26,8 +26,8 @@ use tokio::process::{Child, ChildStdout, Command};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
-use crate::execute::{NativeEndpointPlan, NativeRunSpec};
-use crate::records::{CapturedRecord, record_json_value};
+use crate::runner_protocol::execute::{NativeEndpointPlan, NativeRunSpec};
+use crate::runner_protocol::records::{CapturedRecord, record_json_value};
 
 const WORKER_CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
 const LIVE_STREAMING_PROTOCOL_VERSION: u32 = 1;
@@ -367,7 +367,7 @@ struct LiveEndpointConfig<'a> {
 
 fn live_endpoint_config(endpoint: &NativeEndpointPlan) -> Result<LiveEndpointConfig<'_>> {
     let NativeEndpointPlan::Prepared(profiles) = endpoint;
-    let profile = crate::execute::default_prepared_endpoint_profile(profiles)?;
+    let profile = crate::runner_protocol::execute::default_prepared_endpoint_profile(profiles)?;
     Ok(LiveEndpointConfig {
         endpoint_id: profile.endpoint_id.as_str(),
         urls: &profile.config.urls,
@@ -503,8 +503,8 @@ struct WorkerConfig<'a> {
     endpoint_urls: &'a [String],
     streaming: bool,
     artifact_dir: &'a Path,
-    otel: &'a crate::protocol::OTelStreamingSpec,
-    mlflow: &'a crate::protocol::MLflowStreamingSpec,
+    otel: &'a crate::runner_protocol::protocol::OTelStreamingSpec,
+    mlflow: &'a crate::runner_protocol::protocol::MLflowStreamingSpec,
 }
 
 #[derive(Serialize)]
@@ -609,16 +609,15 @@ mod tests {
     #[test]
     fn prepared_endpoint_projects_open_identity_without_legacy_conversion() {
         let endpoint = NativeEndpointPlan::Prepared(Arc::new(vec![
-            crate::registry::ValidatedEndpointProfileV2 {
+            crate::runner_protocol::registry::ValidatedEndpointProfileV2 {
                 profile_id: "default".into(),
-                endpoint_id: aiperf::endpoints::EndpointId::new("extension_chat").unwrap(),
-                config: aiperf::endpoints::RawEndpointConfig {
+                endpoint_id: crate::endpoints::EndpointId::new("extension_chat").unwrap(),
+                config: crate::endpoints::RawEndpointConfig {
                     urls: vec!["http://example.test/v1".into()],
                     streaming: false,
-                    ..aiperf::endpoints::RawEndpointConfig::default()
+                    ..crate::endpoints::RawEndpointConfig::default()
                 },
-                connection_reuse: aiperf::transport_http::models::ConnectionReuseStrategy::default(
-                ),
+                connection_reuse: crate::transport_http::models::ConnectionReuseStrategy::default(),
                 client: Default::default(),
                 session_header: None,
             },

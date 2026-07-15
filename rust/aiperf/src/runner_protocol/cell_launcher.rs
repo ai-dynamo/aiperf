@@ -23,9 +23,11 @@ use std::collections::BTreeMap;
 use anyhow::{Context, Result};
 use tokio::process::Child;
 
-use aiperf::cellular::partition::{CELL_COUNT_ENV, CELL_ID_ENV};
+use crate::cellular::partition::{CELL_COUNT_ENV, CELL_ID_ENV};
 
-use crate::cellular_cell::{CELL_CONTROLLER_ADDR_ENV, CELL_PHASE_ORDINAL_BASES_ENV};
+use crate::runner_protocol::cellular_cell::{
+    CELL_CONTROLLER_ADDR_ENV, CELL_PHASE_ORDINAL_BASES_ENV,
+};
 
 /// Env var selecting the launcher: `local` (default) or `k8s`.
 pub const CELL_LAUNCHER_ENV: &str = "AIPERF_CELL_LAUNCHER";
@@ -166,7 +168,7 @@ pub fn select_launcher() -> Box<dyn CellLauncher> {
 /// summing to `total`.
 ///
 /// Lives here (not the velo-gated controller) so the thread-per-core sharded
-/// scheduled runtime ([`crate::sharded_scheduled`]) reuses the identical round-robin
+/// scheduled runtime ([`crate::runner_protocol::sharded_scheduled`]) reuses the identical round-robin
 /// share **without** the `velo` feature — the two-level `(cell × thread)` partition
 /// tiles only if both levels use this exact `ceil((total-k)/C)` share.
 pub(crate) fn owned_positions(total: u64, cell_id: u32, cell_count: u32) -> u64 {

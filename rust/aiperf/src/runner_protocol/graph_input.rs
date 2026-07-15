@@ -8,7 +8,7 @@
 //! identity-only format lookup, then gives the untouched object to exactly one
 //! selected adapter. The adapter owns the sole strict full decode and lowers
 //! directly to [`GraphInputBundle`]; no protocol-v1 DTO, linear
-//! [`aiperf::dataset::Dataset`],
+//! [`crate::dataset::Dataset`],
 //! conversation, or second graph-source representation exists in this path.
 //!
 //! A future linked distribution injects another [`RunnerGraphInputAdapter`]
@@ -20,20 +20,20 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use aiperf::dataset::{DatasetSource, LoadConfig, TextTokenizer};
-use aiperf::graph::input::{GraphInputBundle, GraphInputConfig, compile_dag_jsonl_input};
-use aiperf::graph::recorded::{
+use crate::dataset::{DatasetSource, LoadConfig, TextTokenizer};
+use crate::graph::input::{GraphInputBundle, GraphInputConfig, compile_dag_jsonl_input};
+use crate::graph::recorded::{
     PromptCorpus, RecordedTraceInputConfig, compile_aiperf_trace_input, compile_dynamo_trace_input,
     compile_weka_trace_input,
 };
-use aiperf::rng::RngRoot;
+use crate::rng::RngRoot;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Map, Value, value::RawValue};
 
-use crate::execute::distribution;
-use crate::protocol::{
+use crate::runner_protocol::execute::distribution;
+use crate::runner_protocol::protocol::{
     DistributionSpec, FileDatasetSpec, PublicDatasetSourceSpec, PublicDatasetSpec,
     TraceSynthesisSpec,
 };
@@ -43,7 +43,7 @@ use crate::protocol::{
 /// Carries the C1 protocol-v2 synthesis knobs
 /// (`trajectory_start_min_ratio` / `trajectory_start_max_ratio` /
 /// `t_star_random_seed`) forward to the graph phase runtime, where each phase
-/// samples a per-trace `t*` via [`aiperf::graph::tstar::WindowTStarSampler`] and
+/// samples a per-trace `t*` via [`crate::graph::tstar::WindowTStarSampler`] and
 /// applies the warmup/profiling snapshot split. The default `[0.0, 0.0]` window
 /// with seed `0` yields `t* = 0` for every trace, i.e. full native replay:
 /// profiling runs the whole graph unchanged and warmup is empty.
@@ -153,7 +153,7 @@ impl BuiltinRunnerGraphInputAdapterResolver {
             Arc::new(DagJsonlRunnerGraphInputAdapter),
             Arc::new(WekaTraceRunnerGraphInputAdapter),
             Arc::new(DynamoTraceRunnerGraphInputAdapter),
-            Arc::new(AiperfTraceRunnerGraphInputAdapter),
+            Arc::new(AIPerfTraceRunnerGraphInputAdapter),
         ];
         Self {
             adapters: adapters
@@ -285,10 +285,10 @@ pub struct DynamoTraceRunnerGraphInputAdapter;
 
 /// Built-in native `aiperf.trace.v1` recorded-trace adapter.
 #[derive(Debug)]
-pub struct AiperfTraceRunnerGraphInputAdapter;
+pub struct AIPerfTraceRunnerGraphInputAdapter;
 
 #[async_trait(?Send)]
-impl RunnerGraphInputAdapter for AiperfTraceRunnerGraphInputAdapter {
+impl RunnerGraphInputAdapter for AIPerfTraceRunnerGraphInputAdapter {
     fn format(&self) -> &'static str {
         "aiperf_trace"
     }
@@ -304,7 +304,7 @@ impl RunnerGraphInputAdapter for AiperfTraceRunnerGraphInputAdapter {
     }
 }
 
-impl AiperfTraceRunnerGraphInputAdapter {
+impl AIPerfTraceRunnerGraphInputAdapter {
     async fn load_decoded(
         &self,
         input: RecordedDatasetInput,
@@ -906,7 +906,7 @@ fn default_sequential() -> String {
 
 #[cfg(test)]
 mod tests {
-    use aiperf::dataset::TiktokenTokenizer;
+    use crate::dataset::TiktokenTokenizer;
     use serde_json::json;
 
     use super::*;

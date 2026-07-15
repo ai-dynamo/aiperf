@@ -328,6 +328,14 @@ impl LoaderRegistry {
     /// Register every built-in format implemented by this crate.
     pub fn with_builtin_formats() -> Result<Self> {
         let mut registry = Self::new();
+        registry.register_builtin_formats()?;
+        Ok(registry)
+    }
+
+    /// Register every built-in format into an existing registry. Shared by
+    /// [`Self::with_builtin_formats`] and the built-in loader `AIPerfExtension`
+    /// so both compose the identical set.
+    pub fn register_builtin_formats(&mut self) -> Result<()> {
         for registration in [
             DatasetFormatRegistration::new(
                 Arc::new(SyntheticRankingsDatasetLoader),
@@ -412,9 +420,9 @@ impl LoaderRegistry {
                 Arc::new(SingleTurnComposer),
             ),
         ] {
-            registry.register(registration)?;
+            self.register(registration)?;
         }
-        Ok(registry)
+        Ok(())
     }
 
     /// Register a format; duplicate normalized names are rejected.

@@ -7,49 +7,15 @@
 //! aggregation. This crate accepts exactly one versioned run request and owns
 //! dataset construction, phase scheduling, HTTP dispatch, measurement, and the
 //! authoritative native-v2 report.
-pub mod application;
-pub mod cell_launcher;
-pub mod cellular_cell;
-// The controller orchestration (cell launch + velo transport + merge) is only
-// reachable with the `velo` feature; `owned_positions` (needed by the non-velo
-// sharded runtime) lives in `cell_launcher` instead.
-#[cfg(feature = "velo")]
-pub mod cellular_controller;
-pub mod control_plane_http;
-pub mod coordinator;
-pub mod dataset_input;
-pub mod distribution_identity;
-pub mod execute;
-pub mod execution_factories;
-mod gpu_telemetry;
-mod graph_execution;
-pub mod graph_input;
-mod graph_phase_runtime;
-pub mod grpc_execution;
-pub mod grpc_turn_execution;
-mod heartbeat_lane;
-mod live_streaming;
-mod network_latency;
-#[cfg(feature = "dynosim")]
-pub mod offline_execution;
-pub mod online_execution;
-pub mod protocol;
-pub mod protocol_v2;
-pub mod readiness;
-mod record_lane;
-mod records;
-pub mod redaction;
-pub mod registry;
-mod server_metrics;
-mod sharded_scheduled;
-pub mod sidecar_input;
-pub mod turn_execution;
-
-pub use application::RunnerApplication;
-pub use distribution_identity::current_distribution_id;
-pub use execution_factories::{RunnerExecutionFactories, native_execution_factories};
-pub use graph_execution::{NativeRunnerGraphPlacementFactory, RunnerGraphPlacementFactory};
-pub use grpc_turn_execution::NativeGrpcExecutionBackendFactory;
-pub use turn_execution::{
+pub use aiperf::runner_protocol::application::RunnerApplication;
+pub use aiperf::runner_protocol::distribution_identity::current_distribution_id;
+pub use aiperf::runner_protocol::execution_factories::{
+    RunnerExecutionFactories, native_execution_factories,
+};
+pub use aiperf::runner_protocol::graph_execution::{
+    NativeRunnerGraphPlacementFactory, RunnerGraphPlacementFactory,
+};
+pub use aiperf::runner_protocol::grpc_turn_execution::NativeGrpcExecutionBackendFactory;
+pub use aiperf::runner_protocol::turn_execution::{
     HttpExecutionBackendConfig, NativeRequestExecutorFactory, RequestExecutorFactory,
 };

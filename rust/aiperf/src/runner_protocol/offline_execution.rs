@@ -5,7 +5,7 @@
 //!
 //! This module owns only the authored runner boundary. The virtual clock,
 //! steppable engine host, scheduling loops, cancellation, observers, and exact
-//! AIPerf/Dynamo parity proof remain in [`aiperf::dynosim`]. A registered
+//! AIPerf/Dynamo parity proof remain in [`crate::dynosim`]. A registered
 //! backend/workload pair supplies one of the typed execution plans below; no
 //! string branch or alternate executable is introduced here.
 //!
@@ -20,12 +20,12 @@ use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use aiperf::clock::Clock;
-use aiperf::dataset::{
+use crate::clock::Clock;
+use crate::dataset::{
     HashIdentityTracePromptStorage, NativeSyntheticMediaGeneratorFactory, SamplerRegistry,
     SegmentStore, TextTokenizer, TraceHashAwareRequestMaterializer,
 };
-use aiperf::dynosim::{
+use crate::dynosim::{
     CanonicalSharedMetrics, DeferredOfflineGraphFuture, DeferredOfflineGraphRunFactory,
     DeferredOfflineScheduledFuture, DeferredOfflineScheduledRunFactory,
     IncrementalOfflineEventDelivery, OfflineAicConfig, OfflineDirectGraphReport,
@@ -41,56 +41,56 @@ use aiperf::dynosim::{
     run_scheduled_backend_online_deferred_with_delivery, run_trace_offline,
     write_dynamo_per_request_jsonl, write_dynamo_report_json, write_dynamo_worker_artifacts_json,
 };
-use aiperf::endpoints::{Modality, PreparedEndpointTable};
-use aiperf::failure::OnFailure;
-use aiperf::graph::bench::BenchConfig;
-use aiperf::graph::input::GraphInputBundle;
-use aiperf::graph::policy::{
+use crate::endpoints::{Modality, PreparedEndpointTable};
+use crate::failure::OnFailure;
+use crate::graph::bench::BenchConfig;
+use crate::graph::input::GraphInputBundle;
+use crate::graph::policy::{
     AbortTraceNodeFailurePolicy, CancellationNodePolicy, NodeDispatchPolicy, NodeFailurePolicy,
 };
-use aiperf::metrics::NativeMetricsObserver;
-use aiperf::metrics_core::{
+use crate::metrics::NativeMetricsObserver;
+use crate::metrics_core::{
     CATALOG, MetricFlags, MetricTag, MetricType, MetricsConfig, NativeReport, ReportClockKind,
     ReportDynamoCapacityInfo, ReportDynamoParityInfo, ReportDynamoRouter, ReportDynamoRunInfo,
     ReportDynamoTopology, ReportGraphOutcomeInfo, ReportGraphRunInfo, ReportPairRunFacts,
     ReportRunInfo, ReportSummary, RunOutcome, SloThreshold,
 };
-use aiperf::multiturn::{
+use crate::multiturn::{
     ConversationSource, EndpointInputTokenCounter, InputTokenCounter,
     NativeDatasetConversationSource, PreparedEndpointReference, PreparedEndpointTableResolver,
     PreparedTurnEndpointResolver,
 };
-use aiperf::phase_runtime::run_scheduled_phases_with_aggregate_deferred;
-use aiperf::rng::{RngRoot, namespace};
-use aiperf::timing::{BernoulliFixedDelay, DISABLED_PROGRESS_INTERVAL_NS, NoopPhaseObserver};
+use crate::phase_runtime::run_scheduled_phases_with_aggregate_deferred;
+use crate::rng::{RngRoot, namespace};
+use crate::timing::{BernoulliFixedDelay, DISABLED_PROGRESS_INTERVAL_NS, NoopPhaseObserver};
 use anyhow::{Context, Result, anyhow, ensure};
 use loadgen_core::sink::RequestObserver;
 use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
 
-use crate::dataset_input::{PreparedDatasetInput, RunnerDatasetInputContext};
-use crate::execute::{
+use crate::runner_protocol::dataset_input::{PreparedDatasetInput, RunnerDatasetInputContext};
+use crate::runner_protocol::execute::{
     NativeConversationSourceFactory, build_native_scheduled_phase_plan_with_source_factory,
     load_tokenizer, metrics_config, native_scheduled_resources, phase_seamless_to_next,
 };
-use crate::graph_execution::{RunnerGraphExecutionEvent, RunnerGraphExecutionEventSink};
-use crate::graph_input::RunnerGraphInputContext;
-use crate::graph_phase_runtime::{
+use crate::runner_protocol::graph_execution::{
+    RunnerGraphExecutionEvent, RunnerGraphExecutionEventSink,
+};
+use crate::runner_protocol::graph_input::RunnerGraphInputContext;
+use crate::runner_protocol::graph_phase_runtime::{
     GraphPhaseBackendConfig, PreparedGraphPhaseBackend, RunnerGraphPhaseBackendFactory,
     run_graph_phases, validate_graph_phases,
 };
-use crate::online_execution::{
-    NativeOnlineTokenizerSourceResolver, OnlineTokenizerSourceResolver, lower_authored_tokenizer,
-    validate_authored_tokenizer,
+use crate::runner_protocol::online_execution::{
+    OnlineTokenizerSourceResolver, lower_authored_tokenizer, validate_authored_tokenizer,
 };
-use crate::protocol::{MetricsSpec, ModelSelectionStrategy, PhaseSpec};
-use crate::protocol_v2::AuthoredRunSpecV2;
-use crate::records::{CapturedModelOutput, CapturedRecord};
-use crate::registry::{
+use crate::runner_protocol::protocol::{MetricsSpec, ModelSelectionStrategy, PhaseSpec};
+use crate::runner_protocol::protocol_v2::AuthoredRunSpecV2;
+use crate::runner_protocol::records::{CapturedModelOutput, CapturedRecord};
+use crate::runner_protocol::registry::{
     GraphWorkloadConfigV2, PreparedRunOutcome, PreparedRunnerOperation, RunnerClockKind,
-    RunnerPairFactory, RunnerRegistryBuilder, RunnerRunContext, RunnerTransportDescriptor,
-    RunnerTransportFactory, ScheduledWorkloadConfigV2, ValidatedTransportConfig,
-    ValidatedWorkloadConfig, WorkloadRequirements,
+    RunnerRunContext, RunnerTransportDescriptor, RunnerTransportFactory, ScheduledWorkloadConfigV2,
+    ValidatedTransportConfig, ValidatedWorkloadConfig, WorkloadRequirements,
 };
 
 /// Stable runner-registry transport IDs for the in-process Dynamo engine.
@@ -132,7 +132,6 @@ static DYNOSIM_OFFLINE_DESCRIPTOR: RunnerTransportDescriptor = RunnerTransportDe
     id: DYNOSIM_OFFLINE_ID,
     description: "Dynamo passive-engine co-simulation on one deterministic SimClock",
     clock: RunnerClockKind::Sim,
-    semantic_responses: false,
     features: DYNOSIM_TRANSPORT_FEATURES,
 };
 
@@ -140,7 +139,6 @@ static DYNOSIM_ONLINE_DESCRIPTOR: RunnerTransportDescriptor = RunnerTransportDes
     id: DYNOSIM_ONLINE_ID,
     description: "Dynamo passive-engine in-process replay under the real wall clock",
     clock: RunnerClockKind::Real,
-    semantic_responses: false,
     features: DYNOSIM_TRANSPORT_FEATURES,
 };
 
@@ -848,23 +846,16 @@ impl RunnerTransportFactory for DynosimTransportFactory {
     }
 }
 
-/// Add both offline and online Dynamo transports and their executable workload
-/// pairs to a mutable runner registry.
+/// Add both offline and online Dynamo transports to a mutable runner registry.
 ///
-/// Registers **2 transports** (`dynosim_offline`, `dynosim_online`) and **4
-/// pairs**: `(dynosim_offline, scheduled)`, `(dynosim_offline, graph)`,
-/// `(dynosim_online, scheduled)`, `(dynosim_online, graph)`.
-///
-/// Direct graph preparation resolves its authored-input adapter from the
-/// coordinator-owned [`RunnerRunContext`], so the pair never constructs or
-/// retains a private adapter universe.
-pub fn register_dynosim_transport(builder: &mut RunnerRegistryBuilder) -> Result<()> {
-    builder.register_transport(Arc::new(DynosimTransportFactory::offline()))?;
-    builder.register_transport(Arc::new(DynosimTransportFactory::online()))?;
-    for transport_id in [DYNOSIM_OFFLINE_ID, DYNOSIM_ONLINE_ID] {
-        builder.register_pair(Arc::new(DynosimGraphPairFactory::new(transport_id)))?;
-        builder.register_pair(Arc::new(DynosimScheduledPairFactory::new(transport_id)))?;
-    }
+/// Registers **2 transports** (`dynosim_offline`, `dynosim_online`). The
+/// scheduled and graph workload factories resolve these transports by type and
+/// dispatch to [`prepare_dynosim_scheduled`]/[`prepare_dynosim_graph`]; there is
+/// no per-transport pair object. Direct graph preparation resolves its
+/// authored-input adapter from the coordinator-owned [`RunnerRunContext`].
+pub fn register_dynosim_transport(registry: &mut crate::extensions::AIPerfRegistry) -> Result<()> {
+    registry.register_transport(Arc::new(DynosimTransportFactory::offline()))?;
+    registry.register_transport(Arc::new(DynosimTransportFactory::online()))?;
     Ok(())
 }
 
@@ -878,204 +869,154 @@ pub fn validated_dynosim_transport(
         .ok_or_else(|| anyhow!("dynosim pair received a different transport config type"))
 }
 
-#[derive(Clone)]
-struct DynosimScheduledPairFactory {
-    transport_id: &'static str,
+/// Run-level validation for a dynosim scheduled run.
+///
+/// Called by the scheduled workload factory when the resolved transport is a
+/// dynosim transport (there is no per-transport pair object).
+pub(crate) fn dynosim_scheduled_validate_run(
+    run: &AuthoredRunSpecV2,
+    context: &RunnerRunContext,
+    transport: &dyn ValidatedTransportConfig,
+    workload: &ScheduledWorkloadConfigV2,
+) -> Result<()> {
+    let _ = validated_dynosim_transport(transport)?;
+    ensure!(
+        workload.worker_count == 1,
+        "dynosim scheduled execution owns one LocalSet around one globally contended engine; worker_count must be 1"
+    );
+    validate_offline_scheduled_phases(&workload.phases)?;
+    ensure!(
+        context.sidecar_inputs().is_empty(),
+        "dynosim scheduled execution does not support online sidecars"
+    );
+    ensure!(
+        run.artifacts.records_path.is_none()
+            && run.artifacts.raw_path.is_none()
+            && run.artifacts.outputs_path.is_none()
+            && !run.artifacts.trace
+            && run.artifacts.user_files.is_empty(),
+        "dynosim scheduled execution does not project common request/raw/output/user-file artifacts; use backend Dynamo artifacts or disable them"
+    );
+    // The artifact target directory may already exist: the Python CLI creates it
+    // for its own logs before launching the runner, exactly as on the online HTTP
+    // path. Each backend-owned Dynamo artifact still rejects a pre-existing file
+    // of its own name in `emit_backend_artifacts`, so no output is silently
+    // overwritten.
+    Ok(())
+}
+
+/// Prepare a dynosim scheduled operation from the coordinator-owned context.
+pub(crate) fn prepare_dynosim_scheduled(
+    run: &AuthoredRunSpecV2,
+    context: &RunnerRunContext,
+    transport: Box<dyn ValidatedTransportConfig>,
+    workload: Box<dyn ValidatedWorkloadConfig>,
     tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
-}
+) -> Result<Box<dyn PreparedRunnerOperation>> {
+    let backend = validated_dynosim_transport(transport.as_ref())?.clone();
+    let workload = validated_scheduled_workload(workload.as_ref())?;
+    validate_offline_scheduled_phases(&workload.phases)?;
 
-impl DynosimScheduledPairFactory {
-    fn new(transport_id: &'static str) -> Self {
-        Self {
-            transport_id,
-            tokenizers: Arc::new(NativeOnlineTokenizerSourceResolver::default()),
-        }
-    }
-}
+    let tokenizer_spec = lower_authored_tokenizer(&workload.tokenizer, tokenizers.as_ref())?;
+    let tokenizer = load_tokenizer(Some(&tokenizer_spec.name))?;
+    let input_token_counter: Arc<dyn InputTokenCounter> = Arc::new(EndpointInputTokenCounter::new(
+        tokenizer.clone(),
+        tokenizer_spec.apply_chat_template,
+    ));
+    let profile = context.default_endpoint_profile()?;
+    let prepared_endpoint = context
+        .product_registry()
+        .endpoints()
+        .prepare(&profile.endpoint_id, profile.config.clone())
+        .context("preparing offline scheduled endpoint materialization policy")?;
+    let rankings = prepared_endpoint
+        .descriptor()
+        .output_modalities
+        .contains(&Modality::Rankings);
+    let endpoint_descriptor = prepared_endpoint.descriptor();
+    let mut endpoint_table = PreparedEndpointTable::new();
+    let endpoint_key = endpoint_table.push(prepared_endpoint)?;
+    let endpoint_reference = PreparedEndpointReference {
+        key: endpoint_key,
+        endpoint_id: profile.endpoint_id.clone(),
+    };
+    let endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver> = Rc::new(
+        PreparedEndpointTableResolver::single(Rc::new(endpoint_table), endpoint_reference)?,
+    );
 
-impl fmt::Debug for DynosimScheduledPairFactory {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("DynosimScheduledPairFactory")
-            .field("transport_id", &self.transport_id)
-            .finish_non_exhaustive()
-    }
-}
+    let rng_root = RngRoot::new(run.identity.random_seed);
+    let dataset_context = RunnerDatasetInputContext {
+        registry: context.product_registry(),
+        models: &run.models,
+        run_rng_root: rng_root,
+        tokenizer: tokenizer.as_ref(),
+        rankings,
+        endpoint_descriptor,
+        trace_prompt_storage: Arc::new(HashIdentityTracePromptStorage),
+        media_generator_factory: Arc::new(NativeSyntheticMediaGeneratorFactory::default()),
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("creating offline scheduled preparation runtime")?;
+    let local = tokio::task::LocalSet::new();
+    let prepared_dataset = local
+        .block_on(
+            &runtime,
+            context
+                .dataset_inputs()
+                .load(&workload.dataset, &dataset_context),
+        )
+        .context("loading and validating authored offline scheduled dataset")?;
+    // Offline co-simulation drives no real server, so server usage counts
+    // never arrive; input accounting stays on the client tokenizer.
+    let metrics = metrics_config(&run.metrics, false)?;
+    let model = run
+        .models
+        .items
+        .first()
+        .map(|item| item.name.clone())
+        .ok_or_else(|| anyhow!("dynosim scheduled execution requires a model"))?;
 
-impl RunnerPairFactory for DynosimScheduledPairFactory {
-    fn transport_id(&self) -> &'static str {
-        self.transport_id
-    }
-
-    fn workload_id(&self) -> &'static str {
-        "scheduled"
-    }
-
-    fn validate_pair(
-        &self,
-        backend: &dyn ValidatedTransportConfig,
-        workload: &dyn ValidatedWorkloadConfig,
-    ) -> Result<()> {
-        let _ = validated_dynosim_transport(backend)?;
-        let workload = validated_scheduled_workload(workload)?;
+    let adaptive_paths = [
+        Path::new("adaptive_scale_events.jsonl"),
+        Path::new("adaptive_scale_summary.json"),
+    ];
+    for backend_path in [
+        backend.artifacts.report_json.as_deref(),
+        backend.artifacts.per_request_jsonl.as_deref(),
+        backend.artifacts.worker_artifacts_json.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
         ensure!(
-            workload.worker_count == 1,
-            "dynosim scheduled execution owns one LocalSet around one globally contended engine; worker_count must be 1"
+            !workload
+                .phases
+                .iter()
+                .any(|phase| phase.common().adaptive_scale.is_some())
+                || !adaptive_paths.contains(&backend_path),
+            "backend artifact path conflicts with an adaptive-scale artifact: {}",
+            backend_path.display()
         );
-        validate_offline_scheduled_phases(&workload.phases)
     }
 
-    fn validate_run(
-        &self,
-        run: &AuthoredRunSpecV2,
-        context: &RunnerRunContext,
-        backend: &dyn ValidatedTransportConfig,
-        workload: &dyn ValidatedWorkloadConfig,
-    ) -> Result<()> {
-        self.validate_pair(backend, workload)?;
-        ensure!(
-            context.sidecar_inputs().is_empty(),
-            "dynosim scheduled execution does not support online sidecars"
-        );
-        ensure!(
-            run.artifacts.records_path.is_none()
-                && run.artifacts.raw_path.is_none()
-                && run.artifacts.outputs_path.is_none()
-                && !run.artifacts.trace
-                && run.artifacts.user_files.is_empty(),
-            "dynosim scheduled execution does not project common request/raw/output/user-file artifacts; use backend Dynamo artifacts or disable them"
-        );
-        // The artifact target directory may already exist: the Python CLI
-        // creates it for its own logs before launching the runner, exactly as on
-        // the online HTTP path. Each backend-owned Dynamo artifact still rejects
-        // a pre-existing file of its own name in `emit_backend_artifacts`, so no
-        // output is silently overwritten.
-        Ok(())
-    }
-
-    fn prepare(
-        &self,
-        _run: &AuthoredRunSpecV2,
-        _backend: Box<dyn ValidatedTransportConfig>,
-        _workload: Box<dyn ValidatedWorkloadConfig>,
-    ) -> Result<Box<dyn PreparedRunnerOperation>> {
-        Err(anyhow!(
-            "dynosim + scheduled preparation requires the coordinator-owned RunnerRunContext"
-        ))
-    }
-
-    fn prepare_with_context(
-        &self,
-        run: &AuthoredRunSpecV2,
-        context: &RunnerRunContext,
-        backend: Box<dyn ValidatedTransportConfig>,
-        workload: Box<dyn ValidatedWorkloadConfig>,
-    ) -> Result<Box<dyn PreparedRunnerOperation>> {
-        let backend = validated_dynosim_transport(backend.as_ref())?.clone();
-        let workload = validated_scheduled_workload(workload.as_ref())?;
-        validate_offline_scheduled_phases(&workload.phases)?;
-
-        let tokenizer_spec =
-            lower_authored_tokenizer(&workload.tokenizer, self.tokenizers.as_ref())?;
-        let tokenizer = load_tokenizer(Some(&tokenizer_spec.name))?;
-        let input_token_counter: Arc<dyn InputTokenCounter> = Arc::new(
-            EndpointInputTokenCounter::new(tokenizer.clone(), tokenizer_spec.apply_chat_template),
-        );
-        let profile = context.default_endpoint_profile()?;
-        let prepared_endpoint = context
-            .product_registry()
-            .endpoints()
-            .prepare(&profile.endpoint_id, profile.config.clone())
-            .context("preparing offline scheduled endpoint materialization policy")?;
-        let rankings = prepared_endpoint
-            .descriptor()
-            .output_modalities
-            .contains(&Modality::Rankings);
-        let endpoint_descriptor = prepared_endpoint.descriptor();
-        let mut endpoint_table = PreparedEndpointTable::new();
-        let endpoint_key = endpoint_table.push(prepared_endpoint)?;
-        let endpoint_reference = PreparedEndpointReference {
-            key: endpoint_key,
-            endpoint_id: profile.endpoint_id.clone(),
-        };
-        let endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver> = Rc::new(
-            PreparedEndpointTableResolver::single(Rc::new(endpoint_table), endpoint_reference)?,
-        );
-
-        let rng_root = RngRoot::new(run.identity.random_seed);
-        let dataset_context = RunnerDatasetInputContext {
-            registry: context.product_registry(),
-            models: &run.models,
-            run_rng_root: rng_root,
-            tokenizer: tokenizer.as_ref(),
-            rankings,
-            endpoint_descriptor,
-            trace_prompt_storage: Arc::new(HashIdentityTracePromptStorage),
-            media_generator_factory: Arc::new(NativeSyntheticMediaGeneratorFactory::default()),
-        };
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .context("creating offline scheduled preparation runtime")?;
-        let local = tokio::task::LocalSet::new();
-        let prepared_dataset = local
-            .block_on(
-                &runtime,
-                context
-                    .dataset_inputs()
-                    .load(&workload.dataset, &dataset_context),
-            )
-            .context("loading and validating authored offline scheduled dataset")?;
-        // Offline co-simulation drives no real server, so server usage counts
-        // never arrive; input accounting stays on the client tokenizer.
-        let metrics = metrics_config(&run.metrics, false)?;
-        let model = run
-            .models
-            .items
-            .first()
-            .map(|item| item.name.clone())
-            .ok_or_else(|| anyhow!("dynosim scheduled execution requires a model"))?;
-
-        let adaptive_paths = [
-            Path::new("adaptive_scale_events.jsonl"),
-            Path::new("adaptive_scale_summary.json"),
-        ];
-        for backend_path in [
-            backend.artifacts.report_json.as_deref(),
-            backend.artifacts.per_request_jsonl.as_deref(),
-            backend.artifacts.worker_artifacts_json.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            ensure!(
-                !workload
-                    .phases
-                    .iter()
-                    .any(|phase| phase.common().adaptive_scale.is_some())
-                    || !adaptive_paths.contains(&backend_path),
-                "backend artifact path conflicts with an adaptive-scale artifact: {}",
-                backend_path.display()
-            );
-        }
-
-        Ok(Box::new(PreparedDynosimScheduledOperation {
-            backend,
-            dataset: prepared_dataset,
-            source_factory: DynosimPreparedConversationSourceFactory {
-                endpoint_resolver,
-                samplers: context.product_registry().samplers().clone(),
-            },
-            tokenizer,
-            input_token_counter,
-            phases: workload.phases.clone(),
-            metrics,
-            model,
-            rng_root,
-            artifact_target: run.artifact_target.clone(),
-            benchmark_id: run.identity.benchmark_id.clone(),
-        }))
-    }
+    Ok(Box::new(PreparedDynosimScheduledOperation {
+        backend,
+        dataset: prepared_dataset,
+        source_factory: DynosimPreparedConversationSourceFactory {
+            endpoint_resolver,
+            samplers: context.product_registry().samplers().clone(),
+        },
+        tokenizer,
+        input_token_counter,
+        phases: workload.phases.clone(),
+        metrics,
+        model,
+        rng_root,
+        artifact_target: run.artifact_target.clone(),
+        benchmark_id: run.identity.benchmark_id.clone(),
+    }))
 }
 
 fn validated_scheduled_workload(
@@ -1184,7 +1125,7 @@ struct DynosimPreparedConversationSourceFactory {
 impl NativeConversationSourceFactory for DynosimPreparedConversationSourceFactory {
     fn build(
         &self,
-        dataset: aiperf::dataset::Dataset,
+        dataset: crate::dataset::Dataset,
         model: String,
         default_output_tokens: usize,
         rng_root: RngRoot,
@@ -1398,7 +1339,7 @@ impl PreparedRunnerOperation for PreparedDynosimScheduledOperation {
             .report
             .auxiliary_phase_reports
             .iter()
-            .find(|report| report.kind == aiperf::timing::PhaseKind::Warmup)
+            .find(|report| report.kind == crate::timing::PhaseKind::Warmup)
             .map(|report| report.report.native_metrics.clone());
         let native_report = NativeReport::from_outcome(
             &outcome.report.aiperf.native_metrics,
@@ -1490,164 +1431,110 @@ fn seconds_to_ns(value: f64, name: &str) -> Result<i64> {
     Ok((value * 1_000_000_000.0).round_ties_even() as i64)
 }
 
-#[derive(Clone)]
-struct DynosimGraphPairFactory {
-    transport_id: &'static str,
+/// Run-level validation for a dynosim direct-graph run.
+///
+/// Called by the graph workload factory when the resolved transport is a dynosim
+/// transport (there is no per-transport pair object).
+pub(crate) fn dynosim_graph_validate_run(
+    _run: &AuthoredRunSpecV2,
+    context: &RunnerRunContext,
+    transport: &dyn ValidatedTransportConfig,
+    workload: &GraphWorkloadConfigV2,
+) -> Result<()> {
+    let _ = validated_dynosim_transport(transport)?;
+    ensure!(
+        workload.worker_count == 1,
+        "dynosim direct graph uses one LocalSet around one globally contended engine; worker_count must be 1"
+    );
+    validate_authored_tokenizer(&workload.tokenizer)?;
+    validate_graph_phases(&workload.phases)?;
+    context
+        .graph_inputs()
+        .validate_identity(&workload.dataset)?;
+    ensure!(
+        context.sidecar_inputs().is_empty(),
+        "dynosim graph execution does not support online sidecars"
+    );
+    for (profile_id, profile) in context.endpoint_profiles() {
+        let descriptor = context
+            .product_registry()
+            .endpoints()
+            .resolve_factory(&profile.endpoint_id)
+            .with_context(|| format!("resolving offline graph endpoint profile {profile_id:?}"))?
+            .descriptor();
+        ensure!(
+            !descriptor.requires_raw_token_ids,
+            "offline graph endpoint profile {profile_id:?} selects {:?}, which requires raw token IDs; direct Graph-IR nodes do not carry the dataset raw-token handle",
+            descriptor.id
+        );
+    }
+    Ok(())
+}
+
+/// Prepare a dynosim direct-graph operation from the coordinator-owned context.
+pub(crate) fn prepare_dynosim_graph(
+    run: &AuthoredRunSpecV2,
+    context: &RunnerRunContext,
+    transport: Box<dyn ValidatedTransportConfig>,
+    workload: Box<dyn ValidatedWorkloadConfig>,
     tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
-}
-
-impl DynosimGraphPairFactory {
-    fn new(transport_id: &'static str) -> Self {
-        Self {
-            transport_id,
-            tokenizers: Arc::new(NativeOnlineTokenizerSourceResolver::default()),
-        }
-    }
-}
-
-impl fmt::Debug for DynosimGraphPairFactory {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("DynosimGraphPairFactory")
-            .field("transport_id", &self.transport_id)
-            .finish_non_exhaustive()
-    }
-}
-
-impl RunnerPairFactory for DynosimGraphPairFactory {
-    fn transport_id(&self) -> &'static str {
-        self.transport_id
-    }
-
-    fn workload_id(&self) -> &'static str {
-        "graph"
-    }
-
-    fn validate_pair(
-        &self,
-        backend: &dyn ValidatedTransportConfig,
-        workload: &dyn ValidatedWorkloadConfig,
-    ) -> Result<()> {
-        let _ = validated_dynosim_transport(backend)?;
-        let workload = validated_graph_workload(workload)?;
-        ensure!(
-            workload.worker_count == 1,
-            "dynosim direct graph uses one LocalSet around one globally contended engine; worker_count must be 1"
-        );
-        validate_authored_tokenizer(&workload.tokenizer)?;
-        validate_graph_phases(&workload.phases)
-    }
-
-    fn validate_run(
-        &self,
-        _run: &AuthoredRunSpecV2,
-        context: &RunnerRunContext,
-        backend: &dyn ValidatedTransportConfig,
-        workload: &dyn ValidatedWorkloadConfig,
-    ) -> Result<()> {
-        self.validate_pair(backend, workload)?;
-        let workload = validated_graph_workload(workload)?;
-        context
-            .graph_inputs()
-            .validate_identity(&workload.dataset)?;
-        ensure!(
-            context.sidecar_inputs().is_empty(),
-            "dynosim graph execution does not support online sidecars"
-        );
-        for (profile_id, profile) in context.endpoint_profiles() {
-            let descriptor = context
-                .product_registry()
-                .endpoints()
-                .resolve_factory(&profile.endpoint_id)
-                .with_context(|| {
-                    format!("resolving offline graph endpoint profile {profile_id:?}")
-                })?
-                .descriptor();
-            ensure!(
-                !descriptor.requires_raw_token_ids,
-                "offline graph endpoint profile {profile_id:?} selects {:?}, which requires raw token IDs; direct Graph-IR nodes do not carry the dataset raw-token handle",
-                descriptor.id
-            );
-        }
-        Ok(())
-    }
-
-    fn prepare(
-        &self,
-        _run: &AuthoredRunSpecV2,
-        _backend: Box<dyn ValidatedTransportConfig>,
-        _workload: Box<dyn ValidatedWorkloadConfig>,
-    ) -> Result<Box<dyn PreparedRunnerOperation>> {
-        Err(anyhow!(
-            "dynosim + graph preparation requires the coordinator-owned RunnerRunContext"
+) -> Result<Box<dyn PreparedRunnerOperation>> {
+    let backend = validated_dynosim_transport(transport.as_ref())?.clone();
+    let workload = validated_graph_workload(workload.as_ref())?;
+    let phases = workload.phases.clone();
+    ensure!(
+        run.models.items.len() == 1
+            && matches!(run.models.strategy, ModelSelectionStrategy::RoundRobin),
+        "dynosim direct graph requires exactly one round_robin model"
+    );
+    ensure!(
+        run.artifacts.records_path.is_none()
+            && run.artifacts.raw_path.is_none()
+            && run.artifacts.outputs_path.is_none()
+            && !run.artifacts.trace
+            && run.artifacts.user_files.is_empty(),
+        "dynosim direct graph does not yet project common request/raw/output/user-file artifacts; use backend Dynamo artifacts or disable them"
+    );
+    // The artifact target directory may already exist: the Python CLI
+    // creates it for its own logs before launching the runner, exactly as on
+    // the online HTTP path. Each backend-owned Dynamo artifact still rejects
+    // a pre-existing file of its own name in `emit_backend_artifacts`, so no
+    // output is silently overwritten.
+    let model = run.models.items[0].name.clone();
+    let tokenizer_spec = lower_authored_tokenizer(&workload.tokenizer, tokenizers.as_ref())?;
+    let tokenizer = load_tokenizer(Some(&tokenizer_spec.name))?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("creating direct graph preparation runtime")?;
+    let prepared = runtime
+        .block_on(context.graph_inputs().load(
+            &workload.dataset,
+            &RunnerGraphInputContext {
+                tokenizer: tokenizer.as_ref(),
+                run_random_seed: run.identity.random_seed,
+            },
         ))
-    }
-
-    fn prepare_with_context(
-        &self,
-        run: &AuthoredRunSpecV2,
-        context: &RunnerRunContext,
-        backend: Box<dyn ValidatedTransportConfig>,
-        workload: Box<dyn ValidatedWorkloadConfig>,
-    ) -> Result<Box<dyn PreparedRunnerOperation>> {
-        let backend = validated_dynosim_transport(backend.as_ref())?.clone();
-        let workload = validated_graph_workload(workload.as_ref())?;
-        let phases = workload.phases.clone();
-        ensure!(
-            run.models.items.len() == 1
-                && matches!(run.models.strategy, ModelSelectionStrategy::RoundRobin),
-            "dynosim direct graph requires exactly one round_robin model"
-        );
-        ensure!(
-            run.artifacts.records_path.is_none()
-                && run.artifacts.raw_path.is_none()
-                && run.artifacts.outputs_path.is_none()
-                && !run.artifacts.trace
-                && run.artifacts.user_files.is_empty(),
-            "dynosim direct graph does not yet project common request/raw/output/user-file artifacts; use backend Dynamo artifacts or disable them"
-        );
-        // The artifact target directory may already exist: the Python CLI
-        // creates it for its own logs before launching the runner, exactly as on
-        // the online HTTP path. Each backend-owned Dynamo artifact still rejects
-        // a pre-existing file of its own name in `emit_backend_artifacts`, so no
-        // output is silently overwritten.
-        let model = run.models.items[0].name.clone();
-        let tokenizer_spec =
-            lower_authored_tokenizer(&workload.tokenizer, self.tokenizers.as_ref())?;
-        let tokenizer = load_tokenizer(Some(&tokenizer_spec.name))?;
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .context("creating direct graph preparation runtime")?;
-        let prepared = runtime
-            .block_on(context.graph_inputs().load(
-                &workload.dataset,
-                &RunnerGraphInputContext {
-                    tokenizer: tokenizer.as_ref(),
-                    run_random_seed: run.identity.random_seed,
-                },
-            ))
-            .context("loading direct authored Graph-IR input")?;
-        let metrics = offline_metrics_config(&run.metrics)?;
-        let default_max_tokens = prepared.default_output_tokens;
-        let allow_dataset_wrap = prepared.allow_dataset_wrap;
-        let random_seed = prepared.random_seed.or(run.identity.random_seed);
-        Ok(Box::new(PreparedDynosimGraphOperation {
-            backend,
-            input: prepared.bundle,
-            phases,
-            metrics,
-            model,
-            benchmark_id: run.identity.benchmark_id.clone(),
-            random_seed,
-            artifact_target: run.artifact_target.clone(),
-            default_max_tokens,
-            allow_dataset_wrap,
-            t_star_window: prepared.t_star_window,
-            worker_count: workload.worker_count,
-            phase_count: workload.phases.len(),
-        }))
-    }
+        .context("loading direct authored Graph-IR input")?;
+    let metrics = offline_metrics_config(&run.metrics)?;
+    let default_max_tokens = prepared.default_output_tokens;
+    let allow_dataset_wrap = prepared.allow_dataset_wrap;
+    let random_seed = prepared.random_seed.or(run.identity.random_seed);
+    Ok(Box::new(PreparedDynosimGraphOperation {
+        backend,
+        input: prepared.bundle,
+        phases,
+        metrics,
+        model,
+        benchmark_id: run.identity.benchmark_id.clone(),
+        random_seed,
+        artifact_target: run.artifact_target.clone(),
+        default_max_tokens,
+        allow_dataset_wrap,
+        t_star_window: prepared.t_star_window,
+        worker_count: workload.worker_count,
+        phase_count: workload.phases.len(),
+    }))
 }
 
 fn validated_graph_workload(
@@ -1744,7 +1631,7 @@ struct PreparedDynosimGraphOperation {
     artifact_target: PathBuf,
     default_max_tokens: usize,
     allow_dataset_wrap: bool,
-    t_star_window: crate::graph_input::TStarWindow,
+    t_star_window: crate::runner_protocol::graph_input::TStarWindow,
     worker_count: usize,
     phase_count: usize,
 }
@@ -1931,7 +1818,7 @@ pub struct DynosimExecutor {
 
 impl DynosimExecutor {
     /// Run any registered scheduled workload over the shared virtual clock and
-    /// dispatcher supplied by `aiperf::dynosim`.
+    /// dispatcher supplied by `crate::dynosim`.
     pub fn execute_scheduled(
         self,
         workload: Box<dyn OfflineScheduledRunFactory>,
@@ -2304,7 +2191,7 @@ fn create_artifact_target(path: &Path) -> Result<()> {
 
 /// Abort an offline graph run when any root trace failed, surfacing the first
 /// available trace error exactly as the inline call sites once did.
-fn ensure_no_failed_traces(workload: &aiperf::graph::workload::GraphWorkloadReport) -> Result<()> {
+fn ensure_no_failed_traces(workload: &crate::graph::workload::GraphWorkloadReport) -> Result<()> {
     if workload.failed == 0 {
         return Ok(());
     }
@@ -2417,9 +2304,8 @@ pub struct DynosimTraceOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::{
-        BuiltinRunnerRegistryFactory, RunnerRegistryFactory, RunnerTransportFactory,
-    };
+    use crate::extensions::{AIPerfRegistryFactory, BuiltinAIPerfRegistryFactory};
+    use crate::runner_protocol::registry::RunnerTransportFactory;
 
     fn raw(value: Value) -> Box<RawValue> {
         RawValue::from_string(value.to_string()).unwrap()
@@ -2492,7 +2378,7 @@ mod tests {
 
     #[test]
     fn factory_registration_is_derived_from_the_feature_bearing_registry() {
-        let registry = BuiltinRunnerRegistryFactory.build().unwrap();
+        let registry = BuiltinAIPerfRegistryFactory.build().unwrap();
         for (transport_id, clock) in [
             (DYNOSIM_OFFLINE_ID, RunnerClockKind::Sim),
             (DYNOSIM_ONLINE_ID, RunnerClockKind::Real),
@@ -2504,17 +2390,17 @@ mod tests {
                 .unwrap();
             assert!(descriptor.features.contains(&"exact_metric_parity"));
             assert_eq!(descriptor.clock, clock);
-            assert!(
-                registry
-                    .supported_pairs()
-                    .contains(&(transport_id, "graph"))
-            );
-            assert!(
-                registry
-                    .supported_pairs()
-                    .contains(&(transport_id, "scheduled"))
-            );
         }
+        // Transport and workload registries are independent; the dynosim
+        // transports and the scheduled/graph workloads are all present and any
+        // workload can drive any transport with no pair/cross-product table.
+        let workloads = registry
+            .workload_descriptors()
+            .into_iter()
+            .map(|descriptor| descriptor.id)
+            .collect::<Vec<_>>();
+        assert!(workloads.contains(&"graph"));
+        assert!(workloads.contains(&"scheduled"));
     }
 
     #[test]
@@ -2566,10 +2452,10 @@ mod tests {
 
     #[test]
     fn direct_graph_plans_use_the_shared_segment_store_and_engine() {
-        let (segments, graph, _) = aiperf::graph::bench::build_workload(2);
-        let plan = aiperf::graph::model::GraphTracePlan {
+        let (segments, graph, _) = crate::graph::bench::build_workload(2);
+        let plan = crate::graph::model::GraphTracePlan {
             graph,
-            trace: aiperf::graph::model::TraceRecord {
+            trace: crate::graph::model::TraceRecord {
                 id: "direct-root".into(),
                 graph_ref: None,
                 initial_state: BTreeMap::new(),
@@ -2577,9 +2463,9 @@ mod tests {
             arrival_offset_ns: None,
         };
         let factory: Box<dyn OfflineGraphRunFactory> = Box::new(move |clock, backend| {
-            Ok(aiperf::graph::workload::GraphWorkload::new(
+            Ok(crate::graph::workload::GraphWorkload::new(
                 clock,
-                Rc::new(aiperf::graph::workload::VecGraphTraceSource::new([plan])),
+                Rc::new(crate::graph::workload::VecGraphTraceSource::new([plan])),
                 backend,
             ))
         });
@@ -2593,7 +2479,7 @@ mod tests {
                 2,
                 MetricsConfig::default(),
                 None,
-                Rc::new(aiperf::graph::policy::AbortTraceNodeFailurePolicy),
+                Rc::new(crate::graph::policy::AbortTraceNodeFailurePolicy),
                 factory,
             )
             .unwrap();

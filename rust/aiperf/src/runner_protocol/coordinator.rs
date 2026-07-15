@@ -12,26 +12,25 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use aiperf::extensions::{AiperfRegistry, AiperfRegistryFactory};
-use aiperf::metrics_core::ReportRunProvenance;
-use aiperf::report::finalize_and_write_native_report_json;
+use crate::extensions::{AIPerfRegistry, AIPerfRegistryFactory};
+use crate::metrics_core::ReportRunProvenance;
+use crate::report::finalize_and_write_native_report_json;
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 
-use crate::dataset_input::RunnerDatasetInputAdapterResolver;
-use crate::execution_factories::RunnerExecutionFactories;
-use crate::graph_input::RunnerGraphInputAdapterResolver;
-use crate::protocol::RunnerCatalog;
-use crate::protocol_v2::{
+use crate::runner_protocol::dataset_input::RunnerDatasetInputAdapterResolver;
+use crate::runner_protocol::execution_factories::RunnerExecutionFactories;
+use crate::runner_protocol::graph_input::RunnerGraphInputAdapterResolver;
+use crate::runner_protocol::protocol::RunnerCatalog;
+use crate::runner_protocol::protocol_v2::{
     DeferredCheckV2, RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2,
     RunnerEnvelopeV2, RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
 };
-use crate::redaction::redact_diagnostic;
-use crate::registry::{
-    PreparedRunFailure, PreparedRunOutcome, RunnerRegistry, RunnerRegistryFactory,
-    RunnerRunContext, validate_endpoint_profiles_v2,
+use crate::runner_protocol::redaction::redact_diagnostic;
+use crate::runner_protocol::registry::{
+    PreparedRunFailure, PreparedRunOutcome, RunnerRunContext, validate_endpoint_profiles_v2,
 };
-use crate::sidecar_input::RunnerSidecarInputAdapterResolver;
+use crate::runner_protocol::sidecar_input::RunnerSidecarInputAdapterResolver;
 
 /// Exactly one typed response emitted for a protocol-v2 request.
 #[derive(Debug, Serialize)]
@@ -59,8 +58,7 @@ pub struct RunnerProcessResultV2 {
 /// scheduling code remain unchanged.
 pub struct RunnerV2Coordinator {
     distribution_id: String,
-    runner_registry: RunnerRegistry,
-    product_registry: Arc<AiperfRegistry>,
+    product_registry: Arc<AIPerfRegistry>,
     execution_factories: RunnerExecutionFactories,
     graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
     dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
@@ -72,7 +70,8 @@ impl std::fmt::Debug for RunnerV2Coordinator {
         formatter
             .debug_struct("RunnerV2Coordinator")
             .field("distribution_id", &self.distribution_id)
-            .field("supported_pairs", &self.runner_registry.supported_pairs())
+            .field("transports", &self.product_registry.transport_descriptors())
+            .field("workloads", &self.product_registry.workload_descriptors())
             .finish_non_exhaustive()
     }
 }
@@ -81,8 +80,7 @@ impl RunnerV2Coordinator {
     /// Compose every startup registry exactly once for this child process.
     pub fn new(
         distribution_id: impl Into<String>,
-        runner_registry_factory: &dyn RunnerRegistryFactory,
-        product_registry_factory: &dyn AiperfRegistryFactory,
+        product_registry_factory: &dyn AIPerfRegistryFactory,
         execution_factories: RunnerExecutionFactories,
         graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
         dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
@@ -90,9 +88,8 @@ impl RunnerV2Coordinator {
     ) -> Result<Self> {
         let distribution_id = distribution_id.into();
         validate_distribution_id(&distribution_id)?;
-        let runner_registry = runner_registry_factory
-            .build()
-            .context("composing runner transport/workload registry")?;
+        // One registry of record: transports, workloads, endpoints, samplers, and
+        // loaders all live in the single product registry composed here.
         let product_registry = Arc::new(
             product_registry_factory
                 .build()
@@ -100,7 +97,6 @@ impl RunnerV2Coordinator {
         );
         Ok(Self {
             distribution_id,
-            runner_registry,
             product_registry,
             execution_factories,
             graph_inputs,
@@ -109,9 +105,9 @@ impl RunnerV2Coordinator {
         })
     }
 
-    /// Return the plugins.yaml-shaped catalog from this process's frozen registries.
+    /// Return the plugins.yaml-shaped catalog from this process's frozen registry.
     pub fn catalog(&self) -> RunnerCatalog {
-        RunnerCatalog::from_registries(&self.runner_registry, self.product_registry.as_ref())
+        RunnerCatalog::from_registry(self.product_registry.as_ref())
     }
 
     /// Validate or execute one strict authored envelope through the frozen registries.
@@ -154,7 +150,7 @@ impl RunnerV2Coordinator {
             }
         };
 
-        let selection = match self.runner_registry.validate_selection_for_run(&run) {
+        let selection = match self.product_registry.validate_selection_for_run(&run) {
             Ok(selection) => selection,
             Err(error) => {
                 return failure(
@@ -191,10 +187,10 @@ impl RunnerV2Coordinator {
         // is pure waste — N DCGM/Prometheus scrapes, N localhost telemetry probes.
         // So only the primary cell (`cell_id == 0`, or any non-cellular run) starts
         // the collectors; secondary cells prepare an empty sidecar set.
-        let run_sidecars = aiperf::cellular::ModuloCellPartition::from_env()
+        let run_sidecars = crate::cellular::ModuloCellPartition::from_env()
             .map(|partition| {
-                !(aiperf::cellular::CellPartition::cell_count(&partition) > 1
-                    && aiperf::cellular::CellPartition::cell_id(&partition) != 0)
+                !(crate::cellular::CellPartition::cell_count(&partition) > 1
+                    && crate::cellular::CellPartition::cell_id(&partition) != 0)
             })
             .unwrap_or(true);
         let authored_sidecars = if run_sidecars {
@@ -239,7 +235,7 @@ impl RunnerV2Coordinator {
             }
         };
         if let Err(error) = self
-            .runner_registry
+            .product_registry
             .validate_run(&run, &context, &selection)
         {
             return failure(
@@ -295,7 +291,7 @@ impl RunnerV2Coordinator {
 
         let report_path = run.artifact_target.join("native-v2.json");
         let operation = match self
-            .runner_registry
+            .product_registry
             .prepare_with_context(&run, &context, selection)
         {
             Ok(operation) => operation,
@@ -318,6 +314,7 @@ impl RunnerV2Coordinator {
                     &report_path,
                     &run.artifact_target,
                     &run.export,
+                    self.product_registry.exporters(),
                 ) {
                     Ok(provenance) => provenance,
                     Err(error) => {
@@ -374,7 +371,7 @@ impl RunnerV2Coordinator {
     }
 
     /// Borrow the exact frozen product registry used by this process.
-    pub fn product_registry(&self) -> &AiperfRegistry {
+    pub fn product_registry(&self) -> &AIPerfRegistry {
         self.product_registry.as_ref()
     }
 }
@@ -390,7 +387,8 @@ fn persist_prepared_report(
     report_provenance: ReportRunProvenance,
     report_path: &Path,
     artifact_dir: &Path,
-    export: &aiperf::export::ExportConfig,
+    export: &crate::export::ExportConfig,
+    exporters: &crate::export::ExporterRegistry,
 ) -> std::result::Result<BTreeMap<String, String>, ReportPersistenceFailure> {
     if report_path.exists() {
         return Err(ReportPersistenceFailure {
@@ -419,7 +417,7 @@ fn persist_prepared_report(
     })?;
     // Native post-report export plane. Best-effort: the native-v2 report above is
     // the committed authority; genai-perf compat / OTLP / MLflow side outputs log
-    // and never fail the run (see `aiperf::export`).
+    // and never fail the run (see `crate::export`).
     //
     // `AIPERF_EXPORT_SUBDIR` (parity-proof only) redirects the native sink outputs
     // into `<artifact_dir>/<subdir>/` so they coexist with the legacy Python
@@ -433,7 +431,7 @@ fn persist_prepared_report(
         }
         _ => artifact_dir.to_path_buf(),
     };
-    aiperf::export::run_exporters(&finalized, &export_dir, export);
+    exporters.run(&finalized, &export_dir, export);
     if let Some(report_commit) = report_commit {
         report_commit
             .commit()
@@ -557,7 +555,7 @@ fn terminal_failure_with_artifacts(
     stage: RunnerFailureStageV2,
     code: &str,
     message: impl Into<String>,
-    diagnostic_artifacts: Vec<crate::protocol_v2::RunDiagnosticArtifactV2>,
+    diagnostic_artifacts: Vec<crate::runner_protocol::protocol_v2::RunDiagnosticArtifactV2>,
     exit_code: i32,
 ) -> RunnerProcessResultV2 {
     RunnerProcessResultV2 {
@@ -589,8 +587,8 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
-    use crate::protocol_v2::RunDiagnosticArtifactV2;
-    use crate::registry::PreparedReportCommit;
+    use crate::runner_protocol::protocol_v2::RunDiagnosticArtifactV2;
+    use crate::runner_protocol::registry::PreparedReportCommit;
 
     #[derive(Debug)]
     struct TrackingCommit {
@@ -617,8 +615,7 @@ mod tests {
             "evaluation",
             Vec::new(),
             vec![
-                aiperf::metrics_core::ReportEndpointProfileIdentity::new("default", "chat")
-                    .unwrap(),
+                crate::metrics_core::ReportEndpointProfileIdentity::new("default", "chat").unwrap(),
             ],
         )
         .unwrap()
@@ -626,11 +623,11 @@ mod tests {
 
     fn outcome(calls: Arc<AtomicUsize>, fail: bool) -> PreparedRunOutcome {
         PreparedRunOutcome {
-            native_report: aiperf::metrics_core::NativeReport::new(
-                &aiperf::metrics_core::AccumulatorSummary::new(),
+            native_report: crate::metrics_core::NativeReport::new(
+                &crate::metrics_core::AccumulatorSummary::new(),
                 None,
             ),
-            report_facts: aiperf::metrics_core::ReportPairRunFacts::new(),
+            report_facts: crate::metrics_core::ReportPairRunFacts::new(),
             provenance: BTreeMap::from([("fixture".to_owned(), "durable".to_owned())]),
             report_commit: Some(Box::new(TrackingCommit { calls, fail })),
         }
@@ -648,7 +645,8 @@ mod tests {
             provenance(),
             &report_path,
             root.path(),
-            &aiperf::export::ExportConfig::default(),
+            &crate::export::ExportConfig::default(),
+            &crate::export::ExporterRegistry::with_builtin_exporters(),
         )
         .unwrap_err();
 
@@ -668,7 +666,8 @@ mod tests {
             provenance(),
             &report_path,
             root.path(),
-            &aiperf::export::ExportConfig::default(),
+            &crate::export::ExportConfig::default(),
+            &crate::export::ExporterRegistry::with_builtin_exporters(),
         )
         .unwrap_err();
 
@@ -688,7 +687,8 @@ mod tests {
             provenance(),
             &report_path,
             root.path(),
-            &aiperf::export::ExportConfig::default(),
+            &crate::export::ExportConfig::default(),
+            &crate::export::ExporterRegistry::with_builtin_exporters(),
         )
         .unwrap();
 
@@ -718,7 +718,8 @@ mod tests {
             provenance(),
             &report_path,
             root.path(),
-            &aiperf::export::ExportConfig::default(),
+            &crate::export::ExportConfig::default(),
+            &crate::export::ExporterRegistry::with_builtin_exporters(),
         )
         .unwrap_err();
 

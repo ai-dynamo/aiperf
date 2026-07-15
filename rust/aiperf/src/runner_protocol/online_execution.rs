@@ -1,75 +1,116 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Protocol-v2 adapters for the native online HTTP transport.
+//! Protocol-v2 executable workloads for the native online transports.
 //!
-//! Authored protocol-v2 values lower directly into the protocol-neutral
-//! [`NativeRunSpec`] consumed by the same coordinator as protocol v1. The
-//! adapter never constructs or serializes a protocol-v1 `RunRequest`. Direct
-//! `dag_jsonl` input remains an authored graph program: the common coordinator
-//! passes it once to the selected runner-owned authored-input adapter, which
-//! returns `GraphTracePlan`s and one frozen segment store.
+//! The scheduled, graph, and static-accuracy [`RunnerWorkloadFactory`]
+//! implementations own authored-source lowering into the protocol-neutral
+//! [`NativeRunSpec`] and resolve the transport's turn-placement/graph-placement
+//! factory and readiness policy from the validated transport (http/grpc) by
+//! type — there is no per-transport pair object, and dynosim transports are
+//! prepared through their own module. Direct `dag_jsonl` input remains an
+//! authored graph program: the common coordinator passes it once to the selected
+//! runner-owned authored-input adapter, which returns `GraphTracePlan`s and one
+//! frozen segment store.
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use aiperf::content_server::ContentServerMediaPublisher;
-use aiperf::dataset::{
+use crate::content_server::ContentServerMediaPublisher;
+use crate::dataset::{
     DatasetFetcher, HttpDatasetFetcher, MaterializedTracePromptStorage,
     NativeSyntheticMediaGeneratorFactory, SyntheticMediaGeneratorFactory, TiktokenEncoding,
     download_hugging_face_tokenizer,
 };
-use aiperf::endpoints::Modality;
-use aiperf::failure::OnFailure;
-use aiperf::metrics_core::{NativeReport, ReportGraphRunInfo, ReportPairRunFacts};
-use aiperf::rng::RngRoot;
-use anyhow::{Context, Result, anyhow, bail, ensure};
+use crate::endpoints::Modality;
+use crate::failure::OnFailure;
+use crate::metrics_core::{ReportGraphRunInfo, ReportPairRunFacts};
+use crate::rng::RngRoot;
+use anyhow::{Context, Result, anyhow, ensure};
 use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
 use url::Url;
 
-use crate::dataset_input::RunnerDatasetInputContext;
-use crate::execute::{
+use crate::runner_protocol::dataset_input::RunnerDatasetInputContext;
+use crate::runner_protocol::execute::{
     NativeDatasetPlan, NativeEndpointPlan, NativeGraphDatasetPlan, NativeRunSpec,
     NativeSidecarPlan, NativeStaticAccuracyEvaluatorFactory, NativeStaticAccuracyPlan,
     StaticAccuracyEvaluatorFactory, StaticAccuracyEvaluatorProcessSpec,
-    execute_prepared_native_plan_uncommitted_with_execution_factories, load_tokenizer,
+    execute_prepared_native_plan_uncommitted_selected, load_tokenizer,
 };
-use crate::execution_factories::RunnerExecutionFactories;
-use crate::graph_input::RunnerGraphInputContext;
-use crate::protocol::{ArtifactSpec, PhaseSpec, TokenizerSpec};
-use crate::protocol_v2::AuthoredRunSpecV2;
-use crate::readiness::{PreparedOnlineReadiness, ReadinessEndpointProfile, ReadinessPlanInput};
-use crate::registry::{
-    GraphWorkloadConfigV2, OnlineHttpTransportConfigV2, PreparedRunOutcome,
-    PreparedRunnerOperation, RunnerPairFactory, RunnerRegistryBuilder, RunnerRunContext,
-    ScheduledWorkloadConfigV2, StaticAccuracyWorkloadConfigV2, ValidatedTransportConfig,
-    ValidatedWorkloadConfig,
+use crate::runner_protocol::execution_factories::RunnerExecutionFactories;
+use crate::runner_protocol::graph_execution::GraphTransportKind;
+use crate::runner_protocol::graph_input::RunnerGraphInputContext;
+use crate::runner_protocol::protocol::{ArtifactSpec, PhaseSpec, TokenizerSpec};
+use crate::runner_protocol::protocol_v2::AuthoredRunSpecV2;
+use crate::runner_protocol::readiness::{
+    PreparedOnlineReadiness, ReadinessEndpointProfile, ReadinessPlanInput,
 };
-use crate::sidecar_input::{CONTENT_SERVER_SIDECAR_ID, ContentServerSpec};
+use crate::runner_protocol::registry::{
+    GRAPH_WORKLOAD_DESCRIPTOR, GraphWorkloadConfigV2, OnlineGrpcTransportConfigV2,
+    OnlineHttpTransportConfigV2, PreparedRunOutcome, PreparedRunnerOperation, RunnerRunContext,
+    RunnerWorkloadDescriptor, RunnerWorkloadFactory, SCHEDULED_WORKLOAD_DESCRIPTOR,
+    STATIC_ACCURACY_WORKLOAD_DESCRIPTOR, ScheduledWorkloadConfigV2, StaticAccuracyWorkloadConfigV2,
+    ValidatedTransportConfig, ValidatedWorkloadConfig, WorkloadRequirements,
+    inference_workload_requirements, strict_decode, validate_common_workload,
+};
+use crate::runner_protocol::turn_execution::RequestExecutorFactory;
 
-const TRANSPORT_ID: &str = "http";
-
-/// Register online HTTP pairs whose entire authored Config-v2 surface is
-/// executable without falling back to protocol v1.
+/// Native (`http`/`grpc`) transport execution selection, resolved from the
+/// validated transport config type. Non-native transports (e.g. dynosim) return
+/// `None` and are prepared through their own module.
 ///
-/// Keeping registration in this module means capability publication changes
-/// only when a real adapter and its execution proof are both linked.
-pub fn register_http_pairs(builder: &mut RunnerRegistryBuilder) -> Result<()> {
-    let tokenizers: Arc<dyn OnlineTokenizerSourceResolver> =
-        Arc::new(HfHubOnlineTokenizerSourceResolver::default());
-    builder.register_pair(Arc::new(OnlineHttpPairFactory::new(Arc::new(
-        OnlineGraphAdapter { tokenizers },
-    ))))
+/// This is a type dispatch, not a string switch: the coordinator resolves the
+/// transport factory by id and the workload reads its concrete validated config
+/// to pick the turn-placement factory and readiness policy. Adding a native
+/// `PreparedTurn` transport adds one arm here and nothing in the coordinator.
+#[derive(Clone, Copy)]
+enum NativeTransportSelection {
+    Http,
+    Grpc,
 }
 
-/// Register static accuracy after sidecar parity or an exact frontend gate is
-/// present in the same distribution.
-pub fn register_http_static_accuracy_pair(builder: &mut RunnerRegistryBuilder) -> Result<()> {
-    register_http_static_accuracy_pair_with_factories(
-        builder,
+fn classify_native_transport(
+    transport: &dyn ValidatedTransportConfig,
+) -> Option<NativeTransportSelection> {
+    let any = ValidatedTransportConfig::as_any(transport);
+    if any.is::<OnlineHttpTransportConfigV2>() {
+        Some(NativeTransportSelection::Http)
+    } else if any.is::<OnlineGrpcTransportConfigV2>() {
+        Some(NativeTransportSelection::Grpc)
+    } else {
+        None
+    }
+}
+
+use crate::runner_protocol::sidecar_input::{CONTENT_SERVER_SIDECAR_ID, ContentServerSpec};
+
+/// Register the built-in executable workloads (`scheduled`, `graph`).
+///
+/// Each is one [`RunnerWorkloadFactory`] that owns its authored-source lowering
+/// and resolves the transport's turn-placement/graph-placement factory from the
+/// validated transport by id/type. Any registered transport (http, grpc,
+/// dynosim) can drive them; there is no per-transport pair object and no
+/// compatibility predicate.
+pub fn register_online_workloads(registry: &mut crate::extensions::AIPerfRegistry) -> Result<()> {
+    let tokenizers: Arc<dyn OnlineTokenizerSourceResolver> =
+        Arc::new(HfHubOnlineTokenizerSourceResolver::default());
+    registry.register_workload(Arc::new(ScheduledWorkloadFactoryV2 {
+        tokenizers: tokenizers.clone(),
+    }))?;
+    registry.register_workload(Arc::new(GraphWorkloadFactoryV2 { tokenizers }))?;
+    Ok(())
+}
+
+/// Register the static-accuracy workload (HTTP only) after sidecar parity or an
+/// exact frontend gate is present in the same distribution.
+pub fn register_http_static_accuracy_workload(
+    registry: &mut crate::extensions::AIPerfRegistry,
+) -> Result<()> {
+    register_http_static_accuracy_workload_with_factories(
+        registry,
         Arc::new(HfHubOnlineTokenizerSourceResolver::default()),
         Arc::new(NativeStaticAccuracyEvaluatorFactory),
     )
@@ -77,107 +118,53 @@ pub fn register_http_static_accuracy_pair(builder: &mut RunnerRegistryBuilder) -
 
 /// Register static accuracy with distribution-selected preparation factories.
 ///
-/// Both factories are retained by the pair adapter and used exactly once when
-/// an authored run becomes its prepared operation. This is the compile-time
-/// extension point for non-Hugging-Face tokenizer stores or non-local
-/// evaluator processes.
-pub fn register_http_static_accuracy_pair_with_factories(
-    builder: &mut RunnerRegistryBuilder,
+/// Both factories are retained by the workload factory and used exactly once
+/// when an authored run becomes its prepared operation. This is the compile-time
+/// extension point for non-Hugging-Face tokenizer stores or non-local evaluator
+/// processes.
+pub fn register_http_static_accuracy_workload_with_factories(
+    registry: &mut crate::extensions::AIPerfRegistry,
     tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
     evaluator_factory: Arc<dyn StaticAccuracyEvaluatorFactory>,
 ) -> Result<()> {
-    builder.register_pair(Arc::new(OnlineHttpPairFactory::new(Arc::new(
-        OnlineStaticAccuracyAdapter {
-            tokenizers,
-            evaluator_factory,
-        },
-    ))))
+    registry.register_workload(Arc::new(StaticAccuracyWorkloadFactoryV2 {
+        tokenizers,
+        evaluator_factory,
+    }))
 }
 
-/// Register the scheduled adapter after the distribution also supplies a
-/// capability-aware frontend gate or complete public-dataset and sidecar
-/// preparation.
-///
-/// The adapter is real and subprocess-tested, but the base registry must not
-/// advertise it while ordinary v1 scheduled configs could be routed to a
-/// narrower v2 surface merely because the pair ID matches.
-pub fn register_http_scheduled_pair(builder: &mut RunnerRegistryBuilder) -> Result<()> {
-    builder.register_pair(Arc::new(OnlineHttpPairFactory::new(Arc::new(
-        OnlineScheduledAdapter {
-            tokenizers: Arc::new(HfHubOnlineTokenizerSourceResolver::default()),
-        },
-    ))))
+/// Built-in scheduled workload: runs over any native (http/grpc) or dynosim
+/// transport. Transport-specific endpoint validation, turn-placement factory,
+/// and readiness policy are resolved from the validated transport by id/type.
+struct ScheduledWorkloadFactoryV2 {
+    tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
 }
 
-#[derive(Clone)]
-struct OnlineHttpPairFactory {
-    adapter: Arc<dyn OnlineWorkloadAdapter>,
-}
-
-impl OnlineHttpPairFactory {
-    fn new(adapter: Arc<dyn OnlineWorkloadAdapter>) -> Self {
-        Self { adapter }
-    }
-}
-
-impl fmt::Debug for OnlineHttpPairFactory {
+impl fmt::Debug for ScheduledWorkloadFactoryV2 {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("OnlineHttpPairFactory")
-            .field("workload_id", &self.adapter.workload_id())
-            .finish_non_exhaustive()
+        formatter.write_str("ScheduledWorkloadFactoryV2")
     }
 }
 
-/// Direct authored-workload adapter selected by one registered online pair.
-///
-/// Each implementation owns strict type recovery, workload validation, and
-/// its single source-to-prepared-harness transition. The generic pair and
-/// registry coordinator never branch on workload IDs or inspect workload
-/// configuration.
-trait OnlineWorkloadAdapter: fmt::Debug + Send + Sync {
-    /// Registry identity consumed by this adapter.
-    fn workload_id(&self) -> &'static str;
-
-    /// Check that the selected workload factory returned this adapter's exact
-    /// validated configuration type.
-    fn validate_workload(&self, workload: &dyn ValidatedWorkloadConfig) -> Result<()>;
-
-    /// Check run-level invariants without acquisition, socket IO, or artifact
-    /// creation.
-    fn validate_run(
-        &self,
-        run: &AuthoredRunSpecV2,
-        context: &RunnerRunContext,
-        workload: &dyn ValidatedWorkloadConfig,
-    ) -> Result<()>;
-
-    /// Load the selected authored source exactly once and retain its canonical
-    /// prepared harness through execution.
-    fn prepare(
-        &self,
-        run: &AuthoredRunSpecV2,
-        context: &RunnerRunContext,
-        workload: Box<dyn ValidatedWorkloadConfig>,
-    ) -> Result<Box<dyn PreparedOnlineHarness>>;
-}
-
-impl RunnerPairFactory for OnlineHttpPairFactory {
-    fn transport_id(&self) -> &'static str {
-        TRANSPORT_ID
+impl RunnerWorkloadFactory for ScheduledWorkloadFactoryV2 {
+    fn descriptor(&self) -> &'static RunnerWorkloadDescriptor {
+        &SCHEDULED_WORKLOAD_DESCRIPTOR
     }
 
-    fn workload_id(&self) -> &'static str {
-        self.adapter.workload_id()
+    fn validate(&self, authored: &RawValue) -> Result<Box<dyn ValidatedWorkloadConfig>> {
+        let config =
+            strict_decode::<ScheduledWorkloadConfigV2>(authored, "scheduled workload config")?;
+        validate_common_workload(
+            config.worker_count,
+            &config.dataset,
+            &config.tokenizer,
+            &config.phases,
+        )?;
+        Ok(Box::new(config))
     }
 
-    fn validate_pair(
-        &self,
-        transport: &dyn ValidatedTransportConfig,
-        workload: &dyn ValidatedWorkloadConfig,
-    ) -> Result<()> {
-        online_transport(transport)?;
-        self.adapter.validate_workload(workload)
+    fn requirements(&self, _config: &dyn ValidatedWorkloadConfig) -> Result<WorkloadRequirements> {
+        Ok(inference_workload_requirements())
     }
 
     fn validate_run(
@@ -186,21 +173,28 @@ impl RunnerPairFactory for OnlineHttpPairFactory {
         context: &RunnerRunContext,
         transport: &dyn ValidatedTransportConfig,
         workload: &dyn ValidatedWorkloadConfig,
+        transport_id: &str,
     ) -> Result<()> {
-        self.validate_pair(transport, workload)?;
-        self.adapter.validate_run(run, context, workload)
-    }
-
-    fn prepare(
-        &self,
-        _run: &AuthoredRunSpecV2,
-        _transport: Box<dyn ValidatedTransportConfig>,
-        _workload: Box<dyn ValidatedWorkloadConfig>,
-    ) -> Result<Box<dyn PreparedRunnerOperation>> {
-        bail!(
-            "{TRANSPORT_ID} + {} preparation requires the coordinator-owned RunnerRunContext",
-            self.adapter.workload_id()
-        )
+        let workload = workload_config::<ScheduledWorkloadConfigV2>(workload, "scheduled")?;
+        match classify_native_transport(transport) {
+            Some(NativeTransportSelection::Http) => validate_online_run(context)?,
+            Some(NativeTransportSelection::Grpc) => {
+                crate::runner_protocol::grpc_execution::validate_grpc_run(run, context)?;
+            }
+            None => {
+                #[cfg(feature = "dynosim")]
+                return crate::runner_protocol::offline_execution::dynosim_scheduled_validate_run(
+                    run, context, transport, workload,
+                );
+                #[cfg(not(feature = "dynosim"))]
+                {
+                    let _ = (run, transport_id);
+                    anyhow::bail!("transport does not support the scheduled workload");
+                }
+            }
+        }
+        let _ = transport_id;
+        validate_authored_tokenizer(&workload.tokenizer)
     }
 
     fn prepare_with_context(
@@ -209,158 +203,211 @@ impl RunnerPairFactory for OnlineHttpPairFactory {
         context: &RunnerRunContext,
         transport: Box<dyn ValidatedTransportConfig>,
         workload: Box<dyn ValidatedWorkloadConfig>,
+        _transport_id: &str,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
-        online_transport(transport.as_ref())?;
-        self.adapter.validate_workload(workload.as_ref())?;
-        let readiness = prepare_online_readiness(run, context)?;
-        let harness = self.adapter.prepare(run, context, workload)?;
-        Ok(Box::new(PreparedOnlineOperation {
-            workload_id: self.adapter.workload_id(),
-            harness,
-            product_registry: context.product_registry_handle(),
-            execution_factories: context.execution_factories_handle(),
-            readiness,
-        }))
+        match classify_native_transport(transport.as_ref()) {
+            Some(selection) => {
+                let workload =
+                    workload_config::<ScheduledWorkloadConfigV2>(workload.as_ref(), "scheduled")?;
+                let plan = lower_scheduled(run, context, workload, self.tokenizers.as_ref())?;
+                prepare_native_operation(run, context, plan, selection)
+            }
+            None => {
+                #[cfg(feature = "dynosim")]
+                return crate::runner_protocol::offline_execution::prepare_dynosim_scheduled(
+                    run,
+                    context,
+                    transport,
+                    workload,
+                    self.tokenizers.clone(),
+                );
+                #[cfg(not(feature = "dynosim"))]
+                {
+                    let _ = (run, context, workload);
+                    anyhow::bail!(
+                        "transport {_transport_id:?} does not support the scheduled workload"
+                    );
+                }
+            }
+        }
     }
 }
 
-/// Retained workload-specific execution harness produced by one direct adapter
-/// load. Implementations own their canonical prepared state; the registry and
-/// pair coordinator do not inspect it.
-trait PreparedOnlineHarness: fmt::Debug {
-    /// Execute through the selected transport and return an uncommitted report.
-    fn execute(
-        self: Box<Self>,
-        product_registry: &aiperf::extensions::AiperfRegistry,
-        execution_factories: &RunnerExecutionFactories,
-        readiness: Box<dyn PreparedOnlineReadiness>,
-    ) -> Result<(NativeReport, ReportPairRunFacts)>;
-}
-
-#[derive(Clone)]
-struct OnlineScheduledAdapter {
+/// Built-in direct Graph-IR workload: runs over any native (http/grpc) or
+/// dynosim transport. The resolved transport selects the graph placement's
+/// dispatcher arm (`GraphTransportKind::{Http, Grpc}`) plus readiness policy.
+struct GraphWorkloadFactoryV2 {
     tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
 }
 
-impl fmt::Debug for OnlineScheduledAdapter {
+impl fmt::Debug for GraphWorkloadFactoryV2 {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("OnlineScheduledAdapter")
+        formatter.write_str("GraphWorkloadFactoryV2")
     }
 }
 
-#[derive(Clone)]
-struct OnlineGraphAdapter {
-    tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
-}
+impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
+    fn descriptor(&self) -> &'static RunnerWorkloadDescriptor {
+        &GRAPH_WORKLOAD_DESCRIPTOR
+    }
 
-impl fmt::Debug for OnlineGraphAdapter {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("OnlineGraphAdapter")
+    fn validate(&self, authored: &RawValue) -> Result<Box<dyn ValidatedWorkloadConfig>> {
+        let config = strict_decode::<GraphWorkloadConfigV2>(authored, "graph workload config")?;
+        validate_common_workload(
+            config.worker_count,
+            &config.dataset,
+            &config.tokenizer,
+            &config.phases,
+        )?;
+        Ok(Box::new(config))
+    }
+
+    fn requirements(&self, _config: &dyn ValidatedWorkloadConfig) -> Result<WorkloadRequirements> {
+        Ok(inference_workload_requirements())
+    }
+
+    fn validate_run(
+        &self,
+        run: &AuthoredRunSpecV2,
+        context: &RunnerRunContext,
+        transport: &dyn ValidatedTransportConfig,
+        workload: &dyn ValidatedWorkloadConfig,
+        transport_id: &str,
+    ) -> Result<()> {
+        let workload = workload_config::<GraphWorkloadConfigV2>(workload, "graph")?;
+        match classify_native_transport(transport) {
+            Some(selection) => {
+                match selection {
+                    NativeTransportSelection::Http => validate_online_run(context)?,
+                    NativeTransportSelection::Grpc => {
+                        crate::runner_protocol::grpc_execution::validate_grpc_run(run, context)?;
+                    }
+                }
+                ensure!(
+                    run.sidecars.live_streaming.is_none(),
+                    "protocol-v2 graph execution supports the content-server and GPU/network/server telemetry side-channels but not the live-streaming record extension"
+                );
+                ensure!(
+                    run.models.items.len() == 1,
+                    "online graph execution requires exactly one default model"
+                );
+                validate_authored_tokenizer(&workload.tokenizer)?;
+                context
+                    .graph_inputs()
+                    .validate_identity(&workload.dataset)?;
+                let _ = transport_id;
+                Ok(())
+            }
+            None => {
+                #[cfg(feature = "dynosim")]
+                return crate::runner_protocol::offline_execution::dynosim_graph_validate_run(
+                    run, context, transport, workload,
+                );
+                #[cfg(not(feature = "dynosim"))]
+                {
+                    let _ = (run, transport_id);
+                    anyhow::bail!("transport does not support the graph workload");
+                }
+            }
+        }
+    }
+
+    fn prepare_with_context(
+        &self,
+        run: &AuthoredRunSpecV2,
+        context: &RunnerRunContext,
+        transport: Box<dyn ValidatedTransportConfig>,
+        workload: Box<dyn ValidatedWorkloadConfig>,
+        _transport_id: &str,
+    ) -> Result<Box<dyn PreparedRunnerOperation>> {
+        match classify_native_transport(transport.as_ref()) {
+            Some(selection) => {
+                let workload =
+                    workload_config::<GraphWorkloadConfigV2>(workload.as_ref(), "graph")?;
+                let transport_kind = match selection {
+                    NativeTransportSelection::Http => GraphTransportKind::Http,
+                    NativeTransportSelection::Grpc => GraphTransportKind::Grpc,
+                };
+                let plan = lower_graph(
+                    run,
+                    context,
+                    workload,
+                    self.tokenizers.as_ref(),
+                    transport_kind,
+                )?;
+                prepare_native_operation(run, context, plan, selection)
+            }
+            None => {
+                #[cfg(feature = "dynosim")]
+                return crate::runner_protocol::offline_execution::prepare_dynosim_graph(
+                    run,
+                    context,
+                    transport,
+                    workload,
+                    self.tokenizers.clone(),
+                );
+                #[cfg(not(feature = "dynosim"))]
+                {
+                    let _ = (run, context, workload);
+                    anyhow::bail!(
+                        "transport {_transport_id:?} does not support the graph workload"
+                    );
+                }
+            }
+        }
     }
 }
 
-#[derive(Clone)]
-struct OnlineStaticAccuracyAdapter {
+/// Built-in static-accuracy workload (HTTP only).
+struct StaticAccuracyWorkloadFactoryV2 {
     tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
     evaluator_factory: Arc<dyn StaticAccuracyEvaluatorFactory>,
 }
 
-impl fmt::Debug for OnlineStaticAccuracyAdapter {
+impl fmt::Debug for StaticAccuracyWorkloadFactoryV2 {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("OnlineStaticAccuracyAdapter")
+        formatter.write_str("StaticAccuracyWorkloadFactoryV2")
     }
 }
 
-impl OnlineWorkloadAdapter for OnlineScheduledAdapter {
-    fn workload_id(&self) -> &'static str {
-        "scheduled"
+impl RunnerWorkloadFactory for StaticAccuracyWorkloadFactoryV2 {
+    fn descriptor(&self) -> &'static RunnerWorkloadDescriptor {
+        &STATIC_ACCURACY_WORKLOAD_DESCRIPTOR
     }
 
-    fn validate_workload(&self, workload: &dyn ValidatedWorkloadConfig) -> Result<()> {
-        workload_config::<ScheduledWorkloadConfigV2>(workload, self.workload_id()).map(drop)
+    fn validate(&self, authored: &RawValue) -> Result<Box<dyn ValidatedWorkloadConfig>> {
+        let config = strict_decode::<StaticAccuracyWorkloadConfigV2>(
+            authored,
+            "static accuracy workload config",
+        )?;
+        validate_common_workload(
+            config.worker_count,
+            &config.dataset,
+            &config.tokenizer,
+            &config.phases,
+        )?;
+        Ok(Box::new(config))
     }
 
-    fn validate_run(
-        &self,
-        _run: &AuthoredRunSpecV2,
-        context: &RunnerRunContext,
-        workload: &dyn ValidatedWorkloadConfig,
-    ) -> Result<()> {
-        validate_online_run(context)?;
-        let workload = workload_config::<ScheduledWorkloadConfigV2>(workload, self.workload_id())?;
-        validate_authored_tokenizer(&workload.tokenizer)
-    }
-
-    fn prepare(
-        &self,
-        run: &AuthoredRunSpecV2,
-        context: &RunnerRunContext,
-        workload: Box<dyn ValidatedWorkloadConfig>,
-    ) -> Result<Box<dyn PreparedOnlineHarness>> {
-        let workload =
-            workload_config::<ScheduledWorkloadConfigV2>(workload.as_ref(), self.workload_id())?;
-        let plan = lower_scheduled(run, context, workload, self.tokenizers.as_ref())?;
-        Ok(Box::new(NativePlanHarness { plan }))
-    }
-}
-
-impl OnlineWorkloadAdapter for OnlineGraphAdapter {
-    fn workload_id(&self) -> &'static str {
-        "graph"
-    }
-
-    fn validate_workload(&self, workload: &dyn ValidatedWorkloadConfig) -> Result<()> {
-        workload_config::<GraphWorkloadConfigV2>(workload, self.workload_id()).map(drop)
+    fn requirements(&self, _config: &dyn ValidatedWorkloadConfig) -> Result<WorkloadRequirements> {
+        Ok(inference_workload_requirements())
     }
 
     fn validate_run(
         &self,
         run: &AuthoredRunSpecV2,
         context: &RunnerRunContext,
+        transport: &dyn ValidatedTransportConfig,
         workload: &dyn ValidatedWorkloadConfig,
+        _transport_id: &str,
     ) -> Result<()> {
-        validate_online_run(context)?;
         ensure!(
-            run.sidecars.live_streaming.is_none(),
-            "protocol-v2 graph execution supports the content-server and GPU/network/server telemetry side-channels but not the live-streaming record extension"
+            matches!(
+                classify_native_transport(transport),
+                Some(NativeTransportSelection::Http)
+            ),
+            "static accuracy execution runs only over the http transport"
         );
-        ensure!(
-            run.models.items.len() == 1,
-            "online graph execution requires exactly one default model"
-        );
-        let workload = workload_config::<GraphWorkloadConfigV2>(workload, self.workload_id())?;
-        validate_authored_tokenizer(&workload.tokenizer)?;
-        context.graph_inputs().validate_identity(&workload.dataset)
-    }
-
-    fn prepare(
-        &self,
-        run: &AuthoredRunSpecV2,
-        context: &RunnerRunContext,
-        workload: Box<dyn ValidatedWorkloadConfig>,
-    ) -> Result<Box<dyn PreparedOnlineHarness>> {
-        let workload =
-            workload_config::<GraphWorkloadConfigV2>(workload.as_ref(), self.workload_id())?;
-        let plan = lower_graph(run, context, workload, self.tokenizers.as_ref())?;
-        Ok(Box::new(NativePlanHarness { plan }))
-    }
-}
-
-impl OnlineWorkloadAdapter for OnlineStaticAccuracyAdapter {
-    fn workload_id(&self) -> &'static str {
-        "static_accuracy"
-    }
-
-    fn validate_workload(&self, workload: &dyn ValidatedWorkloadConfig) -> Result<()> {
-        workload_config::<StaticAccuracyWorkloadConfigV2>(workload, self.workload_id()).map(drop)
-    }
-
-    fn validate_run(
-        &self,
-        run: &AuthoredRunSpecV2,
-        context: &RunnerRunContext,
-        workload: &dyn ValidatedWorkloadConfig,
-    ) -> Result<()> {
         validate_online_run(context)?;
         validate_static_accuracy_endpoint(context)?;
         ensure!(
@@ -368,20 +415,29 @@ impl OnlineWorkloadAdapter for OnlineStaticAccuracyAdapter {
             "static accuracy execution currently requires exactly one model"
         );
         let workload =
-            workload_config::<StaticAccuracyWorkloadConfigV2>(workload, self.workload_id())?;
+            workload_config::<StaticAccuracyWorkloadConfigV2>(workload, "static_accuracy")?;
         validate_authored_tokenizer(&workload.tokenizer)?;
         StaticAccuracyConfigV2::decode(&workload.accuracy).map(drop)
     }
 
-    fn prepare(
+    fn prepare_with_context(
         &self,
         run: &AuthoredRunSpecV2,
         context: &RunnerRunContext,
+        transport: Box<dyn ValidatedTransportConfig>,
         workload: Box<dyn ValidatedWorkloadConfig>,
-    ) -> Result<Box<dyn PreparedOnlineHarness>> {
+        _transport_id: &str,
+    ) -> Result<Box<dyn PreparedRunnerOperation>> {
+        ensure!(
+            matches!(
+                classify_native_transport(transport.as_ref()),
+                Some(NativeTransportSelection::Http)
+            ),
+            "static accuracy execution runs only over the http transport"
+        );
         let workload = workload_config::<StaticAccuracyWorkloadConfigV2>(
             workload.as_ref(),
-            self.workload_id(),
+            "static_accuracy",
         )?;
         let plan = lower_static_accuracy(
             run,
@@ -390,14 +446,40 @@ impl OnlineWorkloadAdapter for OnlineStaticAccuracyAdapter {
             self.tokenizers.as_ref(),
             self.evaluator_factory.clone(),
         )?;
-        Ok(Box::new(NativePlanHarness { plan }))
+        prepare_native_operation(run, context, plan, NativeTransportSelection::Http)
     }
 }
 
-fn online_transport(config: &dyn ValidatedTransportConfig) -> Result<&OnlineHttpTransportConfigV2> {
-    ValidatedTransportConfig::as_any(config)
-        .downcast_ref::<OnlineHttpTransportConfigV2>()
-        .ok_or_else(|| anyhow!("online HTTP pair received a different transport config type"))
+/// Build the prepared native operation for one lowered plan, resolving the
+/// transport's turn-placement factory and readiness policy by selection.
+fn prepare_native_operation(
+    run: &AuthoredRunSpecV2,
+    context: &RunnerRunContext,
+    plan: NativeRunSpec,
+    selection: NativeTransportSelection,
+) -> Result<Box<dyn PreparedRunnerOperation>> {
+    let report_facts = native_plan_report_facts(&plan)?;
+    let (request_executor, readiness, provenance) = match selection {
+        NativeTransportSelection::Http => (
+            context.execution_factories().http_handle(),
+            Some(prepare_online_readiness(run, context)?),
+            BTreeMap::new(),
+        ),
+        NativeTransportSelection::Grpc => (
+            context.execution_factories().grpc_handle(),
+            None,
+            BTreeMap::from([("transport".to_owned(), "grpc".to_owned())]),
+        ),
+    };
+    Ok(Box::new(PreparedNativeOperation {
+        plan,
+        request_executor,
+        execution_factories: context.execution_factories_handle(),
+        product_registry: context.product_registry_handle(),
+        readiness,
+        report_facts,
+        provenance,
+    }))
 }
 
 fn workload_config<'a, T: 'static>(
@@ -406,7 +488,7 @@ fn workload_config<'a, T: 'static>(
 ) -> Result<&'a T> {
     ValidatedWorkloadConfig::as_any(config)
         .downcast_ref::<T>()
-        .ok_or_else(|| anyhow!("online {workload_id} pair received a different config type"))
+        .ok_or_else(|| anyhow!("online {workload_id} workload received a different config type"))
 }
 
 fn validate_online_run(context: &RunnerRunContext) -> Result<()> {
@@ -810,7 +892,7 @@ impl AuthoredTokenizerV2 {
 /// two flags, so a descriptor with both false has no token metrics and needs no
 /// tokenizer. Descriptor-driven so any future non-tokenizing endpoint is
 /// covered without enumerating endpoint ids.
-fn endpoint_needs_tokenizer(descriptor: &aiperf::endpoints::EndpointDescriptor) -> bool {
+fn endpoint_needs_tokenizer(descriptor: &crate::endpoints::EndpointDescriptor) -> bool {
     descriptor.tokenizes_input || descriptor.produces_tokens
 }
 
@@ -821,7 +903,7 @@ fn endpoint_needs_tokenizer(descriptor: &aiperf::endpoints::EndpointDescriptor) 
 fn lower_tokenizer_for_endpoint(
     raw: &RawValue,
     resolver: &dyn OnlineTokenizerSourceResolver,
-    descriptor: &aiperf::endpoints::EndpointDescriptor,
+    descriptor: &crate::endpoints::EndpointDescriptor,
 ) -> Result<TokenizerSpec> {
     let authored = AuthoredTokenizerV2::decode(raw)?;
     if endpoint_needs_tokenizer(descriptor) {
@@ -832,8 +914,8 @@ fn lower_tokenizer_for_endpoint(
 }
 
 /// Strictly validate one authored tokenizer policy without resolving its
-/// source. Pair adapters use this during side-effect-free validation and call
-/// [`lower_authored_tokenizer`] exactly once during preparation.
+/// source. Workload factories use this during side-effect-free validation and
+/// call [`lower_authored_tokenizer`] exactly once during preparation.
 pub(crate) fn validate_authored_tokenizer(raw: &RawValue) -> Result<()> {
     AuthoredTokenizerV2::decode(raw).map(|_| ())
 }
@@ -981,6 +1063,9 @@ pub(crate) fn lower_scheduled(
         NativeEndpointPlan::Prepared(context.endpoint_profiles_handle()),
         NativeSidecarPlan::Prepared(context.sidecar_inputs_handle()),
         workload.failure_policy,
+        // Scheduled resolves its transport through the injected
+        // RequestExecutorFactory; this field is inert on the linear path.
+        GraphTransportKind::Http,
     )
 }
 
@@ -1010,6 +1095,7 @@ fn lower_graph(
     context: &RunnerRunContext,
     workload: &GraphWorkloadConfigV2,
     tokenizers: &dyn OnlineTokenizerSourceResolver,
+    transport_kind: GraphTransportKind,
 ) -> Result<NativeRunSpec> {
     let tokenizer = lower_authored_tokenizer(&workload.tokenizer, tokenizers)?;
     let tokenizer_impl = load_tokenizer(Some(&tokenizer.name))?;
@@ -1047,6 +1133,9 @@ fn lower_graph(
         NativeEndpointPlan::Prepared(context.endpoint_profiles_handle()),
         NativeSidecarPlan::Prepared(context.sidecar_inputs_handle()),
         workload.failure_policy,
+        // The resolved transport selects the graph placement's dispatcher arm:
+        // `Grpc` routes graph nodes over Tonic, `Http` over hyper/SSE.
+        transport_kind,
     )
 }
 
@@ -1071,6 +1160,8 @@ fn lower_static_accuracy(
         // Static accuracy has no failure knob today; it inherits the scheduled
         // default (resilient) via `None`.
         None,
+        // Static accuracy runs over HTTP and does not use the graph runtime.
+        GraphTransportKind::Http,
     )
 }
 
@@ -1100,6 +1191,7 @@ fn build_common_plan(
     endpoint: NativeEndpointPlan,
     sidecars: NativeSidecarPlan,
     failure_policy: Option<OnFailure>,
+    transport_kind: GraphTransportKind,
 ) -> Result<NativeRunSpec> {
     Ok(NativeRunSpec {
         benchmark_id: run.identity.benchmark_id.clone(),
@@ -1125,11 +1217,12 @@ fn build_common_plan(
         user_files: run.artifacts.user_files.clone(),
         failure_policy,
         native_otel_enabled: run.export.otel.enabled && run.export.otel.endpoint.is_some(),
+        transport_kind,
     })
 }
 
 fn validate_graph_endpoint_profile_references(
-    bundle: &aiperf::graph::input::GraphInputBundle,
+    bundle: &crate::graph::input::GraphInputBundle,
     context: &RunnerRunContext,
 ) -> Result<()> {
     context.default_endpoint_profile()?;
@@ -1148,37 +1241,6 @@ fn validate_graph_endpoint_profile_references(
     Ok(())
 }
 
-struct NativePlanHarness {
-    plan: NativeRunSpec,
-}
-
-impl fmt::Debug for NativePlanHarness {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("NativePlanHarness")
-            .field("benchmark_id", &self.plan.benchmark_id)
-            .finish_non_exhaustive()
-    }
-}
-
-impl PreparedOnlineHarness for NativePlanHarness {
-    fn execute(
-        self: Box<Self>,
-        product_registry: &aiperf::extensions::AiperfRegistry,
-        execution_factories: &RunnerExecutionFactories,
-        readiness: Box<dyn PreparedOnlineReadiness>,
-    ) -> Result<(NativeReport, ReportPairRunFacts)> {
-        let report_facts = native_plan_report_facts(&self.plan)?;
-        let native_report = execute_prepared_native_plan_uncommitted_with_execution_factories(
-            self.plan,
-            execution_factories,
-            product_registry,
-            readiness,
-        )?;
-        Ok((native_report, report_facts))
-    }
-}
-
 fn native_plan_report_facts(plan: &NativeRunSpec) -> Result<ReportPairRunFacts> {
     let NativeDatasetPlan::Graph(graph) = &plan.dataset else {
         return Ok(ReportPairRunFacts::new());
@@ -1193,35 +1255,45 @@ fn native_plan_report_facts(plan: &NativeRunSpec) -> Result<ReportPairRunFacts> 
     Ok(ReportPairRunFacts::new().with_graph(graph))
 }
 
-struct PreparedOnlineOperation {
-    workload_id: &'static str,
-    harness: Box<dyn PreparedOnlineHarness>,
-    product_registry: Arc<aiperf::extensions::AiperfRegistry>,
+/// Prepared native (http/grpc, scheduled/graph/static-accuracy) operation.
+///
+/// The workload resolved the transport's turn-placement factory and readiness
+/// policy at prepare time; execution is transport-blind from here — the same
+/// entry point drives scheduled turns (through the selected request executor)
+/// and graph traces (through the shared graph placement with the plan's
+/// `transport_kind` arm).
+struct PreparedNativeOperation {
+    plan: NativeRunSpec,
+    request_executor: Arc<dyn RequestExecutorFactory>,
     execution_factories: RunnerExecutionFactories,
-    readiness: Box<dyn PreparedOnlineReadiness>,
+    product_registry: Arc<crate::extensions::AIPerfRegistry>,
+    readiness: Option<Box<dyn PreparedOnlineReadiness>>,
+    report_facts: ReportPairRunFacts,
+    provenance: BTreeMap<String, String>,
 }
 
-impl fmt::Debug for PreparedOnlineOperation {
+impl fmt::Debug for PreparedNativeOperation {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("PreparedOnlineOperation")
-            .field("workload_id", &self.workload_id)
-            .field("harness", &self.harness)
+            .debug_struct("PreparedNativeOperation")
+            .field("benchmark_id", &self.plan.benchmark_id)
             .finish_non_exhaustive()
     }
 }
 
-impl PreparedRunnerOperation for PreparedOnlineOperation {
+impl PreparedRunnerOperation for PreparedNativeOperation {
     fn execute(self: Box<Self>) -> Result<PreparedRunOutcome> {
-        let (native_report, report_facts) = self.harness.execute(
-            self.product_registry.as_ref(),
+        let native_report = execute_prepared_native_plan_uncommitted_selected(
+            self.plan,
+            self.request_executor,
             &self.execution_factories,
+            self.product_registry.as_ref(),
             self.readiness,
         )?;
         Ok(PreparedRunOutcome {
             native_report,
-            report_facts,
-            provenance: BTreeMap::new(),
+            report_facts: self.report_facts,
+            provenance: self.provenance,
             report_commit: None,
         })
     }
@@ -1243,7 +1315,7 @@ mod tests {
         async fn spawn(
             &self,
             _process: &StaticAccuracyEvaluatorProcessSpec,
-        ) -> Result<Box<dyn aiperf::accuracy_core::AccuracyEvaluator>> {
+        ) -> Result<Box<dyn crate::accuracy_core::AccuracyEvaluator>> {
             panic!("config lowering must retain, not invoke, the selected evaluator factory")
         }
     }
@@ -1260,7 +1332,7 @@ mod tests {
             url: &str,
             _cache_key: &str,
             _bearer_token: Option<&str>,
-        ) -> aiperf::dataset::Result<Bytes> {
+        ) -> crate::dataset::Result<Bytes> {
             self.urls.lock().unwrap().push(url.to_owned());
             if url.contains("/api/models/") {
                 return Ok(Bytes::from(
@@ -1270,7 +1342,7 @@ mod tests {
             if url.ends_with("/tokenizer.json") {
                 return Ok(Bytes::from_static(br#"{"version":"1.0"}"#));
             }
-            Err(aiperf::dataset::DatasetError::Validation(
+            Err(crate::dataset::DatasetError::Validation(
                 "optional fixture file is absent".into(),
             ))
         }
@@ -1340,13 +1412,13 @@ mod tests {
     }
 
     #[test]
-    fn registration_adds_only_real_online_pairs() {
-        let mut builder = RunnerRegistryBuilder::new();
-        // The builder intentionally rejects dangling pairs at freeze time;
-        // registration itself proves the function has no hidden mode switch.
-        register_http_pairs(&mut builder).unwrap();
-        register_http_static_accuracy_pair(&mut builder).unwrap();
-        register_http_scheduled_pair(&mut builder).unwrap();
+    fn registration_adds_only_real_online_workloads() {
+        let mut registry = crate::extensions::AIPerfRegistry::builtin().unwrap();
+        // Registration proves the executable scheduled/graph/static-accuracy
+        // workloads compose into the one unified registry without a per-transport
+        // pair object; any workload runs over any transport.
+        register_online_workloads(&mut registry).unwrap();
+        register_http_static_accuracy_workload(&mut registry).unwrap();
     }
 
     #[test]

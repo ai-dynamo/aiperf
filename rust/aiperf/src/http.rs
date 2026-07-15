@@ -472,6 +472,40 @@ pub trait HttpRequestDispatcher: RequestSink<HttpRequest> {
     ) -> Result<HttpDispatchResult>;
 }
 
+/// Transport-neutral `PreparedTurn` dispatch seam shared by the graph path.
+///
+/// This is deliberately distinct from [`HttpRequestDispatcher`] (the scheduled
+/// path, keyed on [`HttpRequest`]). Both [`TransportSink`] and the native gRPC
+/// sink already expose an identical inherent `dispatch_collect(turn:
+/// PreparedTurn, …)`; this object-safe trait unifies them so a graph sink can
+/// hold its transport as `Rc<dyn Dispatcher>` and later dispatch a graph dataset
+/// over gRPC without branching on a concrete backend. It is `#[async_trait(?Send)]`
+/// because graph workers own their sink in `Rc`/`RefCell` on a thread-local
+/// `LocalSet`.
+///
+/// Extension point: a future non-HTTP/non-gRPC `PreparedTurn` transport
+/// implements this trait and nothing in the graph runtime changes.
+#[async_trait(?Send)]
+pub trait Dispatcher {
+    /// Execute one owned scheduler-free command, retaining its terminal
+    /// response facts, and invoke `on_first_token` once with TTFT in nanoseconds.
+    async fn dispatch_collect(
+        &self,
+        turn: PreparedTurn,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+    ) -> Result<DispatchResult>;
+
+    /// Resolve report dimensions using the same endpoint selection as dispatch.
+    fn inference_dimensions(&self, request: &HttpRequest) -> InferenceDimensions;
+
+    /// Whether the transport can publish live response frames before terminal
+    /// completion.
+    fn supports_response_streaming(&self) -> bool {
+        false
+    }
+}
+
 impl Dispatchable for HttpRequest {
     fn uuid(&self) -> Uuid {
         self.uuid
@@ -1109,6 +1143,26 @@ impl HttpRequestDispatcher for TransportSink {
 }
 
 #[async_trait(?Send)]
+impl Dispatcher for TransportSink {
+    async fn dispatch_collect(
+        &self,
+        turn: PreparedTurn,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+    ) -> Result<DispatchResult> {
+        TransportSink::dispatch_collect(self, turn, observer, on_first_token).await
+    }
+
+    fn inference_dimensions(&self, request: &HttpRequest) -> InferenceDimensions {
+        <Self as HttpRequestDispatcher>::inference_dimensions(self, request)
+    }
+
+    fn supports_response_streaming(&self) -> bool {
+        true
+    }
+}
+
+#[async_trait(?Send)]
 impl TurnDispatcher for TransportSink {
     fn supports_response_streaming(&self) -> bool {
         true
@@ -1499,6 +1553,14 @@ mod tests {
 
     use super::*;
     use crate::clock::RealClock;
+
+    #[test]
+    fn transport_and_grpc_sinks_are_dispatchers() {
+        fn assert_dispatcher<T: Dispatcher>() {}
+        assert_dispatcher::<TransportSink>();
+        assert_dispatcher::<crate::grpc::GrpcTransportSink>();
+        fn _takes_dyn(_: &dyn Dispatcher) {}
+    }
 
     #[derive(Default)]
     struct RecordingObserver {

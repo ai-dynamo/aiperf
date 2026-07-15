@@ -6,11 +6,11 @@
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 
-use aiperf_runner::protocol_v2::{
+use aiperf::runner_protocol::protocol_v2::{
     RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2, RunnerEnvelopeV2,
     RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
 };
-use aiperf_runner::redaction::redact_diagnostic;
+use aiperf::runner_protocol::redaction::redact_diagnostic;
 use aiperf_runner::{RunnerApplication, current_distribution_id};
 use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
@@ -91,7 +91,7 @@ fn main() {
     if std::env::var(aiperf::cellular::partition::CELL_ID_ENV).is_err()
         && let Ok(envelope) = serde_json::from_slice::<Value>(&input)
         && envelope.pointer("/operation").and_then(Value::as_str) == Some("execute")
-        && aiperf_runner::cell_launcher::cell_count_from_envelope(&envelope) > 1
+        && aiperf::runner_protocol::cell_launcher::cell_count_from_envelope(&envelope) > 1
     {
         run_controller(&envelope);
     }
@@ -123,17 +123,17 @@ fn run_cell() -> ! {
             std::process::exit(2);
         }
     };
-    let envelope_bytes = match runtime.block_on(aiperf_runner::cellular_cell::fetch_cell_envelope())
-    {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            tracing::error!(
-                error = format!("{error:#}"),
-                "cell failed to fetch its envelope"
-            );
-            std::process::exit(2);
-        }
-    };
+    let envelope_bytes =
+        match runtime.block_on(aiperf::runner_protocol::cellular_cell::fetch_cell_envelope()) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                tracing::error!(
+                    error = format!("{error:#}"),
+                    "cell failed to fetch its envelope"
+                );
+                std::process::exit(2);
+            }
+        };
     drop(runtime);
     configure_dynosim_process_defaults(&envelope_bytes);
     let application = compose_stock_application();
@@ -178,14 +178,24 @@ fn run_controller(envelope: &Value) -> ! {
         .and_then(Value::as_str)
         .unwrap_or_default();
     let report_path = std::path::Path::new(artifact_dir).join("native-v2.json");
-    let cell_count = aiperf_runner::cell_launcher::cell_count_from_envelope(envelope);
+    let cell_count = aiperf::runner_protocol::cell_launcher::cell_count_from_envelope(envelope);
+    // Compose the stock application so the merged-report export plane resolves the
+    // built-in exporter sinks from the one unified `AIPerfRegistry`, exactly as the
+    // single-process coordinator path does via `product_registry().exporters()`.
+    let application = compose_stock_application();
+    let exporters = application.product_registry().exporters();
     // Mirror run_v2's catch_unwind (see `handle_v2`): the controller runs the records
     // merge, native-v2 serialization, and the best-effort export plane inline in
     // run_cellular; a panic in any of them would otherwise unwind past this writer and
     // abort the controller (exit 101) with no envelope, so Python would see a crashed
     // subprocess instead of a typed execution failure.
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        aiperf_runner::cellular_controller::run_cellular(envelope, cell_count, &report_path)
+        aiperf::runner_protocol::cellular_controller::run_cellular(
+            envelope,
+            cell_count,
+            &report_path,
+            exporters,
+        )
     }));
     match outcome {
         Ok(Ok(outcome)) => {

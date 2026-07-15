@@ -633,3 +633,41 @@ This design is complete when:
 
 The exact runner catalog — not library presence or this design record — is the authority for what
 the selected runner can execute.
+
+---
+
+## Addendum — 2026-07-14
+
+Superseded by `2026-07-14-unified-execution-substrate-design.md` (Stage 1, built): the
+**`RunnerPairFactory` mechanism** this spec referenced — and the
+**`validate_descriptor_compatibility` predicate together with the `supported_pairs`
+inventory** it derived — are **removed from the tree**. This addendum revises the
+composition *mechanism* only; the completion criteria in §14 and the product-reachability
+matrix (scheduled/graph over http/grpc, dynosim behind the feature) are unchanged.
+
+What changed, and why:
+
+- **No pair object, no compatibility predicate, no pair inventory.** There is no
+  `RunnerPairFactory`, no `pairs: BTreeMap<(transport_id, workload_id), …>` map, no
+  `register_pair`, no `validate_descriptor_compatibility`, and no `supported_pairs`
+  catalog field. `git grep` for any of these in `rust/runner/src` returns nothing.
+- **Two independent registries, no gate.** The runner now exposes a transport registry
+  and a workload registry as **orthogonal axes with no admission gate between them**:
+  every workload runs over every transport. `prepare` / `validate_run` moved onto the
+  workload factory (`RunnerWorkloadFactory`), which resolves the transport's
+  dispatcher/placement from `RunnerExecutionFactories` keyed by `transport_id` and is
+  otherwise transport-blind. Selection is map lookups by id — never a `match` on
+  transport/workload strings — so this spec's Invariant (no runtime string switch) is
+  **preserved**; only the reified-cell mechanism is gone.
+- **Genuinely transport-specific limits surface at point-of-use, not as admission.**
+  The earlier design admitted the transport × workload cross-product up-front via the
+  descriptor predicate. With the flatten, there is no up-front cross-product admission at
+  all; any constraint a transport genuinely cannot satisfy (e.g. a token-native gRPC body
+  for an endpoint that does not stream) surfaces where it is exercised, not as a
+  registry-time compatibility rejection.
+- **`grpc + graph` falls out for free.** The visible symptom this unlocks — a `dag_jsonl`
+  graph dataset dispatching over Tonic — needs no hand-added cell; it is proven by
+  `rust/runner/tests/test_graph_grpc.rs`.
+
+The body above is retained as the historical record of the pair-factory design; where it
+and this addendum conflict, the addendum is authoritative.
