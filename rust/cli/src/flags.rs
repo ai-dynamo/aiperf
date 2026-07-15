@@ -89,6 +89,10 @@ pub struct ProfileFlags {
     #[arg(long = "sweep-type", default_value = "grid")]
     pub sweep_type: String,
 
+    /// Suppress the live sweep summary table (`--no-sweep-table`).
+    #[arg(long = "no-sweep-table", default_value_t = false)]
+    pub no_sweep_table: bool,
+
     /// Mean turns per session for multi-turn (`--session-turns-mean`).
     #[arg(long = "session-turns-mean")]
     pub session_turns_mean: Option<f64>,

@@ -1,42 +1,56 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The native `aiperf profile` command (single run).
+//! The native `aiperf profile` command (single run + sweeps).
 //!
-//! Flow: parse flags → load the native [`BenchmarkRun`] → serialize the
-//! protocol-v2 execute envelope → spawn the unchanged `aiperf-runner` once →
-//! map its terminal outcome to a process exit code. A YAML `--config` is not yet
-//! ported, so it is delegated to the Python frontend; a multi-run sweep is
-//! rejected with a clear error by the loader.
+//! Flow: parse flags → expand any comma-list sweep → for each cell load the
+//! native [`BenchmarkRun`], serialize the protocol-v2 execute envelope, spawn the
+//! unchanged `aiperf-runner`, and map its terminal outcome. A single run is a
+//! degenerate one-cell sweep. YAML `--config` currently takes the single-run path.
 
 use crate::model::{Operation, RunnerRequest};
+use crate::sweep::artifact_dir::IterationOrder;
+use crate::sweep::{self, run as sweep_run};
 use crate::{execute, flags::ProfileFlags, load, runner_install, yaml};
 
 /// Run `aiperf profile <args>` natively. Returns the process exit code.
 pub fn run(args: &[String]) -> anyhow::Result<i32> {
     let flags = match ProfileFlags::parse_from_args(args) {
         Ok(flags) => flags,
-        // clap already rendered help/usage to stderr; propagate its exit code.
         Err(err) => {
             err.print().ok();
             return Ok(err.exit_code());
         }
     };
 
-    // A YAML `--config` uses the native YAML surface; otherwise the flag surface.
-    // Both funnel through `load::build` into the one native run.
-    let run = match &flags.config_file {
-        Some(path) => yaml::resolve(path, flags.artifact_dir.clone())?,
-        None => load::resolve(&flags)?,
+    // YAML `--config` uses the native YAML surface (single run for now).
+    if let Some(path) = &flags.config_file {
+        let run = yaml::resolve(path, flags.artifact_dir.clone())?;
+        return run_single(run);
+    }
+
+    let sweep_type = match flags.sweep_type.as_str() {
+        "grid" => sweep::SweepType::Grid,
+        "zip" => sweep::SweepType::Zip,
+        other => anyhow::bail!("unknown --sweep-type {other:?} (grid/zip)"),
     };
+    let expansion = sweep::expand(&flags, sweep_type)?;
+    if !expansion.is_sweep {
+        return run_single(load::resolve(&flags)?);
+    }
+    run_sweep(&flags, &expansion)
+}
+
+/// Execute one built run through the runner and map its terminal outcome, echoing
+/// the runner's console summary to stdout on success.
+fn run_single(run: crate::model::BenchmarkRun) -> anyhow::Result<i32> {
     let request = RunnerRequest::new(Operation::Execute, run);
     let payload = serde_json::to_vec(&request)
         .map_err(|e| anyhow::anyhow!("failed to serialize the runner request: {e}"))?;
-
     let runner = runner_install::resolve()?;
     let terminal = execute::run_once(&runner, &payload)?;
-
     if terminal.success {
         if let Some(path) = &terminal.report_path {
+            crate::render::print_console_summary(path);
             tracing::info!(report = %path, "run complete");
         }
         Ok(0)
@@ -51,5 +65,59 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         } else {
             terminal.returncode
         })
+    }
+}
+
+/// Execute a sweep: run every `(variation, trial)` cell in turn, then render the
+/// sweep table and write the aggregate artifacts.
+fn run_sweep(flags: &ProfileFlags, expansion: &sweep::Expansion) -> anyhow::Result<i32> {
+    let sweep_id = uuid::Uuid::new_v4().simple().to_string();
+    let base_seed = flags.random_seed.unwrap_or(sweep_run::DEFAULT_SWEEP_SEED);
+    let cells = sweep_run::plan_cells(
+        flags,
+        expansion,
+        1, // trials; multi-run trial repetition is a follow-up
+        IterationOrder::Repeated,
+        &sweep_id,
+        base_seed,
+        load::resolve,
+    )?;
+
+    let runner = runner_install::resolve()?;
+    eprintln!("aiperf: sweep of {} runs", cells.len());
+    let mut outcomes = Vec::new();
+    for (n, cell) in cells.iter().enumerate() {
+        eprintln!(
+            "aiperf: [{}/{}] {} -> {}",
+            n + 1,
+            cells.len(),
+            cell.label,
+            cell.run.artifact_dir.display()
+        );
+        let request = RunnerRequest::new(Operation::Execute, cell.run.clone());
+        let payload = serde_json::to_vec(&request)?;
+        let terminal = execute::run_once(&runner, &payload)?;
+        outcomes.push(sweep::aggregate::CellOutcome {
+            label: cell.label.clone(),
+            values: cell.run.variation.clone(),
+            artifact_dir: cell.run.artifact_dir.clone(),
+            report_path: terminal.report_path.clone(),
+            success: terminal.success,
+        });
+        if !terminal.success {
+            eprintln!(
+                "aiperf: cell failed: {}",
+                terminal.error.as_deref().unwrap_or("(no detail)")
+            );
+        }
+    }
+
+    sweep::aggregate::finish(flags, &outcomes)?;
+    let failed = outcomes.iter().filter(|o| !o.success).count();
+    if failed > 0 {
+        eprintln!("aiperf: {failed}/{} sweep cells failed", outcomes.len());
+        Ok(1)
+    } else {
+        Ok(0)
     }
 }

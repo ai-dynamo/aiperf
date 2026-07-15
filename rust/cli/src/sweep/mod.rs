@@ -18,6 +18,7 @@
 
 use crate::flags::ProfileFlags;
 
+pub mod aggregate;
 pub mod artifact_dir;
 pub mod run;
 

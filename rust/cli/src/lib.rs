@@ -19,6 +19,7 @@ pub mod flags;
 pub mod load;
 pub mod model;
 pub mod profile;
+pub mod render;
 pub mod runner_install;
 pub mod sweep;
 pub mod yaml;
