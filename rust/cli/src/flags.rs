@@ -51,8 +51,14 @@ pub struct ProfileFlags {
     pub tokenizer_trust_remote_code: bool,
 
     /// Number of conversations to generate (`--num-conversations`); comma ⇒ sweep.
-    #[arg(long = "num-conversations")]
+    #[arg(long = "num-conversations", visible_alias = "conversation-num")]
     pub num_conversations: Option<String>,
+
+    /// Explicit synthetic dataset entry count (`--num-dataset-entries` /
+    /// `--num-prompts`); highest precedence for the dataset size (over
+    /// `--num-conversations` and `--request-count`).
+    #[arg(long = "num-dataset-entries", visible_alias = "num-prompts")]
+    pub num_dataset_entries: Option<String>,
 
     /// Mean turns per session for multi-turn (`--session-turns-mean`).
     #[arg(long = "session-turns-mean")]

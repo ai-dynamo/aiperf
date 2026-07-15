@@ -231,6 +231,11 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         parse_single::<f64>("--benchmark-duration", flags.benchmark_duration.as_deref())?;
     let num_conversations =
         parse_single::<u32>("--num-conversations", flags.num_conversations.as_deref())?;
+    // Explicit dataset entry count wins over conversations/request-count for the
+    // synthetic dataset size (Python `_resolve_entries`), but does NOT set the
+    // profiling-phase session bound.
+    let num_dataset_entries =
+        parse_single::<u32>("--num-dataset-entries", flags.num_dataset_entries.as_deref())?;
     // Fixed-schedule replays each timestamped entry once, so the request bound is
     // the schedule length (the input file's non-empty line count).
     let (fixed_schedule, request_count) = if flags.fixed_schedule {
@@ -377,11 +382,13 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
             .dataset_sampling_strategy
             .clone()
             .unwrap_or_else(|| "sequential".to_string()),
-        entries: num_conversations
+        entries: num_dataset_entries
+            .or(num_conversations)
             .or(num_sessions)
             .or(request_count.map(|n| n as u32))
             .unwrap_or(DEFAULT_ENTRIES),
-        dataset_entries: num_conversations
+        dataset_entries: num_dataset_entries
+            .or(num_conversations)
             .or(num_sessions)
             .or(request_count.map(|n| n as u32)),
         sessions: num_conversations.or(num_sessions).map(u64::from),
