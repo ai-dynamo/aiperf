@@ -1,0 +1,21 @@
+# Standalone (own [workspace]) so monoio/io-uring stay out of the main workspace.
+[workspace]
+
+[package]
+name = "fastmock-uring"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "fastmock-uring"
+path = "src/main.rs"
+
+[dependencies]
+monoio = { version = "0.2", features = ["iouring"] }
+bytes = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
