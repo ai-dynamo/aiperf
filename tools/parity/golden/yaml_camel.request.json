@@ -2,7 +2,7 @@
   "operation": "execute",
   "protocol_version": 2,
   "run": {
-    "artifact_dir": "/tmp/x",
+    "artifact_dir": "/tmp/aiperf-parity/yaml_camel",
     "benchmark_id": "parity-benchmark",
     "cfg": {
       "accuracy": null,
@@ -13,39 +13,48 @@
       },
       "datasets": [
         {
-          "entries": 4,
+          "entries": 100,
+          "prefix_prompts": {
+            "length": 8,
+            "pool_size": 4
+          },
           "prompts": {
             "batch_size": 1,
+            "block_size": 32,
             "isl": {
-              "mean": 550.0,
-              "stddev": 0.0
+              "value": 256.0
+            },
+            "osl": {
+              "value": 64.0
             }
           },
           "sampling": "sequential",
-          "turn_delay_ratio": 1.0,
+          "turn_delay_ratio": 0.5,
           "type": "synthetic"
         }
       ],
       "endpoint": {
+        "api_key": "k",
         "connection_limit": 2500,
-        "connection_reuse": "pooled",
+        "connection_reuse": "never",
         "download_video_content": false,
         "extra": {},
         "headers": {},
         "http2": false,
         "keepalive_timeout": 300.0,
+        "session_header": "x-s",
         "ssl_verify": true,
-        "streaming": false,
+        "streaming": true,
         "timeout_seconds": 21600.0,
         "type": "chat",
         "urls": [
           "http://127.0.0.1:8000"
         ],
         "use_legacy_max_tokens": false,
-        "use_server_token_count": false,
-        "wait_for_model_interval": 5.0,
-        "wait_for_model_mode": "inference",
-        "wait_for_model_timeout": 0.0
+        "use_server_token_count": true,
+        "wait_for_model_interval": 3.0,
+        "wait_for_model_mode": "both",
+        "wait_for_model_timeout": 10.0
       },
       "endpoint_profiles": {},
       "export": {
@@ -561,32 +570,43 @@
             "benchmark_id": "parity-benchmark",
             "input_config": {
               "artifacts": {
-                "auto_plot": false,
-                "dir": "/tmp/x",
-                "plot_required": false
+                "dir": "/tmp/aiperf-parity/yaml_camel",
+                "slice_duration": 5.0
               },
               "datasets": [
                 {
-                  "entries": 4,
-                  "name": "main",
+                  "name": "default",
+                  "prefix_prompts": {
+                    "length": 8,
+                    "pool_size": 4
+                  },
                   "prompts": {
+                    "block_size": 32,
                     "isl": {
-                      "mean": 550.0
+                      "value": 256.0
+                    },
+                    "osl": {
+                      "value": 64.0
                     }
                   },
+                  "turn_delay_ratio": 0.5,
                   "type": "synthetic"
                 }
               ],
               "endpoint": {
+                "api_key": "<redacted>",
+                "connection_reuse": "never",
+                "session_header": "x-s",
+                "streaming": true,
                 "type": "chat",
                 "urls": [
                   "http://127.0.0.1:8000"
-                ]
+                ],
+                "use_server_token_count": true,
+                "wait_for_model_interval": 3.0,
+                "wait_for_model_mode": "both",
+                "wait_for_model_timeout": 10.0
               },
-              "gpu_telemetry": {
-                "enabled": true
-              },
-              "mlflow": {},
               "models": {
                 "items": [
                   {
@@ -595,37 +615,44 @@
                 ]
               },
               "network_latency": {
-                "enabled": false
+                "enabled": true,
+                "mean_ms": 4.0
               },
-              "otel": {},
               "phases": [
                 {
-                  "concurrency": 4,
                   "concurrency_ramp": {
-                    "duration": 10.0
+                    "duration": 4.0
                   },
+                  "duration": 20.0,
                   "name": "profiling",
-                  "requests": 4,
-                  "type": "concurrency"
+                  "rate": 8.0,
+                  "rate_ramp": {
+                    "duration": 2.0
+                  },
+                  "smoothness": 1.5,
+                  "type": "gamma"
                 }
               ],
               "runtime": {
-                "ui": "none"
+                "ui": "none",
+                "workers": 3,
+                "workers_min": 1
               },
               "server_metrics": {
-                "enabled": true,
-                "formats": [
-                  "json",
-                  "csv"
-                ],
-                "urls": []
+                "urls": [
+                  "http://sm:9090"
+                ]
               },
-              "tokenizer": {},
-              "wandb": {}
+              "tokenizer": {
+                "apply_chat_template": true,
+                "name": "Qwen/Qwen3-0.6B",
+                "trust_remote_code": true
+              }
             },
             "run_info": {
               "benchmark_id": "parity-benchmark",
-              "cli_command": "aiperf 'tools/parity/fixtures/ramp.args'",
+              "cli_command": "aiperf '/tmp/regen.args'",
+              "random_seed": 99,
               "trial": 0
             }
           },
@@ -801,32 +828,43 @@
           "csv": true,
           "input_config": {
             "artifacts": {
-              "auto_plot": false,
-              "dir": "/tmp/x",
-              "plot_required": false
+              "dir": "/tmp/aiperf-parity/yaml_camel",
+              "slice_duration": 5.0
             },
             "datasets": [
               {
-                "entries": 4,
-                "name": "main",
+                "name": "default",
+                "prefix_prompts": {
+                  "length": 8,
+                  "pool_size": 4
+                },
                 "prompts": {
+                  "block_size": 32,
                   "isl": {
-                    "mean": 550.0
+                    "value": 256.0
+                  },
+                  "osl": {
+                    "value": 64.0
                   }
                 },
+                "turn_delay_ratio": 0.5,
                 "type": "synthetic"
               }
             ],
             "endpoint": {
+              "api_key": "<redacted>",
+              "connection_reuse": "never",
+              "session_header": "x-s",
+              "streaming": true,
               "type": "chat",
               "urls": [
                 "http://127.0.0.1:8000"
-              ]
+              ],
+              "use_server_token_count": true,
+              "wait_for_model_interval": 3.0,
+              "wait_for_model_mode": "both",
+              "wait_for_model_timeout": 10.0
             },
-            "gpu_telemetry": {
-              "enabled": true
-            },
-            "mlflow": {},
             "models": {
               "items": [
                 {
@@ -835,35 +873,291 @@
               ]
             },
             "network_latency": {
-              "enabled": false
+              "enabled": true,
+              "mean_ms": 4.0
             },
-            "otel": {},
             "phases": [
               {
-                "concurrency": 4,
                 "concurrency_ramp": {
-                  "duration": 10.0
+                  "duration": 4.0
                 },
+                "duration": 20.0,
                 "name": "profiling",
-                "requests": 4,
-                "type": "concurrency"
+                "rate": 8.0,
+                "rate_ramp": {
+                  "duration": 2.0
+                },
+                "smoothness": 1.5,
+                "type": "gamma"
               }
             ],
             "runtime": {
-              "ui": "none"
+              "ui": "none",
+              "workers": 3,
+              "workers_min": 1
             },
             "server_metrics": {
-              "enabled": true,
-              "formats": [
-                "json",
-                "csv"
-              ],
-              "urls": []
+              "urls": [
+                "http://sm:9090"
+              ]
             },
-            "tokenizer": {},
-            "wandb": {}
+            "tokenizer": {
+              "apply_chat_template": true,
+              "name": "Qwen/Qwen3-0.6B",
+              "trust_remote_code": true
+            }
           },
           "json": true
+        },
+        "timeslice": {
+          "csv": true,
+          "filtered_tags": [
+            "accuracy.correct",
+            "accuracy.unparsed",
+            "credit_drop_latency",
+            "max_response_timestamp",
+            "min_request_timestamp",
+            "overall_thinking_efficiency",
+            "requested_osl",
+            "stream_prefill_latency",
+            "stream_setup_latency",
+            "thinking_efficiency"
+          ],
+          "header_map": {
+            "accuracy.correct": "Accuracy Correct",
+            "accuracy.unparsed": "Accuracy Unparsed",
+            "audio_duration": "Audio Duration",
+            "benchmark_duration": "Benchmark Duration",
+            "completed_request_count": "Completed Requests (Success + Error)",
+            "credit_drop_latency": "Credit Drop Latency",
+            "e2e_output_token_throughput": "E2E Output Token Throughput",
+            "energy_per_user": "Energy per User",
+            "error_isl": "Error Input Sequence Length",
+            "error_request_count": "Error Request Count",
+            "good_request_count": "Good Request Count",
+            "good_request_fraction": "GoodRequestFraction",
+            "goodput": "Goodput",
+            "http_req_blocked": "HTTP Blocked",
+            "http_req_chunks_received": "HTTP Chunks Received",
+            "http_req_chunks_sent": "HTTP Chunks Sent",
+            "http_req_connecting": "HTTP Connecting",
+            "http_req_connection_overhead": "HTTP Connection Overhead",
+            "http_req_connection_reused": "HTTP Connection Reused",
+            "http_req_data_received": "HTTP Data Received",
+            "http_req_data_sent": "HTTP Data Sent",
+            "http_req_dns_lookup": "HTTP DNS Lookup",
+            "http_req_duration": "HTTP Duration (excl. conn)",
+            "http_req_receiving": "HTTP Receiving",
+            "http_req_sending": "HTTP Sending",
+            "http_req_total": "HTTP Total Time",
+            "http_req_waiting": "HTTP Waiting (TTFB)",
+            "image_latency": "Image Latency",
+            "image_throughput": "Image Throughput",
+            "input_sequence_length": "Input Sequence Length",
+            "input_token_throughput": "Input Token Throughput",
+            "inter_chunk_latency": "Inter Chunk Latency",
+            "inter_token_latency": "Inter Token Latency",
+            "max_response_timestamp": "Maximum Response Timestamp",
+            "min_request_timestamp": "Minimum Request Timestamp",
+            "network_adjusted_request_latency": "Network-Adjusted Request Latency",
+            "network_adjusted_time_to_first_output_token": "Network-Adjusted Time to First Output Token",
+            "network_adjusted_time_to_first_token": "Network-Adjusted Time to First Token",
+            "network_rtt": "Network RTT",
+            "num_images": "Number of Images",
+            "osl_mismatch_count": "OSL Mismatch Count",
+            "osl_mismatch_diff_pct": "OSL Mismatch Diff",
+            "output_sequence_length": "Output Sequence Length",
+            "output_token_count": "Output Token Count",
+            "output_token_throughput": "Output Token Throughput",
+            "output_token_throughput_per_user": "Output Token Throughput Per User",
+            "output_tokens_per_joule": "Output Tokens per Joule",
+            "overall_thinking_efficiency": "Overall Thinking Efficiency",
+            "overall_usage_prompt_cache_read_pct": "Overall Usage Prompt Cache Read %",
+            "prefill_throughput_per_user": "Prefill Throughput Per User",
+            "reasoning_token_count": "Reasoning Token Count",
+            "request_count": "Request Count",
+            "request_error_rate": "Request Error Rate",
+            "request_latency": "Request Latency",
+            "request_throughput": "Request Throughput",
+            "requested_osl": "Requested OSL",
+            "rtfx": "Inverse Real-Time Factor (RTFx)",
+            "stream_prefill_latency": "Stream Prefill Latency",
+            "stream_setup_latency": "Stream Setup Latency",
+            "thinking_efficiency": "Thinking Efficiency",
+            "time_to_first_output_token": "Time to First Output Token",
+            "time_to_first_token": "Time to First Token",
+            "time_to_second_token": "Time to Second Token",
+            "total_error_isl": "Total Error Input Sequence Length",
+            "total_gpu_energy": "Total GPU Energy",
+            "total_gpu_power": "Total GPU Power",
+            "total_isl": "Total Input Sequence Length",
+            "total_osl": "Total Output Sequence Length",
+            "total_output_tokens": "Total Output Tokens",
+            "total_reasoning_tokens": "Total Reasoning Tokens",
+            "total_token_throughput": "Total Token Throughput",
+            "total_usage_accepted_prediction_tokens": "Total Usage Accepted Prediction Tokens",
+            "total_usage_completion_audio_tokens": "Total Usage Completion Audio Tokens",
+            "total_usage_completion_tokens": "Total Usage Completion Tokens",
+            "total_usage_prompt_audio_seconds": "Total Usage Prompt Audio Seconds",
+            "total_usage_prompt_audio_tokens": "Total Usage Prompt Audio Tokens",
+            "total_usage_prompt_cache_miss_tokens": "Total Usage Prompt Cache Miss Tokens",
+            "total_usage_prompt_cache_read_tokens": "Total Usage Prompt Cache Read Tokens",
+            "total_usage_prompt_cache_write_tokens": "Total Usage Prompt Cache Write Tokens",
+            "total_usage_prompt_tokens": "Total Usage Prompt Tokens",
+            "total_usage_reasoning_tokens": "Total Usage Reasoning Tokens",
+            "total_usage_rejected_prediction_tokens": "Total Usage Rejected Prediction Tokens",
+            "total_usage_tool_use_prompt_tokens": "Total Usage Tool Use Prompt Tokens",
+            "total_usage_total_tokens": "Total Usage Total Tokens",
+            "usage_accepted_prediction_tokens": "Usage Accepted Prediction Tokens",
+            "usage_completion_audio_tokens": "Usage Completion Audio Tokens",
+            "usage_completion_tokens": "Usage Completion Tokens",
+            "usage_completion_tokens_diff_pct": "Usage Completion Diff",
+            "usage_discrepancy_count": "Usage Discrepancy Count",
+            "usage_prompt_audio_seconds": "Usage Prompt Audio Seconds",
+            "usage_prompt_audio_tokens": "Usage Prompt Audio Tokens",
+            "usage_prompt_cache_miss_tokens": "Usage Prompt Cache Miss Tokens",
+            "usage_prompt_cache_read_tokens": "Usage Prompt Cache Read Tokens",
+            "usage_prompt_cache_write_tokens": "Usage Prompt Cache Write Tokens",
+            "usage_prompt_tokens": "Usage Prompt Tokens",
+            "usage_prompt_tokens_diff_pct": "Usage Prompt Diff",
+            "usage_reasoning_tokens": "Usage Reasoning Tokens",
+            "usage_reasoning_tokens_diff_pct": "Usage Reasoning Diff",
+            "usage_rejected_prediction_tokens": "Usage Rejected Prediction Tokens",
+            "usage_tool_use_prompt_tokens": "Usage Tool Use Prompt Tokens",
+            "usage_total_tokens": "Usage Total Tokens",
+            "video_inference_time": "Video Inference Time",
+            "video_peak_memory": "Video Peak Memory"
+          },
+          "input_config": {
+            "artifacts": {
+              "dir": "/tmp/aiperf-parity/yaml_camel",
+              "slice_duration": 5.0
+            },
+            "datasets": [
+              {
+                "name": "default",
+                "prefix_prompts": {
+                  "length": 8,
+                  "pool_size": 4
+                },
+                "prompts": {
+                  "block_size": 32,
+                  "isl": {
+                    "value": 256.0
+                  },
+                  "osl": {
+                    "value": 64.0
+                  }
+                },
+                "turn_delay_ratio": 0.5,
+                "type": "synthetic"
+              }
+            ],
+            "endpoint": {
+              "api_key": "<redacted>",
+              "connection_reuse": "never",
+              "session_header": "x-s",
+              "streaming": true,
+              "type": "chat",
+              "urls": [
+                "http://127.0.0.1:8000"
+              ],
+              "use_server_token_count": true,
+              "wait_for_model_interval": 3.0,
+              "wait_for_model_mode": "both",
+              "wait_for_model_timeout": 10.0
+            },
+            "models": {
+              "items": [
+                {
+                  "name": "Qwen/Qwen3-0.6B"
+                }
+              ]
+            },
+            "network_latency": {
+              "enabled": true,
+              "mean_ms": 4.0
+            },
+            "phases": [
+              {
+                "concurrency_ramp": {
+                  "duration": 4.0
+                },
+                "duration": 20.0,
+                "name": "profiling",
+                "rate": 8.0,
+                "rate_ramp": {
+                  "duration": 2.0
+                },
+                "smoothness": 1.5,
+                "type": "gamma"
+              }
+            ],
+            "runtime": {
+              "ui": "none",
+              "workers": 3,
+              "workers_min": 1
+            },
+            "server_metrics": {
+              "urls": [
+                "http://sm:9090"
+              ]
+            },
+            "tokenizer": {
+              "apply_chat_template": true,
+              "name": "Qwen/Qwen3-0.6B",
+              "trust_remote_code": true
+            }
+          },
+          "json": true,
+          "scalar_tags": [
+            "accuracy.correct",
+            "accuracy.unparsed",
+            "benchmark_duration",
+            "completed_request_count",
+            "energy_per_user",
+            "error_request_count",
+            "good_request_count",
+            "good_request_fraction",
+            "goodput",
+            "input_token_throughput",
+            "max_response_timestamp",
+            "min_request_timestamp",
+            "network_adjusted_request_latency",
+            "network_adjusted_time_to_first_output_token",
+            "network_adjusted_time_to_first_token",
+            "network_rtt",
+            "osl_mismatch_count",
+            "output_token_throughput",
+            "output_tokens_per_joule",
+            "overall_thinking_efficiency",
+            "overall_usage_prompt_cache_read_pct",
+            "request_count",
+            "request_error_rate",
+            "request_throughput",
+            "total_error_isl",
+            "total_gpu_energy",
+            "total_gpu_power",
+            "total_isl",
+            "total_osl",
+            "total_output_tokens",
+            "total_reasoning_tokens",
+            "total_token_throughput",
+            "total_usage_accepted_prediction_tokens",
+            "total_usage_completion_audio_tokens",
+            "total_usage_completion_tokens",
+            "total_usage_prompt_audio_seconds",
+            "total_usage_prompt_audio_tokens",
+            "total_usage_prompt_cache_miss_tokens",
+            "total_usage_prompt_cache_read_tokens",
+            "total_usage_prompt_cache_write_tokens",
+            "total_usage_prompt_tokens",
+            "total_usage_reasoning_tokens",
+            "total_usage_rejected_prediction_tokens",
+            "total_usage_tool_use_prompt_tokens",
+            "total_usage_total_tokens",
+            "usage_discrepancy_count"
+          ]
         }
       },
       "failure_policy": null,
@@ -875,6 +1169,7 @@
         "urls": []
       },
       "metrics": {
+        "slice_duration_seconds": 5.0,
         "slos": {}
       },
       "models": {
@@ -886,28 +1181,33 @@
         "strategy": "round_robin"
       },
       "network_latency": {
-        "enabled": false,
-        "mean_ms": null,
+        "enabled": true,
+        "mean_ms": 4.0,
         "ping_interval": 1.0
       },
       "phases": [
         {
-          "concurrency": 4,
           "concurrency_ramp": {
-            "duration": 10.0,
+            "duration": 4.0,
             "strategy": "linear"
           },
+          "duration": 20.0,
           "exclude_from_results": false,
           "name": "profiling",
-          "requests": 4,
+          "rate": 8.0,
+          "rate_ramp": {
+            "duration": 2.0,
+            "strategy": "linear"
+          },
           "seamless": false,
-          "type": "concurrency"
+          "smoothness": 1.5,
+          "type": "gamma"
         }
       ],
       "runtime": {
         "cells": 1,
-        "workers": null,
-        "workers_min": null
+        "workers": 3,
+        "workers_min": 1
       },
       "scenario": null,
       "server_metrics": {
@@ -921,7 +1221,9 @@
           "json",
           "csv"
         ],
-        "urls": []
+        "urls": [
+          "http://sm:9090"
+        ]
       },
       "sidecars": {
         "gpu_telemetry": {
@@ -939,6 +1241,9 @@
             }
           ]
         },
+        "network_latency": {
+          "mean_rtt_ns": 4000000
+        },
         "server_metrics": {
           "collection_interval_ns": 333000000,
           "formats": [
@@ -947,16 +1252,17 @@
           ],
           "reachability_timeout_ns": 10000000000,
           "urls": [
-            "http://127.0.0.1:8000/metrics"
+            "http://127.0.0.1:8000/metrics",
+            "http://sm:9090/metrics"
           ]
         }
       },
       "slos": null,
       "tokenizer": {
-        "apply_chat_template": false,
+        "apply_chat_template": true,
         "name": "Qwen/Qwen3-0.6B",
         "revision": "main",
-        "trust_remote_code": false
+        "trust_remote_code": true
       },
       "trajectory_start_max_ratio": 0.0,
       "trajectory_start_min_ratio": 0.0,
@@ -965,9 +1271,9 @@
       },
       "unsafe_override": false
     },
-    "cli_command": "aiperf 'tools/parity/fixtures/ramp.args'",
+    "cli_command": "aiperf '/tmp/regen.args'",
     "label": "",
-    "random_seed": null,
+    "random_seed": 99,
     "resolved": {
       "artifact_dir_created": false,
       "comm_config": null,

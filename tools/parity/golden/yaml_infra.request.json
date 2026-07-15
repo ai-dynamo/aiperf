@@ -647,7 +647,7 @@
             },
             "run_info": {
               "benchmark_id": "parity-benchmark",
-              "cli_command": "aiperf '/tmp/yi.args'",
+              "cli_command": "aiperf '/tmp/regen.args'",
               "trial": 0
             }
           },
@@ -835,7 +835,7 @@
           "enabled": true,
           "experiment": "exp1",
           "params": {
-            "aiperf.cli_command": "aiperf '/tmp/yi.args'",
+            "aiperf.cli_command": "aiperf '/tmp/regen.args'",
             "endpoint.models": "Qwen/Qwen3-0.6B",
             "endpoint.type": "chat",
             "endpoint.urls": "http://127.0.0.1:8000",
@@ -1208,8 +1208,8 @@
         "wandb": {
           "aiperf_version": "0.11.0",
           "benchmark_id": "parity-benchmark",
-          "cli_command": "aiperf '/tmp/yi.args'",
-          "config_json": "{\"models\":{\"strategy\":\"round_robin\",\"items\":[{\"name\":\"Qwen/Qwen3-0.6B\"}]},\"endpoint\":{\"urls\":[\"http://127.0.0.1:8000\"],\"url_strategy\":\"round_robin\",\"type\":\"chat\",\"timeout\":21600.0,\"streaming\":false,\"connection_reuse\":\"pooled\",\"http2\":false,\"ssl_verify\":true,\"connection_limit\":2500,\"keepalive_timeout\":300.0,\"use_legacy_max_tokens\":false,\"use_server_token_count\":false,\"headers\":{},\"extra\":{},\"download_video_content\":false,\"wait_for_model_timeout\":0.0,\"wait_for_model_interval\":5.0,\"wait_for_model_mode\":\"inference\"},\"endpoint_profiles\":{},\"datasets\":[{\"name\":\"default\",\"type\":\"synthetic\",\"entries\":100,\"sampling\":\"sequential\",\"prompts\":{\"isl\":{\"value\":512.0},\"osl\":{\"value\":128.0},\"batch_size\":1},\"turn_delay_ratio\":1.0}],\"phases\":[{\"adaptive_scale\":false,\"adaptive_min_completed_requests\":1,\"adaptive_control_variable\":\"concurrency\",\"adaptive_control_min\":1.0,\"adaptive_scale_strategy_type\":\"ramp_until_fail\",\"adaptive_scale_step_policy\":\"sla_margin\",\"adaptive_scale_base_step\":10,\"adaptive_scale_max_step_multiplier\":4,\"adaptive_scale_step_percent\":25.0,\"name\":\"profiling\",\"type\":\"concurrency\",\"exclude_from_results\":false,\"requests\":5,\"concurrency\":2,\"sla\":[],\"seamless\":false}],\"artifacts\":{\"dir\":\"/tmp/aiperf-parity/yaml_infra\",\"summary\":[\"json\"],\"records\":[\"jsonl\"],\"raw\":false,\"trace\":false,\"slice_duration\":10.0,\"show_trace_timing\":false,\"user_files\":[],\"auto_plot\":false,\"plot_required\":false,\"export_outputs_json\":false},\"slos\":{\"request_latency\":200.0,\"time_to_first_token\":50.0},\"tokenizer\":{\"revision\":\"main\",\"trust_remote_code\":false,\"apply_chat_template\":false},\"gpu_telemetry\":{\"enabled\":true,\"urls\":[\"http://dcgm:9400\"],\"collector\":\"dcgm\",\"mode\":\"summary\"},\"server_metrics\":{\"enabled\":true,\"urls\":[\"http://127.0.0.1:9090\"],\"formats\":[\"json\",\"csv\",\"parquet\"],\"discovery\":{\"mode\":\"auto\"}},\"network_latency\":{\"enabled\":true,\"ping_interval\":1.0,\"mean_ms\":5.0},\"otel\":{\"metrics_url\":\"http://otel:4317/v1/metrics\",\"stream_metrics_enabled\":true,\"stream_timing_enabled\":true,\"custom_resource_attributes\":{}},\"mlflow\":{\"tracking_uri\":\"http://mlflow:5000\",\"experiment\":\"exp1\",\"run_name\":\"run1\"},\"wandb\":{\"project\":\"proj1\",\"entity\":\"ent1\",\"run_name\":\"wrun1\"},\"runtime\":{\"ui\":\"none\",\"workers\":4,\"cells\":1,\"service_run_type\":\"multiprocessing\",\"workers_min\":2},\"logging\":{\"level\":\"INFO\"},\"metrics\":{},\"transport\":{\"type\":\"http\"},\"trajectory_start_min_ratio\":0.0,\"trajectory_start_max_ratio\":0.0}",
+          "cli_command": "aiperf '/tmp/regen.args'",
+          "config_json": "{\"models\":{\"strategy\":\"round_robin\",\"items\":[{\"name\":\"Qwen/Qwen3-0.6B\"}]},\"endpoint\":{\"urls\":[\"http://127.0.0.1:8000\"],\"url_strategy\":\"round_robin\",\"type\":\"chat\",\"timeout\":21600.0,\"streaming\":false,\"connection_reuse\":\"pooled\",\"http2\":false,\"ssl_verify\":true,\"connection_limit\":2500,\"keepalive_timeout\":300.0,\"use_legacy_max_tokens\":false,\"use_server_token_count\":false,\"headers\":{},\"extra\":{},\"download_video_content\":false,\"wait_for_model_timeout\":0.0,\"wait_for_model_interval\":5.0,\"wait_for_model_mode\":\"inference\"},\"endpoint_profiles\":{},\"datasets\":[{\"name\":\"default\",\"type\":\"synthetic\",\"entries\":100,\"sampling\":\"sequential\",\"prompts\":{\"isl\":{\"value\":512.0},\"osl\":{\"value\":128.0},\"batch_size\":1},\"turn_delay_ratio\":1.0}],\"phases\":[{\"adaptive_scale\":false,\"adaptive_min_completed_requests\":1,\"adaptive_control_variable\":\"concurrency\",\"adaptive_control_min\":1.0,\"adaptive_scale_strategy_type\":\"ramp_until_fail\",\"adaptive_scale_step_policy\":\"sla_margin\",\"adaptive_scale_base_step\":10,\"adaptive_scale_max_step_multiplier\":4,\"adaptive_scale_step_percent\":25.0,\"name\":\"profiling\",\"type\":\"concurrency\",\"exclude_from_results\":false,\"requests\":5,\"concurrency\":2,\"sla\":[],\"seamless\":false}],\"artifacts\":{\"dir\":\"/tmp/aiperf-parity/yaml_infra\",\"summary\":[\"json\"],\"records\":[\"jsonl\"],\"raw\":false,\"trace\":false,\"slice_duration\":10.0,\"show_trace_timing\":false,\"user_files\":[],\"auto_plot\":false,\"plot_required\":false,\"export_outputs_json\":false},\"slos\":{\"request_latency\":200.0,\"time_to_first_token\":50.0},\"tokenizer\":{\"revision\":\"main\",\"trust_remote_code\":false,\"apply_chat_template\":false},\"gpu_telemetry\":{\"enabled\":true,\"urls\":[\"http://dcgm:9400\"],\"collector\":\"dcgm\",\"mode\":\"summary\"},\"server_metrics\":{\"enabled\":true,\"urls\":[\"http://127.0.0.1:9090\"],\"formats\":[\"json\",\"csv\",\"parquet\"],\"discovery\":{\"mode\":\"auto\"}},\"network_latency\":{\"enabled\":true,\"ping_interval\":1.0,\"mean_ms\":5.0},\"otel\":{\"metrics_url\":\"http://otel:4317/v1/metrics\",\"stream_metrics_enabled\":true,\"stream_timing_enabled\":true,\"custom_resource_attributes\":{}},\"mlflow\":{\"tracking_uri\":\"http://mlflow:5000\",\"experiment\":\"exp1\",\"run_name\":\"run1\"},\"wandb\":{\"project\":\"proj1\",\"entity\":\"ent1\",\"run_name\":\"wrun1\"},\"runtime\":{\"ui\":\"none\",\"workers\":4,\"cells\":1,\"service_run_type\":\"multiprocessing\",\"workers_min\":2},\"logging\":{\"level\":\"INFO\"},\"metrics\":{},\"transport\":{\"type\":\"http\"},\"unsafe_override\":false,\"trajectory_start_min_ratio\":0.0,\"trajectory_start_max_ratio\":0.0}",
           "entity": "ent1",
           "project": "proj1",
           "run_name": "wrun1"
@@ -1260,6 +1260,7 @@
         "workers": 4,
         "workers_min": 2
       },
+      "scenario": null,
       "server_metrics": {
         "discovery": {
           "label_selector": null,
@@ -1328,9 +1329,10 @@
       "trajectory_start_min_ratio": 0.0,
       "transport": {
         "type": "http"
-      }
+      },
+      "unsafe_override": false
     },
-    "cli_command": "aiperf '/tmp/yi.args'",
+    "cli_command": "aiperf '/tmp/regen.args'",
     "label": "",
     "random_seed": null,
     "resolved": {
@@ -1347,6 +1349,7 @@
       "gpu_custom_metrics": null,
       "gpu_dcgm_mappings": null,
       "gpu_telemetry_mode": "summary",
+      "scenario_outcome": null,
       "tokenizer_names": null,
       "total_expected_duration": null
     },

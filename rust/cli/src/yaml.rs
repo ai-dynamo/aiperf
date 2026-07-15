@@ -115,10 +115,13 @@ struct Benchmark {
     /// Goodput SLO thresholds (`benchmark.slos`: metric -> ms).
     slos: Option<std::collections::BTreeMap<String, f64>>,
     /// GPU telemetry policy.
+    #[serde(default, alias = "gpuTelemetry")]
     gpu_telemetry: Option<GpuTelemetrySection>,
     /// Server-metrics scraping policy.
+    #[serde(default, alias = "serverMetrics")]
     server_metrics: Option<ServerMetricsSection>,
     /// Network-latency calibration policy.
+    #[serde(default, alias = "networkLatency")]
     network_latency: Option<NetworkLatencySection>,
     /// OTLP export sink.
     otel: Option<OtelSection>,

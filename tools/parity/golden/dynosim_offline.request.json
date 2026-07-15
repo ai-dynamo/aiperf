@@ -620,7 +620,7 @@
             },
             "run_info": {
               "benchmark_id": "parity-benchmark",
-              "cli_command": "aiperf '/tmp/dynosim_offline.args'",
+              "cli_command": "aiperf '/tmp/regen.args'",
               "random_seed": 42,
               "trial": 0
             }
@@ -901,6 +901,7 @@
         "workers": null,
         "workers_min": null
       },
+      "scenario": null,
       "server_metrics": {
         "discovery": {
           "label_selector": null,
@@ -942,9 +943,10 @@
         "topology": "single",
         "type": "dynosim_offline",
         "workers": 1
-      }
+      },
+      "unsafe_override": false
     },
-    "cli_command": "aiperf '/tmp/dynosim_offline.args'",
+    "cli_command": "aiperf '/tmp/regen.args'",
     "label": "",
     "random_seed": 42,
     "resolved": {
@@ -961,6 +963,7 @@
       "gpu_custom_metrics": null,
       "gpu_dcgm_mappings": null,
       "gpu_telemetry_mode": "summary",
+      "scenario_outcome": null,
       "tokenizer_names": null,
       "total_expected_duration": null
     },

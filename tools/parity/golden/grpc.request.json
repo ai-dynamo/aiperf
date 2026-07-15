@@ -605,7 +605,7 @@
             },
             "run_info": {
               "benchmark_id": "parity-benchmark",
-              "cli_command": "aiperf 'tools/parity/fixtures/grpc.args'",
+              "cli_command": "aiperf '/tmp/regen.args'",
               "trial": 0
             }
           },
@@ -866,6 +866,7 @@
         "workers": null,
         "workers_min": null
       },
+      "scenario": null,
       "server_metrics": {
         "discovery": {
           "label_selector": null,
@@ -914,11 +915,14 @@
         "revision": "main",
         "trust_remote_code": false
       },
+      "trajectory_start_max_ratio": 0.0,
+      "trajectory_start_min_ratio": 0.0,
       "transport": {
         "type": "grpc"
-      }
+      },
+      "unsafe_override": false
     },
-    "cli_command": "aiperf 'tools/parity/fixtures/grpc.args'",
+    "cli_command": "aiperf '/tmp/regen.args'",
     "label": "",
     "random_seed": null,
     "resolved": {
@@ -935,6 +939,7 @@
       "gpu_custom_metrics": null,
       "gpu_dcgm_mappings": null,
       "gpu_telemetry_mode": "summary",
+      "scenario_outcome": null,
       "tokenizer_names": null,
       "total_expected_duration": null
     },

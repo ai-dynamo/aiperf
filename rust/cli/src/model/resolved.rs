@@ -40,6 +40,8 @@ pub struct Resolved {
     pub gpu_dcgm_mappings: Option<serde_json::Value>,
     /// GPU telemetry source mode (e.g. `summary`).
     pub gpu_telemetry_mode: String,
+    /// Scenario-lock outcome (agentic/graph programs); `null` on the scheduled path.
+    pub scenario_outcome: Option<serde_json::Value>,
     /// Resolved tokenizer identities.
     pub tokenizer_names: Option<Vec<String>>,
     /// Total expected run duration, seconds.
@@ -62,6 +64,7 @@ impl Default for Resolved {
             gpu_custom_metrics: None,
             gpu_dcgm_mappings: None,
             gpu_telemetry_mode: "summary".to_string(),
+            scenario_outcome: None,
             tokenizer_names: None,
             total_expected_duration: None,
         }
