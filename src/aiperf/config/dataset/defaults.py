@@ -35,6 +35,7 @@ class InputDefaults:
     CUSTOM_DATASET_TYPE = None
     DATASET_SAMPLING_STRATEGY = DatasetSamplingStrategy.SHUFFLE
     RANDOM_SEED = None
+    TRACE_SESSION_SAMPLE_RATIO = None
     NUM_DATASET_ENTRIES = 100
 
 

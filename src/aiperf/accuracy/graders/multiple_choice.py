@@ -6,6 +6,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
+from aiperf.accuracy.graders._choice_extract import extract_choice_letter
 from aiperf.accuracy.graders.base import BaseGrader
 from aiperf.accuracy.models import GradingResult
 
@@ -43,13 +44,37 @@ class MultipleChoiceGrader(BaseGrader):
         super().__init__(run=run, **kwargs)
 
     def _extract_with_flag(self, response_text: str) -> tuple[str, bool]:
-        """Return (answer, unparsed). unparsed=True when regex fallback was used."""
+        """Return (answer, unparsed). unparsed=True when a fallback past the
+        clean bare-letter first line was used.
+
+        Order matters for chain-of-thought output. A bare-letter first line
+        (non-CoT lighteval parity) wins first. Otherwise the explicit
+        ``"The answer is (X)"`` signal (tier 1 of the shared cascade) is tried
+        BEFORE the first-line lone-letter regex: CoT reasoning routinely echoes
+        the option list (e.g. ``"A. 0, B. 4, C. 2, D. 6"``) on its first line,
+        and the old first-line-regex-first order grabbed that echoed option
+        label instead of the model's actual answer.
+        """
         first_line = response_text.split("\n", 1)[0].strip()
         if first_line in _VALID_CHOICES:
             return first_line, False
+        letter, tier = extract_choice_letter(response_text, "ABCD")
+        # Explicit CoT answer statement anywhere in the response. This IS the
+        # requested answer format, so it is a clean parse (not unparsed).
+        if letter and tier == 1:
+            return letter, False
+        # An explicit "Answer: X" anywhere (tier 2) also beats the first-line
+        # lone-letter regex, which would otherwise grab an option label echoed
+        # in the reasoning (e.g. "A. 0, B. 4, ..." then a final "Answer: B").
+        if letter and tier == 2:
+            return letter, True
+        # Legacy first-line lone-letter fallback (messy non-CoT output).
         m = _LETTER_RE.search(first_line)
         if m:
             return m.group(1), True
+        # Whole-text last-lone-letter (tier 3, last resort).
+        if letter:
+            return letter, True
         return first_line, True
 
     def extract_answer(self, response_text: str, **kwargs: Any) -> str:

@@ -124,6 +124,14 @@ class AccuracyDatasetLoader:
                 if problem.metadata
                 else DEFAULT_GENERATION_SIZE
             )
+            # Benchmarks that need a server-side stop (e.g. MMLU non-CoT uses
+            # ``["\n"]`` for lighteval parity) declare it in metadata; ride it
+            # through the OpenAI-style ``extra_body["stop"]``. Empty/absent =>
+            # no stop (e.g. CoT, which must not truncate the reasoning).
+            stop_sequence = (
+                problem.metadata.get("stop_sequence") if problem.metadata else None
+            )
+            extra_body = {"stop": stop_sequence} if stop_sequence else None
 
             prompt_text = (
                 f"{system_prompt}\n\n{problem.prompt}"
@@ -135,6 +143,7 @@ class AccuracyDatasetLoader:
                 role="user",
                 raw_messages=messages,
                 max_tokens=gen_size,
+                extra_body=extra_body,
                 texts=[Text(contents=[prompt_text])],
             )
 

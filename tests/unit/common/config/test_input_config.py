@@ -33,6 +33,7 @@ def test_input_config_defaults():
     assert config.input_file == InputDefaults.FILE
     assert config.random_seed == InputDefaults.RANDOM_SEED
     assert config.custom_dataset_type == InputDefaults.CUSTOM_DATASET_TYPE
+    assert config.trace_session_sample_ratio == InputDefaults.TRACE_SESSION_SAMPLE_RATIO
     assert config.goodput == InputDefaults.GOODPUT
     # Modality fields are flat post-Task-13; smoke-check a representative
     # field per modality to confirm they exist and carry their defaults.
@@ -58,6 +59,17 @@ def test_input_config_custom_values():
         assert config.input_file == Path(temp_file.name)
         assert config.random_seed == 42
         assert config.custom_dataset_type == CustomDatasetType.MULTI_TURN
+
+
+def test_input_config_trace_session_sample_ratio():
+    config = CLIConfig(trace_session_sample_ratio=0.1)
+    assert config.trace_session_sample_ratio == 0.1
+
+
+@pytest.mark.parametrize("ratio", [0.0, -0.1, 1.1])
+def test_input_config_trace_session_sample_ratio_validation(ratio):
+    with pytest.raises(ValidationError):
+        CLIConfig(trace_session_sample_ratio=ratio)
 
 
 def test_input_config_file_validation():

@@ -3,16 +3,54 @@
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
-from aiperf.common.constants import NANOS_PER_SECOND
+from aiperf.common.constants import NANOS_PER_MILLIS, NANOS_PER_SECOND
 from aiperf.metrics.accumulator import MetricsAccumulator
 from aiperf.metrics.types.max_response_metric import MaxResponseTimestampMetric
 from aiperf.metrics.types.min_request_metric import MinRequestTimestampMetric
+from aiperf.metrics.types.replay_sched_lag_metrics import (
+    ReplaySchedDegradedMetric,
+    ReplaySchedLagP50Metric,
+    ReplaySchedLagP90Metric,
+    ReplaySchedLagP99Metric,
+    ReplaySendScheduleOffsetMetric,
+)
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
 from tests.unit.post_processors.conftest import create_metric_records_message
+
+
+@pytest.fixture
+def fixed_schedule_slice_run():
+    """Real (unmocked) fixed-schedule BenchmarkRun with --slice-duration set,
+    so FIXED_SCHEDULE_ONLY metrics survive the applicability filters."""
+    from aiperf.config import BenchmarkConfig, BenchmarkRun
+    from aiperf.plugin.enums import EndpointType
+
+    cfg = BenchmarkConfig.model_validate(
+        {
+            "models": ["test-model"],
+            "endpoint": {
+                "type": EndpointType.COMPLETIONS,
+                "urls": ["http://localhost:8000/v1"],
+                "streaming": False,
+            },
+            "datasets": [{"name": "default", "type": "synthetic"}],
+            "phases": [{"name": "profiling", "type": "fixed_schedule"}],
+            "artifacts": {"slice_duration": 1.0},
+        }
+    )
+    return BenchmarkRun(
+        benchmark_id=uuid.uuid4().hex,
+        cfg=cfg,
+        artifact_dir=cfg.artifacts.dir,
+        random_seed=None,
+        variables={},
+    )
 
 
 class TestMetricsAccumulatorTimeslices:
@@ -225,3 +263,55 @@ class TestMetricsAccumulatorTimeslices:
         assert timeslices is not None
         assert timeslices[0].is_complete is False
         assert timeslices[0].end_ns == int(0.6 * NANOS_PER_SECOND)
+
+
+class TestMetricsAccumulatorRunScopedDerivedMetrics:
+    """The replay send-lag family is anchored to the run-global minimum offset
+    (``timeslice_derivable = False``); re-deriving it per slice would re-anchor
+    each slice at its own minimum and erase cumulative schedule drift, so the
+    accumulator excludes it from per-slice derivation while keeping it in the
+    overall summary."""
+
+    def test_run_scoped_tags_excluded_from_timeslice_derivation(
+        self, fixed_schedule_slice_run
+    ) -> None:
+        accumulator = MetricsAccumulator(fixed_schedule_slice_run)
+
+        run_scoped_tags = {
+            ReplaySchedLagP50Metric.tag,
+            ReplaySchedLagP90Metric.tag,
+            ReplaySchedLagP99Metric.tag,
+            ReplaySchedDegradedMetric.tag,
+        }
+        # The run-scoped family derives at run level but is skipped per slice.
+        assert run_scoped_tags <= set(accumulator._derive_funcs)
+        assert accumulator._non_timeslice_derived_tags == run_scoped_tags
+
+    @pytest.mark.asyncio
+    async def test_run_scoped_tags_never_derived_in_timeslice_results(
+        self, fixed_schedule_slice_run
+    ) -> None:
+        accumulator = MetricsAccumulator(fixed_schedule_slice_run)
+
+        # Two records straddling the 1s slice boundary so timeslices are built.
+        for i, start_s in enumerate((0.2, 1.2)):
+            await accumulator.process_record(
+                create_metric_records_message(
+                    x_request_id=f"req-{i}",
+                    request_start_ns=int(start_s * NANOS_PER_SECOND),
+                    request_end_ns=int((start_s + 0.05) * NANOS_PER_SECOND),
+                    results=[
+                        {ReplaySendScheduleOffsetMetric.tag: i * NANOS_PER_MILLIS}
+                    ],
+                ).to_data()
+            )
+
+        summary = await accumulator.summarize()
+
+        assert summary.timeslices is not None
+        assert len(summary.timeslices) >= 1
+        for ts in summary.timeslices:
+            assert ReplaySchedLagP50Metric.tag not in ts.metric_results
+            assert ReplaySchedLagP90Metric.tag not in ts.metric_results
+            assert ReplaySchedLagP99Metric.tag not in ts.metric_results
+            assert ReplaySchedDegradedMetric.tag not in ts.metric_results

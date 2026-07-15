@@ -95,13 +95,23 @@ class MetricsAccumulator(BaseMetricsProcessor):
         # Derive functions for DERIVED metrics
         # _setup_metrics includes transitive dependencies (RECORD/AGGREGATE),
         # so filter to only metrics that actually have derive_value.
+        # Bind derive_value off fresh per-run instances (not MetricRegistry
+        # singletons) so any metric instance state (e.g. warn-once latches) is
+        # scoped to this run rather than shared process-wide.
         self._derive_funcs: dict[
             MetricTagT, Callable[[MetricResultsDict], MetricValueTypeT]
-        ] = {
-            metric.tag: metric.derive_value  # type: ignore
-            for metric in self._setup_metrics(MetricType.DERIVED)
-            if metric.type == MetricType.DERIVED
-        }
+        ] = {}
+        # Derived tags anchored to a run-global reference (``timeslice_derivable
+        # = False``, e.g. the replay send-lag family): re-deriving them per
+        # timeslice would re-anchor each slice at its own reference and erase the
+        # run-wide signal, so the per-slice derivation skips them.
+        self._non_timeslice_derived_tags: set[MetricTagT] = set()
+        for metric in self._setup_metrics(MetricType.DERIVED):
+            if metric.type != MetricType.DERIVED:
+                continue
+            self._derive_funcs[metric.tag] = type(metric)().derive_value  # type: ignore
+            if not getattr(metric, "timeslice_derivable", True):
+                self._non_timeslice_derived_tags.add(metric.tag)
 
         _all_metric_classes: list[type[BaseMetric]] = MetricRegistry.all_classes()
         self._tags_to_types: dict[MetricTagT, MetricType] = {
@@ -235,12 +245,16 @@ class MetricsAccumulator(BaseMetricsProcessor):
         *,
         window_start_ns: int | None = None,
         window_end_ns: int | None = None,
+        is_timeslice: bool = False,
     ) -> dict[MetricTagT, MetricResult]:
         """Phases: collect scalars/arrays, resolve derived, build MetricResults.
 
         For metrics flagged ``PERCENTILE_INCLUDES_FAILED_REQUESTS`` (issue #688),
         appends a separate ``adj_<tag>`` MetricResult with the failure-inflated
         distribution after the regular build pass.
+
+        ``is_timeslice`` skips derived metrics anchored to a run-global reference
+        (``timeslice_derivable = False``); see ``_non_timeslice_derived_tags``.
         """
         scalar_dict: MetricResultsDict = MetricResultsDict()
         scalar_dict.window_start_ns = window_start_ns
@@ -251,7 +265,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         self._collect_scalars_and_arrays(
             mask, scalar_dict, record_arrays, sketch_results
         )
-        self._resolve_derived_metrics(scalar_dict)
+        self._resolve_derived_metrics(scalar_dict, is_timeslice=is_timeslice)
 
         output = self._build_metric_results(scalar_dict, record_arrays, sketch_results)
 
@@ -380,9 +394,18 @@ class MetricsAccumulator(BaseMetricsProcessor):
         # uniformly via the scalar_dict.
         scalar_dict[tag] = float(backend.sum)
 
-    def _resolve_derived_metrics(self, scalar_dict: MetricResultsDict) -> None:
-        """Run derive functions over the scalar dict, logging failures."""
+    def _resolve_derived_metrics(
+        self, scalar_dict: MetricResultsDict, *, is_timeslice: bool = False
+    ) -> None:
+        """Run derive functions over the scalar dict, logging failures.
+
+        When ``is_timeslice`` is True, derived metrics anchored to a run-global
+        reference (``_non_timeslice_derived_tags``) are skipped so each slice is
+        not re-anchored at its own reference.
+        """
         for tag, derive_func in self._derive_funcs.items():
+            if is_timeslice and tag in self._non_timeslice_derived_tags:
+                continue
             try:
                 scalar_dict[tag] = derive_func(scalar_dict)
             except NoMetricValue as e:
@@ -651,6 +674,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 full_mask,
                 window_start_ns=int(window_start),
                 window_end_ns=int(window_end),
+                is_timeslice=True,
             )
             if len(results) == 0:
                 continue
