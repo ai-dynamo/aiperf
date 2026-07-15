@@ -79,6 +79,9 @@ async fn serve(config: MockServerConfig, worker_threads: usize) -> anyhow::Resul
     // connection gets its own tokio task driving hyper's auto HTTP/1+2
     // handshake.
     let make_service = router.into_make_service();
+    // 0 = leave hyper's default; otherwise advertise this h2 stream ceiling so a
+    // single connection can hold very large concurrent-request counts.
+    let max_concurrent_streams = config.max_concurrent_streams;
     loop {
         let (stream, peer) = match listener.accept().await {
             Ok(v) => v,
@@ -104,7 +107,11 @@ async fn serve(config: MockServerConfig, worker_threads: usize) -> anyhow::Resul
                 hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
                     tower_service.clone().call(req)
                 });
-            if let Err(e) = ConnBuilder::new(TokioExecutor::new())
+            let mut builder = ConnBuilder::new(TokioExecutor::new());
+            if max_concurrent_streams > 0 {
+                builder.http2().max_concurrent_streams(max_concurrent_streams);
+            }
+            if let Err(e) = builder
                 .serve_connection_with_upgrades(io, hyper_service)
                 .await
             {
