@@ -15,8 +15,25 @@ use aiperf_runner::{RunnerApplication, current_distribution_id};
 use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
 
+#[cfg(not(feature = "dhat-heap"))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[cfg(feature = "dhat-heap")]
+#[global_allocator]
+static DHAT_ALLOC: dhat::Alloc = dhat::Alloc;
+
+#[cfg(feature = "dhat-heap")]
+static DHAT_PROFILER: std::sync::Mutex<Option<dhat::Profiler>> = std::sync::Mutex::new(None);
+
+/// Flush the dhat heap profile before a `process::exit` (which skips destructors,
+/// so the `Profiler`'s `Drop` would never run and `dhat-heap.json` never be written).
+fn dhat_flush() {
+    #[cfg(feature = "dhat-heap")]
+    if let Ok(mut guard) = DHAT_PROFILER.lock() {
+        guard.take();
+    }
+}
 
 #[cfg(target_os = "linux")]
 #[used]
@@ -62,6 +79,11 @@ fn init_tracing() {
 
 fn main() {
     init_tracing();
+    #[cfg(feature = "dhat-heap")]
+    {
+        let file = format!("/tmp/dhat-{}.json", std::process::id());
+        *DHAT_PROFILER.lock().unwrap() = Some(dhat::Profiler::builder().file_name(file).build());
+    }
     let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
     if arguments.len() == 1 && arguments[0] == "--capabilities" {
         let application = compose_stock_application();
@@ -511,7 +533,9 @@ fn write_json_line(value: &impl serde::Serialize, exit_code: i32) -> ! {
         || stdout.write_all(b"\n").is_err()
         || stdout.flush().is_err()
     {
+        dhat_flush();
         std::process::exit(2);
     }
+    dhat_flush();
     std::process::exit(exit_code);
 }
