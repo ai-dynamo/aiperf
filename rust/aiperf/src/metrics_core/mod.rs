@@ -59,7 +59,7 @@ pub use store::{
     RaggedReplay, RaggedSeries, SketchColumns, TagSketch,
 };
 // Re-export the shared t-digest so the sketch retention path has a single source.
-pub use crate::cellular::sketch::TDigest;
+pub use crate::cellular::sketch::{DEFAULT_COMPRESSION as SKETCH_DEFAULT_COMPRESSION, TDigest};
 pub use units::{MetricValueType, Unit, UnitConversionError};
 pub use value::MetricValue;
 pub use window::{ExportContext, Phase, Timeslice};
