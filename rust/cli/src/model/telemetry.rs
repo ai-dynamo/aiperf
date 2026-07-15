@@ -195,23 +195,23 @@ impl ServerMetricsSidecar {
     }
 }
 
-/// Normalize a scrape target to `http://host:port/metrics` (mirrors
-/// `normalize_metrics_endpoint_url` / `_normalize_dcgm_url`): add an `http://`
-/// scheme when missing and a `/metrics` path when the URL has none.
+/// Normalize a scrape target to end with `/metrics`, exactly reproducing
+/// `normalize_metrics_endpoint_url`: prepend `http://` only when the URL does
+/// not already start with `http://`/`https://` (so a `grpc://` URL becomes the
+/// intentional `http://grpc://.../metrics`), strip trailing slashes, then append
+/// `/metrics` unless already present.
 pub fn normalize_metrics_url(url: &str) -> String {
-    let with_scheme = if url.contains("://") {
+    let mut url = if url.starts_with("http://") || url.starts_with("https://") {
         url.to_string()
     } else {
         format!("http://{url}")
     };
-    // Split scheme from the remainder to inspect the path portion.
-    let (scheme, rest) = with_scheme.split_once("://").expect("scheme ensured above");
-    let has_path = rest.split_once('/').is_some_and(|(_, p)| !p.is_empty());
-    if has_path {
-        with_scheme
-    } else {
-        format!("{scheme}://{}/metrics", rest.trim_end_matches('/'))
+    let trimmed_len = url.trim_end_matches('/').len();
+    url.truncate(trimmed_len);
+    if !url.ends_with("/metrics") {
+        url.push_str("/metrics");
     }
+    url
 }
 
 #[cfg(test)]
@@ -228,9 +228,16 @@ mod tests {
             normalize_metrics_url("localhost:9400"),
             "http://localhost:9400/metrics"
         );
+        // A non-http scheme is treated as a bare host and prefixed (the same
+        // quirk Python has for grpc:// endpoints).
+        assert_eq!(
+            normalize_metrics_url("grpc://127.0.0.1:8001"),
+            "http://grpc://127.0.0.1:8001/metrics"
+        );
+        // A custom path still gets /metrics appended.
         assert_eq!(
             normalize_metrics_url("http://h:9/custom"),
-            "http://h:9/custom"
+            "http://h:9/custom/metrics"
         );
     }
 }

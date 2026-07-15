@@ -52,6 +52,7 @@ pub(crate) struct Inputs {
     pub model_names: Vec<String>,
     pub urls: Vec<String>,
     pub endpoint_type: String,
+    pub transport: crate::model::transport::Transport,
     pub streaming: bool,
     pub api_key: Option<String>,
     pub headers: std::collections::BTreeMap<String, String>,
@@ -139,6 +140,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         model_names: flags.model_names.clone(),
         urls: flags.urls.clone(),
         endpoint_type,
+        transport: Transport::Http,
         streaming: flags.streaming,
         api_key: flags.api_key.clone(),
         headers: parse_headers(&flags.headers)?,
@@ -292,20 +294,28 @@ pub(crate) fn build(inputs: Inputs) -> BenchmarkRun {
 
     let endpoint_type = endpoint.endpoint_type.0.clone();
     let endpoint_urls = endpoint.urls.clone();
-    // GPU telemetry + server-metrics scraping are enabled by default; lower them
-    // into the sidecars block (server-metrics scrapes each endpoint's /metrics,
-    // GPU telemetry scrapes the default DCGM endpoints).
-    let sidecars = crate::model::telemetry::Sidecars {
-        gpu_telemetry: Some(crate::model::telemetry::GpuTelemetrySidecar::default_dcgm()),
-        server_metrics: Some(
-            crate::model::telemetry::ServerMetricsSidecar::from_endpoint_urls(&endpoint_urls),
-        ),
+    // DynoSim co-simulation opens no sockets, so every online sidecar is forced
+    // off (mirrors `_authored_sidecars`); other transports keep the default
+    // GPU-telemetry + server-metrics scraping.
+    let is_dynosim = matches!(
+        inputs.transport,
+        Transport::DynosimOffline | Transport::DynosimOnline
+    );
+    let sidecars = if is_dynosim {
+        None
+    } else {
+        Some(crate::model::telemetry::Sidecars {
+            gpu_telemetry: Some(crate::model::telemetry::GpuTelemetrySidecar::default_dcgm()),
+            server_metrics: Some(
+                crate::model::telemetry::ServerMetricsSidecar::from_endpoint_urls(&endpoint_urls),
+            ),
+        })
     };
     let mut cfg = BenchmarkConfig {
         models: Some(models),
         endpoint: Some(endpoint),
         tokenizer: Some(tokenizer),
-        transport: Some(Transport::Http),
+        transport: Some(inputs.transport),
         runtime: Some(Runtime::default()),
         metrics: Some(Metrics::default()),
         artifacts: Some(Artifacts {
@@ -320,7 +330,7 @@ pub(crate) fn build(inputs: Inputs) -> BenchmarkRun {
         gpu_telemetry: Some(crate::model::telemetry::GpuTelemetryConfig::default()),
         server_metrics: Some(crate::model::telemetry::ServerMetricsConfig::default()),
         network_latency: Some(crate::model::telemetry::NetworkLatencyConfig::default()),
-        sidecars: Some(sidecars),
+        sidecars,
     };
 
     let benchmark_id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();

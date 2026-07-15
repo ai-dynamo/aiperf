@@ -1,0 +1,17 @@
+schemaVersion: "2.0"
+benchmark:
+  model: Qwen/Qwen3-0.6B
+  transport:
+    type: grpc
+  endpoint:
+    type: chat
+    url: grpc://127.0.0.1:8001
+  dataset:
+    type: synthetic
+    entries: 3
+    prompts:
+      isl: 128
+  phases:
+    type: concurrency
+    concurrency: 2
+    requests: 3

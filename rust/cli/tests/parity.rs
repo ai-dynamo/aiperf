@@ -171,17 +171,25 @@ fn loader_reproduces_goldens() {
     }
 }
 
+/// YAML config fixtures: (config file stem, golden stem, artifact_dir).
+const YAML_FIXTURES: &[(&str, &str, &str)] = &[
+    ("basic", "yaml_basic", "/tmp/aiperf-parity/yaml_basic"),
+    ("grpc", "grpc", "/tmp/aiperf-parity/grpc"),
+];
+
 #[test]
-fn yaml_config_reproduces_golden() {
+fn yaml_configs_reproduce_goldens() {
     // The native YAML surface must reproduce the same consumed sections as
-    // Python's resolve_config for a config file.
-    let golden = load_golden("yaml_basic");
-    let cfg = std::path::Path::new("../../tools/parity/configs/basic.yaml");
-    let run = aiperf_cli::yaml::resolve(
-        cfg,
-        Some(std::path::PathBuf::from("/tmp/aiperf-parity/yaml_basic")),
-    )
-    .expect("yaml resolves");
-    let built = serde_json::to_value(&run).expect("serialize built run");
-    assert_matches_golden("yaml_basic", &built, &golden);
+    // Python's resolve_config for each config file.
+    for (config, golden_stem, artifact_dir) in YAML_FIXTURES {
+        let golden = load_golden(golden_stem);
+        let cfg = format!("../../tools/parity/configs/{config}.yaml");
+        let run = aiperf_cli::yaml::resolve(
+            std::path::Path::new(&cfg),
+            Some(std::path::PathBuf::from(artifact_dir)),
+        )
+        .unwrap_or_else(|e| panic!("[{golden_stem}] yaml resolve: {e}"));
+        let built = serde_json::to_value(&run).expect("serialize built run");
+        assert_matches_golden(golden_stem, &built, &golden);
+    }
 }

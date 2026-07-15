@@ -17,6 +17,7 @@ use serde::Deserialize;
 
 use crate::load::{self, Inputs, Warmup, default_isl};
 use crate::model::dataset::Distribution;
+use crate::model::transport::Transport;
 
 /// Parse a YAML config file into one native run.
 pub fn resolve(
@@ -76,6 +77,8 @@ struct Benchmark {
     /// Expanded `models:` block.
     models: Option<ModelsSection>,
     endpoint: EndpointSection,
+    /// Orthogonal transport selection (`http` default; `grpc`/`dynosim_*`).
+    transport: Option<TransportSection>,
     /// `dataset:` shorthand (single entry).
     dataset: Option<DatasetSection>,
     /// Expanded `datasets:` list (first entry used on the single-run path).
@@ -92,6 +95,12 @@ struct ModelsSection {
 #[derive(Debug, Deserialize)]
 struct ModelItem {
     name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TransportSection {
+    #[serde(rename = "type")]
+    transport_type: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -187,6 +196,7 @@ impl Benchmark {
             model_names,
             urls: self.endpoint.url.into_vec(),
             endpoint_type,
+            transport: parse_transport(self.transport.as_ref())?,
             streaming: self.endpoint.streaming,
             api_key: None,
             headers: std::collections::BTreeMap::new(),
@@ -224,6 +234,20 @@ impl Benchmark {
             None => anyhow::bail!("a model is required (set `model:` or `models:`)"),
         }
     }
+}
+
+/// Map a YAML `transport.type` string to the typed [`Transport`] (default HTTP).
+fn parse_transport(section: Option<&TransportSection>) -> anyhow::Result<Transport> {
+    let Some(section) = section else {
+        return Ok(Transport::Http);
+    };
+    Ok(match section.transport_type.as_str() {
+        "http" => Transport::Http,
+        "grpc" => Transport::Grpc,
+        "dynosim_offline" => Transport::DynosimOffline,
+        "dynosim_online" => Transport::DynosimOnline,
+        other => anyhow::bail!("unknown transport.type {other:?}"),
+    })
 }
 
 /// Extract the ISL distribution, optional OSL, and batch size from a dataset.

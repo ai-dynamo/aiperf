@@ -1,0 +1,1 @@
+-f tools/parity/configs/grpc.yaml --artifact-dir /tmp/aiperf-parity/grpc
