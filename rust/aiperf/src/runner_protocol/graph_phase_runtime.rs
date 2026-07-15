@@ -451,13 +451,17 @@ impl GraphLaneLedger {
 ///
 /// The `plan` is the warmup-rewritten graph (`apply_tstar_split` on the WARMUP
 /// phase), `template_id` is the authored root id (the `instance_id` prefix
-/// before `"::"`), and `t_star_us` is this template's lane-0 `t*` — byte-equal
-/// to the value `apply_tstar_split` sampled when it produced `plan` (see
-/// [`sample_plan_tstar`]).
+/// before `"::"`), `t_star_us` is this template's lane-0 `t*` — byte-equal to
+/// the value `apply_tstar_split` sampled when it produced `plan` (see
+/// [`sample_plan_tstar`]) — and `duration_us` is the ORIGINAL (pre-warmup-rewrite)
+/// replayable span the per-lane resample feeds back into
+/// [`WindowTStarSampler::sample_t_star`] so a recycle lane's salted `t*` uses the
+/// same duration lane 0 did (`graph_ir_replay.py:_plan_for_lane`, lines 743-772).
 struct PressureTemplate {
     plan: GraphTracePlan,
     template_id: String,
     t_star_us: f64,
+    duration_us: f64,
 }
 
 /// Prepared warmup cache-pressure recycle inputs, carried on the warmup
@@ -476,6 +480,10 @@ struct PreparedPressureRecycle {
     /// Whether an explicit phase stop condition exists (governs the corpus
     /// lane clamp in [`pressure_resolve_lane_count`]); false for the auto warmup.
     recycle_bounded: bool,
+    /// The trajectory-start `t*` window, threaded onto [`GraphPressureRecycle`]
+    /// so each recycle lane resamples its OWN lane-salted `t*` at dispatch time
+    /// (`graph_ir_replay.py:_plan_for_lane`/`_lane_source`, lines 743-791).
+    t_star: TStarWindow,
 }
 
 /// Remap a monotonic draw counter to a corpus index.
@@ -570,18 +578,55 @@ fn sample_plan_tstar(original_plan: &GraphTracePlan, t_star: TStarWindow) -> f64
         start_max_ratio: t_star.start_max_ratio,
         random_seed: t_star.random_seed,
     };
+    let duration_us = plan_trace_duration_us(original_plan);
+    sampler.sample_t_star(&original_plan.trace.id, 0, duration_us)
+}
+
+/// Resolve one recycle lane's trajectory-start `t*` in microseconds.
+///
+/// Direct port of `graph_ir_replay.py:_plan_for_lane`/`_lane_source`
+/// (lines 743-791, branch `ajc/aiperf-graph-ir`): lane `0` reuses the prebuilt
+/// lane-0 `t*` (`template.t_star_us`, byte-identical to the single-pass plan),
+/// so the first pass of every template is unchanged. A higher lane draws a
+/// DISTINCT lane-salted `t*` (`sha256(seed:trace_id:lane)` via
+/// [`seed_for_trace_lane`]) so the SAME template recurring across recycle lanes
+/// resumes at a different snapshot instant, anchored to the ORIGINAL plan's
+/// replayable span (`template.duration_us`) exactly as lane 0 was. The default
+/// `[0, 0]` window collapses every lane to `t*=0` (identity) — both via this
+/// early return and via `sample_t_star`'s `hi <= lo` short-circuit — so lane
+/// fan-out adds no `t*` divergence on the working default-window profiling path.
+fn sample_lane_tstar(template: &PressureTemplate, lane: u64, t_star: TStarWindow) -> f64 {
+    if lane == 0 || (t_star.start_min_ratio == 0.0 && t_star.start_max_ratio == 0.0) {
+        return template.t_star_us;
+    }
+    let sampler = WindowTStarSampler {
+        start_min_ratio: t_star.start_min_ratio,
+        start_max_ratio: t_star.start_max_ratio,
+        random_seed: t_star.random_seed,
+    };
+    sampler.sample_t_star(&template.template_id, lane, template.duration_us)
+}
+
+/// Measure one root plan's intrinsic replayable span in microseconds.
+///
+/// The single-trace [`ParsedGraph`] view + [`trace_duration_us`] shared by
+/// [`sample_plan_tstar`], [`apply_tstar_split`], and the pressure recycle's
+/// per-lane resample, so every lane's `t*` draw is anchored to the SAME duration
+/// (the value `apply_tstar_split` used for lane 0), matching Python planning the
+/// trace once and reusing the duration across lanes
+/// (`graph_ir_replay.py:_plan_for_lane`, lines 743-772).
+fn plan_trace_duration_us(plan: &GraphTracePlan) -> f64 {
     let view_trace = TraceRecord {
-        id: original_plan.trace.id.clone(),
+        id: plan.trace.id.clone(),
         graph_ref: None,
-        initial_state: original_plan.trace.initial_state.clone(),
+        initial_state: plan.trace.initial_state.clone(),
     };
     let parsed = ParsedGraph {
-        graph: original_plan.graph.clone(),
+        graph: plan.graph.clone(),
         graphs: std::collections::BTreeMap::new(),
         traces: vec![view_trace.clone()],
     };
-    let duration_us = trace_duration_us(&parsed, &view_trace);
-    sampler.sample_t_star(&original_plan.trace.id, 0, duration_us)
+    trace_duration_us(&parsed, &view_trace)
 }
 
 /// In-runtime, duration-bounded cache-pressure warmup recycle controller.
@@ -615,6 +660,13 @@ struct GraphPressureRecycle {
     lane_target: usize,
     session_limit: Option<u64>,
     recycle_bounded: bool,
+    /// The trajectory-start `t*` window. Each recycle lane resamples its OWN
+    /// lane-salted `t*` from this window at dispatch time (port of
+    /// `graph_ir_replay.py:_plan_for_lane`/`_lane_source`, lines 743-791): lane 0
+    /// reuses the prebuilt lane-0 `t*` (byte-identical to the single-pass plan),
+    /// higher lanes draw a distinct `sha256(seed:trace_id:lane)`-salted instant.
+    /// The default `[0, 0]` window collapses every lane to `t*=0` (identity).
+    t_star: TStarWindow,
     cancelled: Rc<Cell<bool>>,
     /// Number of pass-0 lanes this stage launched (`len(pass0_traces)`), stamped
     /// once [`run`](Self::run) resolves the lane fan-out. E3c's warmup teardown
@@ -672,6 +724,7 @@ impl GraphPressureRecycle {
             let cancelled = self.cancelled.clone();
             let next_index = next_index.clone();
             let done_tx = done_tx.clone();
+            let t_star = self.t_star;
             let lane = lane_index as u64;
             tokio::task::spawn_local(async move {
                 let mut template_index = start_template;
@@ -689,6 +742,13 @@ impl GraphPressureRecycle {
                         format!("{}::{}", template.template_id, Uuid::new_v4().simple());
                     let mut plan = template.plan.clone();
                     plan.trace.id = instance_id.clone();
+                    // Per-lane `t*` salt: lane 0 reuses the prebuilt lane-0 `t*`
+                    // (byte-identical to the single-pass plan); a higher recycle
+                    // lane draws its OWN `sha256(seed:trace_id:lane)`-salted `t*`
+                    // so the same template recurring across lanes resumes at a
+                    // distinct snapshot instant (`graph_ir_replay.py:_plan_for_lane`,
+                    // lines 743-791). Default `[0, 0]` window => every lane `t*=0`.
+                    let lane_t_star_us = sample_lane_tstar(template, lane, t_star);
                     // Register BEFORE dispatch so the instance's terminal node
                     // returns (drain path -> `observe_lane_return`) attribute to
                     // this lane; re-registering the lane on recycle overwrites its
@@ -698,7 +758,7 @@ impl GraphPressureRecycle {
                         GraphLaneIdentity {
                             template_trace_id: template.template_id.clone(),
                             instance_id: instance_id.clone(),
-                            t_star_us: template.t_star_us,
+                            t_star_us: lane_t_star_us,
                         },
                     );
                     progress.admit(&TraceAdmissionInfo {
@@ -1543,6 +1603,7 @@ impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
                 lane_target: prepared_pressure.lane_target,
                 session_limit: prepared_pressure.session_limit,
                 recycle_bounded: prepared_pressure.recycle_bounded,
+                t_star: prepared_pressure.t_star,
                 cancelled: Rc::new(Cell::new(false)),
                 pressure_lane_count: Cell::new(0),
             })
@@ -2110,6 +2171,7 @@ fn build_pressure_recycle(
             plan: warmup_plan.clone(),
             template_id: warmup_plan.trace.id.clone(),
             t_star_us: sample_plan_tstar(original_plan, t_star),
+            duration_us: plan_trace_duration_us(original_plan),
         })
         .collect::<Vec<_>>();
     let lane_target = phase.concurrency().unwrap_or(1).max(1);
@@ -2125,6 +2187,7 @@ fn build_pressure_recycle(
         lane_target,
         session_limit: common.sessions,
         recycle_bounded,
+        t_star,
     }))
 }
 
@@ -3552,16 +3615,19 @@ mod tests {
                 plan: pressure_one_node_plan("a"),
                 template_id: "a".into(),
                 t_star_us: 0.0,
+                duration_us: 0.0,
             },
             PressureTemplate {
                 plan: empty,
                 template_id: "b".into(),
                 t_star_us: 0.0,
+                duration_us: 0.0,
             },
             PressureTemplate {
                 plan: pressure_one_node_plan("c"),
                 template_id: "c".into(),
                 t_star_us: 0.0,
+                duration_us: 0.0,
             },
         ];
         let (pass0, cursor) = pressure_resolve_pass0_lanes(&templates, 2);
@@ -3569,6 +3635,63 @@ mod tests {
         assert_eq!(pass0, vec![0, 2]);
         // Cursor is one past the last consumed corpus position (a, b, c walked).
         assert_eq!(cursor, 3);
+    }
+
+    #[test]
+    fn sample_lane_tstar_salts_higher_lanes_and_keeps_lane0_and_default_identity() {
+        // Port parity for `graph_ir_replay.py:_plan_for_lane`/`_lane_source`
+        // (lines 743-791): lane 0 reuses the prebuilt lane-0 t*, higher lanes
+        // draw a DISTINCT lane-salted t*, and the default `[0, 0]` window keeps
+        // every lane at t*=0 (identity). Expected values come straight from the
+        // already-tested `WindowTStarSampler`/`seed_for_trace_lane` substrate.
+        let window = TStarWindow {
+            start_min_ratio: 0.2,
+            start_max_ratio: 0.8,
+            random_seed: 0,
+        };
+        let sampler = WindowTStarSampler {
+            start_min_ratio: window.start_min_ratio,
+            start_max_ratio: window.start_max_ratio,
+            random_seed: window.random_seed,
+        };
+        let duration_us = 1_000.0;
+        // The prebuilt lane-0 t* the recycle template carries (what
+        // `apply_tstar_split`/`sample_plan_tstar` produced for lane 0).
+        let lane0_expected = sampler.sample_t_star("t", 0, duration_us);
+        let template = PressureTemplate {
+            plan: pressure_one_node_plan("t"),
+            template_id: "t".into(),
+            t_star_us: lane0_expected,
+            duration_us,
+        };
+
+        // Lane 0 is byte-identical to the prebuilt single-pass lane-0 value.
+        assert_eq!(sample_lane_tstar(&template, 0, window), lane0_expected);
+        // A higher lane draws its OWN salted t*, matching `sample_t_star` on that
+        // lane index, and is DISTINCT from lane 0 (lanes decorrelate).
+        let lane1 = sample_lane_tstar(&template, 1, window);
+        let lane2 = sample_lane_tstar(&template, 2, window);
+        assert_eq!(lane1, sampler.sample_t_star("t", 1, duration_us));
+        assert_eq!(lane2, sampler.sample_t_star("t", 2, duration_us));
+        assert_ne!(lane1, lane0_expected, "lane 1 must not reuse lane 0's t*");
+        assert_ne!(lane2, lane1, "distinct lanes must draw distinct t*");
+
+        // HARD guard: the default `[0, 0]` window collapses EVERY lane to t*=0,
+        // so lane fan-out adds no divergence on the working profiling path.
+        let default_window = TStarWindow::default();
+        let default_template = PressureTemplate {
+            plan: pressure_one_node_plan("t"),
+            template_id: "t".into(),
+            t_star_us: 0.0,
+            duration_us,
+        };
+        for lane in 0..3u64 {
+            assert_eq!(
+                sample_lane_tstar(&default_template, lane, default_window),
+                0.0,
+                "default window lane {lane} must stay at t*=0"
+            );
+        }
     }
 
     /// Placement stub that advances the injected clock a fixed amount per
@@ -3620,11 +3743,13 @@ mod tests {
                 plan: pressure_one_node_plan("a"),
                 template_id: "a".into(),
                 t_star_us: 0.0,
+                duration_us: 0.0,
             },
             PressureTemplate {
                 plan: pressure_one_node_plan("b"),
                 template_id: "b".into(),
                 t_star_us: 0.0,
+                duration_us: 0.0,
             },
         ]);
         let recycle = Rc::new(GraphPressureRecycle {
@@ -3636,6 +3761,7 @@ mod tests {
             lane_target: 2,
             session_limit: None,
             recycle_bounded: false,
+            t_star: TStarWindow::default(),
             cancelled: Rc::new(Cell::new(false)),
             pressure_lane_count: Cell::new(0),
         });

@@ -78,3 +78,5 @@ apps/architecture-atlas/playwright-report/
 
 # cargo build output for ad-hoc deploy targets
 .deploy-target*/
+
+dynamo-aiperf-native
