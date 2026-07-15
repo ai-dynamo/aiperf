@@ -262,6 +262,31 @@ For anything realistic — multiple endpoints, latency modeling, telemetry,
 token counting — use the full `aiperf-mock-server` server above (which has its own
 `--processes N` round-robin balancer).
 
+### `fastclient` — a monster load generator for the fast targets
+
+`rust/mock-server/tools/fastclient.rs` is a std-only (`rustc`-compiled) HTTP/1.1
+load generator that blazes past the reqwest `examples/loadgen` (which caps ~650k
+rps and is itself the bottleneck). Persistent keep-alive connections, response
+framing by probed byte length (no per-request parsing) — >2M rps on loopback.
+
+```bash
+rustc -O rust/mock-server/tools/fastclient.rs -o /tmp/fastclient
+/tmp/fastclient http://127.0.0.1:8131/v1/chat/completions --connections 512 --duration 6
+```
+
+`--pipeline` defaults to **1** (one in-flight per connection) — the honest setting,
+since real HTTP/1.1 clients don't pipeline; express concurrency via `--connections`.
+`--pipeline P>1` measures the server's raw *retirement ceiling* (batches syscalls in
+a way real traffic won't) — label it as such, never quote it as client RPS.
+
+### `fastmock-uring` — io_uring engine A/B
+
+`rust/mock-server/tools/fastmock-uring/` is a monoio (io_uring) thread-per-core twin
+of `fastmock` for A/B-ing the I/O engine. Result: at realistic `pipeline=1`, io_uring
+beats blocking thread-per-connection **+27–54%**; under deep pipelining blocking wins
+(unrepresentative). See its `README.md` and the durable finding at
+`~/.claude/benchmark-findings/rust-io_uring-monoio-vs-blocking-threadperconn-http.md`.
+
 ## Gotchas recap
 
 - **Verify liveness before reporting "running."** Read the log / curl `/health`;

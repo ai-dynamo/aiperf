@@ -20,42 +20,54 @@ cargo build --release            # in this directory
 
 ## The A/B result (TL;DR)
 
-Two findings, both actionable:
+**The winner flips on the client's load pattern** — which is the whole point.
 
-1. **Per core, io_uring is ~1.7–1.9× the blocking model** — but only where the
-   *server* is the bottleneck (≤2 cores here).
-2. **Above ~4 cores the loopback client (the load generator) saturates first**
-   (~650–700k rps on this box), so neither server is the limiter. For fastmock's
-   actual job — being a non-bottleneck target — the std `fastmock --procs/--threads`
-   already exceeds what a client can drive. **Reach for io_uring only if you must
-   serve very high throughput from few cores.**
+1. **Realistic load — 1 in-flight request per connection** (how every real
+   HTTP/1.1 client behaves: browsers disabled pipelining; reqwest/curl/wrk/oha
+   don't do it): **io_uring wins +27% to +54%**, biggest at low core counts. It
+   amortizes per-request syscall cost and dodges thread-per-connection overhead.
+2. **Deep client-side pipelining — 32 in-flight per connection: blocking wins
+   ~29%**, because the app already gets 32 requests per `read()` and sends 32 per
+   `write()`, so io_uring's submit/complete machinery is pure overhead. **This
+   regime is unrepresentative** — treat pipelined numbers as a server "retirement
+   ceiling", never as client-achievable RPS.
+3. A weak client hides everything: the `reqwest`-based `examples/loadgen` (no
+   pipelining) caps at ~650k rps — itself the bottleneck, ~3.7× below the servers'
+   true ceiling. Use `../fastclient.rs`, which does >1.5M rps.
 
-### Numbers (32-core box, server pinned to N cores, load generator pinned to the rest)
+### Numbers — realistic (pipeline=1), 512 connections, server pinned to N cores
 
-| server cores | `fastmock --procs N` (blocking, thread-per-conn) | `fastmock-uring --cores N` (io_uring) | io_uring speedup |
-|-------------:|-------------------------------------------------:|--------------------------------------:|:----------------:|
-| 1 | 135,671 rps | 263,403 rps | **1.94×** |
-| 2 | 254,321 rps | 436,038 rps | **1.71×** |
-| 4 | 531,262 rps | 698,413 rps | 1.31× (io_uring nearing client cap) |
-| 8 | 583,033 rps | 613,048 rps | 1.05× (both client-capped) |
+| server cores | `fastmock --procs N` (blocking) | `fastmock-uring --cores N` (io_uring) | io_uring advantage |
+|-------------:|--------------------------------:|--------------------------------------:|:------------------:|
+| 1 |   199,716 rps |   307,059 rps | **+54%** |
+| 2 |   308,969 rps |   459,416 rps | **+49%** |
+| 4 |   643,301 rps |   913,645 rps | **+42%** |
+| 8 | 1,228,966 rps | 1,556,854 rps | **+27%** |
 
-The plateau/regression from 4→8 cores (and io_uring's 698k@4 > 613k@8) is the
-tell that the **load generator** — not the server — sets the ceiling above ~4
-server cores: with more cores handed to the server, the generator has fewer, so
-its cap drops. Interpret only the 1–2 core rows as a pure engine comparison.
+### Mechanism — 8 cores, pipeline × connections (why it flips)
+
+| pipeline | conns | blocking | io_uring | winner |
+|---------:|------:|---------:|---------:|:------:|
+| 1  |   64 | 1,368,815 | 1,599,706 | io_uring +17% |
+| 1  |  512 | 1,227,857 | 1,573,448 | io_uring +28% |
+| 32 |   64 | 2,197,006 | 1,701,633 | blocking +29% |
+| 32 | 1000 | 1,944,064 | 1,519,287 | blocking +28% |
+
+Full write-up (setup, caveats, version pins) is saved as a durable finding at
+`~/.claude/benchmark-findings/rust-io_uring-monoio-vs-blocking-threadperconn-http.md`.
 
 ## Reproducing
 
 ```bash
-# 1. Build the three pieces.
-cargo build --release                                             # fastmock-uring (here)
-rustc -C opt-level=3 -C lto=fat -C codegen-units=1 ../fastmock.rs -o /tmp/fastmock
-cargo build --release --example loadgen -p aiperf-mock-server     # from the workspace
+# 1. Build server A (blocking), server B (io_uring), and the monster client.
+rustc -C opt-level=3 -C lto=fat -C codegen-units=1 ../fastmock.rs   -o /tmp/fastmock
+rustc -C opt-level=3 -C lto=fat -C codegen-units=1 ../fastclient.rs -o /tmp/fastclient
+cargo build --release                                              # fastmock-uring (here)
 
-# 2. Server on cores 0..N-1, load generator on the rest (so it isn't the bottleneck).
-taskset -c 0-1 /tmp/fastmock --procs 2 9001 &                     # or: fastmock-uring --cores 2 9001
-taskset -c 2-31 <workspace>/target/release/examples/loadgen \
-  --url http://127.0.0.1:9001/v1/chat/completions --concurrency 600 --total 600000
+# 2. Server on cores 0..N-1, client on the rest (so the client is never the limiter).
+taskset -c 0-3 /tmp/fastmock --procs 4 9001 &                      # or: fastmock-uring --cores 4 9001
+taskset -c 4-31 /tmp/fastclient http://127.0.0.1:9001/v1/chat/completions \
+  --connections 512 --duration 6 --pipeline 1                      # pipeline 1 = realistic
 ```
 
 > **Gotcha:** run the benchmark with the sandbox **disabled**. A sandbox that
