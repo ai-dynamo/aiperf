@@ -20,14 +20,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
-from aiperf.common.enums import AIPerfLogLevel, CommunicationType
+from aiperf.common.enums import AIPerfLogLevel
 from aiperf.common.environment import Environment
 from aiperf.config import AIPerfConfig
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.deployment import DeploymentConfig
 from aiperf.config.loader import expand_config_dict
 from aiperf.kubernetes.environment import K8sEnvironment
-from aiperf.plugin.enums import ServiceRunType, UIType
 
 logger = logging.getLogger(__name__)
 
@@ -298,54 +297,33 @@ def apply_k8s_runtime_config(
     *,
     use_aliases: bool = False,
 ) -> None:
-    """Apply Kubernetes runtime settings to a config dict in-place.
+    """Apply Kubernetes runtime settings for the native Rust-runner execution path.
 
-    Sets up dual-bind ZMQ, API service, dataset URL, and K8s service run type.
+    Unlike the retired Python service mesh, the native ``aiperf-runner`` path has
+    no ZMQ dual-bind, no ``service_run_type``, no per-service API host/port, and no
+    HTTP dataset service: one runner (or, for cellular runs, a controller plus its
+    cell pods) owns the whole run and resolves its dataset in-process.
+    ``rust_wire.dump_benchmark_run`` keeps only ``{workers, workers_max,
+    workers_min, cells}`` from ``runtime`` when it lowers the config to the
+    protocol-v2 envelope, so injecting the mesh runtime here is at best dropped and
+    at worst fatal (e.g. ``ServiceRunType.KUBERNETES`` does not exist on the native
+    branch). This therefore only pins the artifact directory the results volume is
+    mounted at and a default log level; the cell count and worker count flow through
+    from ``spec.benchmark.runtime`` untouched.
 
     Args:
         config_dict: AIPerfConfig dict to modify in-place.
-        job_id: Job identifier for DNS name generation.
-        namespace: Kubernetes namespace for DNS resolution.
+        job_id: Job identifier (unused on the native path; kept for signature
+            parity with the mesh callers and future controller-DNS needs).
+        namespace: Kubernetes namespace (unused on the native path; see ``job_id``).
+        use_aliases: Whether ``config_dict`` uses camelCase aliases (kept for
+            signature parity; the native runtime keys written here are identical in
+            either form).
     """
+    del job_id, namespace, use_aliases  # native path needs no controller DNS wiring
+
     config_dict.setdefault("artifacts", {})
     config_dict["artifacts"]["dir"] = "/results"
-
-    api_port = K8sEnvironment.PORTS.API_SERVICE
-    jobset_name = f"aiperf-{job_id}"
-    controller_dns = (
-        f"{jobset_name}-controller-0-0.{jobset_name}.{namespace}.svc.cluster.local"
-    )
-    dataset_api_base_url = f"http://{controller_dns}:{api_port}/api/dataset"
-
-    if use_aliases:
-        runtime_config: dict[str, Any] = {
-            "serviceRunType": ServiceRunType.KUBERNETES,
-            "ui": UIType.SIMPLE,
-            "apiPort": api_port,
-            "apiHost": "0.0.0.0",
-            "datasetApiBaseUrl": dataset_api_base_url,
-            "communication": {
-                "type": CommunicationType.DUAL,
-                "ipcPath": K8sEnvironment.ZMQ.IPC_PATH,
-                "tcpHost": "0.0.0.0",
-            },
-        }
-    else:
-        runtime_config = {
-            "service_run_type": ServiceRunType.KUBERNETES,
-            "ui": UIType.SIMPLE,
-            "api_port": api_port,
-            "api_host": "0.0.0.0",
-            "dataset_api_base_url": dataset_api_base_url,
-            "communication": {
-                "type": CommunicationType.DUAL,
-                "ipc_path": K8sEnvironment.ZMQ.IPC_PATH,
-                "tcp_host": "0.0.0.0",
-            },
-        }
-
-    config_dict.setdefault("runtime", {})
-    config_dict["runtime"].update(runtime_config)
 
     config_dict.setdefault("logging", {})
     config_dict["logging"].setdefault("level", AIPerfLogLevel.INFO)
