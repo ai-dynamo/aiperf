@@ -40,7 +40,6 @@ from aiperf.operator.models import AIPerfJobSpec, OwnerReference
 from aiperf.operator.results_layout import epoch_key_from_body
 from aiperf.operator.spec_converter import (
     AIPerfJobSpecConverter,
-    apply_worker_config,
     build_benchmark_run,
 )
 from aiperf.operator.status import (
@@ -147,7 +146,12 @@ def _build_deployment(
     config = converter.to_aiperf_config()
     deploy_config = converter.to_deployment_config()
     total_workers = converter.calculate_workers(deploy_config)
-    num_pods = apply_worker_config(config, total_workers)
+    # The native cellular topology partitions the run across `runtime.cells` cell
+    # pods, not the retired mesh worker-pod fanout, so the mesh-only
+    # apply_worker_config (workers_per_pod / record_processors_per_pod scaling) is
+    # not applied. worker_replicas is a legacy field the cellular JobSet ignores;
+    # the cell-pod count is plumbed from config.runtime.cells in
+    # KubernetesDeployment.to_jobset_spec.
 
     run = build_benchmark_run(
         run_config=config.model_dump(mode="json", exclude_none=True),
@@ -158,7 +162,7 @@ def _build_deployment(
     deployment = KubernetesDeployment(
         job_id=job_id,
         namespace=namespace,
-        worker_replicas=num_pods,
+        worker_replicas=1,
         config=config,
         run=run,
         deployment=deploy_config,
