@@ -278,6 +278,26 @@ pub struct ProfileFlags {
     #[arg(long = "hf-subset")]
     pub hf_subset: Option<String>,
 
+    /// Dataset sampling strategy (`--dataset-sampling-strategy`).
+    #[arg(long = "dataset-sampling-strategy")]
+    pub dataset_sampling_strategy: Option<String>,
+
+    /// Shared system prompt length (`--shared-system-prompt-length`).
+    #[arg(long = "shared-system-prompt-length")]
+    pub shared_system_prompt_length: Option<u32>,
+
+    /// Per-user context prompt length (`--user-context-prompt-length`).
+    #[arg(long = "user-context-prompt-length")]
+    pub user_context_prompt_length: Option<u32>,
+
+    /// Number of prefix prompts / pool size (`--num-prefix-prompts`).
+    #[arg(long = "num-prefix-prompts")]
+    pub num_prefix_prompts: Option<u32>,
+
+    /// Prefix prompt length (`--prefix-prompt-length`).
+    #[arg(long = "prefix-prompt-length")]
+    pub prefix_prompt_length: Option<u32>,
+
     /// Cap on inter-turn delay, seconds (`--inter-turn-delay-cap-seconds`).
     #[arg(long = "inter-turn-delay-cap-seconds")]
     pub inter_turn_delay_cap_seconds: Option<f64>,

@@ -18,8 +18,8 @@ use std::path::PathBuf;
 use crate::flags::ProfileFlags;
 use crate::model::artifacts::Artifacts;
 use crate::model::dataset::{
-    AudioSpec, Dataset, Distribution, ImageSpec, Prompts, Sampling, Synthetic, VideoAudio,
-    VideoSpec,
+    AudioSpec, Dataset, Distribution, ImageSpec, PrefixPrompts, Prompts, Sampling, Synthetic,
+    VideoAudio, VideoSpec,
 };
 use crate::model::endpoint::{
     ConnectionReuse, Endpoint, EndpointType, RequestContentType, WaitForModelMode,
@@ -167,6 +167,8 @@ pub(crate) struct Inputs {
     pub video_spec: Option<VideoSpec>,
     /// Adaptive-scale controller (present when --adaptive-scale is set).
     pub adaptive_scale: Option<AdaptiveScale>,
+    /// Shared-prefix / prefix-pool policy.
+    pub prefix_prompts: Option<PrefixPrompts>,
     pub artifact_dir: PathBuf,
 }
 
@@ -330,7 +332,10 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         turn_delay_ms,
         session_header: flags.session_header.clone(),
         batch_size: 1,
-        sampling: "sequential".to_string(),
+        sampling: flags
+            .dataset_sampling_strategy
+            .clone()
+            .unwrap_or_else(|| "sequential".to_string()),
         entries: num_conversations
             .or(num_sessions)
             .or(request_count.map(|n| n as u32))
@@ -381,6 +386,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         audio_spec: build_audio_spec(flags),
         video_spec: build_video_spec(flags),
         adaptive_scale: build_adaptive_scale(flags, concurrency)?,
+        prefix_prompts: build_prefix_prompts(flags),
         artifact_dir: flags
             .artifact_dir
             .clone()
@@ -509,6 +515,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 prefix_prompt_length: None,
                 block_size: inputs.isl_block_size,
             },
+            prefix_prompts: inputs.prefix_prompts.clone(),
             images: inputs.image_spec.clone(),
             audio: inputs.audio_spec.clone(),
             video: inputs.video_spec.clone(),
@@ -932,6 +939,23 @@ fn build_image_spec(flags: &ProfileFlags) -> Option<ImageSpec> {
             .image_source_sampling
             .clone()
             .unwrap_or_else(|| "random-with-replacement".to_string()),
+    })
+}
+
+/// Build the prefix-prompts block from the shared/user or pool flags.
+fn build_prefix_prompts(flags: &ProfileFlags) -> Option<PrefixPrompts> {
+    let any = flags.shared_system_prompt_length.is_some()
+        || flags.user_context_prompt_length.is_some()
+        || flags.num_prefix_prompts.is_some()
+        || flags.prefix_prompt_length.is_some();
+    if !any {
+        return None;
+    }
+    Some(PrefixPrompts {
+        shared_system_length: flags.shared_system_prompt_length,
+        user_context_length: flags.user_context_prompt_length,
+        length: flags.prefix_prompt_length,
+        pool_size: flags.num_prefix_prompts,
     })
 }
 

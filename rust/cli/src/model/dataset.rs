@@ -141,11 +141,32 @@ pub struct VideoSpec {
     pub height: Option<u32>,
 }
 
+/// Shared-prefix / prefix-pool policy (`synthetic.prefix_prompts`). Two mutually
+/// exclusive modes: shared-system+user-context, or a length+pool_size pool.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct PrefixPrompts {
+    /// Shared system prompt length.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_system_length: Option<u32>,
+    /// Per-user context prompt length.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_context_length: Option<u32>,
+    /// Pool prefix length.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub length: Option<u32>,
+    /// Prefix pool size.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool_size: Option<u32>,
+}
+
 /// The typed synthetic dataset body.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Synthetic {
     /// Prompt-generation policy.
     pub prompts: Prompts,
+    /// Shared-prefix / prefix-pool policy (present when authored).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_prompts: Option<PrefixPrompts>,
     /// Synthetic image generation (present when authored).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub images: Option<ImageSpec>,
@@ -251,6 +272,7 @@ mod tests {
                 prefix_prompt_length: None,
                 block_size: None,
             },
+            prefix_prompts: None,
             images: None,
             audio: None,
             video: None,

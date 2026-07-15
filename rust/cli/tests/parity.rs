@@ -81,6 +81,8 @@ const FIXTURES: &[&str] = &[
     "hf_subset",
     "interturn_cap",
     "video_audio",
+    "prefix_shared",
+    "prefix_pool",
 ];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).
