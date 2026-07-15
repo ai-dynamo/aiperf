@@ -317,6 +317,13 @@ pub struct MeasuredContext {
     /// Whether a live-results sink is attached and the worker must return a
     /// non-consuming cloned record for live emission.
     pub wants_live_record: bool,
+    /// Whether the returned record should be *moved out* of the worker observer
+    /// (freeing its token storage) rather than cloned. Set in metrics-only
+    /// (sketch) mode, where the coordinator folds each record into a bounded
+    /// streaming accumulator and immediately drops it, so retaining the
+    /// observer's copy would defeat the O(sketch) memory bound. Only consulted
+    /// when `wants_live_record` is set.
+    pub consume_record: bool,
 }
 
 /// Result of a worker-local measured execution: the transport outcome plus an
@@ -1182,7 +1189,16 @@ impl RequestExecutor for TransportSink {
             .await?;
         let live_record = context
             .wants_live_record
-            .then(|| observer.snapshot_record(uuid, 0))
+            .then(|| {
+                // Metrics-only (sketch) mode moves the record out of the observer
+                // so its token storage is freed as the run streams; every other
+                // mode clones it and leaves the authoritative copy for the drain.
+                if context.consume_record {
+                    observer.drain_terminal_record(uuid, 0)
+                } else {
+                    observer.snapshot_record(uuid, 0)
+                }
+            })
             .flatten();
         Ok(MeasuredOutcome {
             result,
@@ -1204,7 +1220,16 @@ impl RequestExecutor for TransportSink {
             .await?;
         let live_record = context
             .wants_live_record
-            .then(|| observer.snapshot_record(uuid, 0))
+            .then(|| {
+                // Metrics-only (sketch) mode moves the record out of the observer
+                // so its token storage is freed as the run streams; every other
+                // mode clones it and leaves the authoritative copy for the drain.
+                if context.consume_record {
+                    observer.drain_terminal_record(uuid, 0)
+                } else {
+                    observer.snapshot_record(uuid, 0)
+                }
+            })
             .flatten();
         Ok(MeasuredOutcome {
             result,

@@ -1784,7 +1784,10 @@ pub(crate) async fn execute_scheduled_shard(
     }
     .await;
 
-    let drained = if execution_result.is_ok() {
+    // Metrics-only mode already folded every completed record on the fly (the worker
+    // moved each out of its observer as it streamed), so there is nothing left to
+    // drain and materializing that Vec would reintroduce the O(records) peak.
+    let drained = if execution_result.is_ok() && !capture.metrics_only {
         execution_backend.drain_records(clock.now_ns())
     } else {
         Ok(Vec::new())
@@ -1798,17 +1801,12 @@ pub(crate) async fn execute_scheduled_shard(
         .flat_map(|report| report.report.turns.iter())
         .map(|turn| (turn.uuid, turn.issued_offset_ns))
         .collect::<HashMap<_, _>>();
-    // Sketch mode folds each record into this shard's own bounded accumulator and
-    // drops it (finish_fold_into → only errored records retained); exact mode keeps
-    // the full record Vec. Shards are merged accumulator-to-accumulator downstream, so
-    // the coordinator never holds O(all records) in sketch mode.
-    let sketch_mode = matches!(
-        shared.metrics_config.storage_mode,
-        aiperf::metrics_core::MetricsStorageMode::Sketch { .. }
-    );
-    let records = if sketch_mode {
-        let mut accumulator = MetricsAccumulator::with_config(shared.metrics_config.clone());
-        let errored = capture.finish_fold_into(&issued_times, drained, &mut accumulator)?;
+    // Sketch mode folded each completed record into this shard's own bounded
+    // accumulator as it streamed and dropped it (only errored records retained);
+    // exact mode keeps the full record Vec. Shards merge accumulator-to-accumulator
+    // downstream, so the coordinator never holds O(all records) in sketch mode.
+    let records = if capture.metrics_only {
+        let (accumulator, errored) = capture.take_streamed();
         ShardRecords::Folded {
             accumulator,
             errored,
@@ -2118,7 +2116,10 @@ async fn execute_native_inner(
         .await;
         // Drain each worker observer's records before shutting the workers down; on
         // the failure path the report is discarded, so an empty drain is fine.
-        let drained = if execution_result.is_ok() {
+        // Metrics-only mode already folded and dropped every completed record as it
+        // streamed (the worker moved each out of its observer), so skip the drain —
+        // materializing that Vec would reintroduce the O(records) peak.
+        let drained = if execution_result.is_ok() && !sketch_mode {
             execution_backend.drain_records(capture.clock.now_ns())
         } else {
             Ok(Vec::new())
@@ -2132,12 +2133,16 @@ async fn execute_native_inner(
             .flat_map(|report| report.report.turns.iter())
             .map(|turn| (turn.uuid, turn.issued_offset_ns))
             .collect::<HashMap<_, _>>();
-        // Single-thread finalize: sketch mode folds each joined record into the bounded
-        // `accumulator` and drops it (`finish_fold_into` → only errored records retained
-        // for error grouping); the exact path keeps the full record Vec and ingests it
-        // into the same accumulator.
+        // Single-thread finalize: sketch mode folded each record into the capture's
+        // bounded streaming accumulator as the run streamed and dropped it (only
+        // errored records retained for error grouping); merge that into the report
+        // `accumulator`. The exact path keeps the full record Vec and ingests it.
         let captured = if sketch_mode {
-            capture.finish_fold_into(&issued_times, drained, &mut accumulator)?
+            let (streamed, errored) = capture.take_streamed();
+            accumulator
+                .merge(&streamed)
+                .map_err(|error| anyhow!("merging streamed sketch: {error}"))?;
+            errored
         } else {
             let captured = capture.finish(&issued_times, drained)?;
             for record in &captured {
@@ -3944,6 +3949,20 @@ struct RunCapture {
     /// adds this base to a turn's phase-local slot to recover the single-cell
     /// absolute slot. Empty (all-zero) for the single-process path.
     phase_ordinal_bases: HashMap<MetricsPhase, usize>,
+    /// Whether this capture runs in metrics-only (sketch) mode: each completed
+    /// turn's record is folded into `accumulator` and dropped as the run streams,
+    /// so peak coordinator memory stays O(sketch) instead of O(records). Derived
+    /// once from `config.storage_mode`, so exact mode leaves every field below
+    /// untouched and byte-unchanged.
+    metrics_only: bool,
+    /// Bounded streaming accumulator that folds each metrics-only record on
+    /// completion (see [`RunCapture::fold_streaming`]). Empty and unused in exact
+    /// mode. `RefCell` because the fold runs from `&self` record processing.
+    accumulator: RefCell<MetricsAccumulator>,
+    /// Errored/canceled metrics-only records retained for the report's error
+    /// grouping ([`group_record_errors`]); the fold drops every non-errored
+    /// record, so this stays O(errors), not O(records).
+    streaming_errored: RefCell<Vec<CapturedRecord>>,
 }
 
 impl RunCapture {
@@ -4034,6 +4053,14 @@ impl RunCapture {
         issuance: Rc<dyn IssuanceAuthority>,
         phase_ordinal_bases: HashMap<MetricsPhase, usize>,
     ) -> Self {
+        // Sketch storage mode is the metrics-only fold-and-drop path; computed here
+        // (not passed) so every constructor and call site is byte-unchanged and
+        // exact mode never touches the streaming fields.
+        let metrics_only = matches!(
+            config.storage_mode,
+            aiperf::metrics_core::MetricsStorageMode::Sketch { .. }
+        );
+        let accumulator = RefCell::new(MetricsAccumulator::with_config(config.clone()));
         Self {
             clock,
             origin_ns,
@@ -4051,6 +4078,9 @@ impl RunCapture {
             wants_adaptive_record,
             issuance,
             phase_ordinal_bases,
+            metrics_only,
+            accumulator,
+            streaming_errored: RefCell::new(Vec::new()),
         }
     }
 
@@ -4098,10 +4128,11 @@ impl RunCapture {
             .collect()
     }
 
-    /// Whether the worker should snapshot a non-consuming record for either the
-    /// live-results sink or the adaptive window sampler.
+    /// Whether the worker should return a per-turn record: a non-consuming
+    /// snapshot for the live-results sink or the adaptive window sampler, or a
+    /// consuming drain in metrics-only mode (see [`MeasuredContext::consume_record`]).
     fn wants_live_record(&self) -> bool {
-        self.wants_live_sink_record || self.wants_adaptive_record
+        self.wants_live_sink_record || self.wants_adaptive_record || self.metrics_only
     }
 
     /// Record the dispatch identity plus coordinator-known arrival facts, and
@@ -4122,12 +4153,22 @@ impl RunCapture {
                 ..RequestMetricMetadata::default()
             },
             wants_live_record: self.wants_live_record(),
+            // Metrics-only mode folds each record and drops it, so the worker must
+            // move the record out of its observer to free token storage as it goes.
+            consume_record: self.metrics_only,
         };
-        self.identities.borrow_mut().push(CaptureIdentity {
-            uuid: turn.uuid,
-            x_correlation_id: turn.x_correlation_id.clone(),
-            context: context.clone(),
-        });
+        // Metrics-only mode never joins records by dispatch identity at finish (it
+        // folds each on completion), so skip the O(records) identity retention —
+        // the fold source is the per-turn record staged by `record_live`, and a
+        // failed turn's record is synthesized in `process` instead. Every other
+        // mode retains the identity for the finish-time uuid join, byte-unchanged.
+        if !self.metrics_only {
+            self.identities.borrow_mut().push(CaptureIdentity {
+                uuid: turn.uuid,
+                x_correlation_id: turn.x_correlation_id.clone(),
+                context: context.clone(),
+            });
+        }
         context
     }
 
@@ -4138,6 +4179,12 @@ impl RunCapture {
         has_credit_timestamp: bool,
         outcome: &TurnDispatchOutcome,
     ) {
+        // Labels feed the finish-time uuid join only; metrics-only mode folds each
+        // record on completion and never joins, so retaining them would be pure
+        // O(records) waste. The fold applies phase/session/admit itself.
+        if self.metrics_only {
+            return;
+        }
         self.labels.borrow_mut().insert(
             credit.turn.uuid,
             CaptureLabel {
@@ -4152,6 +4199,20 @@ impl RunCapture {
     }
 
     fn record_live(&self, uuid: Uuid, record: RecordIngest) {
+        // Metrics-only mode stages every completed turn's record for the phase
+        // processor's fold-and-drop, regardless of any live/adaptive consumer. An
+        // adaptive phase still needs its own copy (read-only window sampling), so
+        // clone into `adaptive_records` when one is active. Both maps are drained
+        // per completed turn, so neither outgrows in-flight work.
+        if self.metrics_only {
+            if self.wants_adaptive_record {
+                self.adaptive_records
+                    .borrow_mut()
+                    .insert(uuid, record.clone());
+            }
+            self.live_records.borrow_mut().insert(uuid, record);
+            return;
+        }
         // Fan the worker's non-consuming snapshot out to each interested
         // consumer. Both drain their own map per completed turn, so neither
         // consumer starves the other and neither map outgrows in-flight work.
@@ -4179,6 +4240,12 @@ impl RunCapture {
         visible_text: Option<&str>,
         reasoning_text: Option<&str>,
     ) -> Result<()> {
+        // Metrics-only (sketch) mode retains no per-record output artifact
+        // (`validate_plan` forbids `outputs_path`), so keeping the text would be
+        // pure O(records) waste; drop it before the map grows.
+        if self.metrics_only {
+            return Ok(());
+        }
         ensure!(
             self.outputs
                 .borrow_mut()
@@ -4305,67 +4372,138 @@ impl RunCapture {
             .collect()
     }
 
-    /// Streaming write-then-drop finalize for bounded-memory (sketch) mode.
+    /// Fold one completed metrics-only turn's record into the streaming sketch and
+    /// drop it, keeping peak memory O(sketch) rather than O(records).
     ///
-    /// Performs the same dispatch-order identity/label/ordinal join as [`finish`],
-    /// but instead of materializing one [`CapturedRecord`] per request into a Vec
-    /// (each cloning model output and raw exchange bytes) and then re-ingesting the
-    /// whole Vec into the report accumulator, it folds each joined record into
-    /// `accumulator` and immediately drops it. Only errored records are retained
-    /// (there are few, and [`group_record_errors`] needs them), so coordinator
-    /// memory at finalize is O(errors) instead of O(records). The accumulator is a
-    /// bounded sketch, so the whole finalize stays bounded.
+    /// Applies the coordinator-owned fields the finish-time join would apply —
+    /// `phase` (the worker defaults every record, warmup included, to Profiling),
+    /// `session_num`, and the credit-issued `admit_ns` (bit-equal to the finish
+    /// path's `issued_offset_ns` because the run origin equals every phase's start)
+    /// — then processes the record into the bounded accumulator. Only errored or
+    /// canceled records are retained, for [`group_record_errors`], so the retained
+    /// set stays O(errors).
     ///
-    /// Per-record artifacts are unavailable in sketch mode (the frontend and
-    /// `validate_plan` guarantee their paths are absent), so no output/raw bytes are
-    /// needed for non-errored records.
-    fn finish_fold_into(
+    /// Approximate-memory contract: the sketch (t-digest percentiles, Welford
+    /// mean/M2, and the float running sums) is order-independent only up to a few
+    /// ULPs, and this folds in *completion* order rather than the finish path's
+    /// *dispatch* order. So percentiles, means, and float sums drift a few ULPs —
+    /// below display precision — and lose exact run-to-run reproducibility, while
+    /// counts, min/max, and integer sums stay bit-identical. That drift is the
+    /// accepted price of bounded memory; a reorder buffer would be O(records) and
+    /// defeat the goal.
+    fn fold_streaming(
         &self,
-        issued_times: &HashMap<Uuid, i64>,
-        drained: Vec<(Uuid, RecordIngest)>,
-        accumulator: &mut MetricsAccumulator,
-    ) -> Result<Vec<CapturedRecord>> {
-        let identities = self.identities.borrow();
-        let labels = self.labels.borrow();
-        let outputs = self.outputs.borrow();
-
-        let mut records_by_uuid = self.resolve_records_by_uuid(&identities, &labels, drained)?;
-
-        let mut phase_counters: HashMap<_, usize> = HashMap::new();
-        let mut errored = Vec::new();
-        for (ordinal, identity) in identities.iter().enumerate() {
-            let mut ingest = records_by_uuid.remove(&identity.uuid).ok_or_else(|| {
-                anyhow!(
-                    "captured request {} produced no native metric record",
-                    identity.uuid
-                )
-            })?;
-            self.patch_joined_ingest(
-                ordinal,
-                identity,
-                &labels,
-                issued_times,
-                &mut phase_counters,
-                &mut ingest,
-            )?;
-            // Fold-and-drop: the sketch accumulator retains only bounded aggregates.
-            accumulator.process_record(&ingest);
-            if ingest.errored || ingest.canceled {
-                errored.push(CapturedRecord {
-                    uuid: identity.uuid,
-                    x_correlation_id: identity.x_correlation_id.clone(),
-                    output: outputs.get(&identity.uuid).cloned().unwrap_or_default(),
-                    raw: None,
-                    ingest,
-                });
-            }
+        mut ingest: RecordIngest,
+        phase: MetricsPhase,
+        has_credit_timestamp: bool,
+        credit: &IssuedCredit,
+    ) {
+        ingest.phase = phase;
+        ingest.session_num = credit.id;
+        ingest.admit_ns =
+            has_credit_timestamp.then(|| credit.issued_ns.saturating_sub(self.origin_ns));
+        self.accumulator.borrow_mut().process_record(&ingest);
+        if ingest.errored || ingest.canceled {
+            self.streaming_errored.borrow_mut().push(CapturedRecord {
+                uuid: credit.turn.uuid,
+                x_correlation_id: credit.turn.x_correlation_id.clone(),
+                output: CapturedModelOutput::default(),
+                raw: None,
+                ingest,
+            });
         }
-        Ok(errored)
     }
 
-    /// Builds the uuid→record map for a finalize, synthesizing fallback records for
-    /// identities no worker observer produced. Shared by [`finish`] and
-    /// [`finish_fold_into`] so the two paths resolve records identically.
+    /// Remove one metrics-only turn's staged worker record for the phase
+    /// processor's fold. Absent for a turn that failed or was canceled before it
+    /// completed (its `Err`/cancel path never called `record_live`), in which case
+    /// the processor synthesizes the record instead.
+    fn take_streaming_record(&self, uuid: Uuid) -> Option<RecordIngest> {
+        self.live_records.borrow_mut().remove(&uuid)
+    }
+
+    /// Synthesize the record for a metrics-only turn the worker never staged — a
+    /// dispatch that failed or was canceled before completion.
+    ///
+    /// Built exactly as [`resolve_records_by_uuid`]'s finish-time fallback: a
+    /// one-shot [`NativeMetricsObserver`] fed the same arrival/terminal/response
+    /// facts (from `credit.turn` and `outcome`), so the errored/canceled flag,
+    /// `ErrorRequestCount`, and error grouping match the exact and retained paths.
+    /// `fold_streaming` then applies phase/session/admit.
+    fn synthesize_streaming_fallback(
+        &self,
+        credit: &IssuedCredit,
+        outcome: &TurnDispatchOutcome,
+    ) -> RecordIngest {
+        let turn = &credit.turn;
+        let fallback = NativeMetricsObserver::new(
+            self.clock.clone(),
+            self.origin_ns,
+            self.metrics_config.clone(),
+        );
+        let arrival_ms = self.clock.now_ns().saturating_sub(self.origin_ns) as f64 / 1_000_000.0;
+        fallback.register_metadata(
+            turn.uuid,
+            RequestMetricMetadata {
+                turn_index: u32::try_from(turn.turn_index).unwrap_or(u32::MAX),
+                conversation_id: Some(turn.conversation_id.clone()),
+                audio_duration_s: turn.audio_duration_seconds,
+                ..RequestMetricMetadata::default()
+            },
+        );
+        fallback.on_arrival(
+            turn.uuid,
+            arrival_ms,
+            turn.input_length,
+            turn.max_output_tokens,
+        );
+        fallback.on_terminal(turn.uuid, outcome.terminal);
+        fallback.record_response(
+            turn.uuid,
+            NativeResponseMetadata {
+                start_ns: Some(outcome.start_ns),
+                end_ns: Some(outcome.end_ns),
+                ..NativeResponseMetadata::default()
+            },
+        );
+        fallback
+            .finish_with_records()
+            .records
+            .into_iter()
+            .find_map(|(uuid, ingest)| (uuid == turn.uuid).then_some(ingest))
+            .unwrap_or_else(|| {
+                // Defensive: the observer always yields the record it was just fed;
+                // fall back to a minimal terminal record rather than panicking.
+                let mut ingest = RecordIngest::minimal(
+                    outcome.start_ns,
+                    outcome.end_ns,
+                    MetricsPhase::Profiling,
+                );
+                ingest.errored = matches!(
+                    outcome.terminal,
+                    ReplayTerminalStatus::Failed | ReplayTerminalStatus::Rejected
+                );
+                ingest.canceled = outcome.terminal == ReplayTerminalStatus::Canceled;
+                ingest
+            })
+    }
+
+    /// Move the streaming accumulator and its retained errored records out for the
+    /// finalize, leaving a fresh empty accumulator behind so the capture stays
+    /// reusable. The sharded path ships the returned accumulator as its shard
+    /// partition; the single-thread path merges it into the report accumulator.
+    fn take_streamed(&self) -> (MetricsAccumulator, Vec<CapturedRecord>) {
+        let accumulator = std::mem::replace(
+            &mut *self.accumulator.borrow_mut(),
+            MetricsAccumulator::with_config(self.metrics_config.clone()),
+        );
+        (accumulator, self.streaming_errored.take())
+    }
+
+    /// Builds the uuid→record map for the exact-mode finish, synthesizing fallback
+    /// records for identities no worker observer produced. (Metrics-only mode folds
+    /// each record on completion and synthesizes its own per-turn fallback in
+    /// [`RunCapture::synthesize_streaming_fallback`], so it never joins here.)
     fn resolve_records_by_uuid(
         &self,
         identities: &[CaptureIdentity],
@@ -4526,6 +4664,24 @@ struct CapturePhaseProcessor {
 #[async_trait(?Send)]
 impl TurnRecordProcessor for CapturePhaseProcessor {
     async fn process(&self, credit: &IssuedCredit, outcome: &TurnDispatchOutcome) -> Result<()> {
+        if self.capture.metrics_only {
+            // Metrics-only (sketch) mode: fold this turn's record into the bounded
+            // streaming accumulator and drop it, so peak memory stays O(sketch). A
+            // successful turn staged its record via `record_live`; a failed or
+            // canceled turn never did (its `Err`/cancel path skips `record_live`),
+            // so synthesize the record — matching the exact path's finish-time
+            // fallback — to keep error counts and grouping correct. The per-record
+            // live sink and cellular heartbeat are not driven here: sketch retains
+            // no per-record data to stream, and the sharded workers that dominate
+            // this mode already run with neither attached.
+            let ingest = match self.capture.take_streaming_record(credit.turn.uuid) {
+                Some(ingest) => ingest,
+                None => self.capture.synthesize_streaming_fallback(credit, outcome),
+            };
+            self.capture
+                .fold_streaming(ingest, self.phase, self.has_credit_timestamp, credit);
+            return Ok(());
+        }
         self.capture
             .label(credit, self.phase, self.has_credit_timestamp, outcome);
         // The per-record clone is consumed once; feed both the Python live sink and
@@ -4975,6 +5131,7 @@ mod tests {
                 requested_output_length: 8,
                 metadata: RequestMetricMetadata::default(),
                 wants_live_record: false,
+                consume_record: false,
             },
         });
         capture.labels.borrow_mut().insert(
