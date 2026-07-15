@@ -349,6 +349,13 @@ impl Workload for RequestRateWorkload {
     }
 
     async fn execute(&self, runtime: Rc<ScheduledRuntime>) -> Result<()> {
+        // Arrival pacing is the (AfterInterval, Reanchor) policy named in
+        // `crate::timing::arrival`: the first arrival is one interval in and a target
+        // that has fallen behind re-anchors to `now` with no catch-up burst. This
+        // loop keeps its own arithmetic rather than calling `next_arrival_target`
+        // because it *eagerly* advances and peeks the next target for closed-loop
+        // backpressure (the `NoSlot` block-vs-yield decision below), which the shared
+        // pure helper does not express.
         let mut next_target_ns = runtime
             .start_ns()
             .saturating_add(self.intervals.borrow_mut().next_interval_ns());

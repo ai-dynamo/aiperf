@@ -551,7 +551,14 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   JSON+CSV, server-metrics JSON+CSV+parquet, accuracy CSV, console.txt (+warning/insight
   detectors), OTLP per-record metrics, MLflow, W&B — parity-verified byte-for-byte (or
   schema+data for parquet) vs the retired Python exporters via the `AIPERF_EXPORT_SUBDIR`
-  same-report diff.
+  same-report diff. Opt-in bounded-memory metrics: `AIPERF_METRICS_SKETCH=1` /
+  `--sketch-metrics` (default off) swaps `MetricsStorageMode::Exact` for `Sketch`, streaming
+  each Record-metric value into a per-`(phase, tag)` mergeable `cellular::sketch::TDigest`
+  (exact count/sum/min/max + Welford std, approximate percentiles) so accumulator memory is
+  O(1) in the record count; per-record artifacts + per-row-only outputs are dropped
+  fail-closed (`rust_wire`, `validate_plan`), and the online path folds+drops each finalized
+  record (`RunCapture::finish_fold_into`). Bounds the accumulator/coordinator finalize;
+  online-path peak RSS still gated by per-worker record retention until drain (follow-up).
 - `specs/2026-07-11-aiperf-rust-endpoints-design.md` — **built + implementation/
   token-native addenda**: every tier-1 and tier-2 dialect plus the open PR-1113
   `vllm_generate` factory is implemented behind trait-backed prepared endpoints,

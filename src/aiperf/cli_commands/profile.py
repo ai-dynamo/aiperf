@@ -50,6 +50,14 @@ def profile(
     from aiperf.cli_utils import exit_on_error
     from aiperf.config.loader.errors import ConfigurationError
 
+    # `--sketch-metrics` toggles the same runtime setting the AIPERF_METRICS_SKETCH
+    # env var backs; rust_wire reads `Environment.METRICS.SKETCH` as the single
+    # source when projecting the native run request.
+    if cli_config.sketch_metrics:
+        from aiperf.common.environment import Environment
+
+        Environment.METRICS.SKETCH = True
+
     with exit_on_error(title="Error Running AIPerf System", show_traceback=False):
         from aiperf.config.flags.resolver import resolve_config
         from aiperf.config.loader import build_benchmark_plan

@@ -342,6 +342,12 @@ pub(crate) async fn run_paced_with_backend(
     };
 
     // Absolute schedule: the next arrival's target time on the clock's timeline.
+    // This is the (AfterInterval, Reanchor) policy named in `crate::timing::arrival`.
+    // It keeps its own arithmetic rather than calling `next_arrival_target` because
+    // the next interval is drawn at the tail of each iteration (line below), and this
+    // loop shares its generator with live ramp actuators — moving that draw into the
+    // shared helper's start-of-iteration position could shift it across a concurrent
+    // rate change. The graph loop, which has no such ramp coupling, uses the helper.
     let mut next_target_ns = start_ns + intervals.borrow_mut().next_interval_ns();
 
     let mut handles = Vec::new();

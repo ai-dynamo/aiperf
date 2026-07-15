@@ -35,6 +35,7 @@ mod records;
 pub mod redaction;
 pub mod registry;
 mod server_metrics;
+mod sharded_scheduled;
 pub mod sidecar_input;
 pub mod turn_execution;
 

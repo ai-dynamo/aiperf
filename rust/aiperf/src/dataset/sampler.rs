@@ -288,7 +288,23 @@ impl PartitionedSampler {
     /// multi-cell run; otherwise returns `inner` unchanged (single process or the
     /// identity partition), so non-cell sampling stays byte-identical.
     pub fn from_env(inner: Box<dyn Sampler>) -> Box<dyn Sampler> {
-        match ModuloCellPartition::from_env() {
+        Self::for_partition(inner, ModuloCellPartition::from_env())
+    }
+
+    /// Wraps `inner` with an explicitly supplied partition instead of reading the
+    /// process environment, mirroring [`Self::from_env`]'s wrap-or-passthrough
+    /// policy exactly: a multi-cell partition (`cell_count > 1`) applies the
+    /// ownership filter; `None` or the identity partition returns `inner` unchanged
+    /// so non-cell sampling stays byte-identical. A future single-process
+    /// thread-per-core scheduled run derives one partition per sub-cell thread —
+    /// which the process-global `AIPERF_CELL_ID`/`_COUNT` cannot express — and
+    /// injects it here; [`Self::from_env`] delegates here with the env partition so
+    /// its callers stay byte-unchanged.
+    pub fn for_partition(
+        inner: Box<dyn Sampler>,
+        partition: Option<ModuloCellPartition>,
+    ) -> Box<dyn Sampler> {
+        match partition {
             Some(partition) if partition.cell_count() > 1 => Box::new(Self::new(inner, partition)),
             _ => inner,
         }

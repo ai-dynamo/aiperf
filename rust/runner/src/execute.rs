@@ -25,7 +25,7 @@ use aiperf::adaptive_core::{
     AdaptiveScale, CorrelationContext, SharedWindowSampler, SlaFilter, UserTarget,
 };
 use aiperf::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
-use aiperf::cellular::IssuanceAuthority;
+use aiperf::cellular::{CellPartition, IssuanceAuthority, ModuloCellPartition};
 use aiperf::clock::{Clock, RealClock, RealClockAnchor};
 use aiperf::content_server::{
     ContentServerConfig, ContentServerFactory, ContentServerRuntime, NativeContentServerFactory,
@@ -305,8 +305,13 @@ pub(crate) fn default_prepared_endpoint_profile(
     prepared_endpoint_profile(profiles, DEFAULT_ENDPOINT_PROFILE_ID)
 }
 
+/// Worker-local prepared endpoint table factory. `pub(crate)` so the
+/// thread-per-core sharded runtime can retain the concrete `Arc` in its shared
+/// bundle and build one coordinator resolver per sub-cell thread (the resolver is
+/// `Rc`/`!Send`, so it cannot be shared — only rebuilt per thread from this
+/// `Send + Sync` factory).
 #[derive(Clone)]
-struct NativePreparedEndpointTableFactory {
+pub(crate) struct NativePreparedEndpointTableFactory {
     registry: EndpointRegistry,
     profiles: Arc<Vec<ValidatedEndpointProfileV2>>,
 }
@@ -341,7 +346,7 @@ impl NativePreparedEndpointTableFactory {
         })
     }
 
-    fn coordinator_resolver(&self) -> Result<Rc<dyn PreparedTurnEndpointResolver>> {
+    pub(crate) fn coordinator_resolver(&self) -> Result<Rc<dyn PreparedTurnEndpointResolver>> {
         let table = Rc::new(self.prepare_table()?);
         let default = self.reference(DEFAULT_ENDPOINT_PROFILE_ID)?;
         Ok(Rc::new(PreparedEndpointTableResolver::single(
@@ -467,7 +472,7 @@ pub(crate) struct NativeGraphDatasetPlan {
 /// reinterpret the authored source a second time.
 pub(crate) fn execute_prepared_native_plan_uncommitted_with_factories(
     plan: NativeRunSpec,
-    transport_factory: &dyn RequestExecutorFactory,
+    transport_factory: Arc<dyn RequestExecutorFactory>,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
@@ -493,7 +498,7 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_with_execution_factories(
 ) -> Result<NativeReport> {
     execute_prepared_native_plan_uncommitted_with_runtime_factories(
         plan,
-        factories.http(),
+        factories.http_handle(),
         factories.graph(),
         registry,
         &BuiltinNativeSidecarResourceFactory,
@@ -504,7 +509,7 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_with_execution_factories(
 /// Execute one fully prepared plan with sidecar resource construction injected.
 pub(crate) fn execute_prepared_native_plan_uncommitted_with_all_factories(
     plan: NativeRunSpec,
-    transport_factory: &dyn RequestExecutorFactory,
+    transport_factory: Arc<dyn RequestExecutorFactory>,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
     sidecar_factory: &dyn NativeSidecarResourceFactory,
@@ -521,7 +526,7 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_with_all_factories(
 
 fn execute_prepared_native_plan_uncommitted_with_runtime_factories(
     plan: NativeRunSpec,
-    transport_factory: &dyn RequestExecutorFactory,
+    transport_factory: Arc<dyn RequestExecutorFactory>,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
     sidecar_factory: &dyn NativeSidecarResourceFactory,
@@ -654,6 +659,23 @@ fn validate_plan(request: &NativeRunSpec) -> Result<()> {
     );
     ensure!(!request.phases.is_empty(), "at least one phase is required");
     ensure!(request.workers > 0, "workers must be greater than zero");
+    // Sketch retention keeps no per-record values, so per-record artifacts and the
+    // native per-record OTLP histograms are impossible. The frontend already drops
+    // these from the projection; this fail-closed check guards a hand-authored plan.
+    if request.metrics.sketch {
+        ensure!(
+            request.artifacts.records_path.is_none()
+                && request.artifacts.raw_path.is_none()
+                && request.artifacts.outputs_path.is_none(),
+            "sketch metrics mode cannot emit per-record artifacts \
+             (records_path/raw_path/outputs_path); disable them or the sketch flag"
+        );
+        ensure!(
+            !request.native_otel_enabled,
+            "sketch metrics mode cannot emit per-record OTLP histograms; \
+             disable native OTLP or the sketch flag"
+        );
+    }
     ensure!(
         request
             .phases
@@ -964,7 +986,7 @@ impl PreparedNativeSidecarResources {
 
 async fn prepare_and_execute_native(
     request: NativeRunSpec,
-    transport_factory: &dyn RequestExecutorFactory,
+    transport_factory: Arc<dyn RequestExecutorFactory>,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
     sidecar_factory: &dyn NativeSidecarResourceFactory,
@@ -1028,7 +1050,7 @@ async fn execute_native(
     request: NativeRunSpec,
     accuracy: Option<&mut PreparedAccuracy>,
     sidecars: &mut PreparedNativeSidecarResources,
-    transport_factory: &dyn RequestExecutorFactory,
+    transport_factory: Arc<dyn RequestExecutorFactory>,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
@@ -1046,7 +1068,7 @@ async fn execute_scheduled_native(
     request: NativeRunSpec,
     accuracy: Option<&mut PreparedAccuracy>,
     sidecars: &mut PreparedNativeSidecarResources,
-    transport_factory: &dyn RequestExecutorFactory,
+    transport_factory: Arc<dyn RequestExecutorFactory>,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
     execute_native_inner(request, accuracy, sidecars, transport_factory, registry).await
@@ -1471,11 +1493,346 @@ fn finish_with_shutdown<T>(result: Result<T>, shutdown: Result<()>, label: &str)
     }
 }
 
+/// The `Send + Sync` inputs one thread-per-core sub-cell needs to build and run
+/// its whole scheduled pipeline, shared read-only across the `W` worker threads
+/// through an `Arc`.
+///
+/// Everything here is either owned+`Send` (config, dataset, phase specs, rng
+/// roots), an `Arc` handle (the transport factory, the prepared-endpoint table
+/// factory, the tokenizers), or `Copy` (the clock anchor). The `!Send` per-thread
+/// stack — clock, transport sink, `RunCapture`, dispatcher, `SlotPool`s, plans —
+/// is built *inside* each worker from these. Only the read-only dataset/registry
+/// `Arc`s cross the spawn boundary, so no lock sits on the hot path.
+pub(crate) struct ShardedShared {
+    /// The injected transport factory (HTTP or gRPC). Each thread builds its own
+    /// `workers == 1` sink from it, co-locating scheduler and transport.
+    pub(crate) transport_factory: Arc<dyn RequestExecutorFactory>,
+    /// Concrete prepared-endpoint table factory; each thread derives its own
+    /// worker-local prepared table and (`Rc`) coordinator resolver from it.
+    pub(crate) table_factory: Arc<NativePreparedEndpointTableFactory>,
+    /// Cloned sampler registry (the source factory borrows it per thread).
+    pub(crate) samplers: aiperf::dataset::SamplerRegistry,
+    /// The composed dataset every thread partitions.
+    pub(crate) dataset: Dataset,
+    /// Effective primary model.
+    pub(crate) primary_model: String,
+    /// Resolved native metrics policy.
+    pub(crate) metrics_config: MetricsConfig,
+    /// Shared response tokenizer.
+    pub(crate) tokenizer: Arc<dyn TextTokenizer>,
+    /// Shared input-token counter.
+    pub(crate) input_token_counter: Arc<dyn InputTokenCounter>,
+    /// Ordered inference endpoint URLs.
+    pub(crate) endpoint_urls: Vec<String>,
+    /// Fully resolved transport policy.
+    pub(crate) transport_config: TransportSinkConfig,
+    /// Dataset default output-token bound.
+    pub(crate) default_output_tokens: usize,
+    /// Dataset RNG root (seeded per phase inside the plan builder).
+    pub(crate) dataset_rng_root: RngRoot,
+    /// Run RNG root (arrival/cancellation/ramp derivations).
+    pub(crate) rng_root: RngRoot,
+    /// The authored phases (unsliced; each thread slices its own copy by `W`).
+    pub(crate) phases: Vec<PhaseSpec>,
+    /// Stable benchmark id (adaptive artifact naming).
+    pub(crate) benchmark_id: String,
+    /// Run artifact directory (adaptive artifacts).
+    pub(crate) artifact_dir: PathBuf,
+    /// Whether raw HTTP exchanges are retained.
+    pub(crate) raw_enabled: bool,
+    /// Whether `inputs.json` canonical payloads are retained.
+    pub(crate) inputs_enabled: bool,
+    /// Whether an adaptive phase needs each completed turn's terminal record.
+    pub(crate) wants_adaptive_record: bool,
+    /// Run-failure discipline.
+    pub(crate) on_failure: OnFailure,
+    /// The shared monotonic real-clock origin; each thread builds a reactor-local
+    /// clock from it so all timestamps sit on one timeline.
+    pub(crate) real_clock_anchor: RealClockAnchor,
+    /// The run origin (`now_ns` captured once on the main thread).
+    pub(crate) start_ns: i64,
+    /// This process's cell id (0 when not a controller child).
+    pub(crate) cell_id: u32,
+    /// This run's cell count (1 when not a controller child).
+    pub(crate) cells: u32,
+    /// This cell's thread-per-core sub-cell count.
+    pub(crate) workers: u32,
+    /// Each phase's global ordinal base (env for a controller child, computed for a
+    /// lone process), injected identically into every thread's issuer.
+    pub(crate) phase_ordinal_bases: HashMap<MetricsPhase, usize>,
+}
+
+/// A sub-cell thread's finished records: kept exactly (retained for the report
+/// ingest + per-record artifacts) or folded into a bounded per-shard accumulator and
+/// dropped (sketch mode). Folding is the cells-48 memory fix — RAM is
+/// O(shards × sketch), flat in record count, instead of O(all records).
+pub(crate) enum ShardRecords {
+    /// Exact mode: every record retained, each stamped with its global two-level
+    /// dispatch ordinal. The report tail ingests them and per-record artifacts read
+    /// them.
+    Retained(Vec<CapturedRecord>),
+    /// Sketch mode: records streamed into this shard's bounded accumulator and
+    /// dropped; only errored records survive for the report's error grouping. Shards
+    /// merge accumulator-to-accumulator (associative), never by concatenating records.
+    Folded {
+        accumulator: MetricsAccumulator,
+        errored: Vec<CapturedRecord>,
+    },
+}
+
+impl Default for ShardRecords {
+    fn default() -> Self {
+        ShardRecords::Retained(Vec::new())
+    }
+}
+
+impl ShardRecords {
+    /// Merge another shard's records into this one: concatenate retained records, or
+    /// merge folded accumulators (append-only) + concatenate their errored records.
+    /// Every shard runs the same storage mode, so the variants always match.
+    fn absorb(&mut self, other: ShardRecords) -> Result<()> {
+        match (self, other) {
+            (ShardRecords::Retained(a), ShardRecords::Retained(b)) => a.extend(b),
+            (
+                ShardRecords::Folded {
+                    accumulator: a,
+                    errored: ea,
+                },
+                ShardRecords::Folded {
+                    accumulator: b,
+                    errored: eb,
+                },
+            ) => {
+                a.merge(&b)
+                    .map_err(|error| anyhow!("merging sharded sketch partitions: {error}"))?;
+                ea.extend(eb);
+            }
+            _ => bail!(
+                "sharded scheduled shards disagree on storage mode (retained vs folded) — \
+                 every shard must run the same metrics storage mode"
+            ),
+        }
+        Ok(())
+    }
+}
+
+/// One sub-cell thread's finished records plus the phase facts the once-per-cell
+/// report tail folds across threads. `Send` so it crosses the worker join.
+#[derive(Default)]
+pub(crate) struct ScheduledShardOutcome {
+    /// This thread's records — retained (exact) or folded-and-dropped (sketch).
+    pub(crate) records: ShardRecords,
+    /// This thread's `inputs.json` sessions (disjoint conversation ids across
+    /// threads, so the union needs only a re-sort by session id).
+    pub(crate) input_sessions: Vec<InputSession>,
+    /// Whether any of this thread's phases was externally cancelled.
+    pub(crate) was_cancelled: bool,
+    /// Whether this thread ran a warmup phase (gates the warmup metrics export).
+    pub(crate) has_warmup: bool,
+}
+
+impl ScheduledShardOutcome {
+    /// Fold another thread's shard into this one: merge records (mode-aware), union
+    /// input sessions, OR the phase flags. Record ordering is applied once after all
+    /// shards are absorbed (retained records only).
+    pub(crate) fn absorb(&mut self, other: ScheduledShardOutcome) -> Result<()> {
+        self.records.absorb(other.records)?;
+        self.input_sessions.extend(other.input_sessions);
+        self.was_cancelled |= other.was_cancelled;
+        self.has_warmup |= other.has_warmup;
+        Ok(())
+    }
+}
+
+/// Build and run one sub-cell thread's complete scheduled pipeline over its `1/W`
+/// nested partition, returning its record shard.
+///
+/// This is the per-thread body of the sharded runtime: it mirrors the
+/// single-thread scheduled path in [`execute_native_inner`] exactly, differing
+/// only in the parts that make a thread a self-contained sub-cell — a fresh
+/// reactor-local clock, a `workers == 1` co-located transport (no hop), an
+/// injected two-level [`IssuanceAuthority`] + injected ordinal bases, its
+/// per-thread cell partition threaded into both the sampler and the issuer, and
+/// phases sliced to this thread's `1/W` share. It runs the **unchanged**
+/// [`run_scheduled_phases`] engine. It never touches a sidecar, the live sink, the
+/// heartbeat lane, or an artifact — those stay once-per-cell on the main thread.
+///
+/// Called on a worker OS thread inside that thread's own `current_thread` runtime
+/// + `LocalSet`, so its entire `!Send` stack is thread-local.
+pub(crate) async fn execute_scheduled_shard(
+    shared: &ShardedShared,
+    thread_id: usize,
+) -> Result<ScheduledShardOutcome> {
+    // A reactor-local clock on the shared real-clock timeline (the graph
+    // thread-per-core model); never the coordinator's clock object.
+    let clock: Rc<dyn Clock> = RealClock::from_anchor(shared.real_clock_anchor);
+    let start_ns = shared.start_ns;
+    // This thread's nested `(cell × thread)` partition — the same object feeds the
+    // sampler (which instances it draws) and the issuer (which global ordinals it
+    // stamps), so `within*(cells*W) + index == instance` holds and the ordinals
+    // tile 0..total.
+    let partition = crate::sharded_scheduled::two_level_partition(
+        shared.cell_id,
+        shared.cells,
+        thread_id,
+        shared.workers,
+    )?;
+
+    let prepared_endpoints: Arc<dyn HttpPreparedEndpointTableFactory> =
+        shared.table_factory.clone();
+    let execution_backend = shared.transport_factory.build(HttpExecutionBackendConfig {
+        // One worker: the sink stays on this thread's reactor, co-located with the
+        // scheduler — the old per-request mpsc/oneshot hop is gone.
+        workers: 1,
+        coordinator_clock: clock.clone(),
+        real_clock_anchor: shared.real_clock_anchor,
+        base_urls: shared.endpoint_urls.clone(),
+        model: shared.primary_model.clone(),
+        transport: shared.transport_config.clone(),
+        prepared_endpoints: Some(prepared_endpoints),
+    })?;
+    let capture = Rc::new(RunCapture::new_with_issuance_and_bases(
+        clock.clone(),
+        start_ns,
+        shared.metrics_config.clone(),
+        shared.raw_enabled,
+        shared.inputs_enabled,
+        // Worker threads never feed the live sink or heartbeat lane (D5); those are
+        // driven once-per-cell on the main thread.
+        false,
+        shared.wants_adaptive_record,
+        crate::cellular_cell::issuance_authority_for(partition),
+        shared.phase_ordinal_bases.clone(),
+    ));
+    let resolver = shared.table_factory.coordinator_resolver()?;
+    let source_factory = PreparedNativeConversationSourceFactory {
+        endpoint_resolver: resolver,
+        samplers: &shared.samplers,
+        // Inject this thread's partition so its sampler draws only its nested
+        // subset of the cell's instances.
+        cell_partition: Some(partition),
+    };
+    let sliced_phases: Vec<PhaseSpec> = shared
+        .phases
+        .iter()
+        .map(|phase| {
+            crate::sharded_scheduled::slice_phase_for_thread(phase, thread_id, shared.workers)
+        })
+        .collect();
+
+    let execution_result = async {
+        execution_backend.set_run_origin(start_ns)?;
+        execution_backend.configure_measurement(shared.metrics_config.clone(), start_ns)?;
+        let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(ConfiguredDispatcher {
+            execution_backend: execution_backend.clone(),
+            model: shared.primary_model.clone(),
+            capture: capture.clone(),
+        });
+        let shared_resources = native_scheduled_resources(&sliced_phases);
+
+        let mut plans = Vec::with_capacity(sliced_phases.len());
+        for (phase_index, phase) in sliced_phases.iter().enumerate() {
+            let mut plan = build_native_scheduled_phase_plan_with_source_factory(
+                phase_index,
+                phase,
+                phase_seamless_to_next(&sliced_phases, phase_index),
+                &shared.dataset,
+                &shared.primary_model,
+                shared.default_output_tokens,
+                shared.dataset_rng_root,
+                shared.rng_root,
+                &source_factory,
+                shared.tokenizer.clone(),
+                shared.input_token_counter.clone(),
+                clock.clone(),
+                start_ns,
+                &shared.benchmark_id,
+                &shared.artifact_dir,
+                &shared.endpoint_urls,
+                &shared_resources,
+                shared
+                    .wants_adaptive_record
+                    .then(|| capture.clone() as Rc<dyn AdaptiveTerminalRecordSource>),
+                shared.on_failure,
+            )?;
+            let record_processor: Rc<dyn TurnRecordProcessor> = Rc::new(CapturePhaseProcessor {
+                capture: capture.clone(),
+                phase: metrics_phase(phase)?,
+                has_credit_timestamp: !matches!(phase, PhaseSpec::FixedSchedule { .. }),
+                // Once-per-cell on the main thread; a worker never feeds them.
+                live_sink: None,
+                heartbeat: None,
+            });
+            plan = plan
+                .with_record_processors(vec![record_processor])
+                .with_performance_record_capture(false)
+                .with_native_metric_record_dimensions(false);
+            plans.push(plan);
+        }
+
+        // No live/heartbeat phase observers on a worker thread.
+        let observer: Rc<dyn PhaseObserver> = Rc::new(NoopPhaseObserver);
+        let phased = run_scheduled_phases(plans, clock.clone(), dispatcher, observer).await?;
+        phased
+            .reports
+            .iter()
+            .find(|report| report.kind == PhaseKind::Profiling)
+            .ok_or_else(|| {
+                anyhow!("sharded scheduled worker completed without a profiling report")
+            })?;
+        Ok(phased)
+    }
+    .await;
+
+    // Metrics-only mode already folded every completed record on the fly (the worker
+    // moved each out of its observer as it streamed), so there is nothing left to
+    // drain and materializing that Vec would reintroduce the O(records) peak.
+    let drained = if execution_result.is_ok() && !capture.metrics_only {
+        execution_backend.drain_records(clock.now_ns())
+    } else {
+        Ok(Vec::new())
+    };
+    let shutdown = execution_backend.shutdown();
+    let phased = finish_with_shutdown(execution_result, shutdown, "sharded execution backend")?;
+    let drained = drained?;
+    let issued_times = phased
+        .reports
+        .iter()
+        .flat_map(|report| report.report.turns.iter())
+        .map(|turn| (turn.uuid, turn.issued_offset_ns))
+        .collect::<HashMap<_, _>>();
+    // Sketch mode folded each completed record into this shard's own bounded
+    // accumulator as it streamed and dropped it (only errored records retained);
+    // exact mode keeps the full record Vec. Shards merge accumulator-to-accumulator
+    // downstream, so the coordinator never holds O(all records) in sketch mode.
+    let records = if capture.metrics_only {
+        let (accumulator, errored) = capture.take_streamed();
+        ShardRecords::Folded {
+            accumulator,
+            errored,
+        }
+    } else {
+        ShardRecords::Retained(capture.finish(&issued_times, drained)?)
+    };
+    let input_sessions = capture.take_input_sessions();
+    let was_cancelled = phased.phases.iter().any(|phase| phase.was_cancelled);
+    let has_warmup = phased
+        .reports
+        .iter()
+        .any(|report| report.kind == PhaseKind::Warmup);
+    Ok(ScheduledShardOutcome {
+        records,
+        input_sessions,
+        was_cancelled,
+        has_warmup,
+    })
+}
+
 async fn execute_native_inner(
     request: NativeRunSpec,
     mut accuracy: Option<&mut PreparedAccuracy>,
     sidecars: &mut PreparedNativeSidecarResources,
-    transport_factory: &dyn RequestExecutorFactory,
+    transport_factory: Arc<dyn RequestExecutorFactory>,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
     let live_sink = sidecars.live_sink();
@@ -1527,6 +1884,9 @@ async fn execute_native_inner(
             Box::new(PreparedNativeConversationSourceFactory {
                 endpoint_resolver,
                 samplers: registry.samplers(),
+                // The coordinator (single-process / cell-entry) path reads the
+                // process-global partition from the environment; byte-unchanged.
+                cell_partition: None,
             }),
         )
     };
@@ -1557,20 +1917,6 @@ async fn execute_native_inner(
 
     let real_clock_anchor = sidecars.real_clock_anchor;
     let clock = sidecars.clock.clone();
-    let execution_backend = transport_factory.build(HttpExecutionBackendConfig {
-        workers: request.workers,
-        coordinator_clock: clock.clone(),
-        real_clock_anchor,
-        base_urls: endpoint_urls.clone(),
-        model: primary_model.clone(),
-        transport: transport_config,
-        prepared_endpoints,
-    })?;
-    let start_ns = clock.now_ns();
-    // Env-gated single-process cellular heartbeat lane; the same accumulator/t-digest
-    // the controller aggregates across cells in Phase 2. It consumes the per-record
-    // live clone, so it forces record capture on even without the Python sink.
-    let heartbeat_lane = HeartbeatLane::from_env(clock.clone(), start_ns)?;
     // An adaptive phase needs each completed turn's finished worker record fed
     // into its window sampler; the online dispatcher records per-token facts
     // worker-locally, so the coordinator sampler is otherwise starved.
@@ -1578,168 +1924,384 @@ async fn execute_native_inner(
         .phases
         .iter()
         .any(|phase| phase.common().adaptive_scale.is_some());
-    let capture = Rc::new(RunCapture::new(
-        clock.clone(),
-        start_ns,
-        metrics_config.clone(),
-        request.artifacts.raw_path.is_some(),
-        request.artifacts.inputs_path.is_some(),
-        live_sink.is_some() || heartbeat_lane.is_some(),
-        wants_adaptive_record,
-    ));
-    let execution_result = async {
-        execution_backend.set_run_origin(start_ns)?;
-        // Build one worker-local observer per execution worker from the single
-        // resolved metrics configuration; token accumulation moves off the
-        // coordinator onto each worker's core.
-        execution_backend.configure_measurement(metrics_config.clone(), start_ns)?;
-        let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(ConfiguredDispatcher {
-            execution_backend: execution_backend.clone(),
-            model: primary_model.clone(),
-            capture: capture.clone(),
-        });
 
-        let shared_resources = native_scheduled_resources(&request.phases);
-        let on_failure = OnFailure::scheduled_or_default(request.failure_policy);
-        // Fail-fast is wired into the request-rate/concurrency workload only.
-        // Surface the gap instead of silently ignoring `abort` for the two
-        // specialized scheduled workloads that do not yet honor it.
-        if on_failure.is_abort()
-            && request.phases.iter().any(|phase| {
-                matches!(
-                    phase,
-                    PhaseSpec::UserCentric { .. } | PhaseSpec::FixedSchedule { .. }
-                )
-            })
-        {
-            tracing::warn!(
-                "failure_policy=abort is honored only for request-rate/concurrency scheduled \
-                 phases; user_centric and fixed_schedule phases in this run stay resilient"
-            );
-        }
-
-        let mut plans = Vec::with_capacity(request.phases.len());
-        for (phase_index, phase) in request.phases.iter().enumerate() {
-            let mut plan = build_native_scheduled_phase_plan_with_source_factory(
-                phase_index,
+    // `workers == 1` keeps the byte-unchanged single coordinator-reactor path;
+    // `runtime.workers` defaults to a CPU-based count (> 1), so the sharded path is
+    // the common case, not an opt-in. A thread-per-core sub-cell can partition only
+    // request-bounded phases (concurrency/poisson/gamma/constant) and cannot host a
+    // single main-thread static-accuracy evaluator; every other shape — trace-driven
+    // `user_centric`/`fixed_schedule` phases, static-accuracy scoring, and always
+    // `workers <= 1` — keeps the established path unchanged (which still fans the
+    // transport across `workers` threads via `ThreadPerCoreRequestExecutor` for
+    // `workers > 1`). So route by shardability rather than fail closed: an
+    // unshardable default-workers run must not regress to an error.
+    // Sketch storage mode streams each record into a bounded accumulator and drops
+    // it. The thread-per-core sharded path folds per shard — each sub-cell owns its
+    // own sketch accumulator, merged accumulator-to-accumulator at the join — so a
+    // sketch run shards exactly like an exact run and coordinator memory stays
+    // O(shards × sketch) rather than O(records). `sketch_mode` still gates the
+    // finalize (fold vs ingest) and the cellular record-shipping guard below.
+    let sketch_mode = matches!(
+        metrics_config.storage_mode,
+        aiperf::metrics_core::MetricsStorageMode::Sketch { .. }
+    );
+    let shardable = request.workers > 1
+        && accuracy.is_none()
+        && request.phases.iter().all(|phase| {
+            matches!(
                 phase,
-                phase_seamless_to_next(&request.phases, phase_index),
-                &dataset,
-                &primary_model,
-                default_output_tokens,
-                dataset_rng_root,
-                rng_root,
-                source_factory.as_ref(),
-                tokenizer.clone(),
-                input_token_counter.clone(),
-                clock.clone(),
-                start_ns,
-                &request.benchmark_id,
-                &request.artifact_dir,
-                &endpoint_urls,
-                &shared_resources,
-                wants_adaptive_record
-                    .then(|| capture.clone() as Rc<dyn AdaptiveTerminalRecordSource>),
-                on_failure,
-            )?;
-            let record_processor: Rc<dyn TurnRecordProcessor> = Rc::new(CapturePhaseProcessor {
+                PhaseSpec::Concurrency { .. }
+                    | PhaseSpec::Poisson { .. }
+                    | PhaseSpec::Gamma { .. }
+                    | PhaseSpec::Constant { .. }
+            )
+        });
+    // Both arms converge on the same `captured` records + phase facts the
+    // once-per-cell report tail below folds, so that tail stays written exactly once.
+    // The accumulator that tail exports is created once here and populated inside the
+    // branch that runs: the single-thread finalize folds/ingests into it directly (so
+    // sketch mode drops records as it goes), the sharded arm ingests its merged shard
+    // records. Created before the branch so both arms share the one instance.
+    let mut accumulator = MetricsAccumulator::with_config(metrics_config.clone());
+    let (captured, input_sessions, was_cancelled, has_warmup, start_ns) = if !shardable {
+        let execution_backend = transport_factory.build(HttpExecutionBackendConfig {
+            workers: request.workers,
+            coordinator_clock: clock.clone(),
+            real_clock_anchor,
+            base_urls: endpoint_urls.clone(),
+            model: primary_model.clone(),
+            transport: transport_config,
+            prepared_endpoints,
+        })?;
+        let start_ns = clock.now_ns();
+        // Env-gated single-process cellular heartbeat lane; the same accumulator/t-digest
+        // the controller aggregates across cells in Phase 2. It consumes the per-record
+        // live clone, so it forces record capture on even without the Python sink.
+        let heartbeat_lane = HeartbeatLane::from_env(clock.clone(), start_ns)?;
+        let capture = Rc::new(RunCapture::new(
+            clock.clone(),
+            start_ns,
+            metrics_config.clone(),
+            request.artifacts.raw_path.is_some(),
+            request.artifacts.inputs_path.is_some(),
+            live_sink.is_some() || heartbeat_lane.is_some(),
+            wants_adaptive_record,
+        ));
+        let execution_result = async {
+            execution_backend.set_run_origin(start_ns)?;
+            // Build one worker-local observer per execution worker from the single
+            // resolved metrics configuration; token accumulation moves off the
+            // coordinator onto each worker's core.
+            execution_backend.configure_measurement(metrics_config.clone(), start_ns)?;
+            let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(ConfiguredDispatcher {
+                execution_backend: execution_backend.clone(),
+                model: primary_model.clone(),
                 capture: capture.clone(),
-                phase: metrics_phase(phase)?,
-                has_credit_timestamp: !matches!(phase, PhaseSpec::FixedSchedule { .. }),
-                live_sink: live_sink.clone(),
-                heartbeat: heartbeat_lane.clone(),
             });
-            let mut record_processors = vec![record_processor];
-            if phase.common().name == "profiling"
-                && let Some(accuracy) = accuracy.as_ref()
+
+            let shared_resources = native_scheduled_resources(&request.phases);
+            let on_failure = OnFailure::scheduled_or_default(request.failure_policy);
+            // Fail-fast is wired into the request-rate/concurrency workload only.
+            // Surface the gap instead of silently ignoring `abort` for the two
+            // specialized scheduled workloads that do not yet honor it.
+            if on_failure.is_abort()
+                && request.phases.iter().any(|phase| {
+                    matches!(
+                        phase,
+                        PhaseSpec::UserCentric { .. } | PhaseSpec::FixedSchedule { .. }
+                    )
+                })
             {
-                let processor: Rc<dyn TurnRecordProcessor> = accuracy.processor.clone();
-                record_processors.push(processor);
+                tracing::warn!(
+                    "failure_policy=abort is honored only for request-rate/concurrency scheduled \
+                 phases; user_centric and fixed_schedule phases in this run stay resilient"
+                );
             }
-            plan = plan.with_record_processors(record_processors);
-            let mut phase_sidecars = Vec::new();
-            if let Some(server_metrics) = sidecars.server_metrics.as_ref() {
-                phase_sidecars.push(server_metrics.sidecar(metrics_phase(phase)?));
-            }
-            if phase.common().name == "profiling" {
-                if let Some(gpu_telemetry) = sidecars.gpu_telemetry.as_ref() {
-                    phase_sidecars.push(gpu_telemetry.sidecar());
-                }
-                if let Some(network_latency) = sidecars.network_latency.as_ref()
-                    && let Some(sidecar) = network_latency.sidecar()
+
+            let mut plans = Vec::with_capacity(request.phases.len());
+            for (phase_index, phase) in request.phases.iter().enumerate() {
+                let mut plan = build_native_scheduled_phase_plan_with_source_factory(
+                    phase_index,
+                    phase,
+                    phase_seamless_to_next(&request.phases, phase_index),
+                    &dataset,
+                    &primary_model,
+                    default_output_tokens,
+                    dataset_rng_root,
+                    rng_root,
+                    source_factory.as_ref(),
+                    tokenizer.clone(),
+                    input_token_counter.clone(),
+                    clock.clone(),
+                    start_ns,
+                    &request.benchmark_id,
+                    &request.artifact_dir,
+                    &endpoint_urls,
+                    &shared_resources,
+                    wants_adaptive_record
+                        .then(|| capture.clone() as Rc<dyn AdaptiveTerminalRecordSource>),
+                    on_failure,
+                )?;
+                let record_processor: Rc<dyn TurnRecordProcessor> =
+                    Rc::new(CapturePhaseProcessor {
+                        capture: capture.clone(),
+                        phase: metrics_phase(phase)?,
+                        has_credit_timestamp: !matches!(phase, PhaseSpec::FixedSchedule { .. }),
+                        live_sink: live_sink.clone(),
+                        heartbeat: heartbeat_lane.clone(),
+                    });
+                let mut record_processors = vec![record_processor];
+                if phase.common().name == "profiling"
+                    && let Some(accuracy) = accuracy.as_ref()
                 {
-                    phase_sidecars.push(sidecar);
+                    let processor: Rc<dyn TurnRecordProcessor> = accuracy.processor.clone();
+                    record_processors.push(processor);
                 }
+                plan = plan.with_record_processors(record_processors);
+                let mut phase_sidecars = Vec::new();
+                if let Some(server_metrics) = sidecars.server_metrics.as_ref() {
+                    phase_sidecars.push(server_metrics.sidecar(metrics_phase(phase)?));
+                }
+                if phase.common().name == "profiling" {
+                    if let Some(gpu_telemetry) = sidecars.gpu_telemetry.as_ref() {
+                        phase_sidecars.push(gpu_telemetry.sidecar());
+                    }
+                    if let Some(network_latency) = sidecars.network_latency.as_ref()
+                        && let Some(sidecar) = network_latency.sidecar()
+                    {
+                        phase_sidecars.push(sidecar);
+                    }
+                }
+                if !phase_sidecars.is_empty() {
+                    plan = plan.with_sidecars(phase_sidecars);
+                }
+                // The coordinator's per-run `CollectorObserver`/`NativeMetricsObserver`
+                // retention is dead work on the runner path: the native-v2 report is
+                // rebuilt from the drained per-worker records, and the only value the
+                // coordinator report supplies is per-turn `issued_offset_ns`, which
+                // comes from the runtime's own `DetailedSchedule` (gated separately by
+                // timing-record capture), not from these observers. Drop the discarded
+                // full-record retention and keep the coordinator native metrics
+                // aggregate-only so we do not accumulate a per-request record graph
+                // that is never read.
+                plan = plan
+                    .with_performance_record_capture(false)
+                    .with_native_metric_record_dimensions(false);
+                plans.push(plan);
             }
-            if !phase_sidecars.is_empty() {
-                plan = plan.with_sidecars(phase_sidecars);
+
+            create_run_artifacts(&request)?;
+            sidecars.activate_live_streaming().await;
+
+            let mut observers: Vec<Rc<dyn PhaseObserver>> = Vec::new();
+            if let Some(sink) = live_sink {
+                observers.push(live_phase_observer(sink, clock.clone()));
             }
-            // The coordinator's per-run `CollectorObserver`/`NativeMetricsObserver`
-            // retention is dead work on the runner path: the native-v2 report is
-            // rebuilt from the drained per-worker records, and the only value the
-            // coordinator report supplies is per-turn `issued_offset_ns`, which
-            // comes from the runtime's own `DetailedSchedule` (gated separately by
-            // timing-record capture), not from these observers. Drop the discarded
-            // full-record retention and keep the coordinator native metrics
-            // aggregate-only so we do not accumulate a per-request record graph
-            // that is never read.
-            plan = plan
-                .with_performance_record_capture(false)
-                .with_native_metric_record_dimensions(false);
-            plans.push(plan);
+            if let Some(lane) = &heartbeat_lane {
+                observers.push(Rc::new(HeartbeatPhaseObserver::new(lane.clone())));
+            }
+            let observer: Rc<dyn PhaseObserver> = if observers.is_empty() {
+                Rc::new(NoopPhaseObserver)
+            } else {
+                CompositePhaseObserver::compose(observers)
+            };
+            let phased = run_scheduled_phases(plans, clock.clone(), dispatcher, observer).await?;
+            phased
+                .reports
+                .iter()
+                .find(|report| report.kind == PhaseKind::Profiling)
+                .ok_or_else(|| anyhow!("phase runtime completed without a profiling report"))?;
+            Ok(phased)
         }
-
-        create_run_artifacts(&request)?;
-        sidecars.activate_live_streaming().await;
-
-        let mut observers: Vec<Rc<dyn PhaseObserver>> = Vec::new();
-        if let Some(sink) = live_sink {
-            observers.push(live_phase_observer(sink, clock.clone()));
-        }
-        if let Some(lane) = &heartbeat_lane {
-            observers.push(Rc::new(HeartbeatPhaseObserver::new(lane.clone())));
-        }
-        let observer: Rc<dyn PhaseObserver> = if observers.is_empty() {
-            Rc::new(NoopPhaseObserver)
+        .await;
+        // Drain each worker observer's records before shutting the workers down; on
+        // the failure path the report is discarded, so an empty drain is fine.
+        // Metrics-only mode already folded and dropped every completed record as it
+        // streamed (the worker moved each out of its observer), so skip the drain —
+        // materializing that Vec would reintroduce the O(records) peak.
+        let drained = if execution_result.is_ok() && !sketch_mode {
+            execution_backend.drain_records(capture.clock.now_ns())
         } else {
-            CompositePhaseObserver::compose(observers)
+            Ok(Vec::new())
         };
-        let phased = run_scheduled_phases(plans, clock, dispatcher, observer).await?;
-        phased
+        let shutdown = execution_backend.shutdown();
+        let phased = finish_with_shutdown(execution_result, shutdown, "execution backend")?;
+        let drained = drained?;
+        let issued_times = phased
             .reports
             .iter()
-            .find(|report| report.kind == PhaseKind::Profiling)
-            .ok_or_else(|| anyhow!("phase runtime completed without a profiling report"))?;
-        Ok(phased)
-    }
-    .await;
-    // Drain each worker observer's records before shutting the workers down; on
-    // the failure path the report is discarded, so an empty drain is fine.
-    let drained = if execution_result.is_ok() {
-        execution_backend.drain_records(capture.clock.now_ns())
+            .flat_map(|report| report.report.turns.iter())
+            .map(|turn| (turn.uuid, turn.issued_offset_ns))
+            .collect::<HashMap<_, _>>();
+        // Single-thread finalize: sketch mode folded each record into the capture's
+        // bounded streaming accumulator as the run streamed and dropped it (only
+        // errored records retained for error grouping); merge that into the report
+        // `accumulator`. The exact path keeps the full record Vec and ingests it.
+        let captured = if sketch_mode {
+            let (streamed, errored) = capture.take_streamed();
+            accumulator
+                .merge(&streamed)
+                .map_err(|error| anyhow!("merging streamed sketch: {error}"))?;
+            errored
+        } else {
+            let captured = capture.finish(&issued_times, drained)?;
+            for record in &captured {
+                accumulator.process_record(&record.ingest);
+            }
+            captured
+        };
+        let input_sessions = capture.take_input_sessions();
+        let was_cancelled = phased.phases.iter().any(|phase| phase.was_cancelled);
+        let has_warmup = phased
+            .reports
+            .iter()
+            .any(|report| report.kind == PhaseKind::Warmup);
+        (
+            captured,
+            input_sessions,
+            was_cancelled,
+            has_warmup,
+            start_ns,
+        )
     } else {
-        Ok(Vec::new())
+        // ==================== THREAD-PER-CORE SHARDED PATH ====================
+        // `shardable` above guarantees workers > 1, no static-accuracy scoring, and
+        // only request-bounded phases — the shapes a sub-cell can partition.
+        // Once-per-cell on the main thread, before the sub-cell threads spawn.
+        create_run_artifacts(&request)?;
+        sidecars.activate_live_streaming().await;
+        if live_sink.is_some() {
+            tracing::warn!(
+                "live-streaming per-record updates are delivered only at end-of-run under \
+                 thread-per-core scheduled execution (workers > 1); intermediate live progress is \
+                 degraded"
+            );
+        }
+        let start_ns = clock.now_ns();
+        // The two-level grid: this process is cell `cell_id` of `cells`
+        // (`AIPERF_CELL_ID`/`_COUNT`, default the lone `(0, 1)`), sub-divided into
+        // `workers` thread-per-core sub-cells.
+        let (cell_id, cells) = ModuloCellPartition::from_env()
+            .map(|partition| (partition.cell_id(), partition.cell_count()))
+            .unwrap_or((0, 1));
+        // A controller child already carries the global phase ordinal bases in the
+        // env; a lone process computes them from its (global == local) phase
+        // budgets so profiling ordinals never collide with warmup's `[0, W)` block.
+        let env_bases = crate::cellular_cell::phase_ordinal_bases_from_env();
+        let phase_ordinal_bases = if env_bases.is_empty() {
+            crate::sharded_scheduled::compute_phase_ordinal_bases(&request.phases)?
+        } else {
+            env_bases
+        };
+        // The concrete prepared-endpoint table factory the sub-cell threads share
+        // (each derives its own Rc resolver from it). Rebuilt from the request here
+        // rather than plumbed out of the coordinator setup so the workers == 1 path
+        // stays untouched; the coordinator `source_factory`/`prepared_endpoints`
+        // built above go unused on this arm.
+        let table_factory = {
+            let NativeEndpointPlan::Prepared(profiles) = &request.endpoint;
+            Arc::new(NativePreparedEndpointTableFactory::new(
+                registry.endpoints().clone(),
+                profiles.clone(),
+            ))
+        };
+        let shared = Arc::new(ShardedShared {
+            transport_factory: transport_factory.clone(),
+            table_factory,
+            samplers: registry.samplers().clone(),
+            dataset: dataset.clone(),
+            primary_model: primary_model.clone(),
+            metrics_config: metrics_config.clone(),
+            tokenizer: tokenizer.clone(),
+            input_token_counter: input_token_counter.clone(),
+            endpoint_urls: endpoint_urls.clone(),
+            transport_config: transport_config.clone(),
+            default_output_tokens,
+            dataset_rng_root,
+            rng_root,
+            phases: request.phases.clone(),
+            benchmark_id: request.benchmark_id.clone(),
+            artifact_dir: request.artifact_dir.clone(),
+            raw_enabled: request.artifacts.raw_path.is_some(),
+            inputs_enabled: request.artifacts.inputs_path.is_some(),
+            wants_adaptive_record,
+            on_failure: OnFailure::scheduled_or_default(request.failure_policy),
+            real_clock_anchor,
+            start_ns,
+            cell_id,
+            cells,
+            workers: request.workers as u32,
+            phase_ordinal_bases,
+        });
+        // Build the once-per-cell profiling-phase side-channel sidecars on the main
+        // thread; the sharded runtime drives them over the run window while the
+        // sub-cell threads execute (a worker thread never scrapes telemetry).
+        let mut profiling_sidecars: Vec<Rc<dyn aiperf::phase_runtime::ScheduledPhaseSidecar>> =
+            Vec::new();
+        if let Some(server_metrics) = sidecars.server_metrics.as_ref() {
+            profiling_sidecars.push(server_metrics.sidecar(MetricsPhase::Profiling));
+        }
+        if let Some(gpu_telemetry) = sidecars.gpu_telemetry.as_ref() {
+            profiling_sidecars.push(gpu_telemetry.sidecar());
+        }
+        if let Some(network_latency) = sidecars.network_latency.as_ref()
+            && let Some(sidecar) = network_latency.sidecar()
+        {
+            profiling_sidecars.push(sidecar);
+        }
+        let outcome = crate::sharded_scheduled::run_sharded_scheduled(
+            shared,
+            profiling_sidecars,
+            clock.clone(),
+        )
+        .await?;
+        // Exact shards return retained records to ingest into the report accumulator;
+        // sketch shards already folded into per-shard accumulators that merge_shards
+        // combined, so merge that into the report accumulator and keep only the errored
+        // records for error grouping. Peak coordinator memory is bounded by the mode:
+        // O(records) exact (inherent — per-record artifacts need them), O(shards ×
+        // sketch) sketch.
+        let captured = match outcome.records {
+            ShardRecords::Retained(records) => {
+                for record in &records {
+                    accumulator.process_record(&record.ingest);
+                }
+                records
+            }
+            ShardRecords::Folded {
+                accumulator: shard_accumulator,
+                errored,
+            } => {
+                accumulator.merge(&shard_accumulator).map_err(|error| {
+                    anyhow!("merging sharded sketch partition into the report accumulator: {error}")
+                })?;
+                errored
+            }
+        };
+        (
+            captured,
+            outcome.input_sessions,
+            outcome.was_cancelled,
+            outcome.has_warmup,
+            start_ns,
+        )
     };
-    let shutdown = execution_backend.shutdown();
-    let phased = finish_with_shutdown(execution_result, shutdown, "execution backend")?;
-    let drained = drained?;
-    let issued_times = phased
-        .reports
-        .iter()
-        .flat_map(|report| report.report.turns.iter())
-        .map(|turn| (turn.uuid, turn.issued_offset_ns))
-        .collect::<HashMap<_, _>>();
-    let captured = capture.finish(&issued_times, drained)?;
     // A cell ships its captured records — each carrying the dense global dispatch
     // ordinal the autonomous issuer stamped — to the controller, which merges every
     // cell's records in global order into the single authoritative report. Absent
-    // the controller address (the single-process path) this is inert.
+    // the controller address (the single-process path) this is inert. Sketch mode
+    // retains no full record set, so cellular record shipping is unsupported there
+    // (a cell partition would ship its merged sketch instead — a future seam).
     if let Some(shipper) = crate::cellular_cell::CellRecordsShipper::from_env() {
+        ensure!(
+            !sketch_mode,
+            "sketch metrics mode does not support cellular record shipping yet"
+        );
         let records: Vec<RecordIngest> = captured
             .iter()
             .map(|record| record.ingest.clone())
             .collect();
-        let epoch_ns: i64 = capture.clock.now_ns().saturating_sub(start_ns);
+        let epoch_ns: i64 = clock.now_ns().saturating_sub(start_ns);
         shipper.ship_records(records, epoch_ns)?;
     }
     let gpu_telemetry = sidecars.gpu_telemetry.as_ref();
@@ -1749,10 +2311,6 @@ async fn execute_native_inner(
     let network_latency_records_path = sidecars.network_latency_records_path.as_ref();
     let server_metrics_jsonl_path = sidecars.server_metrics_jsonl_path.as_ref();
     let server_metrics_parquet_wire_path = sidecars.server_metrics_parquet_wire_path.as_ref();
-    let mut accumulator = MetricsAccumulator::with_config(metrics_config.clone());
-    for record in &captured {
-        accumulator.process_record(&record.ingest);
-    }
     if let Some(network_latency) = network_latency {
         let mean_rtt_ns = network_latency.mean_rtt_ns();
         if network_latency.is_active_probe() && mean_rtt_ns.is_none() {
@@ -1779,11 +2337,8 @@ async fn execute_native_inner(
     let profiling_server_summary = server_metrics.map(|server_metrics| {
         server_metrics.summarize(MetricsPhase::Profiling, metrics_config.slice_duration_ns)
     });
-    let warmup = phased
-        .reports
-        .iter()
-        .any(|report| report.kind == PhaseKind::Warmup)
-        .then(|| accumulator.export_results(&ExportContext::phase(MetricsPhase::Warmup)));
+    let warmup =
+        has_warmup.then(|| accumulator.export_results(&ExportContext::phase(MetricsPhase::Warmup)));
     let warmup_server_summary = server_metrics
         .filter(|_| warmup.is_some())
         .map(|server_metrics| {
@@ -1808,7 +2363,7 @@ async fn execute_native_inner(
     }
     if let Some(inputs_path) = &request.artifacts.inputs_path {
         let inputs_path = artifact_path(&request.artifact_dir, inputs_path, "inputs_path")?;
-        write_inputs_json(&inputs_path, &capture.take_input_sessions())?;
+        write_inputs_json(&inputs_path, &input_sessions)?;
     }
     if let (Some(gpu_telemetry), Some(gpu_records_path)) = (gpu_telemetry, gpu_records_path) {
         gpu_telemetry.write_records_jsonl(gpu_records_path)?;
@@ -1841,7 +2396,8 @@ async fn execute_native_inner(
             // orchestrator reports was_cancelled=true alongside the partial
             // results written on a graceful Ctrl+C. The graph path sets this
             // the same way; the scheduled summary previously left it default.
-            was_cancelled: phased.phases.iter().any(|phase| phase.was_cancelled),
+            // Sharded runs OR this across every sub-cell thread.
+            was_cancelled,
             ..ReportSummary::default()
         },
         warmup,
@@ -1932,6 +2488,12 @@ type NativeEndpointExecutionParts<'a> = (
 struct PreparedNativeConversationSourceFactory<'a> {
     endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
     samplers: &'a aiperf::dataset::SamplerRegistry,
+    /// The dataset instance partition this source draws, or `None` to read the
+    /// process-global partition from the environment. `None` is the byte-unchanged
+    /// default for the coordinator (single-process) and multi-process cell paths;
+    /// the thread-per-core sharded runtime injects `Some` per sub-cell thread with
+    /// a partition the process-global `AIPERF_CELL_ID`/`_COUNT` cannot express.
+    cell_partition: Option<ModuloCellPartition>,
 }
 
 impl NativeConversationSourceFactory for PreparedNativeConversationSourceFactory<'_> {
@@ -1946,20 +2508,22 @@ impl NativeConversationSourceFactory for PreparedNativeConversationSourceFactory
         sequential: bool,
     ) -> Result<Box<dyn ConversationSource>> {
         let source = if sequential {
-            NativeDatasetConversationSource::sequential_with_prepared_resolver(
+            NativeDatasetConversationSource::sequential_with_prepared_resolver_for_partition(
                 dataset,
                 model,
                 default_output_tokens,
                 self.endpoint_resolver.clone(),
+                self.cell_partition,
             )?
         } else {
-            NativeDatasetConversationSource::preferred_with_prepared_resolver(
+            NativeDatasetConversationSource::preferred_with_prepared_resolver_for_partition(
                 dataset,
                 model,
                 default_output_tokens,
                 rng_root,
                 self.samplers,
                 self.endpoint_resolver.clone(),
+                self.cell_partition,
             )?
         };
         Ok(Box::new(
@@ -2676,10 +3240,18 @@ pub(crate) fn metrics_config(
         );
         slos.push(SloThreshold::from_display(metric.tag, *value)?);
     }
+    let storage_mode = if spec.sketch {
+        aiperf::metrics_core::MetricsStorageMode::Sketch {
+            compression: aiperf::metrics_core::SKETCH_DEFAULT_COMPRESSION,
+        }
+    } else {
+        aiperf::metrics_core::MetricsStorageMode::Exact
+    };
     Ok(MetricsConfig {
         slice_duration_ns,
         slos,
         use_server_token_count,
+        storage_mode,
         ..MetricsConfig::default()
     })
 }
@@ -3377,6 +3949,20 @@ struct RunCapture {
     /// adds this base to a turn's phase-local slot to recover the single-cell
     /// absolute slot. Empty (all-zero) for the single-process path.
     phase_ordinal_bases: HashMap<MetricsPhase, usize>,
+    /// Whether this capture runs in metrics-only (sketch) mode: each completed
+    /// turn's record is folded into `accumulator` and dropped as the run streams,
+    /// so peak coordinator memory stays O(sketch) instead of O(records). Derived
+    /// once from `config.storage_mode`, so exact mode leaves every field below
+    /// untouched and byte-unchanged.
+    metrics_only: bool,
+    /// Bounded streaming accumulator that folds each metrics-only record on
+    /// completion (see [`RunCapture::fold_streaming`]). Empty and unused in exact
+    /// mode. `RefCell` because the fold runs from `&self` record processing.
+    accumulator: RefCell<MetricsAccumulator>,
+    /// Errored/canceled metrics-only records retained for the report's error
+    /// grouping ([`group_record_errors`]); the fold drops every non-errored
+    /// record, so this stays O(errors), not O(records).
+    streaming_errored: RefCell<Vec<CapturedRecord>>,
 }
 
 impl RunCapture {
@@ -3389,6 +3975,92 @@ impl RunCapture {
         wants_live_sink_record: bool,
         wants_adaptive_record: bool,
     ) -> Self {
+        // Cell processes select the autonomous issuer from the environment
+        // (`AIPERF_CELL_ID`/`_COUNT`); the single-process default is Direct
+        // (identity), so non-cell output is byte-unchanged.
+        Self::new_with_issuance(
+            clock,
+            origin_ns,
+            config,
+            raw_enabled,
+            inputs_enabled,
+            wants_live_sink_record,
+            wants_adaptive_record,
+            crate::cellular_cell::issuance_authority_from_env(),
+        )
+    }
+
+    /// Same as [`Self::new`] but with an explicitly injected dispatch-ordinal
+    /// issuer instead of the process-environment default. A future single-process
+    /// thread-per-core scheduled run builds one `RunCapture` per sub-cell thread,
+    /// each with a per-thread issuer (see
+    /// [`issuance_authority_for`](crate::cellular_cell::issuance_authority_for))
+    /// whose `(cell_id, cell_count)` partition the process-global env vars cannot
+    /// express. [`Self::new`] delegates here with the env default
+    /// ([`issuance_authority_from_env`](crate::cellular_cell::issuance_authority_from_env))
+    /// so every current call site is byte-unchanged. The per-phase ordinal bases
+    /// still come from the environment — they carry no partition — matching `new`.
+    #[allow(clippy::too_many_arguments)]
+    fn new_with_issuance(
+        clock: Rc<dyn Clock>,
+        origin_ns: i64,
+        config: MetricsConfig,
+        raw_enabled: bool,
+        inputs_enabled: bool,
+        wants_live_sink_record: bool,
+        wants_adaptive_record: bool,
+        issuance: Rc<dyn IssuanceAuthority>,
+    ) -> Self {
+        // The multi-process cell path carries its per-phase global ordinal bases in
+        // the environment (`AIPERF_CELL_PHASE_ORDINAL_BASES`); the single-process
+        // default reads an empty (all-zero) map, so non-cell output is unchanged.
+        Self::new_with_issuance_and_bases(
+            clock,
+            origin_ns,
+            config,
+            raw_enabled,
+            inputs_enabled,
+            wants_live_sink_record,
+            wants_adaptive_record,
+            issuance,
+            crate::cellular_cell::phase_ordinal_bases_from_env(),
+        )
+    }
+
+    /// Same as [`Self::new_with_issuance`] but with the per-phase global ordinal
+    /// bases injected instead of read from the process environment.
+    ///
+    /// A single-process thread-per-core scheduled run (cells == 1, no controller)
+    /// has no `AIPERF_CELL_PHASE_ORDINAL_BASES` env var, yet its `W` sub-cell
+    /// threads still need each phase's global base so profiling ordinals do not
+    /// collide with warmup's `[0, W)` block. The sharded runtime computes the
+    /// bases from the phase `requests` budgets (mirroring
+    /// [`crate::cellular_controller::phase_ordinal_bases`]) and injects the same
+    /// map into every thread's capture. A controller child instead reuses the
+    /// controller-provided env bases (they are already global and
+    /// partition-independent, identical across a cell's threads);
+    /// [`Self::new_with_issuance`] delegates here with the env default so every
+    /// non-sharded call site stays byte-unchanged.
+    #[allow(clippy::too_many_arguments)]
+    fn new_with_issuance_and_bases(
+        clock: Rc<dyn Clock>,
+        origin_ns: i64,
+        config: MetricsConfig,
+        raw_enabled: bool,
+        inputs_enabled: bool,
+        wants_live_sink_record: bool,
+        wants_adaptive_record: bool,
+        issuance: Rc<dyn IssuanceAuthority>,
+        phase_ordinal_bases: HashMap<MetricsPhase, usize>,
+    ) -> Self {
+        // Sketch storage mode is the metrics-only fold-and-drop path; computed here
+        // (not passed) so every constructor and call site is byte-unchanged and
+        // exact mode never touches the streaming fields.
+        let metrics_only = matches!(
+            config.storage_mode,
+            aiperf::metrics_core::MetricsStorageMode::Sketch { .. }
+        );
+        let accumulator = RefCell::new(MetricsAccumulator::with_config(config.clone()));
         Self {
             clock,
             origin_ns,
@@ -3404,11 +4076,11 @@ impl RunCapture {
             adaptive_records: RefCell::new(HashMap::new()),
             wants_live_sink_record,
             wants_adaptive_record,
-            // Cell processes select the autonomous issuer from the environment
-            // (`AIPERF_CELL_ID`/`_COUNT`); the single-process default is Direct
-            // (identity), so non-cell output is byte-unchanged.
-            issuance: crate::cellular_cell::issuance_authority_from_env(),
-            phase_ordinal_bases: crate::cellular_cell::phase_ordinal_bases_from_env(),
+            issuance,
+            phase_ordinal_bases,
+            metrics_only,
+            accumulator,
+            streaming_errored: RefCell::new(Vec::new()),
         }
     }
 
@@ -3456,10 +4128,11 @@ impl RunCapture {
             .collect()
     }
 
-    /// Whether the worker should snapshot a non-consuming record for either the
-    /// live-results sink or the adaptive window sampler.
+    /// Whether the worker should return a per-turn record: a non-consuming
+    /// snapshot for the live-results sink or the adaptive window sampler, or a
+    /// consuming drain in metrics-only mode (see [`MeasuredContext::consume_record`]).
     fn wants_live_record(&self) -> bool {
-        self.wants_live_sink_record || self.wants_adaptive_record
+        self.wants_live_sink_record || self.wants_adaptive_record || self.metrics_only
     }
 
     /// Record the dispatch identity plus coordinator-known arrival facts, and
@@ -3480,12 +4153,22 @@ impl RunCapture {
                 ..RequestMetricMetadata::default()
             },
             wants_live_record: self.wants_live_record(),
+            // Metrics-only mode folds each record and drops it, so the worker must
+            // move the record out of its observer to free token storage as it goes.
+            consume_record: self.metrics_only,
         };
-        self.identities.borrow_mut().push(CaptureIdentity {
-            uuid: turn.uuid,
-            x_correlation_id: turn.x_correlation_id.clone(),
-            context: context.clone(),
-        });
+        // Metrics-only mode never joins records by dispatch identity at finish (it
+        // folds each on completion), so skip the O(records) identity retention —
+        // the fold source is the per-turn record staged by `record_live`, and a
+        // failed turn's record is synthesized in `process` instead. Every other
+        // mode retains the identity for the finish-time uuid join, byte-unchanged.
+        if !self.metrics_only {
+            self.identities.borrow_mut().push(CaptureIdentity {
+                uuid: turn.uuid,
+                x_correlation_id: turn.x_correlation_id.clone(),
+                context: context.clone(),
+            });
+        }
         context
     }
 
@@ -3496,6 +4179,12 @@ impl RunCapture {
         has_credit_timestamp: bool,
         outcome: &TurnDispatchOutcome,
     ) {
+        // Labels feed the finish-time uuid join only; metrics-only mode folds each
+        // record on completion and never joins, so retaining them would be pure
+        // O(records) waste. The fold applies phase/session/admit itself.
+        if self.metrics_only {
+            return;
+        }
         self.labels.borrow_mut().insert(
             credit.turn.uuid,
             CaptureLabel {
@@ -3510,6 +4199,20 @@ impl RunCapture {
     }
 
     fn record_live(&self, uuid: Uuid, record: RecordIngest) {
+        // Metrics-only mode stages every completed turn's record for the phase
+        // processor's fold-and-drop, regardless of any live/adaptive consumer. An
+        // adaptive phase still needs its own copy (read-only window sampling), so
+        // clone into `adaptive_records` when one is active. Both maps are drained
+        // per completed turn, so neither outgrows in-flight work.
+        if self.metrics_only {
+            if self.wants_adaptive_record {
+                self.adaptive_records
+                    .borrow_mut()
+                    .insert(uuid, record.clone());
+            }
+            self.live_records.borrow_mut().insert(uuid, record);
+            return;
+        }
         // Fan the worker's non-consuming snapshot out to each interested
         // consumer. Both drain their own map per completed turn, so neither
         // consumer starves the other and neither map outgrows in-flight work.
@@ -3537,6 +4240,12 @@ impl RunCapture {
         visible_text: Option<&str>,
         reasoning_text: Option<&str>,
     ) -> Result<()> {
+        // Metrics-only (sketch) mode retains no per-record output artifact
+        // (`validate_plan` forbids `outputs_path`), so keeping the text would be
+        // pure O(records) waste; drop it before the map grows.
+        if self.metrics_only {
+            return Ok(());
+        }
         ensure!(
             self.outputs
                 .borrow_mut()
@@ -3626,6 +4335,181 @@ impl RunCapture {
         let outputs = self.outputs.borrow();
         let mut raw_exchanges = self.raw_exchanges.take();
 
+        let mut records_by_uuid = self.resolve_records_by_uuid(&identities, &labels, drained)?;
+
+        // Emit rows in dispatch (identity) order. `ordinal` (begin order) is the
+        // cumulative flat dispatch index; `phase_counters` tracks the per-phase
+        // dispatch index because a cell's sampler restarts each phase, so the
+        // cellular issuer's ordinal must be phase-local (the identity issuer ignores
+        // it and keeps the flat slot, leaving the cell-of-one path unchanged).
+        let mut phase_counters: HashMap<_, usize> = HashMap::new();
+        identities
+            .iter()
+            .enumerate()
+            .map(|(ordinal, identity)| {
+                let mut ingest = records_by_uuid.remove(&identity.uuid).ok_or_else(|| {
+                    anyhow!(
+                        "captured request {} produced no native metric record",
+                        identity.uuid
+                    )
+                })?;
+                self.patch_joined_ingest(
+                    ordinal,
+                    identity,
+                    &labels,
+                    issued_times,
+                    &mut phase_counters,
+                    &mut ingest,
+                )?;
+                Ok(CapturedRecord {
+                    uuid: identity.uuid,
+                    x_correlation_id: identity.x_correlation_id.clone(),
+                    output: outputs.get(&identity.uuid).cloned().unwrap_or_default(),
+                    raw: raw_exchanges.remove(&identity.uuid),
+                    ingest,
+                })
+            })
+            .collect()
+    }
+
+    /// Fold one completed metrics-only turn's record into the streaming sketch and
+    /// drop it, keeping peak memory O(sketch) rather than O(records).
+    ///
+    /// Applies the coordinator-owned fields the finish-time join would apply —
+    /// `phase` (the worker defaults every record, warmup included, to Profiling),
+    /// `session_num`, and the credit-issued `admit_ns` (bit-equal to the finish
+    /// path's `issued_offset_ns` because the run origin equals every phase's start)
+    /// — then processes the record into the bounded accumulator. Only errored or
+    /// canceled records are retained, for [`group_record_errors`], so the retained
+    /// set stays O(errors).
+    ///
+    /// Approximate-memory contract: the sketch (t-digest percentiles, Welford
+    /// mean/M2, and the float running sums) is order-independent only up to a few
+    /// ULPs, and this folds in *completion* order rather than the finish path's
+    /// *dispatch* order. So percentiles, means, and float sums drift a few ULPs —
+    /// below display precision — and lose exact run-to-run reproducibility, while
+    /// counts, min/max, and integer sums stay bit-identical. That drift is the
+    /// accepted price of bounded memory; a reorder buffer would be O(records) and
+    /// defeat the goal.
+    fn fold_streaming(
+        &self,
+        mut ingest: RecordIngest,
+        phase: MetricsPhase,
+        has_credit_timestamp: bool,
+        credit: &IssuedCredit,
+    ) {
+        ingest.phase = phase;
+        ingest.session_num = credit.id;
+        ingest.admit_ns =
+            has_credit_timestamp.then(|| credit.issued_ns.saturating_sub(self.origin_ns));
+        self.accumulator.borrow_mut().process_record(&ingest);
+        if ingest.errored || ingest.canceled {
+            self.streaming_errored.borrow_mut().push(CapturedRecord {
+                uuid: credit.turn.uuid,
+                x_correlation_id: credit.turn.x_correlation_id.clone(),
+                output: CapturedModelOutput::default(),
+                raw: None,
+                ingest,
+            });
+        }
+    }
+
+    /// Remove one metrics-only turn's staged worker record for the phase
+    /// processor's fold. Absent for a turn that failed or was canceled before it
+    /// completed (its `Err`/cancel path never called `record_live`), in which case
+    /// the processor synthesizes the record instead.
+    fn take_streaming_record(&self, uuid: Uuid) -> Option<RecordIngest> {
+        self.live_records.borrow_mut().remove(&uuid)
+    }
+
+    /// Synthesize the record for a metrics-only turn the worker never staged — a
+    /// dispatch that failed or was canceled before completion.
+    ///
+    /// Built exactly as [`resolve_records_by_uuid`]'s finish-time fallback: a
+    /// one-shot [`NativeMetricsObserver`] fed the same arrival/terminal/response
+    /// facts (from `credit.turn` and `outcome`), so the errored/canceled flag,
+    /// `ErrorRequestCount`, and error grouping match the exact and retained paths.
+    /// `fold_streaming` then applies phase/session/admit.
+    fn synthesize_streaming_fallback(
+        &self,
+        credit: &IssuedCredit,
+        outcome: &TurnDispatchOutcome,
+    ) -> RecordIngest {
+        let turn = &credit.turn;
+        let fallback = NativeMetricsObserver::new(
+            self.clock.clone(),
+            self.origin_ns,
+            self.metrics_config.clone(),
+        );
+        let arrival_ms = self.clock.now_ns().saturating_sub(self.origin_ns) as f64 / 1_000_000.0;
+        fallback.register_metadata(
+            turn.uuid,
+            RequestMetricMetadata {
+                turn_index: u32::try_from(turn.turn_index).unwrap_or(u32::MAX),
+                conversation_id: Some(turn.conversation_id.clone()),
+                audio_duration_s: turn.audio_duration_seconds,
+                ..RequestMetricMetadata::default()
+            },
+        );
+        fallback.on_arrival(
+            turn.uuid,
+            arrival_ms,
+            turn.input_length,
+            turn.max_output_tokens,
+        );
+        fallback.on_terminal(turn.uuid, outcome.terminal);
+        fallback.record_response(
+            turn.uuid,
+            NativeResponseMetadata {
+                start_ns: Some(outcome.start_ns),
+                end_ns: Some(outcome.end_ns),
+                ..NativeResponseMetadata::default()
+            },
+        );
+        fallback
+            .finish_with_records()
+            .records
+            .into_iter()
+            .find_map(|(uuid, ingest)| (uuid == turn.uuid).then_some(ingest))
+            .unwrap_or_else(|| {
+                // Defensive: the observer always yields the record it was just fed;
+                // fall back to a minimal terminal record rather than panicking.
+                let mut ingest = RecordIngest::minimal(
+                    outcome.start_ns,
+                    outcome.end_ns,
+                    MetricsPhase::Profiling,
+                );
+                ingest.errored = matches!(
+                    outcome.terminal,
+                    ReplayTerminalStatus::Failed | ReplayTerminalStatus::Rejected
+                );
+                ingest.canceled = outcome.terminal == ReplayTerminalStatus::Canceled;
+                ingest
+            })
+    }
+
+    /// Move the streaming accumulator and its retained errored records out for the
+    /// finalize, leaving a fresh empty accumulator behind so the capture stays
+    /// reusable. The sharded path ships the returned accumulator as its shard
+    /// partition; the single-thread path merges it into the report accumulator.
+    fn take_streamed(&self) -> (MetricsAccumulator, Vec<CapturedRecord>) {
+        let accumulator = std::mem::replace(
+            &mut *self.accumulator.borrow_mut(),
+            MetricsAccumulator::with_config(self.metrics_config.clone()),
+        );
+        (accumulator, self.streaming_errored.take())
+    }
+
+    /// Builds the uuid→record map for the exact-mode finish, synthesizing fallback
+    /// records for identities no worker observer produced. (Metrics-only mode folds
+    /// each record on completion and synthesizes its own per-turn fallback in
+    /// [`RunCapture::synthesize_streaming_fallback`], so it never joins here.)
+    fn resolve_records_by_uuid(
+        &self,
+        identities: &[CaptureIdentity],
+        labels: &HashMap<Uuid, CaptureLabel>,
+        drained: Vec<(Uuid, RecordIngest)>,
+    ) -> Result<HashMap<Uuid, RecordIngest>> {
         let mut records_by_uuid: HashMap<Uuid, RecordIngest> =
             HashMap::with_capacity(drained.len());
         for (uuid, ingest) in drained {
@@ -3634,12 +4518,6 @@ impl RunCapture {
                 "worker drained request {uuid} more than once"
             );
         }
-
-        // Synthesize fallback records for identities that failed before any
-        // worker observer registered them (pre-dispatch send failure, worker
-        // drop, or placement cancellation). Reusing a coordinator-owned observer
-        // reproduces the exact `into_record` shape the single-observer path
-        // produced for those requests.
         let missing: Vec<&CaptureIdentity> = identities
             .iter()
             .filter(|identity| !records_by_uuid.contains_key(&identity.uuid))
@@ -3682,67 +4560,51 @@ impl RunCapture {
                 records_by_uuid.insert(uuid, ingest);
             }
         }
-
         ensure!(
             records_by_uuid.len() == identities.len(),
             "native record capture finalized {} records for {} dispatched identities",
             records_by_uuid.len(),
             identities.len()
         );
+        Ok(records_by_uuid)
+    }
 
-        // Emit rows in dispatch (identity) order. `ordinal` (begin order) is the
-        // cumulative flat dispatch index; `phase_counters` tracks the per-phase
-        // dispatch index because a cell's sampler restarts each phase, so the
-        // cellular issuer's ordinal must be phase-local (the identity issuer ignores
-        // it and keeps the flat slot, leaving the cell-of-one path unchanged).
-        let mut phase_counters: HashMap<_, usize> = HashMap::new();
-        identities
-            .iter()
-            .enumerate()
-            .map(|(ordinal, identity)| {
-                let mut ingest = records_by_uuid.remove(&identity.uuid).ok_or_else(|| {
-                    anyhow!(
-                        "captured request {} produced no native metric record",
-                        identity.uuid
-                    )
-                })?;
-                let has_credit_timestamp = labels
-                    .get(&identity.uuid)
-                    .map(|label| label.has_credit_timestamp)
-                    .unwrap_or(true);
-                if let Some(label) = labels.get(&identity.uuid) {
-                    ingest.phase = label.phase;
-                    ingest.session_num = label.session_num;
-                }
-                // The single central ordinal assignment the records-first re-ingest
-                // orders by. The cellular issuer maps (phase base, phase-local index)
-                // to the single-cell absolute slot; the identity issuer uses `ordinal`.
-                let within_phase = phase_counters.entry(ingest.phase).or_insert(0);
-                let within = *within_phase;
-                *within_phase += 1;
-                let phase_base = self
-                    .phase_ordinal_bases
-                    .get(&ingest.phase)
-                    .copied()
-                    .unwrap_or(0);
-                ingest.request_index =
-                    Some(self.issuance.global_ordinal(ordinal, phase_base, within));
-                ingest.admit_ns = if has_credit_timestamp {
-                    Some(*issued_times.get(&identity.uuid).ok_or_else(|| {
-                        anyhow!("captured request {} has no issuer timestamp", identity.uuid)
-                    })?)
-                } else {
-                    None
-                };
-                Ok(CapturedRecord {
-                    uuid: identity.uuid,
-                    x_correlation_id: identity.x_correlation_id.clone(),
-                    output: outputs.get(&identity.uuid).cloned().unwrap_or_default(),
-                    raw: raw_exchanges.remove(&identity.uuid),
-                    ingest,
-                })
-            })
-            .collect()
+    /// Patches one joined record's coordinator-owned fields (phase, session number,
+    /// global dispatch ordinal, and admit timestamp) exactly as [`finish`] does.
+    fn patch_joined_ingest(
+        &self,
+        ordinal: usize,
+        identity: &CaptureIdentity,
+        labels: &HashMap<Uuid, CaptureLabel>,
+        issued_times: &HashMap<Uuid, i64>,
+        phase_counters: &mut HashMap<MetricsPhase, usize>,
+        ingest: &mut RecordIngest,
+    ) -> Result<()> {
+        let has_credit_timestamp = labels
+            .get(&identity.uuid)
+            .map(|label| label.has_credit_timestamp)
+            .unwrap_or(true);
+        if let Some(label) = labels.get(&identity.uuid) {
+            ingest.phase = label.phase;
+            ingest.session_num = label.session_num;
+        }
+        let within_phase = phase_counters.entry(ingest.phase).or_insert(0);
+        let within = *within_phase;
+        *within_phase += 1;
+        let phase_base = self
+            .phase_ordinal_bases
+            .get(&ingest.phase)
+            .copied()
+            .unwrap_or(0);
+        ingest.request_index = Some(self.issuance.global_ordinal(ordinal, phase_base, within));
+        ingest.admit_ns = if has_credit_timestamp {
+            Some(*issued_times.get(&identity.uuid).ok_or_else(|| {
+                anyhow!("captured request {} has no issuer timestamp", identity.uuid)
+            })?)
+        } else {
+            None
+        };
+        Ok(())
     }
 }
 
@@ -3802,6 +4664,24 @@ struct CapturePhaseProcessor {
 #[async_trait(?Send)]
 impl TurnRecordProcessor for CapturePhaseProcessor {
     async fn process(&self, credit: &IssuedCredit, outcome: &TurnDispatchOutcome) -> Result<()> {
+        if self.capture.metrics_only {
+            // Metrics-only (sketch) mode: fold this turn's record into the bounded
+            // streaming accumulator and drop it, so peak memory stays O(sketch). A
+            // successful turn staged its record via `record_live`; a failed or
+            // canceled turn never did (its `Err`/cancel path skips `record_live`),
+            // so synthesize the record — matching the exact path's finish-time
+            // fallback — to keep error counts and grouping correct. The per-record
+            // live sink and cellular heartbeat are not driven here: sketch retains
+            // no per-record data to stream, and the sharded workers that dominate
+            // this mode already run with neither attached.
+            let ingest = match self.capture.take_streaming_record(credit.turn.uuid) {
+                Some(ingest) => ingest,
+                None => self.capture.synthesize_streaming_fallback(credit, outcome),
+            };
+            self.capture
+                .fold_streaming(ingest, self.phase, self.has_credit_timestamp, credit);
+            return Ok(());
+        }
         self.capture
             .label(credit, self.phase, self.has_credit_timestamp, outcome);
         // The per-record clone is consumed once; feed both the Python live sink and
@@ -4251,6 +5131,7 @@ mod tests {
                 requested_output_length: 8,
                 metadata: RequestMetricMetadata::default(),
                 wants_live_record: false,
+                consume_record: false,
             },
         });
         capture.labels.borrow_mut().insert(

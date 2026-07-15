@@ -548,7 +548,16 @@ impl RequestExecutor for GrpcTransportSink {
             .await?;
         let live_record = context
             .wants_live_record
-            .then(|| observer.snapshot_record(uuid, 0))
+            .then(|| {
+                // Metrics-only (sketch) mode moves the record out of the observer
+                // so its token storage is freed as the run streams; every other
+                // mode clones it and leaves the authoritative copy for the drain.
+                if context.consume_record {
+                    observer.drain_terminal_record(uuid, 0)
+                } else {
+                    observer.snapshot_record(uuid, 0)
+                }
+            })
             .flatten();
         Ok(MeasuredOutcome {
             result,

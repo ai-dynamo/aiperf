@@ -94,6 +94,24 @@ pub fn issuance_authority_from_env() -> std::rc::Rc<dyn IssuanceAuthority> {
     }
 }
 
+/// The autonomous issuer for an explicitly supplied partition, for a caller that
+/// derives a per-worker partition itself rather than from the process
+/// environment. The process-global `AIPERF_CELL_ID`/`_COUNT` name one partition
+/// per process; a future single-process thread-per-core scheduled run whose `W`
+/// sub-cell threads each own a distinct `(cell_id, cell_count)` slice needs a
+/// per-thread issuer the env vars cannot express, so it constructs one here from
+/// the thread's partition. [`issuance_authority_from_env`] stays the default for
+/// the ordinary single-process and multi-process cell paths, so their output is
+/// byte-unchanged. Always the autonomous issuer (never [`DirectIssuanceAuthority`]):
+/// a caller supplies a partition only when it wants global-ordinal stamping.
+///
+/// [`DirectIssuanceAuthority`]: aiperf::cellular::DirectIssuanceAuthority
+pub fn issuance_authority_for(
+    partition: ModuloCellPartition,
+) -> std::rc::Rc<dyn IssuanceAuthority> {
+    std::rc::Rc::new(CellularAutonomousIssuer::new(partition))
+}
+
 /// Ships a cell's final records-shard partition to the controller over the
 /// transport, when this process is a cell (the controller address is set).
 pub struct CellRecordsShipper {

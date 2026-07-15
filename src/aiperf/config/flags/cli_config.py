@@ -3758,6 +3758,27 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    sketch_metrics: Annotated[
+        bool,
+        Field(
+            description=(
+                "Opt-in bounded-memory metrics mode (equivalent to "
+                "AIPERF_METRICS_SKETCH=1). Stream each per-record metric value into a "
+                "t-digest sketch instead of retaining every value, so the native "
+                "aiperf-runner's metric memory stays O(1) in the request count at "
+                "very high request rates. Counts, sums, averages, and min/max stay "
+                "exact; percentiles become approximate. Per-record artifacts "
+                "(records/raw/outputs JSONL, per-record OTLP) and per-row-only "
+                "trend outputs (timeslices, per-model/endpoint inference series, "
+                "sweep curves) are unavailable and are dropped from the run request."
+            ),
+        ),
+        CLIParameter(
+            name=("--sketch-metrics",),
+            group=Groups.WORKERS,
+        ),
+    ] = False
+
     ##############################################################################
     # ZMQ Communication
     ##############################################################################
