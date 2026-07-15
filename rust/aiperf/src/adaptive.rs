@@ -16,6 +16,7 @@ use crate::adaptive_core::{
     TumblingWindowSampler, UserTarget, UsersActuator,
 };
 use crate::clock::Clock;
+use crate::extensions::TransactionalRegistry;
 use crate::timing::{IntervalGenerator, SlotPool};
 use anyhow::{Context, Result, anyhow, bail};
 use loadgen_core::sink::RequestObserver;
@@ -99,6 +100,197 @@ pub struct BuiltAdaptive {
     pub observer: Rc<dyn RequestObserver>,
 }
 
+/// Injected resources available to an [`ActuatorFactory`] at construction time.
+///
+/// A factory consumes the context by value because it builds exactly one
+/// actuator and moves the resources it owns (the interval generator, a slot
+/// pool, or the user-target hook) into that actuator. The registry resolves and
+/// invokes exactly one factory per adaptive phase, so single-use ownership is
+/// sufficient and avoids cloning the injected seams.
+pub struct ActuatorBuildContext {
+    /// Inclusive minimum control value from the lowered config.
+    pub minimum: f64,
+    /// Inclusive maximum control value from the lowered config.
+    pub maximum: f64,
+    /// Run clock injected into time-stamping actuators.
+    pub clock: Rc<dyn Clock>,
+    /// Interval generator paced by the request-rate actuator.
+    pub intervals: Rc<RefCell<Box<dyn IntervalGenerator>>>,
+    /// Session-concurrency slot pool, when the workload exposes one.
+    pub session_slots: Option<Rc<SlotPool>>,
+    /// Prefill-concurrency slot pool, when the workload exposes one.
+    pub prefill_slots: Option<Rc<SlotPool>>,
+    /// User-centric workload target hook, when the workload exposes one.
+    pub user_target: Option<Rc<dyn UserTarget>>,
+}
+
+/// Factory that builds one adaptive [`ControlActuator`] from run inputs.
+///
+/// Each control variable is an implementable seam rather than a hardcoded match
+/// arm: a distribution can register an additional control variable by linking a
+/// new factory into an [`ActuatorRegistry`] without editing the construction
+/// site. Factories carry no run state; they are registered once at startup.
+pub trait ActuatorFactory {
+    /// Stable control-variable id keying this factory in the registry.
+    ///
+    /// The returned id is authoritative: it must equal the built actuator's
+    /// [`ControlActuator::variable`], since the controller cross-checks the two.
+    fn id(&self) -> &'static str;
+
+    /// Construct the actuator, consuming the resources it owns from `context`.
+    fn build(&self, context: ActuatorBuildContext) -> Result<Rc<dyn ControlActuator>>;
+}
+
+/// Session-concurrency control-variable factory.
+struct ConcurrencyActuatorFactory;
+
+impl ActuatorFactory for ConcurrencyActuatorFactory {
+    fn id(&self) -> &'static str {
+        "concurrency"
+    }
+
+    fn build(&self, context: ActuatorBuildContext) -> Result<Rc<dyn ControlActuator>> {
+        let pool = context
+            .session_slots
+            .ok_or_else(|| anyhow!("adaptive concurrency requires a session slot pool"))?;
+        Ok(Rc::new(SessionConcurrencyActuator::new(
+            pool,
+            integer_bound(context.minimum, "adaptive concurrency minimum")?,
+            integer_bound(context.maximum, "adaptive concurrency maximum")?,
+        )?))
+    }
+}
+
+/// Prefill-concurrency control-variable factory.
+struct PrefillConcurrencyActuatorFactory;
+
+impl ActuatorFactory for PrefillConcurrencyActuatorFactory {
+    fn id(&self) -> &'static str {
+        "prefill_concurrency"
+    }
+
+    fn build(&self, context: ActuatorBuildContext) -> Result<Rc<dyn ControlActuator>> {
+        let pool = context
+            .prefill_slots
+            .ok_or_else(|| anyhow!("adaptive prefill_concurrency requires a prefill slot pool"))?;
+        let minimum = integer_bound(context.minimum, "adaptive prefill minimum")?;
+        let maximum = integer_bound(context.maximum, "adaptive prefill maximum")?;
+        if let Some(session) = &context.session_slots
+            && maximum > session.current_limit()
+        {
+            bail!("adaptive prefill_concurrency maximum must be <= concurrency");
+        }
+        Ok(Rc::new(PrefillConcurrencyActuator::new(
+            pool, minimum, maximum,
+        )?))
+    }
+}
+
+/// Request-rate control-variable factory.
+struct RequestRateActuatorFactory;
+
+impl ActuatorFactory for RequestRateActuatorFactory {
+    fn id(&self) -> &'static str {
+        "request_rate"
+    }
+
+    fn build(&self, context: ActuatorBuildContext) -> Result<Rc<dyn ControlActuator>> {
+        Ok(Rc::new(RequestRateActuator::new(
+            context.intervals,
+            context.minimum,
+            context.maximum,
+        )?))
+    }
+}
+
+/// Target-users control-variable factory.
+struct UsersActuatorFactory;
+
+impl ActuatorFactory for UsersActuatorFactory {
+    fn id(&self) -> &'static str {
+        "users"
+    }
+
+    fn build(&self, context: ActuatorBuildContext) -> Result<Rc<dyn ControlActuator>> {
+        let target = context.user_target.ok_or_else(|| {
+            anyhow!("adaptive users requires a user-centric workload target hook")
+        })?;
+        Ok(Rc::new(UsersActuator::new(
+            target,
+            context.clock.clone(),
+            integer_bound(context.minimum, "adaptive users minimum")?,
+            integer_bound(context.maximum, "adaptive users maximum")?,
+        )?))
+    }
+}
+
+/// Id-keyed registry of adaptive control-variable actuator factories.
+///
+/// Mirrors the `with_builtin_*` pattern of the dataset [`LoaderRegistry`] and
+/// [`SamplerRegistry`], backed by the shared [`TransactionalRegistry`] so that
+/// duplicate ids are rejected and batch registration commits atomically. Replaces
+/// the former hardcoded `match config.control_variable` in
+/// [`build_adaptive_with_origins`].
+///
+/// [`LoaderRegistry`]: crate::dataset::LoaderRegistry
+/// [`SamplerRegistry`]: crate::dataset::SamplerRegistry
+#[derive(Clone)]
+pub struct ActuatorRegistry {
+    factories: TransactionalRegistry<Rc<dyn ActuatorFactory>>,
+}
+
+impl Default for ActuatorRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ActuatorRegistry {
+    /// Create an empty actuator registry.
+    pub fn new() -> Self {
+        Self {
+            factories: TransactionalRegistry::new(),
+        }
+    }
+
+    /// Register the four native control-variable actuator factories.
+    pub fn with_builtin_actuators() -> Result<Self> {
+        let mut registry = Self::new();
+        registry.register(ConcurrencyActuatorFactory)?;
+        registry.register(PrefillConcurrencyActuatorFactory)?;
+        registry.register(RequestRateActuatorFactory)?;
+        registry.register(UsersActuatorFactory)?;
+        Ok(registry)
+    }
+
+    /// Register one factory, rejecting a duplicate control-variable id.
+    pub fn register(&mut self, factory: impl ActuatorFactory + 'static) -> Result<()> {
+        let id = factory.id();
+        self.factories
+            .insert(id, Rc::new(factory))
+            .map_err(|error| anyhow!("{error}"))
+    }
+
+    /// Build the actuator registered under `id`, consuming the build context.
+    pub fn build(
+        &self,
+        id: &str,
+        context: ActuatorBuildContext,
+    ) -> Result<Rc<dyn ControlActuator>> {
+        let factory = self.factories.get(id).ok_or_else(|| {
+            anyhow!(
+                "unknown adaptive control variable {id:?}; registered variables: {}",
+                self.factories
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })?;
+        factory.build(context)
+    }
+}
+
 /// Parse `metric:stat:op:threshold` into a validated SLA filter.
 pub fn parse_sla_filter(value: &str) -> Result<SlaFilter> {
     let parts: Vec<&str> = value.split(':').collect();
@@ -176,43 +368,18 @@ pub fn build_adaptive_with_origins(
     prefill_slots: Option<Rc<SlotPool>>,
     user_target: Option<Rc<dyn UserTarget>>,
 ) -> Result<BuiltAdaptive> {
-    let actuator: Rc<dyn ControlActuator> = match config.control_variable {
-        AdaptiveControlVariable::Concurrency => {
-            let pool = session_slots
-                .ok_or_else(|| anyhow!("adaptive concurrency requires a session slot pool"))?;
-            Rc::new(SessionConcurrencyActuator::new(
-                pool,
-                integer_bound(config.minimum, "adaptive concurrency minimum")?,
-                integer_bound(config.maximum, "adaptive concurrency maximum")?,
-            )?)
-        }
-        AdaptiveControlVariable::PrefillConcurrency => {
-            let pool = prefill_slots.ok_or_else(|| {
-                anyhow!("adaptive prefill_concurrency requires a prefill slot pool")
-            })?;
-            let minimum = integer_bound(config.minimum, "adaptive prefill minimum")?;
-            let maximum = integer_bound(config.maximum, "adaptive prefill maximum")?;
-            if let Some(session) = &session_slots
-                && maximum > session.current_limit()
-            {
-                bail!("adaptive prefill_concurrency maximum must be <= concurrency");
-            }
-            Rc::new(PrefillConcurrencyActuator::new(pool, minimum, maximum)?)
-        }
-        AdaptiveControlVariable::RequestRate => Rc::new(RequestRateActuator::new(
+    let actuator = ActuatorRegistry::with_builtin_actuators()?.build(
+        control_variable_name(config.control_variable),
+        ActuatorBuildContext {
+            minimum: config.minimum,
+            maximum: config.maximum,
+            clock: clock.clone(),
             intervals,
-            config.minimum,
-            config.maximum,
-        )?),
-        AdaptiveControlVariable::Users => Rc::new(UsersActuator::new(
-            user_target.ok_or_else(|| {
-                anyhow!("adaptive users requires a user-centric workload target hook")
-            })?,
-            clock.clone(),
-            integer_bound(config.minimum, "adaptive users minimum")?,
-            integer_bound(config.maximum, "adaptive users maximum")?,
-        )?),
-    };
+            session_slots,
+            prefill_slots,
+            user_target,
+        },
+    )?;
     let sampler: SharedWindowSampler = Rc::new(RefCell::new(Box::new(TumblingWindowSampler::new(
         window_start_ns,
     ))));
@@ -302,6 +469,68 @@ fn integer_bound(value: f64, label: &str) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adaptive_core::ControlSnapshot;
+    use crate::clock::SimClock;
+    use crate::timing::intervals::Constant;
+
+    struct NoopUserTarget;
+
+    impl UserTarget for NoopUserTarget {
+        fn set_target_users(
+            &self,
+            _value: usize,
+            _now_ns: i64,
+        ) -> std::result::Result<(), crate::adaptive_core::AdaptiveError> {
+            Ok(())
+        }
+
+        fn user_control_snapshot(&self) -> ControlSnapshot {
+            ControlSnapshot {
+                target_value: 1.0,
+                actual_value: 1.0,
+                active_users: None,
+                retiring_users: None,
+                cancelled: None,
+            }
+        }
+    }
+
+    fn build_context() -> ActuatorBuildContext {
+        ActuatorBuildContext {
+            minimum: 1.0,
+            maximum: 4.0,
+            clock: Rc::new(SimClock::new()),
+            intervals: Rc::new(RefCell::new(Box::new(Constant::new(2.0)))),
+            session_slots: Some(Rc::new(SlotPool::new(4))),
+            prefill_slots: Some(Rc::new(SlotPool::new(4))),
+            user_target: Some(Rc::new(NoopUserTarget)),
+        }
+    }
+
+    #[test]
+    fn registry_resolves_each_control_variable_to_its_actuator() {
+        let registry = ActuatorRegistry::with_builtin_actuators().unwrap();
+        for variable in [
+            AdaptiveControlVariable::Concurrency,
+            AdaptiveControlVariable::PrefillConcurrency,
+            AdaptiveControlVariable::RequestRate,
+            AdaptiveControlVariable::Users,
+        ] {
+            let id = control_variable_name(variable);
+            let actuator = registry
+                .build(id, build_context())
+                .unwrap_or_else(|error| panic!("building {id:?} actuator failed: {error}"));
+            // The built actuator's variable id is the identity probe: it must equal
+            // the id used to resolve the factory, matching the pre-refactor match.
+            assert_eq!(actuator.variable(), id);
+        }
+    }
+
+    #[test]
+    fn registry_rejects_an_unknown_control_variable() {
+        let registry = ActuatorRegistry::with_builtin_actuators().unwrap();
+        assert!(registry.build("nonexistent", build_context()).is_err());
+    }
 
     #[test]
     fn parses_compact_sla_filter() {
