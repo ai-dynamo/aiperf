@@ -160,8 +160,29 @@ pub fn run_cellular(
         std::env::var(crate::runner_protocol::cell_launcher::CELL_LAUNCHER_ENV).as_deref(),
         Ok("k8s")
     );
+    // The run's artifact spec, parsed once (the same `AuthoredRunSpecV2` shape the
+    // cell's execute path reads), for the Stage E shipping decision and the Stage D
+    // concat below.
+    let artifacts: crate::runner_protocol::protocol::ArtifactSpec = envelope
+        .pointer("/run/cfg/artifacts")
+        .cloned()
+        .and_then(|value| serde_json::from_value(value).ok())
+        .unwrap_or_default();
+    // Stage E (reopened): a CROSS-HOST (k8s) run whose cells write per-record
+    // artifacts to their own pod filesystems now ships those files to the controller
+    // over HTTP + streaming zstd, so the controller runs the SAME Stage D concat on
+    // `temp_root/cell-{id}`. Same-host (`--cells N`) keeps the shared-FS concat (no
+    // HTTP). Gated on the operator toggle and on the run actually requesting
+    // shippable files (per-record artifacts or inputs.json); a metrics-only run ships
+    // nothing.
+    let http_shipping = is_k8s
+        && crate::runner_protocol::cellular_cell::http_artifact_shipping_enabled()
+        && !crate::runner_protocol::artifact_shipping::shippable_relatives(&artifacts).is_empty();
     warn_dropped_sidecar_telemetry(envelope);
-    warn_dropped_per_record_artifacts(envelope, is_k8s);
+    // Warn about DROPPED per-record artifacts only when they genuinely cannot be
+    // delivered — cross-host AND HTTP shipping disabled. When HTTP shipping is active
+    // the files ARE collected, so the boundary warning would be misleading.
+    warn_dropped_per_record_artifacts(envelope, is_k8s && !http_shipping);
     warn_cellular_approximations(envelope);
     // One shared seed for every cell when the author gave none (else `None` and each
     // cell inherits the authored `run.random_seed` verbatim).
@@ -190,6 +211,30 @@ pub fn run_cellular(
         let _scratch = ScratchTreeGuard(temp_root.clone());
         std::fs::create_dir_all(&temp_root)
             .with_context(|| format!("creating cellular scratch {}", temp_root.display()))?;
+
+        // Stage E: start the artifact upload server BEFORE launching cells (a k8s pod
+        // may start and upload before the controller's collect loop). Cells POST their
+        // per-record artifact files here with streaming zstd; each file lands at
+        // `temp_root/cell-{id}/{rel}` — exactly where the Stage D concat reads. The
+        // allowlist is the run's shippable relative paths, so a cell can only land
+        // known artifacts inside its own cell dir.
+        let artifact_server = if http_shipping {
+            let allowed: std::collections::HashSet<String> =
+                crate::runner_protocol::artifact_shipping::shippable_relatives(&artifacts)
+                    .into_iter()
+                    .collect();
+            Some(
+                crate::runner_protocol::artifact_shipping::ArtifactUploadServer::start(
+                    controller_artifact_bind(),
+                    temp_root.clone(),
+                    allowed,
+                )
+                .await
+                .context("starting cellular artifact upload server")?,
+            )
+        } else {
+            None
+        };
 
         // Build the controller's velo transport and publish its PeerInfo so cells
         // reach it from the one operator-hardcoded coordinate (zero discovery).
@@ -246,6 +291,11 @@ pub fn run_cellular(
             cell_count,
             controller_coordinate: cell_coordinate,
             phase_ordinal_bases,
+            // k8s pods derive the artifact authority from their operator-injected
+            // `tcp://` controller coordinate + artifact port (the controller cannot
+            // know its own routable host), so nothing is injected here. A future
+            // local-launcher HTTP path would pass the bound server address instead.
+            artifact_authority: None,
         };
         let mut handles = select_launcher()
             .launch(&launch_ctx)
@@ -419,44 +469,48 @@ pub fn run_cellular(
                 .context("writing merged cellular heartbeat")?;
         }
 
-        // Stage D (same-host): each cell ran its ordinary execute path with its
-        // controller-local `temp_root/cell-{id}` dir as its artifact_dir, so under
-        // exact-fold (the streaming `RecordArtifactLane`, flushed before the cell ships)
-        // — or the retain batch tail — it already wrote its merged per-record artifacts
-        // (records/raw/CSV/parquet/outputs) there. Every cell shipped its terminal
-        // partition AFTER finishing its lane, so by the time all partitions are collected
-        // above the cell files are complete and controller-local. Concatenate them into
-        // the real artifact dir (the per-cell dirs are the "shards") before `_scratch`
-        // removes `temp_root` — reusing the Stage B concat (row SET-identical, completion
-        // order accepted). `inputs.json` is NOT concatenated (it is a single FULL-dataset
-        // document, not per-record rows): every cell generated the identical up-front (S4)
-        // inputs.json over the same resident dataset, so the controller copies ONE cell's
-        // copy verbatim into the real dir (`copy_cell_inputs_json`). inputs.json is
-        // always-on (`rust_wire`), so without this the cellular run would silently drop it
-        // and diverge from the single-cell run / break GenAI-Perf compat. Cross-host (k8s)
-        // pods write to their own filesystem, so their files are not controller-local;
-        // skipped here (`!is_k8s`) — the SAME product boundary `dropped_cross_host_artifacts`
-        // reports and `warn_dropped_per_record_artifacts` warns about at startup. The
-        // intended cross-host mechanism is shared object storage (see that fn), NOT
-        // bulk-shipping the artifact bytes over the velo control plane.
-        if !is_k8s
+        // Stage E artifact barrier: when cross-host HTTP shipping is active, wait for
+        // every cell to POST its files AND its `/done` marker before concatenating, so
+        // `temp_root/cell-{id}` is complete. (Same-host cells write their files locally
+        // before shipping their velo partition, so the partition-collection loop above
+        // is already their barrier.)
+        if let Some(server) = artifact_server.as_ref() {
+            server
+                .wait_for_cells(cell_count, collect_timeout())
+                .await
+                .context("waiting for cellular artifact uploads")?;
+        }
+
+        // Per-record artifact concat + inputs.json copy. Each cell ran its ordinary
+        // execute path with a per-cell `temp_root/cell-{id}` dir as its artifact_dir and
+        // wrote its merged per-record artifacts (records/raw/CSV/parquet/outputs) there.
+        // The controller concatenates them into the real artifact dir (the per-cell dirs
+        // are the "shards"), reusing the Stage B concat (row SET-identical, completion
+        // order accepted), before `_scratch` removes `temp_root`. `inputs.json` is NOT
+        // concatenated (a single FULL-dataset document, not per-record rows): every cell
+        // generated the identical up-front (S4) inputs.json over the same resident
+        // dataset, so the controller copies ONE cell's copy verbatim
+        // (`copy_cell_inputs_json`). inputs.json is always-on (`rust_wire`), so without
+        // this the cellular run would silently drop it / break GenAI-Perf compat.
+        //
+        // The files are controller-local in two cases, both handled here:
+        // - SAME-HOST (`!is_k8s`): every cell wrote directly to its controller-local
+        //   `temp_root/cell-{id}` dir (Stage D).
+        // - CROSS-HOST (k8s) with `http_shipping`: each pod wrote to its OWN fs, then
+        //   shipped every file to the controller over HTTP + streaming zstd (Stage E),
+        //   landing at the SAME `temp_root/cell-{id}/{rel}` paths.
+        // Cross-host with shipping DISABLED still skips the concat (the files never
+        // reach the controller) — the shared-storage product boundary, warned at start.
+        if (!is_k8s || http_shipping)
             && let Some(artifact_dir) = report_path.parent()
         {
             let cell_dirs: Vec<PathBuf> = (0..cell_count)
                 .map(|cell_id| temp_root.join(format!("cell-{cell_id}")))
                 .collect();
-            // Parse `cfg.artifacts` exactly as the cell's execute path does
-            // (`AuthoredRunSpecV2` — `from_value(...).unwrap_or_default()`), so the
-            // controller reads each artifact's relative path identically to how the
-            // cell wrote it under its cell dir.
-            let artifacts: crate::runner_protocol::protocol::ArtifactSpec = envelope
-                .pointer("/run/cfg/artifacts")
-                .cloned()
-                .and_then(|value| serde_json::from_value(value).ok())
-                .unwrap_or_default();
             // Per-record artifacts (records/raw/CSV/parquet/outputs) are concatenated only
             // when requested; inputs.json (a single full-dataset doc) is copied whenever a
-            // cell produced one, independent of the per-record request set.
+            // cell produced one, independent of the per-record request set. `artifacts` was
+            // parsed once at the top of the run (identically to the cell's execute path).
             if !requested_per_record_artifacts(envelope).is_empty() {
                 crate::runner_protocol::shard_artifacts::concatenate_cell_artifacts(
                     &cell_dirs,
@@ -473,6 +527,11 @@ pub fn run_cellular(
             .context("copying per-cell inputs.json")?;
         }
 
+        // Stop the upload server (also dropped on any bail path).
+        if let Some(server) = artifact_server {
+            server.shutdown().await;
+        }
+
         // `_scratch` removes `temp_root` on drop.
         Ok(CellularRunOutcome {
             report_path: report_path.to_path_buf(),
@@ -480,6 +539,20 @@ pub fn run_cellular(
             record_count,
         })
     })
+}
+
+/// The controller's HTTP artifact-upload bind (Stage E). A fixed routable port
+/// (`AIPERF_CONTROLLER_ARTIFACT_BIND`, default `0.0.0.0:9600`) the operator exposes
+/// on the controller pod; cells derive the matching authority from their `tcp://`
+/// velo coordinate host + the artifact port. Distinct from the velo messaging bind
+/// (control plane) — this carries bulk artifact bytes, not coordination.
+#[cfg(feature = "velo")]
+fn controller_artifact_bind() -> std::net::SocketAddr {
+    use crate::runner_protocol::cellular_cell::DEFAULT_ARTIFACT_PORT;
+    std::env::var("AIPERF_CONTROLLER_ARTIFACT_BIND")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_else(|| std::net::SocketAddr::from(([0, 0, 0, 0], DEFAULT_ARTIFACT_PORT)))
 }
 
 /// The controller's velo messaging bind. k8s binds an ephemeral routable TCP port

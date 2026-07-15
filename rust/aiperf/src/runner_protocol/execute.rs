@@ -1614,6 +1614,15 @@ async fn execute_graph_native(
             .unwrap_or_default(),
         ..RunOutcome::default()
     };
+    // Stage E (cross-host k8s cell): now that this cell has written its per-record
+    // artifacts into its own artifact_dir, ship them to the controller's HTTP upload
+    // server with streaming zstd. A no-op on the same-host launcher (Stage D
+    // concatenates the local writes) or the single-process path.
+    #[cfg(feature = "velo")]
+    crate::runner_protocol::cellular_cell::ship_http_artifacts_if_enabled(
+        &request.artifact_dir,
+        &request.artifacts,
+    )?;
     Ok(NativeReport::from_outcome(&profiling_metrics, &outcome))
 }
 
@@ -2959,6 +2968,15 @@ async fn execute_native_inner(
         let inputs_path = artifact_path(&request.artifact_dir, inputs_path, "inputs_path")?;
         write_inputs_json(&inputs_path, &input_sessions)?;
     }
+    // Stage E (cross-host k8s cell): all per-record artifacts (+ inputs.json) are now
+    // on this cell's own filesystem; ship them to the controller's HTTP upload server
+    // with streaming zstd. A no-op on the same-host launcher (Stage D concatenates the
+    // local writes) or the single-process path.
+    #[cfg(feature = "velo")]
+    crate::runner_protocol::cellular_cell::ship_http_artifacts_if_enabled(
+        &request.artifact_dir,
+        &request.artifacts,
+    )?;
     if let (Some(gpu_telemetry), Some(gpu_records_path)) = (gpu_telemetry, gpu_records_path) {
         gpu_telemetry.write_records_jsonl(gpu_records_path)?;
     }

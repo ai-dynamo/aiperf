@@ -43,6 +43,71 @@ pub const CELL_CONTROLLER_ADDR_ENV: &str = "AIPERF_CELL_CONTROLLER_ADDR";
 /// slot (the cell's sampler restarts each phase; see [`phase_ordinal_bases_from_env`]).
 pub const CELL_PHASE_ORDINAL_BASES_ENV: &str = "AIPERF_CELL_PHASE_ORDINAL_BASES";
 
+/// Env var carrying the controller's artifact upload `host:port` (Stage E). The
+/// operator injects this into k8s pods (or the local launcher sets it to the
+/// controller's bound server) so a cell knows where to POST its per-record artifact
+/// files. When absent, a cell on a `tcp://` (k8s) controller coordinate derives the
+/// host from that coordinate and the port from [`CELL_ARTIFACT_PORT_ENV`].
+pub const CELL_ARTIFACT_ADDR_ENV: &str = "AIPERF_CELL_ARTIFACT_ADDR";
+
+/// Env var overriding the controller's artifact-server port when a cell derives the
+/// artifact `host:port` from its `tcp://HOST:PORT` velo coordinate (default `9600`,
+/// matching the controller's `AIPERF_CONTROLLER_ARTIFACT_BIND` default).
+pub const CELL_ARTIFACT_PORT_ENV: &str = "AIPERF_CELL_ARTIFACT_PORT";
+
+/// Env toggle disabling cross-host HTTP artifact shipping (Stage E). Default ON;
+/// set to `0`/`false`/`off` to fall back to the shared-storage product boundary (the
+/// controller then warns the per-record files are dropped, as before). For operators
+/// on a shared-FS (ReadWriteMany PVC) setup who prefer the cells' own writes.
+pub const CELL_HTTP_ARTIFACT_SHIPPING_ENV: &str = "AIPERF_CELL_HTTP_ARTIFACT_SHIPPING";
+
+/// The default controller artifact-server port (server bind + cell-derived fetch).
+pub const DEFAULT_ARTIFACT_PORT: u16 = 9600;
+
+/// Whether cross-host HTTP artifact shipping is enabled ([`CELL_HTTP_ARTIFACT_SHIPPING_ENV`],
+/// default ON). Shared by the controller (whether to start the upload server + run the
+/// concat) and the cell (whether to ship), so the two never disagree.
+pub fn http_artifact_shipping_enabled() -> bool {
+    !matches!(
+        std::env::var(CELL_HTTP_ARTIFACT_SHIPPING_ENV)
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "0" | "false" | "off" | "no"
+    )
+}
+
+/// The controller's artifact upload `host:port` this cell should POST to, or `None`
+/// when HTTP shipping is off or this is a same-host launcher (Stage D concatenates
+/// the cell's own local writes instead — no HTTP). Resolution order:
+/// 1. shipping disabled → `None`;
+/// 2. [`CELL_ARTIFACT_ADDR_ENV`] set (operator/launcher) → that authority;
+/// 3. a `tcp://HOST:PORT` velo controller coordinate (k8s) → `HOST` + the
+///    [`CELL_ARTIFACT_PORT_ENV`] port (default [`DEFAULT_ARTIFACT_PORT`]);
+/// 4. otherwise (a `file:` local coordinate) → `None`.
+pub fn cell_artifact_authority() -> Option<String> {
+    if !http_artifact_shipping_enabled() {
+        return None;
+    }
+    if let Ok(addr) = std::env::var(CELL_ARTIFACT_ADDR_ENV)
+        && !addr.is_empty()
+    {
+        return Some(addr);
+    }
+    let coordinate = std::env::var(CELL_CONTROLLER_ADDR_ENV).ok()?;
+    let host_port = coordinate.strip_prefix("tcp://")?;
+    // The velo coordinate host, with the artifact-server port (the velo port is a
+    // different service).
+    let host = host_port
+        .rsplit_once(':')
+        .map_or(host_port, |(host, _)| host);
+    let port = std::env::var(CELL_ARTIFACT_PORT_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(DEFAULT_ARTIFACT_PORT);
+    Some(format!("{host}:{port}"))
+}
+
 /// The per-phase global ordinal bases for this cell, keyed by metric phase — the
 /// turns the run's prior phases dispatched globally — or empty when the process is
 /// not a cell (the single-process path stamps the flat cumulative slot). A cell's
@@ -92,6 +157,51 @@ pub fn issuance_authority_for(
     partition: ModuloCellPartition,
 ) -> std::rc::Rc<dyn IssuanceAuthority> {
     std::rc::Rc::new(CellularAutonomousIssuer::new(partition))
+}
+
+/// Ship this cell's per-record artifact files (+ `inputs.json`) to the controller's
+/// HTTP upload server with streaming zstd (Stage E, cross-host path), when shipping
+/// is enabled and an artifact authority is resolvable ([`cell_artifact_authority`]).
+/// A no-op on the same-host launcher (Stage D concatenates the cell's own writes) or
+/// when shipping is disabled.
+///
+/// Called at cell finalize AFTER the cell has written its artifacts to its own
+/// `artifact_dir`, before process exit. Blocking by design (off the hot path); the
+/// async HTTP work runs on a dedicated thread + runtime so it never touches the
+/// caller's (possibly `current_thread`) execute runtime — mirroring
+/// [`CellRecordsShipper::ship`]. The controller waits for every cell's `/done` marker
+/// (posted last by [`crate::runner_protocol::artifact_shipping::ship_cell_artifacts`])
+/// before running its concat, so this must complete before the process exits.
+#[cfg(feature = "velo")]
+pub fn ship_http_artifacts_if_enabled(
+    cell_dir: &std::path::Path,
+    artifacts: &crate::runner_protocol::protocol::ArtifactSpec,
+) -> Result<()> {
+    let Some(partition) = ModuloCellPartition::from_env() else {
+        return Ok(()); // not a cell (single-process path)
+    };
+    let Some(authority) = cell_artifact_authority() else {
+        return Ok(()); // same-host or shipping disabled
+    };
+    let relatives = crate::runner_protocol::artifact_shipping::shippable_relatives(artifacts);
+    if relatives.is_empty() {
+        return Ok(()); // metrics-only run with no files to ship
+    }
+    let cell_id = partition.cell_id();
+    let cell_dir = cell_dir.to_path_buf();
+    std::thread::spawn(move || -> Result<()> {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()?;
+        runtime.block_on(
+            crate::runner_protocol::artifact_shipping::ship_cell_artifacts(
+                &authority, cell_id, &cell_dir, &relatives,
+            ),
+        )
+    })
+    .join()
+    .map_err(|_| anyhow::anyhow!("cell artifact-shipping thread panicked"))?
 }
 
 // -- velo cell transport (fetch spec + ship records) ------------------------------

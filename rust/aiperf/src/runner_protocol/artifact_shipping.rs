@@ -600,7 +600,6 @@ pub fn shippable_relatives(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write as _;
 
     /// Deterministic pseudo-random bytes spanning several [`CHUNK_SIZE`] windows,
     /// so the round-trip exercises multi-chunk streaming (not a single read).

@@ -26,7 +26,7 @@ use tokio::process::Child;
 use crate::cellular::partition::{CELL_COUNT_ENV, CELL_ID_ENV};
 
 use crate::runner_protocol::cellular_cell::{
-    CELL_CONTROLLER_ADDR_ENV, CELL_PHASE_ORDINAL_BASES_ENV,
+    CELL_ARTIFACT_ADDR_ENV, CELL_CONTROLLER_ADDR_ENV, CELL_PHASE_ORDINAL_BASES_ENV,
 };
 
 /// Env var selecting the launcher: `local` (default) or `k8s`.
@@ -46,6 +46,11 @@ pub struct CellLaunchContext {
     /// [`CELL_PHASE_ORDINAL_BASES_ENV`] so a cell's issuer stamps
     /// single-cell-equivalent absolute slots (unchanged from the process launcher).
     pub phase_ordinal_bases: BTreeMap<String, u64>,
+    /// The controller's artifact upload `host:port` (Stage E), injected as
+    /// [`CELL_ARTIFACT_ADDR_ENV`] so a local-launched cell POSTs its per-record
+    /// artifact files there. `None` when HTTP artifact shipping is off or on the
+    /// same-host path (Stage D concatenates local writes instead of shipping).
+    pub artifact_authority: Option<String>,
 }
 
 /// A started cell the controller watches for hard failure. For a local subprocess
@@ -112,6 +117,9 @@ impl LocalLauncher {
             .kill_on_drop(true);
         if let Ok(bases) = serde_json::to_string(&ctx.phase_ordinal_bases) {
             command.env(CELL_PHASE_ORDINAL_BASES_ENV, bases);
+        }
+        if let Some(authority) = &ctx.artifact_authority {
+            command.env(CELL_ARTIFACT_ADDR_ENV, authority);
         }
         command
     }
@@ -202,6 +210,7 @@ mod tests {
             cell_count: 2,
             controller_coordinate: "file:/tmp/controller-peer.rmp".to_owned(),
             phase_ordinal_bases: bases,
+            artifact_authority: Some("controller.local:9600".to_owned()),
         }
     }
 
@@ -222,6 +231,12 @@ mod tests {
             Some("file:/tmp/controller-peer.rmp")
         );
         assert!(envs.contains_key(CELL_PHASE_ORDINAL_BASES_ENV));
+        // Stage E: the controller's artifact upload authority is injected so the cell
+        // knows where to POST its per-record artifact files.
+        assert_eq!(
+            envs.get(CELL_ARTIFACT_ADDR_ENV).map(String::as_str),
+            Some("controller.local:9600")
+        );
     }
 
     #[test]
