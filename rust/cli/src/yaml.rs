@@ -243,20 +243,47 @@ struct DatasetSection {
     /// Sampling order (`sequential` default).
     sampling: Option<String>,
     entries: Option<u32>,
-    #[serde(alias = "num_conversations")]
+    #[serde(default, alias = "numConversations")]
     num_conversations: Option<u32>,
     /// Per-dataset sampling seed (distinct from the top-level run `randomSeed`).
     #[serde(default, alias = "randomSeed")]
     random_seed: Option<u64>,
     prompts: Option<PromptsSection>,
+    /// Shared-prefix / prefix-pool policy (`synthetic.prefix_prompts`).
+    #[serde(default, alias = "prefixPrompts")]
+    prefix_prompts: Option<PrefixPromptsSection>,
+    /// Turns-per-session distribution (multi-turn).
+    turns: Option<DistFields>,
+    /// Inter-turn fixed delay distribution, milliseconds (`turn_delay`).
+    #[serde(default, alias = "turnDelay")]
+    turn_delay: Option<DistFields>,
+    /// Per-turn think-time delay ratio.
+    #[serde(default, alias = "turnDelayRatio")]
+    turn_delay_ratio: Option<f64>,
+    /// Inter-turn delay cap, seconds (file/trace datasets).
+    #[serde(default, alias = "interTurnDelayCapSeconds")]
+    inter_turn_delay_cap_seconds: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
 struct PromptsSection {
     isl: Option<NumOrDist>,
     osl: Option<NumOrDist>,
-    #[serde(alias = "batch_size")]
+    #[serde(alias = "batchSize")]
     batch_size: Option<u32>,
+    #[serde(default, alias = "blockSize")]
+    block_size: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PrefixPromptsSection {
+    #[serde(default, alias = "poolSize")]
+    pool_size: Option<u32>,
+    length: Option<u32>,
+    #[serde(default, alias = "sharedSystemLength")]
+    shared_system_length: Option<u32>,
+    #[serde(default, alias = "userContextLength")]
+    user_context_length: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -327,24 +354,49 @@ impl Benchmark {
         let dataset = self
             .dataset
             .or_else(|| self.datasets.and_then(|d| d.into_iter().next()));
-        let (isl, osl, batch_size) = extract_prompts(dataset.as_ref());
+        let (isl, osl, batch_size, isl_block_size) = extract_prompts(dataset.as_ref());
         let num_conversations = dataset.as_ref().and_then(|d| d.num_conversations);
         let dataset_entries = dataset.as_ref().and_then(|d| d.entries);
         // Per-dataset seed is separate from the top-level run seed.
         let dataset_random_seed = dataset.as_ref().and_then(|d| d.random_seed);
+        let inter_turn_delay_cap_seconds =
+            dataset.as_ref().and_then(|d| d.inter_turn_delay_cap_seconds);
 
-        // A `type: file` dataset routes through the file loader (path/format/
-        // sampling); anything else stays on the synthetic path.
+        // Multi-turn (turns / inter-turn delay / think-time ratio).
+        let turns = dataset.as_ref().and_then(|d| d.turns.as_ref()).map(dist_from);
+        let turn_delay_ms = dataset
+            .as_ref()
+            .and_then(|d| d.turn_delay.as_ref())
+            .map(dist_from);
+        let turn_delay_ratio = dataset
+            .as_ref()
+            .and_then(|d| d.turn_delay_ratio)
+            .unwrap_or(1.0);
+
+        // Shared-prefix / prefix-pool policy (`synthetic.prefix_prompts`).
+        let prefix_prompts = dataset.as_ref().and_then(|d| d.prefix_prompts.as_ref()).map(
+            |p| crate::model::dataset::PrefixPrompts {
+                shared_system_length: p.shared_system_length,
+                user_context_length: p.user_context_length,
+                length: p.length,
+                pool_size: p.pool_size,
+            },
+        );
+
+        // Sampling order applies to both synthetic and file datasets.
+        let sampling = dataset
+            .as_ref()
+            .and_then(|d| d.sampling.clone())
+            .unwrap_or_else(|| "sequential".to_string());
+
+        // A `type: file` dataset routes through the file loader (path/format);
+        // anything else stays on the synthetic path.
         let is_file = dataset.as_ref().and_then(|d| d.dataset_type.as_deref()) == Some("file");
-        let (input_file, custom_dataset_type, sampling) = if is_file {
+        let (input_file, custom_dataset_type) = if is_file {
             let d = dataset.as_ref().expect("file dataset present");
-            (
-                d.path.clone().map(PathBuf::from),
-                d.format.clone(),
-                d.sampling.clone().unwrap_or_else(|| "sequential".to_string()),
-            )
+            (d.path.clone().map(PathBuf::from), d.format.clone())
         } else {
-            (None, None, "sequential".to_string())
+            (None, None)
         };
 
         // Single phase on the single-run path.
@@ -501,9 +553,9 @@ impl Benchmark {
             tokenizer_trust,
             isl,
             osl,
-            turns: None,
-            turn_delay_ratio: 1.0,
-            turn_delay_ms: None,
+            turns,
+            turn_delay_ratio,
+            turn_delay_ms,
             session_header: self.endpoint.session_header,
             batch_size: batch_size.unwrap_or(1),
             sampling,
@@ -532,19 +584,19 @@ impl Benchmark {
             custom_dataset_type,
             public_dataset: None,
             hf_subset: None,
-            inter_turn_delay_cap_seconds: None,
+            inter_turn_delay_cap_seconds,
             fixed_schedule: None,
             fixed_schedule_start_offset: None,
             fixed_schedule_end_offset: None,
             model_strategy,
             slice_duration,
-            isl_block_size: None,
+            isl_block_size,
             sketch_metrics: false,
             image_spec: None,
             audio_spec: None,
             video_spec: None,
             adaptive_scale: None,
-            prefix_prompts: None,
+            prefix_prompts,
             artifact_dir: artifact_dir
                 .or_else(|| config_artifact_dir.map(PathBuf::from))
                 .unwrap_or_else(|| PathBuf::from("artifacts")),
@@ -584,19 +636,30 @@ fn parse_transport(section: Option<&TransportSection>) -> anyhow::Result<Transpo
     })
 }
 
-/// Extract the ISL distribution, optional OSL, and batch size from a dataset.
+/// Extract the ISL distribution, optional OSL, batch size, and block size.
 fn extract_prompts(
     dataset: Option<&DatasetSection>,
-) -> (Distribution, Option<Distribution>, Option<u32>) {
+) -> (Distribution, Option<Distribution>, Option<u32>, Option<u32>) {
     let Some(prompts) = dataset.and_then(|d| d.prompts.as_ref()) else {
-        return (default_isl(), None, None);
+        return (default_isl(), None, None, None);
     };
     let isl = match &prompts.isl {
         Some(n) => clone_num_or_dist(n),
         None => default_isl(),
     };
     let osl = prompts.osl.as_ref().map(clone_num_or_dist);
-    (isl, osl, prompts.batch_size)
+    (isl, osl, prompts.batch_size, prompts.block_size)
+}
+
+/// Build a [`Distribution`] from a parametric YAML dist block (`{mean,stddev,…}`).
+fn dist_from(d: &DistFields) -> Distribution {
+    Distribution {
+        mean: d.mean,
+        stddev: d.stddev,
+        min: d.min,
+        max: d.max,
+        ..Default::default()
+    }
 }
 
 /// Clone a `StringOrVec` into a `Vec<String>` without consuming it.
