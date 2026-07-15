@@ -668,7 +668,11 @@ class _MetricsSettings(BaseSettings):
         ge=20,
         le=10000,
         default=500,
-        description="t-digest sketch compression for list-valued record metric aggregation. Higher = more centroids, tighter percentile accuracy, larger sketch. Default 500 measured to keep worst-case relative percentile error under 0.05% on 50M-sample workloads (40x under the 0.5% claimed accuracy band) at ~4 KB sketch size.",
+        description="t-digest sketch compression for list-valued record metric aggregation. Higher = more centroids, tighter percentile accuracy, larger sketch. Default 500 measured to keep worst-case relative percentile error under 0.05% on 50M-sample workloads (40x under the 0.5% claimed accuracy band) at ~4 KB sketch size. Also the compression used by the whole-run sketch metrics mode (AIPERF_METRICS_SKETCH).",
+    )
+    SKETCH: bool = Field(
+        default=False,
+        description="Opt-in bounded-memory metrics mode (--sketch-metrics). Stream every per-record metric value into a t-digest sketch (compression TDIGEST_COMPRESSION) instead of retaining each value, so the native aiperf-runner's metric memory stays O(1) in the request count at very high request rates. Counts, sums, averages, and min/max stay exact; percentiles become approximate. Per-record artifacts (records/raw/outputs JSONL, per-record OTLP histograms) and the per-row-only trend outputs (timeslices, per-model/endpoint inference series, sweep curves) are unavailable in this mode and are dropped from the run request. Off by default.",
     )
     LIST_BACKEND: Literal["ragged", "tdigest"] = Field(
         default="ragged",

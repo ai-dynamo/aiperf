@@ -134,6 +134,11 @@ pub struct MetricsSpec {
     /// Per-request SLO thresholds in each metric's display unit.
     #[serde(default)]
     pub slos: BTreeMap<String, f64>,
+    /// Retain each Record-metric value in a bounded-memory t-digest sketch instead
+    /// of the full value vector, trading exact percentiles for O(1) memory. Off by
+    /// default; enabled by `AIPERF_METRICS_SKETCH` / `--sketch-metrics`.
+    #[serde(default)]
+    pub sketch: bool,
 }
 
 /// Artifact paths relative to the exclusive run directory.
