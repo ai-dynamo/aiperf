@@ -65,6 +65,23 @@ class TestGetOrCreateProgressClient:
         mock_client.__aenter__.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_client_targets_results_sidecar_port(self) -> None:
+        """The cellular results client must hit the sidecar (9091), not mesh api (9090)."""
+        from unittest.mock import patch as mock_patch
+
+        from aiperf.kubernetes.environment import K8sEnvironment
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+
+        with mock_patch(
+            "aiperf.operator.client_cache.ProgressClient", return_value=mock_client
+        ) as cls:
+            await get_or_create_progress_client("test/job-port")
+
+        cls.assert_called_once_with(port=K8sEnvironment.PORTS.RESULTS_SIDECAR)
+
+    @pytest.mark.asyncio
     async def test_returns_cached_client(self) -> None:
         """Verify same client returned for same key."""
         from unittest.mock import patch as mock_patch
@@ -88,7 +105,7 @@ class TestGetOrCreateProgressClient:
 
         call_count = 0
 
-        def make_client():
+        def make_client(*_args, **_kwargs):
             nonlocal call_count
             call_count += 1
             c = AsyncMock()
@@ -112,7 +129,7 @@ class TestGetOrCreateProgressClient:
         """Verify oldest client evicted when cache is full."""
         from unittest.mock import patch as mock_patch
 
-        def make_client():
+        def make_client(*_args, **_kwargs):
             c = AsyncMock()
             c.__aenter__ = AsyncMock(return_value=c)
             c.__aexit__ = AsyncMock(return_value=None)

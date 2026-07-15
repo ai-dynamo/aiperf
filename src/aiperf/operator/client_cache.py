@@ -26,6 +26,7 @@ from aiperf.kubernetes.cr_refs import (
     AIPERF_JOB_PLURAL,
     AIPERF_JOB_VERSION,
 )
+from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.operator.progress_client import ProgressClient
 
 logger = logging.getLogger(__name__)
@@ -147,7 +148,15 @@ async def get_or_create_progress_client(key: str) -> ProgressClient:
             while len(_progress_clients) >= _MAX_CACHE_SIZE:
                 oldest_key = next(iter(_progress_clients))
                 await _close_unlocked(oldest_key)
-            client = ProgressClient()
+            # Target the results-sidecar port, not the retired mesh API service
+            # (9090). Under the native cellular model the controller pod runs no
+            # api service — the only HTTP the operator makes to the run pod is
+            # results fetch, served by the results-sidecar container on
+            # PORTS.RESULTS_SIDECAR (9091) with the same /api/results/* paths the
+            # ProgressClient uses. Progress/metrics polling is retired and the
+            # (vestigial) shutdown call best-effort no-ops against the exited
+            # controller, so a single results-scoped client is correct here.
+            client = ProgressClient(port=K8sEnvironment.PORTS.RESULTS_SIDECAR)
             await client.__aenter__()
             _progress_clients[key] = client
         return client

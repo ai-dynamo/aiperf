@@ -2602,7 +2602,7 @@ class TestProgressClientCache:
 
         with mock_patch("aiperf.operator.client_cache.ProgressClient") as mock_cls:
 
-            def make_client():
+            def make_client(*_args, **_kwargs):
                 nonlocal call_count
                 call_count += 1
                 c = AsyncMock()

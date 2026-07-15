@@ -139,6 +139,16 @@ async def _run_controller(run: BenchmarkRun) -> None:
     if not result.success:
         raise RuntimeError(f"controller run failed: {result.error}")
 
+    # Mark the exported results dir ready BEFORE signalling completion. The
+    # results-sidecar (serving this same /results volume) refuses to serve result
+    # files until the ``.aiperf_results_ready.json`` marker exists, and the
+    # operator's on_benchmark_complete -> fetch_results_with_retry downloads
+    # through the sidecar the instant it sees the completion annotation. Writing
+    # the marker first (the mesh SystemController's contract, which the native
+    # cellular controller must uphold) closes the race where the fetch races the
+    # export and the run is stamped Failed with results already on disk.
+    _mark_results_ready(run)
+
     # Push the terminal progress + the FULL native-v2 report snapshot, then signal
     # completion -- same ordering as the mesh SystemController (report-then-complete
     # after export). The final snapshot supersedes the live approximations with the
@@ -148,6 +158,20 @@ async def _run_controller(run: BenchmarkRun) -> None:
     from aiperf.kubernetes.completion_signal import signal_benchmark_complete
 
     await signal_benchmark_complete()
+
+
+def _mark_results_ready(run: BenchmarkRun) -> None:
+    """Write the results-sidecar readiness marker into the run's artifact dir.
+
+    Best-effort: off-cluster (no sidecar) the marker is harmless, and a write
+    failure is logged rather than aborting a successful run.
+    """
+    from aiperf.kubernetes.results_sidecar import write_ready_marker
+
+    try:
+        write_ready_marker(run.artifact_dir)
+    except OSError as e:
+        logger.warning("could not write results-ready marker: %s", e)
 
 
 async def _report_final_snapshot(run: BenchmarkRun) -> None:
