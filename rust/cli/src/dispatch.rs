@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Top-level command routing: `profile` is native, everything else delegates.
 
-use crate::delegate;
+use crate::{delegate, profile};
 
 /// Route one invocation (argv with the program name already stripped). Returns
 /// the process exit code.
@@ -12,11 +12,7 @@ use crate::delegate;
 /// the native binary is a drop-in front door while the port is incremental.
 pub fn run(argv: &[String]) -> anyhow::Result<i32> {
     match argv.first().map(String::as_str) {
-        Some("profile") => {
-            // Native profile lands in a later task; the skeleton delegates so
-            // the front door is functional end-to-end from day one.
-            delegate::exec_python(argv)
-        }
+        Some("profile") => profile::run(&argv[1..]),
         _ => delegate::exec_python(argv),
     }
 }

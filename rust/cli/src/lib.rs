@@ -15,5 +15,8 @@
 pub mod delegate;
 pub mod dispatch;
 pub mod execute;
+pub mod flags;
+pub mod load;
 pub mod model;
+pub mod profile;
 pub mod runner_install;

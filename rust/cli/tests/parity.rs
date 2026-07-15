@@ -15,6 +15,8 @@
 //! the list is intentionally dropped by the native type and not asserted yet.
 
 use aiperf::runner_protocol::protocol_v2::RunnerEnvelopeV2;
+use aiperf_cli::flags::ProfileFlags;
+use aiperf_cli::load;
 use aiperf_cli::model::BenchmarkRun;
 
 /// `cfg` sections the native type currently models; asserted for byte-exact
@@ -78,4 +80,47 @@ fn golden_minimal_chat_ported_sections_roundtrip() {
             "run.{field} diverges from golden\n got: {got:#}\nwant: {want:#}"
         );
     }
+}
+
+/// Read a `.args` fixture and split into argv tokens (fixtures use simple
+/// whitespace-separated tokens, no quoting).
+fn fixture_args(name: &str) -> Vec<String> {
+    let path = format!("../../tools/parity/fixtures/{name}.args");
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+    text.split_whitespace().map(str::to_owned).collect()
+}
+
+#[test]
+fn loader_minimal_chat_matches_golden() {
+    // The pre-translation (flags -> native run) must reproduce the golden's
+    // consumed cfg sections + resolved. benchmark_id/cli_command are
+    // invocation-specific and excluded; artifact_dir comes from the flag.
+    let golden = load_golden("minimal_chat");
+    let flags = ProfileFlags::parse_from_args(&fixture_args("minimal_chat")).expect("flags parse");
+    let run = load::resolve(&flags).expect("loader resolves");
+    let built = serde_json::to_value(&run).expect("serialize built run");
+
+    for section in PORTED_CFG_SECTIONS {
+        assert_eq!(
+            &built["cfg"][section], &golden["run"]["cfg"][section],
+            "loader cfg.{section} diverges from golden\n got: {:#}\nwant: {:#}",
+            built["cfg"][section], golden["run"]["cfg"][section]
+        );
+    }
+    for field in PORTED_RUN_FIELDS {
+        assert_eq!(
+            &built[field], &golden["run"][field],
+            "loader run.{field} diverges from golden"
+        );
+    }
+    assert_eq!(
+        built["artifact_dir"], golden["run"]["artifact_dir"],
+        "loader artifact_dir diverges from golden"
+    );
+    // The built request must be valid input for the unchanged runner.
+    let envelope = serde_json::json!({
+        "protocol_version": 2, "operation": "execute", "run": built,
+    });
+    let _: RunnerEnvelopeV2 =
+        serde_json::from_value(envelope).expect("built run is valid RunnerEnvelopeV2");
 }
