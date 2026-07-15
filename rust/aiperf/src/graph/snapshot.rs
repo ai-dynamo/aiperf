@@ -17,7 +17,7 @@
 //! as `f64` (the brief's shape) rather than Python's `int`; the comparison and
 //! the re-root offset arithmetic are otherwise identical.
 
-use crate::graph::model::{LlmNode, ParsedGraph, START_NODE_ID, StaticEdge};
+use crate::graph::model::{GraphRecord, LlmNode, ParsedGraph, START_NODE_ID, StaticEdge};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The node's recorded arrival offset in microseconds, or `0.0` when absent.
@@ -179,6 +179,135 @@ fn chop_node_inputs(node: &LlmNode, survivor_out_channels: &BTreeSet<String>) ->
     out
 }
 
+/// The per-session chain key a trie node id belongs to.
+///
+/// Both live trie producers mint node ids as `{chain_prefix}_{ordinal}` — one
+/// linear chain per recorded session (the weka walk emits `{trace_id}:{k}` for
+/// the root request list and `r_1_0`/`r_1_1` for a spawned subagent; the dynamo
+/// lowering emits `{session_id}:{k}` per session). Stripping the final
+/// `_`-delimited token recovers the enclosing session chain. Chain identity must
+/// come from node ids because the sidecar-loaded timing plane strips
+/// `metadata["trie"]`, leaving ids + edges as the only chain signal, and the
+/// interval-order edges are cross-chain ordering edges, not session boundaries.
+/// A node id with no `_` forms a defensive singleton chain.
+///
+/// Port of `graph_ir_replay.py:106-127` (`_chain_key`). Python uses
+/// `str.rpartition("_")`, which splits on the LAST `_`; `str::rfind('_')` is the
+/// byte-exact equivalent over the id's ASCII segment names.
+fn chain_key(node_id: &str) -> String {
+    match node_id.rfind('_') {
+        Some(idx) => node_id[..idx].to_owned(),
+        None => node_id.to_owned(),
+    }
+}
+
+/// Return `{node_id: node}` of each chain-live-at-`t*` boundary turn.
+///
+/// Chains are the per-session linear paths the trie node ids encode
+/// ([`chain_key`]), ordered by recorded arrival. A chain is LIVE when it has
+/// BOTH a node arriving before `t*` and a node arriving at/after `t*`; its
+/// boundary is the LAST pre-`t*` node. Chains with no pre-`t*` node need no
+/// priming (profiling replays them from their own start); chains entirely
+/// pre-`t*` are not live (nothing of them is profiled). The returned map borrows
+/// the boundary nodes from `graph` unchanged — the warmup re-root is applied by
+/// [`rewrite_for_warmup`], mirroring Python's returning of the same node objects.
+///
+/// Port of `graph_ir_replay.py:128-149` (`_warmup_boundary_nodes`). Signature
+/// adaptation: the Python original takes a `GraphRecord` and reads a first-class
+/// `LlmNode.arrival_offset_us`; the Rust IR reads it from
+/// `metadata["arrival_offset_us"]` via [`arrival_offset_us`], and `t_star_us` is
+/// `f64` (the brief's shape) rather than Python's `int`. Python sorts `(arrival,
+/// nid)` tuples; the Rust sort is byte-identical (arrival then id).
+pub fn warmup_boundary_nodes(graph: &GraphRecord, t_star_us: f64) -> BTreeMap<String, &LlmNode> {
+    let mut chains: BTreeMap<String, Vec<(f64, &str)>> = BTreeMap::new();
+    for (nid, node) in &graph.nodes {
+        chains
+            .entry(chain_key(nid))
+            .or_default()
+            .push((arrival_offset_us(node), nid.as_str()));
+    }
+    let mut boundary: BTreeMap<String, &LlmNode> = BTreeMap::new();
+    for members in chains.values_mut() {
+        // Python `list.sort()` on `(arrival, nid)` tuples; arrivals are never
+        // NaN (they come from finite recorded offsets), so `partial_cmp` is total.
+        members.sort_by(|a, b| a.partial_cmp(b).expect("finite arrival offsets"));
+        let last_pre = members
+            .iter()
+            .rfind(|(arrival, _)| *arrival < t_star_us)
+            .map(|(_, nid)| *nid);
+        let any_post = members.iter().any(|(arrival, _)| *arrival >= t_star_us);
+        if let Some(nid) = last_pre
+            && any_post
+        {
+            boundary.insert(nid.to_owned(), &graph.nodes[nid]);
+        }
+    }
+    boundary
+}
+
+/// Rewrite `parsed` into the WARMUP boundary-priming graph at `t*`.
+///
+/// AgentX-parity contract: warmup dispatches exactly ONE priming credit per
+/// chain LIVE at `t*` — the chain's boundary turn, the last node of that
+/// per-session chain whose recorded arrival precedes `t*`
+/// ([`warmup_boundary_nodes`]). Because trie prompts are cumulative along a
+/// chain, priming the boundary turn's prompt (at the worker-side warmup
+/// `max_tokens` cap, keyed off the `"warmup"` phase variant) warms the chain's
+/// whole prefix.
+///
+/// The produced graph is FLAT: only the boundary nodes survive, each re-rooted
+/// from `START` with NO leading offset (warmup bursts every priming credit at
+/// phase start rather than replaying recorded gaps — the synthetic edge carries
+/// no delay of any kind) and with fan-in `inputs` cleared and `min_start_delay_us`
+/// dropped (their predecessors are gone). Node identity, the trie envelope
+/// (`metadata`, including the retained `arrival_offset_us`), `max_tokens`, and
+/// the prompt program (`items`) are preserved so the worker resolves the
+/// unmodified catalog ordinal and materializes the exact recorded prompt.
+/// `t_star_us <= 0` (full native replay, or a zero-duration trace) yields an
+/// EMPTY graph so the warmup phase finalizes immediately.
+///
+/// Port of `graph_ir_replay.py:151-181` (`rewrite_for_warmup`). Signature
+/// adaptation: `t_star_us` is `f64`; the worker-side warmup `max_tokens` cap is
+/// applied downstream by the `"warmup"` phase variant and is NOT encoded into the
+/// node here, matching the Python source (which likewise leaves `max_tokens`
+/// untouched). Only `graph.graph` is rewritten; the named `graphs` map and
+/// `traces` carry through verbatim, matching Python's `replace(parsed, graph=…)`.
+pub fn rewrite_for_warmup(parsed: &ParsedGraph, t_star_us: f64) -> ParsedGraph {
+    let boundary = if t_star_us > 0.0 {
+        warmup_boundary_nodes(&parsed.graph, t_star_us)
+    } else {
+        BTreeMap::new()
+    };
+
+    let mut new_nodes: BTreeMap<String, LlmNode> = BTreeMap::new();
+    for (nid, node) in &boundary {
+        let mut rewritten = (*node).clone();
+        rewritten.inputs = Vec::new();
+        rewritten.min_start_delay_us = None;
+        new_nodes.insert(nid.clone(), rewritten);
+    }
+
+    let new_edges: Vec<StaticEdge> = new_nodes
+        .keys()
+        .map(|nid| StaticEdge {
+            source: START_NODE_ID.to_owned(),
+            target: nid.clone(),
+            delay_after_predecessor_us: None,
+            min_start_delay_us: None,
+            delay_after_predecessor_start_us: None,
+            delay_after_predecessor_first_token_us: None,
+        })
+        .collect();
+
+    let mut new_graph = parsed.graph.clone();
+    new_graph.nodes = new_nodes;
+    new_graph.edges = new_edges;
+
+    let mut out = parsed.clone();
+    out.graph = new_graph;
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,5 +444,153 @@ mod tests {
         let chopped = chop_trie_at_tstar(&fixture(), 5_000_000.0);
         assert!(chopped.graph.nodes.is_empty());
         assert!(chopped.graph.edges.is_empty());
+    }
+
+    // --- warmup rewrite (task B2) ---------------------------------------------
+    //
+    // Expected values below were produced by running the VERBATIM Python warmup
+    // rewrite (`graph_ir_replay.py:106-181`: `_chain_key`,
+    // `_warmup_boundary_nodes`, `rewrite_for_warmup`) against a shape-equivalent
+    // standalone fixture — see the task-B2 report and `/tmp/warmup_derive.py`.
+
+    /// Node id `{chain}_{ordinal}` with arrival, inputs, optional min-start-delay,
+    /// and optional `max_tokens`, so warmup preservation/clearing is observable.
+    fn wnode(
+        arrival_us: u64,
+        inputs: &[&str],
+        min_start: Option<f64>,
+        max_tokens: Option<usize>,
+    ) -> LlmNode {
+        let mut n = node(arrival_us, inputs);
+        n.min_start_delay_us = min_start;
+        n.max_tokens = max_tokens;
+        n
+    }
+
+    /// Four chains at `t* = 1.5e6`: `chainA` straddles t* (boundary = chainA_1),
+    /// `chainB` entirely pre-t* (not live), `chainC` entirely post-t* (no prime),
+    /// `chainD` straddles with a node-level min-start-delay + max_tokens on its
+    /// boundary (boundary = chainD_1). Mirrors `/tmp/warmup_derive.py`.
+    fn warmup_fixture() -> ParsedGraph {
+        let mut nodes = BTreeMap::new();
+        nodes.insert("chainA_0".to_owned(), wnode(0, &[], None, None));
+        nodes.insert(
+            "chainA_1".to_owned(),
+            wnode(1_000_000, &["chainA_0_out"], None, None),
+        );
+        nodes.insert(
+            "chainA_2".to_owned(),
+            wnode(2_000_000, &["chainA_1_out"], None, None),
+        );
+        nodes.insert("chainB_0".to_owned(), wnode(0, &[], None, None));
+        nodes.insert(
+            "chainB_1".to_owned(),
+            wnode(500_000, &["chainB_0_out"], None, None),
+        );
+        nodes.insert("chainC_0".to_owned(), wnode(3_000_000, &[], None, None));
+        nodes.insert("chainD_0".to_owned(), wnode(0, &[], None, None));
+        nodes.insert(
+            "chainD_1".to_owned(),
+            wnode(1_000_000, &["chainD_0_out"], Some(999.0), Some(42)),
+        );
+        nodes.insert(
+            "chainD_2".to_owned(),
+            wnode(2_000_000, &["chainD_1_out"], None, None),
+        );
+        ParsedGraph {
+            graph: GraphRecord {
+                nodes,
+                edges: Vec::new(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    const TSTAR: f64 = 1_500_000.0;
+
+    #[test]
+    fn warmup_boundary_is_last_pre_tstar_of_each_live_chain() {
+        let g = warmup_fixture();
+        let boundary = warmup_boundary_nodes(&g.graph, TSTAR);
+        // chainA_1 and chainD_1 straddle t*; chainB (all pre) and chainC (all
+        // post) are not live.
+        assert_eq!(
+            boundary.keys().cloned().collect::<Vec<_>>(),
+            vec!["chainA_1".to_owned(), "chainD_1".to_owned()]
+        );
+    }
+
+    #[test]
+    fn rewrite_for_warmup_flattens_and_reroots_from_start() {
+        let g = warmup_fixture();
+        let warmup = rewrite_for_warmup(&g, TSTAR);
+
+        assert_eq!(
+            warmup.graph.nodes.keys().cloned().collect::<Vec<_>>(),
+            vec!["chainA_1".to_owned(), "chainD_1".to_owned()]
+        );
+
+        // Boundary nodes: inputs cleared, node-level min_start_delay dropped, but
+        // max_tokens + trie envelope (arrival metadata) preserved.
+        let d1 = &warmup.graph.nodes["chainD_1"];
+        assert!(d1.inputs.is_empty());
+        assert_eq!(d1.min_start_delay_us, None);
+        assert_eq!(d1.max_tokens, Some(42));
+        assert_eq!(arrival_offset_us(d1), 1_000_000.0);
+        assert!(warmup.graph.nodes["chainA_1"].inputs.is_empty());
+
+        // One priming edge per boundary node, rooted at START with NO delay of
+        // any kind (bursts at phase start).
+        let edges: Vec<_> = warmup
+            .graph
+            .edges
+            .iter()
+            .map(|e| {
+                (
+                    e.source.clone(),
+                    e.target.clone(),
+                    e.delay_after_predecessor_us,
+                    e.min_start_delay_us,
+                    e.delay_after_predecessor_start_us,
+                    e.delay_after_predecessor_first_token_us,
+                )
+            })
+            .collect();
+        assert_eq!(
+            edges,
+            vec![
+                (
+                    "START".to_owned(),
+                    "chainA_1".to_owned(),
+                    None,
+                    None,
+                    None,
+                    None
+                ),
+                (
+                    "START".to_owned(),
+                    "chainD_1".to_owned(),
+                    None,
+                    None,
+                    None,
+                    None
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn rewrite_for_warmup_tstar_zero_yields_empty_graph() {
+        let warmup = rewrite_for_warmup(&warmup_fixture(), 0.0);
+        assert!(warmup.graph.nodes.is_empty());
+        assert!(warmup.graph.edges.is_empty());
+    }
+
+    #[test]
+    fn rewrite_for_warmup_tstar_negative_yields_empty_graph() {
+        let warmup = rewrite_for_warmup(&warmup_fixture(), -5.0);
+        assert!(warmup.graph.nodes.is_empty());
+        assert!(warmup.graph.edges.is_empty());
     }
 }
