@@ -50,8 +50,8 @@ use aiperf::export::per_record_parquet::{
 #[cfg(feature = "parquet")]
 use crate::records::per_record_parquet_row;
 use crate::records::{
-    CapturedRecord, record_csv_header, record_csv_row, write_raw_record_jsonl_row,
-    write_record_jsonl_row,
+    CapturedRecord, OUTPUTS_PREFIX, outputs_entry_indented, record_csv_header, record_csv_row,
+    write_raw_record_jsonl_row, write_record_jsonl_row,
 };
 
 /// Create (truncating) one export file, creating its parent directory first, exactly
@@ -107,6 +107,60 @@ impl CsvLaneWriter {
     }
 }
 
+/// The held-open `outputs.json` streaming sub-writer (task S4). It writes the pretty
+/// document prefix eagerly (so an all-warmup / empty run still leaves a valid
+/// `{"schema_version":"1.1","data":[]}`, matching the batch
+/// [`crate::records::write_outputs_json`]), appends each PROFILING record's pretty
+/// entry at completion in **completion order**, then closes the array + object on
+/// finish. Non-profiling records are skipped. The response text is dropped by the
+/// fold immediately after this append, so retention stays O(in-flight).
+///
+/// Byte-format: prefix + (`\n` before the first entry, `,\n` before each later one) +
+/// each [`outputs_entry_indented`] entry + the closing `\n  ]\n}` (or `]\n}` when no
+/// entry was written), with NO trailing newline — exactly the bytes
+/// `serde_json::to_writer_pretty` emits for the whole document. A set-comparison of
+/// this stream against the batch document (both sorted by `(session_num, turn_index)`)
+/// is therefore byte-identical.
+struct OutputsLaneWriter {
+    writer: BufWriter<File>,
+    wrote_any: bool,
+}
+
+impl OutputsLaneWriter {
+    fn create(path: &Path) -> Result<Self> {
+        let mut writer = create_export_file(path, "native outputs export")?;
+        writer
+            .write_all(OUTPUTS_PREFIX.as_bytes())
+            .context("writing outputs export prefix")?;
+        Ok(Self {
+            writer,
+            wrote_any: false,
+        })
+    }
+
+    fn write(&mut self, captured: &CapturedRecord, config: &MetricsConfig) -> Result<()> {
+        let Some(entry) = outputs_entry_indented(captured, config)? else {
+            return Ok(());
+        };
+        self.writer
+            .write_all(if self.wrote_any { b",\n" } else { b"\n" })
+            .context("writing outputs export entry separator")?;
+        self.writer
+            .write_all(entry.as_bytes())
+            .context("writing outputs export entry")?;
+        self.wrote_any = true;
+        Ok(())
+    }
+
+    fn finish(&mut self) -> Result<()> {
+        let suffix: &[u8] = if self.wrote_any { b"\n  ]\n}" } else { b"]\n}" };
+        self.writer
+            .write_all(suffix)
+            .context("writing outputs export suffix")?;
+        self.writer.flush().context("flushing outputs export")
+    }
+}
+
 /// A run-held lane that streams enabled per-record artifacts one row at a time.
 ///
 /// Built once (when the exact-fold path requests any of records/raw/CSV), fed
@@ -117,6 +171,10 @@ pub(crate) struct RecordArtifactLane {
     records: Option<RefCell<BufWriter<File>>>,
     raw: Option<RefCell<BufWriter<File>>>,
     csv: Option<RefCell<CsvLaneWriter>>,
+    /// Held-open `outputs.json` streaming writer (task S4): each completed profiling
+    /// record's pretty entry is appended in completion order, then the fold drops its
+    /// response text. `None` when no `outputs.json` artifact is requested.
+    outputs: Option<RefCell<OutputsLaneWriter>>,
     /// Held-open incremental Parquet writer (task S3): each completed record's wide
     /// row is buffered and flushed as a bounded row group, so the columnar sidecar
     /// streams without retaining every record. `None` when no Parquet artifact is
@@ -138,6 +196,7 @@ impl RecordArtifactLane {
         raw_path: Option<PathBuf>,
         csv_path: Option<PathBuf>,
         records_parquet_path: Option<PathBuf>,
+        outputs_path: Option<PathBuf>,
         include_trace: bool,
     ) -> Result<Option<Rc<Self>>> {
         // On a lite build the Parquet path never streams (the exact-fold gate keeps
@@ -150,7 +209,12 @@ impl RecordArtifactLane {
             let _ = &records_parquet_path;
             false
         };
-        if records_path.is_none() && raw_path.is_none() && csv_path.is_none() && !any_parquet {
+        if records_path.is_none()
+            && raw_path.is_none()
+            && csv_path.is_none()
+            && outputs_path.is_none()
+            && !any_parquet
+        {
             return Ok(None);
         }
         let records = records_path
@@ -168,6 +232,13 @@ impl RecordArtifactLane {
                 writer: None,
             })
         });
+        // The outputs writer opens its file and writes the document prefix eagerly,
+        // matching the batch writer's unconditional `File::create` (an empty run still
+        // leaves a valid `{"schema_version":"1.1","data":[]}`).
+        let outputs = outputs_path
+            .map(|path| OutputsLaneWriter::create(&path))
+            .transpose()?
+            .map(RefCell::new);
         // The Parquet writer defers file creation to its first row (matching the
         // batch writer's empty-rows-no-file contract), so it is built here without
         // touching the filesystem.
@@ -184,6 +255,7 @@ impl RecordArtifactLane {
             records,
             raw,
             csv,
+            outputs,
             #[cfg(feature = "parquet")]
             parquet,
             include_trace,
@@ -208,6 +280,9 @@ impl RecordArtifactLane {
         }
         if let Some(csv) = &self.csv {
             csv.borrow_mut().write(captured, config)?;
+        }
+        if let Some(outputs) = &self.outputs {
+            outputs.borrow_mut().write(captured, config)?;
         }
         #[cfg(feature = "parquet")]
         if let Some(parquet) = self.parquet.borrow_mut().as_mut() {
@@ -234,6 +309,9 @@ impl RecordArtifactLane {
         }
         if let Some(csv) = &self.csv {
             csv.borrow_mut().finish()?;
+        }
+        if let Some(outputs) = &self.outputs {
+            outputs.borrow_mut().finish()?;
         }
         // `StreamingPerRecordParquetWriter::finish` consumes the writer (closing the
         // Arrow file footer), so take it out of the cell. A writer that saw no row
@@ -334,6 +412,7 @@ mod tests {
             Some(dir.join("profile_export.jsonl")),
             Some(dir.join("profile_export_raw.jsonl")),
             Some(dir.join("profile_export_records.csv")),
+            None,
             None,
             include_trace,
         )
@@ -441,7 +520,7 @@ mod tests {
     #[test]
     fn new_returns_none_when_no_artifact_requested() {
         assert!(
-            RecordArtifactLane::new(None, None, None, None, false)
+            RecordArtifactLane::new(None, None, None, None, None, false)
                 .unwrap()
                 .is_none()
         );
@@ -456,6 +535,7 @@ mod tests {
             None,
             None,
             Some(dir.path().join("profile_export_records.csv")),
+            None,
             None,
             false,
         )
@@ -484,7 +564,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let lane_path = dir.path().join("profile_export.parquet");
 
-        let lane = RecordArtifactLane::new(None, None, None, Some(lane_path.clone()), false)
+        let lane = RecordArtifactLane::new(None, None, None, Some(lane_path.clone()), None, false)
             .unwrap()
             .expect("parquet artifact requested");
         for captured in &records {
@@ -509,10 +589,154 @@ mod tests {
     fn empty_parquet_lane_leaves_no_file() {
         let dir = tempfile::tempdir().unwrap();
         let lane_path = dir.path().join("profile_export.parquet");
-        let lane = RecordArtifactLane::new(None, None, None, Some(lane_path.clone()), false)
+        let lane = RecordArtifactLane::new(None, None, None, Some(lane_path.clone()), None, false)
             .unwrap()
             .expect("parquet artifact requested");
         lane.finish().unwrap();
         assert!(!lane_path.exists());
+    }
+
+    /// A mixed slice for the outputs stream: three profiling records (out of
+    /// `(session_num, turn_index)` order) with distinct response/reasoning text, plus a
+    /// warmup record that `outputs.json` must exclude.
+    fn outputs_records() -> Vec<CapturedRecord> {
+        use crate::records::CapturedModelOutput;
+
+        let mut record = |session_num: u64,
+                          turn_index: u32,
+                          visible: &str,
+                          reasoning: Option<&str>,
+                          phase: Phase| {
+            let mut ingest = RecordIngest::minimal(1_000_000, 11_000_000, phase);
+            ingest.session_num = session_num;
+            ingest.turn_index = turn_index;
+            ingest.conversation_id = Some(format!("conversation-{session_num}"));
+            ingest.first_token_ns = Some(6_000_000);
+            ingest.token_arrival_ns = vec![6_000_000, 8_000_000, 11_000_000];
+            ingest.tokens = TokenCounts {
+                input: Some(8),
+                output: Some(3),
+                requested_output: Some(3),
+                ..TokenCounts::default()
+            };
+            CapturedRecord {
+                uuid: Uuid::from_u128(u128::from(session_num) * 10 + u128::from(turn_index)),
+                x_correlation_id: format!("session-{session_num}"),
+                output: CapturedModelOutput::from_parts(visible, Some(visible), reasoning),
+                raw: None,
+                ingest,
+            }
+        };
+
+        vec![
+            record(2, 1, "second answer", Some("second why"), Phase::Profiling),
+            record(1, 0, "first answer", None, Phase::Profiling),
+            record(2, 0, "middle answer", Some("mid why"), Phase::Profiling),
+            record(9, 0, "warmup answer", None, Phase::Warmup),
+        ]
+    }
+
+    fn drive_outputs_lane(dir: &Path, records: &[CapturedRecord], config: &MetricsConfig) {
+        let lane = RecordArtifactLane::new(
+            None,
+            None,
+            None,
+            None,
+            Some(dir.join("outputs.json")),
+            false,
+        )
+        .unwrap()
+        .expect("outputs artifact requested");
+        for captured in records {
+            lane.write(captured, config).unwrap();
+        }
+        lane.finish().unwrap();
+    }
+
+    /// Feeding the outputs stream in already-sorted `(session_num, turn_index)` order
+    /// yields bytes byte-identical to the batch `write_outputs_json` document, proving
+    /// the streamed prefix/entry-indentation/suffix match `to_writer_pretty` exactly.
+    #[test]
+    fn outputs_stream_in_sorted_order_matches_batch_bytes() {
+        use crate::records::write_outputs_json;
+
+        let config = MetricsConfig::default();
+        let mut records = outputs_records();
+        // Only profiling records reach the batch document; sort them the same way.
+        records.sort_by_key(|r| (r.ingest.session_num, r.ingest.turn_index));
+
+        let lane_dir = tempfile::tempdir().unwrap();
+        let batch_dir = tempfile::tempdir().unwrap();
+        drive_outputs_lane(lane_dir.path(), &records, &config);
+        write_outputs_json(&batch_dir.path().join("outputs.json"), &records, &config).unwrap();
+
+        let lane_bytes = std::fs::read(lane_dir.path().join("outputs.json")).unwrap();
+        let batch_bytes = std::fs::read(batch_dir.path().join("outputs.json")).unwrap();
+        assert_eq!(
+            String::from_utf8(lane_bytes).unwrap(),
+            String::from_utf8(batch_bytes).unwrap()
+        );
+    }
+
+    /// In completion (arrival) order the stream is a reordered SET of the batch
+    /// document's entries: sorting both `data` arrays by `(session_num, turn_index)`
+    /// yields byte-identical documents, the warmup record is excluded, and the schema
+    /// version matches.
+    #[test]
+    fn outputs_stream_is_sorted_set_equal_to_batch() {
+        use crate::records::write_outputs_json;
+        use serde_json::Value;
+
+        let config = MetricsConfig::default();
+        let records = outputs_records(); // deliberately out of order, with a warmup row
+
+        let lane_dir = tempfile::tempdir().unwrap();
+        let batch_dir = tempfile::tempdir().unwrap();
+        drive_outputs_lane(lane_dir.path(), &records, &config);
+        write_outputs_json(&batch_dir.path().join("outputs.json"), &records, &config).unwrap();
+
+        let sort_data = |path: &Path| -> Value {
+            let mut doc: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+            let data = doc["data"].as_array_mut().unwrap();
+            data.sort_by_key(|row| {
+                (
+                    row["session_num"].as_u64().unwrap(),
+                    row["turn_index"].as_u64().unwrap(),
+                )
+            });
+            doc
+        };
+        let lane_doc = sort_data(&lane_dir.path().join("outputs.json"));
+        let batch_doc = sort_data(&batch_dir.path().join("outputs.json"));
+
+        assert_eq!(lane_doc["schema_version"], "1.1");
+        // Warmup is excluded: only the three profiling records survive.
+        assert_eq!(lane_doc["data"].as_array().unwrap().len(), 3);
+        assert_eq!(lane_doc, batch_doc);
+    }
+
+    /// An all-warmup (or empty) run still leaves a valid empty document byte-identical
+    /// to the batch writer's `{"schema_version":"1.1","data":[]}`.
+    #[test]
+    fn outputs_stream_empty_matches_batch() {
+        use crate::records::write_outputs_json;
+
+        let config = MetricsConfig::default();
+        let warmup: Vec<CapturedRecord> = outputs_records()
+            .into_iter()
+            .filter(|r| r.ingest.phase == Phase::Warmup)
+            .collect();
+
+        let lane_dir = tempfile::tempdir().unwrap();
+        let batch_dir = tempfile::tempdir().unwrap();
+        drive_outputs_lane(lane_dir.path(), &warmup, &config);
+        write_outputs_json(&batch_dir.path().join("outputs.json"), &warmup, &config).unwrap();
+
+        let lane_bytes = std::fs::read(lane_dir.path().join("outputs.json")).unwrap();
+        let batch_bytes = std::fs::read(batch_dir.path().join("outputs.json")).unwrap();
+        assert_eq!(
+            String::from_utf8(lane_bytes).unwrap(),
+            String::from_utf8(batch_bytes).unwrap()
+        );
     }
 }

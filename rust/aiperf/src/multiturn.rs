@@ -246,6 +246,23 @@ pub struct ConversationMetadata {
     pub turns: Vec<TurnMetadata>,
 }
 
+/// One conversation's canonical per-turn request bodies, generated up front from
+/// the resident dataset for a pure `inputs.json` export.
+///
+/// This is the dataset-derived analog of the during-run `record_input_payload`
+/// capture: the session id is the authored conversation id and each payload is the
+/// exact canonical body [`crate::transport_http::transport::prepare_request`] would
+/// retain as `canonical_body()` when the same turn is dispatched, so an
+/// `inputs.json` written from these bytes is byte-identical to the capture-based
+/// output (see [`NativeDatasetConversationSource::materialize_input_payloads`]).
+#[derive(Clone, Debug)]
+pub struct UpFrontInputSession {
+    /// Authored conversation id (mirrors `SampledSession::conversation_id`).
+    pub session_id: String,
+    /// One canonical request body per turn, ordered by turn index.
+    pub payloads: Vec<Bytes>,
+}
+
 /// Terminal response data needed to construct a continuation request.
 #[derive(Clone, Debug)]
 pub struct TurnResponse {
@@ -737,6 +754,17 @@ pub trait ConversationSource {
         conversation_id: &str,
         x_correlation_id: String,
     ) -> Result<SampledSession>;
+
+    /// Generate every conversation's canonical per-turn request bodies up front for a
+    /// pure `inputs.json` export, or `None` when this source cannot reproduce them
+    /// without dispatching (the caller then keeps the during-run capture path).
+    ///
+    /// The default is `None` (unsupported); the dataset-backed
+    /// [`NativeDatasetConversationSource`] overrides it (see
+    /// [`NativeDatasetConversationSource::materialize_input_payloads`]).
+    fn materialize_input_payloads(&self) -> Result<Option<Vec<UpFrontInputSession>>> {
+        Ok(None)
+    }
 
     /// Metadata for the turn after `credit`, with a checked out-of-range error.
     fn next_turn_metadata(&self, credit: &IssuedCredit) -> Result<TurnMetadata> {
@@ -1324,11 +1352,91 @@ impl NativeDatasetConversationSource {
             backend: Rc::new(backend),
         })
     }
+
+    /// Generate every sampleable conversation's canonical per-turn request bodies up
+    /// front, WITHOUT dispatching, for a pure `inputs.json` export.
+    ///
+    /// Each turn is materialized through the same session machinery dispatch drives
+    /// ([`SampledSession::build_first_turn`] / `build_next_turn` over the resident
+    /// [`Dataset`](NativeDataset)), so the retained `request_body` equals the
+    /// `canonical_body()` the capture path records for the same turn — the two
+    /// `inputs.json` files are byte-identical (same conversation-id sort via the
+    /// returned [`BTreeMap`] ordering, same per-turn dedup: one payload per authored
+    /// turn). The session id is the authored conversation id, matching the capture
+    /// path's `owner.conversation_id` key.
+    ///
+    /// Returns `None` (fallback: the caller keeps the during-run capture path) when a
+    /// MULTI-turn conversation captures live responses — context modes
+    /// [`DeltasWithoutResponses`](crate::dataset::ConversationContextMode::DeltasWithoutResponses)
+    /// or
+    /// [`MessageArrayWithoutResponses`](crate::dataset::ConversationContextMode::MessageArrayWithoutResponses)
+    /// — because a later turn's body then splices the live model reply, which an
+    /// up-front pass cannot reproduce. Single-turn conversations never capture a reply
+    /// into a subsequent turn, so they are always reproducible regardless of mode.
+    pub fn build_input_payloads(&self) -> Result<Option<Vec<UpFrontInputSession>>> {
+        // A dummy terminal for `build_next_turn`; the only conversations that reach it
+        // here are non-response-capture (with-responses or single-turn), where
+        // `build_next_turn` ignores the live reply and splices the authored turn.
+        let no_capture_reply = || TurnResponse {
+            text: String::new(),
+            assistant_message: None,
+            completion_tokens: None,
+            terminal: ReplayTerminalStatus::Completed,
+        };
+        // Sort by conversation id so the emitted session order matches the capture
+        // path's `BTreeMap<conversation_id, …>` iteration exactly.
+        let mut sessions: BTreeMap<String, Vec<Bytes>> = BTreeMap::new();
+        for metadata in &self.metadata {
+            let conversation_id = metadata.conversation_id.as_str();
+            let id = crate::dataset::SessionId::from(conversation_id);
+            let conversation = self.dataset.get(&id)?;
+            let captures_response = matches!(
+                self.dataset.context_mode(conversation),
+                crate::dataset::ConversationContextMode::DeltasWithoutResponses
+                    | crate::dataset::ConversationContextMode::MessageArrayWithoutResponses
+            );
+            let session = self.session(conversation_id, None)?;
+            let num_turns = session.available_turns();
+            if num_turns > 1 && captures_response {
+                // A live-reply-dependent multi-turn conversation cannot be reproduced
+                // up front: the whole run falls back to the during-run capture path.
+                return Ok(None);
+            }
+            let mut payloads = Vec::with_capacity(num_turns);
+            let mut current = session.build_first_turn(None)?;
+            payloads.push(current.request_body.clone().ok_or_else(|| {
+                anyhow!("materialized turn for conversation {conversation_id:?} produced no body")
+            })?);
+            for _ in 1..num_turns {
+                let next = session.build_next_turn(&current, no_capture_reply())?;
+                payloads.push(next.request_body.clone().ok_or_else(|| {
+                    anyhow!(
+                        "materialized turn for conversation {conversation_id:?} produced no body"
+                    )
+                })?);
+                current = next;
+            }
+            sessions.insert(conversation_id.to_string(), payloads);
+        }
+        Ok(Some(
+            sessions
+                .into_iter()
+                .map(|(session_id, payloads)| UpFrontInputSession {
+                    session_id,
+                    payloads,
+                })
+                .collect(),
+        ))
+    }
 }
 
 impl ConversationSource for NativeDatasetConversationSource {
     fn conversations(&self) -> &[ConversationMetadata] {
         &self.metadata
+    }
+
+    fn materialize_input_payloads(&self) -> Result<Option<Vec<UpFrontInputSession>>> {
+        self.build_input_payloads()
     }
 
     fn next(&mut self, x_correlation_id: Option<String>) -> Result<SampledSession> {
@@ -1544,6 +1652,131 @@ mod tests {
             )
             .await
             .unwrap()
+    }
+
+    /// A static single-session dataset via the `single_turn` format: multiple rows
+    /// sharing a `session_id` compose into one MessageArrayWithResponses conversation
+    /// (authored responses, no live-reply capture), so its turns can be materialized
+    /// up front byte-identically to dispatch.
+    async fn inline_static_multi_turn_dataset(model: &str) -> NativeDataset {
+        LoaderRegistry::with_builtin_formats()
+            .unwrap()
+            .build_dataset(
+                Some("single_turn"),
+                &LoadConfig::new(DatasetSource::Inline(json!([
+                    {"session_id":"s","text":"q0 alpha","output_length":4},
+                    {"session_id":"s","text":"q1 beta gamma","output_length":4},
+                ]))),
+                &ComposeConfig::new(model, RngRoot::new(Some(1))),
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap()
+    }
+
+    async fn inline_single_turn_dataset(model: &str) -> NativeDataset {
+        LoaderRegistry::with_builtin_formats()
+            .unwrap()
+            .build_dataset(
+                Some("single_turn"),
+                &LoadConfig::new(DatasetSource::Inline(json!([
+                    {"session_id":"solo","text":"hello world","output_length":4},
+                ]))),
+                &ComposeConfig::new(model, RngRoot::new(Some(1))),
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap()
+    }
+
+    /// Up-front `inputs.json` generation for a single-turn dataset reproduces the
+    /// exact dispatch body: the generated payload equals the `request_body` the same
+    /// session's `build_first_turn` (the dispatch turn producer) yields — the bytes the
+    /// capture path would record as `canonical_body`.
+    #[tokio::test]
+    async fn up_front_input_payloads_single_turn_match_dispatch_body() {
+        let dataset = inline_single_turn_dataset("test-model").await;
+        let source = prepared_chat_source(dataset, "test-model", 4);
+
+        let sessions = source
+            .build_input_payloads()
+            .unwrap()
+            .expect("single-turn dataset is reproducible up front");
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_id, "solo");
+        assert_eq!(sessions[0].payloads.len(), 1);
+
+        // The dispatch turn producer for the same conversation yields the identical
+        // body bytes the up-front pass emits.
+        let dispatch_turn = source
+            .session_for("solo", "corr-0".into())
+            .unwrap()
+            .build_first_turn(None)
+            .unwrap();
+        assert_eq!(
+            sessions[0].payloads[0].as_ref(),
+            dispatch_turn.request_body.as_deref().unwrap()
+        );
+    }
+
+    /// Up-front generation of a static (authored-response) multi-turn conversation
+    /// yields every turn in order; each payload is a distinct, growing message array.
+    #[tokio::test]
+    async fn up_front_input_payloads_static_multi_turn_are_ordered_and_complete() {
+        let dataset = inline_static_multi_turn_dataset("test-model").await;
+        let source = prepared_chat_source(dataset, "test-model", 4);
+
+        let sessions = source
+            .build_input_payloads()
+            .unwrap()
+            .expect("authored-response multi-turn is reproducible up front");
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_id, "s");
+        assert_eq!(sessions[0].payloads.len(), 2);
+
+        // The two turns are materialized in order into distinct request bodies: turn 0
+        // carries q0's content, turn 1 carries q1's — proving the walk drives every
+        // authored turn sequentially.
+        let turn0: Value = serde_json::from_slice(sessions[0].payloads[0].as_ref()).unwrap();
+        let turn1: Value = serde_json::from_slice(sessions[0].payloads[1].as_ref()).unwrap();
+        assert_ne!(
+            sessions[0].payloads[0].as_ref(),
+            sessions[0].payloads[1].as_ref(),
+            "each authored turn materializes to a distinct body"
+        );
+        let turn0_text = turn0["messages"].to_string();
+        let turn1_text = turn1["messages"].to_string();
+        assert!(
+            turn0_text.contains("q0"),
+            "turn 0 body carries q0: {turn0_text}"
+        );
+        assert!(
+            turn1_text.contains("q1"),
+            "turn 1 body carries q1: {turn1_text}"
+        );
+        // The first turn body matches the dispatch producer's first turn.
+        let dispatch_turn0 = source
+            .session_for("s", "corr-0".into())
+            .unwrap()
+            .build_first_turn(None)
+            .unwrap();
+        assert_eq!(
+            sessions[0].payloads[0].as_ref(),
+            dispatch_turn0.request_body.as_deref().unwrap()
+        );
+    }
+
+    /// A live-reply-dependent multi-turn dataset (the default DeltasWithoutResponses
+    /// `multi_turn` format) cannot be reproduced up front, so the generator declines
+    /// (returns `None`) and the caller keeps the during-run capture path.
+    #[tokio::test]
+    async fn up_front_input_payloads_declines_live_reply_multi_turn() {
+        let dataset = inline_multi_turn_dataset(3, 4, "test-model").await;
+        let source = prepared_chat_source(dataset, "test-model", 4);
+        assert!(
+            source.build_input_payloads().unwrap().is_none(),
+            "capture-mode multi-turn must fall back to the during-run capture path"
+        );
     }
 
     #[test]

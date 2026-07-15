@@ -793,9 +793,15 @@ fn validate_plan(request: &NativeRunSpec) -> Result<()> {
 /// completion, then the fold drops the record, so an artifact-present run can still
 /// fold-and-drop. Task S3 additionally removed the columnar Parquet sidecar (now
 /// streamed as bounded row groups through the same lane) and the per-record OTLP
-/// histograms (now folded at completion into an order-independent accumulator). What
-/// remains disqualifying is what still needs the full retained record set at
-/// end-of-run: `outputs.json` and `inputs.json` (task S4).
+/// histograms (now folded at completion into an order-independent accumulator). Task
+/// S4 removed `outputs.json` (now streamed through the same lane at completion) and
+/// `inputs.json` when it can be generated up front from the resident dataset
+/// (`inputs_need_retain == false`).
+///
+/// `inputs_need_retain` is the one dataset-dependent input: `inputs.json` still needs
+/// the during-run capture path (and so still disqualifies exact-fold) when the dataset
+/// is a live-reply multi-turn shape whose later-turn bodies cannot be reproduced up
+/// front (see [`dataset_supports_up_front_inputs`]).
 ///
 /// Parquet is only streamable under the `parquet` feature; a lite runner cannot emit
 /// it, so a requested Parquet sidecar still disqualifies exact-fold on a lite build
@@ -803,14 +809,91 @@ fn validate_plan(request: &NativeRunSpec) -> Result<()> {
 fn wants_per_record_artifacts(
     artifacts: &crate::protocol::ArtifactSpec,
     native_otel_enabled: bool,
+    inputs_need_retain: bool,
 ) -> bool {
-    // Per-record OTLP folds at completion (S3), so it no longer forces the retain path.
+    // Per-record OTLP folds at completion (S3) and outputs.json streams through the
+    // lane at completion (S4), so neither forces the retain path any longer.
     let _ = native_otel_enabled;
     #[cfg(feature = "parquet")]
     let parquet_needs_retain = false;
     #[cfg(not(feature = "parquet"))]
     let parquet_needs_retain = artifacts.records_parquet_path.is_some();
-    artifacts.outputs_path.is_some() || artifacts.inputs_path.is_some() || parquet_needs_retain
+    inputs_need_retain || parquet_needs_retain
+}
+
+/// Whether every conversation in `dataset` can have its `inputs.json` request bodies
+/// generated up front, WITHOUT dispatching (task S4).
+///
+/// A conversation is reproducible up front unless it is BOTH multi-turn AND captures
+/// live model replies into its later turns — context modes
+/// [`DeltasWithoutResponses`](aiperf::dataset::ConversationContextMode::DeltasWithoutResponses)
+/// or
+/// [`MessageArrayWithoutResponses`](aiperf::dataset::ConversationContextMode::MessageArrayWithoutResponses)
+/// with more than one turn — because a later turn's body then splices the live reply.
+/// This mirrors the per-conversation rule in
+/// [`NativeDatasetConversationSource::build_input_payloads`] so the cheap gate check
+/// and the actual generation agree.
+fn dataset_supports_up_front_inputs(dataset: &Dataset) -> bool {
+    use aiperf::dataset::ConversationContextMode;
+    dataset.conversations().iter().all(|conversation| {
+        conversation.turns.len() <= 1
+            || !matches!(
+                dataset.context_mode(conversation),
+                ConversationContextMode::DeltasWithoutResponses
+                    | ConversationContextMode::MessageArrayWithoutResponses
+            )
+    })
+}
+
+/// Generate the `inputs.json` sessions up front from the resident `dataset`, reusing
+/// the dispatch-side session materializer through a freshly built sequential source
+/// (task S4). Returns the sessions ready for [`write_inputs_json`], or an error if the
+/// source declines (which the caller only reaches after
+/// [`dataset_supports_up_front_inputs`] already vouched for the shape).
+#[allow(clippy::too_many_arguments)]
+fn build_up_front_input_sessions(
+    dataset: &Dataset,
+    source_factory: &dyn NativeConversationSourceFactory,
+    primary_model: &str,
+    default_output_tokens: usize,
+    rng_root: RngRoot,
+    tokenizer: Arc<dyn TextTokenizer>,
+    input_token_counter: Arc<dyn InputTokenCounter>,
+) -> Result<Vec<InputSession>> {
+    let source = source_factory.build(
+        dataset.clone(),
+        primary_model.to_owned(),
+        default_output_tokens,
+        rng_root,
+        tokenizer,
+        input_token_counter,
+        true,
+    )?;
+    let sessions = source
+        .materialize_input_payloads()?
+        .ok_or_else(|| anyhow!("resident dataset cannot generate inputs.json up front"))?;
+    sessions
+        .into_iter()
+        .map(|session| {
+            let payloads = session
+                .payloads
+                .iter()
+                .map(|payload| {
+                    serde_json::from_slice::<Box<serde_json::value::RawValue>>(payload)
+                        .with_context(|| {
+                            format!(
+                                "validating up-front inputs.json payload for conversation {:?}",
+                                session.session_id
+                            )
+                        })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Ok(InputSession {
+                session_id: session.session_id,
+                payloads,
+            })
+        })
+        .collect()
 }
 
 /// Force-disable switch for exact-fold, mirroring the `AIPERF_RUNTIME_*` env toggles
@@ -2115,6 +2198,17 @@ async fn execute_native_inner(
     // pick the finalize, the sharded arm's gate rejects it (`shardable`), and the
     // cellular-shipping guard reads it below. Heartbeat presence is probed from the env
     // rather than the (file-truncating) lane so this stays a pre-branch decision.
+    // inputs.json is generated up front from the resident dataset (task S4) unless the
+    // dataset is a live-reply multi-turn shape, or a fixed-schedule phase filters the
+    // dispatched conversations to a first-turn window (an up-front full-dataset pass
+    // would then over-include). Either case keeps inputs.json on the during-run capture
+    // path, which still disqualifies exact-fold.
+    let inputs_up_front_ok = dataset_supports_up_front_inputs(&dataset)
+        && !request
+            .phases
+            .iter()
+            .any(|phase| matches!(phase, PhaseSpec::FixedSchedule { .. }));
+    let inputs_need_retain = request.artifacts.inputs_path.is_some() && !inputs_up_front_ok;
     let exact_fold = exact_fold_enabled_by_env()
         && exact_fold_eligible(
             sketch_mode,
@@ -2124,7 +2218,11 @@ async fn execute_native_inner(
             wants_adaptive_record,
             live_sink.is_some(),
             HeartbeatLane::enabled_by_env(),
-            wants_per_record_artifacts(&request.artifacts, request.native_otel_enabled),
+            wants_per_record_artifacts(
+                &request.artifacts,
+                request.native_otel_enabled,
+                inputs_need_retain,
+            ),
         );
     // Per-record OTLP folded at completion by the exact-fold capture (task S3); the
     // retain/sharded arms leave this `None` and fold their retained records post-run.
@@ -2176,18 +2274,29 @@ async fn execute_native_inner(
                     .as_ref()
                     .map(|path| artifact_path(&request.artifact_dir, path, "records_parquet_path"))
                     .transpose()?,
+                // outputs.json streams through the lane at completion (task S4).
+                request
+                    .artifacts
+                    .outputs_path
+                    .as_ref()
+                    .map(|path| artifact_path(&request.artifact_dir, path, "outputs_path"))
+                    .transpose()?,
                 request.artifacts.trace,
             )?
         } else {
             None
         };
+        // Under exact-fold, inputs.json is generated up front from the resident dataset
+        // (task S4) and the during-run capture is disabled; the retain path keeps the
+        // during-run capture. outputs.json streams through the lane, so exact-fold folds
+        // and drops the model output text at completion rather than retaining it.
         let capture = Rc::new(
             RunCapture::new(
                 clock.clone(),
                 start_ns,
                 metrics_config.clone(),
                 request.artifacts.raw_path.is_some(),
-                request.artifacts.inputs_path.is_some(),
+                request.artifacts.inputs_path.is_some() && !exact_fold,
                 live_sink.is_some() || heartbeat_lane.is_some(),
                 wants_adaptive_record,
                 exact_fold,
@@ -2195,7 +2304,10 @@ async fn execute_native_inner(
             .with_record_lane(record_lane)
             // Per-record OTLP (task S3) folds at completion only on the exact-fold
             // path; the retain path still folds the retained records post-run.
-            .with_otel(exact_fold && request.native_otel_enabled),
+            .with_otel(exact_fold && request.native_otel_enabled)
+            // Stage each turn's model output text so the streaming outputs.json entry
+            // carries it, then drop it in the fold (exact-fold + outputs.json only).
+            .with_outputs_capture(exact_fold && request.artifacts.outputs_path.is_some()),
         );
         let execution_result = async {
             execution_backend.set_run_origin(start_ns)?;
@@ -2374,7 +2486,23 @@ async fn execute_native_inner(
             }
             captured
         };
-        let input_sessions = capture.take_input_sessions();
+        // Exact-fold generates inputs.json up front from the resident dataset (task S4):
+        // a pure export the benchmark never read, formatted through the same session
+        // materializer dispatch uses, so it is byte-identical to the disabled during-run
+        // capture. The retain path keeps the during-run capture (`take_input_sessions`).
+        let input_sessions = if exact_fold && request.artifacts.inputs_path.is_some() {
+            build_up_front_input_sessions(
+                &dataset,
+                source_factory.as_ref(),
+                &primary_model,
+                default_output_tokens,
+                rng_root,
+                tokenizer.clone(),
+                input_token_counter.clone(),
+            )?
+        } else {
+            capture.take_input_sessions()
+        };
         let was_cancelled = phased.phases.iter().any(|phase| phase.was_cancelled);
         let has_warmup = phased
             .reports
@@ -2578,9 +2706,11 @@ async fn execute_native_inner(
     // flushed it at the finalize), so `captured` here holds only the retained errored
     // records — running the batch writers over it would truncate the streamed files to
     // the errored subset. Skip all four streamed batch writers under exact-fold; the
-    // retain path (and every non-folding mode) still writes them here. outputs.json and
-    // inputs.json stay disqualifying for exact-fold (task S4), so their writers below
-    // remain inert under exact-fold and need no guard.
+    // retain path (and every non-folding mode) still writes them here. outputs.json
+    // (task S4) also streamed through the lane under exact-fold, so its batch writer is
+    // skipped too — `captured` holds only the retained errored records. inputs.json is
+    // NOT skipped: under exact-fold `input_sessions` holds the up-front, dataset-derived
+    // export (task S4), so the writer below emits the same bytes the capture path would.
     if !exact_fold {
         if let Some(records_path) = &request.artifacts.records_path {
             let records_path = artifact_path(&request.artifact_dir, records_path, "records_path")?;
@@ -2597,10 +2727,10 @@ async fn execute_native_inner(
             write_raw_records_jsonl(&raw_path, &captured)?;
         }
         write_records_parquet_artifact(&request, &captured, &metrics_config)?;
-    }
-    if let Some(outputs_path) = &request.artifacts.outputs_path {
-        let outputs_path = artifact_path(&request.artifact_dir, outputs_path, "outputs_path")?;
-        write_outputs_json(&outputs_path, &captured, &metrics_config)?;
+        if let Some(outputs_path) = &request.artifacts.outputs_path {
+            let outputs_path = artifact_path(&request.artifact_dir, outputs_path, "outputs_path")?;
+            write_outputs_json(&outputs_path, &captured, &metrics_config)?;
+        }
     }
     if let Some(inputs_path) = &request.artifacts.inputs_path {
         let inputs_path = artifact_path(&request.artifact_dir, inputs_path, "inputs_path")?;
@@ -4245,6 +4375,13 @@ struct RunCapture {
     /// the retained record set post-run. `None` when native OTLP is off. Set once at
     /// construction via [`Self::with_otel`].
     otel: Option<RefCell<OtelRecordAccumulator>>,
+    /// Whether the fold-and-drop path must retain each turn's model output text long
+    /// enough to stream its `outputs.json` entry (task S4): `record_model_output`
+    /// stages the text in `outputs`, [`Self::fold_record`] attaches it to the streamed
+    /// record and drops it. `false` on the retain path (which keeps `outputs` for the
+    /// batch writer) and whenever no `outputs.json` artifact is requested. Set once via
+    /// [`Self::with_outputs_capture`].
+    capture_outputs_text: bool,
 }
 
 impl RunCapture {
@@ -4379,6 +4516,7 @@ impl RunCapture {
             fold_dispatch_ordinals: RefCell::new(HashMap::new()),
             record_lane: None,
             otel: None,
+            capture_outputs_text: false,
         }
     }
 
@@ -4401,6 +4539,16 @@ impl RunCapture {
         if enabled {
             self.otel = Some(RefCell::new(OtelRecordAccumulator::new()));
         }
+        self
+    }
+
+    /// Retain each turn's model output text for streaming `outputs.json` (task S4).
+    /// When `enabled`, `record_model_output` stages the text even on the fold-and-drop
+    /// path so [`Self::fold_record`] can attach it to the streamed record before the
+    /// fold drops it. Builder-style so only the exact-fold call site with an
+    /// `outputs.json` artifact opts in.
+    fn with_outputs_capture(mut self, enabled: bool) -> Self {
+        self.capture_outputs_text = enabled;
         self
     }
 
@@ -4615,11 +4763,13 @@ impl RunCapture {
         visible_text: Option<&str>,
         reasoning_text: Option<&str>,
     ) -> Result<()> {
-        // Fold-and-drop modes retain no per-record output artifact (`validate_plan`
-        // forbids `outputs_path` for sketch; the exact-fold gate requires it absent),
-        // so keeping the text would be pure O(records) waste; drop it before the map
-        // grows.
-        if self.folds_records() {
+        // Fold-and-drop modes retain no per-record output artifact by default (sketch
+        // forbids `outputs_path` in `validate_plan`), so keeping the text would be pure
+        // O(records) waste; drop it before the map grows. The exception is exact-fold
+        // with a streaming `outputs.json` (task S4): stage the text so `fold_record` can
+        // attach it to the streamed entry and drop it per completion (bounded to
+        // in-flight work).
+        if self.folds_records() && !self.capture_outputs_text {
             return Ok(());
         }
         ensure!(
@@ -4833,12 +4983,19 @@ impl RunCapture {
         // keeps `raw_exchanges` bounded to in-flight work.
         if self.record_lane.is_some() || errored || wants_otel {
             let raw = self.raw_exchanges.borrow_mut().remove(&uuid);
+            // The streaming outputs.json entry (task S4) reads the model output text;
+            // drain the text staged by `record_model_output` so the entry carries it,
+            // then the record (and its text) is dropped here. records/raw/CSV rows never
+            // read it, so the default is byte-safe when outputs.json is not requested.
+            let output = if self.capture_outputs_text {
+                self.outputs.borrow_mut().remove(&uuid).unwrap_or_default()
+            } else {
+                CapturedModelOutput::default()
+            };
             let captured = CapturedRecord {
                 uuid,
                 x_correlation_id: x_correlation_id.to_string(),
-                // records/raw/CSV rows never read the model output text (only the
-                // still-disqualified outputs.json does), so the default is byte-safe.
-                output: CapturedModelOutput::default(),
+                output,
                 raw,
                 ingest,
             };
@@ -5238,17 +5395,19 @@ mod tests {
 
     use super::*;
 
-    /// Task S2/S3 relax the exact-fold gate: records.jsonl / raw.jsonl / the per-record
-    /// CSV (S2) and the columnar Parquet sidecar + per-record OTLP histograms (S3) all
-    /// stream / fold at completion, so none of them disqualify the fold. outputs.json
-    /// and inputs.json still need the full retained set (task S4) and stay
-    /// disqualifying. (Parquet only streams under the `parquet` feature; a lite build
-    /// keeps it disqualifying — asserted below under the matching cfg.)
+    /// Task S2/S3/S4 relax the exact-fold gate: records.jsonl / raw.jsonl / the
+    /// per-record CSV (S2), the columnar Parquet sidecar + per-record OTLP histograms
+    /// (S3), and outputs.json + up-front-feasible inputs.json (S4) all stream / fold /
+    /// export up front, so none of them disqualify the fold. inputs.json still
+    /// disqualifies ONLY when the dataset cannot be generated up front
+    /// (`inputs_need_retain == true`). (Parquet only streams under the `parquet`
+    /// feature; a lite build keeps it disqualifying — asserted below under the matching
+    /// cfg.)
     #[test]
     fn exact_fold_gate_accepts_streamed_artifacts_and_rejects_retained_ones() {
         use crate::protocol::ArtifactSpec;
 
-        let eligible = |artifacts: &ArtifactSpec, native_otel: bool| {
+        let eligible = |artifacts: &ArtifactSpec, native_otel: bool, inputs_need_retain: bool| {
             exact_fold_eligible(
                 false, // sketch_mode
                 false, // shardable
@@ -5257,12 +5416,12 @@ mod tests {
                 false, // wants_adaptive_record
                 false, // has_live_sink
                 false, // has_heartbeat
-                wants_per_record_artifacts(artifacts, native_otel),
+                wants_per_record_artifacts(artifacts, native_otel, inputs_need_retain),
             )
         };
 
         // No artifacts at all: eligible (the S1 baseline).
-        assert!(eligible(&ArtifactSpec::default(), false));
+        assert!(eligible(&ArtifactSpec::default(), false, false));
 
         // Streamed artifacts (records / raw / CSV, alone or together, trace on): still
         // eligible now that the lane writes them.
@@ -5273,11 +5432,11 @@ mod tests {
             trace: true,
             ..ArtifactSpec::default()
         };
-        assert!(eligible(&streamed, false));
+        assert!(eligible(&streamed, false, false));
 
         // Per-record OTLP (native_otel_enabled) folds at completion (S3), so it no
         // longer disqualifies — even alongside the streamed artifacts.
-        assert!(eligible(&streamed, true));
+        assert!(eligible(&streamed, true, false));
 
         // The Parquet sidecar streams under the `parquet` feature (S3), so it no longer
         // disqualifies; on a lite build it still needs the retain path.
@@ -5287,31 +5446,39 @@ mod tests {
         };
         #[cfg(feature = "parquet")]
         assert!(
-            eligible(&parquet, false),
+            eligible(&parquet, false, false),
             "parquet streams under the parquet feature"
         );
         #[cfg(not(feature = "parquet"))]
         assert!(
-            !eligible(&parquet, false),
+            !eligible(&parquet, false, false),
             "a lite build cannot stream parquet, so it disqualifies exact-fold"
         );
 
-        // outputs.json and inputs.json still need the full retained set (task S4).
-        for artifacts in [
-            ArtifactSpec {
-                outputs_path: Some("outputs.json".into()),
-                ..ArtifactSpec::default()
-            },
-            ArtifactSpec {
-                inputs_path: Some("inputs.json".into()),
-                ..ArtifactSpec::default()
-            },
-        ] {
-            assert!(
-                !eligible(&artifacts, false),
-                "retained artifact must disqualify exact-fold: {artifacts:?}"
-            );
-        }
+        // outputs.json streams through the lane (S4), so it no longer disqualifies.
+        let outputs = ArtifactSpec {
+            outputs_path: Some("outputs.json".into()),
+            ..ArtifactSpec::default()
+        };
+        assert!(
+            eligible(&outputs, false, false),
+            "outputs.json streams at completion (S4)"
+        );
+
+        // inputs.json is eligible when it can be generated up front, and disqualifying
+        // only when the dataset forces the during-run capture path.
+        let inputs = ArtifactSpec {
+            inputs_path: Some("inputs.json".into()),
+            ..ArtifactSpec::default()
+        };
+        assert!(
+            eligible(&inputs, false, false),
+            "up-front-feasible inputs.json no longer disqualifies (S4)"
+        );
+        assert!(
+            !eligible(&inputs, false, true),
+            "a live-reply multi-turn dataset keeps inputs.json on the retain path"
+        );
     }
 
     fn synthetic(value: serde_json::Value) -> SyntheticDatasetSpec {
@@ -5706,6 +5873,73 @@ mod tests {
                 end_ns: 8_000_000,
             },
         )
+    }
+
+    /// inputs.json parity (task S4): the during-run capture path (fed in arbitrary
+    /// dispatch order, with a recycled duplicate turn) and the up-front, dataset-ordered
+    /// generation both funnel through the same `write_inputs_json`, so the two files are
+    /// byte-identical — dedup per `(conversation_id, turn)` and the conversation-id sort
+    /// are order-independent.
+    #[test]
+    fn inputs_json_up_front_matches_capture_regardless_of_dispatch_order() {
+        let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
+        let capture = RunCapture::new(
+            clock,
+            0,
+            MetricsConfig::default(),
+            false,
+            true, // inputs_enabled
+            false,
+            false,
+            false,
+        );
+        // Distinct canonical bodies per (conversation, turn). "conv-b" is a two-turn
+        // conversation; "conv-a" is single-turn.
+        let body = |tag: &str| format!(r#"{{"model":"m","tag":"{tag}"}}"#).into_bytes();
+        // Feed the during-run capture out of conversation order, with a recycled
+        // duplicate (conv-b turn 0 dispatched twice, e.g. via --request-count recycling);
+        // the second write must be ignored (first-write-wins dedup).
+        capture
+            .record_input_payload("conv-b", 0, &body("b0"))
+            .unwrap();
+        capture
+            .record_input_payload("conv-a", 0, &body("a0"))
+            .unwrap();
+        capture
+            .record_input_payload("conv-b", 1, &body("b1"))
+            .unwrap();
+        capture
+            .record_input_payload("conv-b", 0, &body("b0-recycled"))
+            .unwrap();
+        let capture_sessions = capture.take_input_sessions();
+
+        // The up-front generator emits sessions conversation-id-sorted, each with its
+        // turns in order — build the equivalent list directly.
+        let parse = |bytes: Vec<u8>| {
+            serde_json::from_slice::<Box<serde_json::value::RawValue>>(&bytes).unwrap()
+        };
+        let up_front = vec![
+            InputSession {
+                session_id: "conv-a".into(),
+                payloads: vec![parse(body("a0"))],
+            },
+            InputSession {
+                session_id: "conv-b".into(),
+                payloads: vec![parse(body("b0")), parse(body("b1"))],
+            },
+        ];
+
+        let dir = tempfile::tempdir().unwrap();
+        let capture_path = dir.path().join("inputs_capture.json");
+        let up_front_path = dir.path().join("inputs_up_front.json");
+        write_inputs_json(&capture_path, &capture_sessions).unwrap();
+        write_inputs_json(&up_front_path, &up_front).unwrap();
+
+        assert_eq!(
+            std::fs::read(&capture_path).unwrap(),
+            std::fs::read(&up_front_path).unwrap(),
+            "up-front inputs.json must be byte-identical to the capture-based output"
+        );
     }
 
     /// A1 core: worker records arrive **per worker**, not in global dispatch

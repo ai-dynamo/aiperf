@@ -784,6 +784,78 @@ pub(crate) fn write_inputs_json(path: &Path, sessions: &[InputSession]) -> Resul
         .with_context(|| format!("flushing inputs export {}", path.display()))
 }
 
+/// Outputs schema version, shared by the batch writer and the streaming lane.
+pub(crate) const OUTPUTS_SCHEMA_VERSION: &str = "1.1";
+
+/// The `outputs.json` document prefix up to (and including) the opening `[` of the
+/// `data` array, byte-identical to what `serde_json::to_writer_pretty` emits for the
+/// enclosing [`OutputsDocument`]. The streaming lane writes this once, then appends
+/// pretty entries (see [`outputs_entry_indented`]) and the matching suffix.
+pub(crate) const OUTPUTS_PREFIX: &str = "{\n  \"schema_version\": \"1.1\",\n  \"data\": [";
+
+/// Project one captured record into the profiling `outputs.json` row, or `None` for a
+/// non-profiling (warmup) record. Shared by the batch [`write_outputs_json`] and the
+/// streaming lane so both select the same `OUTPUT_METRICS` and text fields.
+fn output_row<'a>(captured: &'a CapturedRecord, config: &MetricsConfig) -> Option<OutputRow<'a>> {
+    if captured.ingest.phase != Phase::Profiling {
+        return None;
+    }
+    let metrics = record_metrics(captured, config)
+        .into_iter()
+        .filter_map(|(name, metric)| {
+            OUTPUT_METRICS
+                .contains(&name.as_str())
+                .then_some((name, metric.value))
+        })
+        .map(|(name, value)| {
+            let name = OUTPUT_METRICS
+                .iter()
+                .copied()
+                .find(|candidate| *candidate == name)
+                .expect("output metric names come from the static allowlist");
+            (name, value)
+        })
+        .collect();
+    Some(OutputRow {
+        session_num: captured.ingest.session_num,
+        conversation_id: captured.ingest.conversation_id.as_deref(),
+        turn_index: captured.ingest.turn_index,
+        x_request_id: captured.uuid.to_string(),
+        request_start_ns: captured.ingest.start_ns,
+        request_end_ns: captured.ingest.end_ns,
+        metrics,
+        response_text: captured.output.response_text.as_deref(),
+        reasoning_text: captured.output.reasoning_text.as_deref(),
+    })
+}
+
+/// Serialize one profiling record's `outputs.json` entry indented to sit inside the
+/// `data` array, byte-for-byte as `serde_json::to_writer_pretty` would render that
+/// element within the enclosing [`OutputsDocument`] (every line shifted right by four
+/// spaces: two for the object nesting, two for the array nesting). Returns `None` for
+/// a non-profiling record, which the outputs stream skips exactly as [`write_outputs_json`]
+/// filters warmup rows. Sharing [`output_row`] with the batch writer keeps a single
+/// pretty entry byte-identical, so a set-comparison of the two documents (sorted by
+/// `(session_num, turn_index)`) is exact.
+pub(crate) fn outputs_entry_indented(
+    captured: &CapturedRecord,
+    config: &MetricsConfig,
+) -> Result<Option<String>> {
+    let Some(row) = output_row(captured, config) else {
+        return Ok(None);
+    };
+    let pretty = serde_json::to_string_pretty(&row).context("serializing outputs export entry")?;
+    let mut indented = String::with_capacity(pretty.len() + pretty.lines().count() * 4);
+    for (index, line) in pretty.lines().enumerate() {
+        if index > 0 {
+            indented.push('\n');
+        }
+        indented.push_str("    ");
+        indented.push_str(line);
+    }
+    Ok(Some(indented))
+}
+
 /// Write profiling response and reasoning text with selected metric values.
 ///
 /// This collapses Python's per-processor fragment/aggregation implementation
@@ -801,36 +873,7 @@ pub(crate) fn write_outputs_json(
     }
     let mut rows = records
         .iter()
-        .filter(|captured| captured.ingest.phase == Phase::Profiling)
-        .map(|captured| {
-            let metrics = record_metrics(captured, config)
-                .into_iter()
-                .filter_map(|(name, metric)| {
-                    OUTPUT_METRICS
-                        .contains(&name.as_str())
-                        .then_some((name, metric.value))
-                })
-                .map(|(name, value)| {
-                    let name = OUTPUT_METRICS
-                        .iter()
-                        .copied()
-                        .find(|candidate| *candidate == name)
-                        .expect("output metric names come from the static allowlist");
-                    (name, value)
-                })
-                .collect();
-            OutputRow {
-                session_num: captured.ingest.session_num,
-                conversation_id: captured.ingest.conversation_id.as_deref(),
-                turn_index: captured.ingest.turn_index,
-                x_request_id: captured.uuid.to_string(),
-                request_start_ns: captured.ingest.start_ns,
-                request_end_ns: captured.ingest.end_ns,
-                metrics,
-                response_text: captured.output.response_text.as_deref(),
-                reasoning_text: captured.output.reasoning_text.as_deref(),
-            }
-        })
+        .filter_map(|captured| output_row(captured, config))
         .collect::<Vec<_>>();
     rows.sort_by_key(|row| (row.session_num, row.turn_index));
 
@@ -840,7 +883,7 @@ pub(crate) fn write_outputs_json(
     serde_json::to_writer_pretty(
         &mut writer,
         &OutputsDocument {
-            schema_version: "1.1",
+            schema_version: OUTPUTS_SCHEMA_VERSION,
             data: rows,
         },
     )
