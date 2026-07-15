@@ -1746,12 +1746,36 @@ async fn execute_native_inner(
         .flat_map(|report| report.report.turns.iter())
         .map(|turn| (turn.uuid, turn.issued_offset_ns))
         .collect::<HashMap<_, _>>();
-    let captured = capture.finish(&issued_times, drained)?;
+    let sketch_mode = matches!(
+        metrics_config.storage_mode,
+        aiperf::metrics_core::MetricsStorageMode::Sketch { .. }
+    );
+    let mut accumulator = MetricsAccumulator::with_config(metrics_config.clone());
+    // Sketch mode streams each joined record into the bounded accumulator and drops
+    // it (`finish_fold_into`), so `captured` holds only the few errored records the
+    // report's error grouping needs — coordinator memory at finalize is O(errors),
+    // not O(records), and no full record Vec is re-ingested. The exact path keeps
+    // the full `captured` Vec for per-record artifacts and the re-ingest loop.
+    let captured = if sketch_mode {
+        capture.finish_fold_into(&issued_times, drained, &mut accumulator)?
+    } else {
+        let captured = capture.finish(&issued_times, drained)?;
+        for record in &captured {
+            accumulator.process_record(&record.ingest);
+        }
+        captured
+    };
     // A cell ships its captured records — each carrying the dense global dispatch
     // ordinal the autonomous issuer stamped — to the controller, which merges every
     // cell's records in global order into the single authoritative report. Absent
-    // the controller address (the single-process path) this is inert.
+    // the controller address (the single-process path) this is inert. Sketch mode
+    // retains no full record set, so cellular record shipping is unsupported there
+    // (a cell partition would ship its merged sketch instead — a future seam).
     if let Some(shipper) = crate::cellular_cell::CellRecordsShipper::from_env() {
+        ensure!(
+            !sketch_mode,
+            "sketch metrics mode does not support cellular record shipping yet"
+        );
         let records: Vec<RecordIngest> = captured
             .iter()
             .map(|record| record.ingest.clone())
@@ -1766,10 +1790,6 @@ async fn execute_native_inner(
     let network_latency_records_path = sidecars.network_latency_records_path.as_ref();
     let server_metrics_jsonl_path = sidecars.server_metrics_jsonl_path.as_ref();
     let server_metrics_parquet_wire_path = sidecars.server_metrics_parquet_wire_path.as_ref();
-    let mut accumulator = MetricsAccumulator::with_config(metrics_config.clone());
-    for record in &captured {
-        accumulator.process_record(&record.ingest);
-    }
     if let Some(network_latency) = network_latency {
         let mean_rtt_ns = network_latency.mean_rtt_ns();
         if network_latency.is_active_probe() && mean_rtt_ns.is_none() {
@@ -3651,6 +3671,110 @@ impl RunCapture {
         let outputs = self.outputs.borrow();
         let mut raw_exchanges = self.raw_exchanges.take();
 
+        let mut records_by_uuid = self.resolve_records_by_uuid(&identities, &labels, drained)?;
+
+        // Emit rows in dispatch (identity) order. `ordinal` (begin order) is the
+        // cumulative flat dispatch index; `phase_counters` tracks the per-phase
+        // dispatch index because a cell's sampler restarts each phase, so the
+        // cellular issuer's ordinal must be phase-local (the identity issuer ignores
+        // it and keeps the flat slot, leaving the cell-of-one path unchanged).
+        let mut phase_counters: HashMap<_, usize> = HashMap::new();
+        identities
+            .iter()
+            .enumerate()
+            .map(|(ordinal, identity)| {
+                let mut ingest = records_by_uuid.remove(&identity.uuid).ok_or_else(|| {
+                    anyhow!(
+                        "captured request {} produced no native metric record",
+                        identity.uuid
+                    )
+                })?;
+                self.patch_joined_ingest(
+                    ordinal,
+                    identity,
+                    &labels,
+                    issued_times,
+                    &mut phase_counters,
+                    &mut ingest,
+                )?;
+                Ok(CapturedRecord {
+                    uuid: identity.uuid,
+                    x_correlation_id: identity.x_correlation_id.clone(),
+                    output: outputs.get(&identity.uuid).cloned().unwrap_or_default(),
+                    raw: raw_exchanges.remove(&identity.uuid),
+                    ingest,
+                })
+            })
+            .collect()
+    }
+
+    /// Streaming write-then-drop finalize for bounded-memory (sketch) mode.
+    ///
+    /// Performs the same dispatch-order identity/label/ordinal join as [`finish`],
+    /// but instead of materializing one [`CapturedRecord`] per request into a Vec
+    /// (each cloning model output and raw exchange bytes) and then re-ingesting the
+    /// whole Vec into the report accumulator, it folds each joined record into
+    /// `accumulator` and immediately drops it. Only errored records are retained
+    /// (there are few, and [`group_record_errors`] needs them), so coordinator
+    /// memory at finalize is O(errors) instead of O(records). The accumulator is a
+    /// bounded sketch, so the whole finalize stays bounded.
+    ///
+    /// Per-record artifacts are unavailable in sketch mode (the frontend and
+    /// `validate_plan` guarantee their paths are absent), so no output/raw bytes are
+    /// needed for non-errored records.
+    fn finish_fold_into(
+        &self,
+        issued_times: &HashMap<Uuid, i64>,
+        drained: Vec<(Uuid, RecordIngest)>,
+        accumulator: &mut MetricsAccumulator,
+    ) -> Result<Vec<CapturedRecord>> {
+        let identities = self.identities.borrow();
+        let labels = self.labels.borrow();
+        let outputs = self.outputs.borrow();
+
+        let mut records_by_uuid = self.resolve_records_by_uuid(&identities, &labels, drained)?;
+
+        let mut phase_counters: HashMap<_, usize> = HashMap::new();
+        let mut errored = Vec::new();
+        for (ordinal, identity) in identities.iter().enumerate() {
+            let mut ingest = records_by_uuid.remove(&identity.uuid).ok_or_else(|| {
+                anyhow!(
+                    "captured request {} produced no native metric record",
+                    identity.uuid
+                )
+            })?;
+            self.patch_joined_ingest(
+                ordinal,
+                identity,
+                &labels,
+                issued_times,
+                &mut phase_counters,
+                &mut ingest,
+            )?;
+            // Fold-and-drop: the sketch accumulator retains only bounded aggregates.
+            accumulator.process_record(&ingest);
+            if ingest.errored || ingest.canceled {
+                errored.push(CapturedRecord {
+                    uuid: identity.uuid,
+                    x_correlation_id: identity.x_correlation_id.clone(),
+                    output: outputs.get(&identity.uuid).cloned().unwrap_or_default(),
+                    raw: None,
+                    ingest,
+                });
+            }
+        }
+        Ok(errored)
+    }
+
+    /// Builds the uuid→record map for a finalize, synthesizing fallback records for
+    /// identities no worker observer produced. Shared by [`finish`] and
+    /// [`finish_fold_into`] so the two paths resolve records identically.
+    fn resolve_records_by_uuid(
+        &self,
+        identities: &[CaptureIdentity],
+        labels: &HashMap<Uuid, CaptureLabel>,
+        drained: Vec<(Uuid, RecordIngest)>,
+    ) -> Result<HashMap<Uuid, RecordIngest>> {
         let mut records_by_uuid: HashMap<Uuid, RecordIngest> =
             HashMap::with_capacity(drained.len());
         for (uuid, ingest) in drained {
@@ -3659,12 +3783,6 @@ impl RunCapture {
                 "worker drained request {uuid} more than once"
             );
         }
-
-        // Synthesize fallback records for identities that failed before any
-        // worker observer registered them (pre-dispatch send failure, worker
-        // drop, or placement cancellation). Reusing a coordinator-owned observer
-        // reproduces the exact `into_record` shape the single-observer path
-        // produced for those requests.
         let missing: Vec<&CaptureIdentity> = identities
             .iter()
             .filter(|identity| !records_by_uuid.contains_key(&identity.uuid))
@@ -3707,67 +3825,51 @@ impl RunCapture {
                 records_by_uuid.insert(uuid, ingest);
             }
         }
-
         ensure!(
             records_by_uuid.len() == identities.len(),
             "native record capture finalized {} records for {} dispatched identities",
             records_by_uuid.len(),
             identities.len()
         );
+        Ok(records_by_uuid)
+    }
 
-        // Emit rows in dispatch (identity) order. `ordinal` (begin order) is the
-        // cumulative flat dispatch index; `phase_counters` tracks the per-phase
-        // dispatch index because a cell's sampler restarts each phase, so the
-        // cellular issuer's ordinal must be phase-local (the identity issuer ignores
-        // it and keeps the flat slot, leaving the cell-of-one path unchanged).
-        let mut phase_counters: HashMap<_, usize> = HashMap::new();
-        identities
-            .iter()
-            .enumerate()
-            .map(|(ordinal, identity)| {
-                let mut ingest = records_by_uuid.remove(&identity.uuid).ok_or_else(|| {
-                    anyhow!(
-                        "captured request {} produced no native metric record",
-                        identity.uuid
-                    )
-                })?;
-                let has_credit_timestamp = labels
-                    .get(&identity.uuid)
-                    .map(|label| label.has_credit_timestamp)
-                    .unwrap_or(true);
-                if let Some(label) = labels.get(&identity.uuid) {
-                    ingest.phase = label.phase;
-                    ingest.session_num = label.session_num;
-                }
-                // The single central ordinal assignment the records-first re-ingest
-                // orders by. The cellular issuer maps (phase base, phase-local index)
-                // to the single-cell absolute slot; the identity issuer uses `ordinal`.
-                let within_phase = phase_counters.entry(ingest.phase).or_insert(0);
-                let within = *within_phase;
-                *within_phase += 1;
-                let phase_base = self
-                    .phase_ordinal_bases
-                    .get(&ingest.phase)
-                    .copied()
-                    .unwrap_or(0);
-                ingest.request_index =
-                    Some(self.issuance.global_ordinal(ordinal, phase_base, within));
-                ingest.admit_ns = if has_credit_timestamp {
-                    Some(*issued_times.get(&identity.uuid).ok_or_else(|| {
-                        anyhow!("captured request {} has no issuer timestamp", identity.uuid)
-                    })?)
-                } else {
-                    None
-                };
-                Ok(CapturedRecord {
-                    uuid: identity.uuid,
-                    x_correlation_id: identity.x_correlation_id.clone(),
-                    output: outputs.get(&identity.uuid).cloned().unwrap_or_default(),
-                    raw: raw_exchanges.remove(&identity.uuid),
-                    ingest,
-                })
-            })
-            .collect()
+    /// Patches one joined record's coordinator-owned fields (phase, session number,
+    /// global dispatch ordinal, and admit timestamp) exactly as [`finish`] does.
+    fn patch_joined_ingest(
+        &self,
+        ordinal: usize,
+        identity: &CaptureIdentity,
+        labels: &HashMap<Uuid, CaptureLabel>,
+        issued_times: &HashMap<Uuid, i64>,
+        phase_counters: &mut HashMap<MetricsPhase, usize>,
+        ingest: &mut RecordIngest,
+    ) -> Result<()> {
+        let has_credit_timestamp = labels
+            .get(&identity.uuid)
+            .map(|label| label.has_credit_timestamp)
+            .unwrap_or(true);
+        if let Some(label) = labels.get(&identity.uuid) {
+            ingest.phase = label.phase;
+            ingest.session_num = label.session_num;
+        }
+        let within_phase = phase_counters.entry(ingest.phase).or_insert(0);
+        let within = *within_phase;
+        *within_phase += 1;
+        let phase_base = self
+            .phase_ordinal_bases
+            .get(&ingest.phase)
+            .copied()
+            .unwrap_or(0);
+        ingest.request_index = Some(self.issuance.global_ordinal(ordinal, phase_base, within));
+        ingest.admit_ns = if has_credit_timestamp {
+            Some(*issued_times.get(&identity.uuid).ok_or_else(|| {
+                anyhow!("captured request {} has no issuer timestamp", identity.uuid)
+            })?)
+        } else {
+            None
+        };
+        Ok(())
     }
 }
 
