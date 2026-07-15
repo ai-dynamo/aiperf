@@ -91,12 +91,85 @@ struct Benchmark {
     phases: Phases,
     /// Output artifacts block (`dir` is the run's artifact target).
     artifacts: Option<ArtifactsSection>,
+    /// Goodput SLO thresholds (`benchmark.slos`: metric -> ms).
+    slos: Option<std::collections::BTreeMap<String, f64>>,
+    /// GPU telemetry policy.
+    gpu_telemetry: Option<GpuTelemetrySection>,
+    /// Server-metrics scraping policy.
+    server_metrics: Option<ServerMetricsSection>,
+    /// Network-latency calibration policy.
+    network_latency: Option<NetworkLatencySection>,
+    /// OTLP export sink.
+    otel: Option<OtelSection>,
+    /// MLflow export sink.
+    mlflow: Option<MlflowSection>,
+    /// Weights & Biases export sink.
+    wandb: Option<WandbSection>,
+    /// Worker/cell runtime policy.
+    runtime: Option<RuntimeSection>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ArtifactsSection {
     /// Run artifact directory (the `--artifact-dir` flag overrides it).
     dir: Option<String>,
+    /// Timeslice window, seconds (wire `metrics.slice_duration_seconds`).
+    #[serde(default, alias = "sliceDuration")]
+    slice_duration: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GpuTelemetrySection {
+    enabled: Option<bool>,
+    urls: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ServerMetricsSection {
+    enabled: Option<bool>,
+    urls: Option<Vec<String>>,
+    formats: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NetworkLatencySection {
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default, alias = "meanMs")]
+    mean_ms: Option<f64>,
+    #[serde(default, alias = "pingInterval")]
+    ping_interval: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OtelSection {
+    #[serde(alias = "metricsUrl")]
+    metrics_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MlflowSection {
+    #[serde(default, alias = "trackingUri")]
+    tracking_uri: Option<String>,
+    experiment: Option<String>,
+    #[serde(default, alias = "runName")]
+    run_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WandbSection {
+    project: Option<String>,
+    entity: Option<String>,
+    #[serde(default, alias = "runName")]
+    run_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RuntimeSection {
+    workers: Option<u32>,
+    #[serde(default, alias = "workersMin")]
+    workers_min: Option<u32>,
+    cells: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -303,6 +376,79 @@ impl Benchmark {
             .map(load::parse_model_strategy)
             .transpose()?;
 
+        // Goodput SLOs (`benchmark.slos`): metric -> ms as a JSON map.
+        let slos: serde_json::Map<String, serde_json::Value> = self
+            .slos
+            .as_ref()
+            .map(|m| m.iter().map(|(k, v)| (k.clone(), serde_json::json!(v))).collect())
+            .unwrap_or_default();
+
+        // GPU telemetry (default enabled): optional custom DCGM URLs.
+        let (gpu_enabled, gpu_urls) = self
+            .gpu_telemetry
+            .as_ref()
+            .map(|g| (g.enabled.unwrap_or(true), g.urls.clone().unwrap_or_default()))
+            .unwrap_or((true, Vec::new()));
+
+        // Server metrics (default enabled): optional scrape URLs and formats.
+        let (sm_enabled, sm_urls, sm_formats) = self
+            .server_metrics
+            .as_ref()
+            .map(|s| {
+                (
+                    s.enabled.unwrap_or(true),
+                    s.urls.clone().unwrap_or_default(),
+                    s.formats.clone(),
+                )
+            })
+            .unwrap_or((true, Vec::new(), None));
+
+        // Network latency: a fixed mean wins; otherwise an enabled block runs a
+        // probe with the given ping interval (mirrors `_network_latency`).
+        let (network_latency_mean, network_latency_probe) = match self.network_latency.as_ref() {
+            Some(nl) if nl.mean_ms.is_some() => (nl.mean_ms, None),
+            Some(nl) if nl.enabled => (None, Some(nl.ping_interval.unwrap_or(1.0))),
+            _ => (None, None),
+        };
+
+        let otel_url = self.otel.as_ref().and_then(|o| o.metrics_url.clone());
+        let mlflow = self
+            .mlflow
+            .as_ref()
+            .map(|m| crate::model::export::MlflowParams {
+                tracking_uri: m.tracking_uri.clone(),
+                experiment: m.experiment.clone(),
+                run_name: m.run_name.clone(),
+            })
+            .unwrap_or(crate::model::export::MlflowParams {
+                tracking_uri: None,
+                experiment: None,
+                run_name: None,
+            });
+        let wandb = self
+            .wandb
+            .as_ref()
+            .map(|w| crate::model::export::WandbParams {
+                project: w.project.clone(),
+                entity: w.entity.clone(),
+                run_name: w.run_name.clone(),
+            })
+            .unwrap_or(crate::model::export::WandbParams {
+                project: None,
+                entity: None,
+                run_name: None,
+            });
+
+        // Runtime worker/cell policy.
+        let (runtime_workers, runtime_workers_min, runtime_cells) = self
+            .runtime
+            .as_ref()
+            .map(|r| (r.workers, r.workers_min, r.cells.unwrap_or(1)))
+            .unwrap_or((None, None, 1));
+
+        // Timeslice window (`artifacts.slice_duration`).
+        let slice_duration = self.artifacts.as_ref().and_then(|a| a.slice_duration);
+
         Ok(Inputs {
             model_names,
             urls,
@@ -314,7 +460,7 @@ impl Benchmark {
             use_server_token_count: self.endpoint.use_server_token_count.unwrap_or(false),
             download_video_content: self.endpoint.download_video_content.unwrap_or(false),
             extra: self.endpoint.extra.unwrap_or_default(),
-            server_metrics_urls: Vec::new(),
+            server_metrics_urls: sm_urls,
             connection_reuse: self
                 .endpoint
                 .connection_reuse
@@ -338,24 +484,16 @@ impl Benchmark {
             apply_chat_template,
             prefill_concurrency: None,
             prefill_ramp: None,
-            gpu_telemetry_enabled: true,
-            gpu_telemetry_urls: Vec::new(),
-            server_metrics_enabled: true,
-            server_metrics_formats: None,
-            slos: serde_json::Map::new(),
-            network_latency_mean: None,
-            network_latency_probe: None,
-            otel_url: None,
-            mlflow: crate::model::export::MlflowParams {
-                tracking_uri: None,
-                experiment: None,
-                run_name: None,
-            },
-            wandb: crate::model::export::WandbParams {
-                project: None,
-                entity: None,
-                run_name: None,
-            },
+            gpu_telemetry_enabled: gpu_enabled,
+            gpu_telemetry_urls: gpu_urls,
+            server_metrics_enabled: sm_enabled,
+            server_metrics_formats: sm_formats,
+            slos,
+            network_latency_mean,
+            network_latency_probe,
+            otel_url,
+            mlflow,
+            wandb,
             api_key: self.endpoint.api_key,
             headers: self.endpoint.headers.unwrap_or_default(),
             tokenizer_name,
@@ -385,6 +523,9 @@ impl Benchmark {
             benchmark_duration: phase.duration,
             grace_period: phase.grace_period,
             warmup: None::<Warmup>,
+            runtime_workers,
+            runtime_workers_min,
+            runtime_cells,
             random_seed,
             dataset_random_seed,
             input_file,
@@ -396,7 +537,7 @@ impl Benchmark {
             fixed_schedule_start_offset: None,
             fixed_schedule_end_offset: None,
             model_strategy,
-            slice_duration: None,
+            slice_duration,
             isl_block_size: None,
             sketch_metrics: false,
             image_spec: None,

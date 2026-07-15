@@ -146,6 +146,12 @@ pub(crate) struct Inputs {
     pub benchmark_duration: Option<f64>,
     pub grace_period: Option<f64>,
     pub warmup: Option<Warmup>,
+    /// Runtime worker count (`runtime.workers`; `None` = runner auto-selects).
+    pub runtime_workers: Option<u32>,
+    /// Adaptive-scaling minimum worker count (`runtime.workers_min`).
+    pub runtime_workers_min: Option<u32>,
+    /// Cellular (multi-process) cell count (`runtime.cells`; `1` = single).
+    pub runtime_cells: u32,
     pub random_seed: Option<u64>,
     /// Per-dataset sampling seed (`dataset.random_seed`). The `--random-seed`
     /// flag sets both this and `random_seed`; a YAML top-level `randomSeed` sets
@@ -296,7 +302,13 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         use_server_token_count: flags.use_server_token_count,
         download_video_content: flags.download_video_content,
         extra: parse_extra_inputs(&flags.extra_inputs)?,
-        server_metrics_urls: flags.server_metrics.clone(),
+        // The `--server-metrics` flag value is normalized to `.../metrics` here
+        // (mirroring Python's flag converter); the YAML surface keeps it raw.
+        server_metrics_urls: flags
+            .server_metrics
+            .iter()
+            .map(|u| crate::model::telemetry::normalize_metrics_url(u))
+            .collect(),
         connection_reuse: flags
             .connection_reuse_strategy
             .as_deref()
@@ -400,6 +412,11 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         random_seed: flags.random_seed,
         // `--random-seed` sets both the run seed and the dataset sampling seed.
         dataset_random_seed: flags.random_seed,
+        // No flag surface for runtime worker/cell counts; the flag path keeps the
+        // runner defaults (auto workers, single cell).
+        runtime_workers: None,
+        runtime_workers_min: None,
+        runtime_cells: 1,
         input_file: flags.input_file.clone(),
         custom_dataset_type: flags.custom_dataset_type.clone(),
         public_dataset: flags.public_dataset.clone(),
@@ -728,11 +745,10 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     gpu_cfg.urls = inputs.gpu_telemetry_urls.clone();
     let mut server_cfg = crate::model::telemetry::ServerMetricsConfig::default();
     server_cfg.enabled = inputs.server_metrics_enabled;
-    server_cfg.urls = inputs
-        .server_metrics_urls
-        .iter()
-        .map(|u| crate::model::telemetry::normalize_metrics_url(u))
-        .collect();
+    // The raw config value lands in `cfg.server_metrics.urls` verbatim (the flag
+    // path normalizes at the input stage, mirroring Python's converter; the YAML
+    // path keeps the authored value raw). Only the sidecar always normalizes.
+    server_cfg.urls = inputs.server_metrics_urls.clone();
     if let Some(formats) = &inputs.server_metrics_formats {
         server_cfg.formats = formats.clone();
     }
@@ -741,7 +757,12 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         endpoint: Some(endpoint),
         tokenizer: Some(tokenizer),
         transport: Some(inputs.transport),
-        runtime: Some(Runtime::default()),
+        runtime: Some(Runtime {
+            workers: inputs.runtime_workers,
+            workers_min: inputs.runtime_workers_min,
+            workers_max: None,
+            cells: inputs.runtime_cells,
+        }),
         metrics: Some(Metrics {
             slos: inputs.slos.clone(),
             slice_duration_seconds: inputs.slice_duration,

@@ -277,6 +277,7 @@ const YAML_FIXTURES: &[(&str, &str, &str)] = &[
         "yaml_endpoint",
         "/tmp/aiperf-parity/yaml_endpoint",
     ),
+    ("yaml_infra", "yaml_infra", "/tmp/aiperf-parity/yaml_infra"),
 ];
 
 #[test]
