@@ -33,8 +33,17 @@ pub fn resolve(
 ) -> anyhow::Result<crate::model::BenchmarkRun> {
     let text = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("failed to read config {}: {e}", path.display()))?;
-    let file: ConfigFile = serde_yaml::from_str(&text)
-        .map_err(|e| anyhow::anyhow!("failed to parse config {}: {e}", path.display()))?;
+    resolve_str(&text, artifact_dir)
+        .map_err(|e| anyhow::anyhow!("in config {}: {e}", path.display()))
+}
+
+/// Parse YAML config text into one native run (the file-independent core).
+pub(crate) fn resolve_str(
+    text: &str,
+    artifact_dir: Option<PathBuf>,
+) -> anyhow::Result<crate::model::BenchmarkRun> {
+    let file: ConfigFile =
+        serde_yaml::from_str(text).map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))?;
     let random_seed = file.random_seed;
     let inputs = file.benchmark.into_inputs(artifact_dir, random_seed)?;
     load::build(inputs)
@@ -594,13 +603,25 @@ impl Benchmark {
         // Dataset kind: `public` (catalog name) > `file` (path/format) >
         // synthetic. `build()` picks public first when `public_dataset` is set.
         let dataset_type = dataset.as_ref().and_then(|d| d.dataset_type.as_deref());
+        // Fail closed on an unrecognized dataset type rather than silently
+        // treating it as synthetic (Config's discriminated union rejects it too).
+        if let Some(t) = dataset_type
+            && !matches!(t, "synthetic" | "file" | "public")
+        {
+            anyhow::bail!("unknown dataset.type {t:?} (expected synthetic/file/public)");
+        }
         let public_dataset = (dataset_type == Some("public"))
             .then(|| dataset.as_ref().and_then(|d| d.public_name.clone()))
             .flatten();
+        anyhow::ensure!(
+            dataset_type != Some("public") || public_dataset.is_some(),
+            "dataset.type=public requires a `dataset:` catalog name"
+        );
         let hf_subset = dataset.as_ref().and_then(|d| d.hf_subset.clone());
         let is_file = dataset_type == Some("file");
         let (input_file, custom_dataset_type) = if is_file {
             let d = dataset.as_ref().expect("file dataset present");
+            anyhow::ensure!(d.path.is_some(), "dataset.type=file requires a `path:`");
             (d.path.clone().map(PathBuf::from), d.format.clone())
         } else {
             (None, None)
@@ -638,6 +659,18 @@ impl Benchmark {
         // Phase arrival pattern. A rate `type` selects the arrival distribution;
         // `user_centric` binds (rate, users); `concurrency` (default) has no rate.
         let phase_type = phase.phase_type.as_deref();
+        // Fail closed on an unknown phase type rather than silently defaulting to
+        // concurrency (Config's discriminated phase union rejects it too).
+        if let Some(t) = phase_type
+            && !matches!(
+                t,
+                "concurrency" | "poisson" | "gamma" | "constant" | "user_centric" | "fixed_schedule"
+            )
+        {
+            anyhow::bail!(
+                "unknown phase type {t:?} (expected concurrency/poisson/gamma/constant/user_centric/fixed_schedule)"
+            );
+        }
         let is_user_centric = phase_type == Some("user_centric");
         let rate_mode = match phase_type {
             Some(t @ ("poisson" | "gamma" | "constant")) => Some(t.to_string()),
@@ -1016,5 +1049,68 @@ fn clone_num_or_dist(n: &NumOrDist) -> Distribution {
             max: d.max,
             ..Default::default()
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_str;
+
+    /// A minimal valid config with the given `dataset:`/`phases:` bodies spliced in.
+    fn cfg(body: &str) -> String {
+        format!(
+            "schemaVersion: \"2.0\"\n\
+             benchmark:\n\
+             \x20 model: m\n\
+             \x20 endpoint: {{type: chat, url: 127.0.0.1:8000}}\n\
+             {body}"
+        )
+    }
+
+    fn err(body: &str) -> String {
+        resolve_str(&cfg(body), Some("/tmp/x".into()))
+            .expect_err("expected a validation error")
+            .to_string()
+    }
+
+    #[test]
+    fn rejects_unknown_dataset_type() {
+        let e = err("  dataset: {type: bogus}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n");
+        assert!(e.contains("unknown dataset.type"), "{e}");
+    }
+
+    #[test]
+    fn rejects_file_dataset_without_path() {
+        let e = err("  dataset: {type: file, format: mooncake_trace}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n");
+        assert!(e.contains("requires a `path:`"), "{e}");
+    }
+
+    #[test]
+    fn rejects_public_dataset_without_name() {
+        let e = err("  dataset: {type: public}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n");
+        assert!(e.contains("requires a `dataset:` catalog name"), "{e}");
+    }
+
+    #[test]
+    fn rejects_unknown_phase_type() {
+        let e = err("  dataset: {prompts: {isl: 128}}\n  phases: {type: bogus, requests: 1}\n");
+        assert!(e.contains("unknown phase type"), "{e}");
+    }
+
+    #[test]
+    fn rejects_phases_with_profiling() {
+        let e = err("  dataset: {prompts: {isl: 128}}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n  profiling: {type: concurrency, requests: 1, concurrency: 1}\n");
+        assert!(e.contains("cannot be combined"), "{e}");
+    }
+
+    #[test]
+    fn accepts_minimal_synthetic() {
+        let run = resolve_str(
+            &cfg("  dataset: {prompts: {isl: 128}}\n  phases: {type: concurrency, requests: 2, concurrency: 1}\n"),
+            Some("/tmp/x".into()),
+        )
+        .expect("valid config resolves");
+        let v = serde_json::to_value(&run).unwrap();
+        assert_eq!(v["cfg"]["datasets"][0]["type"], serde_json::json!("synthetic"));
     }
 }
