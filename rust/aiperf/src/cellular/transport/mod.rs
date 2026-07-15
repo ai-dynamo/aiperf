@@ -35,6 +35,12 @@ use tokio::task::JoinHandle;
 use crate::cellular::heartbeat::MetricsHeartbeat;
 use crate::cellular::shard::RecordsShardPartition;
 
+/// Discovery-free connection seam: velo transport construction + the
+/// bootstrap-PeerInfo exchange that lets a cell reach the controller from one
+/// operator-hardcoded coordinate. Gated on the `velo` feature.
+#[cfg(feature = "velo")]
+pub mod connect;
+
 /// A frame body larger than this is rejected as corrupt/hostile rather than
 /// allocated — defense-in-depth against a bad length prefix.
 const MAX_FRAME_LEN: u32 = 512 * 1024 * 1024;
@@ -56,6 +62,46 @@ pub enum CellMessage {
     /// The cell's records-shard partition, sent once at run end. The partition
     /// carries its own `cell_id`.
     Partition(RecordsShardPartition),
+}
+
+/// velo handler name: cell → controller registration. The reply carries the
+/// cell's serialized `CellLaunchSpec` (rmp), replacing the stdin pipe, and the
+/// call ticks the controller's readiness barrier.
+pub const HANDLER_REGISTER: &str = "aiperf.cell.register";
+/// velo handler name: cell → controller heartbeat (fire-and-forget `am_send`).
+pub const HANDLER_HEARTBEAT: &str = "aiperf.cell.heartbeat";
+/// velo handler name: cell → controller records-shard partition ship. The reply
+/// is a [`CellAck`]; the body is transferred by a rendezvous handle.
+pub const HANDLER_PARTITION: &str = "aiperf.cell.partition";
+
+/// The cell's registration request: its `cell_id` plus its own serialized
+/// `velo::PeerInfo` (rmp-encoded) so the controller can `register_peer` it and
+/// route the reply (and later messages) back. The reply is the cell's
+/// `CellLaunchSpec` bytes (rmp).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CellRegister {
+    /// Zero-based cell identifier — the barrier key.
+    pub cell_id: u32,
+    /// `rmp_serde`-encoded `velo::PeerInfo` of the registering cell.
+    pub cell_peer: Vec<u8>,
+}
+
+/// A cell's records-shard partition ship: the `cell_id` plus the rendezvous
+/// `DataHandle` (as `u128`) of the rmp-encoded [`RecordsShardPartition`], so a
+/// large partition is pulled out-of-band rather than inflating an AM frame.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CellPartitionShip {
+    /// The shipping cell's identifier.
+    pub cell_id: u32,
+    /// The rendezvous data handle (`velo::DataHandle` as `u128`) of the partition body.
+    pub data_handle: u128,
+}
+
+/// Generic controller acknowledgement reply.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CellAck {
+    /// Whether the controller accepted the message.
+    pub ok: bool,
 }
 
 /// Encodes a message as a length-prefixed MessagePack frame.

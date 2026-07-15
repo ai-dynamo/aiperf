@@ -62,6 +62,7 @@ pub use shard::{
 };
 pub use sketch::TDigest;
 pub use transport::{
-    CellClient, CellMessage, CellTransportError, ControllerTransport, TcpCellClient,
+    CellAck, CellClient, CellMessage, CellPartitionShip, CellRegister, CellTransportError,
+    ControllerTransport, HANDLER_HEARTBEAT, HANDLER_PARTITION, HANDLER_REGISTER, TcpCellClient,
     TcpControllerTransport,
 };
