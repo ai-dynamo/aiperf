@@ -26,7 +26,10 @@ use aiperf::failure::OnFailure;
 use aiperf::graph::errors::TraceError;
 use aiperf::graph::execution::TracePlacement;
 use aiperf::graph::input::GraphInputBundle;
+use aiperf::graph::model::{GraphTracePlan, ParsedGraph, TraceRecord};
 use aiperf::graph::policy::{ContinueRunFailurePolicy, FailFastRunFailurePolicy, RunFailurePolicy};
+use aiperf::graph::snapshot::{chop_trie_at_tstar, rewrite_for_warmup};
+use aiperf::graph::tstar::{TStarSampler, WindowTStarSampler, trace_duration_us};
 use aiperf::graph::workload::{
     CyclingGraphTraceSource, GraphArrivalPolicy, GraphTraceInstanceSequence, GraphTraceRunResult,
     GraphTraceSource, GraphWorkload, GraphWorkloadObserver, GraphWorkloadReport,
@@ -57,6 +60,7 @@ use crate::graph_execution::{
     ChannelRunnerGraphExecutionEventSink, GraphCancellationConfig, ObservedRunnerGraphPlacement,
     RunnerGraphExecutionEvent, RunnerGraphExecutionEventSink,
 };
+use crate::graph_input::TStarWindow;
 use crate::protocol::{AdaptiveControlVariableSpec, PhaseSpec};
 use crate::records::CapturedRecord;
 
@@ -971,6 +975,7 @@ pub(crate) async fn run_graph_phases(
     clock: Rc<dyn Clock>,
     rng_root: RngRoot,
     allow_dataset_wrap: bool,
+    t_star: TStarWindow,
     phase_sidecars: Vec<Vec<Rc<dyn ScheduledPhaseSidecar>>>,
     backends: &dyn RunnerGraphPhaseBackendFactory,
     on_failure: OnFailure,
@@ -995,6 +1000,7 @@ pub(crate) async fn run_graph_phases(
             input,
             clock.clone(),
             rng_root,
+            t_star,
             trace_instances.clone(),
             session_slots.clone(),
             backends,
@@ -1099,6 +1105,7 @@ fn prepare_graph_phase(
     input: &GraphInputBundle,
     clock: Rc<dyn Clock>,
     rng_root: RngRoot,
+    t_star: TStarWindow,
     trace_instances: GraphTraceInstanceSequence,
     session_slots: Option<Rc<SlotPool>>,
     backends: &dyn RunnerGraphPhaseBackendFactory,
@@ -1120,6 +1127,13 @@ fn prepare_graph_phase(
     // on the cycler because `PartitionedGraphTraceSource` does not yet slice that
     // budget across cells; a later controller step must own the split before a
     // per-cell run can honor a static request_limit.
+    // Per-phase trajectory-start snapshot split: the warmup phase primes each
+    // trace's boundary turns (`rewrite_for_warmup`), the profiling (and any other
+    // non-warmup) phase replays only the post-`t*` frontier (`chop_trie_at_tstar`).
+    // At the default `[0, 0]` window `t*` is `0` for every trace, so profiling is
+    // the unchanged full graph and warmup is empty. Both phases sample the SAME
+    // deterministic `t*` per trace, so warmup primes exactly what profiling resumes.
+    let phase_plans = apply_tstar_split(&input.plans, phase, t_star);
     let source: Rc<dyn GraphTraceSource> = match ModuloCellPartition::from_env() {
         Some(partition) if partition.cell_count() > 1 && common.requests.is_none() => {
             tracing::debug!(
@@ -1128,14 +1142,14 @@ fn prepare_graph_phase(
                 "graph phase using partitioned trace source for cell"
             );
             Rc::new(PartitionedGraphTraceSource::new(
-                input.plans.clone(),
+                phase_plans,
                 session_limit,
                 partition.cell_id(),
                 partition.cell_count(),
             )?)
         }
         _ => Rc::new(CyclingGraphTraceSource::with_budgets_and_sequence(
-            input.plans.clone(),
+            phase_plans,
             session_limit,
             common.requests,
             trace_instances,
@@ -1238,6 +1252,71 @@ fn prepare_graph_phase(
         failures,
         adaptive,
     })
+}
+
+/// Apply the per-trace trajectory-start (`t*`) snapshot split for one phase.
+///
+/// For each root plan the intrinsic replayable span is measured
+/// ([`trace_duration_us`]), a per-trace `t*` is drawn from the window
+/// ([`WindowTStarSampler`]), and the plan graph is rewritten: the WARMUP phase
+/// keeps only the boundary priming turns ([`rewrite_for_warmup`]); every other
+/// phase (profiling) keeps only the live post-`t*` frontier
+/// ([`chop_trie_at_tstar`]). The default `[0, 0]` window yields `t* = 0` for
+/// every trace, so profiling returns the graph unchanged (byte-identical full
+/// native replay) and warmup returns an empty graph.
+///
+/// Warmup and profiling are independent phases that each clone `plans`, but they
+/// sample the identical deterministic `t*` per trace (same window, seed, trace
+/// id, and lane), so warmup primes exactly the prefix profiling resumes from.
+///
+/// Lane index: the base single-pass product selection dispatches each root
+/// template once, matching Python's first/only lane (`0`). The trace source mints
+/// per-instance ids only AFTER this seam, so recycled-corpus per-lane `t*`
+/// decorrelation is a future refinement; lane `0` is correct for the one-pass
+/// case. Mirrors `graph_ir_source.py:_plan_trace` selecting the chop vs the
+/// warmup rewrite per phase.
+fn apply_tstar_split(
+    plans: &[GraphTracePlan],
+    phase: &PhaseSpec,
+    t_star: TStarWindow,
+) -> Vec<GraphTracePlan> {
+    let is_warmup = phase.common().name == "warmup";
+    let sampler = WindowTStarSampler {
+        start_min_ratio: t_star.start_min_ratio,
+        start_max_ratio: t_star.start_max_ratio,
+        random_seed: t_star.random_seed,
+    };
+    plans
+        .iter()
+        .map(|plan| {
+            // A single-trace `ParsedGraph` view over the already-resolved plan
+            // graph. The view trace clears `graph_ref` so `resolve_trace_graph`
+            // returns this graph directly (recorded plans carry the resolved
+            // graph on the plan, not a named `graph_ref`).
+            let view_trace = TraceRecord {
+                id: plan.trace.id.clone(),
+                graph_ref: None,
+                initial_state: plan.trace.initial_state.clone(),
+            };
+            let parsed = ParsedGraph {
+                graph: plan.graph.clone(),
+                graphs: std::collections::BTreeMap::new(),
+                traces: vec![view_trace.clone()],
+            };
+            let duration_us = trace_duration_us(&parsed, &view_trace);
+            let t = sampler.sample_t_star(&plan.trace.id, 0, duration_us);
+            let rewritten = if is_warmup {
+                rewrite_for_warmup(&parsed, t)
+            } else {
+                chop_trie_at_tstar(&parsed, t)
+            };
+            GraphTracePlan {
+                graph: rewritten.graph,
+                trace: plan.trace.clone(),
+                arrival_offset_ns: plan.arrival_offset_ns,
+            }
+        })
+        .collect()
 }
 
 fn graph_phase_uses_session_admission(phase: &PhaseSpec) -> bool {
@@ -1428,6 +1507,149 @@ mod tests {
         let input = wrap_policy_input(2);
         validate_dataset_wrap_policy(&[concurrency_phase(3, Some(2))], &input, false).unwrap();
         validate_dataset_wrap_policy(&[concurrency_phase(3, None)], &input, false).unwrap();
+    }
+
+    fn named_concurrency_phase(name: &str) -> PhaseSpec {
+        serde_json::from_value(serde_json::json!({
+            "type": "concurrency",
+            "name": name,
+            "exclude_from_results": false,
+            "concurrency": 1,
+        }))
+        .unwrap()
+    }
+
+    /// One linear-chain recorded plan `n_0 -> n_1 -> n_2` at arrivals 0/1e6/2e6
+    /// us, so the `n` chain straddles a mid-chain `t*` and the split is
+    /// observable in the surviving node ids.
+    fn tstar_chain_plan() -> Vec<GraphTracePlan> {
+        use aiperf::graph::model::{ChannelRequirement, LlmNode, StaticEdge};
+        use serde_json::json;
+        use std::collections::BTreeMap;
+
+        let node = |arrival: u64, inputs: &[&str]| {
+            let mut metadata = BTreeMap::new();
+            metadata.insert("arrival_offset_us".to_owned(), json!(arrival));
+            LlmNode {
+                output: "out".to_owned(),
+                streaming: true,
+                inputs: inputs
+                    .iter()
+                    .map(|c| ChannelRequirement {
+                        channel: (*c).to_owned(),
+                        count: Default::default(),
+                    })
+                    .collect(),
+                min_start_delay_us: None,
+                max_tokens: None,
+                items: Vec::new(),
+                metadata,
+            }
+        };
+        let edge = |source: &str, target: &str| StaticEdge {
+            source: source.to_owned(),
+            target: target.to_owned(),
+            delay_after_predecessor_us: None,
+            min_start_delay_us: None,
+            delay_after_predecessor_start_us: None,
+            delay_after_predecessor_first_token_us: None,
+        };
+        let mut nodes = BTreeMap::new();
+        nodes.insert("n_0".to_owned(), node(0, &[]));
+        nodes.insert("n_1".to_owned(), node(1_000_000, &["n_0_out"]));
+        nodes.insert("n_2".to_owned(), node(2_000_000, &["n_1_out"]));
+        let graph = GraphRecord {
+            nodes,
+            edges: vec![
+                edge("START", "n_0"),
+                edge("n_0", "n_1"),
+                edge("n_1", "n_2"),
+                edge("n_2", "END"),
+            ],
+            ..Default::default()
+        };
+        vec![GraphTracePlan {
+            graph,
+            trace: TraceRecord {
+                id: "t".to_owned(),
+                graph_ref: None,
+                initial_state: Default::default(),
+            },
+            arrival_offset_ns: None,
+        }]
+    }
+
+    fn node_ids(plans: &[GraphTracePlan]) -> Vec<String> {
+        plans[0].graph.nodes.keys().cloned().collect()
+    }
+
+    #[test]
+    fn tstar_split_profiling_keeps_only_post_tstar_frontier() {
+        // Collapsed window min==max==0.5 draws no RNG: t* = 0.5 * dur(2e6) = 1e6.
+        // Survivors are the nodes arriving at/after t*: n_1, n_2 (n_0 dropped).
+        let window = TStarWindow {
+            start_min_ratio: 0.5,
+            start_max_ratio: 0.5,
+            random_seed: 0,
+        };
+        let split = apply_tstar_split(
+            &tstar_chain_plan(),
+            &named_concurrency_phase("profiling"),
+            window,
+        );
+        assert_eq!(node_ids(&split), vec!["n_1".to_owned(), "n_2".to_owned()]);
+    }
+
+    #[test]
+    fn tstar_split_warmup_primes_boundary_turns() {
+        // Same t* = 1e6. The `n` chain's last pre-t* turn is n_0; it primes the
+        // chain prefix while n_1/n_2 (post-t*) are profiled, not warmed.
+        let window = TStarWindow {
+            start_min_ratio: 0.5,
+            start_max_ratio: 0.5,
+            random_seed: 0,
+        };
+        let split = apply_tstar_split(
+            &tstar_chain_plan(),
+            &named_concurrency_phase("warmup"),
+            window,
+        );
+        assert_eq!(node_ids(&split), vec!["n_0".to_owned()]);
+        // Boundary priming node is flattened: fan-in cleared, re-rooted at START.
+        assert!(split[0].graph.nodes["n_0"].inputs.is_empty());
+        assert_eq!(split[0].graph.edges.len(), 1);
+        assert_eq!(split[0].graph.edges[0].source, "START");
+        assert_eq!(split[0].graph.edges[0].target, "n_0");
+    }
+
+    #[test]
+    fn tstar_default_window_is_unchanged_full_replay() {
+        // Regression guard: the default [0, 0] window yields t* = 0, so profiling
+        // is the byte-identical full graph and warmup is empty.
+        let window = TStarWindow::default();
+        let profiling = apply_tstar_split(
+            &tstar_chain_plan(),
+            &named_concurrency_phase("profiling"),
+            window,
+        );
+        assert_eq!(
+            node_ids(&profiling),
+            vec!["n_0".to_owned(), "n_1".to_owned(), "n_2".to_owned()]
+        );
+        // Edges carried through verbatim (full-replay chop early-returns a clone).
+        let original = tstar_chain_plan();
+        assert_eq!(
+            profiling[0].graph.edges.len(),
+            original[0].graph.edges.len()
+        );
+
+        let warmup = apply_tstar_split(
+            &tstar_chain_plan(),
+            &named_concurrency_phase("warmup"),
+            window,
+        );
+        assert!(warmup[0].graph.nodes.is_empty());
+        assert!(warmup[0].graph.edges.is_empty());
     }
 
     #[derive(Default)]
