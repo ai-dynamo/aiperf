@@ -35,8 +35,8 @@ use aiperf::graph::policy::{
 use aiperf::graph::sink::{GraphDispatchOptions, GraphReply, GraphSink};
 use aiperf::graph::wire::OpenAiChatMessage;
 use aiperf::http::{
-    HttpRequest, HttpRequestDispatcher, PreparedEndpointReference, PreparedHttpEndpoint,
-    PreparedTurn, TransportSink, TransportSinkConfig,
+    Dispatcher, HttpRequest, PreparedEndpointReference, PreparedHttpEndpoint, PreparedTurn,
+    TransportSink, TransportSinkConfig,
 };
 use aiperf::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
 use aiperf::metrics_core::{InferenceDimensions, MetricsConfig, Phase};
@@ -240,7 +240,7 @@ pub(crate) struct GraphEndpointRequest {
 }
 
 pub(crate) struct GraphEndpointDispatch {
-    transport: Rc<TransportSink>,
+    transport: Rc<dyn Dispatcher>,
     request: HttpRequest,
     endpoint: PreparedHttpEndpoint,
     input_tokens: u64,
@@ -332,7 +332,7 @@ impl RunnerGraphEndpointRuntimeFactory for PreparedRunnerGraphEndpointRuntimeFac
                         keys: profile.keys,
                         transport: Rc::new(
                             profile.transport.with_prepared_endpoints(table.clone()),
-                        ),
+                        ) as Rc<dyn Dispatcher>,
                         url_count: profile.url_count,
                     },
                 )
@@ -361,7 +361,7 @@ struct PreparedGraphProfile {
 struct PreparedGraphProfileRuntime {
     endpoint_id: EndpointId,
     keys: [EndpointKey; 2],
-    transport: Rc<TransportSink>,
+    transport: Rc<dyn Dispatcher>,
     url_count: usize,
 }
 
@@ -797,7 +797,7 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
         } = dispatch;
         let uuid = request.uuid;
         let dimensions: InferenceDimensions =
-            HttpRequestDispatcher::inference_dimensions(transport.as_ref(), &request);
+            Dispatcher::inference_dimensions(transport.as_ref(), &request);
         self.observer.register_metadata(
             uuid,
             RequestMetricMetadata {
