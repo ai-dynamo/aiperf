@@ -111,6 +111,74 @@ fn profile_single_run_against_mock_writes_native_report() {
     assert_report_has_records(&report);
 }
 
+#[test]
+#[ignore = "needs sibling aiperf-runner + aiperf-mock-server built in the target dir"]
+fn profile_yaml_config_against_mock_writes_native_report() {
+    // Exercises the full YAML `--config` path end-to-end (not just the flag path).
+    let runner = sibling("aiperf-runner");
+    let mock = sibling("aiperf-mock-server");
+    assert!(runner.exists(), "build aiperf-runner first: {runner:?}");
+    assert!(mock.exists(), "build aiperf-mock-server first: {mock:?}");
+
+    let out_dir = tempfile::tempdir().expect("tempdir");
+    let port = free_port();
+
+    let mut mock_child = Command::new(&mock)
+        .args(["--fast", "--host", "127.0.0.1", "--port", &port.to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn mock");
+    wait_for_port(port, &mut mock_child);
+
+    // A config that exercises several YAML-only sections (warmup/profiling blocks,
+    // multi-turn, tokenizer, telemetry-off) resolved purely from YAML.
+    let config = out_dir.path().join("bench.yaml");
+    std::fs::write(
+        &config,
+        format!(
+            "schemaVersion: \"2.0\"\n\
+             randomSeed: 7\n\
+             benchmark:\n\
+             \x20 model: Qwen/Qwen3-0.6B\n\
+             \x20 endpoint:\n\
+             \x20   type: chat\n\
+             \x20   url: 127.0.0.1:{port}\n\
+             \x20   streaming: true\n\
+             \x20 dataset:\n\
+             \x20   type: synthetic\n\
+             \x20   prompts: {{isl: 128, osl: 32}}\n\
+             \x20 gpu_telemetry: {{enabled: false}}\n\
+             \x20 server_metrics: {{enabled: false}}\n\
+             \x20 warmup:\n\
+             \x20   type: concurrency\n\
+             \x20   requests: 2\n\
+             \x20   concurrency: 1\n\
+             \x20 profiling:\n\
+             \x20   type: concurrency\n\
+             \x20   requests: 5\n\
+             \x20   concurrency: 2\n\
+             \x20 artifacts:\n\
+             \x20   dir: {}\n",
+            out_dir.path().to_str().unwrap(),
+        ),
+    )
+    .expect("write config");
+
+    let status = Command::new(aiperf_bin())
+        .args(["profile", "--config", config.to_str().unwrap()])
+        .env("AIPERF_RUNNER_BIN", &runner)
+        .status()
+        .expect("spawn aiperf profile --config");
+
+    let _ = mock_child.kill();
+
+    assert!(status.success(), "native YAML profile run failed: {status}");
+    let report = out_dir.path().join("native-v2.json");
+    assert!(report.exists(), "native-v2.json not written at {report:?}");
+    assert_report_has_records(&report);
+}
+
 /// Assert the native report is a schema-2.0 object with a metrics section.
 fn assert_report_has_records(report: &Path) {
     let bytes = std::fs::read(report).expect("read report");
