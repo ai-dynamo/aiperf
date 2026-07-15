@@ -62,7 +62,9 @@ use crate::graph_execution::{
 };
 use crate::graph_input::TStarWindow;
 use crate::protocol::{AdaptiveControlVariableSpec, PhaseSpec};
+use crate::protocol_v2::RunnerFailureStageV2;
 use crate::records::CapturedRecord;
+use crate::registry::PreparedRunFailure;
 
 /// Backend-owned inputs for one already lowered Graph-IR phase.
 pub(crate) struct GraphPhaseBackendConfig {
@@ -212,6 +214,8 @@ struct PreparedGraphPhase {
     controller: Rc<dyn ScheduledPhaseController>,
     failures: Rc<GraphPhaseFailures>,
     adaptive: Option<AdaptiveRunConfig>,
+    /// Whether this is the WARMUP phase (gates warmup-failure accounting).
+    is_warmup: bool,
 }
 
 struct GraphTracePhaseProgress {
@@ -253,6 +257,14 @@ struct GraphPhaseProgress {
     failures: Rc<GraphPhaseFailures>,
     traces: RefCell<HashMap<String, GraphTracePhaseProgress>>,
     outcome: Rc<RefCell<GraphWorkloadReport>>,
+    /// Whether this phase is the WARMUP phase, gating warmup-failure accounting.
+    is_warmup: bool,
+    /// Run-scoped ledger of WARMUP-phase trace ids that produced a terminal,
+    /// non-cancelled failure. Shared across every phase's progress so the
+    /// sequencer can abort before PROFILING. Mirrors agentx
+    /// `graph_ir_replay.py:_record_warmup_failure` (a WARMUP return carrying a
+    /// non-None error that is NOT cancelled).
+    warmup_failed_trace_ids: Rc<RefCell<Vec<String>>>,
 }
 
 impl GraphPhaseProgress {
@@ -260,12 +272,31 @@ impl GraphPhaseProgress {
         sink: Rc<dyn GraphPhaseProgressSink>,
         failures: Rc<GraphPhaseFailures>,
         outcome: Rc<RefCell<GraphWorkloadReport>>,
+        is_warmup: bool,
+        warmup_failed_trace_ids: Rc<RefCell<Vec<String>>>,
     ) -> Self {
         Self {
             sink,
             failures,
             traces: RefCell::new(HashMap::new()),
             outcome,
+            is_warmup,
+            warmup_failed_trace_ids,
+        }
+    }
+
+    /// Ledger one terminal (non-cancelled) WARMUP-phase failure for `trace_id`,
+    /// deduplicated so each failed trace is reported once. No-op outside the
+    /// WARMUP phase. Port of `graph_ir_replay.py:908` (`_record_warmup_failure`);
+    /// the run sequencer consumes the ledger to abort before PROFILING
+    /// (`phase/runner.py:578` `report_warmup_failures`).
+    fn note_warmup_failure(&self, trace_id: &str) {
+        if !self.is_warmup {
+            return;
+        }
+        let mut ledger = self.warmup_failed_trace_ids.borrow_mut();
+        if !ledger.iter().any(|existing| existing == trace_id) {
+            ledger.push(trace_id.to_owned());
         }
     }
 
@@ -352,6 +383,16 @@ impl GraphPhaseProgress {
                 released_at_first_token,
             )
         };
+        // AgentX warmup gate: a WARMUP node return carrying a non-cancelled
+        // error is a terminal warmup failure. The graph node-failure policy for
+        // the warmup priming turns is resilient (a failed reply does not abort
+        // the boundary trace), so the failure surfaces here as an errored
+        // per-node record rather than a trace-level `complete()` error — the
+        // exact analogue of Python `_on_graph_return`'s per-return dispatch to
+        // `_record_warmup_failure` (`graph_ir_replay.py:964`).
+        if record.ingest.errored && !record.ingest.canceled {
+            self.note_warmup_failure(&record.x_correlation_id);
+        }
         self.sink.record_returned(PhaseReturn {
             completes_session,
             cancelled: record.ingest.canceled,
@@ -445,6 +486,10 @@ impl GraphPhaseProgress {
         {
             self.failures
                 .record(format!("graph trace {trace_id:?} failed: {error}"));
+            // A WARMUP trace that aborts (fail-fast node policy) rather than
+            // completing with an errored record still counts as a terminal
+            // warmup failure for the pre-profiling abort gate.
+            self.note_warmup_failure(trace_id);
         }
         let mut outcome = self.outcome.borrow_mut();
         match result {
@@ -725,6 +770,7 @@ impl PhaseExecution for GraphPhaseExecution {
         let failures = self.failures.clone();
         let sidecars = self.sidecars.clone();
         let clock = self.clock.clone();
+        let progress = self.progress.clone();
         Box::pin(async move {
             if let Some(drain) = drain {
                 drain.await.map_err(|error| {
@@ -740,10 +786,25 @@ impl PhaseExecution for GraphPhaseExecution {
                     PhaseExecutionError::new(format!("finishing graph phase sidecar: {error:#}"))
                 })?;
             }
-            match failures.first() {
-                Some(error) => Err(PhaseExecutionError::new(error)),
-                None => Ok(()),
+            if let Some(error) = failures.first() {
+                return Err(PhaseExecutionError::new(error));
             }
+            // The record drain has now processed every WARMUP return, so the
+            // shared warmup-failure ledger is complete. A WARMUP phase that
+            // recorded a terminal (non-cancelled) trace failure fails HERE so
+            // the orchestrator never advances to PROFILING — the resilient
+            // warmup node policy lets the boundary trace complete, so this
+            // finalize-time gate is the point at which the run must stop.
+            // Mirrors agentx `report_warmup_failures` raising after warmup
+            // returning-complete (`phase/runner.py:578`); `run_graph_phases`
+            // then renders the structured `trajectory_warmup_failed` envelope
+            // from the same ledger.
+            if progress.is_warmup && !progress.warmup_failed_trace_ids.borrow().is_empty() {
+                return Err(PhaseExecutionError::new(
+                    "warmup phase recorded terminal trace failures; aborting before profiling",
+                ));
+            }
+            Ok(())
         })
     }
 }
@@ -754,6 +815,9 @@ struct GraphPhaseExecutionFactory {
     placements: Vec<Rc<dyn TracePlacement>>,
     captured: Rc<RefCell<Vec<CapturedRecord>>>,
     outcome: Rc<RefCell<GraphWorkloadReport>>,
+    /// Run-scoped ledger of terminal WARMUP-phase trace failures, consumed by
+    /// [`run_graph_phases`] to abort before PROFILING.
+    warmup_failed_trace_ids: Rc<RefCell<Vec<String>>>,
 }
 
 impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
@@ -767,6 +831,8 @@ impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
             Rc::new(context.clone()),
             prepared.failures.clone(),
             self.outcome.clone(),
+            prepared.is_warmup,
+            self.warmup_failed_trace_ids.clone(),
         ));
         let observer = Rc::new(GraphPhaseWorkloadObserver {
             progress: progress.clone(),
@@ -1032,12 +1098,14 @@ pub(crate) async fn run_graph_phases(
         .zip(phase_sidecars)
         .map(|(config, sidecars)| (config.id.clone(), sidecars))
         .collect::<HashMap<_, _>>();
+    let warmup_failed_trace_ids = Rc::new(RefCell::new(Vec::new()));
     let execution_factory: Rc<dyn PhaseExecutionFactory> = Rc::new(GraphPhaseExecutionFactory {
         phases: RefCell::new(prepared),
         sidecars: RefCell::new(sidecars),
         placements,
         captured: captured.clone(),
         outcome: outcome.clone(),
+        warmup_failed_trace_ids: warmup_failed_trace_ids.clone(),
     });
     let phase_observer: Rc<dyn PhaseObserver> = Rc::new(NoopPhaseObserver);
     let runner_factory = Rc::new(ClockPhaseRunnerFactory::new(
@@ -1046,7 +1114,20 @@ pub(crate) async fn run_graph_phases(
         execution_factory,
     ));
     let orchestrator = ClockPhaseOrchestrator::new(phase_configs, runner_factory, phase_observer)?;
-    let phase_stats = orchestrator.run_all().await?;
+    // A terminal (non-cancelled) failure during the WARMUP phase already fails
+    // that phase, so `run_all` returns before PROFILING starts. Before
+    // propagating any error we consult the warmup ledger: if the WARMUP phase
+    // recorded terminal trace failures, the run aborts with the structured
+    // `trajectory_warmup_failed` envelope (the `TrajectoryWarmupFailedError`
+    // analogue) so benchmark numbers are never taken from a pool the warmup
+    // could not faithfully prime. Mirrors agentx `phase/runner.py:578`
+    // (`report_warmup_failures`) raising before PROFILING.
+    let run_result = orchestrator.run_all().await;
+    let warmup_failures = std::mem::take(&mut *warmup_failed_trace_ids.borrow_mut());
+    if !warmup_failures.is_empty() {
+        return Err(trajectory_warmup_failed_error(&warmup_failures));
+    }
+    let phase_stats = run_result?;
 
     let mut captured = std::mem::take(&mut *captured.borrow_mut());
     captured.sort_by(|left, right| {
@@ -1064,6 +1145,35 @@ pub(crate) async fn run_graph_phases(
         phases: phase_stats,
         workload,
     })
+}
+
+/// Build the structured `trajectory_warmup_failed` protocol-v2 execution
+/// failure for a WARMUP phase that recorded terminal trace failures.
+///
+/// The wire envelope is a stable lowercase-snake-case `code`
+/// (`trajectory_warmup_failed`, the `kind`) plus a message listing the failed
+/// trace ids — the `{ kind, failed_trace_ids }` analogue in the runner's
+/// `code` + `message` diagnostic shape. Returned as a downcastable
+/// [`PreparedRunFailure`] so the process coordinator emits an
+/// execution-stage failure envelope rather than the generic `execution_failed`
+/// fallback. Mirrors Python `TrajectoryWarmupFailedError`
+/// (`src/aiperf/common/scenario/base.py:182`), whose message likewise embeds the
+/// failed trace ids, raised by `report_warmup_failures`
+/// (`graph_ir_replay.py:908-931`, `phase/runner.py:578`).
+fn trajectory_warmup_failed_error(failed_trace_ids: &[String]) -> anyhow::Error {
+    let message = format!(
+        "Trajectory warmup failed for {} trace(s): {}. Run aborted to preserve metrics integrity.",
+        failed_trace_ids.len(),
+        failed_trace_ids.join(", ")
+    );
+    match PreparedRunFailure::new(
+        RunnerFailureStageV2::Execution,
+        "trajectory_warmup_failed",
+        message,
+    ) {
+        Ok(failure) => anyhow::Error::new(failure),
+        Err(error) => error,
+    }
 }
 
 fn validate_dataset_wrap_policy(
@@ -1251,6 +1361,7 @@ fn prepare_graph_phase(
         controller,
         failures,
         adaptive,
+        is_warmup: common.name == "warmup",
     })
 }
 
@@ -1686,8 +1797,29 @@ mod tests {
     ) -> (GraphPhaseProgress, Rc<RefCell<GraphWorkloadReport>>) {
         let outcome = Rc::new(RefCell::new(GraphWorkloadReport::default()));
         (
-            GraphPhaseProgress::new(sink, failures, outcome.clone()),
+            GraphPhaseProgress::new(
+                sink,
+                failures,
+                outcome.clone(),
+                false,
+                Rc::new(RefCell::new(Vec::new())),
+            ),
             outcome,
+        )
+    }
+
+    /// Build a WARMUP-phase progress plus the shared warmup-failure ledger it
+    /// records into, so a test can assert which trace ids the pre-profiling
+    /// abort gate would report.
+    fn warmup_progress(
+        sink: Rc<RecordingGraphPhaseProgressSink>,
+        failures: Rc<GraphPhaseFailures>,
+    ) -> (GraphPhaseProgress, Rc<RefCell<Vec<String>>>) {
+        let outcome = Rc::new(RefCell::new(GraphWorkloadReport::default()));
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        (
+            GraphPhaseProgress::new(sink, failures, outcome, true, ledger.clone()),
+            ledger,
         )
     }
 
@@ -1982,5 +2114,106 @@ mod tests {
             ]
         );
         assert!(failures.first().is_none());
+    }
+
+    #[test]
+    fn warmup_terminal_node_failure_is_ledgered_for_abort_gate() {
+        let sink = Rc::new(RecordingGraphPhaseProgressSink::default());
+        let failures = Rc::new(GraphPhaseFailures::default());
+        let (progress, ledger) = warmup_progress(sink, failures);
+        progress.admit(&TraceAdmissionInfo {
+            trace_id: "warmup-fail".into(),
+            node_count: 1,
+            arrival_ns: 0,
+        });
+        // Resilient warmup priming: a failed reply surfaces as an errored,
+        // non-cancelled per-node record (Python `_on_graph_return` -> error).
+        progress.record(&graph_phase_record("warmup-fail", true, false));
+        assert_eq!(*ledger.borrow(), vec!["warmup-fail".to_owned()]);
+    }
+
+    #[test]
+    fn warmup_trace_abort_is_ledgered_for_abort_gate() {
+        let sink = Rc::new(RecordingGraphPhaseProgressSink::default());
+        let failures = Rc::new(GraphPhaseFailures::default());
+        let (progress, ledger) = warmup_progress(sink, failures.clone());
+        progress.admit(&TraceAdmissionInfo {
+            trace_id: "warmup-abort".into(),
+            node_count: 1,
+            arrival_ns: 0,
+        });
+        // Fail-fast node policy: the trace itself aborts with a non-cancelled
+        // error and never emits a terminal record.
+        progress.complete(
+            "warmup-abort",
+            1,
+            true,
+            &Err(TraceError::Other("boom".into())),
+        );
+        assert_eq!(*ledger.borrow(), vec!["warmup-abort".to_owned()]);
+        assert!(failures.first().is_some());
+    }
+
+    #[test]
+    fn warmup_cancelled_return_is_not_a_terminal_failure() {
+        let sink = Rc::new(RecordingGraphPhaseProgressSink::default());
+        let failures = Rc::new(GraphPhaseFailures::default());
+        let (progress, ledger) = warmup_progress(sink, failures);
+        progress.admit(&TraceAdmissionInfo {
+            trace_id: "warmup-cancelled".into(),
+            node_count: 1,
+            arrival_ns: 0,
+        });
+        // Cancelled returns are excluded even when they carry error text
+        // (agentx parity: a drain-cancel is self-inflicted teardown).
+        progress.record(&graph_phase_record("warmup-cancelled", true, true));
+        assert!(ledger.borrow().is_empty());
+        // And a trace cancelled at completion is likewise not ledgered.
+        let sink = Rc::new(RecordingGraphPhaseProgressSink::default());
+        let failures = Rc::new(GraphPhaseFailures::default());
+        let (progress, ledger) = warmup_progress(sink, failures);
+        progress.admit(&TraceAdmissionInfo {
+            trace_id: "warmup-drain".into(),
+            node_count: 1,
+            arrival_ns: 0,
+        });
+        progress.complete(
+            "warmup-drain",
+            1,
+            true,
+            &Err(TraceError::Cancelled("phase grace expired".into())),
+        );
+        assert!(ledger.borrow().is_empty());
+    }
+
+    #[test]
+    fn profiling_phase_never_ledgers_warmup_failures() {
+        let sink = Rc::new(RecordingGraphPhaseProgressSink::default());
+        let failures = Rc::new(GraphPhaseFailures::default());
+        let outcome = Rc::new(RefCell::new(GraphWorkloadReport::default()));
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        // is_warmup = false: the same terminal failure is a normal profiling
+        // failure, never a pre-profiling abort trigger.
+        let progress = GraphPhaseProgress::new(sink, failures, outcome, false, ledger.clone());
+        progress.admit(&TraceAdmissionInfo {
+            trace_id: "profiling-fail".into(),
+            node_count: 1,
+            arrival_ns: 0,
+        });
+        progress.record(&graph_phase_record("profiling-fail", true, false));
+        assert!(ledger.borrow().is_empty());
+    }
+
+    #[test]
+    fn trajectory_warmup_failed_error_downcasts_to_execution_stage_failure() {
+        let error = trajectory_warmup_failed_error(&["trace-a".to_owned(), "trace-b".to_owned()]);
+        let failure = error
+            .downcast_ref::<PreparedRunFailure>()
+            .expect("structured warmup failure");
+        assert_eq!(failure.stage, RunnerFailureStageV2::Execution);
+        assert_eq!(failure.code, "trajectory_warmup_failed");
+        assert!(failure.message.contains("trace-a"));
+        assert!(failure.message.contains("trace-b"));
+        assert!(failure.message.contains("2 trace(s)"));
     }
 }
