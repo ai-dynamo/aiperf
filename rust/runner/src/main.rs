@@ -166,6 +166,11 @@ fn run_controller(envelope: &Value) -> ! {
     let report_path = std::path::Path::new(artifact_dir).join("native-v2.json");
     let cell_count =
         aiperf::runner_protocol::cellular_controller::cell_count_from_envelope(envelope);
+    // Compose the stock application so the merged-report export plane resolves the
+    // built-in exporter sinks from the one unified `AIPerfRegistry`, exactly as the
+    // single-process coordinator path does via `product_registry().exporters()`.
+    let application = compose_stock_application();
+    let exporters = application.product_registry().exporters();
     // Mirror run_v2's catch_unwind (see `handle_v2`): the controller runs the records
     // merge, native-v2 serialization, and the best-effort export plane inline in
     // run_cellular; a panic in any of them would otherwise unwind past this writer and
@@ -176,6 +181,7 @@ fn run_controller(envelope: &Value) -> ! {
             envelope,
             cell_count,
             &report_path,
+            exporters,
         )
     }));
     match outcome {

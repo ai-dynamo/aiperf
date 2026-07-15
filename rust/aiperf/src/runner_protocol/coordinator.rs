@@ -296,6 +296,7 @@ impl RunnerV2Coordinator {
                     &report_path,
                     &run.artifact_target,
                     &run.export,
+                    self.product_registry.exporters(),
                 ) {
                     Ok(provenance) => provenance,
                     Err(error) => {
@@ -369,6 +370,7 @@ fn persist_prepared_report(
     report_path: &Path,
     artifact_dir: &Path,
     export: &crate::export::ExportConfig,
+    exporters: &crate::export::ExporterRegistry,
 ) -> std::result::Result<BTreeMap<String, String>, ReportPersistenceFailure> {
     if report_path.exists() {
         return Err(ReportPersistenceFailure {
@@ -411,7 +413,7 @@ fn persist_prepared_report(
         }
         _ => artifact_dir.to_path_buf(),
     };
-    crate::export::run_exporters(&finalized, &export_dir, export);
+    exporters.run(&finalized, &export_dir, export);
     if let Some(report_commit) = report_commit {
         report_commit
             .commit()
@@ -626,6 +628,7 @@ mod tests {
             &report_path,
             root.path(),
             &crate::export::ExportConfig::default(),
+            &crate::export::ExporterRegistry::with_builtin_exporters(),
         )
         .unwrap_err();
 
@@ -646,6 +649,7 @@ mod tests {
             &report_path,
             root.path(),
             &crate::export::ExportConfig::default(),
+            &crate::export::ExporterRegistry::with_builtin_exporters(),
         )
         .unwrap_err();
 
@@ -666,6 +670,7 @@ mod tests {
             &report_path,
             root.path(),
             &crate::export::ExportConfig::default(),
+            &crate::export::ExporterRegistry::with_builtin_exporters(),
         )
         .unwrap();
 
@@ -696,6 +701,7 @@ mod tests {
             &report_path,
             root.path(),
             &crate::export::ExportConfig::default(),
+            &crate::export::ExporterRegistry::with_builtin_exporters(),
         )
         .unwrap_err();
 

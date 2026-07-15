@@ -19,6 +19,7 @@ mod transactional;
 pub(crate) use transactional::commit_on_clone;
 pub use transactional::{DuplicateName, TransactionalRegistry};
 
+use crate::adaptive::ActuatorRegistry;
 use crate::dataset::{
     DatasetError, EndpointResolver as DatasetEndpointResolver, LoaderRegistry, SamplerRegistry,
 };
@@ -26,6 +27,7 @@ use crate::endpoints::{
     Endpoint, EndpointFactory, EndpointId, EndpointRegistry, EndpointRegistryBuilder,
     EndpointRegistryError,
 };
+use crate::export::ExporterRegistry;
 #[cfg(feature = "runner-protocol")]
 use crate::runner_protocol::registry::{RunnerTransportFactory, RunnerWorkloadFactory};
 
@@ -144,6 +146,8 @@ impl AIPerfRegistryFactory for BuiltinAIPerfRegistryFactory {
             &BuiltinLoadersExtension as &dyn AIPerfExtension,
             &BuiltinSamplersExtension,
             &BuiltinEndpointsExtension,
+            &BuiltinExportersExtension,
+            &BuiltinActuatorsExtension,
             #[cfg(feature = "runner-protocol")]
             &crate::runner_protocol::registry::HttpExtension,
             #[cfg(feature = "runner-protocol")]
@@ -199,6 +203,43 @@ impl AIPerfExtension for BuiltinEndpointsExtension {
     }
 }
 
+/// Built-in post-report exporter sinks (genai-perf v1 JSON/CSV, server-metrics,
+/// timeslice, accuracy, parquet, console, OTLP, MLflow, W&B) in canonical emit
+/// order.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BuiltinExportersExtension;
+
+impl AIPerfExtension for BuiltinExportersExtension {
+    fn name(&self) -> &str {
+        "aiperf.builtin.exporters"
+    }
+
+    fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError> {
+        registry
+            .exporters
+            .register_builtins()
+            .map_err(|error| ExtensionError::rejected(error.to_string()))
+    }
+}
+
+/// Built-in adaptive control-variable actuator factories (`concurrency`,
+/// `prefill_concurrency`, `request_rate`, `users`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BuiltinActuatorsExtension;
+
+impl AIPerfExtension for BuiltinActuatorsExtension {
+    fn name(&self) -> &str {
+        "aiperf.builtin.actuators"
+    }
+
+    fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError> {
+        registry
+            .actuators
+            .register_builtins()
+            .map_err(|error| ExtensionError::rejected(error.to_string()))
+    }
+}
+
 /// Aggregate of every runtime-name registry shared by the native CLI paths.
 ///
 /// Directly injected seams such as clocks, transports, observers, segment
@@ -209,6 +250,14 @@ pub struct AIPerfRegistry {
     dataset_formats: LoaderRegistry,
     samplers: SamplerRegistry,
     endpoints: EndpointRegistry,
+    /// Name-keyed, explicitly ordered post-report exporter sinks. Populated by
+    /// [`BuiltinExportersExtension`]; consumed by the report-persistence call
+    /// sites (`persist_prepared_report`, the cellular controller).
+    exporters: ExporterRegistry,
+    /// Id-keyed adaptive control-variable actuator factories. Populated by
+    /// [`BuiltinActuatorsExtension`]; the online adaptive construction path reads
+    /// the same built-in set through [`ActuatorRegistry::with_builtin_actuators`].
+    actuators: ActuatorRegistry,
     /// Name-keyed protocol-v2 transport factories. Selection resolves a transport
     /// by id from this one catalog; there is no separate runner registry.
     #[cfg(feature = "runner-protocol")]
@@ -232,6 +281,8 @@ impl AIPerfRegistry {
             dataset_formats: LoaderRegistry::new(),
             samplers: SamplerRegistry::new(),
             endpoints: EndpointRegistryBuilder::new().freeze(),
+            exporters: ExporterRegistry::new(),
+            actuators: ActuatorRegistry::new(),
             #[cfg(feature = "runner-protocol")]
             transports: TransactionalRegistry::new(),
             #[cfg(feature = "runner-protocol")]
@@ -252,6 +303,8 @@ impl AIPerfRegistry {
             &BuiltinLoadersExtension as &dyn AIPerfExtension,
             &BuiltinSamplersExtension,
             &BuiltinEndpointsExtension,
+            &BuiltinExportersExtension,
+            &BuiltinActuatorsExtension,
         ])
     }
 
@@ -355,6 +408,16 @@ impl AIPerfRegistry {
     /// Registered endpoint dialect adapters.
     pub fn endpoints(&self) -> &EndpointRegistry {
         &self.endpoints
+    }
+
+    /// Registered post-report exporter sinks in canonical emit order.
+    pub fn exporters(&self) -> &ExporterRegistry {
+        &self.exporters
+    }
+
+    /// Registered adaptive control-variable actuator factories.
+    pub fn actuators(&self) -> &ActuatorRegistry {
+        &self.actuators
     }
 
     /// Register one statically linked endpoint factory during startup.

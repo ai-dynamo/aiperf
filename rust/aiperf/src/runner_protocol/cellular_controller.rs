@@ -130,6 +130,7 @@ pub fn run_cellular(
     envelope: &serde_json::Value,
     cell_count: u32,
     report_path: &Path,
+    exporters: &crate::export::ExporterRegistry,
 ) -> Result<CellularRunOutcome> {
     ensure!(cell_count >= 1, "cell_count must be at least 1");
     validate_cellular_run_shape(envelope)?;
@@ -314,7 +315,7 @@ pub fn run_cellular(
         // frontend would find no aiperf.json. Best-effort by contract: run_exporters
         // logs per-sink and never fails the run.
         if let Some(artifact_dir) = report_path.parent() {
-            crate::export::run_exporters(&report, artifact_dir, &cellular_export_config(envelope));
+            exporters.run(&report, artifact_dir, &cellular_export_config(envelope));
         }
 
         // Aggregate the cells' final heartbeats (counters summed, sketches t-digest

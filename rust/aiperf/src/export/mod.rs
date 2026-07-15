@@ -31,6 +31,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::extensions::DuplicateName;
 use crate::metrics_core::NativeReport;
@@ -119,10 +120,15 @@ const ORDER_FILE_WRITER: u32 = 0;
 const ORDER_UPLOADER: u32 = 1_000;
 
 /// One exporter plus its explicit emit-order key.
+#[derive(Clone)]
 struct OrderedExporter {
     /// Ascending sort key; ties break on [`Exporter::name`] for determinism.
     order: u32,
-    exporter: Box<dyn Exporter>,
+    /// Shared thread-safe (`Arc<… + Send + Sync>`) so the registry stays [`Clone`]
+    /// (which the transactional staging of the enclosing [`AIPerfRegistry`]
+    /// requires) and keeps that aggregate `Send + Sync` alongside its transport /
+    /// workload factories; the exporters themselves are stateless.
+    exporter: Arc<dyn Exporter + Send + Sync>,
 }
 
 /// Name-keyed, explicitly ordered registry of report exporters.
@@ -133,6 +139,11 @@ struct OrderedExporter {
 /// order from emit order — a later extension can slot a sink into the correct
 /// band without depending on insertion position. Names are unique (keyed by
 /// [`Exporter::name`]); a duplicate registration is rejected.
+///
+/// [`Clone`] (via shared `Arc` exporters) so it can be a field of the
+/// transactionally staged [`AIPerfRegistry`](crate::extensions::AIPerfRegistry),
+/// which the `BuiltinExportersExtension` populates.
+#[derive(Clone)]
 pub struct ExporterRegistry {
     entries: BTreeMap<String, OrderedExporter>,
 }
@@ -151,7 +162,7 @@ impl ExporterRegistry {
     pub fn register(
         &mut self,
         order: u32,
-        exporter: Box<dyn Exporter>,
+        exporter: Arc<dyn Exporter + Send + Sync>,
     ) -> Result<(), DuplicateName> {
         let name = exporter.name().to_string();
         if self.entries.contains_key(&name) {
@@ -162,40 +173,52 @@ impl ExporterRegistry {
         Ok(())
     }
 
+    /// Populate the complete native in-tree exporter set into this registry in
+    /// canonical emit order: local-file writers first, then network uploaders.
+    ///
+    /// This is the single source of truth for the built-in exporter set; both the
+    /// [`Self::with_builtin_exporters`] convenience constructor and the
+    /// `BuiltinExportersExtension` that folds these sinks into the unified
+    /// [`AIPerfRegistry`](crate::extensions::AIPerfRegistry) delegate here.
+    pub fn register_builtins(&mut self) -> Result<(), DuplicateName> {
+        // Local-file writers (so the uploaders below see the on-disk files).
+        let builtins: [(u32, Arc<dyn Exporter + Send + Sync>); 9] = [
+            (ORDER_FILE_WRITER, Arc::new(genai_perf::GenaiPerfV1Exporter)),
+            (
+                ORDER_FILE_WRITER + 1,
+                Arc::new(server_metrics::ServerMetricsExporter),
+            ),
+            (
+                ORDER_FILE_WRITER + 2,
+                Arc::new(timeslice::TimesliceExporter),
+            ),
+            (
+                ORDER_FILE_WRITER + 3,
+                Arc::new(accuracy_csv::AccuracyCsvExporter),
+            ),
+            (ORDER_FILE_WRITER + 4, Arc::new(parquet::ParquetExporter)),
+            (
+                ORDER_FILE_WRITER + 5,
+                Arc::new(console_txt::ConsoleTxtExporter),
+            ),
+            // Network / deferred uploaders.
+            (ORDER_UPLOADER, Arc::new(otel::OtelExporter)),
+            (ORDER_UPLOADER + 1, Arc::new(mlflow::MlflowExporter)),
+            (ORDER_UPLOADER + 2, Arc::new(wandb::WandbExporter)),
+        ];
+        for (order, exporter) in builtins {
+            self.register(order, exporter)?;
+        }
+        Ok(())
+    }
+
     /// Construct the complete native in-tree exporter set in canonical emit
     /// order: local-file writers first, then network uploaders.
     pub fn with_builtin_exporters() -> Self {
         let mut registry = Self::new();
-        // Local-file writers (so the uploaders below see the on-disk files).
-        let builtins: [(u32, Box<dyn Exporter>); 9] = [
-            (ORDER_FILE_WRITER, Box::new(genai_perf::GenaiPerfV1Exporter)),
-            (
-                ORDER_FILE_WRITER + 1,
-                Box::new(server_metrics::ServerMetricsExporter),
-            ),
-            (
-                ORDER_FILE_WRITER + 2,
-                Box::new(timeslice::TimesliceExporter),
-            ),
-            (
-                ORDER_FILE_WRITER + 3,
-                Box::new(accuracy_csv::AccuracyCsvExporter),
-            ),
-            (ORDER_FILE_WRITER + 4, Box::new(parquet::ParquetExporter)),
-            (
-                ORDER_FILE_WRITER + 5,
-                Box::new(console_txt::ConsoleTxtExporter),
-            ),
-            // Network / deferred uploaders.
-            (ORDER_UPLOADER, Box::new(otel::OtelExporter)),
-            (ORDER_UPLOADER + 1, Box::new(mlflow::MlflowExporter)),
-            (ORDER_UPLOADER + 2, Box::new(wandb::WandbExporter)),
-        ];
-        for (order, exporter) in builtins {
-            registry
-                .register(order, exporter)
-                .expect("built-in exporter names are unique");
-        }
+        registry
+            .register_builtins()
+            .expect("built-in exporter names are unique");
         registry
     }
 
@@ -208,7 +231,9 @@ impl ExporterRegistry {
                 .cmp(&b.order)
                 .then_with(|| a.exporter.name().cmp(b.exporter.name()))
         });
-        ordered.into_iter().map(|entry| entry.exporter.as_ref())
+        ordered
+            .into_iter()
+            .map(|entry| entry.exporter.as_ref() as &dyn Exporter)
     }
 
     /// Run every enabled exporter over the finalized report in emit order.
@@ -323,10 +348,10 @@ mod tests {
     fn duplicate_exporter_name_is_rejected() {
         let mut registry = ExporterRegistry::new();
         registry
-            .register(0, Box::new(genai_perf::GenaiPerfV1Exporter))
+            .register(0, Arc::new(genai_perf::GenaiPerfV1Exporter))
             .unwrap();
         let error = registry
-            .register(5, Box::new(genai_perf::GenaiPerfV1Exporter))
+            .register(5, Arc::new(genai_perf::GenaiPerfV1Exporter))
             .unwrap_err();
         assert_eq!(error, DuplicateName("genai_perf_v1".to_owned()));
     }

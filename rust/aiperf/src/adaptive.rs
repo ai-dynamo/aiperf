@@ -7,6 +7,7 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use crate::adaptive_core::{
     AdaptiveObserver, AdaptiveScale, AdaptiveScaleOptions, ControlActuator, CorrelationContext,
@@ -236,7 +237,12 @@ impl ActuatorFactory for UsersActuatorFactory {
 /// [`SamplerRegistry`]: crate::dataset::SamplerRegistry
 #[derive(Clone)]
 pub struct ActuatorRegistry {
-    factories: TransactionalRegistry<Rc<dyn ActuatorFactory>>,
+    // `Arc<dyn … + Send + Sync>` (not `Rc`) so the enclosing
+    // [`AIPerfRegistry`](crate::extensions::AIPerfRegistry) that now owns this
+    // registry stays `Send + Sync`. Factories are stateless, so requiring the
+    // shared handle be thread-safe costs nothing; only the built actuators they
+    // return (`Rc<dyn ControlActuator>`) remain thread-local.
+    factories: TransactionalRegistry<Arc<dyn ActuatorFactory + Send + Sync>>,
 }
 
 impl Default for ActuatorRegistry {
@@ -253,21 +259,36 @@ impl ActuatorRegistry {
         }
     }
 
+    /// Populate the four native control-variable actuator factories into this
+    /// registry.
+    ///
+    /// This is the single source of truth for the built-in actuator set; both the
+    /// [`Self::with_builtin_actuators`] convenience constructor and the
+    /// `BuiltinActuatorsExtension` that folds these factories into the unified
+    /// [`AIPerfRegistry`](crate::extensions::AIPerfRegistry) delegate here.
+    pub fn register_builtins(&mut self) -> Result<()> {
+        self.register(ConcurrencyActuatorFactory)?;
+        self.register(PrefillConcurrencyActuatorFactory)?;
+        self.register(RequestRateActuatorFactory)?;
+        self.register(UsersActuatorFactory)?;
+        Ok(())
+    }
+
     /// Register the four native control-variable actuator factories.
     pub fn with_builtin_actuators() -> Result<Self> {
         let mut registry = Self::new();
-        registry.register(ConcurrencyActuatorFactory)?;
-        registry.register(PrefillConcurrencyActuatorFactory)?;
-        registry.register(RequestRateActuatorFactory)?;
-        registry.register(UsersActuatorFactory)?;
+        registry.register_builtins()?;
         Ok(registry)
     }
 
     /// Register one factory, rejecting a duplicate control-variable id.
-    pub fn register(&mut self, factory: impl ActuatorFactory + 'static) -> Result<()> {
+    pub fn register(
+        &mut self,
+        factory: impl ActuatorFactory + Send + Sync + 'static,
+    ) -> Result<()> {
         let id = factory.id();
         self.factories
-            .insert(id, Rc::new(factory))
+            .insert(id, Arc::new(factory))
             .map_err(|error| anyhow!("{error}"))
     }
 
