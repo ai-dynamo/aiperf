@@ -43,5 +43,6 @@ pub mod transport_bench;
 pub mod transport_sink;
 pub mod tstar;
 pub mod validate;
+pub mod warmup_handoff;
 pub mod wire;
 pub mod workload;
