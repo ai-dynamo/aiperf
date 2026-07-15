@@ -277,6 +277,23 @@ const OUTPUT_METRICS: &[&str] = &[
     "request_latency",
 ];
 
+/// Serialize one record row (compact JSON + trailing newline) into `writer`,
+/// exactly as [`write_records_jsonl`] emits each line. Shared by the batch writer
+/// and the streaming [`crate::record_lane::RecordArtifactLane`] so both are
+/// byte-identical for the same record.
+pub(crate) fn write_record_jsonl_row(
+    writer: &mut dyn Write,
+    captured: &CapturedRecord,
+    config: &MetricsConfig,
+    include_trace: bool,
+) -> Result<()> {
+    let row = record_row(captured, config, include_trace);
+    serde_json::to_writer(&mut *writer, &row).context("serializing record export row")?;
+    writer
+        .write_all(b"\n")
+        .context("writing record export row newline")
+}
+
 /// Write finalized request metrics in deterministic arrival order.
 pub(crate) fn write_records_jsonl(
     path: &Path,
@@ -292,11 +309,7 @@ pub(crate) fn write_records_jsonl(
         .with_context(|| format!("creating native record export {}", path.display()))?;
     let mut writer = BufWriter::new(file);
     for captured in records {
-        let row = record_row(captured, config, include_trace);
-        serde_json::to_writer(&mut writer, &row)
-            .with_context(|| format!("serializing record export {}", path.display()))?;
-        writer
-            .write_all(b"\n")
+        write_record_jsonl_row(&mut writer, captured, config, include_trace)
             .with_context(|| format!("writing record export {}", path.display()))?;
     }
     writer
@@ -478,100 +491,137 @@ fn csv_opt_u64(value: Option<u64>) -> String {
 /// projected metrics and no error is skipped (mirroring the Python
 /// `if not display_metrics and not error: return`); an all-skipped run writes no
 /// file.
+/// Build the records CSV header line (no trailing newline): fixed metadata
+/// columns, one column per catalog record-metric (`{Header} ({unit})`), the error
+/// triple, then the optional flat `trace_*` columns. Shared by [`write_records_csv`]
+/// and the streaming [`crate::record_lane::RecordArtifactLane`] so both emit the
+/// exact same header bytes.
+pub(crate) fn record_csv_header(include_trace: bool) -> String {
+    use aiperf::metrics_core::record_metric_columns;
+
+    let columns = record_metric_columns();
+    let mut header: Vec<String> = CSV_METADATA_COLUMNS
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+    for column in &columns {
+        header.push(csv_escape(&column.csv_display_name()));
+    }
+    header.push("error_code".to_string());
+    header.push("error_type".to_string());
+    header.push("error_message".to_string());
+    if include_trace {
+        header.extend(CSV_TRACE_COLUMNS.iter().map(|name| name.to_string()));
+    }
+    header.join(",")
+}
+
+/// Build one records CSV data row (no trailing newline) for `captured`, or `None`
+/// when the record has neither a projected metric nor an error and must be skipped
+/// (mirroring the Python `if not display_metrics and not error: return`). Shared by
+/// [`write_records_csv`] and the streaming lane so both emit identical row bytes and
+/// apply the identical skip-empty rule.
+pub(crate) fn record_csv_row(
+    captured: &CapturedRecord,
+    config: &MetricsConfig,
+    include_trace: bool,
+) -> Option<String> {
+    use aiperf::metrics_core::record_metric_columns;
+
+    let columns = record_metric_columns();
+    let metrics = record_metrics(captured, config);
+    let error = classify_record_error(captured);
+    // Skip records with nothing to report unless they carry an error.
+    if metrics.is_empty() && error.is_none() {
+        return None;
+    }
+    let record = &captured.ingest;
+    let mut cells: Vec<String> = Vec::with_capacity(
+        CSV_METADATA_COLUMNS.len() + columns.len() + 3 + CSV_TRACE_COLUMNS.len(),
+    );
+
+    // Metadata (order matches CSV_METADATA_COLUMNS).
+    cells.push(record.session_num.to_string());
+    cells.push(csv_escape(&captured.uuid.to_string()));
+    cells.push(csv_escape(&captured.x_correlation_id));
+    cells.push(
+        record
+            .conversation_id
+            .as_deref()
+            .map(csv_escape)
+            .unwrap_or_default(),
+    );
+    cells.push(record.turn_index.to_string());
+    cells.push(csv_opt_i64(record.admit_ns));
+    cells.push(record.start_ns.to_string());
+    cells.push(csv_opt_i64(record.first_token_ns));
+    cells.push(record.end_ns.to_string());
+    cells.push("rust-0".to_string());
+    cells.push("aiperf-runner".to_string());
+    cells.push(phase_str(record.phase).to_string());
+    cells.push(record.canceled.to_string());
+    cells.push(csv_opt_i64(record.canceled.then_some(record.end_ns)));
+
+    // Metrics: one value cell per catalog column (unit is carried in the
+    // header), empty when the record lacks the metric.
+    for column in &columns {
+        match metrics.get(&column.tag) {
+            Some(metric) => cells.push(metric.value.to_string()),
+            None => cells.push(String::new()),
+        }
+    }
+
+    // Error: code / type / message (empty when the record reached a normal
+    // terminal).
+    match &error {
+        Some(classified) => {
+            cells.push(csv_opt_i64(classified.code.map(i64::from)));
+            cells.push(classified.error_type.to_string());
+            cells.push(csv_escape(&classified.message));
+        }
+        None => {
+            cells.push(String::new());
+            cells.push(String::new());
+            cells.push(String::new());
+        }
+    }
+
+    // Trace columns, only when requested (mirrors the JSONL's conditional
+    // trace_data and the Parquet trace_* tail).
+    if include_trace {
+        let http = &record.http;
+        cells.push(csv_opt_i64(http.stream_setup_ns));
+        cells.push(csv_opt_i64(http.blocked_ns));
+        cells.push(csv_opt_i64(http.dns_lookup_ns));
+        cells.push(csv_opt_i64(http.connecting_ns));
+        cells.push(csv_opt_i64(http.sending_ns));
+        cells.push(csv_opt_i64(http.waiting_ns));
+        cells.push(csv_opt_i64(http.receiving_ns));
+        cells.push(csv_opt_i64(http.duration_ns));
+        cells.push(csv_opt_u64(http.data_sent_bytes));
+        cells.push(csv_opt_u64(http.data_received_bytes));
+        cells.push(csv_opt_u64(http.chunks_sent));
+        cells.push(csv_opt_u64(http.chunks_received));
+        cells.push(
+            http.connection_reused
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+        );
+    }
+
+    Some(cells.join(","))
+}
+
 pub(crate) fn write_records_csv(
     path: &Path,
     records: &[CapturedRecord],
     config: &MetricsConfig,
     include_trace: bool,
 ) -> Result<()> {
-    use aiperf::metrics_core::record_metric_columns;
-
-    let columns = record_metric_columns();
-
-    let mut rows: Vec<String> = Vec::new();
-    for captured in records {
-        let metrics = record_metrics(captured, config);
-        let error = classify_record_error(captured);
-        // Skip records with nothing to report unless they carry an error.
-        if metrics.is_empty() && error.is_none() {
-            continue;
-        }
-        let record = &captured.ingest;
-        let mut cells: Vec<String> = Vec::with_capacity(
-            CSV_METADATA_COLUMNS.len() + columns.len() + 3 + CSV_TRACE_COLUMNS.len(),
-        );
-
-        // Metadata (order matches CSV_METADATA_COLUMNS).
-        cells.push(record.session_num.to_string());
-        cells.push(csv_escape(&captured.uuid.to_string()));
-        cells.push(csv_escape(&captured.x_correlation_id));
-        cells.push(
-            record
-                .conversation_id
-                .as_deref()
-                .map(csv_escape)
-                .unwrap_or_default(),
-        );
-        cells.push(record.turn_index.to_string());
-        cells.push(csv_opt_i64(record.admit_ns));
-        cells.push(record.start_ns.to_string());
-        cells.push(csv_opt_i64(record.first_token_ns));
-        cells.push(record.end_ns.to_string());
-        cells.push("rust-0".to_string());
-        cells.push("aiperf-runner".to_string());
-        cells.push(phase_str(record.phase).to_string());
-        cells.push(record.canceled.to_string());
-        cells.push(csv_opt_i64(record.canceled.then_some(record.end_ns)));
-
-        // Metrics: one value cell per catalog column (unit is carried in the
-        // header), empty when the record lacks the metric.
-        for column in &columns {
-            match metrics.get(&column.tag) {
-                Some(metric) => cells.push(metric.value.to_string()),
-                None => cells.push(String::new()),
-            }
-        }
-
-        // Error: code / type / message (empty when the record reached a normal
-        // terminal).
-        match &error {
-            Some(classified) => {
-                cells.push(csv_opt_i64(classified.code.map(i64::from)));
-                cells.push(classified.error_type.to_string());
-                cells.push(csv_escape(&classified.message));
-            }
-            None => {
-                cells.push(String::new());
-                cells.push(String::new());
-                cells.push(String::new());
-            }
-        }
-
-        // Trace columns, only when requested (mirrors the JSONL's conditional
-        // trace_data and the Parquet trace_* tail).
-        if include_trace {
-            let http = &record.http;
-            cells.push(csv_opt_i64(http.stream_setup_ns));
-            cells.push(csv_opt_i64(http.blocked_ns));
-            cells.push(csv_opt_i64(http.dns_lookup_ns));
-            cells.push(csv_opt_i64(http.connecting_ns));
-            cells.push(csv_opt_i64(http.sending_ns));
-            cells.push(csv_opt_i64(http.waiting_ns));
-            cells.push(csv_opt_i64(http.receiving_ns));
-            cells.push(csv_opt_i64(http.duration_ns));
-            cells.push(csv_opt_u64(http.data_sent_bytes));
-            cells.push(csv_opt_u64(http.data_received_bytes));
-            cells.push(csv_opt_u64(http.chunks_sent));
-            cells.push(csv_opt_u64(http.chunks_received));
-            cells.push(
-                http.connection_reused
-                    .map(|v| v.to_string())
-                    .unwrap_or_default(),
-            );
-        }
-
-        rows.push(cells.join(","));
-    }
+    let rows: Vec<String> = records
+        .iter()
+        .filter_map(|captured| record_csv_row(captured, config, include_trace))
+        .collect();
 
     // No displayable records -> no file (mirrors the Python zero-row cleanup and
     // the Parquet empty-skip).
@@ -587,22 +637,8 @@ pub(crate) fn write_records_csv(
         .with_context(|| format!("creating records CSV export {}", path.display()))?;
     let mut writer = BufWriter::new(file);
 
-    let mut header: Vec<String> = CSV_METADATA_COLUMNS
-        .iter()
-        .map(|name| name.to_string())
-        .collect();
-    for column in &columns {
-        header.push(csv_escape(&column.csv_display_name()));
-    }
-    header.push("error_code".to_string());
-    header.push("error_type".to_string());
-    header.push("error_message".to_string());
-    if include_trace {
-        header.extend(CSV_TRACE_COLUMNS.iter().map(|name| name.to_string()));
-    }
-
     writer
-        .write_all(header.join(",").as_bytes())
+        .write_all(record_csv_header(include_trace).as_bytes())
         .and_then(|()| writer.write_all(b"\n"))
         .with_context(|| format!("writing records CSV header {}", path.display()))?;
     for row in &rows {
@@ -637,6 +673,34 @@ pub(crate) fn record_json_value(
 /// enclosing JSONL object. The response side comes from the terminal
 /// `aiperf-transport-http` record, so no SSE frame, status, response header, or
 /// structured transport error is reconstructed from aggregate metrics.
+/// Serialize one raw request/response row (compact JSON + trailing newline) into
+/// `writer`, exactly as [`write_raw_records_jsonl`] emits each line. Shared by the
+/// batch writer and the streaming [`crate::record_lane::RecordArtifactLane`] so both
+/// are byte-identical for the same record. The captured request payload is validated
+/// through [`RawValue`] here (preserving its original bytes verbatim), matching the
+/// batch writer.
+pub(crate) fn write_raw_record_jsonl_row(
+    writer: &mut dyn Write,
+    captured: &CapturedRecord,
+) -> Result<()> {
+    let payload = captured
+        .raw
+        .as_ref()
+        .map(|raw| serde_json::from_slice::<Box<RawValue>>(&raw.request_payload))
+        .transpose()
+        .with_context(|| {
+            format!(
+                "validating captured request payload for raw record {}",
+                captured.uuid
+            )
+        })?;
+    let row = raw_record_row(captured, payload.as_deref());
+    serde_json::to_writer(&mut *writer, &row).context("serializing raw record export row")?;
+    writer
+        .write_all(b"\n")
+        .context("writing raw record export row newline")
+}
+
 pub(crate) fn write_raw_records_jsonl(path: &Path, records: &[CapturedRecord]) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -646,22 +710,7 @@ pub(crate) fn write_raw_records_jsonl(path: &Path, records: &[CapturedRecord]) -
         .with_context(|| format!("creating native raw record export {}", path.display()))?;
     let mut writer = BufWriter::new(file);
     for captured in records {
-        let payload = captured
-            .raw
-            .as_ref()
-            .map(|raw| serde_json::from_slice::<Box<RawValue>>(&raw.request_payload))
-            .transpose()
-            .with_context(|| {
-                format!(
-                    "validating captured request payload for raw record {}",
-                    captured.uuid
-                )
-            })?;
-        let row = raw_record_row(captured, payload.as_deref());
-        serde_json::to_writer(&mut writer, &row)
-            .with_context(|| format!("serializing raw record export {}", path.display()))?;
-        writer
-            .write_all(b"\n")
+        write_raw_record_jsonl_row(&mut writer, captured)
             .with_context(|| format!("writing raw record export {}", path.display()))?;
     }
     writer

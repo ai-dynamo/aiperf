@@ -114,6 +114,7 @@ use crate::protocol::{
     SyntheticVideoSpec,
 };
 use crate::readiness::{PreparedOnlineReadiness, ReadinessTransportFactory};
+use crate::record_lane::RecordArtifactLane;
 use crate::records::{
     CapturedHttpExchange, CapturedModelOutput, CapturedRecord, InputSession, group_record_errors,
     observe_otel_record, write_inputs_json, write_outputs_json, write_raw_records_jsonl,
@@ -784,19 +785,23 @@ fn validate_plan(request: &NativeRunSpec) -> Result<()> {
     Ok(())
 }
 
-/// Whether the run requests any per-record file artifact (records/raw/outputs/inputs
-/// JSONL, the columnar records sidecars, or per-record OTLP). Exact-fold drops the
-/// per-record data during the run, so it is eligible only when every one of these is
-/// absent; the streaming writers that let artifact-present runs also drop are later
-/// tasks (S2–S4).
-fn wants_per_record_artifacts(request: &NativeRunSpec) -> bool {
-    request.artifacts.records_path.is_some()
-        || request.artifacts.raw_path.is_some()
-        || request.artifacts.outputs_path.is_some()
-        || request.artifacts.inputs_path.is_some()
-        || request.artifacts.records_parquet_path.is_some()
-        || request.artifacts.records_csv_path.is_some()
-        || request.native_otel_enabled
+/// Whether the run requests a per-record artifact the fold path cannot yet stream,
+/// which therefore disqualifies exact-fold.
+///
+/// `records.jsonl`, `raw.jsonl`, and the per-record CSV are NO LONGER here (task S2):
+/// the streaming [`RecordArtifactLane`] writes each of those one row per record at
+/// completion, then the fold drops the record, so an artifact-present run can still
+/// fold-and-drop. What remains disqualifying is what still needs the full retained
+/// record set at end-of-run: `outputs.json` and `inputs.json` (task S4), the columnar
+/// Parquet sidecar (task S3), and the per-record OTLP histograms (task S3).
+fn wants_per_record_artifacts(
+    artifacts: &crate::protocol::ArtifactSpec,
+    native_otel_enabled: bool,
+) -> bool {
+    artifacts.outputs_path.is_some()
+        || artifacts.inputs_path.is_some()
+        || artifacts.records_parquet_path.is_some()
+        || native_otel_enabled
 }
 
 /// Force-disable switch for exact-fold, mirroring the `AIPERF_RUNTIME_*` env toggles
@@ -2110,7 +2115,7 @@ async fn execute_native_inner(
             wants_adaptive_record,
             live_sink.is_some(),
             HeartbeatLane::enabled_by_env(),
-            wants_per_record_artifacts(&request),
+            wants_per_record_artifacts(&request.artifacts, request.native_otel_enabled),
         );
     let (captured, input_sessions, was_cancelled, has_warmup, start_ns) = if !shardable {
         let execution_backend = transport_factory.build(HttpExecutionBackendConfig {
@@ -2127,16 +2132,50 @@ async fn execute_native_inner(
         // the controller aggregates across cells in Phase 2. It consumes the per-record
         // live clone, so it forces record capture on even without the Python sink.
         let heartbeat_lane = HeartbeatLane::from_env(clock.clone(), start_ns)?;
-        let capture = Rc::new(RunCapture::new(
-            clock.clone(),
-            start_ns,
-            metrics_config.clone(),
-            request.artifacts.raw_path.is_some(),
-            request.artifacts.inputs_path.is_some(),
-            live_sink.is_some() || heartbeat_lane.is_some(),
-            wants_adaptive_record,
-            exact_fold,
-        ));
+        // Streaming per-record artifact lane (task S2): only the exact-fold path, which
+        // drops each record mid-run, needs it — the retain path still uses the batch
+        // writers in the tail. Built here so it truncates its files before dispatch;
+        // returns `None` when exact-fold is off or no records/raw/CSV artifact is
+        // requested. Its parent dirs are created eagerly (before `create_run_artifacts`
+        // in the async block), matching the batch writers' own dir creation.
+        let record_lane = if exact_fold {
+            RecordArtifactLane::new(
+                request
+                    .artifacts
+                    .records_path
+                    .as_ref()
+                    .map(|path| artifact_path(&request.artifact_dir, path, "records_path"))
+                    .transpose()?,
+                request
+                    .artifacts
+                    .raw_path
+                    .as_ref()
+                    .map(|path| artifact_path(&request.artifact_dir, path, "raw_path"))
+                    .transpose()?,
+                request
+                    .artifacts
+                    .records_csv_path
+                    .as_ref()
+                    .map(|path| artifact_path(&request.artifact_dir, path, "records_csv_path"))
+                    .transpose()?,
+                request.artifacts.trace,
+            )?
+        } else {
+            None
+        };
+        let capture = Rc::new(
+            RunCapture::new(
+                clock.clone(),
+                start_ns,
+                metrics_config.clone(),
+                request.artifacts.raw_path.is_some(),
+                request.artifacts.inputs_path.is_some(),
+                live_sink.is_some() || heartbeat_lane.is_some(),
+                wants_adaptive_record,
+                exact_fold,
+            )
+            .with_record_lane(record_lane),
+        );
         let execution_result = async {
             execution_backend.set_run_origin(start_ns)?;
             // Build one worker-local observer per execution worker from the single
@@ -2294,6 +2333,10 @@ async fn execute_native_inner(
         // path's dispatch-order re-ingest. The retain path keeps the full record Vec
         // and ingests it.
         let captured = if folds_records {
+            // Exact-fold streamed each record's records/raw/CSV rows into the artifact
+            // lane at completion (task S2); flush and close it now that every record has
+            // folded. A no-op when no lane is attached (sketch, or no lane artifact).
+            capture.finish_record_lane()?;
             let (streamed, errored) = capture.take_streamed();
             accumulator
                 .merge(&streamed)
@@ -2505,21 +2548,31 @@ async fn execute_native_inner(
         .map(|server_metrics| {
             server_metrics.summarize(MetricsPhase::Warmup, metrics_config.slice_duration_ns)
         });
-    if let Some(records_path) = &request.artifacts.records_path {
-        let records_path = artifact_path(&request.artifact_dir, records_path, "records_path")?;
-        write_records_jsonl(
-            &records_path,
-            &captured,
-            &metrics_config,
-            request.artifacts.trace,
-        )?;
+    // The exact-fold path already streamed records.jsonl / raw.jsonl / the per-record
+    // CSV row-by-row through the artifact lane (and flushed it at the finalize), so
+    // `captured` here holds only the retained errored records — running the batch
+    // writers over it would truncate the streamed files to the errored subset. Skip
+    // the three streamed batch writers under exact-fold; the retain path (and every
+    // non-folding mode) still writes them here. Parquet, outputs.json, and inputs.json
+    // stay disqualifying for exact-fold (tasks S3/S4), so their writers below remain
+    // inert under exact-fold and need no guard.
+    if !exact_fold {
+        if let Some(records_path) = &request.artifacts.records_path {
+            let records_path = artifact_path(&request.artifact_dir, records_path, "records_path")?;
+            write_records_jsonl(
+                &records_path,
+                &captured,
+                &metrics_config,
+                request.artifacts.trace,
+            )?;
+        }
+        write_records_csv_artifact(&request, &captured, &metrics_config)?;
+        if let Some(raw_path) = &request.artifacts.raw_path {
+            let raw_path = artifact_path(&request.artifact_dir, raw_path, "raw_path")?;
+            write_raw_records_jsonl(&raw_path, &captured)?;
+        }
     }
     write_records_parquet_artifact(&request, &captured, &metrics_config)?;
-    write_records_csv_artifact(&request, &captured, &metrics_config)?;
-    if let Some(raw_path) = &request.artifacts.raw_path {
-        let raw_path = artifact_path(&request.artifact_dir, raw_path, "raw_path")?;
-        write_raw_records_jsonl(&raw_path, &captured)?;
-    }
     if let Some(outputs_path) = &request.artifacts.outputs_path {
         let outputs_path = artifact_path(&request.artifact_dir, outputs_path, "outputs_path")?;
         write_outputs_json(&outputs_path, &captured, &metrics_config)?;
@@ -4146,6 +4199,12 @@ struct RunCapture {
     /// per completed turn, so it never outgrows in-flight work. Only populated in
     /// exact-fold mode.
     fold_dispatch_ordinals: RefCell<HashMap<Uuid, usize>>,
+    /// Streaming per-record artifact lane (task S2): when exact-fold runs a records/
+    /// raw/CSV-artifact run, each completed record's rows are appended here before the
+    /// fold drops it, so the artifacts are still emitted without retaining every record.
+    /// `None` on the legacy retain path (which uses the batch writers) and whenever no
+    /// lane artifact is requested. Set once at construction via [`Self::with_record_lane`].
+    record_lane: Option<Rc<RecordArtifactLane>>,
 }
 
 impl RunCapture {
@@ -4278,6 +4337,26 @@ impl RunCapture {
             exact_fold,
             fold_dispatch_next: Cell::new(0),
             fold_dispatch_ordinals: RefCell::new(HashMap::new()),
+            record_lane: None,
+        }
+    }
+
+    /// Attach the streaming per-record artifact lane, consumed once per completed
+    /// record in the exact-fold [`Self::fold_record`] path before the record is
+    /// dropped. Builder-style so only the single-thread exact-fold call site opts in;
+    /// every other construction leaves it `None` and uses the batch writers.
+    fn with_record_lane(mut self, lane: Option<Rc<RecordArtifactLane>>) -> Self {
+        self.record_lane = lane;
+        self
+    }
+
+    /// Flush and close the streaming per-record artifact lane, if one is attached.
+    /// Called once at run end after every record has been folded (and its rows
+    /// streamed); a lazy CSV that saw no non-skipped row stays absent.
+    fn finish_record_lane(&self) -> Result<()> {
+        match &self.record_lane {
+            Some(lane) => lane.finish(),
+            None => Ok(()),
         }
     }
 
@@ -4637,7 +4716,7 @@ impl RunCapture {
         has_credit_timestamp: bool,
         request_index: Option<usize>,
         credit: &IssuedCredit,
-    ) {
+    ) -> Result<()> {
         let admit_ns =
             has_credit_timestamp.then(|| credit.issued_ns.saturating_sub(self.origin_ns));
         self.fold_record(
@@ -4648,7 +4727,7 @@ impl RunCapture {
             credit.id,
             admit_ns,
             request_index,
-        );
+        )
     }
 
     /// Stamp the coordinator-owned fields onto one completed record, process it into
@@ -4670,7 +4749,7 @@ impl RunCapture {
         session_num: u64,
         admit_ns: Option<i64>,
         request_index: Option<usize>,
-    ) {
+    ) -> Result<()> {
         ingest.phase = phase;
         ingest.session_num = session_num;
         ingest.admit_ns = admit_ns;
@@ -4678,15 +4757,32 @@ impl RunCapture {
             ingest.request_index = Some(row);
         }
         self.accumulator.borrow_mut().process_record(&ingest);
-        if ingest.errored || ingest.canceled {
-            self.streaming_errored.borrow_mut().push(CapturedRecord {
+        let errored = ingest.errored || ingest.canceled;
+        // Materialize a CapturedRecord only when something consumes it: the streaming
+        // artifact lane (task S2) writes every record's rows, and the error grouping
+        // retains errored records. The raw HTTP exchange captured for this uuid is
+        // pulled out here (present only when `raw_path` is enabled) so raw.jsonl and
+        // the error classification see the same transport facts the retain path does;
+        // the drop keeps `raw_exchanges` bounded to in-flight work.
+        if self.record_lane.is_some() || errored {
+            let raw = self.raw_exchanges.borrow_mut().remove(&uuid);
+            let captured = CapturedRecord {
                 uuid,
                 x_correlation_id: x_correlation_id.to_string(),
+                // records/raw/CSV rows never read the model output text (only the
+                // still-disqualified outputs.json does), so the default is byte-safe.
                 output: CapturedModelOutput::default(),
-                raw: None,
+                raw,
                 ingest,
-            });
+            };
+            if let Some(lane) = &self.record_lane {
+                lane.write(&captured, &self.metrics_config)?;
+            }
+            if errored {
+                self.streaming_errored.borrow_mut().push(captured);
+            }
         }
+        Ok(())
     }
 
     /// Remove one metrics-only turn's staged worker record for the phase
@@ -4966,7 +5062,7 @@ impl TurnRecordProcessor for CapturePhaseProcessor {
                 self.has_credit_timestamp,
                 request_index,
                 credit,
-            );
+            )?;
             return Ok(());
         }
         self.capture
@@ -5071,6 +5167,67 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    /// Task S2 relaxes the exact-fold gate: records.jsonl / raw.jsonl / the per-record
+    /// CSV are streamed row-by-row through [`RecordArtifactLane`], so they no longer
+    /// disqualify the fold; outputs.json, inputs.json, the Parquet sidecar, and the
+    /// per-record OTLP histograms still need the full retained set (tasks S3/S4) and
+    /// stay disqualifying.
+    #[test]
+    fn exact_fold_gate_accepts_streamed_artifacts_and_rejects_retained_ones() {
+        use crate::protocol::ArtifactSpec;
+
+        let eligible = |artifacts: &ArtifactSpec, native_otel: bool| {
+            exact_fold_eligible(
+                false, // sketch_mode
+                false, // shardable
+                false, // is_cellular
+                false, // has_accuracy
+                false, // wants_adaptive_record
+                false, // has_live_sink
+                false, // has_heartbeat
+                wants_per_record_artifacts(artifacts, native_otel),
+            )
+        };
+
+        // No artifacts at all: eligible (the S1 baseline).
+        assert!(eligible(&ArtifactSpec::default(), false));
+
+        // Streamed artifacts (records / raw / CSV, alone or together, trace on): still
+        // eligible now that the lane writes them.
+        let streamed = ArtifactSpec {
+            records_path: Some("profile_export.jsonl".into()),
+            raw_path: Some("profile_export_raw.jsonl".into()),
+            records_csv_path: Some("profile_export_records.csv".into()),
+            trace: true,
+            ..ArtifactSpec::default()
+        };
+        assert!(eligible(&streamed, false));
+
+        // Each still-retained artifact independently disqualifies the fold.
+        for artifacts in [
+            ArtifactSpec {
+                outputs_path: Some("outputs.json".into()),
+                ..ArtifactSpec::default()
+            },
+            ArtifactSpec {
+                inputs_path: Some("inputs.json".into()),
+                ..ArtifactSpec::default()
+            },
+            ArtifactSpec {
+                records_parquet_path: Some("profile_export.parquet".into()),
+                ..ArtifactSpec::default()
+            },
+        ] {
+            assert!(
+                !eligible(&artifacts, false),
+                "retained artifact must disqualify exact-fold: {artifacts:?}"
+            );
+        }
+        // Per-record OTLP (native_otel_enabled) also disqualifies, even alongside the
+        // now-streamed artifacts.
+        assert!(!eligible(&streamed, true));
+    }
 
     fn synthetic(value: serde_json::Value) -> SyntheticDatasetSpec {
         serde_json::from_value(value).unwrap()
@@ -5818,15 +5975,17 @@ mod tests {
             );
             let records = build_records();
             for i in (0..records.len()).rev() {
-                capture.fold_record(
-                    records[i].clone(),
-                    source_facts[i].uuid,
-                    "corr",
-                    phases[i],
-                    i as u64,
-                    Some(admits[i]),
-                    Some(i),
-                );
+                capture
+                    .fold_record(
+                        records[i].clone(),
+                        source_facts[i].uuid,
+                        "corr",
+                        phases[i],
+                        i as u64,
+                        Some(admits[i]),
+                        Some(i),
+                    )
+                    .unwrap();
             }
             let (streamed, errored_records) = capture.take_streamed();
             assert_eq!(

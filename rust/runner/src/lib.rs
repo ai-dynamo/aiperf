@@ -36,6 +36,7 @@ pub mod online_execution;
 pub mod protocol;
 pub mod protocol_v2;
 pub mod readiness;
+mod record_lane;
 mod records;
 pub mod redaction;
 pub mod registry;
