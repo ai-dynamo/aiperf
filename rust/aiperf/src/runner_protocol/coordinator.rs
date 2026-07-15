@@ -12,26 +12,26 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use aiperf::extensions::{AiperfRegistry, AiperfRegistryFactory};
-use aiperf::metrics_core::ReportRunProvenance;
-use aiperf::report::finalize_and_write_native_report_json;
+use crate::extensions::{AiperfRegistry, AiperfRegistryFactory};
+use crate::metrics_core::ReportRunProvenance;
+use crate::report::finalize_and_write_native_report_json;
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 
-use crate::dataset_input::RunnerDatasetInputAdapterResolver;
-use crate::execution_factories::RunnerExecutionFactories;
-use crate::graph_input::RunnerGraphInputAdapterResolver;
-use crate::protocol::RunnerCatalog;
-use crate::protocol_v2::{
+use crate::runner_protocol::dataset_input::RunnerDatasetInputAdapterResolver;
+use crate::runner_protocol::execution_factories::RunnerExecutionFactories;
+use crate::runner_protocol::graph_input::RunnerGraphInputAdapterResolver;
+use crate::runner_protocol::protocol::RunnerCatalog;
+use crate::runner_protocol::protocol_v2::{
     DeferredCheckV2, RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2,
     RunnerEnvelopeV2, RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
 };
-use aiperf::runner_protocol::redaction::redact_diagnostic;
-use crate::registry::{
+use crate::runner_protocol::redaction::redact_diagnostic;
+use crate::runner_protocol::registry::{
     PreparedRunFailure, PreparedRunOutcome, RunnerRegistry, RunnerRegistryFactory,
     RunnerRunContext, validate_endpoint_profiles_v2,
 };
-use crate::sidecar_input::RunnerSidecarInputAdapterResolver;
+use crate::runner_protocol::sidecar_input::RunnerSidecarInputAdapterResolver;
 
 /// Exactly one typed response emitted for a protocol-v2 request.
 #[derive(Debug, Serialize)]
@@ -373,7 +373,7 @@ fn persist_prepared_report(
     report_provenance: ReportRunProvenance,
     report_path: &Path,
     artifact_dir: &Path,
-    export: &aiperf::export::ExportConfig,
+    export: &crate::export::ExportConfig,
 ) -> std::result::Result<BTreeMap<String, String>, ReportPersistenceFailure> {
     if report_path.exists() {
         return Err(ReportPersistenceFailure {
@@ -402,7 +402,7 @@ fn persist_prepared_report(
     })?;
     // Native post-report export plane. Best-effort: the native-v2 report above is
     // the committed authority; genai-perf compat / OTLP / MLflow side outputs log
-    // and never fail the run (see `aiperf::export`).
+    // and never fail the run (see `crate::export`).
     //
     // `AIPERF_EXPORT_SUBDIR` (parity-proof only) redirects the native sink outputs
     // into `<artifact_dir>/<subdir>/` so they coexist with the legacy Python
@@ -416,7 +416,7 @@ fn persist_prepared_report(
         }
         _ => artifact_dir.to_path_buf(),
     };
-    aiperf::export::run_exporters(&finalized, &export_dir, export);
+    crate::export::run_exporters(&finalized, &export_dir, export);
     if let Some(report_commit) = report_commit {
         report_commit
             .commit()
@@ -540,7 +540,7 @@ fn terminal_failure_with_artifacts(
     stage: RunnerFailureStageV2,
     code: &str,
     message: impl Into<String>,
-    diagnostic_artifacts: Vec<crate::protocol_v2::RunDiagnosticArtifactV2>,
+    diagnostic_artifacts: Vec<crate::runner_protocol::protocol_v2::RunDiagnosticArtifactV2>,
     exit_code: i32,
 ) -> RunnerProcessResultV2 {
     RunnerProcessResultV2 {
@@ -572,8 +572,8 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
-    use crate::protocol_v2::RunDiagnosticArtifactV2;
-    use crate::registry::PreparedReportCommit;
+    use crate::runner_protocol::protocol_v2::RunDiagnosticArtifactV2;
+    use crate::runner_protocol::registry::PreparedReportCommit;
 
     #[derive(Debug)]
     struct TrackingCommit {
@@ -600,7 +600,7 @@ mod tests {
             "evaluation",
             Vec::new(),
             vec![
-                aiperf::metrics_core::ReportEndpointProfileIdentity::new("default", "chat")
+                crate::metrics_core::ReportEndpointProfileIdentity::new("default", "chat")
                     .unwrap(),
             ],
         )
@@ -609,11 +609,11 @@ mod tests {
 
     fn outcome(calls: Arc<AtomicUsize>, fail: bool) -> PreparedRunOutcome {
         PreparedRunOutcome {
-            native_report: aiperf::metrics_core::NativeReport::new(
-                &aiperf::metrics_core::AccumulatorSummary::new(),
+            native_report: crate::metrics_core::NativeReport::new(
+                &crate::metrics_core::AccumulatorSummary::new(),
                 None,
             ),
-            report_facts: aiperf::metrics_core::ReportPairRunFacts::new(),
+            report_facts: crate::metrics_core::ReportPairRunFacts::new(),
             provenance: BTreeMap::from([("fixture".to_owned(), "durable".to_owned())]),
             report_commit: Some(Box::new(TrackingCommit { calls, fail })),
         }
@@ -631,7 +631,7 @@ mod tests {
             provenance(),
             &report_path,
             root.path(),
-            &aiperf::export::ExportConfig::default(),
+            &crate::export::ExportConfig::default(),
         )
         .unwrap_err();
 
@@ -651,7 +651,7 @@ mod tests {
             provenance(),
             &report_path,
             root.path(),
-            &aiperf::export::ExportConfig::default(),
+            &crate::export::ExportConfig::default(),
         )
         .unwrap_err();
 
@@ -671,7 +671,7 @@ mod tests {
             provenance(),
             &report_path,
             root.path(),
-            &aiperf::export::ExportConfig::default(),
+            &crate::export::ExportConfig::default(),
         )
         .unwrap();
 
@@ -701,7 +701,7 @@ mod tests {
             provenance(),
             &report_path,
             root.path(),
-            &aiperf::export::ExportConfig::default(),
+            &crate::export::ExportConfig::default(),
         )
         .unwrap_err();
 

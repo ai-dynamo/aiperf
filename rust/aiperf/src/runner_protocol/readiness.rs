@@ -19,14 +19,14 @@ use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use aiperf::clock::Clock;
-use aiperf::endpoints::{
+use crate::clock::Clock;
+use crate::endpoints::{
     EndpointId, EndpointRegistry, PreparedReadinessRequest, RawEndpointConfig, ReadinessMethod,
     ReadinessPolicy, ReadinessSuccess,
 };
-use aiperf::transport_http::config::ClientConfig;
-use aiperf::transport_http::models::{ConnectionReuseStrategy, RequestConfig, Response};
-use aiperf::transport_http::transport::http_transport::HttpTransport;
+use crate::transport_http::config::ClientConfig;
+use crate::transport_http::models::{ConnectionReuseStrategy, RequestConfig, Response};
+use crate::transport_http::transport::http_transport::HttpTransport;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -778,7 +778,7 @@ mod tests {
     use std::future::Future;
     use std::pin::Pin;
 
-    use aiperf::transport_http::models::HttpVersion;
+    use crate::transport_http::models::HttpVersion;
 
     use super::*;
 

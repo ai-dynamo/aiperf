@@ -7,7 +7,7 @@
 //! controller rather than executing in-process. It partitions the request budget by
 //! `(cell_id, cell_count)`, spawns one `aiperf-runner --cell` child per cell (each a
 //! separate OS process, wired with the autonomous issuer and per-cell sampler),
-//! serves the [`transport`](aiperf::cellular::transport) endpoint the cells ship
+//! serves the [`transport`](crate::cellular::transport) endpoint the cells ship
 //! their records-shard partitions and heartbeats back over, merges every cell's
 //! records in global dispatch-ordinal order into the single authoritative
 //! `native-v2.json`, and fails the run loudly if any cell exits non-zero. To the
@@ -16,15 +16,15 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use aiperf::cellular::{
+use crate::cellular::{
     CellMessage, ControllerTransport, MetricsHeartbeat, RecordsShardPartition, TDigest,
     TcpControllerTransport, merge_records_by_concatenation, merge_records_in_global_order,
 };
-use aiperf::metrics_core::report::NativeReport;
-use aiperf::metrics_core::{ExportContext, MetricsAccumulator, MetricsConfig, PERCENTILES};
+use crate::metrics_core::report::NativeReport;
+use crate::metrics_core::{ExportContext, MetricsAccumulator, MetricsConfig, PERCENTILES};
 use anyhow::{Context, Result, bail, ensure};
 
-use crate::cellular_cell::CellLaunchSpec;
+use crate::runner_protocol::cellular_cell::CellLaunchSpec;
 
 /// The outcome of a cellular run: the merged report path plus a live view of the
 /// last heartbeat each cell reported (for diagnostics/logging).
@@ -257,7 +257,7 @@ pub fn run_cellular(
         let merged = kind.merge(metrics_config, partitions)?;
         let record_count = merged.record_count();
         let summary = merged.export_results(&ExportContext::phase(
-            aiperf::metrics_core::Phase::Profiling,
+            crate::metrics_core::Phase::Profiling,
         ));
         // Assemble the report so its metric data matches a 1-cell run: the profiling
         // metrics, the warmup section (carried only when a warmup phase actually ran,
@@ -280,13 +280,13 @@ pub fn run_cellular(
         //     locally but does not ship. All three are report-fidelity gaps, not metric
         //     corruption; the record-derived distributions stay byte-identical.
         let warmup =
-            merged.export_results(&ExportContext::phase(aiperf::metrics_core::Phase::Warmup));
-        let outcome = aiperf::metrics_core::report::RunOutcome {
-            run: aiperf::metrics_core::report::ReportRunInfo {
+            merged.export_results(&ExportContext::phase(crate::metrics_core::Phase::Warmup));
+        let outcome = crate::metrics_core::report::RunOutcome {
+            run: crate::metrics_core::report::ReportRunInfo {
                 mode: Some("online".to_owned()),
                 model: cellular_model_name(envelope),
             },
-            summary: aiperf::metrics_core::report::ReportSummary {
+            summary: crate::metrics_core::report::ReportSummary {
                 endpoints_configured: cellular_endpoint_urls(envelope),
                 ..Default::default()
             },
@@ -315,7 +315,7 @@ pub fn run_cellular(
         // frontend would find no aiperf.json. Best-effort by contract: run_exporters
         // logs per-sink and never fails the run.
         if let Some(artifact_dir) = report_path.parent() {
-            aiperf::export::run_exporters(&report, artifact_dir, &cellular_export_config(envelope));
+            crate::export::run_exporters(&report, artifact_dir, &cellular_export_config(envelope));
         }
 
         // Aggregate the cells' final heartbeats (counters summed, sketches t-digest
@@ -484,8 +484,8 @@ fn build_cell_envelope(
 ///   so the merged report silently reorders (or, for variable turn counts, draws a
 ///   different instance set). Only `turns == 1` (the default) is sound.
 ///
-/// [`PartitionedSampler`]: aiperf::dataset::sampler
-/// [`CellularAutonomousIssuer`]: aiperf::cellular::CellularAutonomousIssuer
+/// [`PartitionedSampler`]: crate::dataset::sampler
+/// [`CellularAutonomousIssuer`]: crate::cellular::CellularAutonomousIssuer
 fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
     if let Some(transport) = envelope
         .pointer("/run/cfg/transport/type")
@@ -643,8 +643,8 @@ fn validate_cellular_phase_budgets(envelope: &serde_json::Value, cell_count: u32
 /// same `>= cell_count` floor as the scheduled path applies (below it every cell floors
 /// to 1 and the aggregate over-subscribes to `cell_count`).
 ///
-/// [`PartitionedGraphTraceSource`]: aiperf::graph::workload::PartitionedGraphTraceSource
-/// [`CyclingGraphTraceSource`]: aiperf::graph::workload::CyclingGraphTraceSource
+/// [`PartitionedGraphTraceSource`]: crate::graph::workload::PartitionedGraphTraceSource
+/// [`CyclingGraphTraceSource`]: crate::graph::workload::CyclingGraphTraceSource
 fn validate_graph_cellular_phases(envelope: &serde_json::Value, cell_count: u32) -> Result<()> {
     let phases = envelope
         .pointer("/run/cfg/phases")
@@ -682,7 +682,7 @@ fn validate_graph_cellular_phases(envelope: &serde_json::Value, cell_count: u32)
 /// it is just each cell's share, summing to `total`.
 ///
 /// `pub(crate)` so the thread-per-core sharded scheduled runtime
-/// ([`crate::sharded_scheduled`]) reuses the identical round-robin share when it
+/// ([`crate::runner_protocol::sharded_scheduled`]) reuses the identical round-robin share when it
 /// slices a cell's already-cell-sliced phase budget across its `W` sub-cell
 /// threads — the two-level partition tiles only if both levels use this exact
 /// `ceil((total-k)/C)` share.
@@ -699,11 +699,11 @@ pub(crate) fn owned_positions(total: u64, cell_id: u32, cell_count: u32) -> u64 
 /// the single-process path does — `cfg.metrics` (SLOs + slice duration) plus
 /// `cfg.endpoint.use_server_token_count`. Passing `MetricsConfig::default()` would
 /// silently drop authored goodput SLOs and timeslice sweep-lines from the merged
-/// report. Mirrors [`crate::protocol::BenchmarkRunConfigWireV2`]'s
+/// report. Mirrors [`crate::runner_protocol::protocol::BenchmarkRunConfigWireV2`]'s
 /// `from_value(cfg.metrics).unwrap_or_default()` so an absent/loose `metrics` block
 /// falls back the same way (`metrics_config` still validates any SLO names present).
 fn cellular_metrics_config(envelope: &serde_json::Value) -> Result<MetricsConfig> {
-    let spec: crate::protocol::MetricsSpec = envelope
+    let spec: crate::runner_protocol::protocol::MetricsSpec = envelope
         .pointer("/run/cfg/metrics")
         .cloned()
         .map(|value| serde_json::from_value(value).unwrap_or_default())
@@ -712,7 +712,7 @@ fn cellular_metrics_config(envelope: &serde_json::Value) -> Result<MetricsConfig
         .pointer("/run/cfg/endpoint/use_server_token_count")
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
-    crate::execute::metrics_config(&spec, use_server_token_count)
+    crate::runner_protocol::execute::metrics_config(&spec, use_server_token_count)
 }
 
 /// Warns, once at controller startup, when a cellular run carries side-channel
@@ -820,7 +820,7 @@ fn warn_cellular_approximations(envelope: &serde_json::Value) {
 /// `cfg.export` exactly as the single-process path does
 /// (`protocol_v2::RunConfig::export`), defaulting when absent so the cellular run
 /// emits the same user-facing sink outputs (genai-perf-v1 JSON/CSV, console.txt, …).
-fn cellular_export_config(envelope: &serde_json::Value) -> aiperf::export::ExportConfig {
+fn cellular_export_config(envelope: &serde_json::Value) -> crate::export::ExportConfig {
     envelope
         .pointer("/run/cfg/export")
         .cloned()

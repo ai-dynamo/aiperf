@@ -19,14 +19,14 @@ use aiperf::graph::placement::{GraphPlacementError, TracePlacementFactory};
 use aiperf::http::{MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor};
 use aiperf::metrics_core::InferenceDimensions;
 use aiperf::multiturn::TurnToSend;
-use aiperf_runner::coordinator::{RunnerResponseV2, RunnerV2Coordinator};
-use aiperf_runner::dataset_input::BuiltinRunnerDatasetInputAdapterResolver;
-use aiperf_runner::graph_input::BuiltinRunnerGraphInputAdapterResolver;
-use aiperf_runner::readiness::{
+use aiperf::runner_protocol::coordinator::{RunnerResponseV2, RunnerV2Coordinator};
+use aiperf::runner_protocol::dataset_input::BuiltinRunnerDatasetInputAdapterResolver;
+use aiperf::runner_protocol::graph_input::BuiltinRunnerGraphInputAdapterResolver;
+use aiperf::runner_protocol::readiness::{
     NativeHttpReadinessPlanFactory, NativeHttpReadinessTransportFactory, ReadinessTransportFactory,
 };
-use aiperf_runner::registry::BuiltinRunnerRegistryFactory;
-use aiperf_runner::sidecar_input::BuiltinRunnerSidecarInputAdapterResolver;
+use aiperf::runner_protocol::registry::BuiltinRunnerRegistryFactory;
+use aiperf::runner_protocol::sidecar_input::BuiltinRunnerSidecarInputAdapterResolver;
 use aiperf_runner::{
     HttpExecutionBackendConfig, NativeRequestExecutorFactory, NativeRunnerGraphPlacementFactory,
     RequestExecutorFactory, RunnerExecutionFactories, RunnerGraphPlacementFactory,
@@ -171,7 +171,7 @@ fn benchmark_run(legacy: Value) -> Value {
 fn execute(
     coordinator: &RunnerV2Coordinator,
     run: Value,
-) -> aiperf_runner::coordinator::RunnerProcessResultV2 {
+) -> aiperf::runner_protocol::coordinator::RunnerProcessResultV2 {
     let envelope = serde_json::from_value(json!({
         "protocol_version": 2,
         "operation": "execute",
@@ -181,7 +181,7 @@ fn execute(
     coordinator.handle(envelope)
 }
 
-fn assert_success(result: &aiperf_runner::coordinator::RunnerProcessResultV2) {
+fn assert_success(result: &aiperf::runner_protocol::coordinator::RunnerProcessResultV2) {
     assert_eq!(result.exit_code, 0, "{:?}", result.response);
     match &result.response {
         RunnerResponseV2::Terminal(terminal) => {

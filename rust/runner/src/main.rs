@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 
-use aiperf_runner::protocol_v2::{
+use aiperf::runner_protocol::protocol_v2::{
     RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2, RunnerEnvelopeV2,
     RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
 };
@@ -90,7 +90,7 @@ fn main() {
     if std::env::var(aiperf::cellular::partition::CELL_ID_ENV).is_err()
         && let Ok(envelope) = serde_json::from_slice::<Value>(&input)
         && envelope.pointer("/operation").and_then(Value::as_str) == Some("execute")
-        && aiperf_runner::cellular_controller::cell_count_from_envelope(&envelope) > 1
+        && aiperf::runner_protocol::cellular_controller::cell_count_from_envelope(&envelope) > 1
     {
         run_controller(&envelope);
     }
@@ -107,7 +107,7 @@ fn main() {
 /// environment from the launch spec, then execute the sliced envelope through the
 /// ordinary single-process path (which the environment makes cell-aware).
 fn run_cell(input: Vec<u8>) -> ! {
-    let spec: aiperf_runner::cellular_cell::CellLaunchSpec = match serde_json::from_slice(&input) {
+    let spec: aiperf::runner_protocol::cellular_cell::CellLaunchSpec = match serde_json::from_slice(&input) {
         Ok(spec) => spec,
         Err(error) => {
             tracing::error!(error = %error, "invalid cell launch spec");
@@ -129,12 +129,12 @@ fn run_cell(input: Vec<u8>) -> ! {
             spec.cell_count.to_string(),
         );
         std::env::set_var(
-            aiperf_runner::cellular_cell::CELL_CONTROLLER_ADDR_ENV,
+            aiperf::runner_protocol::cellular_cell::CELL_CONTROLLER_ADDR_ENV,
             &spec.controller_addr,
         );
         if let Ok(bases) = serde_json::to_string(&spec.phase_ordinal_bases) {
             std::env::set_var(
-                aiperf_runner::cellular_cell::CELL_PHASE_ORDINAL_BASES_ENV,
+                aiperf::runner_protocol::cellular_cell::CELL_PHASE_ORDINAL_BASES_ENV,
                 bases,
             );
         }
@@ -163,14 +163,14 @@ fn run_controller(envelope: &Value) -> ! {
         .and_then(Value::as_str)
         .unwrap_or_default();
     let report_path = std::path::Path::new(artifact_dir).join("native-v2.json");
-    let cell_count = aiperf_runner::cellular_controller::cell_count_from_envelope(envelope);
+    let cell_count = aiperf::runner_protocol::cellular_controller::cell_count_from_envelope(envelope);
     // Mirror run_v2's catch_unwind (see `handle_v2`): the controller runs the records
     // merge, native-v2 serialization, and the best-effort export plane inline in
     // run_cellular; a panic in any of them would otherwise unwind past this writer and
     // abort the controller (exit 101) with no envelope, so Python would see a crashed
     // subprocess instead of a typed execution failure.
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        aiperf_runner::cellular_controller::run_cellular(envelope, cell_count, &report_path)
+        aiperf::runner_protocol::cellular_controller::run_cellular(envelope, cell_count, &report_path)
     }));
     match outcome {
         Ok(Ok(outcome)) => {

@@ -7,7 +7,7 @@
 //! ordinary online scheduled execution over its budget slice, but with the
 //! `CellularAutonomousIssuer` assigning dense global dispatch ordinals from its
 //! `(cell_id, cell_count)` partition, and it ships its captured records to the
-//! controller over the [`transport`](aiperf::cellular::transport) seam instead of
+//! controller over the [`transport`](crate::cellular::transport) seam instead of
 //! writing a report. The controller re-ingests every cell's records in global
 //! ordinal order for the single authoritative `native-v2.json`.
 //!
@@ -21,18 +21,18 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use aiperf::cellular::partition::CellPartition;
-use aiperf::cellular::{
+use crate::cellular::partition::CellPartition;
+use crate::cellular::{
     CellClient, CellMessage, CellularAutonomousIssuer, HeartbeatAccumulator, HeartbeatCounters,
     HeartbeatSaturation, IssuanceAuthority, MetricsHeartbeat, ModuloCellPartition,
     RecordsShardPartition, TcpCellClient,
 };
-use aiperf::metrics_core::{Phase, RecordIngest};
+use crate::metrics_core::{Phase, RecordIngest};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 /// Env var carrying the controller's `host:port` transport address (the cell id and
-/// count live in [`aiperf::cellular::partition`]'s env vars).
+/// count live in [`crate::cellular::partition`]'s env vars).
 pub const CELL_CONTROLLER_ADDR_ENV: &str = "AIPERF_CELL_CONTROLLER_ADDR";
 
 /// Env var carrying the per-phase global ordinal bases as JSON (`{name: base}`), so a
@@ -86,11 +86,11 @@ fn phase_from_name(name: &str) -> Option<Phase> {
 /// [`ModuloCellPartition::from_env`]), so the single-process default stays
 /// byte-unchanged.
 ///
-/// [`DirectIssuanceAuthority`]: aiperf::cellular::DirectIssuanceAuthority
+/// [`DirectIssuanceAuthority`]: crate::cellular::DirectIssuanceAuthority
 pub fn issuance_authority_from_env() -> std::rc::Rc<dyn IssuanceAuthority> {
     match ModuloCellPartition::from_env() {
         Some(partition) => std::rc::Rc::new(CellularAutonomousIssuer::new(partition)),
-        None => std::rc::Rc::new(aiperf::cellular::DirectIssuanceAuthority::new()),
+        None => std::rc::Rc::new(crate::cellular::DirectIssuanceAuthority::new()),
     }
 }
 
@@ -105,7 +105,7 @@ pub fn issuance_authority_from_env() -> std::rc::Rc<dyn IssuanceAuthority> {
 /// byte-unchanged. Always the autonomous issuer (never [`DirectIssuanceAuthority`]):
 /// a caller supplies a partition only when it wants global-ordinal stamping.
 ///
-/// [`DirectIssuanceAuthority`]: aiperf::cellular::DirectIssuanceAuthority
+/// [`DirectIssuanceAuthority`]: crate::cellular::DirectIssuanceAuthority
 pub fn issuance_authority_for(
     partition: ModuloCellPartition,
 ) -> std::rc::Rc<dyn IssuanceAuthority> {
@@ -170,7 +170,7 @@ impl CellRecordsShipper {
         let mut completed = 0_u64;
         let mut errored = 0_u64;
         for record in &records {
-            crate::heartbeat_lane::observe_ingest(&mut heartbeat, record);
+            crate::runner_protocol::heartbeat_lane::observe_ingest(&mut heartbeat, record);
             if record.errored || record.canceled {
                 errored += 1;
             } else {

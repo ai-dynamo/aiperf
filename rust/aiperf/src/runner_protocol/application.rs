@@ -10,19 +10,19 @@
 
 use std::sync::Arc;
 
-use aiperf::extensions::{AiperfRegistry, AiperfRegistryFactory, BuiltinAiperfRegistryFactory};
+use crate::extensions::{AiperfRegistry, AiperfRegistryFactory, BuiltinAiperfRegistryFactory};
 use anyhow::Result;
 
-use crate::coordinator::{RunnerProcessResultV2, RunnerV2Coordinator};
-use crate::dataset_input::{
+use crate::runner_protocol::coordinator::{RunnerProcessResultV2, RunnerV2Coordinator};
+use crate::runner_protocol::dataset_input::{
     BuiltinRunnerDatasetInputAdapterResolver, RunnerDatasetInputAdapterResolver,
 };
-use crate::execution_factories::{RunnerExecutionFactories, native_execution_factories};
-use crate::graph_input::{BuiltinRunnerGraphInputAdapterResolver, RunnerGraphInputAdapterResolver};
-use crate::protocol::RunnerCatalog;
-use crate::protocol_v2::RunnerEnvelopeV2;
-use crate::registry::{BuiltinRunnerRegistryFactory, RunnerRegistryFactory};
-use crate::sidecar_input::{
+use crate::runner_protocol::execution_factories::{RunnerExecutionFactories, native_execution_factories};
+use crate::runner_protocol::graph_input::{BuiltinRunnerGraphInputAdapterResolver, RunnerGraphInputAdapterResolver};
+use crate::runner_protocol::protocol::RunnerCatalog;
+use crate::runner_protocol::protocol_v2::RunnerEnvelopeV2;
+use crate::runner_protocol::registry::{BuiltinRunnerRegistryFactory, RunnerRegistryFactory};
+use crate::runner_protocol::sidecar_input::{
     BuiltinRunnerSidecarInputAdapterResolver, RunnerSidecarInputAdapterResolver,
 };
 

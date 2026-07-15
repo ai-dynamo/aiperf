@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::registry::RunnerRegistry;
+use crate::runner_protocol::registry::RunnerRegistry;
 
 /// One plugins.yaml-shaped catalog entry.
 #[derive(Debug, Serialize)]
@@ -43,7 +43,7 @@ impl RunnerCatalog {
     /// Serialize the exact endpoint and transport registries linked into this binary.
     pub fn from_registries(
         runner_registry: &RunnerRegistry,
-        product_registry: &aiperf::extensions::AiperfRegistry,
+        product_registry: &crate::extensions::AiperfRegistry,
     ) -> Self {
         let endpoint = product_registry
             .endpoints()
@@ -97,7 +97,7 @@ fn transport_url_schemes(id: &str) -> &'static [&'static str] {
     }
 }
 
-pub use crate::sidecar_input::{LiveStreamingSpec, MLflowStreamingSpec, OTelStreamingSpec};
+pub use crate::runner_protocol::sidecar_input::{LiveStreamingSpec, MLflowStreamingSpec, OTelStreamingSpec};
 
 /// Tokenizer source understood by the native dataset composer.
 #[derive(Clone, Debug, Deserialize)]
@@ -164,7 +164,7 @@ pub struct ArtifactSpec {
     pub trace: bool,
 }
 
-pub use crate::sidecar_input::{
+pub use crate::runner_protocol::sidecar_input::{
     GpuTelemetryMetricSpec, GpuTelemetrySourceSpec, GpuTelemetrySpec, GpuTelemetryUnitSpec,
     NetworkLatencyProbeSpec, NetworkLatencySpec, ServerMetricsFormatSpec, ServerMetricsSpec,
 };
@@ -217,7 +217,7 @@ pub struct ModelItemSpec {
     pub weight: Option<f64>,
 }
 
-pub use crate::dataset_input::*;
+pub use crate::runner_protocol::dataset_input::*;
 
 /// Ordered phase variants accepted by the native scheduler.
 #[derive(Clone, Deserialize)]
@@ -486,23 +486,23 @@ impl PhaseSpec {
     /// Request-rate arrival policy, absent for schedule-authored workloads.
     pub fn request_arrival(
         &self,
-    ) -> Option<(aiperf::timing::ArrivalPattern, Option<f64>, Option<f64>)> {
+    ) -> Option<(crate::timing::ArrivalPattern, Option<f64>, Option<f64>)> {
         match self {
             Self::Concurrency { .. } => {
-                Some((aiperf::timing::ArrivalPattern::ConcurrencyBurst, None, None))
+                Some((crate::timing::ArrivalPattern::ConcurrencyBurst, None, None))
             }
             Self::Poisson { rate, .. } => {
-                Some((aiperf::timing::ArrivalPattern::Poisson, Some(*rate), None))
+                Some((crate::timing::ArrivalPattern::Poisson, Some(*rate), None))
             }
             Self::Gamma {
                 rate, smoothness, ..
             } => Some((
-                aiperf::timing::ArrivalPattern::Gamma,
+                crate::timing::ArrivalPattern::Gamma,
                 Some(*rate),
                 *smoothness,
             )),
             Self::Constant { rate, .. } => {
-                Some((aiperf::timing::ArrivalPattern::Constant, Some(*rate), None))
+                Some((crate::timing::ArrivalPattern::Constant, Some(*rate), None))
             }
             Self::UserCentric { .. } | Self::FixedSchedule { .. } => None,
         }

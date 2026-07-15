@@ -18,35 +18,35 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use aiperf::content_server::ContentServerMediaPublisher;
-use aiperf::dataset::{
+use crate::content_server::ContentServerMediaPublisher;
+use crate::dataset::{
     DatasetFetcher, HttpDatasetFetcher, MaterializedTracePromptStorage,
     NativeSyntheticMediaGeneratorFactory, SyntheticMediaGeneratorFactory, TiktokenEncoding,
     download_hugging_face_tokenizer,
 };
-use aiperf::endpoints::Modality;
-use aiperf::failure::OnFailure;
-use aiperf::metrics_core::{ReportGraphRunInfo, ReportPairRunFacts};
-use aiperf::rng::RngRoot;
+use crate::endpoints::Modality;
+use crate::failure::OnFailure;
+use crate::metrics_core::{ReportGraphRunInfo, ReportPairRunFacts};
+use crate::rng::RngRoot;
 use anyhow::{Context, Result, anyhow, ensure};
 use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
 use url::Url;
 
-use crate::dataset_input::RunnerDatasetInputContext;
-use crate::execute::{
+use crate::runner_protocol::dataset_input::RunnerDatasetInputContext;
+use crate::runner_protocol::execute::{
     NativeDatasetPlan, NativeEndpointPlan, NativeGraphDatasetPlan, NativeRunSpec,
     NativeSidecarPlan, NativeStaticAccuracyEvaluatorFactory, NativeStaticAccuracyPlan,
     StaticAccuracyEvaluatorFactory, StaticAccuracyEvaluatorProcessSpec,
     execute_prepared_native_plan_uncommitted_selected, load_tokenizer,
 };
-use crate::execution_factories::RunnerExecutionFactories;
-use crate::graph_execution::GraphTransportKind;
-use crate::graph_input::RunnerGraphInputContext;
-use crate::protocol::{ArtifactSpec, PhaseSpec, TokenizerSpec};
-use crate::protocol_v2::AuthoredRunSpecV2;
-use crate::readiness::{PreparedOnlineReadiness, ReadinessEndpointProfile, ReadinessPlanInput};
-use crate::registry::{
+use crate::runner_protocol::execution_factories::RunnerExecutionFactories;
+use crate::runner_protocol::graph_execution::GraphTransportKind;
+use crate::runner_protocol::graph_input::RunnerGraphInputContext;
+use crate::runner_protocol::protocol::{ArtifactSpec, PhaseSpec, TokenizerSpec};
+use crate::runner_protocol::protocol_v2::AuthoredRunSpecV2;
+use crate::runner_protocol::readiness::{PreparedOnlineReadiness, ReadinessEndpointProfile, ReadinessPlanInput};
+use crate::runner_protocol::registry::{
     GRAPH_WORKLOAD_DESCRIPTOR, GraphWorkloadConfigV2, OnlineGrpcTransportConfigV2,
     OnlineHttpTransportConfigV2, PreparedRunOutcome, PreparedRunnerOperation,
     RunnerRegistryBuilder, RunnerRunContext, RunnerWorkloadDescriptor, RunnerWorkloadFactory,
@@ -54,7 +54,7 @@ use crate::registry::{
     StaticAccuracyWorkloadConfigV2, ValidatedTransportConfig, ValidatedWorkloadConfig,
     WorkloadRequirements, inference_workload_requirements, strict_decode, validate_common_workload,
 };
-use crate::turn_execution::RequestExecutorFactory;
+use crate::runner_protocol::turn_execution::RequestExecutorFactory;
 
 /// Native (`http`/`grpc`) transport execution selection, resolved from the
 /// validated transport config type. Non-native transports (e.g. dynosim) return
@@ -83,7 +83,7 @@ fn classify_native_transport(
     }
 }
 
-use crate::sidecar_input::{CONTENT_SERVER_SIDECAR_ID, ContentServerSpec};
+use crate::runner_protocol::sidecar_input::{CONTENT_SERVER_SIDECAR_ID, ContentServerSpec};
 
 /// Register the built-in executable workloads (`scheduled`, `graph`).
 ///
@@ -175,11 +175,11 @@ impl RunnerWorkloadFactory for ScheduledWorkloadFactoryV2 {
         match classify_native_transport(transport) {
             Some(NativeTransportSelection::Http) => validate_online_run(context)?,
             Some(NativeTransportSelection::Grpc) => {
-                crate::grpc_execution::validate_grpc_run(run, context)?;
+                crate::runner_protocol::grpc_execution::validate_grpc_run(run, context)?;
             }
             None => {
                 #[cfg(feature = "dynosim")]
-                return crate::offline_execution::dynosim_scheduled_validate_run(
+                return crate::runner_protocol::offline_execution::dynosim_scheduled_validate_run(
                     run, context, transport, workload,
                 );
                 #[cfg(not(feature = "dynosim"))]
@@ -210,7 +210,7 @@ impl RunnerWorkloadFactory for ScheduledWorkloadFactoryV2 {
             }
             None => {
                 #[cfg(feature = "dynosim")]
-                return crate::offline_execution::prepare_dynosim_scheduled(
+                return crate::runner_protocol::offline_execution::prepare_dynosim_scheduled(
                     run,
                     context,
                     transport,
@@ -276,7 +276,7 @@ impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
                 match selection {
                     NativeTransportSelection::Http => validate_online_run(context)?,
                     NativeTransportSelection::Grpc => {
-                        crate::grpc_execution::validate_grpc_run(run, context)?;
+                        crate::runner_protocol::grpc_execution::validate_grpc_run(run, context)?;
                     }
                 }
                 ensure!(
@@ -296,7 +296,7 @@ impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
             }
             None => {
                 #[cfg(feature = "dynosim")]
-                return crate::offline_execution::dynosim_graph_validate_run(
+                return crate::runner_protocol::offline_execution::dynosim_graph_validate_run(
                     run, context, transport, workload,
                 );
                 #[cfg(not(feature = "dynosim"))]
@@ -335,7 +335,7 @@ impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
             }
             None => {
                 #[cfg(feature = "dynosim")]
-                return crate::offline_execution::prepare_dynosim_graph(
+                return crate::runner_protocol::offline_execution::prepare_dynosim_graph(
                     run,
                     context,
                     transport,
@@ -888,7 +888,7 @@ impl AuthoredTokenizerV2 {
 /// two flags, so a descriptor with both false has no token metrics and needs no
 /// tokenizer. Descriptor-driven so any future non-tokenizing endpoint is
 /// covered without enumerating endpoint ids.
-fn endpoint_needs_tokenizer(descriptor: &aiperf::endpoints::EndpointDescriptor) -> bool {
+fn endpoint_needs_tokenizer(descriptor: &crate::endpoints::EndpointDescriptor) -> bool {
     descriptor.tokenizes_input || descriptor.produces_tokens
 }
 
@@ -899,7 +899,7 @@ fn endpoint_needs_tokenizer(descriptor: &aiperf::endpoints::EndpointDescriptor) 
 fn lower_tokenizer_for_endpoint(
     raw: &RawValue,
     resolver: &dyn OnlineTokenizerSourceResolver,
-    descriptor: &aiperf::endpoints::EndpointDescriptor,
+    descriptor: &crate::endpoints::EndpointDescriptor,
 ) -> Result<TokenizerSpec> {
     let authored = AuthoredTokenizerV2::decode(raw)?;
     if endpoint_needs_tokenizer(descriptor) {
@@ -1215,7 +1215,7 @@ fn build_common_plan(
 }
 
 fn validate_graph_endpoint_profile_references(
-    bundle: &aiperf::graph::input::GraphInputBundle,
+    bundle: &crate::graph::input::GraphInputBundle,
     context: &RunnerRunContext,
 ) -> Result<()> {
     context.default_endpoint_profile()?;
@@ -1259,7 +1259,7 @@ struct PreparedNativeOperation {
     plan: NativeRunSpec,
     request_executor: Arc<dyn RequestExecutorFactory>,
     execution_factories: RunnerExecutionFactories,
-    product_registry: Arc<aiperf::extensions::AiperfRegistry>,
+    product_registry: Arc<crate::extensions::AiperfRegistry>,
     readiness: Option<Box<dyn PreparedOnlineReadiness>>,
     report_facts: ReportPairRunFacts,
     provenance: BTreeMap<String, String>,
@@ -1308,7 +1308,7 @@ mod tests {
         async fn spawn(
             &self,
             _process: &StaticAccuracyEvaluatorProcessSpec,
-        ) -> Result<Box<dyn aiperf::accuracy_core::AccuracyEvaluator>> {
+        ) -> Result<Box<dyn crate::accuracy_core::AccuracyEvaluator>> {
             panic!("config lowering must retain, not invoke, the selected evaluator factory")
         }
     }
@@ -1325,7 +1325,7 @@ mod tests {
             url: &str,
             _cache_key: &str,
             _bearer_token: Option<&str>,
-        ) -> aiperf::dataset::Result<Bytes> {
+        ) -> crate::dataset::Result<Bytes> {
             self.urls.lock().unwrap().push(url.to_owned());
             if url.contains("/api/models/") {
                 return Ok(Bytes::from(
@@ -1335,7 +1335,7 @@ mod tests {
             if url.ends_with("/tokenizer.json") {
                 return Ok(Bytes::from_static(br#"{"version":"1.0"}"#));
             }
-            Err(aiperf::dataset::DatasetError::Validation(
+            Err(crate::dataset::DatasetError::Validation(
                 "optional fixture file is absent".into(),
             ))
         }

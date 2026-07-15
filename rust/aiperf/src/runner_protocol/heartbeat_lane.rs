@@ -23,12 +23,12 @@ use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use aiperf::cellular::{
+use crate::cellular::{
     HeartbeatAccumulator, HeartbeatCounters, HeartbeatSaturation, MetricsHeartbeat, TDigest,
 };
-use aiperf::clock::Clock;
-use aiperf::metrics_core::{PERCENTILES, RecordIngest};
-use aiperf::timing::{PhaseBranchStats, PhaseConfig, PhaseObserver, PhaseStats};
+use crate::clock::Clock;
+use crate::metrics_core::{PERCENTILES, RecordIngest};
+use crate::timing::{PhaseBranchStats, PhaseConfig, PhaseObserver, PhaseStats};
 use anyhow::{Context, Result};
 use serde::Serialize;
 

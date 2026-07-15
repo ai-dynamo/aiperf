@@ -18,29 +18,29 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use aiperf::endpoints::{EndpointId, EndpointRegistry, RawEndpointConfig, RequestContentType};
-use aiperf::extensions::AiperfRegistry;
-use aiperf::failure::OnFailure;
-use aiperf::metrics_core::{
+use crate::endpoints::{EndpointId, EndpointRegistry, RawEndpointConfig, RequestContentType};
+use crate::extensions::AiperfRegistry;
+use crate::failure::OnFailure;
+use crate::metrics_core::{
     NativeReport, ReportEndpointProfileIdentity, ReportExtensionIdentity, ReportPairRunFacts,
     ReportRunProvenance,
 };
-use aiperf::transport_http::config::ClientConfig;
-use aiperf::transport_http::models::{ConnectionReuseStrategy, HttpVersion};
+use crate::transport_http::config::ClientConfig;
+use crate::transport_http::models::{ConnectionReuseStrategy, HttpVersion};
 use anyhow::{Result, anyhow, bail, ensure};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, value::RawValue};
 
-use crate::dataset_input::RunnerDatasetInputAdapterResolver;
-use crate::execution_factories::RunnerExecutionFactories;
-use crate::graph_input::RunnerGraphInputAdapterResolver;
-use crate::protocol::PhaseSpec;
-use crate::protocol_v2::{
+use crate::runner_protocol::dataset_input::RunnerDatasetInputAdapterResolver;
+use crate::runner_protocol::execution_factories::RunnerExecutionFactories;
+use crate::runner_protocol::graph_input::RunnerGraphInputAdapterResolver;
+use crate::runner_protocol::protocol::PhaseSpec;
+use crate::runner_protocol::protocol_v2::{
     AuthoredRunSpecV2, NamedRunnerComponentSpecV2, RunDiagnosticArtifactV2, RunResourceV2,
     RunnerComponentId, RunnerFailureStageV2,
 };
-use crate::sidecar_input::PreparedSidecarInputs;
+use crate::runner_protocol::sidecar_input::PreparedSidecarInputs;
 
 /// Clock family supplied by one prepared transport.
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -669,7 +669,7 @@ impl RunnerRegistryFactory for BuiltinRunnerRegistryFactory {
         let mut builder = RunnerRegistryBuilder::new();
         builder.register_transport(Arc::new(OnlineGrpcTransportFactoryV2))?;
         builder.register_transport(Arc::new(OnlineHttpTransportFactoryV2))?;
-        crate::online_execution::register_online_workloads(&mut builder)?;
+        crate::runner_protocol::online_execution::register_online_workloads(&mut builder)?;
         register_optional_builtin_components(&mut builder)?;
         builder.freeze()
     }
@@ -680,7 +680,7 @@ fn register_optional_builtin_components(builder: &mut RunnerRegistryBuilder) -> 
     // registry and the descriptor predicate light up every compatible cell
     // without a per-cell registration or a mode string branch.
     #[cfg(feature = "dynosim")]
-    crate::offline_execution::register_dynosim_transport(builder)?;
+    crate::runner_protocol::offline_execution::register_dynosim_transport(builder)?;
     #[cfg(not(feature = "dynosim"))]
     let _ = builder;
     Ok(())
@@ -1527,7 +1527,7 @@ mod tests {
         fn execute(self: Box<Self>) -> Result<PreparedRunOutcome> {
             Ok(PreparedRunOutcome {
                 native_report: NativeReport::new(
-                    &aiperf::metrics_core::AccumulatorSummary::new(),
+                    &crate::metrics_core::AccumulatorSummary::new(),
                     None,
                 ),
                 report_facts: ReportPairRunFacts::new(),
@@ -1667,10 +1667,10 @@ mod tests {
         let context = RunnerRunContext::new(
             format!("blake3:{}", "a".repeat(64)),
             Arc::new(AiperfRegistry::builtin().unwrap()),
-            crate::execution_factories::native_execution_factories(),
-            Arc::new(crate::graph_input::BuiltinRunnerGraphInputAdapterResolver::new()),
-            Arc::new(crate::dataset_input::BuiltinRunnerDatasetInputAdapterResolver::new()),
-            Arc::new(crate::sidecar_input::PreparedSidecarInputs::default()),
+            crate::runner_protocol::execution_factories::native_execution_factories(),
+            Arc::new(crate::runner_protocol::graph_input::BuiltinRunnerGraphInputAdapterResolver::new()),
+            Arc::new(crate::runner_protocol::dataset_input::BuiltinRunnerDatasetInputAdapterResolver::new()),
+            Arc::new(crate::runner_protocol::sidecar_input::PreparedSidecarInputs::default()),
             vec![
                 profile("default", "chat"),
                 profile("z-last", "messages"),

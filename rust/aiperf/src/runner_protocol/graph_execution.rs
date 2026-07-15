@@ -14,36 +14,36 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use aiperf::clock::{Clock, RealClock, RealClockAnchor};
-use aiperf::dataset::{Handle, Payload, SegmentStore};
-use aiperf::endpoints::{
+use crate::clock::{Clock, RealClock, RealClockAnchor};
+use crate::dataset::{Handle, Payload, SegmentStore};
+use crate::endpoints::{
     CreditPhase, EndpointId, EndpointKey, EndpointRegistry, PreparedEndpointTable, PreparedRequest,
     Turn,
 };
-use aiperf::failure::OnFailure;
-use aiperf::graph::errors::TraceError;
-use aiperf::graph::execution::{LocalGraphTraceExecutionBackend, TracePlacement};
-use aiperf::graph::materialize::SegmentItemsMaterializer;
-use aiperf::graph::model::{GraphTracePlan, LlmNode};
-use aiperf::graph::placement::{
+use crate::failure::OnFailure;
+use crate::graph::errors::TraceError;
+use crate::graph::execution::{LocalGraphTraceExecutionBackend, TracePlacement};
+use crate::graph::materialize::SegmentItemsMaterializer;
+use crate::graph::model::{GraphTracePlan, LlmNode};
+use crate::graph::placement::{
     GraphPlacementError, ThreadPerCoreTracePlacement, TracePlacementFactory,
 };
-use aiperf::graph::policy::{
+use crate::graph::policy::{
     AbortTraceNodeFailurePolicy, CancellationNodePolicy, CompositeNodeDispatchPolicy,
     NodeDispatchPolicy, NodeFailurePolicy, PrefillSlotNodePolicy, ResilientNodeFailurePolicy,
 };
-use aiperf::graph::sink::{GraphDispatchOptions, GraphReply, GraphSink};
-use aiperf::graph::wire::OpenAiChatMessage;
-use aiperf::http::{
+use crate::graph::sink::{GraphDispatchOptions, GraphReply, GraphSink};
+use crate::graph::wire::OpenAiChatMessage;
+use crate::http::{
     Dispatcher, HttpRequest, PreparedEndpointReference, PreparedHttpEndpoint, PreparedTurn,
     TransportSink, TransportSinkConfig,
 };
-use aiperf::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
-use aiperf::metrics_core::{InferenceDimensions, MetricsConfig, Phase};
-use aiperf::multiturn::InputTokenCounter;
-use aiperf::rng::{RngRoot, namespace};
-use aiperf::timing::{BernoulliFixedDelay, SlotPool};
-use aiperf::transport_grpc::GrpcBindingRegistry;
+use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
+use crate::metrics_core::{InferenceDimensions, MetricsConfig, Phase};
+use crate::multiturn::InputTokenCounter;
+use crate::rng::{RngRoot, namespace};
+use crate::timing::{BernoulliFixedDelay, SlotPool};
+use crate::transport_grpc::GrpcBindingRegistry;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -53,10 +53,10 @@ use serde_json::{Map, Value};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::execute::DEFAULT_ENDPOINT_PROFILE_ID;
-use crate::grpc_turn_execution::grpc_sink_with_endpoints;
-use aiperf::runner_protocol::records::{CapturedHttpExchange, CapturedModelOutput, CapturedRecord};
-use crate::registry::ValidatedEndpointProfileV2;
+use crate::runner_protocol::execute::DEFAULT_ENDPOINT_PROFILE_ID;
+use crate::runner_protocol::grpc_turn_execution::grpc_sink_with_endpoints;
+use crate::runner_protocol::records::{CapturedHttpExchange, CapturedModelOutput, CapturedRecord};
+use crate::runner_protocol::registry::ValidatedEndpointProfileV2;
 
 /// Transport that a graph endpoint runtime dispatches its prepared turns over.
 ///
@@ -554,7 +554,7 @@ pub(crate) struct GraphCancellationConfig {
     pub(crate) delay_seconds: f64,
     /// Phase-local cancellation root; workers derive independent indexed roots.
     pub(crate) rng_root: RngRoot,
-    pub(crate) phase: aiperf::timing::Phase,
+    pub(crate) phase: crate::timing::Phase,
 }
 
 /// Native runner factory installed into whole-trace placement.
@@ -899,7 +899,7 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
                     model,
                     endpoint,
                     endpoint_aware: true,
-                    data_policy: aiperf::multiturn::TurnDataPolicy::ordinary(),
+                    data_policy: crate::multiturn::TurnDataPolicy::ordinary(),
                 },
                 self.observer.as_ref(),
                 &|_| {
@@ -1044,7 +1044,7 @@ fn terminal_graph_nodes(plan: &GraphTracePlan) -> HashSet<String> {
         .graph
         .edges
         .iter()
-        .filter(|edge| edge.target != aiperf::graph::model::END_NODE_ID)
+        .filter(|edge| edge.target != crate::graph::model::END_NODE_ID)
         .map(|edge| edge.source.as_str())
         .collect::<HashSet<_>>();
     plan.graph
@@ -1090,14 +1090,14 @@ fn uniquify_dynamo_session_headers(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aiperf::clock::SimClock;
-    use aiperf::endpoints::{
+    use crate::clock::SimClock;
+    use crate::endpoints::{
         ChatEndpoint, EffectiveEndpointConfig, Endpoint, EndpointDescriptor, EndpointFactory,
         EndpointRegistry, EndpointRegistryBuilder, EndpointResult, PreparedEndpoint,
         RawEndpointConfig, StatelessEndpointFactory,
     };
-    use aiperf::multiturn::AuthoredInputTokenCounter;
-    use aiperf::transport_http::models::ConnectionReuseStrategy;
+    use crate::multiturn::AuthoredInputTokenCounter;
+    use crate::transport_http::models::ConnectionReuseStrategy;
 
     #[derive(Debug)]
     struct PreparedOnlyChatFactory;
@@ -1128,7 +1128,7 @@ mod tests {
 
         let factory = PreparedRunnerGraphEndpointRuntimeFactory::new(
             registry,
-            Arc::new(vec![crate::registry::ValidatedEndpointProfileV2 {
+            Arc::new(vec![crate::runner_protocol::registry::ValidatedEndpointProfileV2 {
                 profile_id: "default".into(),
                 endpoint_id: EndpointId::new("chat").unwrap(),
                 config: RawEndpointConfig {
@@ -1186,7 +1186,7 @@ mod tests {
         // gRPC binding registry. The `kind()` probe confirms it downcast-free.
         let factory = PreparedRunnerGraphEndpointRuntimeFactory::new(
             EndpointRegistry::builtin().unwrap(),
-            Arc::new(vec![crate::registry::ValidatedEndpointProfileV2 {
+            Arc::new(vec![crate::runner_protocol::registry::ValidatedEndpointProfileV2 {
                 profile_id: "default".into(),
                 endpoint_id: EndpointId::new("kserve_v2_infer").unwrap(),
                 config: RawEndpointConfig {
@@ -1214,7 +1214,7 @@ mod tests {
         // at binding preparation (the HTTP arm would accept it).
         let factory = PreparedRunnerGraphEndpointRuntimeFactory::new(
             EndpointRegistry::builtin().unwrap(),
-            Arc::new(vec![crate::registry::ValidatedEndpointProfileV2 {
+            Arc::new(vec![crate::runner_protocol::registry::ValidatedEndpointProfileV2 {
                 profile_id: "default".into(),
                 endpoint_id: EndpointId::new("chat").unwrap(),
                 config: RawEndpointConfig {
@@ -1244,7 +1244,7 @@ mod tests {
     fn prepared_graph_runtime_rejects_dataset_only_raw_token_requirements() {
         let result = PreparedRunnerGraphEndpointRuntimeFactory::new(
             EndpointRegistry::builtin().unwrap(),
-            Arc::new(vec![crate::registry::ValidatedEndpointProfileV2 {
+            Arc::new(vec![crate::runner_protocol::registry::ValidatedEndpointProfileV2 {
                 profile_id: "default".into(),
                 endpoint_id: EndpointId::new("vllm_generate").unwrap(),
                 config: RawEndpointConfig {

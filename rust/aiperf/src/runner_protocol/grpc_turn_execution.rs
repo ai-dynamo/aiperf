@@ -14,26 +14,26 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
-use aiperf::clock::{Clock, RealClock, RealClockAnchor};
-use aiperf::endpoints::PreparedEndpointTable;
-use aiperf::grpc::{GrpcTransportSink, GrpcTransportSinkConfig};
-use aiperf::http::{
+use crate::clock::{Clock, RealClock, RealClockAnchor};
+use crate::endpoints::PreparedEndpointTable;
+use crate::grpc::{GrpcTransportSink, GrpcTransportSinkConfig};
+use crate::http::{
     DispatchResult, MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor,
 };
-use aiperf::metrics::NativeMetricsObserver;
-use aiperf::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest};
-use aiperf::multiturn::TurnToSend;
-use aiperf::transport_grpc::{
+use crate::metrics::NativeMetricsObserver;
+use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest};
+use crate::multiturn::TurnToSend;
+use crate::transport_grpc::{
     ConnectionReuseStrategy as GrpcConnectionReuseStrategy, GrpcBindingRegistry, GrpcClientConfig,
 };
-use aiperf::transport_http::models::ConnectionReuseStrategy;
+use crate::transport_http::models::ConnectionReuseStrategy;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
 use uuid::Uuid;
 
-use crate::turn_execution::{
+use crate::runner_protocol::turn_execution::{
     HttpExecutionBackendConfig, HttpPreparedEndpointTableFactory, RequestExecutorFactory,
 };
 
@@ -365,7 +365,7 @@ fn run_worker_thread(
     anchor: RealClockAnchor,
     base_urls: Vec<String>,
     model: String,
-    transport: aiperf::http::TransportSinkConfig,
+    transport: crate::http::TransportSinkConfig,
     prepared_endpoints: Option<Arc<dyn HttpPreparedEndpointTableFactory>>,
     bindings: GrpcBindingRegistry,
     started: std::sync::mpsc::SyncSender<std::result::Result<(), String>>,
@@ -409,7 +409,7 @@ fn prepare_grpc_sink(
     start_ns: i64,
     base_urls: &[String],
     model: String,
-    transport: aiperf::http::TransportSinkConfig,
+    transport: crate::http::TransportSinkConfig,
     prepared_endpoints: Option<&dyn HttpPreparedEndpointTableFactory>,
     bindings: GrpcBindingRegistry,
 ) -> Result<GrpcTransportSink> {
@@ -437,13 +437,13 @@ fn prepare_grpc_sink(
 /// factory (which owns its `PreparedEndpointTable` directly). Keeping one core
 /// keeps the gRPC client/reuse/session mapping in a single place.
 ///
-/// [`TransportSinkConfig`]: aiperf::http::TransportSinkConfig
+/// [`TransportSinkConfig`]: crate::http::TransportSinkConfig
 pub(crate) fn grpc_sink_with_endpoints(
     clock: Rc<dyn Clock>,
     start_ns: i64,
     base_urls: &[String],
     model: String,
-    transport: aiperf::http::TransportSinkConfig,
+    transport: crate::http::TransportSinkConfig,
     bindings: GrpcBindingRegistry,
     endpoints: Rc<PreparedEndpointTable>,
 ) -> Result<GrpcTransportSink> {

@@ -18,16 +18,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context as TaskContext, Poll};
 use std::thread::JoinHandle;
 
-use aiperf::clock::{Clock, RealClock, RealClockAnchor};
-use aiperf::endpoints::{ParsedResponse, PreparedEndpointTable};
-use aiperf::http::{
+use crate::clock::{Clock, RealClock, RealClockAnchor};
+use crate::endpoints::{ParsedResponse, PreparedEndpointTable};
+use crate::http::{
     DispatchResult, MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor, TransportSink,
     TransportSinkConfig,
 };
-use aiperf::metrics::NativeMetricsObserver;
-use aiperf::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest};
-use aiperf::multiturn::TurnToSend;
-use aiperf::scheduled::TurnResponseObserver;
+use crate::metrics::NativeMetricsObserver;
+use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest};
+use crate::multiturn::TurnToSend;
+use crate::scheduled::TurnResponseObserver;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use tokio::sync::{Notify, mpsc, oneshot};
@@ -311,7 +311,7 @@ impl RequestExecutor for ThreadPerCoreRequestExecutor {
     }
 
     fn inference_dimensions(&self, turn: &TurnToSend) -> InferenceDimensions {
-        <TransportSink as aiperf::scheduled::TurnDispatcher>::inference_dimensions(
+        <TransportSink as crate::scheduled::TurnDispatcher>::inference_dimensions(
             &self.dimension_sink,
             turn,
         )
@@ -791,10 +791,10 @@ mod tests {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    use aiperf::endpoints::{EndpointId, EndpointKey, EndpointRegistry, RawEndpointConfig};
-    use aiperf::http::{HttpRequest, PreparedHttpEndpoint};
-    use aiperf::metrics::RequestMetricMetadata;
-    use aiperf::multiturn::PreparedEndpointReference;
+    use crate::endpoints::{EndpointId, EndpointKey, EndpointRegistry, RawEndpointConfig};
+    use crate::http::{HttpRequest, PreparedHttpEndpoint};
+    use crate::metrics::RequestMetricMetadata;
+    use crate::multiturn::PreparedEndpointReference;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
@@ -913,7 +913,7 @@ mod tests {
                 endpoint_id: EndpointId::new("chat").unwrap(),
             }),
             endpoint_aware: true,
-            data_policy: aiperf::multiturn::TurnDataPolicy::ordinary(),
+            data_policy: crate::multiturn::TurnDataPolicy::ordinary(),
         }
     }
 

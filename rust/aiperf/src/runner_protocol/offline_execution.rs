@@ -5,7 +5,7 @@
 //!
 //! This module owns only the authored runner boundary. The virtual clock,
 //! steppable engine host, scheduling loops, cancellation, observers, and exact
-//! AIPerf/Dynamo parity proof remain in [`aiperf::dynosim`]. A registered
+//! AIPerf/Dynamo parity proof remain in [`crate::dynosim`]. A registered
 //! backend/workload pair supplies one of the typed execution plans below; no
 //! string branch or alternate executable is introduced here.
 //!
@@ -20,12 +20,12 @@ use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use aiperf::clock::Clock;
-use aiperf::dataset::{
+use crate::clock::Clock;
+use crate::dataset::{
     HashIdentityTracePromptStorage, NativeSyntheticMediaGeneratorFactory, SamplerRegistry,
     SegmentStore, TextTokenizer, TraceHashAwareRequestMaterializer,
 };
-use aiperf::dynosim::{
+use crate::dynosim::{
     CanonicalSharedMetrics, DeferredOfflineGraphFuture, DeferredOfflineGraphRunFactory,
     DeferredOfflineScheduledFuture, DeferredOfflineScheduledRunFactory,
     IncrementalOfflineEventDelivery, OfflineAicConfig, OfflineDirectGraphReport,
@@ -41,51 +41,51 @@ use aiperf::dynosim::{
     run_scheduled_backend_online_deferred_with_delivery, run_trace_offline,
     write_dynamo_per_request_jsonl, write_dynamo_report_json, write_dynamo_worker_artifacts_json,
 };
-use aiperf::endpoints::{Modality, PreparedEndpointTable};
-use aiperf::failure::OnFailure;
-use aiperf::graph::bench::BenchConfig;
-use aiperf::graph::input::GraphInputBundle;
-use aiperf::graph::policy::{
+use crate::endpoints::{Modality, PreparedEndpointTable};
+use crate::failure::OnFailure;
+use crate::graph::bench::BenchConfig;
+use crate::graph::input::GraphInputBundle;
+use crate::graph::policy::{
     AbortTraceNodeFailurePolicy, CancellationNodePolicy, NodeDispatchPolicy, NodeFailurePolicy,
 };
-use aiperf::metrics::NativeMetricsObserver;
-use aiperf::metrics_core::{
+use crate::metrics::NativeMetricsObserver;
+use crate::metrics_core::{
     CATALOG, MetricFlags, MetricTag, MetricType, MetricsConfig, NativeReport, ReportClockKind,
     ReportDynamoCapacityInfo, ReportDynamoParityInfo, ReportDynamoRouter, ReportDynamoRunInfo,
     ReportDynamoTopology, ReportGraphOutcomeInfo, ReportGraphRunInfo, ReportPairRunFacts,
     ReportRunInfo, ReportSummary, RunOutcome, SloThreshold,
 };
-use aiperf::multiturn::{
+use crate::multiturn::{
     ConversationSource, EndpointInputTokenCounter, InputTokenCounter,
     NativeDatasetConversationSource, PreparedEndpointReference, PreparedEndpointTableResolver,
     PreparedTurnEndpointResolver,
 };
-use aiperf::phase_runtime::run_scheduled_phases_with_aggregate_deferred;
-use aiperf::rng::{RngRoot, namespace};
-use aiperf::timing::{BernoulliFixedDelay, DISABLED_PROGRESS_INTERVAL_NS, NoopPhaseObserver};
+use crate::phase_runtime::run_scheduled_phases_with_aggregate_deferred;
+use crate::rng::{RngRoot, namespace};
+use crate::timing::{BernoulliFixedDelay, DISABLED_PROGRESS_INTERVAL_NS, NoopPhaseObserver};
 use anyhow::{Context, Result, anyhow, ensure};
 use loadgen_core::sink::RequestObserver;
 use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
 
-use crate::dataset_input::{PreparedDatasetInput, RunnerDatasetInputContext};
-use crate::execute::{
+use crate::runner_protocol::dataset_input::{PreparedDatasetInput, RunnerDatasetInputContext};
+use crate::runner_protocol::execute::{
     NativeConversationSourceFactory, build_native_scheduled_phase_plan_with_source_factory,
     load_tokenizer, metrics_config, native_scheduled_resources, phase_seamless_to_next,
 };
-use crate::graph_execution::{RunnerGraphExecutionEvent, RunnerGraphExecutionEventSink};
-use crate::graph_input::RunnerGraphInputContext;
-use crate::graph_phase_runtime::{
+use crate::runner_protocol::graph_execution::{RunnerGraphExecutionEvent, RunnerGraphExecutionEventSink};
+use crate::runner_protocol::graph_input::RunnerGraphInputContext;
+use crate::runner_protocol::graph_phase_runtime::{
     GraphPhaseBackendConfig, PreparedGraphPhaseBackend, RunnerGraphPhaseBackendFactory,
     run_graph_phases, validate_graph_phases,
 };
-use crate::online_execution::{
+use crate::runner_protocol::online_execution::{
     OnlineTokenizerSourceResolver, lower_authored_tokenizer, validate_authored_tokenizer,
 };
-use crate::protocol::{MetricsSpec, ModelSelectionStrategy, PhaseSpec};
-use crate::protocol_v2::AuthoredRunSpecV2;
-use aiperf::runner_protocol::records::{CapturedModelOutput, CapturedRecord};
-use crate::registry::{
+use crate::runner_protocol::protocol::{MetricsSpec, ModelSelectionStrategy, PhaseSpec};
+use crate::runner_protocol::protocol_v2::AuthoredRunSpecV2;
+use crate::runner_protocol::records::{CapturedModelOutput, CapturedRecord};
+use crate::runner_protocol::registry::{
     GraphWorkloadConfigV2, PreparedRunOutcome, PreparedRunnerOperation, RunnerClockKind,
     RunnerRegistryBuilder, RunnerRunContext, RunnerTransportDescriptor, RunnerTransportFactory,
     ScheduledWorkloadConfigV2, ValidatedTransportConfig, ValidatedWorkloadConfig,
@@ -1124,7 +1124,7 @@ struct DynosimPreparedConversationSourceFactory {
 impl NativeConversationSourceFactory for DynosimPreparedConversationSourceFactory {
     fn build(
         &self,
-        dataset: aiperf::dataset::Dataset,
+        dataset: crate::dataset::Dataset,
         model: String,
         default_output_tokens: usize,
         rng_root: RngRoot,
@@ -1338,7 +1338,7 @@ impl PreparedRunnerOperation for PreparedDynosimScheduledOperation {
             .report
             .auxiliary_phase_reports
             .iter()
-            .find(|report| report.kind == aiperf::timing::PhaseKind::Warmup)
+            .find(|report| report.kind == crate::timing::PhaseKind::Warmup)
             .map(|report| report.report.native_metrics.clone());
         let native_report = NativeReport::from_outcome(
             &outcome.report.aiperf.native_metrics,
@@ -1810,7 +1810,7 @@ pub struct DynosimExecutor {
 
 impl DynosimExecutor {
     /// Run any registered scheduled workload over the shared virtual clock and
-    /// dispatcher supplied by `aiperf::dynosim`.
+    /// dispatcher supplied by `crate::dynosim`.
     pub fn execute_scheduled(
         self,
         workload: Box<dyn OfflineScheduledRunFactory>,
@@ -2183,7 +2183,7 @@ fn create_artifact_target(path: &Path) -> Result<()> {
 
 /// Abort an offline graph run when any root trace failed, surfacing the first
 /// available trace error exactly as the inline call sites once did.
-fn ensure_no_failed_traces(workload: &aiperf::graph::workload::GraphWorkloadReport) -> Result<()> {
+fn ensure_no_failed_traces(workload: &crate::graph::workload::GraphWorkloadReport) -> Result<()> {
     if workload.failed == 0 {
         return Ok(());
     }
@@ -2296,7 +2296,7 @@ pub struct DynosimTraceOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::{
+    use crate::runner_protocol::registry::{
         BuiltinRunnerRegistryFactory, RunnerRegistryFactory, RunnerTransportFactory,
     };
 
@@ -2445,10 +2445,10 @@ mod tests {
 
     #[test]
     fn direct_graph_plans_use_the_shared_segment_store_and_engine() {
-        let (segments, graph, _) = aiperf::graph::bench::build_workload(2);
-        let plan = aiperf::graph::model::GraphTracePlan {
+        let (segments, graph, _) = crate::graph::bench::build_workload(2);
+        let plan = crate::graph::model::GraphTracePlan {
             graph,
-            trace: aiperf::graph::model::TraceRecord {
+            trace: crate::graph::model::TraceRecord {
                 id: "direct-root".into(),
                 graph_ref: None,
                 initial_state: BTreeMap::new(),
@@ -2456,9 +2456,9 @@ mod tests {
             arrival_offset_ns: None,
         };
         let factory: Box<dyn OfflineGraphRunFactory> = Box::new(move |clock, backend| {
-            Ok(aiperf::graph::workload::GraphWorkload::new(
+            Ok(crate::graph::workload::GraphWorkload::new(
                 clock,
-                Rc::new(aiperf::graph::workload::VecGraphTraceSource::new([plan])),
+                Rc::new(crate::graph::workload::VecGraphTraceSource::new([plan])),
                 backend,
             ))
         });
@@ -2472,7 +2472,7 @@ mod tests {
                 2,
                 MetricsConfig::default(),
                 None,
-                Rc::new(aiperf::graph::policy::AbortTraceNodeFailurePolicy),
+                Rc::new(crate::graph::policy::AbortTraceNodeFailurePolicy),
                 factory,
             )
             .unwrap();

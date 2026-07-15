@@ -14,31 +14,31 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use aiperf::adaptive::{AdaptiveControlVariable, AdaptiveRunConfig, build_adaptive_scale};
-use aiperf::adaptive_core::{
+use crate::adaptive::{AdaptiveControlVariable, AdaptiveRunConfig, build_adaptive_scale};
+use crate::adaptive_core::{
     AdaptiveError, ControlActuator, ControlSnapshot, RequestRateActuator,
     SessionConcurrencyActuator, SharedWindowSampler, TumblingWindowSampler,
 };
-use aiperf::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
-use aiperf::cellular::{CellPartition, ModuloCellPartition};
-use aiperf::clock::Clock;
-use aiperf::failure::OnFailure;
-use aiperf::graph::errors::TraceError;
-use aiperf::graph::execution::TracePlacement;
-use aiperf::graph::input::GraphInputBundle;
-use aiperf::graph::policy::{ContinueRunFailurePolicy, FailFastRunFailurePolicy, RunFailurePolicy};
-use aiperf::graph::workload::{
+use crate::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
+use crate::cellular::{CellPartition, ModuloCellPartition};
+use crate::clock::Clock;
+use crate::failure::OnFailure;
+use crate::graph::errors::TraceError;
+use crate::graph::execution::TracePlacement;
+use crate::graph::input::GraphInputBundle;
+use crate::graph::policy::{ContinueRunFailurePolicy, FailFastRunFailurePolicy, RunFailurePolicy};
+use crate::graph::workload::{
     CyclingGraphTraceSource, GraphArrivalPolicy, GraphTraceInstanceSequence, GraphTraceRunResult,
     GraphTraceSource, GraphWorkload, GraphWorkloadObserver, GraphWorkloadReport,
     ImmediateGraphArrival, IntervalGraphArrival, PartitionedGraphTraceSource,
     SlotPoolTraceAdmission, TraceAdmissionInfo,
 };
-use aiperf::metrics_core::Phase as MetricsPhase;
-use aiperf::phase_runtime::{
+use crate::metrics_core::Phase as MetricsPhase;
+use crate::phase_runtime::{
     RampScheduledPhaseController, ScheduledPhaseController, ScheduledPhaseSidecar,
 };
-use aiperf::rng::{RngRoot, namespace};
-use aiperf::timing::{
+use crate::rng::{RngRoot, namespace};
+use crate::timing::{
     ClockPhaseOrchestrator, ClockPhaseRunnerFactory, LocalPhaseFuture, NoopPhaseObserver,
     PhaseConfig, PhaseContext, PhaseExecution, PhaseExecutionError, PhaseExecutionFactory,
     PhaseObserver, PhaseOrchestrator, PhaseReturn, PhaseSend, PhaseStats, RampDriver, SlotPool,
@@ -48,17 +48,17 @@ use anyhow::{Context, Result, anyhow, bail, ensure};
 use tokio::sync::{Notify, mpsc};
 use uuid::Uuid;
 
-use crate::execute::{
+use crate::runner_protocol::execute::{
     AdaptiveScheduledPhaseController, RampActuatorRngRoots, adaptive_run_config,
     integer_adaptive_bound, metrics_phase, phase_config, phase_seamless_to_next, ramp_strategy,
     seconds_to_u64_ns,
 };
-use crate::graph_execution::{
+use crate::runner_protocol::graph_execution::{
     ChannelRunnerGraphExecutionEventSink, GraphCancellationConfig, ObservedRunnerGraphPlacement,
     RunnerGraphExecutionEvent, RunnerGraphExecutionEventSink,
 };
-use crate::protocol::{AdaptiveControlVariableSpec, PhaseSpec};
-use aiperf::runner_protocol::records::CapturedRecord;
+use crate::runner_protocol::protocol::{AdaptiveControlVariableSpec, PhaseSpec};
+use crate::runner_protocol::records::CapturedRecord;
 
 /// Backend-owned inputs for one already lowered Graph-IR phase.
 pub(crate) struct GraphPhaseBackendConfig {
@@ -202,7 +202,7 @@ struct PreparedGraphPhase {
     workload: GraphWorkload,
     placement: Rc<dyn TracePlacement>,
     events: mpsc::UnboundedReceiver<RunnerGraphExecutionEvent>,
-    intervals: Rc<RefCell<Box<dyn aiperf::timing::IntervalGenerator>>>,
+    intervals: Rc<RefCell<Box<dyn crate::timing::IntervalGenerator>>>,
     session_slots: Option<Rc<SlotPool>>,
     prefill_initial: Option<usize>,
     controller: Rc<dyn ScheduledPhaseController>,
@@ -865,7 +865,7 @@ impl PhaseExecution for FailedGraphPhaseExecution {
 fn graph_adaptive_actuator(
     config: &AdaptiveRunConfig,
     session_slots: Option<Rc<SlotPool>>,
-    intervals: Rc<RefCell<Box<dyn aiperf::timing::IntervalGenerator>>>,
+    intervals: Rc<RefCell<Box<dyn crate::timing::IntervalGenerator>>>,
     placement: Rc<dyn TracePlacement>,
 ) -> Result<Rc<dyn ControlActuator>> {
     Ok(match config.control_variable {
@@ -1147,7 +1147,7 @@ fn prepare_graph_phase(
             make_interval_generator(pattern, rate, smoothness, seed)
         }
         None => make_interval_generator(
-            aiperf::timing::ArrivalPattern::ConcurrencyBurst,
+            crate::timing::ArrivalPattern::ConcurrencyBurst,
             None,
             None,
             seed,
@@ -1182,9 +1182,9 @@ fn prepare_graph_phase(
             delay_seconds: cancellation.delay,
             rng_root: phase_rng.derive_root(namespace::GRAPH_NODE_CANCELLATION),
             phase: if common.name == "warmup" {
-                aiperf::timing::Phase::Warmup
+                crate::timing::Phase::Warmup
             } else {
-                aiperf::timing::Phase::Profiling
+                crate::timing::Phase::Profiling
             },
         });
     let backend = backends.prepare_backend(GraphPhaseBackendConfig {
@@ -1258,7 +1258,7 @@ fn graph_phase_uses_session_admission(phase: &PhaseSpec) -> bool {
 fn graph_ramp_controller(
     spec: &PhaseSpec,
     clock: Rc<dyn Clock>,
-    intervals: Rc<RefCell<Box<dyn aiperf::timing::IntervalGenerator>>>,
+    intervals: Rc<RefCell<Box<dyn crate::timing::IntervalGenerator>>>,
     session_slots: Option<Rc<SlotPool>>,
     placement: Rc<dyn TracePlacement>,
     rng_root: RngRoot,
@@ -1311,7 +1311,7 @@ fn graph_ramp_controller(
         }));
     }
     if drivers.is_empty() {
-        Ok(Rc::new(aiperf::phase_runtime::NoopScheduledPhaseController))
+        Ok(Rc::new(crate::phase_runtime::NoopScheduledPhaseController))
     } else {
         Ok(Rc::new(RampScheduledPhaseController::new(drivers)))
     }
@@ -1367,16 +1367,16 @@ mod tests {
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
-    use aiperf::adaptive_core::{SharedWindowSampler, TumblingWindowSampler};
-    use aiperf::dataset::SegmentPool;
-    use aiperf::graph::errors::TraceError;
-    use aiperf::graph::model::{GraphRecord, GraphTracePlan, TraceRecord};
-    use aiperf::graph::workload::{GraphWorkloadReport, TraceAdmissionInfo};
-    use aiperf::timing::{PhaseReturn, PhaseSend};
+    use crate::adaptive_core::{SharedWindowSampler, TumblingWindowSampler};
+    use crate::dataset::SegmentPool;
+    use crate::graph::errors::TraceError;
+    use crate::graph::model::{GraphRecord, GraphTracePlan, TraceRecord};
+    use crate::graph::workload::{GraphWorkloadReport, TraceAdmissionInfo};
+    use crate::timing::{PhaseReturn, PhaseSend};
     use uuid::Uuid;
 
     use super::*;
-    use aiperf::runner_protocol::records::CapturedModelOutput;
+    use crate::runner_protocol::records::CapturedModelOutput;
 
     fn wrap_policy_input(root_count: usize) -> GraphInputBundle {
         let plans = (0..root_count)
@@ -1393,7 +1393,7 @@ mod tests {
         GraphInputBundle {
             plans,
             segments: Arc::new(SegmentPool::new().freeze()),
-            metadata: aiperf::graph::input::GraphInputMetadata {
+            metadata: crate::graph::input::GraphInputMetadata {
                 format: "weka_trace".into(),
                 root_count,
                 node_count: 0,
@@ -1470,10 +1470,10 @@ mod tests {
     }
 
     fn graph_phase_record(trace_id: &str, errored: bool, canceled: bool) -> CapturedRecord {
-        let mut ingest = aiperf::metrics_core::RecordIngest::minimal(
+        let mut ingest = crate::metrics_core::RecordIngest::minimal(
             0,
             1,
-            aiperf::metrics_core::Phase::Profiling,
+            crate::metrics_core::Phase::Profiling,
         );
         ingest.errored = errored;
         ingest.canceled = canceled;

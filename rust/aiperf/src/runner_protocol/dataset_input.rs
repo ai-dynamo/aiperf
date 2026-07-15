@@ -12,21 +12,21 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use aiperf::dataset::{
+use crate::dataset::{
     Dataset, SyntheticMediaGeneratorFactory, TextTokenizer, TracePromptStoragePolicy,
 };
-use aiperf::endpoints::EndpointDescriptor;
-use aiperf::extensions::AiperfRegistry;
-use aiperf::rng::RngRoot;
+use crate::endpoints::EndpointDescriptor;
+use crate::extensions::AiperfRegistry;
+use crate::rng::RngRoot;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use serde::{Deserialize, Deserializer, de::Error as _};
 use serde_json::{Map, Value, value::RawValue};
 
-use crate::execute::{
+use crate::runner_protocol::execute::{
     build_file_dataset, build_public_dataset, build_synthetic_dataset, distribution,
 };
-use crate::protocol::ModelsSpec;
+use crate::runner_protocol::protocol::ModelsSpec;
 
 /// Public dataset configuration resolved from the Python plugin registry.
 ///

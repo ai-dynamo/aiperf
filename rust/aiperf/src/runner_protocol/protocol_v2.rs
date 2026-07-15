@@ -20,8 +20,8 @@ use anyhow::{Result, anyhow, ensure};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value, value::RawValue};
 
-use crate::protocol::{MetricsSpec, ModelSelectionStrategy, ModelsSpec, VariationSpec};
-use crate::sidecar_input::{
+use crate::runner_protocol::protocol::{MetricsSpec, ModelSelectionStrategy, ModelsSpec, VariationSpec};
+use crate::runner_protocol::sidecar_input::{
     AuthoredSidecarInput, CONTENT_SERVER_SIDECAR_ID, GPU_TELEMETRY_SIDECAR_ID,
     LIVE_STREAMING_SIDECAR_ID, NETWORK_LATENCY_SIDECAR_ID, SERVER_METRICS_SIDECAR_ID,
 };
@@ -440,8 +440,8 @@ pub struct AuthoredRunSpecV2 {
     /// Optional supervised sidecars, retained raw until their native factory
     /// performs its strict decode.
     pub sidecars: SidecarSpecV2,
-    /// Native post-report export policy driving the [`aiperf::export`] plane.
-    pub export: aiperf::export::ExportConfig,
+    /// Native post-report export policy driving the [`crate::export`] plane.
+    pub export: crate::export::ExportConfig,
     resource_presence: ResourcePresenceV2,
 }
 
@@ -509,7 +509,7 @@ impl<'de> Deserialize<'de> for AuthoredRunSpecV2 {
             metrics: wire.resources.metrics.unwrap_or_default(),
             artifacts: wire.resources.artifacts.unwrap_or_default(),
             sidecars: wire.resources.sidecars.unwrap_or_default(),
-            export: aiperf::export::ExportConfig::default(),
+            export: crate::export::ExportConfig::default(),
             resource_presence,
         })
     }

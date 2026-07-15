@@ -8,7 +8,7 @@
 //! identity-only format lookup, then gives the untouched object to exactly one
 //! selected adapter. The adapter owns the sole strict full decode and lowers
 //! directly to [`GraphInputBundle`]; no protocol-v1 DTO, linear
-//! [`aiperf::dataset::Dataset`],
+//! [`crate::dataset::Dataset`],
 //! conversation, or second graph-source representation exists in this path.
 //!
 //! A future linked distribution injects another [`RunnerGraphInputAdapter`]
@@ -20,20 +20,20 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use aiperf::dataset::{DatasetSource, LoadConfig, TextTokenizer};
-use aiperf::graph::input::{GraphInputBundle, GraphInputConfig, compile_dag_jsonl_input};
-use aiperf::graph::recorded::{
+use crate::dataset::{DatasetSource, LoadConfig, TextTokenizer};
+use crate::graph::input::{GraphInputBundle, GraphInputConfig, compile_dag_jsonl_input};
+use crate::graph::recorded::{
     PromptCorpus, RecordedTraceInputConfig, compile_aiperf_trace_input, compile_dynamo_trace_input,
     compile_weka_trace_input,
 };
-use aiperf::rng::RngRoot;
+use crate::rng::RngRoot;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Map, Value, value::RawValue};
 
-use crate::execute::distribution;
-use crate::protocol::{
+use crate::runner_protocol::execute::distribution;
+use crate::runner_protocol::protocol::{
     DistributionSpec, FileDatasetSpec, PublicDatasetSourceSpec, PublicDatasetSpec,
     TraceSynthesisSpec,
 };
@@ -856,7 +856,7 @@ fn default_sequential() -> String {
 
 #[cfg(test)]
 mod tests {
-    use aiperf::dataset::TiktokenTokenizer;
+    use crate::dataset::TiktokenTokenizer;
     use serde_json::json;
 
     use super::*;

@@ -9,28 +9,28 @@ use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use aiperf::accuracy::{
+use crate::accuracy::{
     AccuracyDataset, AccuracyRecordProcessor, accuracy_report_errors, grade_accuracy_responses,
     load_evaluator_problems_with_grader,
 };
-use aiperf::accuracy_core::{
+use crate::accuracy_core::{
     AccuracyEvaluator, EvaluatorLoadConfig, EvaluatorLoadResult, PythonEvaluator,
     WorkerProcessConfig,
 };
-use aiperf::adaptive::{
+use crate::adaptive::{
     AdaptiveControlVariable, AdaptiveRunConfig, AdaptiveStepConfig, build_adaptive_with_origins,
     positive_seconds_to_ns,
 };
-use aiperf::adaptive_core::{
+use crate::adaptive_core::{
     AdaptiveScale, CorrelationContext, SharedWindowSampler, SlaFilter, UserTarget,
 };
-use aiperf::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
-use aiperf::cellular::{CellPartition, IssuanceAuthority, ModuloCellPartition};
-use aiperf::clock::{Clock, RealClock, RealClockAnchor};
-use aiperf::content_server::{
+use crate::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
+use crate::cellular::{CellPartition, IssuanceAuthority, ModuloCellPartition};
+use crate::clock::{Clock, RealClock, RealClockAnchor};
+use crate::content_server::{
     ContentServerConfig, ContentServerFactory, ContentServerRuntime, NativeContentServerFactory,
 };
-use aiperf::dataset::{
+use crate::dataset::{
     ComposeConfig, Dataset, DatasetSource, HuggingFaceTokenizer, LoadConfig, ModelId,
     ModelSelector, ModelSelectorFactory, RandomModelSelectorFactory,
     RoundRobinModelSelectorFactory, SourceImageSampling, SyntheticAudioConfig,
@@ -40,71 +40,71 @@ use aiperf::dataset::{
     SyntheticVideoConfig, SyntheticVideoFormat, SyntheticVideoPattern, TextTokenizer,
     TiktokenEncoding, TiktokenTokenizer, TracePromptStoragePolicy, TraceSynthesisConfig,
 };
-use aiperf::endpoints::{EndpointKey, EndpointRegistry, PreparedEndpointTable};
-use aiperf::export::otel::OtelRecordAccumulator;
-use aiperf::extensions::AiperfRegistry;
-use aiperf::failure::OnFailure;
-use aiperf::fixed_schedule::{
+use crate::endpoints::{EndpointKey, EndpointRegistry, PreparedEndpointTable};
+use crate::export::otel::OtelRecordAccumulator;
+use crate::extensions::AiperfRegistry;
+use crate::failure::OnFailure;
+use crate::fixed_schedule::{
     DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload,
 };
-use aiperf::graph::input::GraphInputBundle;
-use aiperf::http::{
+use crate::graph::input::GraphInputBundle;
+use crate::http::{
     MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor, TransportSinkConfig,
 };
-use aiperf::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
-use aiperf::metrics_core::{
+use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
+use crate::metrics_core::{
     CATALOG, ExportContext, InferenceDimensions, MetricTag, MetricsAccumulator, MetricsConfig,
     NativeReport, Phase as MetricsPhase, RecordIngest, ReportRunInfo, ReportSummary, RunOutcome,
     SloThreshold,
 };
-use aiperf::multiturn::{
+use crate::multiturn::{
     AuthoredInputTokenCounter, ConversationSource, EndpointInputTokenCounter, InputTokenCounter,
     IssuedCredit, NativeDatasetConversationSource, PreparedEndpointReference,
     PreparedEndpointTableResolver, PreparedTurnEndpointResolver, TurnToSend,
 };
-use aiperf::phase_runtime::{
+use crate::phase_runtime::{
     RampScheduledPhaseController, ScheduledPhaseController, ScheduledPhasePlan,
     ScheduledPhaseResources, ScheduledPhaseSidecar, ScheduledRuntimeExtension,
     ScheduledRuntimeExtensionParts, SlotPoolPhaseResources, run_scheduled_phases,
 };
-use aiperf::request_rate::RequestRateWorkload;
-use aiperf::rng::{
+use crate::request_rate::RequestRateWorkload;
+use crate::rng::{
     EmpiricalPoint, PeakEntry, RandomGenerator, RngRoot, SamplingDistribution,
     SequenceLengthDistribution, SequenceLengthPair, namespace,
 };
-use aiperf::scheduled::{
+use crate::scheduled::{
     IssuanceGate, ScheduledAncillaryPolicies, TurnDispatchOutcome, TurnDispatcher,
     TurnRecordProcessor, Workload,
 };
-use aiperf::timing::{
+use crate::timing::{
     BernoulliFixedDelay, CancellationPolicy, ExponentialRamp, GracePeriod, LinearRamp,
     NoopPhaseObserver, PhaseConfig, PhaseKind, PhaseObserver, PoissonRamp, RampDriver,
     RampStrategy, RamperConfig, RoundRobinUrlSelector, SlotPool, StopConfig, UrlSelector,
     make_interval_generator,
 };
-use aiperf::user_centric::{UserCentricConfig, UserCentricWorkload};
+use crate::user_centric::{UserCentricConfig, UserCentricWorkload};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use async_trait::async_trait;
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::RequestObserver;
 use uuid::Uuid;
 
-use crate::dataset_input::PreparedDatasetInput;
-use crate::execution_factories::RunnerExecutionFactories;
-use crate::gpu_telemetry::GpuTelemetryRun;
-use crate::graph_execution::{
+use crate::runner_protocol::dataset_input::PreparedDatasetInput;
+use crate::runner_protocol::execution_factories::RunnerExecutionFactories;
+use crate::runner_protocol::gpu_telemetry::GpuTelemetryRun;
+use crate::runner_protocol::graph_execution::{
     GraphTransportKind, PreparedRunnerGraphEndpointRuntimeFactory, RunnerGraphBackendFactory,
     RunnerGraphBackendFactoryConfig, RunnerGraphEndpointRuntimeFactory,
     RunnerGraphPlacementFactory,
 };
-use crate::graph_phase_runtime::{
+use crate::runner_protocol::graph_phase_runtime::{
     GraphPhaseBackendConfig, PreparedGraphPhaseBackend, RunnerGraphPhaseBackendFactory,
     run_graph_phases, validate_graph_phases,
 };
-use crate::heartbeat_lane::{CompositePhaseObserver, HeartbeatLane, HeartbeatPhaseObserver};
-use crate::live_streaming::{LiveResultsSink, PythonLiveStreamingRun, live_phase_observer};
-use crate::network_latency::NetworkLatencyRun;
-use crate::protocol::{
+use crate::runner_protocol::heartbeat_lane::{CompositePhaseObserver, HeartbeatLane, HeartbeatPhaseObserver};
+use crate::runner_protocol::live_streaming::{LiveResultsSink, PythonLiveStreamingRun, live_phase_observer};
+use crate::runner_protocol::network_latency::NetworkLatencyRun;
+use crate::runner_protocol::protocol::{
     AdaptiveControlVariableSpec, AdaptiveScaleSpec, AdaptiveStepPolicySpec, DistributionSpec,
     FileDatasetSpec, MetricsSpec, ModelSelectionStrategy, ModelsSpec, PhaseSpec,
     PublicDatasetSourceSpec, PublicDatasetSpec, RampSpec, RampStrategySpec,
@@ -113,26 +113,26 @@ use crate::protocol::{
     SyntheticPrefixPromptsSpec, SyntheticVideoFormatSpec, SyntheticVideoPatternSpec,
     SyntheticVideoSpec,
 };
-use crate::readiness::{PreparedOnlineReadiness, ReadinessTransportFactory};
-use aiperf::runner_protocol::records::{
+use crate::runner_protocol::readiness::{PreparedOnlineReadiness, ReadinessTransportFactory};
+use crate::runner_protocol::records::{
     CapturedHttpExchange, CapturedModelOutput, CapturedRecord, InputSession, group_record_errors,
     observe_otel_record, write_inputs_json, write_outputs_json, write_raw_records_jsonl,
     write_records_jsonl,
 };
-use crate::registry::ValidatedEndpointProfileV2;
-use crate::server_metrics::ServerMetricsRun;
-use crate::sidecar_input::{
+use crate::runner_protocol::registry::ValidatedEndpointProfileV2;
+use crate::runner_protocol::server_metrics::ServerMetricsRun;
+use crate::runner_protocol::sidecar_input::{
     CONTENT_SERVER_SIDECAR_ID, ContentServerSpec, GPU_TELEMETRY_SIDECAR_ID, GpuTelemetrySpec,
     LIVE_STREAMING_SIDECAR_ID, LiveStreamingSpec, NETWORK_LATENCY_SIDECAR_ID, NetworkLatencySpec,
     PreparedSidecarInputs, SERVER_METRICS_SIDECAR_ID, ServerMetricsSpec,
 };
-use crate::turn_execution::{
+use crate::runner_protocol::turn_execution::{
     HttpExecutionBackendConfig, HttpPreparedEndpointTableFactory, RequestExecutorFactory,
 };
 
 type PhaseRuntimeParts = (
     Rc<dyn Workload>,
-    Rc<RefCell<Box<dyn aiperf::timing::IntervalGenerator>>>,
+    Rc<RefCell<Box<dyn crate::timing::IntervalGenerator>>>,
     Option<Rc<SlotPool>>,
     Option<Rc<SlotPool>>,
     bool,
@@ -209,12 +209,12 @@ pub(crate) struct NativeRunSpec {
     pub(crate) models: ModelsSpec,
     pub(crate) endpoint: NativeEndpointPlan,
     pub(crate) dataset: NativeDatasetPlan,
-    pub(crate) tokenizer: crate::protocol::TokenizerSpec,
+    pub(crate) tokenizer: crate::runner_protocol::protocol::TokenizerSpec,
     pub(crate) phases: Vec<PhaseSpec>,
     pub(crate) metrics: MetricsSpec,
-    pub(crate) artifacts: crate::protocol::ArtifactSpec,
+    pub(crate) artifacts: crate::runner_protocol::protocol::ArtifactSpec,
     pub(crate) sidecars: NativeSidecarPlan,
-    pub(crate) user_files: Vec<crate::protocol_v2::UserFileSpecV2>,
+    pub(crate) user_files: Vec<crate::runner_protocol::protocol_v2::UserFileSpecV2>,
     /// Optional configured run-failure behavior. `None` lets each execution
     /// path apply its historical default at the point of use
     /// ([`OnFailure::scheduled_or_default`] / [`OnFailure::graph_or_default`]).
@@ -528,7 +528,7 @@ fn execute_prepared_native_plan_uncommitted_with_runtime_factories(
 
 fn materialize_user_files(
     artifact_dir: &Path,
-    files: &[crate::protocol_v2::UserFileSpecV2],
+    files: &[crate::runner_protocol::protocol_v2::UserFileSpecV2],
 ) -> Result<()> {
     if files.is_empty() {
         return Ok(());
@@ -709,10 +709,10 @@ fn validate_plan(request: &NativeRunSpec) -> Result<()> {
         );
         let has_jsonl = spec
             .formats
-            .contains(&crate::protocol::ServerMetricsFormatSpec::Jsonl);
+            .contains(&crate::runner_protocol::protocol::ServerMetricsFormatSpec::Jsonl);
         let has_parquet = spec
             .formats
-            .contains(&crate::protocol::ServerMetricsFormatSpec::Parquet);
+            .contains(&crate::runner_protocol::protocol::ServerMetricsFormatSpec::Parquet);
         ensure!(
             has_jsonl == spec.jsonl_path.is_some(),
             "server metrics jsonl_path must be present exactly when JSONL is selected"
@@ -1074,7 +1074,7 @@ struct OnlineGraphPhaseBackendFactory<'a> {
     model: String,
     default_max_tokens: usize,
     endpoint_runtime_factory: Arc<dyn RunnerGraphEndpointRuntimeFactory>,
-    segments: Arc<dyn aiperf::dataset::SegmentStore>,
+    segments: Arc<dyn crate::dataset::SegmentStore>,
     metrics: MetricsConfig,
     raw_enabled: bool,
     on_failure: OnFailure,
@@ -1228,7 +1228,7 @@ async fn execute_graph_native(
     // report; the accumulator/report the cell keeps building below lands only in
     // the controller's throwaway scratch artifact_dir and is discarded. Absent the
     // controller address (the single-process path) this is inert.
-    if let Some(shipper) = crate::cellular_cell::CellRecordsShipper::from_env() {
+    if let Some(shipper) = crate::runner_protocol::cellular_cell::CellRecordsShipper::from_env() {
         let records: Vec<RecordIngest> = captured
             .iter()
             .map(|record| record.ingest.clone())
@@ -1484,7 +1484,7 @@ pub(crate) struct ShardedShared {
     /// worker-local prepared table and (`Rc`) coordinator resolver from it.
     pub(crate) table_factory: Arc<NativePreparedEndpointTableFactory>,
     /// Cloned sampler registry (the source factory borrows it per thread).
-    pub(crate) samplers: aiperf::dataset::SamplerRegistry,
+    pub(crate) samplers: crate::dataset::SamplerRegistry,
     /// The composed dataset every thread partitions.
     pub(crate) dataset: Dataset,
     /// Effective primary model.
@@ -1644,7 +1644,7 @@ pub(crate) async fn execute_scheduled_shard(
     // sampler (which instances it draws) and the issuer (which global ordinals it
     // stamps), so `within*(cells*W) + index == instance` holds and the ordinals
     // tile 0..total.
-    let partition = crate::sharded_scheduled::two_level_partition(
+    let partition = crate::runner_protocol::sharded_scheduled::two_level_partition(
         shared.cell_id,
         shared.cells,
         thread_id,
@@ -1674,7 +1674,7 @@ pub(crate) async fn execute_scheduled_shard(
         // driven once-per-cell on the main thread.
         false,
         shared.wants_adaptive_record,
-        crate::cellular_cell::issuance_authority_for(partition),
+        crate::runner_protocol::cellular_cell::issuance_authority_for(partition),
         shared.phase_ordinal_bases.clone(),
     ));
     let resolver = shared.table_factory.coordinator_resolver()?;
@@ -1689,7 +1689,7 @@ pub(crate) async fn execute_scheduled_shard(
         .phases
         .iter()
         .map(|phase| {
-            crate::sharded_scheduled::slice_phase_for_thread(phase, thread_id, shared.workers)
+            crate::runner_protocol::sharded_scheduled::slice_phase_for_thread(phase, thread_id, shared.workers)
         })
         .collect();
 
@@ -1916,7 +1916,7 @@ async fn execute_native_inner(
     // finalize (fold vs ingest) and the cellular record-shipping guard below.
     let sketch_mode = matches!(
         metrics_config.storage_mode,
-        aiperf::metrics_core::MetricsStorageMode::Sketch { .. }
+        crate::metrics_core::MetricsStorageMode::Sketch { .. }
     );
     let shardable = request.workers > 1
         && accuracy.is_none()
@@ -2160,9 +2160,9 @@ async fn execute_native_inner(
         // A controller child already carries the global phase ordinal bases in the
         // env; a lone process computes them from its (global == local) phase
         // budgets so profiling ordinals never collide with warmup's `[0, W)` block.
-        let env_bases = crate::cellular_cell::phase_ordinal_bases_from_env();
+        let env_bases = crate::runner_protocol::cellular_cell::phase_ordinal_bases_from_env();
         let phase_ordinal_bases = if env_bases.is_empty() {
-            crate::sharded_scheduled::compute_phase_ordinal_bases(&request.phases)?
+            crate::runner_protocol::sharded_scheduled::compute_phase_ordinal_bases(&request.phases)?
         } else {
             env_bases
         };
@@ -2209,7 +2209,7 @@ async fn execute_native_inner(
         // Build the once-per-cell profiling-phase side-channel sidecars on the main
         // thread; the sharded runtime drives them over the run window while the
         // sub-cell threads execute (a worker thread never scrapes telemetry).
-        let mut profiling_sidecars: Vec<Rc<dyn aiperf::phase_runtime::ScheduledPhaseSidecar>> =
+        let mut profiling_sidecars: Vec<Rc<dyn crate::phase_runtime::ScheduledPhaseSidecar>> =
             Vec::new();
         if let Some(server_metrics) = sidecars.server_metrics.as_ref() {
             profiling_sidecars.push(server_metrics.sidecar(MetricsPhase::Profiling));
@@ -2222,7 +2222,7 @@ async fn execute_native_inner(
         {
             profiling_sidecars.push(sidecar);
         }
-        let outcome = crate::sharded_scheduled::run_sharded_scheduled(
+        let outcome = crate::runner_protocol::sharded_scheduled::run_sharded_scheduled(
             shared,
             profiling_sidecars,
             clock.clone(),
@@ -2265,7 +2265,7 @@ async fn execute_native_inner(
     // the controller address (the single-process path) this is inert. Sketch mode
     // retains no full record set, so cellular record shipping is unsupported there
     // (a cell partition would ship its merged sketch instead — a future seam).
-    if let Some(shipper) = crate::cellular_cell::CellRecordsShipper::from_env() {
+    if let Some(shipper) = crate::runner_protocol::cellular_cell::CellRecordsShipper::from_env() {
         ensure!(
             !sketch_mode,
             "sketch metrics mode does not support cellular record shipping yet"
@@ -2460,7 +2460,7 @@ type NativeEndpointExecutionParts<'a> = (
 
 struct PreparedNativeConversationSourceFactory<'a> {
     endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
-    samplers: &'a aiperf::dataset::SamplerRegistry,
+    samplers: &'a crate::dataset::SamplerRegistry,
     /// The dataset instance partition this source draws, or `None` to read the
     /// process-global partition from the environment. `None` is the byte-unchanged
     /// default for the coordinator (single-process) and multi-process cell paths;
@@ -2649,7 +2649,7 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
             let resources: Rc<dyn ScheduledPhaseResources> =
                 Rc::new(SlotPoolPhaseResources::new(phase_session.clone(), None));
             let intervals = Rc::new(RefCell::new(make_interval_generator(
-                aiperf::timing::ArrivalPattern::ConcurrencyBurst,
+                crate::timing::ArrivalPattern::ConcurrencyBurst,
                 None,
                 None,
                 arrival_seed,
@@ -2686,7 +2686,7 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
             let workload =
                 Rc::new(FixedScheduleWorkload::new(source, schedule_source)?) as Rc<dyn Workload>;
             let intervals = Rc::new(RefCell::new(make_interval_generator(
-                aiperf::timing::ArrivalPattern::ConcurrencyBurst,
+                crate::timing::ArrivalPattern::ConcurrencyBurst,
                 None,
                 None,
                 arrival_seed,
@@ -2697,7 +2697,7 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
                 None,
                 None,
                 false,
-                Rc::new(aiperf::phase_runtime::NoopScheduledPhaseResources),
+                Rc::new(crate::phase_runtime::NoopScheduledPhaseResources),
                 None,
             )
         }
@@ -3205,20 +3205,20 @@ pub(crate) fn metrics_config(
             .find(|metric| metric.tag.as_str() == name)
             .ok_or_else(|| anyhow!("SLO metric {name:?} is not in the native metric catalog"))?;
         ensure!(
-            metric.kind == aiperf::metrics_core::MetricType::Record
+            metric.kind == crate::metrics_core::MetricType::Record
                 && !metric
                     .flags
-                    .contains(aiperf::metrics_core::MetricFlags::NO_INDIVIDUAL_RECORDS),
+                    .contains(crate::metrics_core::MetricFlags::NO_INDIVIDUAL_RECORDS),
             "SLO metric {name:?} does not produce one value per request"
         );
         slos.push(SloThreshold::from_display(metric.tag, *value)?);
     }
     let storage_mode = if spec.sketch {
-        aiperf::metrics_core::MetricsStorageMode::Sketch {
-            compression: aiperf::metrics_core::SKETCH_DEFAULT_COMPRESSION,
+        crate::metrics_core::MetricsStorageMode::Sketch {
+            compression: crate::metrics_core::SKETCH_DEFAULT_COMPRESSION,
         }
     } else {
-        aiperf::metrics_core::MetricsStorageMode::Exact
+        crate::metrics_core::MetricsStorageMode::Exact
     };
     Ok(MetricsConfig {
         slice_duration_ns,
@@ -3307,9 +3307,9 @@ fn ancillary_policies(
         cancellation_policy,
         url_selector,
         phase: if spec.common().name == "warmup" {
-            aiperf::timing::Phase::Warmup
+            crate::timing::Phase::Warmup
         } else {
-            aiperf::timing::Phase::Profiling
+            crate::timing::Phase::Profiling
         },
     })
 }
@@ -3356,7 +3356,7 @@ impl RampActuatorRngRoots {
 fn ramp_controller(
     spec: &PhaseSpec,
     clock: Rc<dyn Clock>,
-    intervals: Rc<RefCell<Box<dyn aiperf::timing::IntervalGenerator>>>,
+    intervals: Rc<RefCell<Box<dyn crate::timing::IntervalGenerator>>>,
     session_slots: Option<Rc<SlotPool>>,
     prefill_slots: Option<Rc<SlotPool>>,
     rng_root: RngRoot,
@@ -3407,7 +3407,7 @@ fn ramp_controller(
         }));
     }
     if drivers.is_empty() {
-        Ok(Rc::new(aiperf::phase_runtime::NoopScheduledPhaseController))
+        Ok(Rc::new(crate::phase_runtime::NoopScheduledPhaseController))
     } else {
         Ok(Rc::new(RampScheduledPhaseController::new(drivers)))
     }
@@ -3418,7 +3418,7 @@ fn adaptive_runtime_extension(
     phase: &PhaseSpec,
     benchmark_id: &str,
     artifact_dir: &Path,
-    intervals: Rc<RefCell<Box<dyn aiperf::timing::IntervalGenerator>>>,
+    intervals: Rc<RefCell<Box<dyn crate::timing::IntervalGenerator>>>,
     session_slots: Option<Rc<SlotPool>>,
     prefill_slots: Option<Rc<SlotPool>>,
     user_target: Option<Rc<dyn UserTarget>>,
@@ -3578,7 +3578,7 @@ pub(crate) fn integer_adaptive_bound(value: f64, label: &str) -> Result<usize> {
 
 struct AdaptiveRuntimeExtension {
     config: AdaptiveRunConfig,
-    intervals: Rc<RefCell<Box<dyn aiperf::timing::IntervalGenerator>>>,
+    intervals: Rc<RefCell<Box<dyn crate::timing::IntervalGenerator>>>,
     session_slots: Option<Rc<SlotPool>>,
     prefill_slots: Option<Rc<SlotPool>>,
     user_target: Option<Rc<dyn UserTarget>>,
@@ -3679,7 +3679,7 @@ impl ScheduledPhaseController for AdaptiveScheduledPhaseController {
         Ok(())
     }
 
-    fn stop(&self) -> aiperf::timing::LocalPhaseFuture<Result<()>> {
+    fn stop(&self) -> crate::timing::LocalPhaseFuture<Result<()>> {
         self.scale.deactivate();
         let assessment = self.assessment.borrow_mut().take();
         let scale = self.scale.clone();
@@ -3711,7 +3711,7 @@ impl ScheduledPhaseController for AdaptiveScheduledPhaseController {
         })
     }
 
-    fn wait_until_stop(&self) -> aiperf::timing::LocalPhaseFuture<()> {
+    fn wait_until_stop(&self) -> crate::timing::LocalPhaseFuture<()> {
         let scale = self.scale.clone();
         Box::pin(async move { scale.wait_until_stop_sending().await })
     }
@@ -3764,9 +3764,9 @@ impl ModelSelectorFactory for WeightedModelSelectorFactory {
         &self,
         models: &[ModelId],
         _root: RngRoot,
-    ) -> aiperf::dataset::Result<Box<dyn ModelSelector>> {
+    ) -> crate::dataset::Result<Box<dyn ModelSelector>> {
         if models.len() != self.weights.len() || models.is_empty() {
-            return Err(aiperf::dataset::DatasetError::Validation(
+            return Err(crate::dataset::DatasetError::Validation(
                 "weighted model values and weights must have the same non-zero length".into(),
             ));
         }
@@ -3777,7 +3777,7 @@ impl ModelSelectorFactory for WeightedModelSelectorFactory {
             .all(|weight| weight.is_finite() && *weight >= 0.0)
             || !(0.99..=1.01).contains(&total)
         {
-            return Err(aiperf::dataset::DatasetError::Validation(
+            return Err(crate::dataset::DatasetError::Validation(
                 "weighted model weights must be finite, non-negative, and sum to 1.0 (+/-0.01)"
                     .into(),
             ));
@@ -3959,7 +3959,7 @@ impl RunCapture {
             inputs_enabled,
             wants_live_sink_record,
             wants_adaptive_record,
-            crate::cellular_cell::issuance_authority_from_env(),
+            crate::runner_protocol::cellular_cell::issuance_authority_from_env(),
         )
     }
 
@@ -3967,10 +3967,10 @@ impl RunCapture {
     /// issuer instead of the process-environment default. A future single-process
     /// thread-per-core scheduled run builds one `RunCapture` per sub-cell thread,
     /// each with a per-thread issuer (see
-    /// [`issuance_authority_for`](crate::cellular_cell::issuance_authority_for))
+    /// [`issuance_authority_for`](crate::runner_protocol::cellular_cell::issuance_authority_for))
     /// whose `(cell_id, cell_count)` partition the process-global env vars cannot
     /// express. [`Self::new`] delegates here with the env default
-    /// ([`issuance_authority_from_env`](crate::cellular_cell::issuance_authority_from_env))
+    /// ([`issuance_authority_from_env`](crate::runner_protocol::cellular_cell::issuance_authority_from_env))
     /// so every current call site is byte-unchanged. The per-phase ordinal bases
     /// still come from the environment — they carry no partition — matching `new`.
     #[allow(clippy::too_many_arguments)]
@@ -3996,7 +3996,7 @@ impl RunCapture {
             wants_live_sink_record,
             wants_adaptive_record,
             issuance,
-            crate::cellular_cell::phase_ordinal_bases_from_env(),
+            crate::runner_protocol::cellular_cell::phase_ordinal_bases_from_env(),
         )
     }
 
@@ -4008,7 +4008,7 @@ impl RunCapture {
     /// threads still need each phase's global base so profiling ordinals do not
     /// collide with warmup's `[0, W)` block. The sharded runtime computes the
     /// bases from the phase `requests` budgets (mirroring
-    /// [`crate::cellular_controller::phase_ordinal_bases`]) and injects the same
+    /// [`crate::runner_protocol::cellular_controller::phase_ordinal_bases`]) and injects the same
     /// map into every thread's capture. A controller child instead reuses the
     /// controller-provided env bases (they are already global and
     /// partition-independent, identical across a cell's threads);
@@ -4031,7 +4031,7 @@ impl RunCapture {
         // exact mode never touches the streaming fields.
         let metrics_only = matches!(
             config.storage_mode,
-            aiperf::metrics_core::MetricsStorageMode::Sketch { .. }
+            crate::metrics_core::MetricsStorageMode::Sketch { .. }
         );
         let accumulator = RefCell::new(MetricsAccumulator::with_config(config.clone()));
         Self {
@@ -4236,7 +4236,7 @@ impl RunCapture {
         &self,
         uuid: Uuid,
         request_payload: Vec<u8>,
-        record: aiperf::transport_http::models::RequestRecord,
+        record: crate::transport_http::models::RequestRecord,
     ) -> Result<()> {
         if !self.raw_enabled {
             return Ok(());
@@ -4753,7 +4753,7 @@ impl TurnDispatcher for ConfiguredDispatcher {
 
 #[cfg(test)]
 mod tests {
-    use aiperf::clock::SimClock;
+    use crate::clock::SimClock;
     use serde_json::json;
 
     use super::*;
@@ -4807,27 +4807,27 @@ mod tests {
 
         assert_eq!(
             roots.concurrency(),
-            phase_root.derive_root(aiperf::rng::namespace::TIMING_RAMP_CONCURRENCY)
+            phase_root.derive_root(crate::rng::namespace::TIMING_RAMP_CONCURRENCY)
         );
         assert_eq!(
             roots.prefill_concurrency(),
-            phase_root.derive_root(aiperf::rng::namespace::TIMING_RAMP_PREFILL_CONCURRENCY)
+            phase_root.derive_root(crate::rng::namespace::TIMING_RAMP_PREFILL_CONCURRENCY)
         );
         assert_eq!(
             roots.request_rate(),
-            phase_root.derive_root(aiperf::rng::namespace::TIMING_RAMP_REQUEST_RATE)
+            phase_root.derive_root(crate::rng::namespace::TIMING_RAMP_REQUEST_RATE)
         );
 
         let curve_seeds = [
             roots
                 .request_rate()
-                .derive_seed(aiperf::rng::namespace::TIMING_RAMP_POISSON),
+                .derive_seed(crate::rng::namespace::TIMING_RAMP_POISSON),
             roots
                 .prefill_concurrency()
-                .derive_seed(aiperf::rng::namespace::TIMING_RAMP_POISSON),
+                .derive_seed(crate::rng::namespace::TIMING_RAMP_POISSON),
             roots
                 .concurrency()
-                .derive_seed(aiperf::rng::namespace::TIMING_RAMP_POISSON),
+                .derive_seed(crate::rng::namespace::TIMING_RAMP_POISSON),
         ];
         assert!(curve_seeds.iter().all(Option::is_some));
         assert_ne!(curve_seeds[0], curve_seeds[1]);
@@ -4835,7 +4835,7 @@ mod tests {
         assert_ne!(curve_seeds[1], curve_seeds[2]);
         assert_ne!(
             roots.concurrency(),
-            phase_root.derive_root(aiperf::rng::namespace::TIMING_RAMP_POISSON),
+            phase_root.derive_root(crate::rng::namespace::TIMING_RAMP_POISSON),
             "the phase must not pre-derive the curve-local Poisson namespace"
         );
     }
@@ -4960,7 +4960,7 @@ mod tests {
             RngRoot::new(Some(73)),
             &TiktokenTokenizer::builtin(),
             false,
-            Arc::new(aiperf::dataset::NativeSyntheticMediaGeneratorFactory::default()),
+            Arc::new(crate::dataset::NativeSyntheticMediaGeneratorFactory::default()),
             false,
         )
         .await
@@ -4993,7 +4993,7 @@ mod tests {
             RngRoot::new(Some(3)),
             &TiktokenTokenizer::builtin(),
             true,
-            Arc::new(aiperf::dataset::NativeSyntheticMediaGeneratorFactory::default()),
+            Arc::new(crate::dataset::NativeSyntheticMediaGeneratorFactory::default()),
             false,
         )
         .await
@@ -5009,9 +5009,9 @@ mod tests {
     #[test]
     fn user_files_write_exact_pre_rendered_utf8_after_artifact_creation() {
         let artifact_dir = tempfile::tempdir().unwrap();
-        let files = vec![crate::protocol_v2::UserFileSpecV2 {
+        let files = vec![crate::runner_protocol::protocol_v2::UserFileSpecV2 {
             path: "nested/run.json".into(),
-            format: crate::protocol_v2::UserFileFormatV2::Json,
+            format: crate::runner_protocol::protocol_v2::UserFileFormatV2::Json,
             content: "{\n  \"count\": 7\n}".into(),
         }];
 
@@ -5031,9 +5031,9 @@ mod tests {
         let artifact_dir = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
         symlink(outside.path(), artifact_dir.path().join("escape")).unwrap();
-        let files = vec![crate::protocol_v2::UserFileSpecV2 {
+        let files = vec![crate::runner_protocol::protocol_v2::UserFileSpecV2 {
             path: "escape/owned.txt".into(),
-            format: crate::protocol_v2::UserFileFormatV2::Text,
+            format: crate::runner_protocol::protocol_v2::UserFileFormatV2::Text,
             content: "must-not-write".into(),
         }];
 

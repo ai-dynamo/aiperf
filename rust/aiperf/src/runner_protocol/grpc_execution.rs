@@ -12,13 +12,13 @@
 
 use std::collections::BTreeSet;
 
-use aiperf::transport_grpc::GrpcBindingRegistry;
-use aiperf::transport_http::config::ClientConfig;
+use crate::transport_grpc::GrpcBindingRegistry;
+use crate::transport_http::config::ClientConfig;
 use anyhow::{Context, Result, ensure};
 use url::Url;
 
-use crate::protocol_v2::AuthoredRunSpecV2;
-use crate::registry::RunnerRunContext;
+use crate::runner_protocol::protocol_v2::AuthoredRunSpecV2;
+use crate::runner_protocol::registry::RunnerRunContext;
 
 /// Validate the gRPC-specific endpoint policy for one authored run.
 ///
