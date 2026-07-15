@@ -155,6 +155,52 @@ pub(crate) fn concatenate_shard_artifacts(
     Ok(())
 }
 
+/// Fuse each cell's per-record artifact files into the single final artifact in the
+/// run's real artifact dir (Stage D, same-host cellular path).
+///
+/// Unlike the sharded path, a cell's `artifact_dir` IS its `temp_root/cell-{id}` dir,
+/// so under exact-fold (or the retain batch tail) each cell already wrote its merged
+/// per-record artifacts at `cell_dir.join(relative)` — the FULL relative path, not the
+/// flattened per-shard file name. The controller has every cell dir locally (same
+/// host), so Stage D is exactly the Stage B concat with the per-cell dirs as the
+/// shards: byte-append records/raw JSONL, header-once + data-append CSV, row-group
+/// concat parquet, and data-array merge outputs.json. Set-compared (completion order
+/// accepted), identical to the in-process sharded merge.
+///
+/// Cleanup of the cell dirs is owned by the controller's `ScratchTreeGuard` (it removes
+/// the whole `temp_root`), so this fn — unlike [`concatenate_shard_artifacts`] — never
+/// deletes its sources. `inputs.json` is NOT merged here: the controller generates it
+/// once up front from the resident dataset, matching the sharded exact-fold path.
+pub(crate) fn concatenate_cell_artifacts(
+    cell_dirs: &[PathBuf],
+    artifact_dir: &Path,
+    artifacts: &ArtifactSpec,
+) -> Result<()> {
+    let sources = |relative: &Path| -> Vec<PathBuf> {
+        cell_dirs.iter().map(|dir| dir.join(relative)).collect()
+    };
+    if let Some(relative) = &artifacts.records_path {
+        concat_jsonl(&sources(relative), &artifact_dir.join(relative))?;
+    }
+    if let Some(relative) = &artifacts.raw_path {
+        concat_jsonl(&sources(relative), &artifact_dir.join(relative))?;
+    }
+    if let Some(relative) = &artifacts.records_csv_path {
+        concat_csv(&sources(relative), &artifact_dir.join(relative))?;
+    }
+    if let Some(relative) = &artifacts.outputs_path {
+        concat_outputs_json(&sources(relative), &artifact_dir.join(relative))?;
+    }
+    #[cfg(feature = "parquet")]
+    if let Some(relative) = &artifacts.records_parquet_path {
+        crate::export::per_record_parquet::concat_per_record_parquet(
+            &sources(relative),
+            &artifact_dir.join(relative),
+        )?;
+    }
+    Ok(())
+}
+
 /// Byte-append each existing shard JSONL file into `final_path` in shard order. The
 /// final file is always created (matching the eager batch writer), so an all-empty
 /// run leaves an empty file rather than none.
@@ -501,6 +547,166 @@ mod tests {
             .unwrap();
             assert_eq!(
                 count_rows(&shard_dir_root.path().join("profile_export.parquet")),
+                count_rows(&batch_dir.path().join("profile_export.parquet")),
+                "merged parquet row count equals the batch writer over the union"
+            );
+        }
+    }
+
+    /// Drive one cell slice through a lane pointed straight at the cell's own dir
+    /// (`cell_dir.join(relative)`), exactly as a cell's execute path does when its
+    /// `artifact_dir` is its `temp_root/cell-{id}` dir. Mirrors [`drive_shard_lane`] but
+    /// with the cell-dir (full relative path) layout, not the flattened per-shard file.
+    fn drive_cell_lane(
+        cell_dir: &Path,
+        slice: &[CapturedRecord],
+        artifacts: &ArtifactSpec,
+        config: &MetricsConfig,
+    ) {
+        std::fs::create_dir_all(cell_dir).unwrap();
+        let in_cell = |relative: &Option<PathBuf>| -> Option<PathBuf> {
+            relative.as_ref().map(|path| cell_dir.join(path))
+        };
+        let lane = RecordArtifactLane::new(
+            in_cell(&artifacts.records_path),
+            in_cell(&artifacts.raw_path),
+            in_cell(&artifacts.records_csv_path),
+            in_cell(&artifacts.records_parquet_path),
+            in_cell(&artifacts.outputs_path),
+            artifacts.trace,
+        )
+        .unwrap()
+        .expect("all artifacts requested");
+        for captured in slice {
+            lane.write(captured, config).unwrap();
+        }
+        lane.finish().unwrap();
+    }
+
+    /// Stage D: per-cell lanes over disjoint slices (each writing to its own
+    /// `cell-{id}` dir) + the controller's cellular concat == the batch writer over the
+    /// union, as a SET, for records/raw/CSV/outputs (and parquet under its feature). One
+    /// cell is deliberately empty. This is the same SET-parity bar the sharded concat
+    /// meets, but exercising the cell-dir (full relative path) source layout and the
+    /// controller-owned (no source deletion) cleanup contract.
+    #[test]
+    fn per_cell_concat_matches_batch_over_union() {
+        let config = MetricsConfig::default();
+        let records = union_records();
+        let artifacts = all_artifacts();
+        let cell_count = 3usize;
+
+        // The controller's throwaway scratch tree with one dir per cell.
+        let temp_root = tempfile::tempdir().unwrap();
+        let cell_dirs: Vec<PathBuf> = (0..cell_count)
+            .map(|id| temp_root.path().join(format!("cell-{id}")))
+            .collect();
+        // Disjoint cell slices: [0..3], [] (empty), [3..7].
+        let slices: [&[CapturedRecord]; 3] = [&records[0..3], &[], &records[3..7]];
+        for (dir, slice) in cell_dirs.iter().zip(slices) {
+            drive_cell_lane(dir, slice, &artifacts, &config);
+        }
+
+        // The real run artifact dir the controller fuses into (separate from the scratch).
+        let run_dir = tempfile::tempdir().unwrap();
+        concatenate_cell_artifacts(&cell_dirs, run_dir.path(), &artifacts).unwrap();
+
+        // The controller does NOT delete cell dirs (ScratchTreeGuard owns the scratch).
+        for dir in &cell_dirs {
+            assert!(
+                dir.exists(),
+                "cell dir {} must survive concat",
+                dir.display()
+            );
+        }
+
+        // Batch writers over the union into a separate dir.
+        let batch_dir = tempfile::tempdir().unwrap();
+        write_records_jsonl(
+            &batch_dir.path().join("profile_export.jsonl"),
+            &records,
+            &config,
+            false,
+        )
+        .unwrap();
+        write_raw_records_jsonl(&batch_dir.path().join("profile_export_raw.jsonl"), &records)
+            .unwrap();
+        write_records_csv(
+            &batch_dir.path().join("profile_export_records.csv"),
+            &records,
+            &config,
+            false,
+        )
+        .unwrap();
+        write_outputs_json(&batch_dir.path().join("outputs.json"), &records, &config).unwrap();
+
+        for name in ["profile_export.jsonl", "profile_export_raw.jsonl"] {
+            assert_eq!(
+                line_set(&run_dir.path().join(name)),
+                line_set(&batch_dir.path().join(name)),
+                "{name} line set must equal the batch writer over the union"
+            );
+        }
+        assert_eq!(
+            line_set(&run_dir.path().join("profile_export_records.csv")),
+            line_set(&batch_dir.path().join("profile_export_records.csv")),
+            "CSV line set (header once + data rows) must equal the batch writer"
+        );
+        let sort_data = |path: &Path| -> serde_json::Value {
+            let mut doc: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+            let data = doc["data"].as_array_mut().unwrap();
+            data.sort_by_key(|row| {
+                (
+                    row["session_num"].as_u64().unwrap(),
+                    row["turn_index"].as_u64().unwrap(),
+                )
+            });
+            doc
+        };
+        assert_eq!(
+            sort_data(&run_dir.path().join("outputs.json")),
+            sort_data(&batch_dir.path().join("outputs.json")),
+            "outputs.json data SET must equal the batch writer (warmup excluded)"
+        );
+        assert_eq!(
+            sort_data(&run_dir.path().join("outputs.json"))["data"]
+                .as_array()
+                .unwrap()
+                .len(),
+            6,
+            "six profiling records, warmup excluded"
+        );
+
+        #[cfg(feature = "parquet")]
+        {
+            use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+            let count_rows = |path: &Path| -> usize {
+                let file = std::fs::File::open(path).unwrap();
+                ParquetRecordBatchReaderBuilder::try_new(file)
+                    .unwrap()
+                    .metadata()
+                    .row_groups()
+                    .iter()
+                    .map(|rg| rg.num_rows() as usize)
+                    .sum()
+            };
+            crate::export::per_record_parquet::write_per_record_parquet(
+                &batch_dir.path().join("profile_export.parquet"),
+                &records
+                    .iter()
+                    .map(|captured| {
+                        crate::runner_protocol::records::per_record_parquet_row(
+                            captured, &config, false,
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+                &crate::export::per_record_parquet::record_metric_columns(),
+                false,
+            )
+            .unwrap();
+            assert_eq!(
+                count_rows(&run_dir.path().join("profile_export.parquet")),
                 count_rows(&batch_dir.path().join("profile_export.parquet")),
                 "merged parquet row count equals the batch writer over the union"
             );

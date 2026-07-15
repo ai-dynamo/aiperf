@@ -152,8 +152,16 @@ pub fn run_cellular(
     // budget check in — graph phases carry sessions/duration, not a `requests` budget.
     let kind = CellularRunKind::detect(envelope);
     kind.validate_phases(envelope, cell_count)?;
+    // Same-host (local launcher) cells write their per-record artifacts into
+    // controller-local `temp_root/cell-{id}` dirs, which the controller concatenates into
+    // the real artifact dir at finalize (Stage D). A cross-host (k8s) pod writes to its
+    // own filesystem, so those files stay unreachable by the controller — still dropped.
+    let is_k8s = matches!(
+        std::env::var(crate::runner_protocol::cell_launcher::CELL_LAUNCHER_ENV).as_deref(),
+        Ok("k8s")
+    );
     warn_dropped_sidecar_telemetry(envelope);
-    warn_dropped_per_record_artifacts(envelope);
+    warn_dropped_per_record_artifacts(envelope, is_k8s);
     warn_cellular_approximations(envelope);
     // One shared seed for every cell when the author gave none (else `None` and each
     // cell inherits the authored `run.random_seed` verbatim).
@@ -185,10 +193,7 @@ pub fn run_cellular(
 
         // Build the controller's velo transport and publish its PeerInfo so cells
         // reach it from the one operator-hardcoded coordinate (zero discovery).
-        let is_k8s = matches!(
-            std::env::var(crate::runner_protocol::cell_launcher::CELL_LAUNCHER_ENV).as_deref(),
-            Ok("k8s")
-        );
+        // `is_k8s` is resolved once above and moved in here.
         let velo = build_velo(controller_velo_bind(is_k8s, &temp_root))
             .await
             .context("building controller velo")?;
@@ -412,6 +417,46 @@ pub fn run_cellular(
             }
             write_heartbeat_sidecar(report_path, &merged_heartbeat)
                 .context("writing merged cellular heartbeat")?;
+        }
+
+        // Stage D (same-host): each cell ran its ordinary execute path with its
+        // controller-local `temp_root/cell-{id}` dir as its artifact_dir, so under
+        // exact-fold (the streaming `RecordArtifactLane`, flushed before the cell ships)
+        // — or the retain batch tail — it already wrote its merged per-record artifacts
+        // (records/raw/CSV/parquet/outputs) there. Every cell shipped its terminal
+        // partition AFTER finishing its lane, so by the time all partitions are collected
+        // above the cell files are complete and controller-local. Concatenate them into
+        // the real artifact dir (the per-cell dirs are the "shards") before `_scratch`
+        // removes `temp_root` — reusing the Stage B concat (row SET-identical, completion
+        // order accepted). `inputs.json` is NOT concatenated: the native exporter/report
+        // path owns the single controller-generated copy, matching sharded exact-fold.
+        // Cross-host (k8s) pods write to their own filesystem, so their files are not
+        // controller-local; skipped here (warned at startup), shipping them is the
+        // cross-host follow-up.
+        if !is_k8s {
+            let requested = requested_per_record_artifacts(envelope);
+            if !requested.is_empty()
+                && let Some(artifact_dir) = report_path.parent()
+            {
+                let cell_dirs: Vec<PathBuf> = (0..cell_count)
+                    .map(|cell_id| temp_root.join(format!("cell-{cell_id}")))
+                    .collect();
+                // Parse `cfg.artifacts` exactly as the cell's execute path does
+                // (`AuthoredRunSpecV2` — `from_value(...).unwrap_or_default()`), so the
+                // controller reads each artifact's relative path identically to how the
+                // cell wrote it under its cell dir.
+                let artifacts: crate::runner_protocol::protocol::ArtifactSpec = envelope
+                    .pointer("/run/cfg/artifacts")
+                    .cloned()
+                    .and_then(|value| serde_json::from_value(value).ok())
+                    .unwrap_or_default();
+                crate::runner_protocol::shard_artifacts::concatenate_cell_artifacts(
+                    &cell_dirs,
+                    artifact_dir,
+                    &artifacts,
+                )
+                .context("concatenating per-cell per-record artifacts")?;
+            }
         }
 
         // `_scratch` removes `temp_root` on drop.
@@ -848,29 +893,34 @@ fn warn_dropped_sidecar_telemetry(envelope: &serde_json::Value) {
     }
 }
 
-/// Warns, once at controller startup, when a cellular run requests any per-record FILE
-/// artifact (`records_path`/`raw_path`/`records_csv_path`/`records_parquet_path`/
-/// `outputs_path`). A cellular run NEVER emits these files, on EITHER retain or
-/// exact-fold: each cell writes its per-record sidecars only into the controller's
-/// throwaway scratch tree (discarded on exit — see `ScratchTreeGuard` / `run_cellular`),
-/// and the cell→controller channel ships only merged metrics (a `Partition` of raw
-/// records or a `StorePartition` of a folded store), never artifact files. The merged
-/// report and the native exporter outputs (genai-perf-v1 JSON/CSV, console.txt,
-/// timeslice, …) ARE produced; the per-record file sidecars are not. Emitting them is
-/// deferred Stage D (a cell→controller artifact-file channel). Surfaced as a loud
-/// runtime warning rather than a silent drop so the operator knows the requested files
-/// will be absent; run without `--cells` to collect them.
-fn warn_dropped_per_record_artifacts(envelope: &serde_json::Value) {
+/// Warns, once at controller startup, when a CROSS-HOST (k8s) cellular run requests a
+/// per-record FILE artifact (`records_path`/`raw_path`/`records_csv_path`/
+/// `records_parquet_path`/`outputs_path`) — the one case Stage D does not yet cover.
+///
+/// Same-host (`--cells N` with the local launcher) DOES now emit these files: each cell
+/// runs its ordinary execute path with a controller-local `temp_root/cell-{id}` dir as
+/// its artifact_dir, so it writes its merged per-record artifacts there (streaming lane
+/// under exact-fold, batch tail otherwise), and the controller concatenates them into
+/// the real artifact dir at finalize (`concatenate_cell_artifacts`). Only a k8s pod,
+/// whose cell dir lives on its OWN filesystem rather than the controller's, still drops
+/// them — shipping those bytes over a new `CellMessage` variant is the cross-host
+/// follow-up. Surfaced as a loud warning so a k8s operator knows the requested files
+/// will be absent; run without `--cells`, or same-host, to collect them.
+fn warn_dropped_per_record_artifacts(envelope: &serde_json::Value, is_k8s: bool) {
+    if !is_k8s {
+        // Same-host emits them (see `concatenate_cell_artifacts`); nothing to warn.
+        return;
+    }
     let requested = requested_per_record_artifacts(envelope);
     if !requested.is_empty() {
         tracing::warn!(
             artifacts = requested.join(","),
-            "cellular mode does not emit per-record file artifacts (each cell's per-record \
-             sidecars are written to the controller's scratch tree and discarded; only \
-             merged metrics ship back — Stage D wires the cell→controller artifact-file \
-             channel). These files will NOT be produced; the merged report and native \
-             exporter outputs (genai-perf-v1 JSON/CSV, console.txt, timeslice) still are. \
-             Run without --cells to collect the per-record sidecars."
+            "cross-host (k8s) cellular mode does not yet ship per-record file artifacts \
+             from cell pods to the controller (each pod writes them to its own \
+             filesystem, unreachable by the controller), so these files will NOT appear \
+             in the run artifact dir. The merged report and native exporter outputs \
+             (genai-perf-v1 JSON/CSV, console.txt, timeslice) still are. A same-host \
+             --cells run DOES emit them; cross-host shipping is a follow-up."
         );
     }
 }
