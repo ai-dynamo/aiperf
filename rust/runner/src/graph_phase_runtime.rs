@@ -9,7 +9,7 @@
 //! phase-local whole-trace execution backend.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -250,6 +250,136 @@ struct GraphTracePhaseProgress {
     returned_uuids: HashSet<Uuid>,
 }
 
+/// One lane's warmup-drain resume identity — the join key E3c's `LaneHandoff`
+/// assembly consumes to reconstruct each profiling lane's resume graph.
+///
+/// Port of the per-live-lane tuple
+/// `_pressure_live[lane] = (template_id, instance_id, t_star_us, pressure_pass)`
+/// recorded in `src/aiperf/timing/strategies/graph_ir_replay.py:2267` (branch
+/// `ajc/aiperf-graph-ir`). The `pressure_pass` recycle-pass member is
+/// intentionally omitted here: E3a is observability only, and the recycle loop
+/// (E3b) owns the pass concept.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct GraphLaneIdentity {
+    /// Authored root template id (the `instance_id` prefix before `"::"`).
+    pub(crate) template_trace_id: String,
+    /// Unique execution-instance id stamped as `x_correlation_id` on every node
+    /// record dispatched for this lane.
+    pub(crate) instance_id: String,
+    /// This lane's trajectory-start `t*` in microseconds.
+    pub(crate) t_star_us: f64,
+}
+
+/// Per-lane executed-node and drain-clock return-wall observability for the
+/// extended-warmup cache-pressure handoff (consumed by E3c).
+///
+/// Ports the three ledgers `graph_ir_replay.py` accumulates over a warmup phase
+/// so the profiling phase can resume each lane at the exact drain frontier:
+///   * `_return_walls: {instance_id: {node_id: wall_us}}`
+///     (`graph_ir_replay.py:499`), written per return by `_record_return_wall`
+///     (`graph_ir_replay.py:884`);
+///   * `executed_node_ids = frozenset(live_walls)`, derived from the return-wall
+///     keys at handoff assembly (`graph_ir_replay.py:2288`); tracked eagerly
+///     here as a set;
+///   * `_pressure_live: {lane: (template, instance, t*, pass)}`, the lane
+///     identity map (`graph_ir_replay.py:2267`).
+///
+/// All three are keyed by lane index (`u64`) to match E1's
+/// `BTreeMap<u64, LaneHandoff>`; an internal `instance_id -> lane` reverse index
+/// attributes each terminal node return — which arrives on the wire keyed only
+/// by its instance id (`x_correlation_id`) — to the owning lane. Every wall is
+/// taken from the injected [`Clock`] at return-handling time
+/// (`clock.now_ns() / 1000`), never `Instant::now()`, mirroring Python's
+/// monotonic `_wall_us` (`perf_counter_ns() / 1_000`, `graph_ir_replay.py:881`).
+///
+/// Lane registration ([`register_lane`](Self::register_lane)) is left for E3b's
+/// recycle loop to drive as it assigns instances to lanes; until a lane is
+/// registered, [`observe_return`](Self::observe_return) is a graceful no-op, so
+/// the ledger is inert on the default (no-scenario) graph path.
+#[derive(Default)]
+pub(crate) struct GraphLaneLedger {
+    identities: RefCell<BTreeMap<u64, GraphLaneIdentity>>,
+    instance_to_lane: RefCell<HashMap<String, u64>>,
+    executed_node_ids: RefCell<BTreeMap<u64, BTreeSet<String>>>,
+    return_wall_us: RefCell<BTreeMap<u64, BTreeMap<String, f64>>>,
+}
+
+impl GraphLaneLedger {
+    /// Associate a lane index with the instance it is executing.
+    ///
+    /// Records the lane -> identity map and the reverse `instance_id -> lane`
+    /// index used by [`observe_return`](Self::observe_return). E3b calls this as
+    /// it launches each lane's instance; re-registering a lane overwrites its
+    /// identity (a recycle draw reusing the lane) while leaving already-ledgered
+    /// returns for the prior instance intact under that lane key.
+    #[allow(dead_code)] // Driven by E3b's recycle loop as it assigns instances to lanes.
+    pub(crate) fn register_lane(&self, lane: u64, identity: GraphLaneIdentity) {
+        self.instance_to_lane
+            .borrow_mut()
+            .insert(identity.instance_id.clone(), lane);
+        self.identities.borrow_mut().insert(lane, identity);
+    }
+
+    /// Ledger one terminal node return against its lane's executed set and
+    /// return-wall map.
+    ///
+    /// Resolves the lane from `instance_id` via the reverse index; an
+    /// unregistered instance (or a return that predates E3b lane assignment) is
+    /// a graceful no-op — the analogue of Python's unknown-`instance_id`
+    /// early-return in `_record_return_wall` (`graph_ir_replay.py:895`). The
+    /// wall is the caller's [`Clock`]-derived microsecond instant at
+    /// return-handling time. The set insert is idempotent; the wall assignment
+    /// is last-write-wins, matching Python's
+    /// `self._return_walls.setdefault(instance_id, {})[node_id] = wall`.
+    pub(crate) fn observe_return(&self, instance_id: &str, node_id: &str, return_wall_us: f64) {
+        let Some(lane) = self.instance_to_lane.borrow().get(instance_id).copied() else {
+            return;
+        };
+        self.executed_node_ids
+            .borrow_mut()
+            .entry(lane)
+            .or_default()
+            .insert(node_id.to_owned());
+        self.return_wall_us
+            .borrow_mut()
+            .entry(lane)
+            .or_default()
+            .insert(node_id.to_owned(), return_wall_us);
+    }
+
+    /// This lane's registered resume identity, if any.
+    #[allow(dead_code)] // Consumed by E3c's `LaneHandoff` assembly at warmup teardown.
+    pub(crate) fn lane_identity(&self, lane: u64) -> Option<GraphLaneIdentity> {
+        self.identities.borrow().get(&lane).cloned()
+    }
+
+    /// The set of node ids this lane executed (returned a non-cancelled record).
+    #[allow(dead_code)] // Consumed by E3c's `LaneHandoff.executed_node_ids`.
+    pub(crate) fn executed_node_ids(&self, lane: u64) -> BTreeSet<String> {
+        self.executed_node_ids
+            .borrow()
+            .get(&lane)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// This lane's `node_id -> return_wall_us` ledger on the Clock-derived wall.
+    #[allow(dead_code)] // Consumed by E3c's `LaneHandoff.return_wall_us`.
+    pub(crate) fn return_wall_us(&self, lane: u64) -> BTreeMap<String, f64> {
+        self.return_wall_us
+            .borrow()
+            .get(&lane)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Every lane index that has a registered identity, ascending.
+    #[allow(dead_code)] // Consumed by E3c to iterate live lanes at handoff assembly.
+    pub(crate) fn registered_lanes(&self) -> Vec<u64> {
+        self.identities.borrow().keys().copied().collect()
+    }
+}
+
 trait GraphPhaseProgressSink {
     fn record_sent_batch(&self, sent: &[PhaseSend]) -> Result<(), String>;
     fn record_first_token(&self);
@@ -282,6 +412,11 @@ struct GraphPhaseProgress {
     failures: Rc<GraphPhaseFailures>,
     traces: RefCell<HashMap<String, GraphTracePhaseProgress>>,
     outcome: Rc<RefCell<GraphWorkloadReport>>,
+    /// Injected clock: the sole source of the per-node return wall stamped into
+    /// the lane ledger (`clock.now_ns() / 1000`); never `Instant::now()`.
+    clock: Rc<dyn Clock>,
+    /// Per-lane executed-node/return-wall observability for the E3c handoff.
+    lanes: Rc<GraphLaneLedger>,
     /// Whether this phase is the WARMUP phase, gating warmup-failure accounting.
     is_warmup: bool,
     /// Run-scoped ledger of WARMUP-phase trace ids that produced a terminal,
@@ -293,10 +428,13 @@ struct GraphPhaseProgress {
 }
 
 impl GraphPhaseProgress {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         sink: Rc<dyn GraphPhaseProgressSink>,
         failures: Rc<GraphPhaseFailures>,
         outcome: Rc<RefCell<GraphWorkloadReport>>,
+        clock: Rc<dyn Clock>,
+        lanes: Rc<GraphLaneLedger>,
         is_warmup: bool,
         warmup_failed_trace_ids: Rc<RefCell<Vec<String>>>,
     ) -> Self {
@@ -305,9 +443,27 @@ impl GraphPhaseProgress {
             failures,
             traces: RefCell::new(HashMap::new()),
             outcome,
+            clock,
+            lanes,
             is_warmup,
             warmup_failed_trace_ids,
         }
+    }
+
+    /// Ledger one non-cancelled terminal node return into its lane's
+    /// executed-node/return-wall observability.
+    ///
+    /// The wall is taken from the injected clock at return-handling time, the
+    /// analogue of Python routing every `trace_id`-bearing return through
+    /// `_record_return_wall` from `_on_graph_return` (`graph_ir_replay.py:964`).
+    /// Cancelled returns are excluded by the caller: a drain-cancel is
+    /// self-inflicted teardown and the server may never have executed the node,
+    /// so keeping it out of `executed_node_ids` lets profiling refire it — the
+    /// exact rationale in Python's `if self._pressure_enabled and not cancelled`
+    /// guard (`graph_ir_replay.py:968`).
+    fn observe_lane_return(&self, instance_id: &str, node_id: &str) {
+        let wall_us = self.clock.now_ns() as f64 / 1_000.0;
+        self.lanes.observe_return(instance_id, node_id, wall_us);
     }
 
     /// Ledger one terminal (non-cancelled) WARMUP-phase failure for `trace_id`,
@@ -666,11 +822,20 @@ fn ingest_graph_execution_event(
         RunnerGraphExecutionEvent::FirstToken { trace_id, uuid } => {
             progress.first_token(&trace_id, uuid);
         }
-        RunnerGraphExecutionEvent::Record(record) => {
+        RunnerGraphExecutionEvent::Record { record, node_id } => {
             if let Some(sampler) = sampler {
                 sampler.borrow_mut().on_record(&record.ingest);
             }
             progress.record(&record);
+            // Attribute a non-cancelled terminal node return to its lane's
+            // executed-node/return-wall ledgers. Cancelled returns are excluded
+            // (see `observe_lane_return`); backends without a node id (offline
+            // dynosim) carry `None` and never feed the warmup handoff.
+            if let Some(node_id) = node_id.as_deref()
+                && !record.ingest.canceled
+            {
+                progress.observe_lane_return(&record.x_correlation_id, node_id);
+            }
             captured.borrow_mut().push(*record);
         }
         RunnerGraphExecutionEvent::TraceComplete {
@@ -843,6 +1008,11 @@ struct GraphPhaseExecutionFactory {
     /// Run-scoped ledger of terminal WARMUP-phase trace failures, consumed by
     /// [`run_graph_phases`] to abort before PROFILING.
     warmup_failed_trace_ids: Rc<RefCell<Vec<String>>>,
+    /// Captures the WARMUP phase's per-lane executed-node/return-wall ledger so
+    /// E3c can read the drain frontier at warmup teardown. Populated in
+    /// [`create`](Self::create) when the warmup phase's progress is built;
+    /// remains `None` for a run with no warmup phase.
+    warmup_lane_ledger: Rc<RefCell<Option<Rc<GraphLaneLedger>>>>,
 }
 
 impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
@@ -852,10 +1022,16 @@ impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
                 error: format!("graph phase {:?} has no prepared execution plan", config.id),
             });
         };
+        let lanes = Rc::new(GraphLaneLedger::default());
+        if prepared.is_warmup {
+            *self.warmup_lane_ledger.borrow_mut() = Some(lanes.clone());
+        }
         let progress = Rc::new(GraphPhaseProgress::new(
             Rc::new(context.clone()),
             prepared.failures.clone(),
             self.outcome.clone(),
+            context.clock(),
+            lanes,
             prepared.is_warmup,
             self.warmup_failed_trace_ids.clone(),
         ));
@@ -1124,6 +1300,10 @@ pub(crate) async fn run_graph_phases(
         .map(|(config, sidecars)| (config.id.clone(), sidecars))
         .collect::<HashMap<_, _>>();
     let warmup_failed_trace_ids = Rc::new(RefCell::new(Vec::new()));
+    // Captures the warmup phase's per-lane executed-node/return-wall ledger for
+    // the E3c cache-pressure handoff; the recycle loop (E3b) registers lanes,
+    // and the handoff assembly (E3c) reads it here after the warmup phase drains.
+    let warmup_lane_ledger: Rc<RefCell<Option<Rc<GraphLaneLedger>>>> = Rc::new(RefCell::new(None));
     let execution_factory: Rc<dyn PhaseExecutionFactory> = Rc::new(GraphPhaseExecutionFactory {
         phases: RefCell::new(prepared),
         sidecars: RefCell::new(sidecars),
@@ -1131,6 +1311,7 @@ pub(crate) async fn run_graph_phases(
         captured: captured.clone(),
         outcome: outcome.clone(),
         warmup_failed_trace_ids: warmup_failed_trace_ids.clone(),
+        warmup_lane_ledger: warmup_lane_ledger.clone(),
     });
     let phase_observer: Rc<dyn PhaseObserver> = Rc::new(NoopPhaseObserver);
     let runner_factory = Rc::new(ClockPhaseRunnerFactory::new(
@@ -1866,6 +2047,8 @@ mod tests {
                 sink,
                 failures,
                 outcome.clone(),
+                Rc::new(aiperf::clock::SimClock::new()),
+                Rc::new(GraphLaneLedger::default()),
                 false,
                 Rc::new(RefCell::new(Vec::new())),
             ),
@@ -1883,7 +2066,15 @@ mod tests {
         let outcome = Rc::new(RefCell::new(GraphWorkloadReport::default()));
         let ledger = Rc::new(RefCell::new(Vec::new()));
         (
-            GraphPhaseProgress::new(sink, failures, outcome, true, ledger.clone()),
+            GraphPhaseProgress::new(
+                sink,
+                failures,
+                outcome,
+                Rc::new(aiperf::clock::SimClock::new()),
+                Rc::new(GraphLaneLedger::default()),
+                true,
+                ledger.clone(),
+            ),
             ledger,
         )
     }
@@ -2027,7 +2218,10 @@ mod tests {
             &captured,
             Some(&sampler),
             &progress,
-            RunnerGraphExecutionEvent::Record(Box::new(record)),
+            RunnerGraphExecutionEvent::Record {
+                record: Box::new(record),
+                node_id: None,
+            },
         );
 
         let window = sampler.borrow_mut().take(10);
@@ -2259,7 +2453,15 @@ mod tests {
         let ledger = Rc::new(RefCell::new(Vec::new()));
         // is_warmup = false: the same terminal failure is a normal profiling
         // failure, never a pre-profiling abort trigger.
-        let progress = GraphPhaseProgress::new(sink, failures, outcome, false, ledger.clone());
+        let progress = GraphPhaseProgress::new(
+            sink,
+            failures,
+            outcome,
+            Rc::new(aiperf::clock::SimClock::new()),
+            Rc::new(GraphLaneLedger::default()),
+            false,
+            ledger.clone(),
+        );
         progress.admit(&TraceAdmissionInfo {
             trace_id: "profiling-fail".into(),
             node_count: 1,
@@ -2267,6 +2469,150 @@ mod tests {
         });
         progress.record(&graph_phase_record("profiling-fail", true, false));
         assert!(ledger.borrow().is_empty());
+    }
+
+    fn lane_identity(template: &str, instance: &str, t_star_us: f64) -> GraphLaneIdentity {
+        GraphLaneIdentity {
+            template_trace_id: template.into(),
+            instance_id: instance.into(),
+            t_star_us,
+        }
+    }
+
+    #[test]
+    fn lane_ledger_records_executed_and_return_walls_per_registered_lane() {
+        // The ledger keys everything by lane index; a return arriving keyed by
+        // its instance id is attributed to the lane that registered it.
+        let ledger = GraphLaneLedger::default();
+        ledger.register_lane(0, lane_identity("tmpl-a", "tmpl-a::inst-a", 1_000.0));
+        ledger.register_lane(1, lane_identity("tmpl-b", "tmpl-b::inst-b", 2_000.0));
+
+        ledger.observe_return("tmpl-a::inst-a", "n_0", 5.0);
+        ledger.observe_return("tmpl-a::inst-a", "n_1", 9.0);
+        ledger.observe_return("tmpl-b::inst-b", "n_0", 12.0);
+        // A return for an unregistered instance is a graceful no-op.
+        ledger.observe_return("tmpl-c::inst-c", "n_0", 99.0);
+
+        assert_eq!(
+            ledger.executed_node_ids(0),
+            BTreeSet::from(["n_0".to_owned(), "n_1".to_owned()])
+        );
+        assert_eq!(
+            ledger.return_wall_us(0),
+            BTreeMap::from([("n_0".to_owned(), 5.0), ("n_1".to_owned(), 9.0)])
+        );
+        assert_eq!(
+            ledger.executed_node_ids(1),
+            BTreeSet::from(["n_0".to_owned()])
+        );
+        assert_eq!(
+            ledger.return_wall_us(1),
+            BTreeMap::from([("n_0".to_owned(), 12.0)])
+        );
+        assert_eq!(
+            ledger.lane_identity(0),
+            Some(lane_identity("tmpl-a", "tmpl-a::inst-a", 1_000.0))
+        );
+        assert_eq!(ledger.registered_lanes(), vec![0, 1]);
+        // The unregistered instance never created a lane entry.
+        assert_eq!(ledger.registered_lanes().len(), 2);
+    }
+
+    #[test]
+    fn lane_return_wall_is_taken_from_the_injected_clock_and_excludes_cancellations() {
+        // Drive terminal node returns through the drain-ingest path with a
+        // SimClock so the recorded wall is exactly `clock.now_ns() / 1000` at
+        // return-handling time, and a cancelled return is kept out of the
+        // executed set (agentx `not cancelled` parity).
+        let sink = Rc::new(RecordingGraphPhaseProgressSink::default());
+        let failures = Rc::new(GraphPhaseFailures::default());
+        let outcome = Rc::new(RefCell::new(GraphWorkloadReport::default()));
+        let clock = Rc::new(aiperf::clock::SimClock::new());
+        let lanes = Rc::new(GraphLaneLedger::default());
+        lanes.register_lane(0, lane_identity("tmpl-a", "tmpl-a::inst-a", 1_000.0));
+        let progress = GraphPhaseProgress::new(
+            sink,
+            failures.clone(),
+            outcome,
+            clock.clone(),
+            lanes.clone(),
+            false,
+            Rc::new(RefCell::new(Vec::new())),
+        );
+        // Instance a reserves three nodes: two real returns plus a cancelled one.
+        progress.admit(&TraceAdmissionInfo {
+            trace_id: "tmpl-a::inst-a".into(),
+            node_count: 3,
+            arrival_ns: 0,
+        });
+        let captured = Rc::new(RefCell::new(Vec::new()));
+
+        let feed = |node_id: &str, uuid: u128, canceled: bool, at_ns: i64| {
+            clock.advance_to(at_ns);
+            let mut record = graph_phase_record("tmpl-a::inst-a", canceled, canceled);
+            record.uuid = Uuid::from_u128(uuid);
+            ingest_graph_execution_event(
+                &captured,
+                None,
+                &progress,
+                RunnerGraphExecutionEvent::Record {
+                    record: Box::new(record),
+                    node_id: Some(node_id.to_owned()),
+                },
+            );
+        };
+        feed("n_0", 1, false, 5_000);
+        feed("n_1", 2, false, 9_000);
+        // A cancelled return at a later instant is NOT ledgered.
+        feed("n_2", 3, true, 20_000);
+
+        assert!(failures.first().is_none());
+        assert_eq!(
+            lanes.executed_node_ids(0),
+            BTreeSet::from(["n_0".to_owned(), "n_1".to_owned()])
+        );
+        assert_eq!(
+            lanes.return_wall_us(0),
+            BTreeMap::from([("n_0".to_owned(), 5.0), ("n_1".to_owned(), 9.0)])
+        );
+    }
+
+    #[test]
+    fn lane_return_without_a_node_id_is_not_ledgered() {
+        // The offline dynosim adapter carries no node id; such a record must
+        // never touch the lane ledger even for a registered instance.
+        let sink = Rc::new(RecordingGraphPhaseProgressSink::default());
+        let failures = Rc::new(GraphPhaseFailures::default());
+        let outcome = Rc::new(RefCell::new(GraphWorkloadReport::default()));
+        let clock = Rc::new(aiperf::clock::SimClock::new());
+        let lanes = Rc::new(GraphLaneLedger::default());
+        lanes.register_lane(0, lane_identity("tmpl-a", "tmpl-a::inst-a", 0.0));
+        let progress = GraphPhaseProgress::new(
+            sink,
+            failures,
+            outcome,
+            clock,
+            lanes.clone(),
+            false,
+            Rc::new(RefCell::new(Vec::new())),
+        );
+        progress.admit(&TraceAdmissionInfo {
+            trace_id: "tmpl-a::inst-a".into(),
+            node_count: 1,
+            arrival_ns: 0,
+        });
+        let captured = Rc::new(RefCell::new(Vec::new()));
+        ingest_graph_execution_event(
+            &captured,
+            None,
+            &progress,
+            RunnerGraphExecutionEvent::Record {
+                record: Box::new(graph_phase_record("tmpl-a::inst-a", false, false)),
+                node_id: None,
+            },
+        );
+        assert!(lanes.executed_node_ids(0).is_empty());
+        assert!(lanes.return_wall_us(0).is_empty());
     }
 
     #[test]

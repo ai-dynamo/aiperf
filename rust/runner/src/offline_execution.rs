@@ -1675,15 +1675,18 @@ impl OfflineGraphEventSink for OfflineGraphRunnerEventSink {
 
     fn record(&self, record: OfflineGraphRequestRecord) -> Result<()> {
         self.events
-            .emit(RunnerGraphExecutionEvent::Record(Box::new(
-                CapturedRecord {
+            .emit(RunnerGraphExecutionEvent::Record {
+                record: Box::new(CapturedRecord {
                     uuid: record.uuid,
                     x_correlation_id: record.trace_id,
                     output: CapturedModelOutput::from_parts(&record.response_text, None, None),
                     raw: None,
                     ingest: record.ingest,
-                },
-            )))
+                }),
+                // The offline dynosim adapter carries no static node id and never
+                // feeds the (online-only) cache-pressure warmup handoff.
+                node_id: None,
+            })
             .map_err(Into::into)
     }
 }
