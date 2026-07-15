@@ -64,6 +64,35 @@ pub const CELL_HTTP_ARTIFACT_SHIPPING_ENV: &str = "AIPERF_CELL_HTTP_ARTIFACT_SHI
 /// The default controller artifact-server port (server bind + cell-derived fetch).
 pub const DEFAULT_ARTIFACT_PORT: u16 = 9600;
 
+/// **Test/dev-only force seam.** Env flag that makes a LOCAL (`--cells N`, same-host)
+/// run drive the CROSS-HOST HTTP artifact path over loopback instead of the default
+/// shared-FS Stage D concat: the controller binds its artifact upload server on
+/// `127.0.0.1:0`, injects that authority into each locally-launched cell, and the
+/// cells POST their per-record artifact files back over real TCP + streaming zstd —
+/// exercising the exact production shipping/upload/concat code that k8s uses, but
+/// without a second host. Set to `1`/`true`/`on`/`yes` to enable.
+///
+/// This exists ONLY so a same-host multi-PROCESS test can prove the HTTP+zstd
+/// shipping mechanism end-to-end (see `rust/e2e/tests/test_cellular_http_shipping.rs`).
+/// It is NOT a product mode: default local `--cells N` (flag unset) is byte-unchanged
+/// — cells write directly to the controller-local scratch and the controller
+/// concatenates those writes with no HTTP, exactly as before.
+pub const CELL_ARTIFACT_HTTP_FORCE_ENV: &str = "AIPERF_CELL_ARTIFACT_HTTP_FORCE";
+
+/// Whether the [test/dev HTTP-force seam](CELL_ARTIFACT_HTTP_FORCE_ENV) is enabled
+/// (default OFF). When ON, the controller routes a same-host cellular run through the
+/// real HTTP+zstd artifact-shipping path over loopback rather than the shared-FS
+/// concat, so a same-host multi-process test drives the production shipping code.
+pub fn artifact_http_force_enabled() -> bool {
+    matches!(
+        std::env::var(CELL_ARTIFACT_HTTP_FORCE_ENV)
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "on" | "yes"
+    )
+}
+
 /// Whether cross-host HTTP artifact shipping is enabled ([`CELL_HTTP_ARTIFACT_SHIPPING_ENV`],
 /// default ON). Shared by the controller (whether to start the upload server + run the
 /// concat) and the cell (whether to ship), so the two never disagree.

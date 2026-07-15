@@ -425,6 +425,12 @@ async fn upload_artifact(
     let (tx, rx) = mpsc::channel::<Bytes>(4);
     let writer = tokio::task::spawn_blocking(move || decode_channel_to_file(rx, &dest, zstd));
 
+    // Count the on-wire (post-compression) body bytes so the completion log below is
+    // an unambiguous observable that this artifact really crossed the HTTP socket —
+    // and, with `content_encoding=zstd`, that it did so compressed, not via a
+    // same-host shared filesystem. A multi-process cellular test greps the
+    // controller's stderr for one such line per cell × file.
+    let mut received_bytes: u64 = 0;
     let mut stream = body.into_data_stream();
     while let Some(frame) = stream.next().await {
         let bytes = frame.map_err(|error| {
@@ -433,6 +439,7 @@ async fn upload_artifact(
                 format!("reading upload body: {error}"),
             )
         })?;
+        received_bytes += bytes.len() as u64;
         if tx.send(bytes).await.is_err() {
             // The writer task failed and dropped rx; surface its error below.
             break;
@@ -440,7 +447,27 @@ async fn upload_artifact(
     }
     drop(tx);
     match writer.await {
-        Ok(Ok(())) => Ok(StatusCode::OK),
+        Ok(Ok(())) => {
+            // The load-bearing HTTP+zstd proof: one line per received artifact,
+            // naming the cell, the file, the wire encoding, and the on-wire byte
+            // count. Emitted on a dedicated `target` so a test can raise just this
+            // to `info` (`AIPERF_RUNNER_LOG=warn,aiperf_cellular_artifact=info`)
+            // without unmuting the whole runner. See
+            // [`crate::runner_protocol::cellular_cell::CELL_ARTIFACT_HTTP_FORCE_ENV`].
+            tracing::info!(
+                target: "aiperf_cellular_artifact",
+                cell_id,
+                artifact = %file,
+                content_encoding = if zstd {
+                    ZSTD_CONTENT_ENCODING
+                } else {
+                    "identity"
+                },
+                bytes = received_bytes,
+                "received artifact upload over HTTP"
+            );
+            Ok(StatusCode::OK)
+        }
         Ok(Err(error)) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("writing cell {cell_id} artifact {file:?}: {error}"),

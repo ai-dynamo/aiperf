@@ -175,9 +175,19 @@ pub fn run_cellular(
     // HTTP). Gated on the operator toggle and on the run actually requesting
     // shippable files (per-record artifacts or inputs.json); a metrics-only run ships
     // nothing.
-    let http_shipping = is_k8s
+    // The test/dev HTTP-force seam ([`CELL_ARTIFACT_HTTP_FORCE_ENV`]) drives the
+    // cross-host HTTP artifact path over loopback for a SAME-HOST run so a
+    // multi-process test can prove the shipping mechanism end-to-end. Off by default,
+    // so a normal `--cells N` run keeps the shared-FS Stage D concat unchanged.
+    let force_http = crate::runner_protocol::cellular_cell::artifact_http_force_enabled();
+    let http_shipping = (is_k8s || force_http)
         && crate::runner_protocol::cellular_cell::http_artifact_shipping_enabled()
         && !crate::runner_protocol::artifact_shipping::shippable_relatives(&artifacts).is_empty();
+    // The force seam only applies to the same-host launcher (k8s already ships): when
+    // true, cells write to their own controller-local `temp_root/cell-{id}` scratch AND
+    // ship those files over HTTP to a SEPARATE loopback landing dir, from which the
+    // concat reads — so the shipped bytes (not the local writes) feed the merged report.
+    let force_local_http = http_shipping && !is_k8s;
     warn_dropped_sidecar_telemetry(envelope);
     // Warn about DROPPED per-record artifacts only when they genuinely cannot be
     // delivered — cross-host AND HTTP shipping disabled. When HTTP shipping is active
@@ -218,6 +228,25 @@ pub fn run_cellular(
         // `temp_root/cell-{id}/{rel}` — exactly where the Stage D concat reads. The
         // allowlist is the run's shippable relative paths, so a cell can only land
         // known artifacts inside its own cell dir.
+        // Where uploaded artifact files land (`landing_root/cell-{id}/{rel}`). k8s
+        // lands directly in `temp_root/cell-{id}` (the concat's own dirs — the cell fs
+        // is a different host, no collision). The same-host force seam MUST land in a
+        // SEPARATE subtree, because there the cell's own artifact_dir already IS
+        // `temp_root/cell-{id}`; landing there would overwrite each file with itself.
+        let landing_root = if force_local_http {
+            temp_root.join("http-landing")
+        } else {
+            temp_root.clone()
+        };
+        // The same-host force seam binds the upload server on an ephemeral loopback
+        // port and injects that concrete authority into each locally-launched cell
+        // (below). k8s uses the fixed operator-exposed routable bind and the cells
+        // derive the authority from their `tcp://` velo coordinate instead.
+        let artifact_bind = if force_local_http {
+            std::net::SocketAddr::from(([127, 0, 0, 1], 0))
+        } else {
+            controller_artifact_bind()
+        };
         let artifact_server = if http_shipping {
             let allowed: std::collections::HashSet<String> =
                 crate::runner_protocol::artifact_shipping::shippable_relatives(&artifacts)
@@ -225,8 +254,8 @@ pub fn run_cellular(
                     .collect();
             Some(
                 crate::runner_protocol::artifact_shipping::ArtifactUploadServer::start(
-                    controller_artifact_bind(),
-                    temp_root.clone(),
+                    artifact_bind,
+                    landing_root.clone(),
                     allowed,
                 )
                 .await
@@ -293,9 +322,15 @@ pub fn run_cellular(
             phase_ordinal_bases,
             // k8s pods derive the artifact authority from their operator-injected
             // `tcp://` controller coordinate + artifact port (the controller cannot
-            // know its own routable host), so nothing is injected here. A future
-            // local-launcher HTTP path would pass the bound server address instead.
-            artifact_authority: None,
+            // know its own routable host), so nothing is injected there. The same-host
+            // HTTP-force seam DOES know its own loopback address, so it injects the
+            // bound server authority into each local cell (there is no `tcp://`
+            // coordinate for a same-host cell to derive it from).
+            artifact_authority: if force_local_http {
+                artifact_server.as_ref().map(|server| server.local_addr().to_string())
+            } else {
+                None
+            },
         };
         let mut handles = select_launcher()
             .launch(&launch_ctx)
@@ -504,8 +539,13 @@ pub fn run_cellular(
         if (!is_k8s || http_shipping)
             && let Some(artifact_dir) = report_path.parent()
         {
+            // Read the SHIPPED copies from the landing subtree when HTTP shipping is
+            // active (k8s: landing_root == temp_root; same-host force: a separate
+            // `http-landing` subtree), else the cells' own local writes under
+            // `temp_root/cell-{id}` (default same-host Stage D).
+            let concat_source_root = if http_shipping { &landing_root } else { &temp_root };
             let cell_dirs: Vec<PathBuf> = (0..cell_count)
-                .map(|cell_id| temp_root.join(format!("cell-{cell_id}")))
+                .map(|cell_id| concat_source_root.join(format!("cell-{cell_id}")))
                 .collect();
             // Per-record artifacts (records/raw/CSV/parquet/outputs) are concatenated only
             // when requested; inputs.json (a single full-dataset doc) is copied whenever a
