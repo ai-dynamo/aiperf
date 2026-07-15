@@ -144,13 +144,25 @@ client only decodes `ModelReadyResponse`, so `ServerLive`/`ServerReady` messages
    `serve_grpc` over h2 using AIPerf's own `aiperf::transport_grpc` encode/decode helpers, exercising
    the framing/trailers/prost round-trip the handler unit tests bypass (unary, server-streaming,
    readiness).
-3. **Full-stack e2e (`rust/runner/tests/mock_server_grpc_e2e.rs`)** — the real `aiperf-runner` binary's
-   production gRPC KServe client drives `aiperf_mock_server::grpc::serve_grpc` (not a throwaway
-   in-test server) over a protocol-v2 `execute` request with `transport.type: grpc`,
-   `grpc://127.0.0.1:<port>`, endpoint `kserve_v2_infer`. Asserts `run_terminal` success,
-   `transport=grpc`, the expected `request_count`, and positive mean OSL — for both `streaming: true`
-   (`ModelStreamInfer`) and `streaming: false` (`ModelInfer`). Closes the client↔server loop over the
-   shared prost types. Use `127.0.0.1` (not `localhost`) to avoid the IPv6/IPv4 mock mismatch.
+3. **Full-stack e2e (`rust/e2e/tests/test_kserve_grpc_endpoint.rs`)** — the real `python -m aiperf
+   profile` CLI (Python frontend → native `aiperf-runner` → its production gRPC KServe client) drives
+   the mock's `serve_grpc` listener, enabled via the harness's `MockServer::start_with_grpc`
+   /`AIPerfHarness::new_with_grpc` (a second in-process listener sharing the mock's `AppState`),
+   selected via a Config-v2 YAML with `transport.type: grpc` + `grpc://127.0.0.1:<port>` + endpoint
+   `kserve_v2_infer`, for both `streaming: true` (`ModelStreamInfer`) and `streaming: false`
+   (`ModelInfer`). Asserts the run succeeds and `request_count` matches. This is the layer that caught
+   the reasoning-model empty-stream bug (below) — the default harness model `openai/gpt-oss-120b` is a
+   reasoning model, so streaming exercises the reasoning path that lower-level tests missed. Use
+   `127.0.0.1` (not `localhost`) to avoid the IPv6/IPv4 mock mismatch.
+
+**Reasoning-model streaming (bug found by the e2e).** The mock lowers a KServe request to a synthetic
+`ChatCompletionRequest`; for a reasoning model (`gpt-oss`/`qwen`) with a small `max_tokens` budget the
+tokenizer spends the whole budget on reasoning tokens, leaving zero *output* tokens. The unary path
+tolerates an empty `text_output`, but a server-streaming response that yields **zero** messages is a
+failed request to strict gRPC clients — including AIPerf's own runner. Both handlers therefore emit the
+full generation (`generated_tokens` = reasoning tokens followed by output tokens), folding reasoning
+into the single KServe `text_output` (KServe text has no separate reasoning channel) so the stream is
+never spuriously empty. Regression-locked by `grpc::tests::model_stream_infer_reasoning_model_is_not_empty`.
 
 ## Extensibility notes (repo non-negotiable)
 

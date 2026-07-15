@@ -130,7 +130,9 @@ async fn serve(config: MockServerConfig, worker_threads: usize) -> anyhow::Resul
                 });
             let mut builder = ConnBuilder::new(TokioExecutor::new());
             if max_concurrent_streams > 0 {
-                builder.http2().max_concurrent_streams(max_concurrent_streams);
+                builder
+                    .http2()
+                    .max_concurrent_streams(max_concurrent_streams);
             }
             if let Err(e) = builder
                 .serve_connection_with_upgrades(io, hyper_service)

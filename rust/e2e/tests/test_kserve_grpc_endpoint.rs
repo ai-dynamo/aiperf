@@ -47,7 +47,10 @@ fn grpc_config(grpc_url: &str, streaming: bool) -> String {
     )
 }
 
-async fn run_grpc(streaming: bool) -> RunResult {
+/// Start a gRPC-enabled harness and run one config against it. Returns the
+/// harness (kept alive by the caller so its `TempDir` artifact tree survives the
+/// assertions) and the run result.
+async fn run_grpc(streaming: bool) -> (AIPerfHarness, RunResult) {
     // The harness runs the real Python CLI, so it needs the venv; the mock now
     // also serves the KServe gRPC listener the run targets.
     let h = AIPerfHarness::new_with_grpc().await;
@@ -68,20 +71,20 @@ async fn run_grpc(streaming: bool) -> RunResult {
         r.stdout,
         r.stderr
     );
-    r
+    (h, r)
 }
 
 /// Unary `ModelInfer` over gRPC through the full product path.
 #[tokio::test]
 async fn test_kserve_grpc_unary() {
-    let r = run_grpc(false).await;
+    let (_h, r) = run_grpc(false).await;
     assert_eq!(r.artifacts.request_count() as u32, REQUEST_COUNT);
 }
 
 /// Server-streaming `ModelStreamInfer` over gRPC, with streaming metrics.
 #[tokio::test]
 async fn test_kserve_grpc_streaming() {
-    let r = run_grpc(true).await;
+    let (_h, r) = run_grpc(true).await;
     assert_eq!(r.artifacts.request_count() as u32, REQUEST_COUNT);
     let json = r.artifacts.json();
     assert!(

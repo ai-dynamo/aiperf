@@ -13,7 +13,9 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use aiperf::dataset::{Overrides, build_message_body_from_wire_parts, build_message_body_from_wires};
+use aiperf::dataset::{
+    Overrides, build_message_body_from_wire_parts, build_message_body_from_wires,
+};
 use bytes::Bytes;
 
 fn overrides_for(max_tokens: u32) -> Overrides {
@@ -56,7 +58,10 @@ fn main() {
     }
     let opt_ns = t1.elapsed().as_nanos() as f64 / iters as f64;
 
-    assert_eq!(sink, sink2, "byte lengths must match — outputs are identical");
+    assert_eq!(
+        sink, sink2,
+        "byte lengths must match — outputs are identical"
+    );
     // Prove byte-identical output, not just equal length.
     let a = build_message_body_from_wires(&messages, &overrides_for(max_tokens)).unwrap();
     let b = build_message_body_from_wire_parts(&messages, &tail);
