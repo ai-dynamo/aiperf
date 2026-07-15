@@ -153,8 +153,14 @@ install: install-app install-mock-server #? install the project and mock server 
 install-app: bundle-runner #? install the project in editable mode (with the interned runner).
 	$(activate_venv) && uv pip install -e ".[dev]"
 
-bundle-runner: #? build the full-fat aiperf-runner and intern it at src/aiperf/_bin/ for packaging.
-	cargo build --release -p aiperf-runner
+# RUNNER_FEATURES selects the runner profile, mirroring the Dockerfile's
+# AIPERF_RUNNER_PROFILE knob. Default (empty) = full-fat crate defaults
+# (dynosim + parquet), which needs the sibling dynamo-aiperf-native checkout.
+# Online-only (no dynosim, no sibling):
+#   make bundle-runner RUNNER_FEATURES="--no-default-features --features parquet"
+RUNNER_FEATURES ?=
+bundle-runner: #? build the aiperf-runner (RUNNER_FEATURES-selectable) and intern it at src/aiperf/_bin/ for packaging.
+	cargo build --release -p aiperf-runner $(RUNNER_FEATURES)
 	mkdir -p src/aiperf/_bin
 	cp target/release/aiperf-runner src/aiperf/_bin/aiperf-runner
 	chmod +x src/aiperf/_bin/aiperf-runner
