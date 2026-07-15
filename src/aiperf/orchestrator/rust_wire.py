@@ -370,9 +370,20 @@ def _authored_artifacts(run: BenchmarkRun) -> dict[str, Any]:
     cfg = run.cfg
     root = cfg.artifacts.dir
     result: dict[str, Any] = {"trace": cfg.artifacts.trace}
-    if cfg.artifacts.records is not False or cfg.artifacts.raw:
+    records_formats = cfg.artifacts.records if cfg.artifacts.records else []
+    # `raw` requires the per-record base file, so it forces the JSONL on even when
+    # the records formats list omits "jsonl".
+    if "jsonl" in records_formats or cfg.artifacts.raw:
         result["records_path"] = str(
             cfg.artifacts.profile_export_jsonl_file.relative_to(root)
+        )
+    if "parquet" in records_formats:
+        result["records_parquet_path"] = str(
+            cfg.artifacts.profile_export_parquet_file.relative_to(root)
+        )
+    if "csv" in records_formats:
+        result["records_csv_path"] = str(
+            cfg.artifacts.profile_export_records_csv_file.relative_to(root)
         )
     if cfg.artifacts.export_outputs_json:
         result["outputs_path"] = str(cfg.artifacts.outputs_json_file.relative_to(root))
@@ -407,7 +418,14 @@ def _authored_artifacts(run: BenchmarkRun) -> dict[str, Any]:
         # re-enables the per-record file even when the YAML disables it, so the
         # only reliable place to drop them is here at the wire choke point. The
         # runner permits ``inputs_path``, so introspection still works.
-        for key in ("records_path", "raw_path", "outputs_path", "user_files"):
+        for key in (
+            "records_path",
+            "records_parquet_path",
+            "records_csv_path",
+            "raw_path",
+            "outputs_path",
+            "user_files",
+        ):
             result.pop(key, None)
         result["trace"] = False
     if _sketch_metrics_enabled():
@@ -415,7 +433,13 @@ def _authored_artifacts(run: BenchmarkRun) -> dict[str, Any]:
         # impossible; fail closed by dropping them here (the runner's validate_plan
         # rejects them defensively). ``inputs_path`` stays — it is built from
         # dispatch-time request payloads, not retained response records.
-        for key in ("records_path", "raw_path", "outputs_path"):
+        for key in (
+            "records_path",
+            "records_parquet_path",
+            "records_csv_path",
+            "raw_path",
+            "outputs_path",
+        ):
             result.pop(key, None)
         result["trace"] = False
     return result

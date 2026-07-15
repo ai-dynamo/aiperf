@@ -45,6 +45,14 @@ pub mod otel;
 /// `cfg.export.parquet` block still decodes (it is simply inert).
 #[cfg(feature = "parquet")]
 pub mod parquet;
+/// Wide, per-request Parquet sidecar to `profile_export.jsonl`. Gated behind the
+/// `parquet` feature (links `arrow` + `parquet`): a lite build drops it and the
+/// runner skips the artifact with a warning. Unlike the sinks in [`registry`],
+/// this is not an [`Exporter`] over the aggregated [`NativeReport`] — the
+/// per-record data lives only at the runner's `CapturedRecord` callsites, so the
+/// runner drives this writer directly.
+#[cfg(feature = "parquet")]
+pub mod per_record_parquet;
 pub mod server_metrics;
 pub mod timeslice;
 pub mod wandb;

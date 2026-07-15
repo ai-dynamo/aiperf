@@ -305,6 +305,82 @@ def test_graph_dataset_stays_on_cfg(tmp_path: Path) -> None:
     assert "workload" not in authored
 
 
+def test_records_parquet_absent_by_default(tmp_path: Path) -> None:
+    # Default records format is ["jsonl"]: JSONL path present, no parquet sidecar.
+    run = _run(tmp_path / "artifacts")
+    artifacts = dump_benchmark_run(run)["cfg"]["artifacts"]
+    assert artifacts["records_path"] == "profile_export.jsonl"
+    assert "records_parquet_path" not in artifacts
+
+
+def test_records_parquet_projects_relative_path_when_in_formats(tmp_path: Path) -> None:
+    run = _run(tmp_path / "artifacts")
+    run.cfg.artifacts.records = ["jsonl", "parquet"]
+    artifacts = dump_benchmark_run(run)["cfg"]["artifacts"]
+    assert artifacts["records_path"] == "profile_export.jsonl"
+    assert artifacts["records_parquet_path"] == "profile_export.parquet"
+
+
+def test_records_parquet_only_omits_jsonl(tmp_path: Path) -> None:
+    # ["parquet"] alone selects the columnar sidecar without the JSONL.
+    run = _run(tmp_path / "artifacts")
+    run.cfg.artifacts.records = ["parquet"]
+    artifacts = dump_benchmark_run(run)["cfg"]["artifacts"]
+    assert "records_path" not in artifacts
+    assert artifacts["records_parquet_path"] == "profile_export.parquet"
+
+
+def test_records_csv_projects_relative_path_when_in_formats(tmp_path: Path) -> None:
+    run = _run(tmp_path / "artifacts")
+    run.cfg.artifacts.records = ["jsonl", "csv"]
+    artifacts = dump_benchmark_run(run)["cfg"]["artifacts"]
+    assert artifacts["records_path"] == "profile_export.jsonl"
+    assert artifacts["records_csv_path"] == "profile_export_records.csv"
+
+
+def test_records_all_three_formats_project_together(tmp_path: Path) -> None:
+    run = _run(tmp_path / "artifacts")
+    run.cfg.artifacts.records = ["jsonl", "csv", "parquet"]
+    artifacts = dump_benchmark_run(run)["cfg"]["artifacts"]
+    assert artifacts["records_path"] == "profile_export.jsonl"
+    assert artifacts["records_csv_path"] == "profile_export_records.csv"
+    assert artifacts["records_parquet_path"] == "profile_export.parquet"
+
+
+def test_records_csv_stripped_for_dynosim(tmp_path: Path) -> None:
+    run = _run(
+        tmp_path / "artifacts",
+        transport={
+            "type": "dynosim_offline",
+            "topology": "single",
+            "engine": {"block_size": 16},
+            "required_features": ["dynamo-full"],
+        },
+        endpoint_type="dynosim",
+        endpoint_url="dynosim://offline",
+    )
+    run.cfg.artifacts.records = ["jsonl", "csv"]
+    artifacts = dump_benchmark_run(run)["cfg"]["artifacts"]
+    assert "records_csv_path" not in artifacts
+
+
+def test_records_parquet_stripped_for_dynosim(tmp_path: Path) -> None:
+    run = _run(
+        tmp_path / "artifacts",
+        transport={
+            "type": "dynosim_offline",
+            "topology": "single",
+            "engine": {"block_size": 16},
+            "required_features": ["dynamo-full"],
+        },
+        endpoint_type="dynosim",
+        endpoint_url="dynosim://offline",
+    )
+    run.cfg.artifacts.records = ["jsonl", "parquet"]
+    artifacts = dump_benchmark_run(run)["cfg"]["artifacts"]
+    assert "records_parquet_path" not in artifacts
+
+
 def test_dynosim_transport_inline(tmp_path: Path) -> None:
     run = _run(
         tmp_path / "artifacts",

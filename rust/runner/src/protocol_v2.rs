@@ -770,6 +770,14 @@ pub struct ArtifactSpecV2 {
     /// Per-request metric records path relative to the artifact target.
     #[serde(default)]
     pub records_path: Option<PathBuf>,
+    /// Wide per-request metric Parquet sidecar path relative to the artifact
+    /// target, or absent when the columnar export is disabled.
+    #[serde(default)]
+    pub records_parquet_path: Option<PathBuf>,
+    /// Per-request metric CSV sidecar path relative to the artifact target, or
+    /// absent when the CSV export is disabled.
+    #[serde(default)]
+    pub records_csv_path: Option<PathBuf>,
     /// Raw request/response records path relative to the artifact target.
     #[serde(default)]
     pub raw_path: Option<PathBuf>,
@@ -793,6 +801,11 @@ impl ArtifactSpecV2 {
         let mut paths = BTreeSet::new();
         for (field, path) in [
             ("artifacts.records_path", self.records_path.as_ref()),
+            (
+                "artifacts.records_parquet_path",
+                self.records_parquet_path.as_ref(),
+            ),
+            ("artifacts.records_csv_path", self.records_csv_path.as_ref()),
             ("artifacts.raw_path", self.raw_path.as_ref()),
             ("artifacts.outputs_path", self.outputs_path.as_ref()),
             ("artifacts.inputs_path", self.inputs_path.as_ref()),

@@ -559,6 +559,17 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   fail-closed (`rust_wire`, `validate_plan`), and the online path folds+drops each finalized
   record (`RunCapture::finish_fold_into`). Bounds the accumulator/coordinator finalize;
   online-path peak RSS still gated by per-worker record retention until drain (follow-up).
+  Opt-in per-record sidecars: the `artifacts.records` format list takes `jsonl`, `csv`, and
+  `parquet` (any subset, e.g. `records: [jsonl, csv, parquet]`). `parquet` writes a wide
+  `profile_export.parquet` (one row per request, one nullable column per catalog record-metric,
+  `aiperf.units` file metadata, `trace_*` columns when `artifacts.trace`); `csv` writes a flat
+  `profile_export_records.csv` (metadata + a `{tag}_value`/`{tag}_unit` pair per metric +
+  `error_code`/`error_type`/`error_message`, `trace_*` when trace on), ported from the legacy
+  Python `RecordExportCsvResultsProcessor`. Runner-owned (not `Exporter`s over `NativeReport`):
+  `rust/runner/src/records.rs::write_records_{parquet,csv}` drive the writers at the scheduled +
+  graph callsites over the shared `aiperf::metrics_core::record_metric_columns`; parquet is gated
+  on the `parquet` feature (a lite runner warns/skips), CSV is stdlib. Both are force-disabled on
+  the DynoSim/sketch paths.
 - `specs/2026-07-11-aiperf-rust-endpoints-design.md` — **built + implementation/
   token-native addenda**: every tier-1 and tier-2 dialect plus the open PR-1113
   `vllm_generate` factory is implemented behind trait-backed prepared endpoints,

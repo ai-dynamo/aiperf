@@ -12,6 +12,11 @@ description = "Full-stack e2e tests: aiperf-mock-server + python -m aiperf profi
 [dev-dependencies]
 aiperf = { path = "../aiperf" }
 aiperf-mock-server = { path = "../mock-server" }
+# Read back the per-record `profile_export.parquet` sidecar in the e2e that
+# enables `artifacts.records: [jsonl, parquet]`. Same workspace versions the
+# `aiperf` parquet sink links.
+arrow = { workspace = true }
+parquet = { workspace = true }
 axum = { workspace = true }
 tokio = { workspace = true }
 serde_json = { workspace = true }

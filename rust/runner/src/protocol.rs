@@ -148,6 +148,16 @@ pub struct ArtifactSpec {
     /// Per-request metrics JSONL path, or absent when records are disabled.
     #[serde(default)]
     pub records_path: Option<PathBuf>,
+    /// Wide per-request metrics Parquet sidecar path, or absent when the columnar
+    /// export is disabled. Decodes on every build; a runner built without the
+    /// `parquet` feature warns and skips it (the field stays present so the wire
+    /// still decodes, mirroring `ParquetExportConfig`).
+    #[serde(default)]
+    pub records_parquet_path: Option<PathBuf>,
+    /// Per-request metrics CSV sidecar path (`profile_export_records.csv`), or
+    /// absent when the CSV export is disabled.
+    #[serde(default)]
+    pub records_csv_path: Option<PathBuf>,
     /// Python-compatible raw request/response JSONL path, or absent when raw
     /// capture is disabled.
     #[serde(default)]

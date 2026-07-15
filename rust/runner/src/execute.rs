@@ -117,7 +117,7 @@ use crate::readiness::{PreparedOnlineReadiness, ReadinessTransportFactory};
 use crate::records::{
     CapturedHttpExchange, CapturedModelOutput, CapturedRecord, InputSession, group_record_errors,
     observe_otel_record, write_inputs_json, write_outputs_json, write_raw_records_jsonl,
-    write_records_jsonl,
+    write_records_csv, write_records_jsonl,
 };
 use crate::registry::ValidatedEndpointProfileV2;
 use crate::server_metrics::ServerMetricsRun;
@@ -1392,6 +1392,54 @@ async fn execute_graph_native(
     Ok(NativeReport::from_outcome(&profiling_metrics, &outcome))
 }
 
+/// Emit the optional wide per-record Parquet sidecar beside the per-request
+/// JSONL. Best-effort and gated on the `parquet` feature: a runner built without
+/// it warns once and skips, so a lite build still decodes the wire field.
+fn write_records_parquet_artifact(
+    request: &NativeRunSpec,
+    captured: &[CapturedRecord],
+    metrics_config: &MetricsConfig,
+) -> Result<()> {
+    let Some(parquet_path) = &request.artifacts.records_parquet_path else {
+        return Ok(());
+    };
+    let path = artifact_path(&request.artifact_dir, parquet_path, "records_parquet_path")?;
+    #[cfg(feature = "parquet")]
+    {
+        crate::records::write_records_parquet(
+            &path,
+            captured,
+            metrics_config,
+            request.artifacts.trace,
+        )?;
+    }
+    #[cfg(not(feature = "parquet"))]
+    {
+        let _ = (captured, metrics_config);
+        tracing::warn!(
+            "records_parquet requested ({}) but this runner was built without the \
+             `parquet` feature; skipping",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+/// Emit the optional per-record CSV sidecar beside the per-request JSONL. Unlike
+/// the Parquet sidecar this needs no extra Cargo feature (CSV is stdlib), so it is
+/// always available.
+fn write_records_csv_artifact(
+    request: &NativeRunSpec,
+    captured: &[CapturedRecord],
+    metrics_config: &MetricsConfig,
+) -> Result<()> {
+    let Some(csv_path) = &request.artifacts.records_csv_path else {
+        return Ok(());
+    };
+    let path = artifact_path(&request.artifact_dir, csv_path, "records_csv_path")?;
+    write_records_csv(&path, captured, metrics_config, request.artifacts.trace)
+}
+
 fn write_graph_artifacts(
     request: &NativeRunSpec,
     captured: &[CapturedRecord],
@@ -1401,6 +1449,8 @@ fn write_graph_artifacts(
         let path = artifact_path(&request.artifact_dir, records_path, "records_path")?;
         write_records_jsonl(&path, captured, metrics_config, request.artifacts.trace)?;
     }
+    write_records_parquet_artifact(request, captured, metrics_config)?;
+    write_records_csv_artifact(request, captured, metrics_config)?;
     if let Some(raw_path) = &request.artifacts.raw_path {
         let path = artifact_path(&request.artifact_dir, raw_path, "raw_path")?;
         write_raw_records_jsonl(&path, captured)?;
@@ -2353,6 +2403,8 @@ async fn execute_native_inner(
             request.artifacts.trace,
         )?;
     }
+    write_records_parquet_artifact(&request, &captured, &metrics_config)?;
+    write_records_csv_artifact(&request, &captured, &metrics_config)?;
     if let Some(raw_path) = &request.artifacts.raw_path {
         let raw_path = artifact_path(&request.artifact_dir, raw_path, "raw_path")?;
         write_raw_records_jsonl(&raw_path, &captured)?;
