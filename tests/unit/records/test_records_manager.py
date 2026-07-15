@@ -39,6 +39,7 @@ from aiperf.credit.messages import (
 from aiperf.metrics.accumulator_models import AccumulatorMetricsSummary
 from aiperf.metrics.cache_reporting_hint import CACHE_REPORTING_HINT
 from aiperf.plugin.enums import AccumulatorType, TimingMode
+from aiperf.records.error_tracker import ErrorTracker
 from aiperf.records.records_manager import ErrorTrackingState, RecordsManager
 from aiperf.records.records_tracker import RecordsTracker
 from aiperf.timing.config import CreditPhaseConfig
@@ -142,6 +143,60 @@ class TestRecordsManagerTelemetry:
 
         assert manager._telemetry_state.error_counts[error] == 1
         manager._dispatch_record.assert_not_awaited()
+
+
+class TestRecordsManagerMetricRecordDispatchErrors:
+    """Metric-handler failures must surface in the phase error summary rather
+    than being silently dropped while the record is marked processed."""
+
+    def _make_manager(self) -> RecordsManager:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager.debug = MagicMock()
+        manager.error = MagicMock()
+        manager.trace = MagicMock()
+        manager.is_enabled_for = MagicMock(return_value=False)
+        manager._dataset_configured_event = asyncio.Event()
+        manager._dataset_configured_event.set()
+        manager._maybe_hint_missing_cache_reporting = MagicMock()
+        manager._records_tracker = MagicMock()
+        manager._records_tracker.check_and_set_all_records_received_for_phase.return_value = False
+        manager._error_tracker = ErrorTracker()
+        manager._complete_credit_phases = set()
+        return manager
+
+    @pytest.mark.asyncio
+    async def test_metric_dispatch_error_recorded_in_phase_error_summary(self) -> None:
+        manager = self._make_manager()
+        dispatch_error = RuntimeError("metric accumulator failed")
+        manager._dispatch_record = AsyncMock(return_value=[dispatch_error])
+
+        message = MagicMock()
+        message.to_data.return_value = create_metric_record_data(1_000, 2_000)
+
+        await manager._on_metric_records(message)
+
+        # Record is still counted, but the handler failure is not swallowed.
+        manager._records_tracker.update_from_record_data.assert_called_once()
+        summary = manager._error_tracker.get_error_summary_for_phase(
+            CreditPhase.PROFILING
+        )
+        tracked = ErrorDetails.from_exception(dispatch_error)
+        assert any(e.error_details == tracked for e in summary)
+
+    @pytest.mark.asyncio
+    async def test_successful_metric_dispatch_records_no_phase_error(self) -> None:
+        manager = self._make_manager()
+        manager._dispatch_record = AsyncMock(return_value=[])
+
+        message = MagicMock()
+        message.to_data.return_value = create_metric_record_data(1_000, 2_000)
+
+        await manager._on_metric_records(message)
+
+        assert (
+            manager._error_tracker.get_error_summary_for_phase(CreditPhase.PROFILING)
+            == []
+        )
 
 
 class TestRecordsManagerTimeslice:

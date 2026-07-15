@@ -532,14 +532,21 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         self._maybe_hint_missing_cache_reporting(record_data)
 
-        await self._dispatch_record(record_data)
+        phase = record_data.metadata.benchmark_phase
+        dispatch_errors = await self._dispatch_record(record_data)
         self._records_tracker.update_from_record_data(record_data)
         if record_data.error:
             self._error_tracker.increment_error_count_for_phase(
-                record_data.metadata.benchmark_phase, record_data.error
+                phase, record_data.error
+            )
+        # A metric accumulator/exporter that failed to ingest this record yields
+        # incomplete metrics; surface it in the phase error summary rather than
+        # marking the record cleanly processed and silently dropping the failure.
+        for error in dispatch_errors:
+            self._error_tracker.increment_error_count_for_phase(
+                phase, ErrorDetails.from_exception(error)
             )
 
-        phase = record_data.metadata.benchmark_phase
         if (
             phase in self._complete_credit_phases
             and self._records_tracker.check_and_set_all_records_received_for_phase(
