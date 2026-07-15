@@ -37,6 +37,13 @@ pub mod console_txt;
 pub mod genai_perf;
 pub mod mlflow;
 pub mod otel;
+/// Server-metrics Parquet sink. Gated behind the `parquet` feature: it links
+/// `arrow` + `parquet` (~2.6 MiB of `.text`), which a lite/online-only build
+/// (e.g. a lightweight nightly wheel) can drop. When the feature is off the
+/// [`ParquetExporter`] is not registered and the public-dataset loader rejects
+/// `.parquet` inputs; [`ParquetExportConfig`] stays present so the wire
+/// `cfg.export.parquet` block still decodes (it is simply inert).
+#[cfg(feature = "parquet")]
 pub mod parquet;
 pub mod server_metrics;
 pub mod timeslice;
@@ -47,10 +54,21 @@ pub use console_txt::ConsoleTxtExportConfig;
 pub use genai_perf::GenaiPerfExportConfig;
 pub use mlflow::MlflowExportConfig;
 pub use otel::OtelExportConfig;
-pub use parquet::ParquetExportConfig;
 pub use server_metrics::ServerMetricsExportConfig;
 pub use timeslice::TimesliceExportConfig;
 pub use wandb::WandbExportConfig;
+
+/// Server-metrics Parquet export policy.
+///
+/// Defined here (not in the feature-gated [`parquet`] module) so the wire
+/// `cfg.export.parquet` block always decodes: a lite build with the `parquet`
+/// feature off still accepts the config, it just registers no Parquet exporter.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ParquetExportConfig {
+    /// Emit `server_metrics_export.parquet`.
+    pub enabled: bool,
+}
 
 /// Typed export policy projected by the Python frontend onto the wire `cfg.export`
 /// block and decoded once by the runner. Each sub-config is independently gated;
@@ -116,6 +134,7 @@ fn registry() -> Vec<Box<dyn Exporter>> {
         Box::new(server_metrics::ServerMetricsExporter),
         Box::new(timeslice::TimesliceExporter),
         Box::new(accuracy_csv::AccuracyCsvExporter),
+        #[cfg(feature = "parquet")]
         Box::new(parquet::ParquetExporter),
         Box::new(console_txt::ConsoleTxtExporter),
         // Network / deferred uploaders.

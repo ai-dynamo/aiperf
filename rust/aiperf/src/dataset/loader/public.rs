@@ -15,6 +15,7 @@ use base64::engine::general_purpose::STANDARD;
 use bytes::Bytes;
 use image::ColorType;
 use image::codecs::jpeg::JpegEncoder;
+#[cfg(feature = "parquet")]
 use parquet::file::reader::{FileReader, SerializedFileReader};
 use serde_json::{Map, Value};
 use smallvec::{SmallVec, smallvec};
@@ -902,6 +903,18 @@ fn rows_from_remote_bytes(
     rows_from_values(values, label)
 }
 
+/// Reject `.parquet` inputs when the `parquet` feature is compiled out (lite
+/// build). The `arrow`/`parquet` decode stack is ~2.6 MiB of `.text`; a lite
+/// nightly drops it and surfaces a clear error instead of silently linking it.
+#[cfg(not(feature = "parquet"))]
+fn decode_parquet(_bytes: Bytes, label: &str, _max_rows: Option<usize>) -> Result<Vec<Value>> {
+    Err(DatasetError::Validation(format!(
+        "Parquet dataset {label} requires an aiperf-runner built with the `parquet` \
+         feature; this build has it disabled"
+    )))
+}
+
+#[cfg(feature = "parquet")]
 fn decode_parquet(bytes: Bytes, label: &str, max_rows: Option<usize>) -> Result<Vec<Value>> {
     let reader = SerializedFileReader::new(bytes).map_err(|error| {
         DatasetError::Validation(format!("failed to open {label} as Parquet: {error}"))
@@ -1674,8 +1687,11 @@ mod tests {
     use std::sync::Mutex;
 
     use crate::rng::RngRoot;
+    #[cfg(feature = "parquet")]
     use parquet::data_type::{ByteArray, ByteArrayType};
+    #[cfg(feature = "parquet")]
     use parquet::file::writer::SerializedFileWriter;
+    #[cfg(feature = "parquet")]
     use parquet::schema::parser::parse_message_type;
     use serde_json::json;
 
@@ -2139,6 +2155,7 @@ mod tests {
         assert_eq!(dataset.conversations().len(), 1);
     }
 
+    #[cfg(feature = "parquet")]
     #[test]
     fn parquet_decoder_preserves_nested_capable_json_scalars() {
         let schema = Arc::new(

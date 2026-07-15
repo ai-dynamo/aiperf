@@ -14,10 +14,14 @@ description = "Versioned single-benchmark subprocess runner for the Python AIPer
 # a plain `cargo build -p aiperf-runner` producing a non-dynosim binary was a
 # recurring footgun (a stale default build silently drops the transport). This
 # requires the sibling `dynamo-aiperf-native/lib/mocker` checkout at build time.
-default = ["dynosim"]
+default = ["dynosim", "parquet"]
 # The runner is the only native executable, so every optional AIPerf/Dynamo
 # composition feature must terminate here rather than requiring another binary.
 dynosim = ["aiperf/dynosim"]
+# Server-metrics Parquet + public `.parquet` reader (arrow/parquet, ~2.6 MiB of
+# `.text`). In the default (full) runner; a lite/online-only build via
+# `--no-default-features` drops it. Forwarded to the library gate.
+parquet = ["aiperf/parquet"]
 dynamo-router-runtime = ["dynosim", "aiperf/dynamo-router-runtime"]
 dynamo-zmq-events = ["dynosim", "aiperf/dynamo-zmq-events"]
 dynamo-kvbm-offload = ["dynosim", "aiperf/dynamo-kvbm-offload"]
@@ -33,7 +37,10 @@ dynamo-full = [
 dynamo-parity = ["dynamo-full", "aiperf/dynamo-parity"]
 
 [dependencies]
-aiperf.workspace = true
+# Declared directly (not via workspace inheritance) so the runner can opt out of
+# aiperf's default features and re-enable them per runner feature — this is what
+# lets `--no-default-features` produce a lite build that drops parquet/dynosim.
+aiperf = { path = "../aiperf", default-features = false }
 anyhow.workspace = true
 async-trait.workspace = true
 base64.workspace = true
