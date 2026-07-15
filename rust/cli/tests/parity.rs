@@ -271,6 +271,12 @@ const YAML_FIXTURES: &[(&str, &str, &str)] = &[
         "dynosim_camel",
         "/tmp/aiperf-parity/dynosim_camel",
     ),
+    // YAML config surface parity (matching the flag surface section by section).
+    (
+        "yaml_endpoint",
+        "yaml_endpoint",
+        "/tmp/aiperf-parity/yaml_endpoint",
+    ),
 ];
 
 #[test]

@@ -147,6 +147,10 @@ pub(crate) struct Inputs {
     pub grace_period: Option<f64>,
     pub warmup: Option<Warmup>,
     pub random_seed: Option<u64>,
+    /// Per-dataset sampling seed (`dataset.random_seed`). The `--random-seed`
+    /// flag sets both this and `random_seed`; a YAML top-level `randomSeed` sets
+    /// only `random_seed` (the run seed), so the two are tracked separately.
+    pub dataset_random_seed: Option<u64>,
     /// File-backed dataset path (mutually exclusive with the synthetic path).
     pub input_file: Option<PathBuf>,
     /// File dataset format id (`--custom-dataset-type`).
@@ -394,6 +398,8 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         grace_period: flags.benchmark_grace_period,
         warmup,
         random_seed: flags.random_seed,
+        // `--random-seed` sets both the run seed and the dataset sampling seed.
+        dataset_random_seed: flags.random_seed,
         input_file: flags.input_file.clone(),
         custom_dataset_type: flags.custom_dataset_type.clone(),
         public_dataset: flags.public_dataset.clone(),
@@ -503,7 +509,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             options,
             sampling: Sampling(inputs.sampling.clone()),
             entries: inputs.dataset_entries,
-            random_seed: inputs.random_seed,
+            random_seed: inputs.dataset_random_seed,
         })
     } else if let Some(path) = &inputs.input_file {
         Dataset::File(crate::model::dataset::FileDataset {
@@ -545,7 +551,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             } else {
                 inputs.dataset_entries
             },
-            random_seed: inputs.random_seed,
+            random_seed: inputs.dataset_random_seed,
             osl: inputs.osl.clone(),
         })
     } else {
@@ -1125,7 +1131,7 @@ fn build_video_spec(flags: &ProfileFlags) -> Option<VideoSpec> {
 }
 
 /// Parse `--model-selection-strategy`.
-fn parse_model_strategy(s: &str) -> anyhow::Result<ModelStrategy> {
+pub(crate) fn parse_model_strategy(s: &str) -> anyhow::Result<ModelStrategy> {
     Ok(match s {
         "round_robin" => ModelStrategy::RoundRobin,
         "random" => ModelStrategy::Random,
@@ -1135,7 +1141,7 @@ fn parse_model_strategy(s: &str) -> anyhow::Result<ModelStrategy> {
 }
 
 /// Parse `--connection-reuse-strategy`.
-fn parse_connection_reuse(s: &str) -> anyhow::Result<ConnectionReuse> {
+pub(crate) fn parse_connection_reuse(s: &str) -> anyhow::Result<ConnectionReuse> {
     Ok(match s {
         "pooled" => ConnectionReuse::Pooled,
         "never" => ConnectionReuse::Never,
@@ -1145,7 +1151,7 @@ fn parse_connection_reuse(s: &str) -> anyhow::Result<ConnectionReuse> {
 }
 
 /// Parse `--request-content-type` (MIME string) into the wire token.
-fn parse_content_type(s: &str) -> anyhow::Result<RequestContentType> {
+pub(crate) fn parse_content_type(s: &str) -> anyhow::Result<RequestContentType> {
     Ok(match s {
         "application/json" => RequestContentType::ApplicationJson,
         "multipart/form-data" => RequestContentType::MultipartFormData,
@@ -1154,7 +1160,7 @@ fn parse_content_type(s: &str) -> anyhow::Result<RequestContentType> {
 }
 
 /// Parse `--wait-for-model-mode`.
-fn parse_wait_mode(s: &str) -> anyhow::Result<WaitForModelMode> {
+pub(crate) fn parse_wait_mode(s: &str) -> anyhow::Result<WaitForModelMode> {
     Ok(match s {
         "models" => WaitForModelMode::Models,
         "inference" => WaitForModelMode::Inference,

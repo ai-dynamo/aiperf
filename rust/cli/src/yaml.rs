@@ -28,7 +28,8 @@ pub fn resolve(
         .map_err(|e| anyhow::anyhow!("failed to read config {}: {e}", path.display()))?;
     let file: ConfigFile = serde_yaml::from_str(&text)
         .map_err(|e| anyhow::anyhow!("failed to parse config {}: {e}", path.display()))?;
-    let inputs = file.benchmark.into_inputs(artifact_dir)?;
+    let random_seed = file.random_seed;
+    let inputs = file.benchmark.into_inputs(artifact_dir, random_seed)?;
     load::build(inputs)
 }
 
@@ -68,6 +69,9 @@ struct DistFields {
 #[derive(Debug, Deserialize)]
 struct ConfigFile {
     benchmark: Benchmark,
+    /// Top-level deterministic run seed (`randomSeed`).
+    #[serde(default, alias = "randomSeed")]
+    random_seed: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -98,6 +102,8 @@ struct ArtifactsSection {
 #[derive(Debug, Deserialize)]
 struct ModelsSection {
     items: Vec<ModelItem>,
+    /// Model-selection strategy (`round_robin`/`random`/`weighted`).
+    strategy: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -124,6 +130,32 @@ struct EndpointSection {
     url: Option<StringOrVec>,
     #[serde(default)]
     streaming: bool,
+    #[serde(default, alias = "apiKey")]
+    api_key: Option<String>,
+    /// Request timeout, seconds (wire `timeout_seconds`).
+    timeout: Option<f64>,
+    #[serde(default, alias = "connectionReuse")]
+    connection_reuse: Option<String>,
+    #[serde(default, alias = "useLegacyMaxTokens")]
+    use_legacy_max_tokens: Option<bool>,
+    #[serde(default, alias = "useServerTokenCount")]
+    use_server_token_count: Option<bool>,
+    #[serde(default, alias = "downloadVideoContent")]
+    download_video_content: Option<bool>,
+    #[serde(default)]
+    headers: Option<std::collections::BTreeMap<String, String>>,
+    #[serde(default)]
+    extra: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(default, alias = "requestContentType")]
+    request_content_type: Option<String>,
+    #[serde(default, alias = "sessionHeader")]
+    session_header: Option<String>,
+    #[serde(default, alias = "waitForModelTimeout")]
+    wait_for_model_timeout: Option<f64>,
+    #[serde(default, alias = "waitForModelInterval")]
+    wait_for_model_interval: Option<f64>,
+    #[serde(default, alias = "waitForModelMode")]
+    wait_for_model_mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -140,6 +172,9 @@ struct DatasetSection {
     entries: Option<u32>,
     #[serde(alias = "num_conversations")]
     num_conversations: Option<u32>,
+    /// Per-dataset sampling seed (distinct from the top-level run `randomSeed`).
+    #[serde(default, alias = "randomSeed")]
+    random_seed: Option<u64>,
     prompts: Option<PromptsSection>,
 }
 
@@ -155,8 +190,10 @@ struct PromptsSection {
 struct TokenizerSection {
     name: Option<String>,
     revision: Option<String>,
-    #[serde(default, alias = "trust_remote_code")]
+    #[serde(default, alias = "trustRemoteCode")]
     trust_remote_code: bool,
+    #[serde(default, alias = "applyChatTemplate")]
+    apply_chat_template: bool,
 }
 
 /// A flat single phase (shorthand) or a list of phases.
@@ -180,7 +217,11 @@ struct PhaseSection {
 
 impl Benchmark {
     /// Normalize the parsed config into shared [`Inputs`].
-    fn into_inputs(self, artifact_dir: Option<PathBuf>) -> anyhow::Result<Inputs> {
+    fn into_inputs(
+        self,
+        artifact_dir: Option<PathBuf>,
+        random_seed: Option<u64>,
+    ) -> anyhow::Result<Inputs> {
         let model_names = self.resolve_model_names()?;
 
         // Artifact dir precedence: the `--artifact-dir` flag, then the config's
@@ -216,6 +257,8 @@ impl Benchmark {
         let (isl, osl, batch_size) = extract_prompts(dataset.as_ref());
         let num_conversations = dataset.as_ref().and_then(|d| d.num_conversations);
         let dataset_entries = dataset.as_ref().and_then(|d| d.entries);
+        // Per-dataset seed is separate from the top-level run seed.
+        let dataset_random_seed = dataset.as_ref().and_then(|d| d.random_seed);
 
         // A `type: file` dataset routes through the file loader (path/format/
         // sampling); anything else stays on the synthetic path.
@@ -240,15 +283,25 @@ impl Benchmark {
                 .ok_or_else(|| anyhow::anyhow!("phases must have at least one entry"))?,
         };
 
+        // Synthetic conversation count: num_conversations or an explicit
+        // dataset `entries`, else the Python default (never the request bound).
         let entries = num_conversations
             .or(dataset_entries)
-            .or(phase.requests.map(|n| n as u32))
             .unwrap_or(load::DEFAULT_ENTRIES);
 
-        let (tokenizer_name, tokenizer_revision, tokenizer_trust) = match self.tokenizer {
-            Some(t) => (t.name, t.revision, t.trust_remote_code),
-            None => (None, None, false),
-        };
+        let (tokenizer_name, tokenizer_revision, tokenizer_trust, apply_chat_template) =
+            match self.tokenizer {
+                Some(t) => (t.name, t.revision, t.trust_remote_code, t.apply_chat_template),
+                None => (None, None, false, false),
+            };
+
+        // Model-selection strategy (`models.strategy`).
+        let model_strategy = self
+            .models
+            .as_ref()
+            .and_then(|m| m.strategy.as_deref())
+            .map(load::parse_model_strategy)
+            .transpose()?;
 
         Ok(Inputs {
             model_names,
@@ -256,18 +309,33 @@ impl Benchmark {
             endpoint_type,
             transport,
             streaming: self.endpoint.streaming,
-            timeout_seconds: None,
-            use_legacy_max_tokens: false,
-            use_server_token_count: false,
-            download_video_content: false,
-            extra: serde_json::Map::new(),
+            timeout_seconds: self.endpoint.timeout,
+            use_legacy_max_tokens: self.endpoint.use_legacy_max_tokens.unwrap_or(false),
+            use_server_token_count: self.endpoint.use_server_token_count.unwrap_or(false),
+            download_video_content: self.endpoint.download_video_content.unwrap_or(false),
+            extra: self.endpoint.extra.unwrap_or_default(),
             server_metrics_urls: Vec::new(),
-            connection_reuse: None,
-            request_content_type: None,
-            wait_for_model_timeout: None,
-            wait_for_model_mode: None,
-            wait_for_model_interval: None,
-            apply_chat_template: false,
+            connection_reuse: self
+                .endpoint
+                .connection_reuse
+                .as_deref()
+                .map(load::parse_connection_reuse)
+                .transpose()?,
+            request_content_type: self
+                .endpoint
+                .request_content_type
+                .as_deref()
+                .map(load::parse_content_type)
+                .transpose()?,
+            wait_for_model_timeout: self.endpoint.wait_for_model_timeout,
+            wait_for_model_mode: self
+                .endpoint
+                .wait_for_model_mode
+                .as_deref()
+                .map(load::parse_wait_mode)
+                .transpose()?,
+            wait_for_model_interval: self.endpoint.wait_for_model_interval,
+            apply_chat_template,
             prefill_concurrency: None,
             prefill_ramp: None,
             gpu_telemetry_enabled: true,
@@ -288,8 +356,8 @@ impl Benchmark {
                 entity: None,
                 run_name: None,
             },
-            api_key: None,
-            headers: std::collections::BTreeMap::new(),
+            api_key: self.endpoint.api_key,
+            headers: self.endpoint.headers.unwrap_or_default(),
             tokenizer_name,
             tokenizer_revision,
             tokenizer_trust,
@@ -298,7 +366,7 @@ impl Benchmark {
             turns: None,
             turn_delay_ratio: 1.0,
             turn_delay_ms: None,
-            session_header: None,
+            session_header: self.endpoint.session_header,
             batch_size: batch_size.unwrap_or(1),
             sampling,
             entries,
@@ -317,7 +385,8 @@ impl Benchmark {
             benchmark_duration: phase.duration,
             grace_period: phase.grace_period,
             warmup: None::<Warmup>,
-            random_seed: None,
+            random_seed,
+            dataset_random_seed,
             input_file,
             custom_dataset_type,
             public_dataset: None,
@@ -326,7 +395,7 @@ impl Benchmark {
             fixed_schedule: None,
             fixed_schedule_start_offset: None,
             fixed_schedule_end_offset: None,
-            model_strategy: None,
+            model_strategy,
             slice_duration: None,
             isl_block_size: None,
             sketch_metrics: false,
