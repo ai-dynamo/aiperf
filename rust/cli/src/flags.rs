@@ -119,6 +119,40 @@ pub struct ProfileFlags {
     #[arg(long = "use-server-token-count", default_value_t = false)]
     pub use_server_token_count: bool,
 
+    /// Connection reuse policy (`--connection-reuse-strategy`):
+    /// `pooled` (default), `never`, `sticky-user-sessions`.
+    #[arg(long = "connection-reuse-strategy")]
+    pub connection_reuse_strategy: Option<String>,
+
+    /// Request body content type (`--request-content-type`):
+    /// `application/json` or `multipart/form-data`.
+    #[arg(long = "request-content-type")]
+    pub request_content_type: Option<String>,
+
+    /// Readiness-probe timeout, seconds (`--wait-for-model-timeout`).
+    #[arg(long = "wait-for-model-timeout")]
+    pub wait_for_model_timeout: Option<f64>,
+
+    /// Readiness-probe mode (`--wait-for-model-mode`): `models`/`inference`/`both`.
+    #[arg(long = "wait-for-model-mode")]
+    pub wait_for_model_mode: Option<String>,
+
+    /// Readiness-probe interval, seconds (`--wait-for-model-interval`).
+    #[arg(long = "wait-for-model-interval")]
+    pub wait_for_model_interval: Option<f64>,
+
+    /// Apply the chat template when tokenizing (`--apply-chat-template`).
+    #[arg(long = "apply-chat-template", default_value_t = false)]
+    pub apply_chat_template: bool,
+
+    /// Prefill concurrency (`--prefill-concurrency`); requires `--streaming`.
+    #[arg(long = "prefill-concurrency")]
+    pub prefill_concurrency: Option<u32>,
+
+    /// Ramp prefill concurrency over N seconds (`--prefill-concurrency-ramp-duration`).
+    #[arg(long = "prefill-concurrency-ramp-duration")]
+    pub prefill_concurrency_ramp_duration: Option<f64>,
+
     /// API authentication key (`--api-key`).
     #[arg(long = "api-key")]
     pub api_key: Option<String>,

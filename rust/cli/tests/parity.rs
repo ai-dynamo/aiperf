@@ -61,6 +61,8 @@ const FIXTURES: &[&str] = &[
     "cancel",
     "multi_turn",
     "user_centric",
+    "endpoint_extra",
+    "prefill",
 ];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).

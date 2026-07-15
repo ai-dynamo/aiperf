@@ -18,7 +18,9 @@ use std::path::PathBuf;
 use crate::flags::ProfileFlags;
 use crate::model::artifacts::Artifacts;
 use crate::model::dataset::{Dataset, Distribution, Prompts, Sampling, Synthetic};
-use crate::model::endpoint::{ConnectionReuse, Endpoint, EndpointType, WaitForModelMode};
+use crate::model::endpoint::{
+    ConnectionReuse, Endpoint, EndpointType, RequestContentType, WaitForModelMode,
+};
 use crate::model::metrics::Metrics;
 use crate::model::models::{ModelItem, ModelStrategy, Models};
 use crate::model::phase::{Phase, PhaseCommon, PhaseKind};
@@ -59,6 +61,14 @@ pub(crate) struct Inputs {
     pub timeout_seconds: Option<f64>,
     pub use_legacy_max_tokens: bool,
     pub use_server_token_count: bool,
+    pub connection_reuse: Option<ConnectionReuse>,
+    pub request_content_type: Option<RequestContentType>,
+    pub wait_for_model_timeout: Option<f64>,
+    pub wait_for_model_mode: Option<WaitForModelMode>,
+    pub wait_for_model_interval: Option<f64>,
+    pub apply_chat_template: bool,
+    pub prefill_concurrency: Option<u32>,
+    pub prefill_ramp: Option<f64>,
     pub api_key: Option<String>,
     pub headers: std::collections::BTreeMap<String, String>,
     pub tokenizer_name: Option<String>,
@@ -204,6 +214,26 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         timeout_seconds: flags.request_timeout_seconds,
         use_legacy_max_tokens: flags.use_legacy_max_tokens,
         use_server_token_count: flags.use_server_token_count,
+        connection_reuse: flags
+            .connection_reuse_strategy
+            .as_deref()
+            .map(parse_connection_reuse)
+            .transpose()?,
+        request_content_type: flags
+            .request_content_type
+            .as_deref()
+            .map(parse_content_type)
+            .transpose()?,
+        wait_for_model_timeout: flags.wait_for_model_timeout,
+        wait_for_model_mode: flags
+            .wait_for_model_mode
+            .as_deref()
+            .map(parse_wait_mode)
+            .transpose()?,
+        wait_for_model_interval: flags.wait_for_model_interval,
+        apply_chat_template: flags.apply_chat_template,
+        prefill_concurrency: flags.prefill_concurrency,
+        prefill_ramp: flags.prefill_concurrency_ramp_duration,
         api_key: flags.api_key.clone(),
         headers: parse_headers(&flags.headers)?,
         tokenizer_name: flags.tokenizer.clone(),
@@ -291,7 +321,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         use_legacy_max_tokens: inputs.use_legacy_max_tokens,
         use_server_token_count: inputs.use_server_token_count,
         timeout_seconds: inputs.timeout_seconds.unwrap_or(DEFAULT_TIMEOUT_SECONDS),
-        connection_reuse: ConnectionReuse::Pooled,
+        connection_reuse: inputs.connection_reuse.unwrap_or(ConnectionReuse::Pooled),
         ssl_verify: true,
         connection_limit: DEFAULT_CONNECTION_LIMIT,
         keepalive_timeout: DEFAULT_KEEPALIVE_TIMEOUT,
@@ -299,13 +329,17 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         extra: serde_json::Map::new(),
         headers: inputs.headers,
         http2: false,
-        wait_for_model_timeout: 0.0,
-        wait_for_model_interval: DEFAULT_WAIT_FOR_MODEL_INTERVAL,
-        wait_for_model_mode: WaitForModelMode::Inference,
+        wait_for_model_timeout: inputs.wait_for_model_timeout.unwrap_or(0.0),
+        wait_for_model_interval: inputs
+            .wait_for_model_interval
+            .unwrap_or(DEFAULT_WAIT_FOR_MODEL_INTERVAL),
+        wait_for_model_mode: inputs
+            .wait_for_model_mode
+            .unwrap_or(WaitForModelMode::Inference),
         path: None,
         api_key: inputs.api_key,
         session_header: inputs.session_header,
-        request_content_type: None,
+        request_content_type: inputs.request_content_type,
         template: None,
         response_field: None,
     };
@@ -316,7 +350,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             .tokenizer_revision
             .unwrap_or_else(|| "main".to_string()),
         trust_remote_code: inputs.tokenizer_trust,
-        apply_chat_template: false,
+        apply_chat_template: inputs.apply_chat_template,
     };
 
     let dataset = if let Some(name) = &inputs.public_dataset {
@@ -436,6 +470,8 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             inputs.benchmark_duration,
             inputs.grace_period,
         );
+        phase.common.prefill_concurrency = inputs.prefill_concurrency;
+        phase.common.prefill_ramp = inputs.prefill_ramp.map(linear_ramp);
         phase.common.concurrency_ramp = inputs.concurrency_ramp.map(linear_ramp);
         phase.common.rate_ramp = inputs.rate_ramp.map(linear_ramp);
         phase.common.cancellation = inputs
@@ -594,6 +630,35 @@ fn parse_headers(raw: &[String]) -> anyhow::Result<std::collections::BTreeMap<St
         headers.insert(name.trim().to_string(), value.trim().to_string());
     }
     Ok(headers)
+}
+
+/// Parse `--connection-reuse-strategy`.
+fn parse_connection_reuse(s: &str) -> anyhow::Result<ConnectionReuse> {
+    Ok(match s {
+        "pooled" => ConnectionReuse::Pooled,
+        "never" => ConnectionReuse::Never,
+        "sticky-user-sessions" => ConnectionReuse::StickyUserSessions,
+        other => anyhow::bail!("unknown --connection-reuse-strategy {other:?}"),
+    })
+}
+
+/// Parse `--request-content-type` (MIME string) into the wire token.
+fn parse_content_type(s: &str) -> anyhow::Result<RequestContentType> {
+    Ok(match s {
+        "application/json" => RequestContentType::ApplicationJson,
+        "multipart/form-data" => RequestContentType::MultipartFormData,
+        other => anyhow::bail!("unknown --request-content-type {other:?}"),
+    })
+}
+
+/// Parse `--wait-for-model-mode`.
+fn parse_wait_mode(s: &str) -> anyhow::Result<WaitForModelMode> {
+    Ok(match s {
+        "models" => WaitForModelMode::Models,
+        "inference" => WaitForModelMode::Inference,
+        "both" => WaitForModelMode::Both,
+        other => anyhow::bail!("unknown --wait-for-model-mode {other:?}"),
+    })
 }
 
 /// A linear ramp of the given duration (the default ramp strategy).
