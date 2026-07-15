@@ -19,7 +19,20 @@ use aiperf_cli::model::BenchmarkRun;
 
 /// `cfg` sections the native type currently models; asserted for byte-exact
 /// round-trip. Extend as each section is ported.
-const PORTED_CFG_SECTIONS: &[&str] = &["endpoint", "models"];
+const PORTED_CFG_SECTIONS: &[&str] = &[
+    "endpoint",
+    "models",
+    "tokenizer",
+    "transport",
+    "runtime",
+    "metrics",
+    "artifacts",
+    "datasets",
+    "phases",
+];
+
+/// Run-level (non-`cfg`) fields the native type currently models byte-exact.
+const PORTED_RUN_FIELDS: &[&str] = &["resolved"];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).
 fn load_golden(name: &str) -> serde_json::Value {
@@ -55,6 +68,14 @@ fn golden_minimal_chat_ported_sections_roundtrip() {
         assert_eq!(
             got, want,
             "cfg.{section} diverges from golden\n got: {got:#}\nwant: {want:#}"
+        );
+    }
+    for field in PORTED_RUN_FIELDS {
+        let want = &golden["run"][field];
+        let got = &view[field];
+        assert_eq!(
+            got, want,
+            "run.{field} diverges from golden\n got: {got:#}\nwant: {want:#}"
         );
     }
 }

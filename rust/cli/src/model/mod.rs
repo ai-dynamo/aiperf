@@ -27,11 +27,20 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+pub mod artifacts;
 pub mod config;
+pub mod dataset;
 pub mod endpoint;
+pub mod metrics;
 pub mod models;
+pub mod phase;
+pub mod resolved;
+pub mod runtime;
+pub mod tokenizer;
+pub mod transport;
 
 pub use config::BenchmarkConfig;
+pub use resolved::Resolved;
 
 /// Requested runner operation. Wire spelling matches `RunnerOperationV2`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,10 +108,9 @@ pub struct BenchmarkRun {
     /// Sweep variation metadata (absent for a bare single run). Open bag.
     #[serde(default)]
     pub variation: Option<serde_json::Value>,
-    /// Resolution facts (gpu custom metrics, comm config, …). Open bag; the CLI
-    /// reproduces the defaults the runner expects. Typed up as sections land.
+    /// Resolution facts (gpu custom metrics, comm config, …), typed.
     #[serde(default)]
-    pub resolved: serde_json::Value,
+    pub resolved: Resolved,
     /// Envelope-level template variables. Open bag.
     #[serde(default)]
     pub variables: serde_json::Map<String, serde_json::Value>,
@@ -134,7 +142,7 @@ mod tests {
             sweep_id: None,
             trial: 0,
             variation: None,
-            resolved: serde_json::Value::Null,
+            resolved: Resolved::default(),
             variables: serde_json::Map::new(),
         };
         let v = serde_json::to_value(&run).unwrap();

@@ -13,8 +13,15 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::artifacts::Artifacts;
+use super::dataset::Dataset;
 use super::endpoint::Endpoint;
+use super::metrics::Metrics;
 use super::models::Models;
+use super::phase::Phase;
+use super::runtime::Runtime;
+use super::tokenizer::Tokenizer;
+use super::transport::Transport;
 
 /// The canonical benchmark configuration (runner-consumed projection).
 ///
@@ -32,6 +39,26 @@ pub struct BenchmarkConfig {
     /// Default endpoint profile (`cfg.endpoint`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub endpoint: Option<Endpoint>,
-    // Further sections (datasets, phases, transport, tokenizer, metrics,
-    // artifacts, runtime, slos, sidecars, export, …) are added here as ported.
+    /// Tokenizer acquisition policy (`cfg.tokenizer`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokenizer: Option<Tokenizer>,
+    /// Inline transport selection (`cfg.transport`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport: Option<Transport>,
+    /// Worker/cell runtime policy (`cfg.runtime`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<Runtime>,
+    /// Native metrics policy (`cfg.metrics`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<Metrics>,
+    /// Native output policy (`cfg.artifacts`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifacts: Option<Artifacts>,
+    /// Canonical single-dataset list (`cfg.datasets`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub datasets: Option<Vec<Dataset>>,
+    /// Ordered phase policy (`cfg.phases`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phases: Option<Vec<Phase>>,
+    // Further sections (slos, sidecars, export, …) are added here as ported.
 }
