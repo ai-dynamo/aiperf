@@ -85,6 +85,14 @@ struct Benchmark {
     datasets: Option<Vec<DatasetSection>>,
     tokenizer: Option<TokenizerSection>,
     phases: Phases,
+    /// Output artifacts block (`dir` is the run's artifact target).
+    artifacts: Option<ArtifactsSection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ArtifactsSection {
+    /// Run artifact directory (the `--artifact-dir` flag overrides it).
+    dir: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -174,6 +182,10 @@ impl Benchmark {
     /// Normalize the parsed config into shared [`Inputs`].
     fn into_inputs(self, artifact_dir: Option<PathBuf>) -> anyhow::Result<Inputs> {
         let model_names = self.resolve_model_names()?;
+
+        // Artifact dir precedence: the `--artifact-dir` flag, then the config's
+        // `artifacts.dir`, then the default `artifacts/`.
+        let config_artifact_dir = self.artifacts.as_ref().and_then(|a| a.dir.clone());
 
         // Transport first: DynoSim relaxes the endpoint URL/type requirements
         // (the runner opens no socket) and injects the never-dialed sentinel.
@@ -323,7 +335,9 @@ impl Benchmark {
             video_spec: None,
             adaptive_scale: None,
             prefix_prompts: None,
-            artifact_dir: artifact_dir.unwrap_or_else(|| PathBuf::from("artifacts")),
+            artifact_dir: artifact_dir
+                .or_else(|| config_artifact_dir.map(PathBuf::from))
+                .unwrap_or_else(|| PathBuf::from("artifacts")),
         })
     }
 
