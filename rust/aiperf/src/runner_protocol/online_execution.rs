@@ -94,7 +94,7 @@ use crate::runner_protocol::sidecar_input::{CONTENT_SERVER_SIDECAR_ID, ContentSe
 /// validated transport by id/type. Any registered transport (http, grpc,
 /// dynosim) can drive them; there is no per-transport pair object and no
 /// compatibility predicate.
-pub fn register_online_workloads(registry: &mut crate::extensions::AiperfRegistry) -> Result<()> {
+pub fn register_online_workloads(registry: &mut crate::extensions::AIPerfRegistry) -> Result<()> {
     let tokenizers: Arc<dyn OnlineTokenizerSourceResolver> =
         Arc::new(HfHubOnlineTokenizerSourceResolver::default());
     registry.register_workload(Arc::new(ScheduledWorkloadFactoryV2 {
@@ -107,7 +107,7 @@ pub fn register_online_workloads(registry: &mut crate::extensions::AiperfRegistr
 /// Register the static-accuracy workload (HTTP only) after sidecar parity or an
 /// exact frontend gate is present in the same distribution.
 pub fn register_http_static_accuracy_workload(
-    registry: &mut crate::extensions::AiperfRegistry,
+    registry: &mut crate::extensions::AIPerfRegistry,
 ) -> Result<()> {
     register_http_static_accuracy_workload_with_factories(
         registry,
@@ -123,7 +123,7 @@ pub fn register_http_static_accuracy_workload(
 /// extension point for non-Hugging-Face tokenizer stores or non-local evaluator
 /// processes.
 pub fn register_http_static_accuracy_workload_with_factories(
-    registry: &mut crate::extensions::AiperfRegistry,
+    registry: &mut crate::extensions::AIPerfRegistry,
     tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
     evaluator_factory: Arc<dyn StaticAccuracyEvaluatorFactory>,
 ) -> Result<()> {
@@ -1263,7 +1263,7 @@ struct PreparedNativeOperation {
     plan: NativeRunSpec,
     request_executor: Arc<dyn RequestExecutorFactory>,
     execution_factories: RunnerExecutionFactories,
-    product_registry: Arc<crate::extensions::AiperfRegistry>,
+    product_registry: Arc<crate::extensions::AIPerfRegistry>,
     readiness: Option<Box<dyn PreparedOnlineReadiness>>,
     report_facts: ReportPairRunFacts,
     provenance: BTreeMap<String, String>,
@@ -1410,7 +1410,7 @@ mod tests {
 
     #[test]
     fn registration_adds_only_real_online_workloads() {
-        let mut registry = crate::extensions::AiperfRegistry::builtin().unwrap();
+        let mut registry = crate::extensions::AIPerfRegistry::builtin().unwrap();
         // Registration proves the executable scheduled/graph/static-accuracy
         // workloads compose into the one unified registry without a per-transport
         // pair object; any workload runs over any transport.

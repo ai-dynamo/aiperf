@@ -3,7 +3,7 @@
 
 //! Shared transactional registration primitive.
 //!
-//! Both the [`AiperfRegistry`](crate::extensions::AiperfRegistry) aggregate and
+//! Both the [`AIPerfRegistry`](crate::extensions::AIPerfRegistry) aggregate and
 //! its name-keyed sub-registries (endpoints, transports, workloads) register on
 //! a staged clone and commit atomically: a batch that fails partway — for
 //! example because a later entry duplicates a name — leaves the target untouched

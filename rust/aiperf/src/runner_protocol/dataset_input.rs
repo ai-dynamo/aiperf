@@ -16,7 +16,7 @@ use crate::dataset::{
     Dataset, SyntheticMediaGeneratorFactory, TextTokenizer, TracePromptStoragePolicy,
 };
 use crate::endpoints::EndpointDescriptor;
-use crate::extensions::AiperfRegistry;
+use crate::extensions::AIPerfRegistry;
 use crate::rng::RngRoot;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
@@ -592,7 +592,7 @@ pub struct PreparedDatasetInput {
 /// Inputs shared by all backend-neutral dataset source adapters.
 pub struct RunnerDatasetInputContext<'a> {
     /// Frozen compile-time loader/sampler/endpoint registry universe.
-    pub registry: &'a AiperfRegistry,
+    pub registry: &'a AIPerfRegistry,
     /// Authored model selection policy.
     pub models: &'a ModelsSpec,
     /// Run-level deterministic RNG root.

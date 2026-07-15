@@ -9,8 +9,12 @@
 //! authoritative native-v2 report.
 pub use aiperf::runner_protocol::application::RunnerApplication;
 pub use aiperf::runner_protocol::distribution_identity::current_distribution_id;
-pub use aiperf::runner_protocol::execution_factories::{RunnerExecutionFactories, native_execution_factories};
-pub use aiperf::runner_protocol::graph_execution::{NativeRunnerGraphPlacementFactory, RunnerGraphPlacementFactory};
+pub use aiperf::runner_protocol::execution_factories::{
+    RunnerExecutionFactories, native_execution_factories,
+};
+pub use aiperf::runner_protocol::graph_execution::{
+    NativeRunnerGraphPlacementFactory, RunnerGraphPlacementFactory,
+};
 pub use aiperf::runner_protocol::grpc_turn_execution::NativeGrpcExecutionBackendFactory;
 pub use aiperf::runner_protocol::turn_execution::{
     HttpExecutionBackendConfig, NativeRequestExecutorFactory, RequestExecutorFactory,

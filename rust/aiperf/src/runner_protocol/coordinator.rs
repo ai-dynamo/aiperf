@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::extensions::{AiperfRegistry, AiperfRegistryFactory};
+use crate::extensions::{AIPerfRegistry, AIPerfRegistryFactory};
 use crate::metrics_core::ReportRunProvenance;
 use crate::report::finalize_and_write_native_report_json;
 use anyhow::{Context, Result, ensure};
@@ -58,7 +58,7 @@ pub struct RunnerProcessResultV2 {
 /// scheduling code remain unchanged.
 pub struct RunnerV2Coordinator {
     distribution_id: String,
-    product_registry: Arc<AiperfRegistry>,
+    product_registry: Arc<AIPerfRegistry>,
     execution_factories: RunnerExecutionFactories,
     graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
     dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
@@ -80,7 +80,7 @@ impl RunnerV2Coordinator {
     /// Compose every startup registry exactly once for this child process.
     pub fn new(
         distribution_id: impl Into<String>,
-        product_registry_factory: &dyn AiperfRegistryFactory,
+        product_registry_factory: &dyn AIPerfRegistryFactory,
         execution_factories: RunnerExecutionFactories,
         graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
         dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
@@ -352,7 +352,7 @@ impl RunnerV2Coordinator {
     }
 
     /// Borrow the exact frozen product registry used by this process.
-    pub fn product_registry(&self) -> &AiperfRegistry {
+    pub fn product_registry(&self) -> &AIPerfRegistry {
         self.product_registry.as_ref()
     }
 }

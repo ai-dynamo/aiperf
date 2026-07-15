@@ -12,7 +12,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use aiperf::extensions::BuiltinAiperfRegistryFactory;
+use aiperf::extensions::BuiltinAIPerfRegistryFactory;
 use aiperf::graph::errors::TraceError;
 use aiperf::graph::execution::TracePlacement;
 use aiperf::graph::placement::{GraphPlacementError, TracePlacementFactory};
@@ -133,7 +133,7 @@ fn coordinator_with_readiness(
 ) -> RunnerV2Coordinator {
     RunnerV2Coordinator::new(
         DISTRIBUTION_ID,
-        &BuiltinAiperfRegistryFactory,
+        &BuiltinAIPerfRegistryFactory,
         RunnerExecutionFactories::new(
             http,
             graph,

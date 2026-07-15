@@ -42,7 +42,7 @@ use crate::dataset::{
 };
 use crate::endpoints::{EndpointKey, EndpointRegistry, PreparedEndpointTable};
 use crate::export::otel::OtelRecordAccumulator;
-use crate::extensions::AiperfRegistry;
+use crate::extensions::AIPerfRegistry;
 use crate::failure::OnFailure;
 use crate::fixed_schedule::{
     DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload,
@@ -101,8 +101,12 @@ use crate::runner_protocol::graph_phase_runtime::{
     GraphPhaseBackendConfig, PreparedGraphPhaseBackend, RunnerGraphPhaseBackendFactory,
     run_graph_phases, validate_graph_phases,
 };
-use crate::runner_protocol::heartbeat_lane::{CompositePhaseObserver, HeartbeatLane, HeartbeatPhaseObserver};
-use crate::runner_protocol::live_streaming::{LiveResultsSink, PythonLiveStreamingRun, live_phase_observer};
+use crate::runner_protocol::heartbeat_lane::{
+    CompositePhaseObserver, HeartbeatLane, HeartbeatPhaseObserver,
+};
+use crate::runner_protocol::live_streaming::{
+    LiveResultsSink, PythonLiveStreamingRun, live_phase_observer,
+};
 use crate::runner_protocol::network_latency::NetworkLatencyRun;
 use crate::runner_protocol::protocol::{
     AdaptiveControlVariableSpec, AdaptiveScaleSpec, AdaptiveStepPolicySpec, DistributionSpec,
@@ -483,7 +487,7 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_selected(
     plan: NativeRunSpec,
     request_executor: Arc<dyn RequestExecutorFactory>,
     factories: &RunnerExecutionFactories,
-    registry: &AiperfRegistry,
+    registry: &AIPerfRegistry,
     readiness: Option<Box<dyn PreparedOnlineReadiness>>,
 ) -> Result<NativeReport> {
     execute_prepared_native_plan_uncommitted_with_runtime_factories(
@@ -500,7 +504,7 @@ fn execute_prepared_native_plan_uncommitted_with_runtime_factories(
     plan: NativeRunSpec,
     transport_factory: Arc<dyn RequestExecutorFactory>,
     graph_placement: &dyn RunnerGraphPlacementFactory,
-    registry: &AiperfRegistry,
+    registry: &AIPerfRegistry,
     sidecar_factory: &dyn NativeSidecarResourceFactory,
     readiness: Option<(
         Box<dyn PreparedOnlineReadiness>,
@@ -960,7 +964,7 @@ async fn prepare_and_execute_native(
     request: NativeRunSpec,
     transport_factory: Arc<dyn RequestExecutorFactory>,
     graph_placement: &dyn RunnerGraphPlacementFactory,
-    registry: &AiperfRegistry,
+    registry: &AIPerfRegistry,
     sidecar_factory: &dyn NativeSidecarResourceFactory,
     readiness: Option<(
         Box<dyn PreparedOnlineReadiness>,
@@ -1024,7 +1028,7 @@ async fn execute_native(
     sidecars: &mut PreparedNativeSidecarResources,
     transport_factory: Arc<dyn RequestExecutorFactory>,
     graph_placement: &dyn RunnerGraphPlacementFactory,
-    registry: &AiperfRegistry,
+    registry: &AIPerfRegistry,
 ) -> Result<NativeReport> {
     if matches!(request.dataset, NativeDatasetPlan::Graph(_)) {
         ensure!(
@@ -1041,7 +1045,7 @@ async fn execute_scheduled_native(
     accuracy: Option<&mut PreparedAccuracy>,
     sidecars: &mut PreparedNativeSidecarResources,
     transport_factory: Arc<dyn RequestExecutorFactory>,
-    registry: &AiperfRegistry,
+    registry: &AIPerfRegistry,
 ) -> Result<NativeReport> {
     execute_native_inner(request, accuracy, sidecars, transport_factory, registry).await
 }
@@ -1115,7 +1119,7 @@ async fn execute_graph_native(
     request: NativeRunSpec,
     sidecars: &PreparedNativeSidecarResources,
     graph_placement: &dyn RunnerGraphPlacementFactory,
-    registry: &AiperfRegistry,
+    registry: &AIPerfRegistry,
 ) -> Result<NativeReport> {
     let graph = match &request.dataset {
         NativeDatasetPlan::Graph(graph) => graph,
@@ -1689,7 +1693,11 @@ pub(crate) async fn execute_scheduled_shard(
         .phases
         .iter()
         .map(|phase| {
-            crate::runner_protocol::sharded_scheduled::slice_phase_for_thread(phase, thread_id, shared.workers)
+            crate::runner_protocol::sharded_scheduled::slice_phase_for_thread(
+                phase,
+                thread_id,
+                shared.workers,
+            )
         })
         .collect();
 
@@ -1806,7 +1814,7 @@ async fn execute_native_inner(
     mut accuracy: Option<&mut PreparedAccuracy>,
     sidecars: &mut PreparedNativeSidecarResources,
     transport_factory: Arc<dyn RequestExecutorFactory>,
-    registry: &AiperfRegistry,
+    registry: &AIPerfRegistry,
 ) -> Result<NativeReport> {
     let live_sink = sidecars.live_sink();
     let rng_root = RngRoot::new(request.random_seed);
@@ -2738,7 +2746,7 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
 }
 
 pub(crate) async fn build_synthetic_dataset(
-    registry: &AiperfRegistry,
+    registry: &AIPerfRegistry,
     spec: &SyntheticDatasetSpec,
     models: &ModelsSpec,
     rng_root: RngRoot,
@@ -2798,7 +2806,7 @@ fn compose_config(models: &ModelsSpec, rng_root: RngRoot) -> Result<ComposeConfi
 }
 
 pub(crate) async fn build_file_dataset(
-    registry: &AiperfRegistry,
+    registry: &AIPerfRegistry,
     spec: &FileDatasetSpec,
     models: &ModelsSpec,
     run_rng_root: RngRoot,
@@ -2874,7 +2882,7 @@ pub(crate) async fn build_file_dataset(
 }
 
 pub(crate) async fn build_public_dataset(
-    registry: &AiperfRegistry,
+    registry: &AIPerfRegistry,
     spec: &PublicDatasetSpec,
     models: &ModelsSpec,
     rng_root: RngRoot,
@@ -4952,7 +4960,7 @@ mod tests {
                 }]
             }
         }));
-        let registry = AiperfRegistry::builtin().unwrap();
+        let registry = AIPerfRegistry::builtin().unwrap();
         let dataset = build_synthetic_dataset(
             &registry,
             &spec,
@@ -4985,7 +4993,7 @@ mod tests {
                 "query_tokens": {"value": 4.0}
             }
         }));
-        let registry = AiperfRegistry::builtin().unwrap();
+        let registry = AIPerfRegistry::builtin().unwrap();
         let dataset = build_synthetic_dataset(
             &registry,
             &spec,

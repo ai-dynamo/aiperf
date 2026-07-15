@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use crate::extensions::{AiperfRegistry, AiperfRegistryFactory, BuiltinAiperfRegistryFactory};
+use crate::extensions::{AIPerfRegistry, AIPerfRegistryFactory, BuiltinAIPerfRegistryFactory};
 use anyhow::Result;
 
 use crate::runner_protocol::coordinator::{RunnerProcessResultV2, RunnerV2Coordinator};
@@ -43,7 +43,7 @@ impl RunnerApplication {
     /// Compose an explicitly linked runner distribution exactly once.
     pub fn new(
         distribution_id: impl Into<String>,
-        product_registry_factory: &dyn AiperfRegistryFactory,
+        product_registry_factory: &dyn AIPerfRegistryFactory,
         execution_factories: RunnerExecutionFactories,
         graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
         dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
@@ -68,7 +68,7 @@ impl RunnerApplication {
     pub fn stock(distribution_id: impl Into<String>) -> Result<Self> {
         Self::new(
             distribution_id,
-            &BuiltinAiperfRegistryFactory,
+            &BuiltinAIPerfRegistryFactory,
             native_execution_factories(),
             Arc::new(BuiltinRunnerGraphInputAdapterResolver::new()),
             Arc::new(BuiltinRunnerDatasetInputAdapterResolver::new()),
@@ -92,7 +92,7 @@ impl RunnerApplication {
     }
 
     /// Borrow the exact product registry used by capabilities and execution.
-    pub fn product_registry(&self) -> &AiperfRegistry {
+    pub fn product_registry(&self) -> &AIPerfRegistry {
         self.coordinator.product_registry()
     }
 }

@@ -1470,11 +1470,8 @@ mod tests {
     }
 
     fn graph_phase_record(trace_id: &str, errored: bool, canceled: bool) -> CapturedRecord {
-        let mut ingest = crate::metrics_core::RecordIngest::minimal(
-            0,
-            1,
-            crate::metrics_core::Phase::Profiling,
-        );
+        let mut ingest =
+            crate::metrics_core::RecordIngest::minimal(0, 1, crate::metrics_core::Phase::Profiling);
         ingest.errored = errored;
         ingest.canceled = canceled;
         CapturedRecord {

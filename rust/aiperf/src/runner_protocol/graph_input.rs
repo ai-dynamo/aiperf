@@ -131,7 +131,7 @@ impl BuiltinRunnerGraphInputAdapterResolver {
             Arc::new(DagJsonlRunnerGraphInputAdapter),
             Arc::new(WekaTraceRunnerGraphInputAdapter),
             Arc::new(DynamoTraceRunnerGraphInputAdapter),
-            Arc::new(AiperfTraceRunnerGraphInputAdapter),
+            Arc::new(AIPerfTraceRunnerGraphInputAdapter),
         ];
         Self {
             adapters: adapters
@@ -259,10 +259,10 @@ pub struct DynamoTraceRunnerGraphInputAdapter;
 
 /// Built-in native `aiperf.trace.v1` recorded-trace adapter.
 #[derive(Debug)]
-pub struct AiperfTraceRunnerGraphInputAdapter;
+pub struct AIPerfTraceRunnerGraphInputAdapter;
 
 #[async_trait(?Send)]
-impl RunnerGraphInputAdapter for AiperfTraceRunnerGraphInputAdapter {
+impl RunnerGraphInputAdapter for AIPerfTraceRunnerGraphInputAdapter {
     fn format(&self) -> &'static str {
         "aiperf_trace"
     }
@@ -278,7 +278,7 @@ impl RunnerGraphInputAdapter for AiperfTraceRunnerGraphInputAdapter {
     }
 }
 
-impl AiperfTraceRunnerGraphInputAdapter {
+impl AIPerfTraceRunnerGraphInputAdapter {
     async fn load_decoded(
         &self,
         input: RecordedDatasetInput,

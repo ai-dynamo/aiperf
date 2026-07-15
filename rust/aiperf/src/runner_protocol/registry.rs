@@ -19,7 +19,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use crate::endpoints::{EndpointId, EndpointRegistry, RawEndpointConfig, RequestContentType};
-use crate::extensions::{AiperfRegistry, DuplicateName};
+use crate::extensions::{AIPerfRegistry, DuplicateName};
 use crate::failure::OnFailure;
 use crate::metrics_core::{
     NativeReport, ReportEndpointProfileIdentity, ReportExtensionIdentity, ReportPairRunFacts,
@@ -430,14 +430,14 @@ impl ValidatedRunnerSelection {
 }
 
 /// Protocol-v2 transport/workload registration and selection over the one
-/// unified [`AiperfRegistry`].
+/// unified [`AIPerfRegistry`].
 ///
 /// Transports and workloads are two independent name-keyed sub-registries of the
 /// single product registry: there is no separate runner registry, no pair table,
 /// and no compatibility predicate. Any registered workload runs over any
 /// registered transport, with transport-specific execution resolved inside the
 /// workload at prepare time.
-impl AiperfRegistry {
+impl AIPerfRegistry {
     /// Register one transport factory, rejecting duplicate IDs.
     pub fn register_transport(&mut self, factory: Arc<dyn RunnerTransportFactory>) -> Result<()> {
         let id = checked_descriptor_id(factory.descriptor().id, "transport")?;
@@ -620,16 +620,16 @@ fn unknown_component<'a>(
 }
 
 /// Install the stock protocol-v2 transport/workload universe into the one
-/// unified [`AiperfRegistry`].
+/// unified [`AIPerfRegistry`].
 ///
 /// Optional feature modules register additional transports here. The transport
 /// and workload sub-registries are independent — any registered workload runs
 /// over any registered transport, with no per-cell object and no compatibility
-/// predicate. Called once by [`BuiltinAiperfRegistryFactory`] when this build
+/// predicate. Called once by [`BuiltinAIPerfRegistryFactory`] when this build
 /// links the runner-protocol layer.
 ///
-/// [`BuiltinAiperfRegistryFactory`]: crate::extensions::BuiltinAiperfRegistryFactory
-pub fn install_builtin_runner_components(registry: &mut AiperfRegistry) -> Result<()> {
+/// [`BuiltinAIPerfRegistryFactory`]: crate::extensions::BuiltinAIPerfRegistryFactory
+pub fn install_builtin_runner_components(registry: &mut AIPerfRegistry) -> Result<()> {
     registry.register_transport(Arc::new(OnlineGrpcTransportFactoryV2))?;
     registry.register_transport(Arc::new(OnlineHttpTransportFactoryV2))?;
     crate::runner_protocol::online_execution::register_online_workloads(registry)?;
@@ -828,13 +828,13 @@ pub struct ValidatedEndpointProfileV2 {
 /// Coordinator-owned immutable context shared by static run-level validation and
 /// complete execution preparation.
 ///
-/// One fresh runner process builds exactly one [`AiperfRegistry`]. Workload
+/// One fresh runner process builds exactly one [`AIPerfRegistry`]. Workload
 /// factories clone this cheap handle into their prepared operation; they never
 /// invoke a built-in registry factory or independently decode endpoint policy.
 #[derive(Clone)]
 pub struct RunnerRunContext {
     distribution_id: String,
-    product_registry: Arc<AiperfRegistry>,
+    product_registry: Arc<AIPerfRegistry>,
     execution_factories: RunnerExecutionFactories,
     graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
     dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
@@ -869,7 +869,7 @@ impl RunnerRunContext {
     /// Freeze one validated profile collection beside the process registry.
     pub fn new(
         distribution_id: impl Into<String>,
-        product_registry: Arc<AiperfRegistry>,
+        product_registry: Arc<AIPerfRegistry>,
         execution_factories: RunnerExecutionFactories,
         graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
         dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
@@ -914,12 +914,12 @@ impl RunnerRunContext {
     }
 
     /// Borrow the single frozen product registry composed by the coordinator.
-    pub fn product_registry(&self) -> &AiperfRegistry {
+    pub fn product_registry(&self) -> &AIPerfRegistry {
         self.product_registry.as_ref()
     }
 
     /// Clone the cheap shared registry handle into a prepared operation.
-    pub fn product_registry_handle(&self) -> Arc<AiperfRegistry> {
+    pub fn product_registry_handle(&self) -> Arc<AIPerfRegistry> {
         self.product_registry.clone()
     }
 
@@ -1358,7 +1358,7 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
-    use crate::extensions::AiperfRegistryFactory;
+    use crate::extensions::AIPerfRegistryFactory;
 
     static TRANSPORT: RunnerTransportDescriptor = RunnerTransportDescriptor {
         id: "acme_remote",
@@ -1496,8 +1496,8 @@ mod tests {
         }
     }
 
-    fn registry() -> AiperfRegistry {
-        let mut registry = AiperfRegistry::builtin().unwrap();
+    fn registry() -> AIPerfRegistry {
+        let mut registry = AIPerfRegistry::builtin().unwrap();
         registry.register_transport(Arc::new(Transport)).unwrap();
         registry.register_workload(Arc::new(Workload)).unwrap();
         registry
@@ -1595,7 +1595,7 @@ mod tests {
             .to_string();
         assert!(error.contains("missing") && error.contains("acme_remote"));
 
-        let mut registry = AiperfRegistry::builtin().unwrap();
+        let mut registry = AIPerfRegistry::builtin().unwrap();
         registry.register_transport(Arc::new(Transport)).unwrap();
         assert!(registry.register_transport(Arc::new(Transport)).is_err());
     }
@@ -1622,7 +1622,7 @@ mod tests {
         };
         let context = RunnerRunContext::new(
             format!("blake3:{}", "a".repeat(64)),
-            Arc::new(AiperfRegistry::builtin().unwrap()),
+            Arc::new(AIPerfRegistry::builtin().unwrap()),
             crate::runner_protocol::execution_factories::native_execution_factories(),
             Arc::new(crate::runner_protocol::graph_input::BuiltinRunnerGraphInputAdapterResolver::new()),
             Arc::new(crate::runner_protocol::dataset_input::BuiltinRunnerDatasetInputAdapterResolver::new()),
@@ -1757,7 +1757,7 @@ mod tests {
 
     #[test]
     fn builtin_inventory_does_not_claim_protocol_v1_or_library_only_execution() {
-        let registry = crate::extensions::BuiltinAiperfRegistryFactory
+        let registry = crate::extensions::BuiltinAIPerfRegistryFactory
             .build()
             .unwrap();
         #[cfg(feature = "dynosim")]
@@ -1789,7 +1789,7 @@ mod tests {
 
     #[test]
     fn builtin_factory_configs_fail_closed_before_execution() {
-        let registry = crate::extensions::BuiltinAiperfRegistryFactory
+        let registry = crate::extensions::BuiltinAIPerfRegistryFactory
             .build()
             .unwrap();
         let transport = component("http", serde_json::json!({}));

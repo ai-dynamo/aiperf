@@ -1128,18 +1128,20 @@ mod tests {
 
         let factory = PreparedRunnerGraphEndpointRuntimeFactory::new(
             registry,
-            Arc::new(vec![crate::runner_protocol::registry::ValidatedEndpointProfileV2 {
-                profile_id: "default".into(),
-                endpoint_id: EndpointId::new("chat").unwrap(),
-                config: RawEndpointConfig {
-                    urls: vec!["http://127.0.0.1:1".into()],
-                    streaming: true,
-                    ..RawEndpointConfig::default()
+            Arc::new(vec![
+                crate::runner_protocol::registry::ValidatedEndpointProfileV2 {
+                    profile_id: "default".into(),
+                    endpoint_id: EndpointId::new("chat").unwrap(),
+                    config: RawEndpointConfig {
+                        urls: vec!["http://127.0.0.1:1".into()],
+                        streaming: true,
+                        ..RawEndpointConfig::default()
+                    },
+                    connection_reuse: ConnectionReuseStrategy::Pooled,
+                    client: Default::default(),
+                    session_header: None,
                 },
-                connection_reuse: ConnectionReuseStrategy::Pooled,
-                client: Default::default(),
-                session_header: None,
-            }]),
+            ]),
             Arc::new(AuthoredInputTokenCounter),
             GraphTransportKind::Http,
         )
@@ -1186,17 +1188,19 @@ mod tests {
         // gRPC binding registry. The `kind()` probe confirms it downcast-free.
         let factory = PreparedRunnerGraphEndpointRuntimeFactory::new(
             EndpointRegistry::builtin().unwrap(),
-            Arc::new(vec![crate::runner_protocol::registry::ValidatedEndpointProfileV2 {
-                profile_id: "default".into(),
-                endpoint_id: EndpointId::new("kserve_v2_infer").unwrap(),
-                config: RawEndpointConfig {
-                    urls: vec!["grpc://127.0.0.1:1".into()],
-                    ..RawEndpointConfig::default()
+            Arc::new(vec![
+                crate::runner_protocol::registry::ValidatedEndpointProfileV2 {
+                    profile_id: "default".into(),
+                    endpoint_id: EndpointId::new("kserve_v2_infer").unwrap(),
+                    config: RawEndpointConfig {
+                        urls: vec!["grpc://127.0.0.1:1".into()],
+                        ..RawEndpointConfig::default()
+                    },
+                    connection_reuse: ConnectionReuseStrategy::Pooled,
+                    client: Default::default(),
+                    session_header: None,
                 },
-                connection_reuse: ConnectionReuseStrategy::Pooled,
-                client: Default::default(),
-                session_header: None,
-            }]),
+            ]),
             Arc::new(AuthoredInputTokenCounter),
             GraphTransportKind::Grpc,
         )
@@ -1214,17 +1218,19 @@ mod tests {
         // at binding preparation (the HTTP arm would accept it).
         let factory = PreparedRunnerGraphEndpointRuntimeFactory::new(
             EndpointRegistry::builtin().unwrap(),
-            Arc::new(vec![crate::runner_protocol::registry::ValidatedEndpointProfileV2 {
-                profile_id: "default".into(),
-                endpoint_id: EndpointId::new("chat").unwrap(),
-                config: RawEndpointConfig {
-                    urls: vec!["grpc://127.0.0.1:1".into()],
-                    ..RawEndpointConfig::default()
+            Arc::new(vec![
+                crate::runner_protocol::registry::ValidatedEndpointProfileV2 {
+                    profile_id: "default".into(),
+                    endpoint_id: EndpointId::new("chat").unwrap(),
+                    config: RawEndpointConfig {
+                        urls: vec!["grpc://127.0.0.1:1".into()],
+                        ..RawEndpointConfig::default()
+                    },
+                    connection_reuse: ConnectionReuseStrategy::Pooled,
+                    client: Default::default(),
+                    session_header: None,
                 },
-                connection_reuse: ConnectionReuseStrategy::Pooled,
-                client: Default::default(),
-                session_header: None,
-            }]),
+            ]),
             Arc::new(AuthoredInputTokenCounter),
             GraphTransportKind::Grpc,
         )
@@ -1244,17 +1250,19 @@ mod tests {
     fn prepared_graph_runtime_rejects_dataset_only_raw_token_requirements() {
         let result = PreparedRunnerGraphEndpointRuntimeFactory::new(
             EndpointRegistry::builtin().unwrap(),
-            Arc::new(vec![crate::runner_protocol::registry::ValidatedEndpointProfileV2 {
-                profile_id: "default".into(),
-                endpoint_id: EndpointId::new("vllm_generate").unwrap(),
-                config: RawEndpointConfig {
-                    urls: vec!["http://127.0.0.1:1".into()],
-                    ..RawEndpointConfig::default()
+            Arc::new(vec![
+                crate::runner_protocol::registry::ValidatedEndpointProfileV2 {
+                    profile_id: "default".into(),
+                    endpoint_id: EndpointId::new("vllm_generate").unwrap(),
+                    config: RawEndpointConfig {
+                        urls: vec!["http://127.0.0.1:1".into()],
+                        ..RawEndpointConfig::default()
+                    },
+                    connection_reuse: ConnectionReuseStrategy::Pooled,
+                    client: Default::default(),
+                    session_header: None,
                 },
-                connection_reuse: ConnectionReuseStrategy::Pooled,
-                client: Default::default(),
-                session_header: None,
-            }]),
+            ]),
             Arc::new(AuthoredInputTokenCounter),
             GraphTransportKind::Http,
         );

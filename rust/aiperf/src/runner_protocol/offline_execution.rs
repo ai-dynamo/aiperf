@@ -853,7 +853,7 @@ impl RunnerTransportFactory for DynosimTransportFactory {
 /// dispatch to [`prepare_dynosim_scheduled`]/[`prepare_dynosim_graph`]; there is
 /// no per-transport pair object. Direct graph preparation resolves its
 /// authored-input adapter from the coordinator-owned [`RunnerRunContext`].
-pub fn register_dynosim_transport(registry: &mut crate::extensions::AiperfRegistry) -> Result<()> {
+pub fn register_dynosim_transport(registry: &mut crate::extensions::AIPerfRegistry) -> Result<()> {
     registry.register_transport(Arc::new(DynosimTransportFactory::offline()))?;
     registry.register_transport(Arc::new(DynosimTransportFactory::online()))?;
     Ok(())
@@ -2297,7 +2297,7 @@ pub struct DynosimTraceOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::extensions::{AiperfRegistryFactory, BuiltinAiperfRegistryFactory};
+    use crate::extensions::{AIPerfRegistryFactory, BuiltinAIPerfRegistryFactory};
     use crate::runner_protocol::registry::RunnerTransportFactory;
 
     fn raw(value: Value) -> Box<RawValue> {
@@ -2371,7 +2371,7 @@ mod tests {
 
     #[test]
     fn factory_registration_is_derived_from_the_feature_bearing_registry() {
-        let registry = BuiltinAiperfRegistryFactory.build().unwrap();
+        let registry = BuiltinAIPerfRegistryFactory.build().unwrap();
         for (transport_id, clock) in [
             (DYNOSIM_OFFLINE_ID, RunnerClockKind::Sim),
             (DYNOSIM_ONLINE_ID, RunnerClockKind::Real),

@@ -216,9 +216,9 @@ becomes a typed failure, never a bare crash — Python always sees one JSONL lin
 
 #### A.3 `application.rs` / `coordinator.rs` — frozen composition & the `handle()` pipeline
 - `RunnerApplication::stock(distribution_id)` composes the built-in universe once:
-  `BuiltinRunnerRegistryFactory`, `BuiltinAiperfRegistryFactory`, `native_execution_factories()`,
+  `BuiltinRunnerRegistryFactory`, `BuiltinAIPerfRegistryFactory`, `native_execution_factories()`,
   and the three built-in input-adapter resolvers (graph/dataset/sidecar).
-- `RunnerV2Coordinator` holds the frozen runner registry, `Arc<AiperfRegistry>` product
+- `RunnerV2Coordinator` holds the frozen runner registry, `Arc<AIPerfRegistry>` product
   registry, `RunnerExecutionFactories`, and the input resolvers. `handle()` runs the 10-step
   pipeline in §3, returning `RunnerProcessResultV2 {response, exit_code}`.
 - `persist_prepared_report` — refuses an existing `native-v2.json`, writes atomically via
@@ -704,7 +704,7 @@ crosses a `dyn` boundary it is object-safe, where it is hot-path it is monomorph
 |---|---|
 | Time | `Clock` (RealClock / SimClock) |
 | Dispatch/measure | `Dispatchable`, `RequestSink<R>`, `RequestObserver` |
-| Runner composition | `RunnerRegistryFactory`, `RunnerTransportFactory`, `RunnerWorkloadFactory`, `RunnerPairFactory`, `PreparedRunnerOperation`, `PreparedReportCommit`, `AiperfRegistryFactory`, `AiperfExtension` |
+| Runner composition | `RunnerRegistryFactory`, `RunnerTransportFactory`, `RunnerWorkloadFactory`, `RunnerPairFactory`, `PreparedRunnerOperation`, `PreparedReportCommit`, `AIPerfRegistryFactory`, `AIPerfExtension` |
 | Execution placement | `RequestExecutorFactory`/`RequestExecutor`, `RunnerGraphPlacementFactory`, `OnlineReadinessPlanFactory`, `ReadinessTransportFactory`, `ControlPlaneHttpProviderFactory` |
 | Inputs | `RunnerGraphInputAdapterResolver`, `RunnerDatasetInputAdapterResolver`, `RunnerSidecarInputAdapterResolver`, `OnlineTokenizerSourceResolver` |
 | HTTP | `ConnectionManager`, `DnsResolver`/`HostLookup`, `SseMessageFilter`/`SseMessageHandler`, `HttpEndpointBinding`, `RequestExecutor`, `TurnDispatcher` |

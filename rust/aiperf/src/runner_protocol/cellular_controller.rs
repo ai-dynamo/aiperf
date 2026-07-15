@@ -256,9 +256,8 @@ pub fn run_cellular(
         // densely — deterministic-per-topology. The kind selects between the two.
         let merged = kind.merge(metrics_config, partitions)?;
         let record_count = merged.record_count();
-        let summary = merged.export_results(&ExportContext::phase(
-            crate::metrics_core::Phase::Profiling,
-        ));
+        let summary =
+            merged.export_results(&ExportContext::phase(crate::metrics_core::Phase::Profiling));
         // Assemble the report so its metric data matches a 1-cell run: the profiling
         // metrics, the warmup section (carried only when a warmup phase actually ran,
         // so a profiling-only run stays byte-identical to the plain builder), plus the

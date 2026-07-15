@@ -4,8 +4,8 @@
 //! Statically linked extension composition for native AIPerf.
 //!
 //! Rust does not discover trait implementations automatically. A distribution
-//! links ordinary Cargo dependencies, constructs one [`AiperfRegistry`], and
-//! explicitly applies their [`AiperfExtension`] implementations before starting
+//! links ordinary Cargo dependencies, constructs one [`AIPerfRegistry`], and
+//! explicitly applies their [`AIPerfExtension`] implementations before starting
 //! any runtime or worker. The resulting implementation universe is fixed by the
 //! build; there is no manifest scanning, dynamic import, or stable-library ABI.
 
@@ -28,7 +28,7 @@ use crate::endpoints::{
 #[cfg(feature = "runner-protocol")]
 use crate::runner_protocol::registry::{RunnerTransportFactory, RunnerWorkloadFactory};
 
-/// Error returned while constructing or extending an [`AiperfRegistry`].
+/// Error returned while constructing or extending an [`AIPerfRegistry`].
 #[derive(Debug)]
 pub enum ExtensionError {
     /// A dataset-format, sampler, or endpoint registry rejected an entry.
@@ -102,32 +102,32 @@ impl From<EndpointRegistryError> for ExtensionError {
 /// Implementations should contain no run state. Registration executes once in
 /// the application composition root, before clocks, transports, or workers are
 /// constructed.
-pub trait AiperfExtension {
+pub trait AIPerfExtension {
     /// Stable package-level name used for duplicate detection and diagnostics.
     fn name(&self) -> &str;
 
     /// Add this package's implementations through the typed category registries.
-    fn register(&self, registry: &mut AiperfRegistry) -> Result<(), ExtensionError>;
+    fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError>;
 }
 
 /// Composition-root seam that constructs one frozen registry universe.
 ///
-/// Stock runners use [`BuiltinAiperfRegistryFactory`]. A custom statically
+/// Stock runners use [`BuiltinAIPerfRegistryFactory`]. A custom statically
 /// linked runner can inject its own factory and apply an explicit ordered set
-/// of [`AiperfExtension`] values without changing benchmark execution code.
-pub trait AiperfRegistryFactory {
+/// of [`AIPerfExtension`] values without changing benchmark execution code.
+pub trait AIPerfRegistryFactory {
     /// Build the registry used by capabilities, validation, and execution.
-    fn build(&self) -> Result<AiperfRegistry, ExtensionError>;
+    fn build(&self) -> Result<AIPerfRegistry, ExtensionError>;
 }
 
 /// Factory for the stock in-tree registry set.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct BuiltinAiperfRegistryFactory;
+pub struct BuiltinAIPerfRegistryFactory;
 
-impl AiperfRegistryFactory for BuiltinAiperfRegistryFactory {
-    fn build(&self) -> Result<AiperfRegistry, ExtensionError> {
+impl AIPerfRegistryFactory for BuiltinAIPerfRegistryFactory {
+    fn build(&self) -> Result<AIPerfRegistry, ExtensionError> {
         #[allow(unused_mut)]
-        let mut registry = AiperfRegistry::builtin()?;
+        let mut registry = AIPerfRegistry::builtin()?;
         // The runner transport/workload universe is the same catalog of record;
         // fold the built-in protocol-v2 components into the one product registry
         // whenever this build links the runner-protocol layer.
@@ -144,7 +144,7 @@ impl AiperfRegistryFactory for BuiltinAiperfRegistryFactory {
 /// stores, and materializers intentionally remain constructor arguments rather
 /// than entries in this name-based catalog.
 #[derive(Clone)]
-pub struct AiperfRegistry {
+pub struct AIPerfRegistry {
     dataset_formats: LoaderRegistry,
     samplers: SamplerRegistry,
     endpoints: EndpointRegistry,
@@ -160,7 +160,7 @@ pub struct AiperfRegistry {
     extension_names: BTreeSet<String>,
 }
 
-impl AiperfRegistry {
+impl AIPerfRegistry {
     /// Construct the complete native in-tree registry set.
     pub fn builtin() -> Result<Self, ExtensionError> {
         Ok(Self {
@@ -181,7 +181,7 @@ impl AiperfRegistry {
     /// leave earlier entries from the same extension visible.
     pub fn register_extension(
         &mut self,
-        extension: &dyn AiperfExtension,
+        extension: &dyn AIPerfExtension,
     ) -> Result<(), ExtensionError> {
         let name = validate_extension_name(extension.name())?;
         if self.extension_names.contains(&name) {
@@ -203,7 +203,7 @@ impl AiperfRegistry {
     /// Apply an ordered collection of linked extensions transactionally one at a time.
     pub fn with_extensions<'a>(
         mut self,
-        extensions: impl IntoIterator<Item = &'a dyn AiperfExtension>,
+        extensions: impl IntoIterator<Item = &'a dyn AIPerfExtension>,
     ) -> Result<Self, ExtensionError> {
         for extension in extensions {
             self.register_extension(extension)?;

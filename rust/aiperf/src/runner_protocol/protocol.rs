@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::extensions::AiperfRegistry;
+use crate::extensions::AIPerfRegistry;
 
 /// One plugins.yaml-shaped catalog entry.
 #[derive(Debug, Serialize)]
@@ -41,7 +41,7 @@ pub struct RunnerCatalog {
 
 impl RunnerCatalog {
     /// Serialize the exact endpoint and transport catalog linked into this binary.
-    pub fn from_registry(product_registry: &AiperfRegistry) -> Self {
+    pub fn from_registry(product_registry: &AIPerfRegistry) -> Self {
         let endpoint = product_registry
             .endpoints()
             .descriptors()

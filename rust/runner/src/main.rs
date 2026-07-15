@@ -107,13 +107,14 @@ fn main() {
 /// environment from the launch spec, then execute the sliced envelope through the
 /// ordinary single-process path (which the environment makes cell-aware).
 fn run_cell(input: Vec<u8>) -> ! {
-    let spec: aiperf::runner_protocol::cellular_cell::CellLaunchSpec = match serde_json::from_slice(&input) {
-        Ok(spec) => spec,
-        Err(error) => {
-            tracing::error!(error = %error, "invalid cell launch spec");
-            std::process::exit(2);
-        }
-    };
+    let spec: aiperf::runner_protocol::cellular_cell::CellLaunchSpec =
+        match serde_json::from_slice(&input) {
+            Ok(spec) => spec,
+            Err(error) => {
+                tracing::error!(error = %error, "invalid cell launch spec");
+                std::process::exit(2);
+            }
+        };
     // SAFETY: the process is still single-threaded here. The only code that ran
     // before this is `init_tracing`, whose synchronous stderr subscriber spawns no
     // background writer thread, and no runtime exists yet — so no other thread can
@@ -163,14 +164,19 @@ fn run_controller(envelope: &Value) -> ! {
         .and_then(Value::as_str)
         .unwrap_or_default();
     let report_path = std::path::Path::new(artifact_dir).join("native-v2.json");
-    let cell_count = aiperf::runner_protocol::cellular_controller::cell_count_from_envelope(envelope);
+    let cell_count =
+        aiperf::runner_protocol::cellular_controller::cell_count_from_envelope(envelope);
     // Mirror run_v2's catch_unwind (see `handle_v2`): the controller runs the records
     // merge, native-v2 serialization, and the best-effort export plane inline in
     // run_cellular; a panic in any of them would otherwise unwind past this writer and
     // abort the controller (exit 101) with no envelope, so Python would see a crashed
     // subprocess instead of a typed execution failure.
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        aiperf::runner_protocol::cellular_controller::run_cellular(envelope, cell_count, &report_path)
+        aiperf::runner_protocol::cellular_controller::run_cellular(
+            envelope,
+            cell_count,
+            &report_path,
+        )
     }));
     match outcome {
         Ok(Ok(outcome)) => {

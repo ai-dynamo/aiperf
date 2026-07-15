@@ -15,13 +15,17 @@ use std::sync::Arc;
 use crate::runner_protocol::control_plane_http::{
     ControlPlaneHttpProviderFactory, NativeControlPlaneHttpProviderFactory,
 };
-use crate::runner_protocol::graph_execution::{NativeRunnerGraphPlacementFactory, RunnerGraphPlacementFactory};
+use crate::runner_protocol::graph_execution::{
+    NativeRunnerGraphPlacementFactory, RunnerGraphPlacementFactory,
+};
 use crate::runner_protocol::grpc_turn_execution::NativeGrpcExecutionBackendFactory;
 use crate::runner_protocol::readiness::{
     NativeHttpReadinessPlanFactory, NativeHttpReadinessTransportFactory,
     OnlineReadinessPlanFactory, ReadinessTransportFactory,
 };
-use crate::runner_protocol::turn_execution::{NativeRequestExecutorFactory, RequestExecutorFactory};
+use crate::runner_protocol::turn_execution::{
+    NativeRequestExecutorFactory, RequestExecutorFactory,
+};
 
 /// Exact execution-factory universe retained from coordinator construction.
 #[derive(Clone)]
