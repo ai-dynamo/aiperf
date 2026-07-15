@@ -547,7 +547,7 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
 - `specs/2026-07-11-aiperf-rust-exporters-overhaul-design.md` — **built (see 2026-07-14
   addendum)**: the full native-Rust exporter plane (`aiperf::export`) is built and is
   the default sole emitter (`AIPERF_RUNTIME_NATIVE_EXPORT=0` restores legacy Python).
-  Nine sinks behind one `Exporter` trait — aiperf-v1 (genai-perf-v1) JSON+CSV, timeslice
+  Nine sinks behind one `Exporter` trait — aiperf-v1 (genai-perf-v1) JSON+CSV (incl. GPU `telemetry_data`), timeslice
   JSON+CSV, server-metrics JSON+CSV+parquet, accuracy CSV, console.txt (+warning/insight
   detectors), OTLP per-record metrics, MLflow, W&B — parity-verified byte-for-byte (or
   schema+data for parquet) vs the retired Python exporters via the `AIPERF_EXPORT_SUBDIR`

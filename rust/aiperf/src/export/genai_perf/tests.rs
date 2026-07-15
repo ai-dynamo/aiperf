@@ -322,3 +322,176 @@ fn empty_report_emits_only_scalar_top_level_fields() {
     let csv = render_csv(&report, &cfg("profile_export").genai_perf).unwrap();
     assert_eq!(csv, "");
 }
+
+/// One GPU-labeled series (`gpu`/`gpu_uuid`/`model_name`/`hostname` + DCGM
+/// `endpoint_url`), matching the labels the GPU-telemetry accumulator emits.
+fn gpu_series(gpu: &str, uuid: &str, endpoint: &str, stats: ReportStats) -> MetricSeries {
+    MetricSeries {
+        labels: Some(BTreeMap::from([
+            ("gpu".to_owned(), gpu.to_owned()),
+            ("gpu_uuid".to_owned(), uuid.to_owned()),
+            ("model_name".to_owned(), "NVIDIA H200".to_owned()),
+            ("hostname".to_owned(), "localhost".to_owned()),
+        ])),
+        endpoint_url: Some(endpoint.to_owned()),
+        stats,
+        timeslices: Vec::new(),
+    }
+}
+
+/// Distribution (gauge) stats with a full stat set.
+fn gauge_stats(avg: f64, min: f64, max: f64, std: f64) -> ReportStats {
+    ReportStats::Distribution(ReportDistributionStats {
+        count: Some(2),
+        avg: Some(fin(avg)),
+        min: Some(fin(min)),
+        max: Some(fin(max)),
+        std: Some(fin(std)),
+        percentiles: pcts([min, min, min, avg, avg, avg, max, max, max]),
+    })
+}
+
+/// The GPU-telemetry projection mirrors Python `_project_gpu_telemetry`: series
+/// are grouped by normalized endpoint then `gpu_N`, gauges render
+/// `{unit,avg,p*,min,max,std,count}` (no `sum`), counters render
+/// `{unit,avg,min,max,sum}` all equal to the total, non-GPU metrics are skipped,
+/// and each GPU's `metrics` keeps report (alphabetical) order.
+#[test]
+fn telemetry_data_projects_gpu_series_grouped_by_endpoint_and_gpu() {
+    const ENDPOINT: &str = "http://127.0.0.1:9400/dcgm1/metrics";
+    let metrics = BTreeMap::from([
+        (
+            "energy_consumption".to_owned(),
+            MetricEntry {
+                metric_type: "counter",
+                unit: "MJ".to_owned(),
+                group: "default",
+                higher_is_better: false,
+                series: vec![
+                    gpu_series(
+                        "0",
+                        "GPU-A",
+                        ENDPOINT,
+                        ReportStats::Counter(ReportCounterStats {
+                            total: fin(0.5),
+                            rate: Some(fin(0.1)),
+                        }),
+                    ),
+                    gpu_series(
+                        "1",
+                        "GPU-B",
+                        ENDPOINT,
+                        ReportStats::Counter(ReportCounterStats {
+                            total: fin(0.7),
+                            rate: Some(fin(0.2)),
+                        }),
+                    ),
+                ],
+            },
+        ),
+        (
+            "gpu_power_usage".to_owned(),
+            MetricEntry {
+                metric_type: "distribution",
+                unit: "W".to_owned(),
+                group: "default",
+                higher_is_better: false,
+                series: vec![
+                    gpu_series(
+                        "0",
+                        "GPU-A",
+                        ENDPOINT,
+                        gauge_stats(300.0, 100.0, 500.0, 40.0),
+                    ),
+                    gpu_series(
+                        "1",
+                        "GPU-B",
+                        ENDPOINT,
+                        gauge_stats(320.0, 120.0, 520.0, 44.0),
+                    ),
+                ],
+            },
+        ),
+        // A non-GPU request metric (unlabeled series) that must be excluded.
+        ("request_latency".to_owned(), scalar("ms", 1.0)),
+    ]);
+    let report = report_with(metrics);
+
+    let telemetry = render_telemetry_data(&report).expect("telemetry present");
+
+    // One endpoint, keyed by the scheme-stripped, /metrics-trimmed display URL.
+    let endpoints = telemetry["endpoints"].as_object().unwrap();
+    assert_eq!(endpoints.len(), 1);
+    let endpoint = &endpoints["127.0.0.1:9400/dcgm1"];
+
+    let gpus = endpoint["gpus"].as_object().unwrap();
+    assert_eq!(
+        gpus.keys().collect::<Vec<_>>(),
+        vec!["gpu_0", "gpu_1"],
+        "GPUs keyed by index, first-seen order"
+    );
+
+    let gpu0 = &gpus["gpu_0"];
+    assert_eq!(gpu0["gpu_index"], 0);
+    assert_eq!(gpu0["gpu_name"], "NVIDIA H200");
+    assert_eq!(gpu0["gpu_uuid"], "GPU-A");
+    assert_eq!(gpu0["hostname"], "localhost");
+
+    let gpu0_metrics = gpu0["metrics"].as_object().unwrap();
+    // Report BTreeMap order is alphabetical: energy_consumption before gpu_power_usage.
+    assert_eq!(
+        gpu0_metrics.keys().collect::<Vec<_>>(),
+        vec!["energy_consumption", "gpu_power_usage"]
+    );
+
+    // Gauge: {unit,avg,p1..p99,min,max,std,count}; no sum.
+    let gauge = gpu0_metrics["gpu_power_usage"].as_object().unwrap();
+    assert_eq!(gauge["unit"], "W");
+    assert_eq!(gauge["avg"], 300.0);
+    assert_eq!(gauge["min"], 100.0);
+    assert_eq!(gauge["max"], 500.0);
+    assert_eq!(gauge["std"], 40.0);
+    assert_eq!(gauge["count"], 2);
+    assert_eq!(gauge["p50"], 300.0);
+    assert!(!gauge.contains_key("sum"), "gauges never carry sum");
+
+    // Counter: {unit,avg,min,max,sum} all equal to the total; no distribution keys.
+    let counter = gpu0_metrics["energy_consumption"].as_object().unwrap();
+    assert_eq!(counter["unit"], "MJ");
+    assert_eq!(counter["avg"], 0.5);
+    assert_eq!(counter["min"], 0.5);
+    assert_eq!(counter["max"], 0.5);
+    assert_eq!(counter["sum"], 0.5);
+    assert!(!counter.contains_key("std"));
+    assert!(!counter.contains_key("count"));
+    assert!(!counter.contains_key("p50"));
+
+    // The unlabeled request metric never leaks into telemetry.
+    let telemetry_str = telemetry.to_string();
+    assert!(!telemetry_str.contains("request_latency"));
+
+    // Summary carries the raw (un-normalized) endpoint URL for configured/successful.
+    let summary = &telemetry["summary"];
+    assert_eq!(
+        summary["endpoints_configured"],
+        serde_json::json!([ENDPOINT])
+    );
+    assert_eq!(
+        summary["endpoints_successful"],
+        serde_json::json!([ENDPOINT])
+    );
+
+    // And the whole block is spliced into the top-level JSON before input_config.
+    let json = render_json(&report, &cfg("profile_export").genai_perf);
+    assert!(json.contains("\"telemetry_data\""));
+}
+
+/// A GPU-less report emits no `telemetry_data` block (parity with `exclude_none`).
+#[test]
+fn telemetry_data_absent_when_no_gpu_series() {
+    let metrics = BTreeMap::from([("request_latency".to_owned(), scalar("ms", 1.0))]);
+    let report = report_with(metrics);
+    assert!(render_telemetry_data(&report).is_none());
+    let json = render_json(&report, &cfg("profile_export").genai_perf);
+    assert!(!json.contains("telemetry_data"));
+}
