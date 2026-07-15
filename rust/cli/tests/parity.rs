@@ -280,6 +280,8 @@ const YAML_FIXTURES: &[(&str, &str, &str)] = &[
     ("yaml_infra", "yaml_infra", "/tmp/aiperf-parity/yaml_infra"),
     ("yaml_synth", "yaml_synth", "/tmp/aiperf-parity/yaml_synth"),
     ("yaml_media", "yaml_media", "/tmp/aiperf-parity/media"),
+    ("yaml_phase", "yaml_phase", "/tmp/aiperf-parity/yaml_phase"),
+    ("yaml_uc", "yaml_uc", "/tmp/aiperf-parity/yaml_uc"),
 ];
 
 #[test]

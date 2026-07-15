@@ -1,0 +1,12 @@
+schemaVersion: "2.0"
+benchmark:
+  model: Qwen/Qwen3-0.6B
+  endpoint: {type: chat, url: 127.0.0.1:8000}
+  dataset:
+    prompts: {isl: 512}
+  phases:
+    type: user_centric
+    rate: 5.0
+    users: 10
+    duration: 20.0
+  artifacts: {dir: /tmp/aiperf-parity/yaml_uc}

@@ -360,13 +360,48 @@ enum Phases {
 
 #[derive(Debug, Deserialize)]
 struct PhaseSection {
+    /// Arrival pattern (`concurrency`/`poisson`/`gamma`/`constant`/
+    /// `user_centric`/`fixed_schedule`).
+    #[serde(rename = "type")]
+    phase_type: Option<String>,
     concurrency: Option<u32>,
     rate: Option<f64>,
     requests: Option<u64>,
     sessions: Option<u64>,
     duration: Option<f64>,
-    #[serde(alias = "grace_period")]
+    #[serde(default, alias = "gracePeriod")]
     grace_period: Option<f64>,
+    /// Gamma smoothness shape.
+    smoothness: Option<f64>,
+    /// Concurrency-ramp duration, seconds.
+    #[serde(default, alias = "concurrencyRamp")]
+    concurrency_ramp: Option<f64>,
+    /// Rate-ramp duration, seconds.
+    #[serde(default, alias = "rateRamp")]
+    rate_ramp: Option<f64>,
+    /// Prefill (warmup-cache) concurrency.
+    #[serde(default, alias = "prefillConcurrency")]
+    prefill_concurrency: Option<u32>,
+    /// Prefill-ramp duration, seconds.
+    #[serde(default, alias = "prefillRamp")]
+    prefill_ramp: Option<f64>,
+    /// Post-send cancellation policy.
+    cancellation: Option<CancellationSection>,
+    /// User-centric concurrent-user count (`user_centric` phase).
+    users: Option<u32>,
+    /// Fixed-schedule auto-offset toggle.
+    #[serde(default, alias = "autoOffset")]
+    auto_offset: Option<bool>,
+    #[serde(default, alias = "startOffset")]
+    start_offset: Option<i64>,
+    #[serde(default, alias = "endOffset")]
+    end_offset: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CancellationSection {
+    rate: f64,
+    delay: f64,
 }
 
 impl Benchmark {
@@ -513,6 +548,23 @@ impl Benchmark {
                 .ok_or_else(|| anyhow::anyhow!("phases must have at least one entry"))?,
         };
 
+        // Phase arrival pattern. A rate `type` selects the arrival distribution;
+        // `user_centric` binds (rate, users); `concurrency` (default) has no rate.
+        let phase_type = phase.phase_type.as_deref();
+        let is_user_centric = phase_type == Some("user_centric");
+        let rate_mode = match phase_type {
+            Some(t @ ("poisson" | "gamma" | "constant")) => Some(t.to_string()),
+            _ => None,
+        };
+        let user_centric = match (is_user_centric, phase.rate, phase.users) {
+            (true, Some(rate), Some(users)) => Some((rate, users)),
+            (true, _, _) => anyhow::bail!("user_centric phase requires rate and users"),
+            _ => None,
+        };
+        // user_centric drives its own rate; keep request_rate clear for it.
+        let phase_rate = if is_user_centric { None } else { phase.rate };
+        let phase_cancellation = phase.cancellation.as_ref().map(|c| (c.rate, c.delay));
+
         // Synthetic conversation count: num_conversations or an explicit
         // dataset `entries`, else the Python default (never the request bound).
         let entries = num_conversations
@@ -639,8 +691,8 @@ impl Benchmark {
                 .transpose()?,
             wait_for_model_interval: self.endpoint.wait_for_model_interval,
             apply_chat_template,
-            prefill_concurrency: None,
-            prefill_ramp: None,
+            prefill_concurrency: phase.prefill_concurrency,
+            prefill_ramp: phase.prefill_ramp,
             gpu_telemetry_enabled: gpu_enabled,
             gpu_telemetry_urls: gpu_urls,
             server_metrics_enabled: sm_enabled,
@@ -669,13 +721,13 @@ impl Benchmark {
             dataset_entries,
             sessions: num_conversations.map(u64::from).or(phase.sessions),
             concurrency: phase.concurrency,
-            request_rate: phase.rate,
-            rate_mode: None,
-            smoothness: None,
-            concurrency_ramp: None,
-            rate_ramp: None,
-            cancellation: None,
-            user_centric: None,
+            request_rate: phase_rate,
+            rate_mode,
+            smoothness: phase.smoothness,
+            concurrency_ramp: phase.concurrency_ramp,
+            rate_ramp: phase.rate_ramp,
+            cancellation: phase_cancellation,
+            user_centric,
             request_count: phase.requests,
             benchmark_duration: phase.duration,
             grace_period: phase.grace_period,

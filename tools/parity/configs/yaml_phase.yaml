@@ -1,0 +1,21 @@
+schemaVersion: "2.0"
+benchmark:
+  model: Qwen/Qwen3-0.6B
+  endpoint: {type: chat, url: 127.0.0.1:8000, streaming: true}
+  dataset:
+    prompts: {isl: 512}
+  phases:
+    type: gamma
+    rate: 10
+    smoothness: 2.0
+    duration: 30.0
+    concurrency: 8
+    concurrency_ramp: 5.0
+    rate_ramp: 3.0
+    prefill_concurrency: 4
+    prefill_ramp: 2.0
+    grace_period: 15.0
+    cancellation:
+      rate: 0.1
+      delay: 500
+  artifacts: {dir: /tmp/aiperf-parity/yaml_phase}
