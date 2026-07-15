@@ -13,16 +13,25 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::endpoint::Endpoint;
+use super::models::Models;
+
 /// The canonical benchmark configuration (runner-consumed projection).
 ///
-/// Empty today; grows one typed section per port task. `#[serde(default)]` on
-/// every field so a partially-populated config (and a golden filtered through
-/// this type) both round-trip.
+/// Grows one typed section per port task. Sections not yet ported are simply
+/// absent from this struct; a Python golden deserialized through it drops them
+/// (no `deny_unknown_fields`), which is the parity filter. Every section field
+/// is `Option` so a partial config (and a filtered golden) both round-trip;
+/// `skip_serializing_if` keeps an unset section out of the serialized request
+/// exactly as Python omits an unprojected section.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct BenchmarkConfig {
-    // Sections are added here as they are ported, e.g.:
-    //   pub endpoint: endpoint::Endpoint,
-    //   pub datasets: Vec<dataset::Dataset>,
-    //   pub phases: Vec<phase::Phase>,
-    // Each is a fully-typed struct whose Serialize output matches the golden.
+    /// Model-selection policy (`cfg.models`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub models: Option<Models>,
+    /// Default endpoint profile (`cfg.endpoint`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<Endpoint>,
+    // Further sections (datasets, phases, transport, tokenizer, metrics,
+    // artifacts, runtime, slos, sidecars, export, …) are added here as ported.
 }

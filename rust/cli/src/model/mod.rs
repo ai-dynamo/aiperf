@@ -28,6 +28,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 pub mod config;
+pub mod endpoint;
+pub mod models;
 
 pub use config::BenchmarkConfig;
 
