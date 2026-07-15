@@ -82,6 +82,27 @@ struct DistFields {
     max: Option<f64>,
 }
 
+/// Deserialize a duration field that accepts a number (seconds) OR a string like
+/// `30s`/`5m`/`2h`/`inf` (Python `loader/duration.py`).
+fn de_duration_opt<'de, D>(d: D) -> Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum DurOrNum {
+        Num(f64),
+        Str(String),
+    }
+    match Option::<DurOrNum>::deserialize(d)? {
+        None => Ok(None),
+        Some(DurOrNum::Num(n)) => Ok(Some(n)),
+        Some(DurOrNum::Str(s)) => {
+            load::parse_duration_secs(&s).map(Some).map_err(serde::de::Error::custom)
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct ConfigFile {
     benchmark: Benchmark,
@@ -138,7 +159,7 @@ struct ArtifactsSection {
     /// Run artifact directory (the `--artifact-dir` flag overrides it).
     dir: Option<String>,
     /// Timeslice window, seconds (wire `metrics.slice_duration_seconds`).
-    #[serde(default, alias = "sliceDuration")]
+    #[serde(default, alias = "sliceDuration", deserialize_with = "de_duration_opt")]
     slice_duration: Option<f64>,
     /// Per-record export formats (`[jsonl,csv,parquet]`) or `false` to disable.
     records: Option<RecordsFormats>,
@@ -422,22 +443,23 @@ struct PhaseSection {
     rate: Option<f64>,
     requests: Option<u64>,
     sessions: Option<u64>,
+    #[serde(default, deserialize_with = "de_duration_opt")]
     duration: Option<f64>,
-    #[serde(default, alias = "gracePeriod")]
+    #[serde(default, alias = "gracePeriod", deserialize_with = "de_duration_opt")]
     grace_period: Option<f64>,
     /// Gamma smoothness shape.
     smoothness: Option<f64>,
     /// Concurrency-ramp duration, seconds.
-    #[serde(default, alias = "concurrencyRamp")]
+    #[serde(default, alias = "concurrencyRamp", deserialize_with = "de_duration_opt")]
     concurrency_ramp: Option<f64>,
     /// Rate-ramp duration, seconds.
-    #[serde(default, alias = "rateRamp")]
+    #[serde(default, alias = "rateRamp", deserialize_with = "de_duration_opt")]
     rate_ramp: Option<f64>,
     /// Prefill (warmup-cache) concurrency.
     #[serde(default, alias = "prefillConcurrency")]
     prefill_concurrency: Option<u32>,
     /// Prefill-ramp duration, seconds.
-    #[serde(default, alias = "prefillRamp")]
+    #[serde(default, alias = "prefillRamp", deserialize_with = "de_duration_opt")]
     prefill_ramp: Option<f64>,
     /// Post-send cancellation policy.
     cancellation: Option<CancellationSection>,

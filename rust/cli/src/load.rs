@@ -1229,6 +1229,29 @@ fn build_video_spec(flags: &ProfileFlags) -> Option<VideoSpec> {
 }
 
 /// Parse `--model-selection-strategy`.
+/// Parse a duration into seconds, mirroring Python `loader/duration.py`:
+/// a bare number is seconds; `Ns`/`Nm`/`Nh` are seconds/minutes/hours; `inf` is
+/// infinity. Used by the YAML duration fields (they accept e.g. `30s`, `5m`).
+pub(crate) fn parse_duration_secs(s: &str) -> anyhow::Result<f64> {
+    let t = s.trim();
+    if t.eq_ignore_ascii_case("inf") {
+        return Ok(f64::INFINITY);
+    }
+    let (num, mult) = if let Some(n) = t.strip_suffix(['s', 'S']) {
+        (n, 1.0)
+    } else if let Some(n) = t.strip_suffix(['m', 'M']) {
+        (n, 60.0)
+    } else if let Some(n) = t.strip_suffix(['h', 'H']) {
+        (n, 3600.0)
+    } else {
+        (t, 1.0)
+    };
+    let v: f64 = num.trim().parse().map_err(|_| {
+        anyhow::anyhow!("invalid duration {s:?} (use a number, '30s', '5m', '2h', or 'inf')")
+    })?;
+    Ok(v * mult)
+}
+
 /// Parse a `--seq-dist` string into weighted `(isl, osl)` pairs, mirroring
 /// Python's `DistributionParser` semicolon form: `isl[|std],osl[|std]:prob`
 /// entries separated by `;` (probabilities are percentages).
