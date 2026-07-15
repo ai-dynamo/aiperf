@@ -22,7 +22,7 @@ use crate::graph::channels::producers_per_channel;
 use crate::graph::context::{NodeExecutionResult, TraceContext};
 use crate::graph::errors::TraceError;
 use crate::graph::materialize::PromptMaterializer;
-use crate::graph::model::{ChannelType, Count, GraphRecord, LlmNode, TraceRecord};
+use crate::graph::model::{ChannelSpec, ChannelType, Count, GraphRecord, LlmNode, TraceRecord};
 use crate::graph::policy::{
     NodeDispatchInfo, NodeDispatchPolicy, NodeFailure, NodeFailureDisposition, NodeFailureKind,
     NodeFailurePolicy, NoopNodeDispatchPolicy, ResilientNodeFailurePolicy,
@@ -57,8 +57,16 @@ pub struct ExecutorFlags {
 /// dialect message `M`.
 pub struct TraceExecutor<M: WireMessage> {
     graph: Rc<GraphRecord>,
+    /// `Rc`-shared handle to each node, built once at construction. `fire` clones
+    /// the `Rc` (a pointer bump) instead of deep-cloning the whole `LlmNode`
+    /// (its `items`/`inputs` vectors and channel strings) on every firing.
+    node_index: BTreeMap<String, Rc<LlmNode>>,
     scheduler: Rc<Scheduler>,
-    producers: BTreeMap<String, i64>,
+    /// Run-immutable channel specs and declared-producer counts, allocated once
+    /// and `Rc`-shared into every per-trace store instead of deep-cloned per
+    /// trace (see [`VersionedChannelStore::new`]).
+    channel_specs: Rc<BTreeMap<String, ChannelSpec>>,
+    producers: Rc<BTreeMap<String, i64>>,
     materializer: Rc<dyn PromptMaterializer>,
     sink: Rc<dyn GraphSink<M>>,
     node_policy: Rc<dyn NodeDispatchPolicy>,
@@ -102,10 +110,18 @@ impl<M: WireMessage> TraceExecutor<M> {
     ) -> Result<Rc<Self>, TraceError> {
         let scheduler =
             Rc::new(Scheduler::new(&graph).map_err(|e| TraceError::Other(e.to_string()))?);
-        let producers = producers_per_channel(&graph);
+        let producers = Rc::new(producers_per_channel(&graph));
+        let channel_specs = Rc::new(graph.state.clone());
+        let node_index = graph
+            .nodes
+            .iter()
+            .map(|(id, node)| (id.clone(), Rc::new(node.clone())))
+            .collect();
         Ok(Rc::new(TraceExecutor {
             graph,
+            node_index,
             scheduler,
+            channel_specs,
             producers,
             materializer,
             sink,
@@ -128,8 +144,8 @@ impl<M: WireMessage> TraceExecutor<M> {
         }
         let store = Rc::new(VersionedChannelStore::new(
             &trace.initial_state,
-            &self.graph.state,
-            &self.producers,
+            self.channel_specs.clone(),
+            self.producers.clone(),
         )?);
         Ok(TraceContext::new(trace, store))
     }
@@ -177,7 +193,10 @@ impl<M: WireMessage> TraceExecutor<M> {
     async fn fire(self: Rc<Self>, node_id: String, ctx: Rc<TraceContext>) {
         // An edge (or START) can target an id that isn't a declared node; treat
         // that as a clean trace error rather than panicking on a missing key.
-        let Some(node) = self.graph.nodes.get(&node_id).cloned() else {
+        // Cloning the `Rc` here is a pointer bump; the owned handle lives across
+        // the `run_node` await without borrowing `self` (which would make this a
+        // self-referential future).
+        let Some(node) = self.node_index.get(&node_id).cloned() else {
             ctx.set_abort(TraceError::Other(format!(
                 "edge targets undeclared node {node_id:?}"
             )));
@@ -230,7 +249,7 @@ impl<M: WireMessage> TraceExecutor<M> {
             .map_err(|error| TraceError::Other(error.to_string()))?;
 
         let info = NodeDispatchInfo {
-            trace_id: ctx.trace.id.clone(),
+            trace_id: ctx.trace_id.clone(),
             node_id: node_id.to_string(),
             max_tokens: node.max_tokens,
         };
@@ -246,7 +265,7 @@ impl<M: WireMessage> TraceExecutor<M> {
             Some(Err(error)) => {
                 self.mark_dispatch_start(node_id, ctx);
                 let failure = NodeFailure {
-                    trace_id: ctx.trace.id.clone(),
+                    trace_id: ctx.trace_id.clone(),
                     node_id: node_id.to_string(),
                     kind: NodeFailureKind::Admission,
                     message: error.to_string(),
@@ -292,7 +311,7 @@ impl<M: WireMessage> TraceExecutor<M> {
                 self.value_after_failure(
                     node,
                     &NodeFailure {
-                        trace_id: ctx.trace.id.clone(),
+                        trace_id: ctx.trace_id.clone(),
                         node_id: node_id.to_string(),
                         kind,
                         message: message.to_string(),
@@ -304,7 +323,7 @@ impl<M: WireMessage> TraceExecutor<M> {
                 self.value_after_failure(
                     node,
                     &NodeFailure {
-                        trace_id: ctx.trace.id.clone(),
+                        trace_id: ctx.trace_id.clone(),
                         node_id: node_id.to_string(),
                         kind: NodeFailureKind::Sink,
                         message: error.to_string(),
