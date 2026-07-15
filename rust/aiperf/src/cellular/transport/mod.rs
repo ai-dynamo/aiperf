@@ -6,49 +6,46 @@
 //!
 //! The roadmap keeps a *cell* transport- and deployment-neutral: the concept is
 //! "get a serialized [`CellMessage`] from a cell to the aggregator", not any fixed
-//! wire (`specs/2026-07-12-cellular-ready-seams-and-roadmap.md`, S2/S3 "Later").
-//! Every message is length-prefixed MessagePack (`u32` big-endian length + body),
-//! which preserves the NaN/`+inf` sketch sentinels JSON cannot and round-trips the
-//! untagged `MetricValue` a non-self-describing format cannot.
+//! wire (`specs/2026-07-12-cellular-ready-seams-and-roadmap.md`, S2/S3 "Later"; the
+//! velo realization is `specs/2026-07-15-velo-cell-transport-design.md`).
 //!
 //! Two sides behind two traits:
-//! - [`CellClient`] (the cell) sends messages. [`TcpCellClient`] is a blocking
-//!   `std::net::TcpStream` — a cell sends a handful of heartbeats plus one final
-//!   partition, never on its per-request hot path, so blocking writes are fine and
-//!   keep the cell off an async reactor.
+//! - [`CellClient`] (the cell) sends messages. It is **async** — the velo impl
+//!   ([`velo_transport::VeloCellClient`]) drives an async messaging client. A cell
+//!   sends a handful of heartbeats plus one final partition, never on its
+//!   per-request hot path.
 //! - [`ControllerTransport`] (the controller) receives a merged stream of every
-//!   cell's messages. [`TcpControllerTransport`] accepts `expected_cells`
-//!   connections on a Tokio listener, reads each concurrently, and merges them into
-//!   one channel; `recv` yields `None` once every cell has closed.
+//!   cell's messages. The velo impl ([`velo_transport::VeloControllerTransport`])
+//!   registers named velo handlers that push each decoded message into one channel.
+//!
+//! **Wire encoding.** Message bodies are MessagePack (`rmp-serde`) carried as
+//! velo *raw* payloads — NOT velo's typed (JSON) payloads — because the sketches
+//! in [`MetricsHeartbeat`] anchor `min = +inf` and the records carry NaN metric
+//! values, neither of which JSON can round-trip. velo owns framing and (for a large
+//! partition) transparent large-payload staging, so this module no longer does its
+//! own length-prefixing.
 //!
 //! A cell that is a thread rather than a process would implement the same two
 //! traits over an in-process channel — the controller and merge logic are unchanged.
 
-use std::net::SocketAddr;
-
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncRead, AsyncReadExt};
-use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
-use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
 
 use crate::cellular::heartbeat::MetricsHeartbeat;
 use crate::cellular::shard::RecordsShardPartition;
 
+/// The velo-backed cell↔controller transport (cell client + controller
+/// endpoint), gated on the `velo` feature.
+#[cfg(feature = "velo")]
+pub mod velo_transport;
 /// Discovery-free connection seam: velo transport construction + the
 /// bootstrap-PeerInfo exchange that lets a cell reach the controller from one
 /// operator-hardcoded coordinate. Gated on the `velo` feature.
 #[cfg(feature = "velo")]
 pub mod connect;
 
-/// A frame body larger than this is rejected as corrupt/hostile rather than
-/// allocated — defense-in-depth against a bad length prefix.
-const MAX_FRAME_LEN: u32 = 512 * 1024 * 1024;
-
 /// One self-attributing message from a cell to the controller. A cell sends its
 /// final heartbeat then its partition, and closes; the controller counts partitions
-/// to termination and detects a cell failure by the child's non-zero exit code, so
-/// no explicit hello/goodbye framing is needed.
+/// to termination, so no explicit hello/goodbye framing is needed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CellMessage {
     /// The cell's final counters + saturation + latency sketches. Boxed so it does
@@ -70,8 +67,8 @@ pub enum CellMessage {
 pub const HANDLER_REGISTER: &str = "aiperf.cell.register";
 /// velo handler name: cell → controller heartbeat (fire-and-forget `am_send`).
 pub const HANDLER_HEARTBEAT: &str = "aiperf.cell.heartbeat";
-/// velo handler name: cell → controller records-shard partition ship. The reply
-/// is a [`CellAck`]; the body is transferred by a rendezvous handle.
+/// velo handler name: cell → controller records-shard partition ship (unary; the
+/// reply is an rmp [`CellAck`]).
 pub const HANDLER_PARTITION: &str = "aiperf.cell.partition";
 
 /// The cell's registration request: its `cell_id` plus its own serialized
@@ -86,202 +83,28 @@ pub struct CellRegister {
     pub cell_peer: Vec<u8>,
 }
 
-/// A cell's records-shard partition ship: the `cell_id` plus the rendezvous
-/// `DataHandle` (as `u128`) of the rmp-encoded [`RecordsShardPartition`], so a
-/// large partition is pulled out-of-band rather than inflating an AM frame.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CellPartitionShip {
-    /// The shipping cell's identifier.
-    pub cell_id: u32,
-    /// The rendezvous data handle (`velo::DataHandle` as `u128`) of the partition body.
-    pub data_handle: u128,
-}
-
-/// Generic controller acknowledgement reply.
+/// Generic controller acknowledgement reply (rmp), returned from the partition
+/// handler so the cell knows its shard was received before exiting.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CellAck {
     /// Whether the controller accepted the message.
     pub ok: bool,
 }
 
-/// Encodes a message as a length-prefixed MessagePack frame.
-pub fn encode_frame(message: &CellMessage) -> Result<Vec<u8>, CellTransportError> {
-    let body = rmp_serde::to_vec(message)
-        .map_err(|error| CellTransportError::Encode(error.to_string()))?;
-    // Enforce the same cap the reader applies, so an oversized partition fails on the
-    // cell before the transfer rather than being rejected after it on the controller.
-    if body.len() > MAX_FRAME_LEN as usize {
-        return Err(CellTransportError::FrameTooLarge(body.len()));
-    }
-    let len =
-        u32::try_from(body.len()).map_err(|_| CellTransportError::FrameTooLarge(body.len()))?;
-    let mut frame = Vec::with_capacity(4 + body.len());
-    frame.extend_from_slice(&len.to_be_bytes());
-    frame.extend_from_slice(&body);
-    Ok(frame)
-}
-
-/// Reads one length-prefixed frame, or `None` at a clean end of stream.
-async fn read_frame<R>(reader: &mut R) -> Result<Option<CellMessage>, CellTransportError>
-where
-    R: AsyncRead + Unpin,
-{
-    let mut len_buf = [0_u8; 4];
-    match reader.read_exact(&mut len_buf).await {
-        Ok(_) => {}
-        // A cell that closed after its last frame ends the stream cleanly.
-        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(error) => return Err(CellTransportError::Io(error.to_string())),
-    }
-    let len = u32::from_be_bytes(len_buf);
-    if len > MAX_FRAME_LEN {
-        return Err(CellTransportError::FrameTooLarge(len as usize));
-    }
-    let mut body = vec![0_u8; len as usize];
-    reader
-        .read_exact(&mut body)
-        .await
-        .map_err(|error| CellTransportError::Io(error.to_string()))?;
-    let message = rmp_serde::from_slice(&body)
-        .map_err(|error| CellTransportError::Decode(error.to_string()))?;
-    Ok(Some(message))
-}
-
-/// The cell side of the seam: sends [`CellMessage`]s to the controller.
+/// The cell side of the seam: sends [`CellMessage`]s to the controller. Async
+/// because the velo messaging client is async (a cell sends only a few control
+/// messages, off its per-request hot path).
+#[async_trait::async_trait]
 pub trait CellClient {
-    /// Sends one message, blocking until it is written.
-    fn send(&mut self, message: &CellMessage) -> Result<(), CellTransportError>;
+    /// Sends one message, awaiting until it is handed to the transport.
+    async fn send(&mut self, message: &CellMessage) -> Result<(), CellTransportError>;
 }
 
 /// The controller side of the seam: a merged stream of every cell's messages.
 #[async_trait::async_trait]
 pub trait ControllerTransport {
-    /// Receives the next message from any cell, or `None` once all cells closed.
+    /// Receives the next message from any cell, or `None` once the stream closes.
     async fn recv(&mut self) -> Result<Option<CellMessage>, CellTransportError>;
-}
-
-/// A cell's blocking TCP connection to the controller.
-pub struct TcpCellClient {
-    stream: std::net::TcpStream,
-}
-
-impl TcpCellClient {
-    /// Connects to the controller at `addr`, disabling Nagle so heartbeats flush
-    /// promptly.
-    pub fn connect(addr: impl std::net::ToSocketAddrs) -> Result<Self, CellTransportError> {
-        let stream = std::net::TcpStream::connect(addr)
-            .map_err(|error| CellTransportError::Io(error.to_string()))?;
-        let _ = stream.set_nodelay(true);
-        Ok(Self { stream })
-    }
-}
-
-impl CellClient for TcpCellClient {
-    fn send(&mut self, message: &CellMessage) -> Result<(), CellTransportError> {
-        use std::io::Write;
-        let frame = encode_frame(message)?;
-        self.stream
-            .write_all(&frame)
-            .and_then(|()| self.stream.flush())
-            .map_err(|error| CellTransportError::Io(error.to_string()))
-    }
-}
-
-/// The controller's TCP endpoint: accepts `expected_cells` connections and merges
-/// their framed messages into one channel.
-pub struct TcpControllerTransport {
-    receiver: mpsc::Receiver<Result<CellMessage, CellTransportError>>,
-    local_addr: SocketAddr,
-    accept: JoinHandle<()>,
-}
-
-impl Drop for TcpControllerTransport {
-    fn drop(&mut self) {
-        // Stop accepting/reading as soon as the controller drops the endpoint (e.g.
-        // on an aborted run), rather than leaving the accept task blocked on a
-        // connection that will never arrive.
-        self.accept.abort();
-    }
-}
-
-impl TcpControllerTransport {
-    /// Binds `addr` and starts accepting exactly `expected_cells` cell connections.
-    /// Returns once bound; the concrete [`local_addr`](Self::local_addr) (e.g. the
-    /// OS-assigned port for `:0`) is what cells connect to.
-    pub async fn bind(
-        addr: impl ToSocketAddrs,
-        expected_cells: usize,
-    ) -> Result<Self, CellTransportError> {
-        let listener = TcpListener::bind(addr)
-            .await
-            .map_err(|error| CellTransportError::Io(error.to_string()))?;
-        let local_addr = listener
-            .local_addr()
-            .map_err(|error| CellTransportError::Io(error.to_string()))?;
-        let (sender, receiver) = mpsc::channel(1024);
-        let accept = tokio::spawn(async move {
-            let mut readers = Vec::with_capacity(expected_cells);
-            for _ in 0..expected_cells {
-                match listener.accept().await {
-                    Ok((socket, _)) => {
-                        let sender = sender.clone();
-                        readers.push(tokio::spawn(read_connection(socket, sender)));
-                    }
-                    Err(error) => {
-                        let _ = sender
-                            .send(Err(CellTransportError::Io(error.to_string())))
-                            .await;
-                        break;
-                    }
-                }
-            }
-            for reader in readers {
-                let _ = reader.await;
-            }
-            // Dropping the last `sender` here closes the channel → `recv` yields None.
-        });
-        Ok(Self {
-            receiver,
-            local_addr,
-            accept,
-        })
-    }
-
-    /// The bound address cells connect to.
-    pub fn local_addr(&self) -> SocketAddr {
-        self.local_addr
-    }
-}
-
-#[async_trait::async_trait]
-impl ControllerTransport for TcpControllerTransport {
-    async fn recv(&mut self) -> Result<Option<CellMessage>, CellTransportError> {
-        match self.receiver.recv().await {
-            Some(Ok(message)) => Ok(Some(message)),
-            Some(Err(error)) => Err(error),
-            None => Ok(None),
-        }
-    }
-}
-
-async fn read_connection(
-    mut socket: TcpStream,
-    sender: mpsc::Sender<Result<CellMessage, CellTransportError>>,
-) {
-    loop {
-        match read_frame(&mut socket).await {
-            Ok(Some(message)) => {
-                if sender.send(Ok(message)).await.is_err() {
-                    return;
-                }
-            }
-            Ok(None) => return,
-            Err(error) => {
-                let _ = sender.send(Err(error)).await;
-                return;
-            }
-        }
-    }
 }
 
 /// Error encoding, decoding, or transporting a [`CellMessage`].
@@ -294,10 +117,8 @@ pub enum CellTransportError {
     Encode(String),
     /// A message could not be decoded.
     Decode(String),
-    /// A socket read/write failed.
+    /// A transport (velo send/receive, connection) failure.
     Io(String),
-    /// A length prefix exceeded [`MAX_FRAME_LEN`].
-    FrameTooLarge(usize),
 }
 
 impl std::fmt::Display for CellTransportError {
@@ -306,92 +127,8 @@ impl std::fmt::Display for CellTransportError {
             Self::Encode(error) => write!(f, "failed to encode cell message: {error}"),
             Self::Decode(error) => write!(f, "failed to decode cell message: {error}"),
             Self::Io(error) => write!(f, "cell transport io error: {error}"),
-            Self::FrameTooLarge(len) => {
-                write!(f, "cell message frame of {len} bytes exceeds the limit")
-            }
         }
     }
 }
 
 impl std::error::Error for CellTransportError {}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::cellular::heartbeat::HeartbeatAccumulator;
-    use crate::metrics_core::ingest::RecordIngest;
-    use crate::metrics_core::window::Phase;
-
-    fn sample_partition(cell_id: u32) -> RecordsShardPartition {
-        let mut record = RecordIngest::minimal(1_000, 5_000, Phase::Profiling);
-        record.request_index = Some(cell_id as usize);
-        RecordsShardPartition::new(cell_id, vec![record])
-    }
-
-    fn sample_heartbeat() -> MetricsHeartbeat {
-        let mut accumulator = HeartbeatAccumulator::new();
-        accumulator.observe(Some(20.0), Some(5.0), Some(50.0));
-        accumulator.snapshot(1, Default::default(), Default::default())
-    }
-
-    #[test]
-    fn frame_round_trips_every_message_variant() {
-        for message in [
-            CellMessage::Heartbeat {
-                cell_id: 1,
-                heartbeat: Box::new(sample_heartbeat()),
-            },
-            CellMessage::Partition(sample_partition(2)),
-        ] {
-            let frame = encode_frame(&message).expect("encode");
-            // The 4-byte prefix equals the body length.
-            let declared = u32::from_be_bytes(frame[..4].try_into().unwrap()) as usize;
-            assert_eq!(declared, frame.len() - 4);
-            let decoded: CellMessage = rmp_serde::from_slice(&frame[4..]).expect("decode");
-            assert_eq!(format!("{decoded:?}"), format!("{message:?}"));
-        }
-    }
-
-    #[tokio::test]
-    async fn tcp_loopback_delivers_all_cells_messages_then_closes() {
-        let cell_count = 3;
-        let mut controller = TcpControllerTransport::bind("127.0.0.1:0", cell_count)
-            .await
-            .expect("bind");
-        let addr = controller.local_addr();
-
-        // Each "cell" connects on a blocking thread and ships its heartbeat then its
-        // partition, matching the real cell's ship order, and closes.
-        let mut handles = Vec::new();
-        for cell_id in 0..cell_count as u32 {
-            handles.push(std::thread::spawn(move || {
-                let mut client = TcpCellClient::connect(addr).expect("connect");
-                client
-                    .send(&CellMessage::Heartbeat {
-                        cell_id,
-                        heartbeat: Box::new(sample_heartbeat()),
-                    })
-                    .unwrap();
-                client
-                    .send(&CellMessage::Partition(sample_partition(cell_id)))
-                    .unwrap();
-            }));
-        }
-
-        let mut heartbeats = 0;
-        let mut partitions = 0;
-        while let Some(message) = controller.recv().await.expect("recv") {
-            match message {
-                CellMessage::Partition(partition) => {
-                    assert_eq!(partition.len(), 1);
-                    partitions += 1;
-                }
-                CellMessage::Heartbeat { .. } => heartbeats += 1,
-            }
-        }
-        for handle in handles {
-            handle.join().unwrap();
-        }
-        assert_eq!((heartbeats, partitions), (cell_count, cell_count));
-    }
-}

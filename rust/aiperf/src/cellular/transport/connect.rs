@@ -155,17 +155,16 @@ pub async fn serve_bootstrap(source: &BootstrapSource, peer: &PeerInfo) -> Resul
 /// pod may start before the controller's listener is up).
 pub async fn resolve_controller_peer(source: &BootstrapSource) -> Result<PeerInfo> {
     let deadline = tokio::time::Instant::now() + BOOTSTRAP_FETCH_TIMEOUT;
-    let mut last_error: Option<anyhow::Error> = None;
     loop {
         match fetch_bootstrap(source).await {
             Ok(bytes) => {
                 return rmp_serde::from_slice(&bytes).context("decode controller PeerInfo");
             }
-            Err(error) => last_error = Some(error),
-        }
-        if tokio::time::Instant::now() >= deadline {
-            return Err(last_error.unwrap_or_else(|| anyhow::anyhow!("bootstrap fetch failed")))
-                .context("resolve controller PeerInfo (timed out)");
+            Err(error) => {
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(error).context("resolve controller PeerInfo (timed out)");
+                }
+            }
         }
         tokio::time::sleep(BOOTSTRAP_RETRY_INTERVAL).await;
     }

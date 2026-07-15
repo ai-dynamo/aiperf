@@ -36,9 +36,11 @@
 //! - **Transport [`transport`]** — [`transport::ControllerTransport`] /
 //!   [`transport::CellClient`]: the abstracted cross-node seam carrying
 //!   [`transport::CellMessage`]s (heartbeats, partitions) from a cell to the
-//!   controller, with a real framed-MessagePack [`transport::TcpControllerTransport`]
-//!   / [`transport::TcpCellClient`] pair. The multi-process controller/cell topology
-//!   that drives it lives in `aiperf-runner` (Phase 2).
+//!   controller. The concrete impl is velo-backed (`velo` feature): a
+//!   `VeloControllerTransport` / `VeloCellClient` pair over rmp raw payloads, with
+//!   discovery-free connection via [`transport::connect`]
+//!   (`specs/2026-07-15-velo-cell-transport-design.md`). The multi-process /
+//!   multi-pod controller/cell topology that drives it lives in `aiperf-runner`.
 //!
 //! Everything here is object-safe where it crosses a `dyn` boundary and generic
 //! where it is hot-path monomorphized, per the crate's extensibility discipline.
@@ -62,7 +64,8 @@ pub use shard::{
 };
 pub use sketch::TDigest;
 pub use transport::{
-    CellAck, CellClient, CellMessage, CellPartitionShip, CellRegister, CellTransportError,
-    ControllerTransport, HANDLER_HEARTBEAT, HANDLER_PARTITION, HANDLER_REGISTER, TcpCellClient,
-    TcpControllerTransport,
+    CellAck, CellClient, CellMessage, CellRegister, CellTransportError, ControllerTransport,
+    HANDLER_HEARTBEAT, HANDLER_PARTITION, HANDLER_REGISTER,
 };
+#[cfg(feature = "velo")]
+pub use transport::velo_transport::{SpecFor, VeloCellClient, VeloControllerTransport};
