@@ -1032,6 +1032,37 @@ mod tests {
         assert_eq!(prepared.random_seed, Some(91));
     }
 
+    #[test]
+    fn recorded_request_carries_tstar_window_on_synthesis() {
+        // A protocol-v2 recorded-graph dataset request carries the trajectory
+        // start (t*) window and derived seed on its synthesis block; the strict
+        // recorded decode retains them for C2 to bind.
+        let RecordedDatasetInput::File(input) = serde_json::from_value(json!({
+            "type": "file",
+            "format": "weka_trace",
+            "sampling": "sequential",
+            "records": {"id": "root", "models": ["m"], "block_size": 16,
+                "hash_id_scope": "global", "requests": []},
+            "synthesis": {
+                "speedup_ratio": 1.0,
+                "prefix_len_multiplier": 1.0,
+                "prefix_root_multiplier": 1,
+                "prompt_len_multiplier": 1.0,
+                "output_len_multiplier": 1.0,
+                "trajectory_start_min_ratio": 0.1,
+                "trajectory_start_max_ratio": 0.9,
+                "t_star_random_seed": 777
+            }
+        }))
+        .expect("recorded request with t* synthesis knobs decodes") else {
+            panic!("expected a file-backed recorded input")
+        };
+        let synthesis = input.synthesis.expect("synthesis block present");
+        assert_eq!(synthesis.trajectory_start_min_ratio, 0.1);
+        assert_eq!(synthesis.trajectory_start_max_ratio, 0.9);
+        assert_eq!(synthesis.t_star_random_seed, 777);
+    }
+
     #[tokio::test]
     async fn dynamo_adapter_rejects_inline_records_before_source_acquisition() {
         let resolver = BuiltinRunnerGraphInputAdapterResolver::new();

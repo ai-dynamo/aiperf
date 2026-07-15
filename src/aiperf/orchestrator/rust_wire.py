@@ -265,6 +265,7 @@ def _authored_dataset_v2(run: BenchmarkRun, dataset: Any) -> dict[str, Any]:
             # Null is semantic for recorded graphs: it disables idle-gap
             # compression, while an absent field selects the 60s default.
             synthesis["idle_gap_cap_seconds"] = dataset.synthesis.idle_gap_cap_seconds
+            _project_trajectory_knobs(synthesis, run)
             result["synthesis"] = synthesis
         if dataset.path is not None:
             path = dataset.path.expanduser()
@@ -280,6 +281,30 @@ def _authored_dataset_v2(run: BenchmarkRun, dataset: Any) -> dict[str, Any]:
     if isinstance(dataset, SyntheticDataset) and "turn_delay" in result:
         result["turn_delay_ms"] = result.pop("turn_delay")
     return result
+
+
+def _project_trajectory_knobs(synthesis: dict[str, Any], run: BenchmarkRun) -> None:
+    """Project the recorded-graph trajectory-start (t*) window and derived seed.
+
+    The trajectory-start window is a per-run Config knob
+    (``cfg.trajectory_start_min_ratio`` / ``cfg.trajectory_start_max_ratio``,
+    auto-filled by the submission scenario). It is carried on the recorded
+    dataset's ``synthesis`` block beside ``idle_gap_cap_seconds`` because the
+    native runner binds every recorded-replay knob through
+    ``RecordedTraceInputConfig`` (``rust/runner/src/graph_input.rs``), which reads
+    the synthesis block. The t* sampling seed derives from the run seed
+    (``BenchmarkRun.random_seed``); zero when unset selects the runner's
+    run-root-derived default. ``getattr`` guards the Config attributes so this
+    projection is a no-op on configs that predate the scenario fields (they stay
+    at the runner's disabled 0.0/0.0/0 defaults).
+    """
+    synthesis["trajectory_start_min_ratio"] = float(
+        getattr(run.cfg, "trajectory_start_min_ratio", 0.0) or 0.0
+    )
+    synthesis["trajectory_start_max_ratio"] = float(
+        getattr(run.cfg, "trajectory_start_max_ratio", 0.0) or 0.0
+    )
+    synthesis["t_star_random_seed"] = int(run.random_seed or 0)
 
 
 def _authored_tokenizer_v2(cfg: Any) -> dict[str, Any]:
@@ -1613,6 +1638,14 @@ def _phase(phase: Any) -> dict[str, Any]:
     adaptive_scale = _adaptive_scale(phase)
     if adaptive_scale is not None:
         common["adaptive_scale"] = adaptive_scale
+    # Agentic cache-warmup duration rides on the warmup phase; the runner lowers
+    # it into the recorded-graph cache-pressure window. Absent on non-scenario
+    # configs (getattr guard), leaving the pair's default cache-warmup policy.
+    _set_optional(
+        common,
+        "agentic_cache_warmup_duration",
+        getattr(phase, "agentic_cache_warmup_duration", None),
+    )
 
     if isinstance(phase, ConcurrencyPhase):
         return {"type": "concurrency", **common, "concurrency": phase.concurrency}
