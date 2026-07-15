@@ -90,6 +90,7 @@ const FIXTURES: &[&str] = &[
     "gpu_urls",
     "dataset_entries",
     "custom_endpoint",
+    "export_raw",
 ];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).
@@ -289,6 +290,7 @@ const YAML_FIXTURES: &[(&str, &str, &str)] = &[
     ("yaml_adaptive", "yaml_adaptive", "/tmp/aiperf-parity/yaml_adaptive"),
     ("yaml_warmup", "yaml_warmup", "/tmp/aiperf-parity/yaml_warmup"),
     ("yaml_camel", "yaml_camel", "/tmp/aiperf-parity/yaml_camel"),
+    ("yaml_records", "yaml_records", "/tmp/aiperf-parity/yaml_records"),
 ];
 
 #[test]

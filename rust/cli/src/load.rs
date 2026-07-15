@@ -123,6 +123,15 @@ pub(crate) struct Inputs {
     pub session_header: Option<String>,
     /// Custom request path appended to the endpoint URL (`endpoint.path`).
     pub endpoint_path: Option<String>,
+    /// Per-record export formats (`artifacts.records`; default `["jsonl"]`,
+    /// empty = summary-only).
+    pub records_formats: Vec<String>,
+    /// Emit the raw request/response JSONL (`artifacts.raw`).
+    pub export_raw: bool,
+    /// Emit per-request HTTP trace columns (`artifacts.trace`).
+    pub export_trace: bool,
+    /// Emit the per-request outputs JSON (`artifacts.export_outputs_json`).
+    pub export_outputs_json: bool,
     pub batch_size: u32,
     pub sampling: String,
     pub entries: u32,
@@ -238,6 +247,17 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
     // profiling-phase session bound.
     let num_dataset_entries =
         parse_single::<u32>("--num-dataset-entries", flags.num_dataset_entries.as_deref())?;
+
+    // Export level maps to the per-record format list + raw flag (Python
+    // `_converter_runtime`): summary => no per-record files; records => JSONL;
+    // raw => JSONL + raw JSONL. Unset keeps the default JSONL.
+    let (records_formats, export_raw) = match flags.export_level.as_deref() {
+        None => (vec!["jsonl".to_string()], false),
+        Some("summary") => (Vec::new(), false),
+        Some("records") => (vec!["jsonl".to_string()], false),
+        Some("raw") => (vec!["jsonl".to_string()], true),
+        Some(other) => anyhow::bail!("unknown --export-level {other:?} (summary/records/raw)"),
+    };
     // Fixed-schedule replays each timestamped entry once, so the request bound is
     // the schedule length (the input file's non-empty line count).
     let (fixed_schedule, request_count) = if flags.fixed_schedule {
@@ -380,6 +400,10 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         turn_delay_ms,
         session_header: flags.session_header.clone(),
         endpoint_path: flags.custom_endpoint.clone(),
+        records_formats,
+        export_raw,
+        export_trace: flags.export_http_trace,
+        export_outputs_json: false,
         batch_size: flags.batch_size.unwrap_or(1),
         sampling: flags
             .dataset_sampling_strategy
@@ -788,15 +812,28 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             sketch: sketch_metrics.then_some(true),
         }),
         slos: (!inputs.slos.is_empty()).then(|| inputs.slos.clone()),
-        artifacts: Some(Artifacts {
-            trace: false,
-            inputs_path: "inputs.json".to_string(),
+        artifacts: Some({
             // Sketch retention keeps no per-record values, and DynoSim emits its
-            // own backend Dynamo artifacts, so both drop the per-record JSONL
-            // (mirrors `_authored_artifacts`, which pops it and forces trace off).
-            records_path: (!sketch_metrics && !is_dynosim)
-                .then(|| "profile_export.jsonl".to_string()),
-            ..Default::default()
+            // own backend Dynamo artifacts, so both drop every per-record file and
+            // force trace off (mirrors `_authored_artifacts`).
+            let per_record = !sketch_metrics && !is_dynosim;
+            let has = |f: &str| inputs.records_formats.iter().any(|x| x == f);
+            Artifacts {
+                trace: inputs.export_trace && per_record,
+                inputs_path: "inputs.json".to_string(),
+                // `raw` forces the base JSONL on even when the format list omits it.
+                records_path: (per_record && (has("jsonl") || inputs.export_raw))
+                    .then(|| "profile_export.jsonl".to_string()),
+                records_csv_path: (per_record && has("csv"))
+                    .then(|| "profile_export_records.csv".to_string()),
+                records_parquet_path: (per_record && has("parquet"))
+                    .then(|| "profile_export.parquet".to_string()),
+                raw_path: (per_record && inputs.export_raw)
+                    .then(|| "profile_export_raw.jsonl".to_string()),
+                outputs_path: (per_record && inputs.export_outputs_json)
+                    .then(|| "outputs.json".to_string()),
+                ..Default::default()
+            }
         }),
         datasets: Some(vec![dataset]),
         phases: Some(phases),

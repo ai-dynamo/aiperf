@@ -140,6 +140,25 @@ struct ArtifactsSection {
     /// Timeslice window, seconds (wire `metrics.slice_duration_seconds`).
     #[serde(default, alias = "sliceDuration")]
     slice_duration: Option<f64>,
+    /// Per-record export formats (`[jsonl,csv,parquet]`) or `false` to disable.
+    records: Option<RecordsFormats>,
+    /// Emit the raw request/response JSONL.
+    #[serde(default)]
+    raw: bool,
+    /// Emit per-request HTTP trace columns.
+    #[serde(default)]
+    trace: bool,
+    /// Emit the per-request outputs JSON.
+    #[serde(default, alias = "exportOutputsJson")]
+    export_outputs_json: bool,
+}
+
+/// `artifacts.records`: a format list, or `false` to disable per-record export.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RecordsFormats {
+    List(Vec<String>),
+    Disabled(bool),
 }
 
 #[derive(Debug, Deserialize)]
@@ -801,6 +820,17 @@ impl Benchmark {
         // Timeslice window (`artifacts.slice_duration`).
         let slice_duration = self.artifacts.as_ref().and_then(|a| a.slice_duration);
 
+        // Per-record export: `artifacts.records` (default JSONL), `raw`, `trace`,
+        // `export_outputs_json`.
+        let records_formats = match self.artifacts.as_ref().and_then(|a| a.records.as_ref()) {
+            Some(RecordsFormats::List(v)) => v.clone(),
+            Some(RecordsFormats::Disabled(_)) => Vec::new(),
+            None => vec!["jsonl".to_string()],
+        };
+        let export_raw = self.artifacts.as_ref().is_some_and(|a| a.raw);
+        let export_trace = self.artifacts.as_ref().is_some_and(|a| a.trace);
+        let export_outputs_json = self.artifacts.as_ref().is_some_and(|a| a.export_outputs_json);
+
         Ok(Inputs {
             model_names,
             urls,
@@ -858,6 +888,10 @@ impl Benchmark {
             turn_delay_ms,
             session_header: self.endpoint.session_header,
             endpoint_path: self.endpoint.path,
+            records_formats,
+            export_raw,
+            export_trace,
+            export_outputs_json,
             batch_size: batch_size.unwrap_or(1),
             sampling,
             entries,

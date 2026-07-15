@@ -65,6 +65,16 @@ pub struct ProfileFlags {
     #[arg(long = "custom-endpoint", visible_alias = "endpoint")]
     pub custom_endpoint: Option<String>,
 
+    /// Per-record export level (`--export-level` / `--profile-export-level`):
+    /// `summary` (no per-record files), `records` (JSONL, default), or `raw`
+    /// (JSONL + raw request/response JSONL).
+    #[arg(long = "export-level", visible_alias = "profile-export-level")]
+    pub export_level: Option<String>,
+
+    /// Emit per-request HTTP trace columns (`--export-http-trace`).
+    #[arg(long = "export-http-trace", default_value_t = false)]
+    pub export_http_trace: bool,
+
     /// Mean turns per session for multi-turn (`--session-turns-mean`).
     #[arg(long = "session-turns-mean")]
     pub session_turns_mean: Option<f64>,
