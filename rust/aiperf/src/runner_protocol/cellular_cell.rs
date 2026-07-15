@@ -43,6 +43,100 @@ pub const CELL_CONTROLLER_ADDR_ENV: &str = "AIPERF_CELL_CONTROLLER_ADDR";
 /// slot (the cell's sampler restarts each phase; see [`phase_ordinal_bases_from_env`]).
 pub const CELL_PHASE_ORDINAL_BASES_ENV: &str = "AIPERF_CELL_PHASE_ORDINAL_BASES";
 
+/// Env var carrying the controller's artifact upload `host:port` (Stage E). The
+/// operator injects this into k8s pods (or the local launcher sets it to the
+/// controller's bound server) so a cell knows where to POST its per-record artifact
+/// files. When absent, a cell on a `tcp://` (k8s) controller coordinate derives the
+/// host from that coordinate and the port from [`CELL_ARTIFACT_PORT_ENV`].
+pub const CELL_ARTIFACT_ADDR_ENV: &str = "AIPERF_CELL_ARTIFACT_ADDR";
+
+/// Env var overriding the controller's artifact-server port when a cell derives the
+/// artifact `host:port` from its `tcp://HOST:PORT` velo coordinate (default `9600`,
+/// matching the controller's `AIPERF_CONTROLLER_ARTIFACT_BIND` default).
+pub const CELL_ARTIFACT_PORT_ENV: &str = "AIPERF_CELL_ARTIFACT_PORT";
+
+/// Env toggle disabling cross-host HTTP artifact shipping (Stage E). Default ON;
+/// set to `0`/`false`/`off` to fall back to the shared-storage product boundary (the
+/// controller then warns the per-record files are dropped, as before). For operators
+/// on a shared-FS (ReadWriteMany PVC) setup who prefer the cells' own writes.
+pub const CELL_HTTP_ARTIFACT_SHIPPING_ENV: &str = "AIPERF_CELL_HTTP_ARTIFACT_SHIPPING";
+
+/// The default controller artifact-server port (server bind + cell-derived fetch).
+pub const DEFAULT_ARTIFACT_PORT: u16 = 9600;
+
+/// **Test/dev-only force seam.** Env flag that makes a LOCAL (`--cells N`, same-host)
+/// run drive the CROSS-HOST HTTP artifact path over loopback instead of the default
+/// shared-FS Stage D concat: the controller binds its artifact upload server on
+/// `127.0.0.1:0`, injects that authority into each locally-launched cell, and the
+/// cells POST their per-record artifact files back over real TCP + streaming zstd —
+/// exercising the exact production shipping/upload/concat code that k8s uses, but
+/// without a second host. Set to `1`/`true`/`on`/`yes` to enable.
+///
+/// This exists ONLY so a same-host multi-PROCESS test can prove the HTTP+zstd
+/// shipping mechanism end-to-end (see `rust/e2e/tests/test_cellular_http_shipping.rs`).
+/// It is NOT a product mode: default local `--cells N` (flag unset) is byte-unchanged
+/// — cells write directly to the controller-local scratch and the controller
+/// concatenates those writes with no HTTP, exactly as before.
+pub const CELL_ARTIFACT_HTTP_FORCE_ENV: &str = "AIPERF_CELL_ARTIFACT_HTTP_FORCE";
+
+/// Whether the [test/dev HTTP-force seam](CELL_ARTIFACT_HTTP_FORCE_ENV) is enabled
+/// (default OFF). When ON, the controller routes a same-host cellular run through the
+/// real HTTP+zstd artifact-shipping path over loopback rather than the shared-FS
+/// concat, so a same-host multi-process test drives the production shipping code.
+pub fn artifact_http_force_enabled() -> bool {
+    matches!(
+        std::env::var(CELL_ARTIFACT_HTTP_FORCE_ENV)
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "on" | "yes"
+    )
+}
+
+/// Whether cross-host HTTP artifact shipping is enabled ([`CELL_HTTP_ARTIFACT_SHIPPING_ENV`],
+/// default ON). Shared by the controller (whether to start the upload server + run the
+/// concat) and the cell (whether to ship), so the two never disagree.
+pub fn http_artifact_shipping_enabled() -> bool {
+    !matches!(
+        std::env::var(CELL_HTTP_ARTIFACT_SHIPPING_ENV)
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "0" | "false" | "off" | "no"
+    )
+}
+
+/// The controller's artifact upload `host:port` this cell should POST to, or `None`
+/// when HTTP shipping is off or this is a same-host launcher (Stage D concatenates
+/// the cell's own local writes instead — no HTTP). Resolution order:
+/// 1. shipping disabled → `None`;
+/// 2. [`CELL_ARTIFACT_ADDR_ENV`] set (operator/launcher) → that authority;
+/// 3. a `tcp://HOST:PORT` velo controller coordinate (k8s) → `HOST` + the
+///    [`CELL_ARTIFACT_PORT_ENV`] port (default [`DEFAULT_ARTIFACT_PORT`]);
+/// 4. otherwise (a `file:` local coordinate) → `None`.
+pub fn cell_artifact_authority() -> Option<String> {
+    if !http_artifact_shipping_enabled() {
+        return None;
+    }
+    if let Ok(addr) = std::env::var(CELL_ARTIFACT_ADDR_ENV)
+        && !addr.is_empty()
+    {
+        return Some(addr);
+    }
+    let coordinate = std::env::var(CELL_CONTROLLER_ADDR_ENV).ok()?;
+    let host_port = coordinate.strip_prefix("tcp://")?;
+    // The velo coordinate host, with the artifact-server port (the velo port is a
+    // different service).
+    let host = host_port
+        .rsplit_once(':')
+        .map_or(host_port, |(host, _)| host);
+    let port = std::env::var(CELL_ARTIFACT_PORT_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(DEFAULT_ARTIFACT_PORT);
+    Some(format!("{host}:{port}"))
+}
+
 /// The per-phase global ordinal bases for this cell, keyed by metric phase — the
 /// turns the run's prior phases dispatched globally — or empty when the process is
 /// not a cell (the single-process path stamps the flat cumulative slot). A cell's
@@ -92,6 +186,151 @@ pub fn issuance_authority_for(
     partition: ModuloCellPartition,
 ) -> std::rc::Rc<dyn IssuanceAuthority> {
     std::rc::Rc::new(CellularAutonomousIssuer::new(partition))
+}
+
+/// Ship this cell's per-record artifact files (+ `inputs.json`) to the controller's
+/// HTTP upload server with streaming zstd (Stage E, cross-host path), when shipping
+/// is enabled and an artifact authority is resolvable ([`cell_artifact_authority`]).
+/// A no-op on the same-host launcher (Stage D concatenates the cell's own writes) or
+/// when shipping is disabled.
+///
+/// Called at cell finalize AFTER the cell has written its artifacts to its own
+/// `artifact_dir`, before process exit. Blocking by design (off the hot path); the
+/// async HTTP work runs on a dedicated thread + runtime so it never touches the
+/// caller's (possibly `current_thread`) execute runtime — mirroring
+/// [`CellRecordsShipper::ship`]. The controller waits for every cell's `/done` marker
+/// (posted last by [`crate::runner_protocol::artifact_shipping::ship_cell_artifacts`])
+/// before running its concat, so this must complete before the process exits.
+#[cfg(feature = "velo")]
+pub fn ship_http_artifacts_if_enabled(
+    cell_dir: &std::path::Path,
+    artifacts: &crate::runner_protocol::protocol::ArtifactSpec,
+) -> Result<()> {
+    let Some(partition) = ModuloCellPartition::from_env() else {
+        return Ok(()); // not a cell (single-process path)
+    };
+    let Some(authority) = cell_artifact_authority() else {
+        return Ok(()); // same-host or shipping disabled
+    };
+    let relatives = crate::runner_protocol::artifact_shipping::shippable_relatives(artifacts);
+    if relatives.is_empty() {
+        return Ok(()); // metrics-only run with no files to ship
+    }
+    let cell_id = partition.cell_id();
+    let cell_dir = cell_dir.to_path_buf();
+    std::thread::spawn(move || -> Result<()> {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()?;
+        runtime.block_on(
+            crate::runner_protocol::artifact_shipping::ship_cell_artifacts(
+                &authority, cell_id, &cell_dir, &relatives,
+            ),
+        )
+    })
+    .join()
+    .map_err(|_| anyhow::anyhow!("cell artifact-shipping thread panicked"))?
+}
+
+/// The controller-local absolute path of a `file`-type dataset with a `path`
+/// source (the only non-synthetic dataset a cross-host cell cannot reach), or
+/// `None` for synthetic, inline-`records` `file`, `public` (URL/HF each cell
+/// fetches independently), or graph datasets. Reads the canonical single-dataset
+/// list at `/run/cfg/datasets/0`, matching the controller's own detection so the
+/// serve allowlist and the cell request name can never disagree.
+pub fn cellular_file_dataset_path(envelope: &serde_json::Value) -> Option<std::path::PathBuf> {
+    let dataset = envelope.pointer("/run/cfg/datasets/0")?;
+    if dataset.get("type").and_then(serde_json::Value::as_str) != Some("file") {
+        return None;
+    }
+    dataset
+        .get("path")
+        .and_then(serde_json::Value::as_str)
+        .filter(|path| !path.is_empty())
+        .map(std::path::PathBuf::from)
+}
+
+/// The cell-local directory shipped dataset sources land in (`aiperf-cell-dataset-{pid}`
+/// under the system temp dir), created on demand. Distinct from the velo scratch so
+/// a shipped dataset never collides with the cell's fetch/ship sockets.
+fn cell_dataset_dir() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("aiperf-cell-dataset-{}", std::process::id()))
+}
+
+/// Before the cell compiles its dataset, ship the controller's `file`/`path`
+/// dataset source to the cell over HTTP + streaming zstd (Stage G) and rewrite the
+/// cell's envelope to point at the landed cell-local copy, so `build_file_dataset`
+/// reads a local file rather than the unreachable controller path.
+///
+/// A no-op that returns the envelope unchanged when any of these hold (each is the
+/// correct behaviour, not a skip):
+/// - the process is not a cell (single-process path);
+/// - the dataset is not a `file`/`path` source (synthetic regenerates from the
+///   shared seed; inline `records` already ride in the envelope; `public` URL/HF
+///   each cell fetches independently);
+/// - no artifact authority resolves ([`cell_artifact_authority`]) — a same-host
+///   cell (the controller-local path is directly readable) or an operator on a
+///   shared filesystem with HTTP shipping disabled (the path is shared too).
+///
+/// The download runs on a dedicated thread + runtime (mirroring
+/// [`CellRecordsShipper::ship`]) so it never touches the caller's runtime.
+#[cfg(feature = "velo")]
+pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<Vec<u8>> {
+    use anyhow::Context;
+
+    if ModuloCellPartition::from_env().is_none() {
+        return Ok(envelope_bytes); // not a cell (single-process path)
+    }
+    let mut envelope: serde_json::Value = serde_json::from_slice(&envelope_bytes)
+        .context("parsing cell envelope for dataset download")?;
+    let Some(source_path) = cellular_file_dataset_path(&envelope) else {
+        return Ok(envelope_bytes); // synthetic / records / public / graph — nothing to ship
+    };
+    let Some(authority) = cell_artifact_authority() else {
+        // Same-host cell, or shared-FS with shipping disabled: the controller-local
+        // path is directly readable, so leave the envelope pointing at it.
+        return Ok(envelope_bytes);
+    };
+    let name = source_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("cellular file dataset path has no file name")?
+        .to_owned();
+    let dest_dir = cell_dataset_dir();
+    std::fs::create_dir_all(&dest_dir)
+        .with_context(|| format!("creating cell dataset dir {}", dest_dir.display()))?;
+    let dest = dest_dir.join(&name);
+
+    let fetch_name = name.clone();
+    let fetch_dest = dest.clone();
+    std::thread::spawn(move || -> Result<()> {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()?;
+        runtime.block_on(
+            crate::runner_protocol::artifact_shipping::fetch_dataset_to_file(
+                &authority,
+                &fetch_name,
+                &fetch_dest,
+            ),
+        )
+    })
+    .join()
+    .map_err(|_| anyhow::anyhow!("cell dataset-download thread panicked"))?
+    .with_context(|| format!("cell downloading dataset {name:?} from controller"))?;
+
+    // Rewrite the cell's envelope to compile from the landed cell-local copy.
+    envelope
+        .pointer_mut("/run/cfg/datasets/0")
+        .and_then(serde_json::Value::as_object_mut)
+        .context("cell envelope dataset is not an object")?
+        .insert(
+            "path".to_owned(),
+            serde_json::Value::String(dest.to_string_lossy().into_owned()),
+        );
+    serde_json::to_vec(&envelope).context("re-serializing cell envelope after dataset download")
 }
 
 // -- velo cell transport (fetch spec + ship records) ------------------------------
@@ -302,5 +541,41 @@ impl CellRecordsShipper {
         })
         .join()
         .map_err(|_| anyhow::anyhow!("cell {} ship thread panicked", self.cell_id))?
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_only_file_path_datasets_for_ship() {
+        // A `file` dataset with a `path` is the one non-synthetic source a cross-host
+        // cell cannot reach — the only shape the controller must ship (Stage G).
+        let file_path = serde_json::json!({"run": {"cfg": {"datasets": [
+            {"type": "file", "format": "single_turn", "path": "/data/prompts.jsonl"}
+        ]}}});
+        assert_eq!(
+            cellular_file_dataset_path(&file_path),
+            Some(std::path::PathBuf::from("/data/prompts.jsonl"))
+        );
+
+        // Everything else yields None (no ship): synthetic regenerates from the seed;
+        // an inline-`records` file already rides in the envelope; `public` URL/HF each
+        // cell fetches itself; and an empty path is not a shippable source.
+        for none in [
+            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "synthetic"}]}}}),
+            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "file", "format": "single_turn", "records": []}]}}}),
+            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "public", "source": {"type": "url", "url": "http://x"}}]}}}),
+            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "file", "format": "single_turn", "path": ""}]}}}),
+            serde_json::json!({"run": {"cfg": {"datasets": []}}}),
+            serde_json::json!({"run": {"cfg": {}}}),
+        ] {
+            assert_eq!(
+                cellular_file_dataset_path(&none),
+                None,
+                "should not ship {none}"
+            );
+        }
     }
 }

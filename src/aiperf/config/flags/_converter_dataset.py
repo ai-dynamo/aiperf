@@ -428,6 +428,7 @@ def _apply_synthesis(d: dict[str, Any], cli: CLIConfig) -> None:
         ("synthesis_output_len_multiplier", "output_len_multiplier"),
         ("synthesis_max_isl", "max_isl"),
         ("synthesis_max_osl", "max_osl"),
+        ("synthesis_idle_gap_cap", "idle_gap_cap_seconds"),
     ):
         if cli_attr in set_fields:
             value = getattr(cli, cli_attr)

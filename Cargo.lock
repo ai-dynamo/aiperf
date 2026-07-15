@@ -112,6 +112,7 @@ dependencies = [
  "uuid",
  "velo 0.5.0",
  "webpki-roots 0.26.11",
+ "zstd",
 ]
 
 [[package]]

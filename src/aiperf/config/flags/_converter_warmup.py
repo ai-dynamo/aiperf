@@ -120,6 +120,14 @@ def build_warmup(cli: CLIConfig) -> dict[str, Any] | None:
                 "--warmup-duration to enable a duration-bounded warmup with "
                 "the grace period, or drop --warmup-grace-period."
             )
+        if cli.agentic_cache_warmup_duration is not None:
+            raise ValueError(
+                "--agentic-cache-warmup-duration was supplied without any "
+                "warmup trigger; the extended cache-pressure warmup rides on a "
+                "warmup phase, which exists only when --warmup-request-count, "
+                "--num-warmup-sessions, or --warmup-duration is set. Add a "
+                "warmup trigger, or drop --agentic-cache-warmup-duration."
+            )
         return None
     w: dict[str, Any] = {"exclude_from_results": True}
     _warmup_count_field(w, cli)
@@ -145,4 +153,9 @@ def build_warmup(cli: CLIConfig) -> dict[str, Any] | None:
                 "when using --warmup-request-count / --warmup-num-sessions."
             )
         w["grace_period"] = cli.warmup_grace_period
+    if cli.agentic_cache_warmup_duration is not None:
+        # Extended cache-pressure warmup rides on the warmup phase; the native
+        # runner reads it off the projected warmup phase (rust_wire). It requires
+        # a warmup phase to exist, which the trigger gate above guarantees.
+        w["agentic_cache_warmup_duration"] = cli.agentic_cache_warmup_duration
     return w

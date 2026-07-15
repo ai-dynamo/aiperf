@@ -135,6 +135,24 @@ fn run_cell() -> ! {
             }
         };
     drop(runtime);
+    // Stage G: before the ordinary execute path compiles the dataset, ship a
+    // cross-host `file`/`path` dataset source from the controller and rewrite the
+    // envelope to point at the landed cell-local copy. A no-op for synthetic /
+    // inline-records / public datasets and for a same-host cell (which reads the
+    // controller-local path directly).
+    let envelope_bytes =
+        match aiperf::runner_protocol::cellular_cell::download_cell_dataset_if_needed(
+            envelope_bytes,
+        ) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                tracing::error!(
+                    error = format!("{error:#}"),
+                    "cell failed to download its dataset source"
+                );
+                std::process::exit(2);
+            }
+        };
     configure_dynosim_process_defaults(&envelope_bytes);
     let application = compose_stock_application();
     run_v2(&envelope_bytes, &application);

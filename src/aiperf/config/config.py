@@ -440,6 +440,34 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         ),
     ]
 
+    trajectory_start_min_ratio: Annotated[
+        float,
+        Field(
+            default=0.0,
+            ge=0.0,
+            le=1.0,
+            description="Lower bound of the recorded-graph trajectory-start (t*) "
+            "snapshot window, expressed as a fraction of each recorded trace's "
+            "total duration. The native runner samples a per-trace start offset in "
+            "[min_ratio, max_ratio] of the trace's duration so replay begins mid-"
+            "trajectory (an active t* window) rather than at t=0. 0.0 (with a 0.0 "
+            "max) disables the window and starts every trace at its beginning.",
+        ),
+    ]
+
+    trajectory_start_max_ratio: Annotated[
+        float,
+        Field(
+            default=0.0,
+            ge=0.0,
+            le=1.0,
+            description="Upper bound of the recorded-graph trajectory-start (t*) "
+            "snapshot window, expressed as a fraction of each recorded trace's "
+            "total duration. Paired with trajectory_start_min_ratio; must be >= it. "
+            "0.0 disables the window (every trace starts at t=0).",
+        ),
+    ]
+
     # ==========================================================================
     # VALIDATORS
     # ==========================================================================

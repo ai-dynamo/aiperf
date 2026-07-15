@@ -499,22 +499,63 @@ def test_shuffle_sampling_strategy_reaches_the_synthesis_block(tmp_path: Path) -
     from aiperf.plugin.enums import DatasetSamplingStrategy
 
     run = _recorded_run(tmp_path)
-    object.__setattr__(
-        run.cfg.datasets[0], "sampling", DatasetSamplingStrategy.SHUFFLE
-    )
+    object.__setattr__(run.cfg.datasets[0], "sampling", DatasetSamplingStrategy.SHUFFLE)
     synthesis = dump_benchmark_run(run)["cfg"]["datasets"][0]["synthesis"]
     assert synthesis["dataset_sampling_strategy"] == "shuffle"
 
 
 def test_scenario_trajectory_and_warmup_knobs_reach_the_wire(tmp_path: Path) -> None:
-    # Simulate a submission-scenario run: the scenario auto-fills the per-run t*
-    # window on cfg and the agentic cache-warmup duration on the warmup phase.
-    # (Those Config fields live on the graph-IR branch; object.__setattr__ mirrors
-    # the auto-fill without depending on that branch's config surface.)
-    run = _recorded_run(tmp_path)
-    object.__setattr__(run.cfg, "trajectory_start_min_ratio", 0.25)
-    object.__setattr__(run.cfg, "trajectory_start_max_ratio", 0.75)
-    object.__setattr__(run.cfg.phases[0], "agentic_cache_warmup_duration", 8.5)
+    # A submission-scenario run: the per-run t* window on cfg and the agentic
+    # cache-warmup duration on the warmup phase are now first-class Config fields
+    # (BenchmarkConfig.trajectory_start_{min,max}_ratio and
+    # BasePhaseConfig.agentic_cache_warmup_duration), so build them through real
+    # validation rather than monkeypatching. rust_wire rides the t* window on the
+    # recorded dataset synthesis block and the warmup duration on the phase.
+    benchmark = {
+        "models": ["mock-model"],
+        "endpoint": {
+            "urls": ["http://127.0.0.1:8000"],
+            "type": "chat",
+            "streaming": True,
+        },
+        "dataset": {
+            "type": "file",
+            "path": str(tmp_path / "trace.jsonl"),
+            "format": "weka_trace",
+            "synthesis": {"speedup_ratio": 1.0},
+        },
+        "trajectory_start_min_ratio": 0.25,
+        "trajectory_start_max_ratio": 0.75,
+        "phases": [
+            {
+                "name": "warmup",
+                "type": "concurrency",
+                "requests": 2,
+                "concurrency": 1,
+                "agentic_cache_warmup_duration": 8.5,
+            },
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "requests": 2,
+                "concurrency": 1,
+            },
+        ],
+        "tokenizer": {"name": "builtin"},
+        "runtime": {"workers": 3},
+        "gpu_telemetry": {"enabled": False},
+        "server_metrics": {"enabled": False},
+        "artifacts": {"dir": str(tmp_path / "artifacts")},
+    }
+    config = AIPerfConfig.model_validate({"benchmark": benchmark})
+    run = BenchmarkRun(
+        benchmark_id="authored-v2",
+        cfg=config.benchmark,
+        artifact_dir=tmp_path / "artifacts",
+        label="cell",
+        trial=2,
+        random_seed=17,
+    )
 
     authored = dump_benchmark_run(run)["cfg"]
     synthesis = authored["datasets"][0]["synthesis"]
@@ -522,8 +563,11 @@ def test_scenario_trajectory_and_warmup_knobs_reach_the_wire(tmp_path: Path) -> 
     assert synthesis["trajectory_start_max_ratio"] == 0.75
     assert synthesis["t_star_random_seed"] == 17
 
-    phase = authored["phases"][0]
-    assert phase["agentic_cache_warmup_duration"] == 8.5
+    warmup_phase = authored["phases"][0]
+    assert warmup_phase["name"] == "warmup"
+    assert warmup_phase["agentic_cache_warmup_duration"] == 8.5
+    # The profiling phase (no override) leaves the field absent.
+    assert "agentic_cache_warmup_duration" not in authored["phases"][1]
 
 
 def test_agentic_cache_warmup_absent_on_non_scenario_phase(tmp_path: Path) -> None:
