@@ -139,8 +139,13 @@ class ConfigMapSpec(AIPerfBaseModel):
     ) -> "ConfigMapSpec":
         """Create a ConfigMapSpec from a BenchmarkRun.
 
-        Serializes the BenchmarkRun as ``run_config.json`` so the pod
-        can bootstrap with ``--benchmark-run``.
+        Projects the BenchmarkRun through ``rust_wire`` into the strict protocol-v2
+        run envelope and serializes THAT as ``run_config.json`` -- the exact shape
+        the native ``aiperf-runner`` (controller and cell) parses from its mounted
+        ``--config``. This is the config seam between the operator and the runner:
+        the runner is protocol-v2-only, so the ConfigMap must carry the envelope
+        (``{protocol_version, operation, run}``), not the raw BenchmarkRun the retired
+        mesh consumed via ``aiperf service --benchmark-run``.
 
         Args:
             name: ConfigMap name.
@@ -153,10 +158,10 @@ class ConfigMapSpec(AIPerfBaseModel):
         """
         import orjson
 
-        run_json = orjson.dumps(
-            run.model_dump(mode="json", exclude_none=True),
-            option=orjson.OPT_INDENT_2,
-        ).decode()
+        from aiperf.orchestrator.rust_wire import build_authored_run_request
+
+        envelope = build_authored_run_request(run, operation="execute")
+        run_json = orjson.dumps(envelope, option=orjson.OPT_INDENT_2).decode()
         spec = cls(
             name=name,
             namespace=namespace,
