@@ -1780,6 +1780,20 @@ pub(crate) struct ShardedShared {
     pub(crate) raw_enabled: bool,
     /// Whether `inputs.json` canonical payloads are retained.
     pub(crate) inputs_enabled: bool,
+    /// Final (relative) per-record artifact paths for the Stage B per-shard lanes.
+    /// When this sharded run selected exact-fold AND any of these is requested, each
+    /// worker opens its OWN [`RecordArtifactLane`] to a per-shard temp file derived
+    /// from the artifact's file name (see
+    /// [`crate::runner_protocol::shard_artifacts`]); the coordinator concatenates the
+    /// per-shard files into the single final artifact at finalize. `None` on the
+    /// retain path (the batch writers run over the merged retained records instead).
+    pub(crate) records_path: Option<PathBuf>,
+    pub(crate) raw_path: Option<PathBuf>,
+    pub(crate) records_csv_path: Option<PathBuf>,
+    pub(crate) records_parquet_path: Option<PathBuf>,
+    pub(crate) outputs_path: Option<PathBuf>,
+    /// Whether per-record artifacts include transport-timing trace columns.
+    pub(crate) include_trace: bool,
     /// Whether an adaptive phase needs each completed turn's terminal record.
     pub(crate) wants_adaptive_record: bool,
     /// Whether this sharded run selected exact-fold (Stage A): each worker capture
@@ -1939,32 +1953,69 @@ pub(crate) async fn execute_scheduled_shard(
         transport: shared.transport_config.clone(),
         prepared_endpoints: Some(prepared_endpoints),
     })?;
-    let capture = Rc::new(RunCapture::new_with_issuance_and_bases(
-        clock.clone(),
-        start_ns,
-        shared.metrics_config.clone(),
-        shared.raw_enabled,
-        shared.inputs_enabled,
-        // Worker threads never feed the live sink or heartbeat lane (D5); those are
-        // driven once-per-cell on the main thread.
-        false,
-        shared.wants_adaptive_record,
-        // Stage A: when the run selected exact-fold, each worker capture folds every
-        // completed record into its OWN exact accumulator and drops the heavy
-        // per-record data mid-run. The fold ordinal comes from this capture's private
-        // `fold_dispatch_next` counter (`assign_fold_ordinal` at `begin`), which is
-        // LOCAL-dense `0..N_shard` — NOT the STRIDED global ordinal the
-        // `CellularAutonomousIssuer` stamps on the retain path (`global_ordinal`, used
-        // only in `patch_joined_ingest`). So each shard's store is dense and the shards
-        // concatenate through `append_store` at merge, yielding a summary within
-        // numerical tolerance of the retain path (counts/percentiles exact, sums/means
-        // a few ULPs). Per-record artifact files (Stage B) and cellular shipping
-        // (Stage C) still keep those runs on retain via the eligibility gate, so
-        // `exact_fold` is `false` there.
-        shared.exact_fold,
-        crate::runner_protocol::cellular_cell::issuance_authority_for(partition),
-        shared.phase_ordinal_bases.clone(),
-    ));
+    // Stage B: when this sharded run selected exact-fold AND a per-record artifact is
+    // requested, this shard streams each completed record's rows into its OWN lane
+    // writing to a per-shard temp file (`<artifact_dir>/.shard-<id>/<name>`), dropping
+    // the record immediately after — exactly like the single-thread lane. The
+    // coordinator concatenates the per-shard files into the single final artifact at
+    // finalize (`shard_artifacts::concatenate_shard_artifacts`). `None` on the retain
+    // path or when no lane artifact is requested.
+    let record_lane = if shared.exact_fold {
+        let per_shard = |relative: &Option<PathBuf>| -> Option<PathBuf> {
+            relative.as_ref().map(|path| {
+                crate::runner_protocol::shard_artifacts::shard_artifact_path(
+                    &shared.artifact_dir,
+                    thread_id,
+                    path,
+                )
+            })
+        };
+        RecordArtifactLane::new(
+            per_shard(&shared.records_path),
+            per_shard(&shared.raw_path),
+            per_shard(&shared.records_csv_path),
+            per_shard(&shared.records_parquet_path),
+            per_shard(&shared.outputs_path),
+            shared.include_trace,
+        )?
+    } else {
+        None
+    };
+    let capture = Rc::new(
+        RunCapture::new_with_issuance_and_bases(
+            clock.clone(),
+            start_ns,
+            shared.metrics_config.clone(),
+            shared.raw_enabled,
+            // Stage B: under exact-fold, inputs.json is generated ONCE at the
+            // coordinator from the resident dataset (the S4 up-front path), so the
+            // shard never captures it during dispatch (which would double-count across
+            // shards). The retain path keeps the per-shard during-run capture.
+            shared.inputs_enabled && !shared.exact_fold,
+            // Worker threads never feed the live sink or heartbeat lane (D5); those are
+            // driven once-per-cell on the main thread.
+            false,
+            shared.wants_adaptive_record,
+            // Stage A: when the run selected exact-fold, each worker capture folds every
+            // completed record into its OWN exact accumulator and drops the heavy
+            // per-record data mid-run. The fold ordinal comes from this capture's private
+            // `fold_dispatch_next` counter (`assign_fold_ordinal` at `begin`), which is
+            // LOCAL-dense `0..N_shard` — NOT the STRIDED global ordinal the
+            // `CellularAutonomousIssuer` stamps on the retain path (`global_ordinal`, used
+            // only in `patch_joined_ingest`). So each shard's store is dense and the shards
+            // concatenate through `append_store` at merge, yielding a summary within
+            // numerical tolerance of the retain path (counts/percentiles exact, sums/means
+            // a few ULPs). Cellular shipping (Stage C) still keeps those runs on retain via
+            // the eligibility gate, so `exact_fold` is `false` there.
+            shared.exact_fold,
+            crate::runner_protocol::cellular_cell::issuance_authority_for(partition),
+            shared.phase_ordinal_bases.clone(),
+        )
+        .with_record_lane(record_lane)
+        // Stage each turn's model output text so this shard's streaming outputs.json
+        // entry carries it, then drop it in the fold (exact-fold + outputs.json only).
+        .with_outputs_capture(shared.exact_fold && shared.outputs_path.is_some()),
+    );
     let resolver = shared.table_factory.coordinator_resolver()?;
     let source_factory = PreparedNativeConversationSourceFactory {
         endpoint_resolver: resolver,
@@ -2075,6 +2126,11 @@ pub(crate) async fn execute_scheduled_shard(
     // the dense exact stores) downstream, so the coordinator never holds O(all records)
     // in either fold mode.
     let records = if capture.folds_records() {
+        // Stage B: this shard streamed each completed record's rows into its per-shard
+        // artifact lane at completion; flush and close it now that every record has
+        // folded. A no-op when no lane is attached (sketch, or no lane artifact). The
+        // coordinator concatenates the per-shard files into the final artifact.
+        capture.finish_record_lane()?;
         let (accumulator, errored) = capture.take_streamed();
         ShardRecords::Folded {
             accumulator,
@@ -2647,6 +2703,14 @@ async fn execute_native_inner(
             artifact_dir: request.artifact_dir.clone(),
             raw_enabled: request.artifacts.raw_path.is_some(),
             inputs_enabled: request.artifacts.inputs_path.is_some(),
+            // Stage B per-shard artifact lanes: the shards stream these when exact-fold
+            // is selected; the coordinator concatenates them at finalize.
+            records_path: request.artifacts.records_path.clone(),
+            raw_path: request.artifacts.raw_path.clone(),
+            records_csv_path: request.artifacts.records_csv_path.clone(),
+            records_parquet_path: request.artifacts.records_parquet_path.clone(),
+            outputs_path: request.artifacts.outputs_path.clone(),
+            include_trace: request.artifacts.trace,
             wants_adaptive_record,
             exact_fold,
             on_failure: OnFailure::scheduled_or_default(request.failure_policy),
@@ -2706,9 +2770,40 @@ async fn execute_native_inner(
                 errored
             }
         };
+        // Stage B: an exact-fold sharded run streamed each shard's records/raw/CSV/
+        // parquet/outputs into per-shard temp files; fuse them into the single final
+        // artifact now that every shard has finished, and remove the temp dirs. The
+        // finalize tail below skips the batch writers under `exact_fold`, so this is the
+        // sole writer of those artifacts on the sharded exact-fold path.
+        let input_sessions = if exact_fold {
+            crate::runner_protocol::shard_artifacts::concatenate_shard_artifacts(
+                &request.artifact_dir,
+                &request.artifacts,
+                request.workers,
+            )?;
+            // inputs.json is generated ONCE at the coordinator from the resident
+            // dataset (the S4 up-front path), matching the single-thread exact-fold
+            // path — the shards disabled their during-run capture. Absent an
+            // `inputs.json` request this yields an unused empty list.
+            if request.artifacts.inputs_path.is_some() {
+                build_up_front_input_sessions(
+                    &dataset,
+                    source_factory.as_ref(),
+                    &primary_model,
+                    default_output_tokens,
+                    rng_root,
+                    tokenizer.clone(),
+                    input_token_counter.clone(),
+                )?
+            } else {
+                outcome.input_sessions
+            }
+        } else {
+            outcome.input_sessions
+        };
         (
             captured,
-            outcome.input_sessions,
+            input_sessions,
             outcome.was_cancelled,
             outcome.has_warmup,
             start_ns,
@@ -6593,15 +6688,20 @@ mod tests {
             }),
             "a cellular child ships the full retained set (Stage C)"
         );
-        // A sharded run WITH a per-record artifact still rejects (Stage B): per-shard
-        // artifact-file concatenation is not yet built, so it stays on retain.
+        // Stage B built per-shard artifact files, so records/raw/CSV/parquet/outputs no
+        // longer set `wants_per_record_artifacts` (they stream+merge across shards) and a
+        // sharded run WITH those artifacts is now eligible — the shards each open a lane
+        // and the coordinator concatenates. `wants_per_record_artifacts` now only flags
+        // the residual unstreamable cases (live-reply-multiturn inputs.json retain, or a
+        // lite-build Parquet request), which STILL reject even when sharded because
+        // neither can be produced by the fold-and-drop path.
         assert!(
             !exact_fold_eligible(ExactFoldInputs {
                 shardable: true,
                 wants_per_record_artifacts: true,
                 ..clean
             }),
-            "a sharded run with a per-record artifact stays on retain (Stage B)"
+            "an unstreamable per-record artifact (inputs-retain / lite parquet) stays on retain even sharded"
         );
         assert!(
             !exact_fold_eligible(ExactFoldInputs {
@@ -6638,5 +6738,49 @@ mod tests {
             }),
             "per-record artifacts still read the retained records"
         );
+    }
+
+    /// Stage B gate wiring: a run requesting records/raw/CSV/parquet/outputs (but no
+    /// inputs.json retain) does NOT set `wants_per_record_artifacts` on a Parquet build,
+    /// so a `workers > 1` run with every streamed artifact is exact-fold-eligible (the
+    /// per-shard lanes + coordinator concat handle them). The residual retain triggers —
+    /// live-reply inputs.json and (lite build) Parquet — still flag it.
+    #[test]
+    fn wants_per_record_artifacts_streamed_set_is_not_a_disqualifier() {
+        use crate::runner_protocol::protocol::ArtifactSpec;
+
+        let streamed = ArtifactSpec {
+            records_path: Some(PathBuf::from("profile_export.jsonl")),
+            raw_path: Some(PathBuf::from("profile_export_raw.jsonl")),
+            records_csv_path: Some(PathBuf::from("profile_export_records.csv")),
+            records_parquet_path: Some(PathBuf::from("profile_export.parquet")),
+            outputs_path: Some(PathBuf::from("outputs.json")),
+            inputs_path: Some(PathBuf::from("inputs.json")),
+            trace: false,
+        };
+        // `inputs_need_retain == false`: inputs.json is up-front-able for this shape.
+        #[cfg(feature = "parquet")]
+        {
+            assert!(
+                !wants_per_record_artifacts(&streamed, false),
+                "records/raw/CSV/parquet/outputs stream+merge — not a disqualifier on a Parquet build"
+            );
+            // Sharded + all streamed artifacts => eligible (Stage B).
+            assert!(exact_fold_eligible(ExactFoldInputs {
+                sketch_mode: false,
+                shardable: true,
+                is_cellular: false,
+                has_accuracy: false,
+                wants_adaptive_record: false,
+                has_live_sink: false,
+                has_heartbeat: false,
+                wants_per_record_artifacts: wants_per_record_artifacts(&streamed, false),
+            }));
+        }
+        // Live-reply inputs.json that cannot be reproduced up front still disqualifies.
+        assert!(wants_per_record_artifacts(&streamed, true));
+        // A lite build cannot stream Parquet, so a requested sidecar still disqualifies.
+        #[cfg(not(feature = "parquet"))]
+        assert!(wants_per_record_artifacts(&streamed, false));
     }
 }
