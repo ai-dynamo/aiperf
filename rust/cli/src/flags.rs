@@ -336,6 +336,53 @@ pub struct ProfileFlags {
     #[arg(long = "image-source-sampling")]
     pub image_source_sampling: Option<String>,
 
+    /// Synthetic audio length mean, seconds (`--audio-length-mean`).
+    #[arg(long = "audio-length-mean")]
+    pub audio_length_mean: Option<f64>,
+    /// Synthetic audio length stddev (`--audio-length-stddev`).
+    #[arg(long = "audio-length-stddev")]
+    pub audio_length_stddev: Option<f64>,
+    /// Synthetic audio clips per request (`--audio-batch-size`).
+    #[arg(long = "audio-batch-size")]
+    pub audio_batch_size: Option<u32>,
+    /// Synthetic audio channels (`--audio-num-channels`).
+    #[arg(long = "audio-num-channels")]
+    pub audio_num_channels: Option<u32>,
+    /// Synthetic audio bit depths (`--audio-depths`).
+    #[arg(long = "audio-depths", num_args = 1..)]
+    pub audio_depths: Vec<u32>,
+    /// Synthetic audio format (`--audio-format`).
+    #[arg(long = "audio-format")]
+    pub audio_format: Option<String>,
+    /// Synthetic audio sample rates, Hz (`--audio-sample-rates`).
+    #[arg(long = "audio-sample-rates", num_args = 1..)]
+    pub audio_sample_rates: Vec<f64>,
+
+    /// Synthetic video width, pixels (`--video-width`).
+    #[arg(long = "video-width")]
+    pub video_width: Option<u32>,
+    /// Synthetic video height, pixels (`--video-height`).
+    #[arg(long = "video-height")]
+    pub video_height: Option<u32>,
+    /// Synthetic video duration, seconds (`--video-duration`).
+    #[arg(long = "video-duration")]
+    pub video_duration: Option<f64>,
+    /// Synthetic video frames per second (`--video-fps`).
+    #[arg(long = "video-fps")]
+    pub video_fps: Option<u32>,
+    /// Synthetic video container format (`--video-format`).
+    #[arg(long = "video-format")]
+    pub video_format: Option<String>,
+    /// Synthetic video codec (`--video-codec`).
+    #[arg(long = "video-codec")]
+    pub video_codec: Option<String>,
+    /// Synthetic video synthesis pattern (`--video-synth-type`).
+    #[arg(long = "video-synth-type")]
+    pub video_synth_type: Option<String>,
+    /// Synthetic video clips per request (`--video-batch-size`).
+    #[arg(long = "video-batch-size")]
+    pub video_batch_size: Option<u32>,
+
     /// Deterministic random seed (`--random-seed`).
     #[arg(long = "random-seed")]
     pub random_seed: Option<u64>,

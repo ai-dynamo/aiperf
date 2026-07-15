@@ -17,7 +17,10 @@ use std::path::PathBuf;
 
 use crate::flags::ProfileFlags;
 use crate::model::artifacts::Artifacts;
-use crate::model::dataset::{Dataset, Distribution, ImageSpec, Prompts, Sampling, Synthetic};
+use crate::model::dataset::{
+    AudioSpec, Dataset, Distribution, ImageSpec, Prompts, Sampling, Synthetic, VideoAudio,
+    VideoSpec,
+};
 use crate::model::endpoint::{
     ConnectionReuse, Endpoint, EndpointType, RequestContentType, WaitForModelMode,
 };
@@ -150,6 +153,10 @@ pub(crate) struct Inputs {
     pub sketch_metrics: bool,
     /// Synthetic image spec (present when any image flag is set).
     pub image_spec: Option<ImageSpec>,
+    /// Synthetic audio spec.
+    pub audio_spec: Option<AudioSpec>,
+    /// Synthetic video spec.
+    pub video_spec: Option<VideoSpec>,
     pub artifact_dir: PathBuf,
 }
 
@@ -356,6 +363,8 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         isl_block_size: flags.isl_block_size,
         sketch_metrics: flags.sketch_metrics,
         image_spec: build_image_spec(flags),
+        audio_spec: build_audio_spec(flags),
+        video_spec: build_video_spec(flags),
         artifact_dir: flags
             .artifact_dir
             .clone()
@@ -472,6 +481,8 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 block_size: inputs.isl_block_size,
             },
             images: inputs.image_spec.clone(),
+            audio: inputs.audio_spec.clone(),
+            video: inputs.video_spec.clone(),
             sampling: Sampling(inputs.sampling.clone()),
             turns: inputs.turns.clone(),
             turn_delay_ratio: inputs.turn_delay_ratio,
@@ -817,6 +828,91 @@ fn build_image_spec(flags: &ProfileFlags) -> Option<ImageSpec> {
             .image_source_sampling
             .clone()
             .unwrap_or_else(|| "random-with-replacement".to_string()),
+    })
+}
+
+/// Build the synthetic audio spec when any `--audio-*` flag is set.
+fn build_audio_spec(flags: &ProfileFlags) -> Option<AudioSpec> {
+    let any = flags.audio_length_mean.is_some()
+        || flags.audio_batch_size.is_some()
+        || flags.audio_num_channels.is_some()
+        || !flags.audio_depths.is_empty()
+        || flags.audio_format.is_some()
+        || !flags.audio_sample_rates.is_empty();
+    if !any {
+        return None;
+    }
+    let length = match flags.audio_length_mean {
+        Some(mean) => Distribution {
+            mean: Some(mean),
+            stddev: Some(flags.audio_length_stddev.unwrap_or(0.0)),
+            ..Default::default()
+        },
+        None => default_media_dim(),
+    };
+    // The wire carries sample rates in kHz (Hz / 1000).
+    let sample_rates = if flags.audio_sample_rates.is_empty() {
+        vec![16.0]
+    } else {
+        flags
+            .audio_sample_rates
+            .iter()
+            .map(|r| r / 1000.0)
+            .collect()
+    };
+    Some(AudioSpec {
+        batch_size: flags.audio_batch_size.unwrap_or(1),
+        channels: flags.audio_num_channels.unwrap_or(1),
+        depths: if flags.audio_depths.is_empty() {
+            vec![16]
+        } else {
+            flags.audio_depths.clone()
+        },
+        format: flags
+            .audio_format
+            .clone()
+            .unwrap_or_else(|| "wav".to_string()),
+        length,
+        sample_rates,
+    })
+}
+
+/// Build the synthetic video spec when any `--video-*` flag is set.
+fn build_video_spec(flags: &ProfileFlags) -> Option<VideoSpec> {
+    let any = flags.video_width.is_some()
+        || flags.video_height.is_some()
+        || flags.video_duration.is_some()
+        || flags.video_fps.is_some()
+        || flags.video_format.is_some()
+        || flags.video_codec.is_some()
+        || flags.video_synth_type.is_some()
+        || flags.video_batch_size.is_some();
+    if !any {
+        return None;
+    }
+    Some(VideoSpec {
+        audio: VideoAudio {
+            channels: 0,
+            depth: 16,
+            sample_rate: 44.1,
+        },
+        batch_size: flags.video_batch_size.unwrap_or(1),
+        codec: flags
+            .video_codec
+            .clone()
+            .unwrap_or_else(|| "libvpx-vp9".to_string()),
+        duration: flags.video_duration.unwrap_or(1.0),
+        format: flags
+            .video_format
+            .clone()
+            .unwrap_or_else(|| "webm".to_string()),
+        fps: flags.video_fps.unwrap_or(4),
+        synth_type: flags
+            .video_synth_type
+            .clone()
+            .unwrap_or_else(|| "moving_shapes".to_string()),
+        width: flags.video_width,
+        height: flags.video_height,
     })
 }
 

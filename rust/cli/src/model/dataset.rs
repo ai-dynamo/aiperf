@@ -88,6 +88,59 @@ pub struct ImageSpec {
     pub source_sampling: String,
 }
 
+/// Synthetic audio-generation policy (`synthetic.audio`).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AudioSpec {
+    /// Audio clips per request.
+    pub batch_size: u32,
+    /// Channel count.
+    pub channels: u32,
+    /// Bit depths.
+    pub depths: Vec<u32>,
+    /// Audio format (`wav`/…).
+    pub format: String,
+    /// Clip length distribution, seconds.
+    pub length: Distribution,
+    /// Sample rates, kHz (the wire value is Hz/1000).
+    pub sample_rates: Vec<f64>,
+}
+
+/// The audio track of a synthetic video (`synthetic.video.audio`).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VideoAudio {
+    /// Channel count.
+    pub channels: u32,
+    /// Bit depth.
+    pub depth: u32,
+    /// Sample rate, kHz.
+    pub sample_rate: f64,
+}
+
+/// Synthetic video-generation policy (`synthetic.video`).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VideoSpec {
+    /// Audio track.
+    pub audio: VideoAudio,
+    /// Clips per request.
+    pub batch_size: u32,
+    /// Video codec.
+    pub codec: String,
+    /// Duration, seconds.
+    pub duration: f64,
+    /// Container format (`webm`/`mp4`/…).
+    pub format: String,
+    /// Frames per second.
+    pub fps: u32,
+    /// Synthesis pattern.
+    pub synth_type: String,
+    /// Width, pixels (present when set).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    /// Height, pixels (present when set).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+}
+
 /// The typed synthetic dataset body.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Synthetic {
@@ -96,6 +149,12 @@ pub struct Synthetic {
     /// Synthetic image generation (present when authored).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub images: Option<ImageSpec>,
+    /// Synthetic audio generation (present when authored).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<AudioSpec>,
+    /// Synthetic video generation (present when authored).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video: Option<VideoSpec>,
     /// Sampling order.
     pub sampling: Sampling,
     /// Turns-per-session distribution (multi-turn; present when authored).
@@ -193,6 +252,8 @@ mod tests {
                 block_size: None,
             },
             images: None,
+            audio: None,
+            video: None,
             sampling: Sampling("sequential".into()),
             turns: None,
             turn_delay_ratio: 1.0,
