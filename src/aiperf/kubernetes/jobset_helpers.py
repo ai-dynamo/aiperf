@@ -207,6 +207,13 @@ CELL_CONTROLLER_ADDR_ENV = "AIPERF_CELL_CONTROLLER_ADDR"
 # cell children (the JobSet already created the cell pods; it waits on the velo
 # registration barrier). cell_launcher.rs::CELL_LAUNCHER_ENV, default "local".
 CELL_LAUNCHER_ENV = "AIPERF_CELL_LAUNCHER"
+# The controller's Stage-E/G artifact HTTP upload server port. When a cellular run
+# ships per-record artifacts or serves a file dataset cross-host, the controller
+# binds 0.0.0.0:9600 and cells derive its host from their velo tcp:// coordinate +
+# this port (cellular_cell.rs DEFAULT_ARTIFACT_PORT / AIPERF_CONTROLLER_ARTIFACT_BIND).
+# Synthetic single-turn runs never start the server; exposing the port is harmless
+# and lets artifact/file-dataset cellular runs reach the controller cross-pod.
+CELL_ARTIFACT_PORT: int = 9600
 
 # HF tokenizer cache dir; the runner tokenizes in-process, so it is the one piece
 # of the mesh container env the native pods still need. Matches the tokenizer-cache

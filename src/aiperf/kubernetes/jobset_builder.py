@@ -16,6 +16,7 @@ from aiperf.kubernetes.constants import Containers
 from aiperf.kubernetes.enums import RestartPolicy
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset_helpers import (
+    CELL_ARTIFACT_PORT,
     CELL_CONTROLLER_PORT,
     build_cell_args,
     build_cell_env_vars,
@@ -517,7 +518,12 @@ class _JobSetManifestBuilder:
             ],
             resources=self._resolve_pod_resources("SYSTEM_CONTROLLER"),
             volume_mounts=build_runner_volume_mounts(self.spec.pod_template),
-            ports=[{"containerPort": CELL_CONTROLLER_PORT, "name": "cell-ctl"}],
+            ports=[
+                {"containerPort": CELL_CONTROLLER_PORT, "name": "cell-ctl"},
+                # Stage-E/G artifact HTTP upload server; only bound for artifact/
+                # file-dataset cellular runs, harmless to expose for synthetic ones.
+                {"containerPort": CELL_ARTIFACT_PORT, "name": "cell-artifact"},
+            ],
             security_context=build_security_context(self.spec.pod_template),
         )
         return [controller, self._create_results_sidecar()]
