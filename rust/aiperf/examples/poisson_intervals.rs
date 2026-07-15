@@ -26,17 +26,14 @@ fn main() {
         .derive_seed(namespace::TIMING_REQUEST_POISSON_INTERVAL)
         .expect("seeded root yields a concrete poisson-interval seed");
 
-    let mut generator =
-        make_interval_generator(ArrivalPattern::Poisson, Some(rate), None, seed);
+    let mut generator = make_interval_generator(ArrivalPattern::Poisson, Some(rate), None, seed);
 
     let mut cumulative_ns: i64 = 0;
     for i in 0..count {
         let interval_ns = generator.next_interval_ns();
         cumulative_ns += interval_ns;
         // Compact JSONL: one object per line, integer nanoseconds (exact across langs).
-        println!(
-            "{{\"i\":{i},\"interval_ns\":{interval_ns},\"cumulative_ns\":{cumulative_ns}}}"
-        );
+        println!("{{\"i\":{i},\"interval_ns\":{interval_ns},\"cumulative_ns\":{cumulative_ns}}}");
     }
     eprintln!("poisson: root_seed={root_seed} derived_seed={seed} rate={rate} count={count}");
 }

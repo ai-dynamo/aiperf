@@ -619,6 +619,21 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   Carries the P1 rename pass (DTO/placement/method renames, landed after the
   concurrent bodyplan work committed `http.rs`); the P1 method-fold,
   `inference_dimensions` signature change, and discarded-observer cleanup stay deferred.
+- `specs/2026-07-14-unified-execution-substrate-design.md` — **the S5 endgame**
+  (design, not built): unify scheduled + graph so any `Workload` runs over any
+  transport, finally enabling `grpc + graph`. Stage 1 (shippable now on
+  `ajc/rust-threaded`) extracts one object-safe `Dispatcher` trait from the
+  identical HTTP/gRPC `dispatch_collect`, `dyn`-ifies the graph sink's concrete
+  `Rc<TransportSink>` (`graph_execution.rs:243`), adds a gRPC arm to the graph
+  endpoint runtime, and **deletes the `RunnerPairFactory` abstraction entirely**
+  (`pairs` map, `register_pair`, the `*Pair` objects) — moving `prepare` onto the
+  workload factory and composing transport × workload inline via the existing
+  descriptor predicate, so `grpc+graph` falls out with no `*Pair` cell object (`M =
+  OpenAiChatMessage` stays; wire dialect ≠ transport). Stage 2 folds the two placement backends + two
+  workload drivers into one `WorkerPool`/`Session` substrate (a flat scheduled turn
+  = a 1-node `Trace`), built on P3's `run_sharded_scheduled` template + P5's
+  `next_arrival_target` pacer + the `OnFailure` enum, reducing the transport axis to
+  a single `Dispatcher` registry. Realizes cellular §S5.
 - `specs/2026-07-13-segment-unification-design.md` — **segment unification**
   (design): collapse `Turn`'s five body fields (content/messages/raw_payload/
   raw_messages/raw_token_ids) into segment `Handle`s in the one `SegmentPool`;

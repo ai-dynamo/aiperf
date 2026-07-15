@@ -337,20 +337,27 @@ where
     if n < 2 {
         return;
     }
-    let keys: Vec<u64> = items.iter().map(|item| radix_key(timestamp(item))).collect();
+    let keys: Vec<u64> = items
+        .iter()
+        .map(|item| radix_key(timestamp(item)))
+        .collect();
     // Single-threaded: the seven curves are already fanned out across rayon in
     // `SweepLineCurves::compute`, so an inner parallel sort only nests rayon
     // regions and multiplies epoch/work-steal coordination (which profiles as
     // the dominant export cost). `radix_argsort_mt` stays for callers that sort
     // a single curve with no outer parallelism.
     let permutation = radix_argsort_st(&keys);
-    let sorted: Vec<T> = permutation.iter().map(|&index| items[index as usize]).collect();
+    let sorted: Vec<T> = permutation
+        .iter()
+        .map(|&index| items[index as usize])
+        .collect();
     items.copy_from_slice(&sorted);
 
     let mut run_start = 0usize;
     while run_start < n {
         let mut run_end = run_start + 1;
-        while run_end < n && same_timestamp(timestamp(&items[run_start]), timestamp(&items[run_end]))
+        while run_end < n
+            && same_timestamp(timestamp(&items[run_start]), timestamp(&items[run_end]))
         {
             run_end += 1;
         }
@@ -1243,7 +1250,11 @@ mod tests {
             .map(|index| {
                 let timestamp_ns = ((index * 31) % 2_048) as f64;
                 let magnitude = ((index / 3) % 9 + 1) as f64;
-                let delta = if index % 2 == 0 { -magnitude } else { magnitude };
+                let delta = if index % 2 == 0 {
+                    -magnitude
+                } else {
+                    magnitude
+                };
                 SweepEvent::new(timestamp_ns, delta)
             })
             .collect::<Vec<_>>();

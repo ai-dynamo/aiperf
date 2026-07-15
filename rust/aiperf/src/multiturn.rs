@@ -1066,7 +1066,11 @@ impl NativeDatasetConversationSource {
     ) -> Result<Self> {
         let mut dataset = dataset;
         let primary_model_name = model.into();
-        lower_static_messages(&mut dataset, endpoint_resolver.as_ref(), &primary_model_name)?;
+        lower_static_messages(
+            &mut dataset,
+            endpoint_resolver.as_ref(),
+            &primary_model_name,
+        )?;
         let dataset = Arc::new(dataset);
         let sampler = samplers.create(
             &dataset.metadata().sampling_strategy,
@@ -1114,7 +1118,11 @@ impl NativeDatasetConversationSource {
     ) -> Result<Self> {
         let mut dataset = dataset;
         let primary_model_name = model.into();
-        lower_static_messages(&mut dataset, endpoint_resolver.as_ref(), &primary_model_name)?;
+        lower_static_messages(
+            &mut dataset,
+            endpoint_resolver.as_ref(),
+            &primary_model_name,
+        )?;
         let dataset = Arc::new(dataset);
         let sampler = SequentialSampler::from_metadata(&dataset.metadata().conversations)?;
         Self::new_with_endpoint(

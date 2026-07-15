@@ -477,10 +477,7 @@ mod tests {
         );
 
         // Raw only.
-        assert_eq!(
-            Turn::dispatch_body(Some(raw), None, &[]).as_slice(),
-            &[raw]
-        );
+        assert_eq!(Turn::dispatch_body(Some(raw), None, &[]).as_slice(), &[raw]);
 
         // Token-native only.
         assert_eq!(

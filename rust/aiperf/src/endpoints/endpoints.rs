@@ -867,7 +867,9 @@ pub(crate) fn format_messages_array_wires(
         .user_context_message()
         .filter(|value| !value.is_empty())
     {
-        out.push(RenderedMessage::Value(json!({"role":"user","content":context})));
+        out.push(RenderedMessage::Value(
+            json!({"role":"user","content":context}),
+        ));
     }
     out.extend(rendered_turn_messages(turns, PartShape::Messages, false)?);
     serialize_rendered_messages(out)
@@ -1716,8 +1718,9 @@ mod lowering_tests {
         let lowerer = ShapeLowerer::for_descriptor_id("chat").unwrap();
         let wires = lowerer.lower_turn(&turn).unwrap();
         assert_eq!(wires.len(), 1);
-        let expected =
-            Bytes::from(serde_json::to_vec(&render_turn_message(&turn, PartShape::Chat).unwrap()).unwrap());
+        let expected = Bytes::from(
+            serde_json::to_vec(&render_turn_message(&turn, PartShape::Chat).unwrap()).unwrap(),
+        );
         assert_eq!(wires[0], expected);
     }
 
@@ -1727,8 +1730,9 @@ mod lowering_tests {
         let turn = multimodal_turn("http://example/a.png");
         let lowerer = ShapeLowerer::for_descriptor_id("chat").unwrap();
         let wires = lowerer.lower_turn(&turn).unwrap();
-        let expected =
-            Bytes::from(serde_json::to_vec(&render_turn_message(&turn, PartShape::Chat).unwrap()).unwrap());
+        let expected = Bytes::from(
+            serde_json::to_vec(&render_turn_message(&turn, PartShape::Chat).unwrap()).unwrap(),
+        );
         assert_eq!(wires[0], expected);
     }
 
@@ -1743,7 +1747,10 @@ mod lowering_tests {
         if let Value::Object(obj) = &mut expected_value {
             obj.insert("type".into(), Value::String("message".into()));
         }
-        assert_eq!(wires[0], Bytes::from(serde_json::to_vec(&expected_value).unwrap()));
+        assert_eq!(
+            wires[0],
+            Bytes::from(serde_json::to_vec(&expected_value).unwrap())
+        );
         // The injected discriminant is present in the wire bytes.
         assert!(
             std::str::from_utf8(&wires[0])
@@ -1757,8 +1764,12 @@ mod lowering_tests {
     #[test]
     fn same_text_different_media_lowers_to_distinct_wires() {
         let lowerer = ShapeLowerer::for_descriptor_id("chat").unwrap();
-        let a = lowerer.lower_turn(&multimodal_turn("http://example/a.png")).unwrap();
-        let b = lowerer.lower_turn(&multimodal_turn("http://example/b.png")).unwrap();
+        let a = lowerer
+            .lower_turn(&multimodal_turn("http://example/a.png"))
+            .unwrap();
+        let b = lowerer
+            .lower_turn(&multimodal_turn("http://example/b.png"))
+            .unwrap();
         assert_ne!(a[0], b[0]);
     }
 

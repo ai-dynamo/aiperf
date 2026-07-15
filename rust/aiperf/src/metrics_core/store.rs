@@ -718,8 +718,11 @@ impl<B: ListMetricBackend> ColumnStore<B> {
             let Some(other_backend) = &other.ragged[tag.index()] else {
                 continue;
             };
-            self.ragged_backend_or_insert(tag)
-                .append_shifted(other_backend, row_offset, other_rows);
+            self.ragged_backend_or_insert(tag).append_shifted(
+                other_backend,
+                row_offset,
+                other_rows,
+            );
         }
     }
 
