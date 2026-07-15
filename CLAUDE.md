@@ -48,7 +48,7 @@ When something is designed-but-not-built, this file says so. Do not assume a spe
 
 ## Crate workspace (`rust/`)
 
-Workspace: `edition = "2024"`, `resolver = "3"`. Four crates; 16 former `aiperf-*` library crates are now modules of `aiperf` (see §Module organization below).
+Workspace: `edition = "2024"`, `resolver = "3"`. Four product crates (plus `pyext`, a packaging-only pyo3 cdylib, and the `e2e` test harness); 16 former `aiperf-*` library crates are now modules of `aiperf` (see §Module organization below).
 
 | Crate | Purpose | Key files |
 |---|---|---|
@@ -56,8 +56,9 @@ Workspace: `edition = "2024"`, `resolver = "3"`. Four crates; 16 former `aiperf-
 | `aiperf` | Library-only runtime composition used by `aiperf-runner`; there is no `src/main.rs` or native `aiperf` executable. It owns scheduled/transport composition, HTTP and gRPC prepared sinks, online pacing, datasets, exact token-array response observation/usage, the provider-neutral evaluation workload/typed host registry/fair arbiter/ledger/retry/scoped proxy/report join, legacy static and stateful accuracy seams, adaptive/ancillary policy, native report persistence, and the feature-gated direct raw-token Dynamo adapter. It also owns the single `AIPerfRegistry`/`AIPerfExtension` composition seam (`extensions/`) and — behind the `runner-protocol` Cargo feature — hosts the relocated v2 layer `aiperf::runner_protocol` (protocol envelopes, the transport/workload registries, execution factories and `*_execution` drivers, coordinator, `RunnerApplication`, cellular controller/cell, control-plane HTTP, and the GPU/network/server side-channel accumulators); only `aiperf-runner` enables it, so `aiperf-mock-server`/`e2e` build without that layer. Sixteen former library crates are inlined as modules (see §Module organization). | `lib.rs`, `extensions/`, `runner_protocol/`, `evaluation.rs`, `evaluation/`, `dynosim.rs`, `ancillary.rs`, `metrics.rs`, `accuracy.rs`, `adaptive.rs`, `http.rs`, `grpc.rs`, `run.rs`, `phase_runtime.rs`, `scheduled.rs`, `report.rs` |
 | `aiperf-runner` | Sole strict Rust executable used by the Python orchestrator, now a thin (~550-line) process shell over the v2 layer that lives in `aiperf::runner_protocol` (feature `runner-protocol`): `lib.rs` re-exports that composition root and `main.rs` is the process/stdio/signal harness (mimalloc install, reads one request, drives `RunnerApplication`, writes the v2 report). Python always sends exact-image-bound protocol-v2 `validate`/`execute` operations; the runner is protocol-v2-only, advertises `protocol_versions: [2]`, and rejects any non-v2 request as a v2 failure envelope. The frozen transport and workload registries (no pair map) direct-load one prepared operation and derive executable capabilities; one injected graph-input resolver performs identity-only selection, strict decode, and direct compilation. The base build registers HTTP scheduled/graph/static-accuracy/agentic plus native gRPC scheduled; `dynosim` adds `dynosim_offline`/`dynosim_online` scheduled/graph. | `main.rs`, `lib.rs` (the v2 modules — `protocol_v2.rs`, `registry.rs`, `graph_input.rs`, `execute.rs`, the `*_execution.rs` drivers, `records.rs` — now live under `rust/aiperf/src/runner_protocol/`) |
 | `aiperf-mock-server` | Standalone online test/benchmark inference target: OpenAI chat/completions/embeddings, TGI, rerank, image, multimodal, and RAG routes; real SSE; analytic or batch-scheduler latency; deterministic token generation; prefix-cache policy; Prometheus backend dialects; and synthetic DCGM telemetry. Latency pacing runs on the `aiperf` RealClock `timerfd` (ns-precision `sleep_ns`, not the `tokio::time` 1 ms wheel). `--processes N` makes the launched binary a lightweight L4 round-robin balancer that spawns N child servers (same binary/config) on internal loopback ports and splices each connection to the next backend; `N=1` (default) is the unchanged single-process path. An optional `--grpc-port` (env `MOCK_SERVER_GRPC_PORT`) opens a second listener serving the KServe OIP v2 `GRPCInferenceService` (`ModelInfer`/`ModelStreamInfer`/`ModelReady`/`ServerLive`/`ServerReady`) over h2c, hand-routed on the shared hyper stack and reusing the same token/latency generation seam plus the `aiperf::transport_grpc::proto` prost messages the runner`\s gRPC client uses (no build-time protoc); it is HTTP-only in `--processes N` balancer mode (gRPC warned-and-skipped). It exports an Axum router for tests and a tuned Hyper server binary, but is not part of the runner dependency graph. | `app.rs`, `balancer.rs`, `grpc.rs`, `listener.rs`, `config.rs`, `handlers.rs`, `tokens.rs`, `latency.rs`, `scheduler.rs`, `prefix_cache.rs`, `metrics.rs`, `prom.rs`, `dcgm.rs`, `main.rs` |
+| `pyext` | Packaging-only pyo3 `cdylib`, compiled by maturin into `aiperf._native` for the **single interned `aiperf` wheel**. maturin forbids `bindings = "bin"` alongside `[project.scripts] aiperf` (maturin #368) and still requires a real binding target, so this tiny module is the wheel's compiled target while the full-fat `aiperf-runner` rides along as **interned package data** (`aiperf/_bin/aiperf-runner`, via `[tool.maturin] include` + `make bundle-runner`). No `aiperf`/dynosim deps; carries only build metadata for `aiperf --version`/diagnostics; runner discovery resolves the binary via `importlib.resources` and never imports this module. | `Cargo.toml`, `src/lib.rs` |
 
-Dependency direction: `aiperf-runner` → {`aiperf` (with the `runner-protocol` feature), `loadgen-core`}; `aiperf` → {`loadgen-core`} plus optional `dynamo-mocker` only under `dynosim`; `aiperf-mock-server` → {`aiperf`}. The runner and mock-rs do not depend on each other; real-network integration tests spawn the mock binary as an ordinary target.
+Dependency direction: `aiperf-runner` → {`aiperf` (with the `runner-protocol` feature), `loadgen-core`}; `aiperf` → {`loadgen-core`} plus optional `dynamo-mocker` only under `dynosim`; `aiperf-mock-server` → {`aiperf`}; `pyext` → {`pyo3`} only (no internal deps, and nothing depends on it). The runner and mock-rs do not depend on each other; real-network integration tests spawn the mock binary as an ordinary target.
 
 ## Module organization (`rust/aiperf/src/`)
 
@@ -92,7 +93,7 @@ Sixteen former `aiperf-*` library crates are now `aiperf::<module>::` namespaces
 
 ## Build, test, run
 
-The (inherited-Python) `Makefile` has **no** cargo targets — use cargo directly:
+The (inherited-Python) `Makefile` now has a few cargo-backed packaging targets (`make bundle-runner`, `make wheel`); for everything else use cargo directly:
 
 ```bash
 cargo build                  # debug build of the whole workspace
@@ -116,6 +117,24 @@ cargo run -p aiperf-mock-server -- --fast
 # Same mock, additionally serving the KServe OIP v2 gRPC service on :8001
 # (target for `transport.type: grpc`, `grpc://127.0.0.1:8001`). HTTP-only under `--processes N`.
 cargo run -p aiperf-mock-server -- --fast --grpc-port 8001
+```
+
+Package the single interned wheel (maturin backend, `pyproject.toml`). There is
+**one** `aiperf` distribution: maturin compiles the `pyext` pyo3 module into
+`aiperf._native`, packages the `src/aiperf` frontend (`python-source = "src"`),
+and interns the full-fat `aiperf-runner` executable as package data — no separate
+`aiperf-runner`/`aiperf_rust` wheel. Because it carries a native binary the wheel
+is platform + CPython-ABI specific (no longer `py3-none-any`); the runner's crate
+default features (`dynosim` + `parquet`) require the sibling `dynamo-aiperf-native`
+checkout at build time (present via the repo symlink and cloned in the Dockerfile):
+
+```bash
+# Build the full-fat aiperf-runner (lto=fat) and intern it at src/aiperf/_bin/.
+make bundle-runner
+# bundle-runner + `maturin build --release --out dist/` -> one interned wheel.
+make wheel
+# Editable dev install also interns the runner (make install-app runs bundle-runner);
+# AIPERF_RUNNER_BIN / --runner-bin still override to a dynosim or custom runner.
 ```
 
 Run the product:

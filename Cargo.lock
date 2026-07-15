@@ -170,6 +170,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "aiperf-pyext"
+version = "0.0.0"
+dependencies = [
+ "pyo3",
+]
+
+[[package]]
 name = "aiperf-runner"
 version = "0.0.0"
 dependencies = [

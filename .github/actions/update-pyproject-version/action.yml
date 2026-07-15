@@ -38,7 +38,6 @@ runs:
 
         paths = [
             "pyproject.toml",
-            "rust/runner/pyproject.toml",
         ]
         for path in paths:
             text = open(path).read()

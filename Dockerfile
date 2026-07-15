@@ -104,12 +104,13 @@ RUN git init -q /dynamo-aiperf-native \
     && git -C /dynamo-aiperf-native fetch --depth 1 origin "${DYNAMO_AIPERF_NATIVE_REF}" \
     && git -C /dynamo-aiperf-native checkout -q FETCH_HEAD
 
-# Copy the frontend sources plus the Rust workspace the runner wheel compiles.
-# The runner wheel's pyproject.toml is co-located with its crate in rust/runner.
-# src/ is copied to /workspace/src (not flattened) so the real repo layout is
-# preserved: the Rust build `include_bytes!`/`include_str!`s a few Python-tree
-# assets via `rust/aiperf/src/...→ src/aiperf/dataset/generator/assets/...`, and
-# hatchling still auto-detects the src-layout frontend package.
+# Copy the frontend sources plus the Rust workspace the interned wheel compiles.
+# The single wheel's pyproject.toml is the repo-root one (maturin backend,
+# rust/pyext cdylib + interned aiperf-runner). src/ is copied to /workspace/src
+# (not flattened) so the real repo layout is preserved: the Rust build
+# `include_bytes!`/`include_str!`s a few Python-tree assets via
+# `rust/aiperf/src/...→ src/aiperf/dataset/generator/assets/...`, and maturin's
+# `python-source = "src"` packages the src-layout frontend.
 COPY pyproject.toml README.md LICENSE ATTRIBUTIONS.md /workspace/
 COPY src /workspace/src
 COPY Cargo.toml Cargo.lock /workspace/
@@ -118,13 +119,17 @@ COPY Cargo.toml Cargo.lock /workspace/
 COPY .cargo /workspace/.cargo
 COPY rust /workspace/rust
 
-# Build the Python frontend wheel, then compile the native runner wheel with
-# maturin directly (ai-dynamo's model): a direct `maturin build` runs its built-in
-# auditwheel repair to emit a manylinux-tagged wheel with the default feature set
-# (includes dynosim → offline/online Dynamo replay). `uv build` is not used for the
-# runner because it forces `--auditwheel skip`, producing a bare linux_x86_64 tag.
-RUN uv build --wheel --out-dir /dist \
-    && cd /workspace/rust/runner \
+# Build the full-fat native runner (crate default features: dynosim + parquet,
+# lto=fat), intern it as package data, then build the ONE maturin wheel. maturin
+# compiles the rust/pyext `aiperf._native` cdylib, packages `src/aiperf`, includes
+# the interned `aiperf/_bin/aiperf-runner`, and runs its built-in auditwheel repair
+# to emit a manylinux-tagged wheel. `bindings = "bin"` is not used (illegal with
+# `[project.scripts] aiperf`); the runner rides along as package data instead.
+RUN cd /workspace \
+    && cargo build --release -p aiperf-runner \
+    && mkdir -p src/aiperf/_bin \
+    && cp target/release/aiperf-runner src/aiperf/_bin/aiperf-runner \
+    && chmod +x src/aiperf/_bin/aiperf-runner \
     && maturin build --release --out /dist
 
 # Export-only stage: scratch-based so `docker buildx build --target
@@ -223,9 +228,11 @@ RUN mkdir -p /app /app/artifacts /app/.cache \
 COPY pyproject.toml .
 RUN uv sync --active --no-install-project --no-default-groups
 
-# Copy the rest of the application
+# Copy the rest of the application. The single interned wheel carries both the
+# Python frontend and the native aiperf-runner (package data) — no separate
+# aiperf_rust/aiperf-runner wheel.
 COPY --from=wheel-builder /dist /dist
-RUN uv pip install /dist/aiperf-*.whl /dist/aiperf_rust-*.whl \
+RUN uv pip install /dist/aiperf-*.whl \
     && rm -rf /dist /workspace/pyproject.toml
 
 # Remove setuptools as it is not needed for the runtime image

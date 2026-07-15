@@ -8,6 +8,14 @@ only Python authority for locating that runner and reading its linked
 plugins.yaml-shaped catalog; it deliberately has no plugin-registry or
 endpoint-metadata fallback. Distribution-id pinning is not part of the wire
 contract.
+
+The runner is **interned** in the one maturin-built ``aiperf`` wheel as package
+data at ``aiperf/_bin/aiperf-runner`` (there is no separate ``aiperf-runner``
+distribution). Discovery precedence is
+``explicit --runner-bin -> AIPERF_RUNNER_BIN -> interned package data -> PATH``:
+the interned binary is the always-present floor, while the env/explicit overrides
+still select a dynosim or custom-catalog runner. PATH remains a last dev
+fallback for a source checkout that has not bundled the binary.
 """
 
 from __future__ import annotations
@@ -20,7 +28,7 @@ import subprocess
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from importlib import metadata
+from importlib import resources
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -39,8 +47,11 @@ if TYPE_CHECKING:
 
 _CAPABILITIES_TIMEOUT_SECONDS = 30.0
 _RUNNER_ENV = "AIPERF_RUNNER_BIN"
-_RUNNER_COMPANION_DISTRIBUTION = "aiperf-runner"
 _RUNNER_COMMAND = "aiperf-runner"
+# Package data location of the interned runner inside the installed `aiperf`
+# wheel (maturin `include` glob in pyproject.toml + Makefile `bundle-runner`).
+_INTERNED_PACKAGE = "aiperf"
+_INTERNED_SUBDIR = "_bin"
 _DISTRIBUTION_ID_DOMAIN = b"aiperf-runner-distribution-v1\0"
 _DISTRIBUTION_ID_PREFIX = "blake3:"
 _DISTRIBUTION_ID_HEX_LENGTH = 64
@@ -305,7 +316,7 @@ def _communicate_forwarding_signals(
 
 
 def _resolve_runner_binary(explicit: Path | None) -> Path:
-    """Resolve one runner by precedence: explicit → env → companion → PATH."""
+    """Resolve one runner by precedence: explicit → env → interned → PATH."""
     if explicit is not None:
         return _require_runner_binary(Path(explicit), "explicit --runner-bin")
 
@@ -313,73 +324,44 @@ def _resolve_runner_binary(explicit: Path | None) -> Path:
     if configured:
         return _require_runner_binary(Path(configured), _RUNNER_ENV)
 
-    companion = _installed_companion_binary()
-    if companion is not None:
-        return companion
+    interned = _interned_binary()
+    if interned is not None:
+        return interned
 
     discovered = shutil.which(_RUNNER_COMMAND)
     if discovered:
         return _require_runner_binary(Path(discovered), "PATH")
 
     raise FileNotFoundError(
-        "aiperf-runner executable was not found; install the platform companion "
-        f"package {_RUNNER_COMPANION_DISTRIBUTION!r}, pass --runner-bin, set "
+        f"aiperf-runner executable was not found; the installed {_INTERNED_PACKAGE!r} "
+        f"package did not intern {_INTERNED_SUBDIR}/{_RUNNER_COMMAND} (build the wheel "
+        "with `make wheel`/`make bundle-runner`), or pass --runner-bin, set "
         f"{_RUNNER_ENV}, or place {_RUNNER_COMMAND} on PATH for development"
     )
 
 
-def _installed_companion_binary() -> Path | None:
-    """Locate the native script installed by the platform companion wheel.
+def _interned_binary() -> Path | None:
+    """Locate the runner interned as package data in the installed wheel.
 
-    The wheel contains the Rust executable as wheel ``scripts`` data. Discovery
-    reads its installed RECORD through ``importlib.metadata``; it never imports
-    a Python shim and does not use PATH for this precedence tier.
+    Resolves ``aiperf/_bin/aiperf-runner`` through ``importlib.resources`` — the
+    absolute install path, independent of PATH. The ``aiperf`` distribution is
+    always installed unpacked (it carries a compiled extension module and this
+    executable), so ``files()`` yields a concrete filesystem path. Returns
+    ``None`` when the package data is absent (e.g. a source checkout that has not
+    run ``make bundle-runner``), so lower precedence tiers can still resolve.
     """
-    distribution = _installed_companion_distribution()
-    if distribution is None:
-        return None
-    return _companion_binary_from_distribution(distribution)
-
-
-def _installed_companion_distribution() -> metadata.Distribution | None:
-    """Return the selected companion distribution without importing from it."""
     try:
-        return metadata.distribution(_RUNNER_COMPANION_DISTRIBUTION)
-    except metadata.PackageNotFoundError:
+        base = resources.files(_INTERNED_PACKAGE)
+    except (ModuleNotFoundError, TypeError):
         return None
-
-
-def _companion_binary_from_distribution(
-    distribution: metadata.Distribution,
-) -> Path:
-    """Resolve the sole native script recorded by one companion distribution."""
-
-    files = distribution.files
-    if files is None:
-        raise RuntimeError(
-            f"installed companion package {_RUNNER_COMPANION_DISTRIBUTION!r} "
-            "does not expose its installed file RECORD"
-        )
-    filenames = {_RUNNER_COMMAND, f"{_RUNNER_COMMAND}.exe"}
-    entries = sorted(
-        (
-            entry
-            for entry in files
-            if str(entry).replace("\\", "/").rsplit("/", 1)[-1] in filenames
-        ),
-        key=str,
-    )
-    if len(entries) != 1:
-        raise RuntimeError(
-            f"installed companion package {_RUNNER_COMPANION_DISTRIBUTION!r} "
-            f"must contain exactly one native {_RUNNER_COMMAND} executable; "
-            f"found {len(entries)}"
-        )
-    candidate = Path(distribution.locate_file(entries[0]))
-    return _require_runner_binary(
-        candidate,
-        f"installed companion package {_RUNNER_COMPANION_DISTRIBUTION!r}",
-    )
+    candidate = base.joinpath(_INTERNED_SUBDIR, _RUNNER_COMMAND)
+    try:
+        path = Path(str(candidate))
+    except (TypeError, ValueError):
+        return None
+    if path.is_file() and os.access(path, os.X_OK):
+        return path.resolve()
+    return None
 
 
 def _require_runner_binary(candidate: Path, source: str) -> Path:
