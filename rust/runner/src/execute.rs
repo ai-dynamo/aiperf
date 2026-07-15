@@ -1562,13 +1562,66 @@ pub(crate) struct ShardedShared {
     pub(crate) phase_ordinal_bases: HashMap<MetricsPhase, usize>,
 }
 
-/// One sub-cell thread's captured records plus the phase facts the once-per-cell
+/// A sub-cell thread's finished records: kept exactly (retained for the report
+/// ingest + per-record artifacts) or folded into a bounded per-shard accumulator and
+/// dropped (sketch mode). Folding is the cells-48 memory fix — RAM is
+/// O(shards × sketch), flat in record count, instead of O(all records).
+pub(crate) enum ShardRecords {
+    /// Exact mode: every record retained, each stamped with its global two-level
+    /// dispatch ordinal. The report tail ingests them and per-record artifacts read
+    /// them.
+    Retained(Vec<CapturedRecord>),
+    /// Sketch mode: records streamed into this shard's bounded accumulator and
+    /// dropped; only errored records survive for the report's error grouping. Shards
+    /// merge accumulator-to-accumulator (associative), never by concatenating records.
+    Folded {
+        accumulator: MetricsAccumulator,
+        errored: Vec<CapturedRecord>,
+    },
+}
+
+impl Default for ShardRecords {
+    fn default() -> Self {
+        ShardRecords::Retained(Vec::new())
+    }
+}
+
+impl ShardRecords {
+    /// Merge another shard's records into this one: concatenate retained records, or
+    /// merge folded accumulators (append-only) + concatenate their errored records.
+    /// Every shard runs the same storage mode, so the variants always match.
+    fn absorb(&mut self, other: ShardRecords) -> Result<()> {
+        match (self, other) {
+            (ShardRecords::Retained(a), ShardRecords::Retained(b)) => a.extend(b),
+            (
+                ShardRecords::Folded {
+                    accumulator: a,
+                    errored: ea,
+                },
+                ShardRecords::Folded {
+                    accumulator: b,
+                    errored: eb,
+                },
+            ) => {
+                a.merge(&b)
+                    .map_err(|error| anyhow!("merging sharded sketch partitions: {error}"))?;
+                ea.extend(eb);
+            }
+            _ => bail!(
+                "sharded scheduled shards disagree on storage mode (retained vs folded) — \
+                 every shard must run the same metrics storage mode"
+            ),
+        }
+        Ok(())
+    }
+}
+
+/// One sub-cell thread's finished records plus the phase facts the once-per-cell
 /// report tail folds across threads. `Send` so it crosses the worker join.
 #[derive(Default)]
 pub(crate) struct ScheduledShardOutcome {
-    /// This thread's finished records, each stamped with its global two-level
-    /// dispatch ordinal.
-    pub(crate) captured: Vec<CapturedRecord>,
+    /// This thread's records — retained (exact) or folded-and-dropped (sketch).
+    pub(crate) records: ShardRecords,
     /// This thread's `inputs.json` sessions (disjoint conversation ids across
     /// threads, so the union needs only a re-sort by session id).
     pub(crate) input_sessions: Vec<InputSession>,
@@ -1579,14 +1632,15 @@ pub(crate) struct ScheduledShardOutcome {
 }
 
 impl ScheduledShardOutcome {
-    /// Fold another thread's shard into this one: concatenate records and input
-    /// sessions, OR the phase flags. Ordinal ordering is applied once after all
-    /// shards are absorbed.
-    pub(crate) fn absorb(&mut self, other: ScheduledShardOutcome) {
-        self.captured.extend(other.captured);
+    /// Fold another thread's shard into this one: merge records (mode-aware), union
+    /// input sessions, OR the phase flags. Record ordering is applied once after all
+    /// shards are absorbed (retained records only).
+    pub(crate) fn absorb(&mut self, other: ScheduledShardOutcome) -> Result<()> {
+        self.records.absorb(other.records)?;
         self.input_sessions.extend(other.input_sessions);
         self.was_cancelled |= other.was_cancelled;
         self.has_warmup |= other.has_warmup;
+        Ok(())
     }
 }
 
@@ -1744,7 +1798,24 @@ pub(crate) async fn execute_scheduled_shard(
         .flat_map(|report| report.report.turns.iter())
         .map(|turn| (turn.uuid, turn.issued_offset_ns))
         .collect::<HashMap<_, _>>();
-    let captured = capture.finish(&issued_times, drained)?;
+    // Sketch mode folds each record into this shard's own bounded accumulator and
+    // drops it (finish_fold_into → only errored records retained); exact mode keeps
+    // the full record Vec. Shards are merged accumulator-to-accumulator downstream, so
+    // the coordinator never holds O(all records) in sketch mode.
+    let sketch_mode = matches!(
+        shared.metrics_config.storage_mode,
+        aiperf::metrics_core::MetricsStorageMode::Sketch { .. }
+    );
+    let records = if sketch_mode {
+        let mut accumulator = MetricsAccumulator::with_config(shared.metrics_config.clone());
+        let errored = capture.finish_fold_into(&issued_times, drained, &mut accumulator)?;
+        ShardRecords::Folded {
+            accumulator,
+            errored,
+        }
+    } else {
+        ShardRecords::Retained(capture.finish(&issued_times, drained)?)
+    };
     let input_sessions = capture.take_input_sessions();
     let was_cancelled = phased.phases.iter().any(|phase| phase.was_cancelled);
     let has_warmup = phased
@@ -1752,7 +1823,7 @@ pub(crate) async fn execute_scheduled_shard(
         .iter()
         .any(|report| report.kind == PhaseKind::Warmup);
     Ok(ScheduledShardOutcome {
-        captured,
+        records,
         input_sessions,
         was_cancelled,
         has_warmup,
@@ -1867,17 +1938,17 @@ async fn execute_native_inner(
     // `workers > 1`). So route by shardability rather than fail closed: an
     // unshardable default-workers run must not regress to an error.
     // Sketch storage mode streams each record into a bounded accumulator and drops
-    // it at finalize (`finish_fold_into`). The thread-per-core sharded path does not
-    // yet carry per-shard sketch partitions, so a sketch run stays on the
-    // single-thread finalize until per-shard fold-and-drop lands; excluding it from
-    // `shardable` is what routes it there.
+    // it. The thread-per-core sharded path folds per shard — each sub-cell owns its
+    // own sketch accumulator, merged accumulator-to-accumulator at the join — so a
+    // sketch run shards exactly like an exact run and coordinator memory stays
+    // O(shards × sketch) rather than O(records). `sketch_mode` still gates the
+    // finalize (fold vs ingest) and the cellular record-shipping guard below.
     let sketch_mode = matches!(
         metrics_config.storage_mode,
         aiperf::metrics_core::MetricsStorageMode::Sketch { .. }
     );
     let shardable = request.workers > 1
         && accuracy.is_none()
-        && !sketch_mode
         && request.phases.iter().all(|phase| {
             matches!(
                 phase,
@@ -2179,15 +2250,31 @@ async fn execute_native_inner(
             clock.clone(),
         )
         .await?;
-        // Sharded is exact-only for now (`sketch_mode` is excluded from `shardable`):
-        // ingest the merged shard records into the report accumulator. Per-shard
-        // fold-and-drop for sketch mode is the follow-up that makes cells-48 memory
-        // O(shards × sketch) instead of O(records).
-        for record in &outcome.captured {
-            accumulator.process_record(&record.ingest);
-        }
+        // Exact shards return retained records to ingest into the report accumulator;
+        // sketch shards already folded into per-shard accumulators that merge_shards
+        // combined, so merge that into the report accumulator and keep only the errored
+        // records for error grouping. Peak coordinator memory is bounded by the mode:
+        // O(records) exact (inherent — per-record artifacts need them), O(shards ×
+        // sketch) sketch.
+        let captured = match outcome.records {
+            ShardRecords::Retained(records) => {
+                for record in &records {
+                    accumulator.process_record(&record.ingest);
+                }
+                records
+            }
+            ShardRecords::Folded {
+                accumulator: shard_accumulator,
+                errored,
+            } => {
+                accumulator.merge(&shard_accumulator).map_err(|error| {
+                    anyhow!("merging sharded sketch partition into the report accumulator: {error}")
+                })?;
+                errored
+            }
+        };
         (
-            outcome.captured,
+            captured,
             outcome.input_sessions,
             outcome.was_cancelled,
             outcome.has_warmup,

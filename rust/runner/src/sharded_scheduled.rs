@@ -90,7 +90,9 @@ use aiperf::phase_runtime::ScheduledPhaseSidecar;
 use anyhow::{Context, Result, anyhow, bail};
 
 use crate::cellular_controller::owned_positions;
-use crate::execute::{ScheduledShardOutcome, ShardedShared, execute_scheduled_shard, metrics_phase};
+use crate::execute::{
+    ScheduledShardOutcome, ShardRecords, ShardedShared, execute_scheduled_shard, metrics_phase,
+};
 use crate::protocol::PhaseSpec;
 
 /// This thread's nested two-level dataset/ordinal partition within the run.
@@ -133,7 +135,11 @@ pub(crate) fn two_level_partition(
 /// phases are returned unchanged: they are trace-driven and rejected upstream for
 /// `workers > 1` (see [`crate::execute`]'s sharded branch), so they never reach a
 /// worker.
-pub(crate) fn slice_phase_for_thread(phase: &PhaseSpec, thread_id: usize, workers: u32) -> PhaseSpec {
+pub(crate) fn slice_phase_for_thread(
+    phase: &PhaseSpec,
+    thread_id: usize,
+    workers: u32,
+) -> PhaseSpec {
     let t = thread_id as u32;
     let owned_budget = |value: u64| owned_positions(value, t, workers);
     // Admission caps split by the same round-robin share, floored to 1 so a cap
@@ -210,7 +216,9 @@ fn slice_common(
 /// sliced `requests` would understate them, so [`crate::execute`]'s sharded branch
 /// prefers the env map when present and only falls back to this for a lone
 /// process.
-pub(crate) fn compute_phase_ordinal_bases(phases: &[PhaseSpec]) -> Result<std::collections::HashMap<Phase, usize>> {
+pub(crate) fn compute_phase_ordinal_bases(
+    phases: &[PhaseSpec],
+) -> Result<std::collections::HashMap<Phase, usize>> {
     let mut bases = std::collections::HashMap::new();
     let mut base = 0usize;
     for phase in phases {
@@ -352,19 +360,31 @@ fn run_worker_thread(shared: &ShardedShared, worker_id: usize) -> Result<Schedul
 /// makes the per-record store placement and the deterministic-per-topology row
 /// order independent of the (racy) thread completion order, and the input-session
 /// list is re-sorted by session id so `inputs.json` is stable across runs.
-fn merge_shards(shards: Vec<Option<Result<ScheduledShardOutcome>>>) -> Result<ScheduledShardOutcome> {
-    let mut combined = ScheduledShardOutcome::default();
-    for (worker_id, shard) in shards.into_iter().enumerate() {
+fn merge_shards(
+    shards: Vec<Option<Result<ScheduledShardOutcome>>>,
+) -> Result<ScheduledShardOutcome> {
+    // Take the first delivered shard as the merge base: a Folded (sketch) shard must
+    // start from a real per-shard accumulator, not the empty `Retained` default that
+    // would then refuse to merge with folded siblings.
+    let mut shards = shards.into_iter().enumerate();
+    let (first_id, first) = shards
+        .next()
+        .ok_or_else(|| anyhow!("sharded scheduled run produced no shards to merge"))?;
+    let mut combined =
+        first.ok_or_else(|| anyhow!("sharded scheduled worker {first_id} produced no shard"))??;
+    for (worker_id, shard) in shards {
         let shard = shard
             .ok_or_else(|| anyhow!("sharded scheduled worker {worker_id} produced no shard"))??;
-        combined.absorb(shard);
+        combined.absorb(shard)?;
     }
-    // Order by the dense global dispatch ordinal every issuer stamped so the
-    // combined shard tiles the store's `insert_record_at` slots without collision
-    // and the row order is topology-deterministic (not thread-race-dependent).
-    combined
-        .captured
-        .sort_by_key(|record| record.ingest.request_index);
+    // Order retained records by the dense global dispatch ordinal every issuer stamped
+    // so the combined shard tiles the store's `insert_record_at` slots without
+    // collision and the row order is topology-deterministic (not thread-race
+    // dependent). Folded shards keep only errored records — order is irrelevant to
+    // error grouping — so there is nothing to sort there.
+    if let ShardRecords::Retained(records) = &mut combined.records {
+        records.sort_by_key(|record| record.ingest.request_index);
+    }
     combined
         .input_sessions
         .sort_by(|a, b| a.session_id.cmp(&b.session_id));
@@ -388,7 +408,8 @@ mod tests {
                 for cell_id in 0..cells {
                     for thread_id in 0..workers {
                         let partition =
-                            two_level_partition(cell_id, cells, thread_id as usize, workers).unwrap();
+                            two_level_partition(cell_id, cells, thread_id as usize, workers)
+                                .unwrap();
                         // Nests: this thread's residue belongs to cell `cell_id`.
                         assert_eq!(
                             partition.cell_id() % cells,
@@ -466,7 +487,12 @@ mod tests {
         assert_eq!(sliced.concurrency(), Some(2));
         // The four threads' request shares sum back to the phase budget.
         let total: u64 = (0..4)
-            .map(|t| slice_phase_for_thread(&phase, t, 4).common().requests.unwrap())
+            .map(|t| {
+                slice_phase_for_thread(&phase, t, 4)
+                    .common()
+                    .requests
+                    .unwrap()
+            })
             .sum();
         assert_eq!(total, 100);
     }
