@@ -64,8 +64,8 @@ pub use shard::{
 };
 pub use sketch::TDigest;
 pub use transport::{
-    CellAck, CellClient, CellMessage, CellRegister, CellTransportError, ControllerTransport,
-    HANDLER_HEARTBEAT, HANDLER_PARTITION, HANDLER_REGISTER,
+    CellAck, CellClient, CellMessage, CellPartitionShip, CellRegister, CellTransportError,
+    ControllerTransport, HANDLER_HEARTBEAT, HANDLER_PARTITION, HANDLER_REGISTER,
 };
 #[cfg(feature = "velo")]
 pub use transport::velo_transport::{SpecFor, VeloCellClient, VeloControllerTransport};

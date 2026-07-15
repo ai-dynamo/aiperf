@@ -35,6 +35,10 @@ dynamo-full = [
     "dynamo-profile",
 ]
 dynamo-parity = ["dynamo-full", "aiperf/dynamo-parity"]
+# Cellular cross-host cell transport over ai-dynamo/velo. Gates the velo
+# controller/cell path; without it `cells=1` is byte-unchanged and `cells>1`
+# fails closed. Not in the default build (velo is experimental).
+velo = ["aiperf/velo"]
 
 [dependencies]
 # Declared directly (not via workspace inheritance) so the runner can opt out of

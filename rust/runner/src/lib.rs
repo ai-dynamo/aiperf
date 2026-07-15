@@ -8,7 +8,12 @@
 //! dataset construction, phase scheduling, HTTP dispatch, measurement, and the
 //! authoritative native-v2 report.
 pub mod application;
+pub mod cell_launcher;
 pub mod cellular_cell;
+// The controller orchestration (cell launch + velo transport + merge) is only
+// reachable with the `velo` feature; `owned_positions` (needed by the non-velo
+// sharded runtime) lives in `cell_launcher` instead.
+#[cfg(feature = "velo")]
 pub mod cellular_controller;
 pub mod control_plane_http;
 pub mod coordinator;

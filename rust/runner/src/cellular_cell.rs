@@ -1,60 +1,47 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Cell-mode support for the multi-process cellular runtime (Phase 2).
+//! Cell-mode support for the multi-cell cellular runtime.
 //!
-//! A *cell* is one `aiperf-runner --cell` child of the controller. It runs the
-//! ordinary online scheduled execution over its budget slice, but with the
-//! `CellularAutonomousIssuer` assigning dense global dispatch ordinals from its
-//! `(cell_id, cell_count)` partition, and it ships its captured records to the
-//! controller over the [`transport`](aiperf::cellular::transport) seam instead of
-//! writing a report. The controller re-ingests every cell's records in global
-//! ordinal order for the single authoritative `native-v2.json`.
+//! A *cell* is one `aiperf-runner --cell` process (a local subprocess or a k8s
+//! pod). It runs the ordinary online scheduled execution over its budget slice,
+//! but with the `CellularAutonomousIssuer` assigning dense global dispatch
+//! ordinals from its `(cell_id, cell_count)` partition, and it ships its captured
+//! records to the controller over the velo [`transport`](aiperf::cellular::transport)
+//! seam instead of writing a report. The controller re-ingests every cell's
+//! records in global ordinal order for the single authoritative `native-v2.json`.
 //!
-//! Cell behaviour is injected through four environment variables so the ordinary
-//! execute path is reused unchanged: [`CELL_ID_ENV`] / [`CELL_COUNT_ENV`] select the
-//! issuer's partition (read by `RunCapture`), [`CELL_CONTROLLER_ADDR_ENV`] points the
-//! records shipper at the controller, and [`CELL_PHASE_ORDINAL_BASES_ENV`] carries
-//! each phase's global ordinal base so the issuer stamps single-cell-equivalent
-//! absolute slots. They are set once, before any runtime exists, from the
-//! [`CellLaunchSpec`] the controller pipes in.
+//! Cell behaviour is injected through environment variables so the ordinary
+//! execute path is reused unchanged: [`CELL_ID_ENV`](aiperf::cellular::partition::CELL_ID_ENV)
+//! / [`CELL_COUNT_ENV`](aiperf::cellular::partition::CELL_COUNT_ENV) select the
+//! issuer's partition, [`CELL_CONTROLLER_ADDR_ENV`] carries the controller's
+//! bootstrap coordinate, and [`CELL_PHASE_ORDINAL_BASES_ENV`] carries each phase's
+//! global ordinal base. The launcher sets them on the child; the cell fetches its
+//! sliced execute envelope over velo (there is no stdin spec pipe).
+//!
+//! velo runtimes: the cell touches velo twice — once to fetch its envelope at
+//! startup, once to ship its records at the end — and each uses its **own**
+//! short-lived runtime (fetch on the caller's runtime; ship on a dedicated thread),
+//! so a velo instance is never shared across the cell's thread-per-core execute
+//! runtime. Because the ship uses a fresh velo instance, the partition ship carries
+//! that instance's `PeerInfo` (see `aiperf::cellular::CellPartitionShip`).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use aiperf::cellular::partition::CellPartition;
-use aiperf::cellular::{
-    CellClient, CellMessage, CellularAutonomousIssuer, HeartbeatAccumulator, HeartbeatCounters,
-    HeartbeatSaturation, IssuanceAuthority, MetricsHeartbeat, ModuloCellPartition,
-    RecordsShardPartition, TcpCellClient,
-};
-use aiperf::metrics_core::{Phase, RecordIngest};
-use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
+use aiperf::cellular::{CellularAutonomousIssuer, IssuanceAuthority, ModuloCellPartition};
+use aiperf::metrics_core::Phase;
+use anyhow::Result;
 
-/// Env var carrying the controller's `host:port` transport address (the cell id and
-/// count live in [`aiperf::cellular::partition`]'s env vars).
+/// Env var carrying the controller's bootstrap coordinate (`file:PATH` locally,
+/// `tcp://HOST:PORT` in k8s) — where a cell fetches the controller's `PeerInfo`.
+/// The cell id and count live in [`aiperf::cellular::partition`]'s env vars.
 pub const CELL_CONTROLLER_ADDR_ENV: &str = "AIPERF_CELL_CONTROLLER_ADDR";
 
 /// Env var carrying the per-phase global ordinal bases as JSON (`{name: base}`), so a
 /// cell's issuer recovers each turn's single-cell absolute slot from its phase-local
 /// slot (the cell's sampler restarts each phase; see [`phase_ordinal_bases_from_env`]).
 pub const CELL_PHASE_ORDINAL_BASES_ENV: &str = "AIPERF_CELL_PHASE_ORDINAL_BASES";
-
-/// The launch descriptor the controller serializes to each cell child's stdin.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CellLaunchSpec {
-    /// This cell's zero-based identifier.
-    pub cell_id: u32,
-    /// Total number of cells the run is partitioned across.
-    pub cell_count: u32,
-    /// The controller's transport address the cell connects back to.
-    pub controller_addr: String,
-    /// Each phase's global ordinal base (`phase name -> turns dispatched by prior
-    /// phases`), so the cell stamps single-cell-equivalent absolute slots.
-    pub phase_ordinal_bases: BTreeMap<String, u64>,
-    /// The full protocol-v2 `execute` envelope for this cell's budget slice.
-    pub envelope: serde_json::Value,
-}
 
 /// The per-phase global ordinal bases for this cell, keyed by metric phase — the
 /// turns the run's prior phases dispatched globally — or empty when the process is
@@ -65,7 +52,8 @@ pub fn phase_ordinal_bases_from_env() -> HashMap<Phase, usize> {
     let Ok(raw) = std::env::var(CELL_PHASE_ORDINAL_BASES_ENV) else {
         return HashMap::new();
     };
-    let by_name: BTreeMap<String, u64> = serde_json::from_str(&raw).unwrap_or_default();
+    let by_name: std::collections::BTreeMap<String, u64> =
+        serde_json::from_str(&raw).unwrap_or_default();
     by_name
         .into_iter()
         .filter_map(|(name, base)| phase_from_name(&name).map(|phase| (phase, base as usize)))
@@ -95,40 +83,84 @@ pub fn issuance_authority_from_env() -> std::rc::Rc<dyn IssuanceAuthority> {
 }
 
 /// The autonomous issuer for an explicitly supplied partition, for a caller that
-/// derives a per-worker partition itself rather than from the process
-/// environment. The process-global `AIPERF_CELL_ID`/`_COUNT` name one partition
-/// per process; a future single-process thread-per-core scheduled run whose `W`
-/// sub-cell threads each own a distinct `(cell_id, cell_count)` slice needs a
-/// per-thread issuer the env vars cannot express, so it constructs one here from
-/// the thread's partition. [`issuance_authority_from_env`] stays the default for
-/// the ordinary single-process and multi-process cell paths, so their output is
-/// byte-unchanged. Always the autonomous issuer (never [`DirectIssuanceAuthority`]):
-/// a caller supplies a partition only when it wants global-ordinal stamping.
+/// derives a per-worker partition itself rather than from the process environment.
+/// Always the autonomous issuer (never [`DirectIssuanceAuthority`]): a caller
+/// supplies a partition only when it wants global-ordinal stamping.
 ///
 /// [`DirectIssuanceAuthority`]: aiperf::cellular::DirectIssuanceAuthority
-pub fn issuance_authority_for(
-    partition: ModuloCellPartition,
-) -> std::rc::Rc<dyn IssuanceAuthority> {
+pub fn issuance_authority_for(partition: ModuloCellPartition) -> std::rc::Rc<dyn IssuanceAuthority> {
     std::rc::Rc::new(CellularAutonomousIssuer::new(partition))
 }
 
-/// Ships a cell's final records-shard partition to the controller over the
-/// transport, when this process is a cell (the controller address is set).
-pub struct CellRecordsShipper {
-    cell_id: u32,
-    controller_addr: String,
+// -- velo cell transport (fetch spec + ship records) ------------------------------
+
+/// The velo bind for this cell, chosen from the controller coordinate scheme: a
+/// `tcp://` coordinate is k8s (bind an ephemeral routable TCP port); anything else
+/// is a co-located launcher (UDS on unix, loopback elsewhere). `role` disambiguates
+/// the cell's fetch vs ship velo instances so their UDS paths do not collide.
+#[cfg(feature = "velo")]
+fn cell_bind(coordinate: &str, role: &str) -> aiperf::cellular::transport::connect::BindSpec {
+    use aiperf::cellular::transport::connect::BindSpec;
+    if coordinate.starts_with("tcp://") {
+        return BindSpec::TcpBind("0.0.0.0:0".parse().expect("valid ephemeral bind addr"));
+    }
+    #[cfg(unix)]
+    {
+        let dir = std::env::temp_dir().join(format!("aiperf-velo-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        BindSpec::UdsPath(dir.join(format!("cell-{role}.sock")))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = role;
+        BindSpec::TcpLoopback
+    }
 }
 
+/// Fetch this cell's sliced execute envelope (protocol-v2 JSON bytes) from the
+/// controller over velo, replacing the stdin spec pipe. Reads the controller
+/// coordinate + cell id from the env the launcher set. Runs on the caller's
+/// runtime; the velo instance is dropped on return.
+#[cfg(feature = "velo")]
+pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
+    use aiperf::cellular::VeloCellClient;
+    use aiperf::cellular::transport::connect::{
+        BootstrapSource, build_velo, resolve_controller_peer,
+    };
+    use anyhow::Context;
+
+    let coordinate =
+        std::env::var(CELL_CONTROLLER_ADDR_ENV).context("cell has no AIPERF_CELL_CONTROLLER_ADDR")?;
+    let cell_id = ModuloCellPartition::from_env()
+        .context("cell has no partition env (AIPERF_CELL_ID/_COUNT)")?
+        .cell_id();
+    let velo = build_velo(cell_bind(&coordinate, "fetch")).await?;
+    let source = BootstrapSource::parse(&coordinate)?;
+    let controller = resolve_controller_peer(&source).await?;
+    let client = VeloCellClient::connect(velo, controller)
+        .map_err(|error| anyhow::anyhow!("cell {cell_id} connect: {error}"))?;
+    client
+        .register(cell_id)
+        .await
+        .map_err(|error| anyhow::anyhow!("cell {cell_id} register: {error}"))
+}
+
+/// Ships a cell's final records-shard partition + heartbeat to the controller over
+/// velo, when this process is a cell (the controller coordinate is set).
+#[cfg(feature = "velo")]
+pub struct CellRecordsShipper {
+    cell_id: u32,
+    coordinate: String,
+}
+
+#[cfg(feature = "velo")]
 impl CellRecordsShipper {
-    /// Builds a shipper when the controller address and cell partition env vars are
-    /// set, else `None` (the ordinary single-process path).
+    /// Builds a shipper when the controller coordinate and cell partition env vars
+    /// are set, else `None` (the ordinary single-process path).
     pub fn from_env() -> Option<Self> {
-        let controller_addr = std::env::var(CELL_CONTROLLER_ADDR_ENV).ok()?;
+        let coordinate = std::env::var(CELL_CONTROLLER_ADDR_ENV).ok()?;
         let cell_id = ModuloCellPartition::from_env()?.cell_id();
-        Some(Self {
-            cell_id,
-            controller_addr,
-        })
+        Some(Self { cell_id, coordinate })
     }
 
     /// The cell's identifier.
@@ -136,36 +168,28 @@ impl CellRecordsShipper {
         self.cell_id
     }
 
-    /// Connects to the controller and ships this cell's final heartbeat then its
-    /// records-shard partition, and closes. Blocking, called once after the run
-    /// completes — never on the hot path. The controller merges the cells'
-    /// heartbeats (counters by sum, sketches by t-digest merge) into one run-wide
-    /// view and their partitions into the single report.
-    pub fn ship(
-        &self,
-        partition: RecordsShardPartition,
-        heartbeat: MetricsHeartbeat,
-    ) -> Result<()> {
-        let mut client = TcpCellClient::connect(&self.controller_addr)
-            .with_context(|| format!("cell {} connecting to controller", self.cell_id))?;
-        client
-            .send(&CellMessage::Heartbeat {
-                cell_id: self.cell_id,
-                heartbeat: Box::new(heartbeat),
-            })
-            .context("cell shipping heartbeat")?;
-        client
-            .send(&CellMessage::Partition(partition))
-            .context("cell shipping partition")?;
-        Ok(())
-    }
-
     /// Builds this cell's terminal heartbeat from its final records and ships the
-    /// records-shard partition + heartbeat to the controller. Shared by the scheduled and
-    /// graph cell paths, which differ only in how they derive `records` and the run-span
-    /// `epoch_ns`. One end-of-run aggregate (not a per-tick snapshot); saturation is zero
-    /// (the run has drained).
-    pub fn ship_records(&self, records: Vec<RecordIngest>, epoch_ns: i64) -> Result<()> {
+    /// records-shard partition + heartbeat to the controller. Shared by the
+    /// scheduled and graph cell paths, which differ only in how they derive
+    /// `records` and the run-span `epoch_ns`. One end-of-run aggregate (not a
+    /// per-tick snapshot); saturation is zero (the run has drained).
+    ///
+    /// Blocking by design (called once, off the hot path). The velo async work runs
+    /// on a dedicated thread + runtime so it never touches the caller's
+    /// (possibly `current_thread`) execute runtime.
+    pub fn ship_records(
+        &self,
+        records: Vec<aiperf::metrics_core::RecordIngest>,
+        epoch_ns: i64,
+    ) -> Result<()> {
+        use aiperf::cellular::transport::connect::{
+            BootstrapSource, build_velo, resolve_controller_peer,
+        };
+        use aiperf::cellular::{
+            CellClient, CellMessage, HeartbeatAccumulator, HeartbeatCounters, HeartbeatSaturation,
+            RecordsShardPartition, VeloCellClient,
+        };
+
         let mut heartbeat = HeartbeatAccumulator::new();
         let mut completed = 0_u64;
         let mut errored = 0_u64;
@@ -183,9 +207,38 @@ impl CellRecordsShipper {
             errored,
         };
         let heartbeat = heartbeat.snapshot(epoch_ns, counters, HeartbeatSaturation::default());
-        self.ship(
-            RecordsShardPartition::new(self.cell_id(), records),
-            heartbeat,
-        )
+        let partition = RecordsShardPartition::new(self.cell_id, records);
+        let coordinate = self.coordinate.clone();
+        let cell_id = self.cell_id;
+
+        // A dedicated thread + multi-thread runtime for the velo ship: velo builds
+        // and drives its own tasks here, isolated from the execute runtime.
+        std::thread::spawn(move || -> Result<()> {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()?;
+            runtime.block_on(async move {
+                let velo = build_velo(cell_bind(&coordinate, "ship")).await?;
+                let source = BootstrapSource::parse(&coordinate)?;
+                let controller = resolve_controller_peer(&source).await?;
+                let mut client = VeloCellClient::connect(velo, controller)
+                    .map_err(|error| anyhow::anyhow!("cell {cell_id} ship connect: {error}"))?;
+                client
+                    .send(&CellMessage::Heartbeat {
+                        cell_id,
+                        heartbeat: Box::new(heartbeat),
+                    })
+                    .await
+                    .map_err(|error| anyhow::anyhow!("cell {cell_id} ship heartbeat: {error}"))?;
+                client
+                    .send(&CellMessage::Partition(partition))
+                    .await
+                    .map_err(|error| anyhow::anyhow!("cell {cell_id} ship partition: {error}"))?;
+                Ok(())
+            })
+        })
+        .join()
+        .map_err(|_| anyhow::anyhow!("cell {} ship thread panicked", self.cell_id))?
     }
 }

@@ -26,8 +26,8 @@ use tokio::sync::mpsc;
 use velo::{Context, Handler, PeerInfo, Velo};
 
 use super::{
-    CellAck, CellClient, CellMessage, CellRegister, CellTransportError, ControllerTransport,
-    HANDLER_HEARTBEAT, HANDLER_PARTITION, HANDLER_REGISTER,
+    CellAck, CellClient, CellMessage, CellPartitionShip, CellRegister, CellTransportError,
+    ControllerTransport, HANDLER_HEARTBEAT, HANDLER_PARTITION, HANDLER_REGISTER,
 };
 
 /// Supplies each cell's serialized (`rmp`) `CellLaunchSpec` by `cell_id`, or
@@ -114,11 +114,16 @@ impl VeloControllerTransport {
             Handler::unary_handler_async(HANDLER_PARTITION, move |ctx: Context| {
                 let sender = partition_sender.clone();
                 async move {
-                    // The cell serializes the whole `CellMessage` (Partition variant);
-                    // decode uniformly with the heartbeat path.
-                    let message: CellMessage = rmp_serde::from_slice(&ctx.payload)
-                        .map_err(|error| anyhow::anyhow!("decode partition: {error}"))?;
-                    let _ = sender.send(Ok(message)).await;
+                    let ship: CellPartitionShip = rmp_serde::from_slice(&ctx.payload)
+                        .map_err(|error| anyhow::anyhow!("decode partition ship: {error}"))?;
+                    // The cell ships from a fresh velo instance the controller has
+                    // not seen; register it so the ack routes back.
+                    let peer: PeerInfo = rmp_serde::from_slice(&ship.cell_peer)
+                        .map_err(|error| anyhow::anyhow!("decode ship peer: {error}"))?;
+                    ctx.msg
+                        .register_peer(peer)
+                        .map_err(|error| anyhow::anyhow!("register_peer shipper: {error}"))?;
+                    let _ = sender.send(Ok(CellMessage::Partition(ship.partition))).await;
                     let ack = rmp_serde::to_vec(&CellAck { ok: true })
                         .map_err(|error| anyhow::anyhow!("encode ack: {error}"))?;
                     Ok(Some(Bytes::from(ack)))
@@ -183,9 +188,10 @@ impl VeloCellClient {
 #[async_trait::async_trait]
 impl CellClient for VeloCellClient {
     async fn send(&mut self, message: &CellMessage) -> Result<(), CellTransportError> {
-        let body = rmp_serde::to_vec(message).map_err(encode)?;
         match message {
             CellMessage::Heartbeat { .. } => {
+                // Fire-and-forget: no ack, so the controller needs no return route.
+                let body = rmp_serde::to_vec(message).map_err(encode)?;
                 self.velo
                     .am_send(HANDLER_HEARTBEAT)
                     .map_err(io)?
@@ -195,7 +201,13 @@ impl CellClient for VeloCellClient {
                     .await
                     .map_err(io)?;
             }
-            CellMessage::Partition(_) => {
+            CellMessage::Partition(partition) => {
+                // Ship carries this instance's PeerInfo so the controller can ack back.
+                let ship = CellPartitionShip {
+                    cell_peer: rmp_serde::to_vec(&self.velo.peer_info()).map_err(encode)?,
+                    partition: partition.clone(),
+                };
+                let body = rmp_serde::to_vec(&ship).map_err(encode)?;
                 let reply: Bytes = self
                     .velo
                     .unary(HANDLER_PARTITION)
@@ -280,5 +292,36 @@ mod tests {
             }
         }
         assert_eq!((heartbeats, partitions), (1, 1));
+    }
+
+    /// A cell ships its partition from a DIFFERENT velo instance than the one it
+    /// registered with (mirroring the real cell: spec-fetch instance is gone by
+    /// ship time). The partition ship carries its peer, so the controller can ack
+    /// the fresh instance even though it only saw the register instance.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn ship_from_a_fresh_instance_is_acked() {
+        let controller_velo = build_velo(BindSpec::TcpLoopback).await.expect("controller velo");
+        let controller_peer = controller_velo.peer_info();
+        let spec_for: SpecFor = Arc::new(|_| Some(vec![1_u8]));
+        let mut controller =
+            VeloControllerTransport::bind_controller(controller_velo, spec_for).expect("bind");
+
+        // Register with instance A.
+        let cell_a = build_velo(BindSpec::TcpLoopback).await.expect("cell A");
+        let client_a = VeloCellClient::connect(cell_a, controller_peer.clone()).expect("connect A");
+        client_a.register(0).await.expect("register");
+
+        // Ship from a fresh instance B — the controller never saw B via register.
+        let cell_b = build_velo(BindSpec::TcpLoopback).await.expect("cell B");
+        let mut client_b = VeloCellClient::connect(cell_b, controller_peer).expect("connect B");
+        client_b
+            .send(&CellMessage::Partition(sample_partition(0)))
+            .await
+            .expect("ship from fresh instance");
+
+        match controller.recv().await.expect("recv").expect("some") {
+            CellMessage::Partition(partition) => assert_eq!(partition.len(), 1),
+            other => panic!("expected partition, got {other:?}"),
+        }
     }
 }
