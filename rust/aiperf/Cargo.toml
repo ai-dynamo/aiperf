@@ -9,7 +9,7 @@ license.workspace = true
 description = "Rust-native AIPerf load-generation runtime used by the subprocess runner."
 
 [features]
-default = ["parquet"]
+default = ["parquet", "velo"]
 # Server-metrics Parquet export sink + public-dataset `.parquet` reader. Links
 # `arrow` + `parquet` (~2.6 MiB of `.text`, plus zstd/snap). A lite/online-only
 # runner (e.g. a lightweight nightly wheel) builds without it: the exporter is
@@ -39,8 +39,9 @@ dynamo-full = [
 dynamo-parity = ["dynamo-full"]
 # Cellular cross-host cell transport over the official ai-dynamo/velo messaging
 # framework. Gates all velo-dependent code (the velo CellClient/ControllerTransport
-# impls + the cell connection seam). Without it, `cells=1` is byte-unchanged and the
-# runner fails closed on `cells>1`.
+# impls + the cell connection seam). In the default build; a lean
+# `--no-default-features` build drops it, keeps `cells=1` byte-unchanged, and fails
+# closed on `cells>1`.
 velo = ["dep:velo"]
 
 [lib]

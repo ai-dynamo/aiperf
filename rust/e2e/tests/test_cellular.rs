@@ -5,12 +5,19 @@
 //! ordinary Python frontend via `--cells N`.
 //!
 //! `--cells N` sets `runtime.cells` in the projected protocol-v2 envelope; the
-//! launched `aiperf-runner` becomes a controller that spawns `N`
-//! `aiperf-runner --cell` subprocesses over a `(cell_id, cell_count)` partition of
-//! the request budget and merges their records into one report. These tests prove
-//! the whole path works from `aiperf profile` — not just the Rust internals — and
-//! that an `N`-cell run reproduces the single-cell run's dataset-deterministic
-//! metrics byte-for-byte through the full presentation pipeline.
+//! launched `aiperf-runner` becomes a controller that (via the `LocalLauncher`)
+//! spawns `N` `aiperf-runner --cell` subprocesses over a `(cell_id, cell_count)`
+//! partition of the request budget. Cells fetch their sliced envelope over the
+//! **velo** transport, await the controller's synchronized START, run their slice,
+//! ship their records over velo, and the controller merges them into one report.
+//! These tests prove the whole path works from `aiperf profile` — not just the
+//! Rust internals — and that an `N`-cell run reproduces the single-cell run's
+//! dataset-deterministic metrics byte-for-byte through the full presentation
+//! pipeline.
+//!
+//! Requires the launched `aiperf-runner` (`AIPERF_RUNNER_BIN`) to include the
+//! `velo` cell transport — it is in the default runner build, so a default
+//! `cargo test` run drives it; a lean `--no-default-features` runner fails closed.
 
 mod common;
 use common::*;
