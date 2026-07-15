@@ -134,7 +134,8 @@ fn list_templates(category: Option<&str>) {
     for (cat, items) in cats {
         println!("\n{cat}");
         for t in items {
-            println!("  {:<28} {}", t.name, t.description);
+            println!("  {:<28} {}", t.name, t.title);
+            println!("  {:<28} {}", "", t.description);
         }
     }
     println!();
