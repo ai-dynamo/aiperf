@@ -30,7 +30,7 @@ use crate::runner_protocol::cell_launcher::owned_positions;
 // needs the `velo` feature; the validation, budget-slicing, merge, and report
 // assembly below are plain envelope/metric logic reused by the non-velo build.
 #[cfg(feature = "velo")]
-use crate::cellular::transport::connect::{BindSpec, BootstrapSource, build_velo, serve_bootstrap};
+use crate::cellular::transport::connect::{BindSpec, build_velo};
 #[cfg(feature = "velo")]
 use crate::cellular::{CellMessage, ControllerTransport, SpecFor, VeloControllerTransport};
 #[cfg(feature = "velo")]
@@ -302,12 +302,11 @@ pub fn run_cellular(
             None
         };
 
-        // Build the controller's velo transport and publish its PeerInfo so cells
-        // reach it from the one operator-hardcoded coordinate (zero discovery).
+        // Bind the controller's velo transport at a known endpoint cells `connect`
+        // to (zero discovery — velo's `_hello` handshake resolves identity on dial).
         // `is_k8s` is resolved once above and moved in here.
-        let velo = build_velo(controller_velo_bind(is_k8s, &temp_root))
-            .await
-            .context("building controller velo")?;
+        let (bind, cell_coordinate) = controller_bind_and_endpoint(is_k8s, &temp_root)?;
+        let velo = build_velo(bind).await.context("building controller velo")?;
         // The run-wide synchronized-START event: cells await it after registering,
         // and the controller triggers it once every cell has registered so they all
         // begin dispatching together. Created before `velo` moves into the transport;
@@ -318,10 +317,6 @@ pub fn run_cellular(
             .new_event()
             .context("creating cellular start event")?;
         let start_handle = start_event.handle();
-        let (serve_source, cell_coordinate) = controller_bootstrap(is_k8s, &temp_root)?;
-        let _bootstrap = serve_bootstrap(&serve_source, &velo.peer_info())
-            .await
-            .context("serving controller bootstrap PeerInfo")?;
 
         // Each phase's global dispatch base (turns dispatched by prior phases): a
         // cell's sampler restarts each phase, so the cell adds this to its phase-local
@@ -637,43 +632,34 @@ fn controller_artifact_bind() -> std::net::SocketAddr {
         .unwrap_or_else(|| std::net::SocketAddr::from(([0, 0, 0, 0], DEFAULT_ARTIFACT_PORT)))
 }
 
-/// The controller's velo messaging bind. k8s binds an ephemeral routable TCP port
-/// (its address is advertised to cells via the bootstrap `PeerInfo`); a co-located
-/// launcher binds UDS on unix (a lower-overhead local socket) or loopback elsewhere.
+/// The controller's velo bind plus the `tcp://HOST:PORT` endpoint string cells
+/// `velo.connect` to. The coordinate stays `tcp://` everywhere so the HTTP artifact
+/// plane (which derives its authority by swapping the port on this coordinate) keeps
+/// working — hence local uses a known loopback port, not UDS.
+/// - **k8s**: bind the operator-known port (`AIPERF_CONTROLLER_PORT`, default 9500)
+///   on all interfaces; the cell endpoint is injected into the pods by the operator
+///   (`AIPERF_CELL_CONTROLLER_ADDR`), so the launcher's copy is unused (empty).
+/// - **local**: pre-bind a loopback TCP listener so the actual port is known before
+///   build; cells connect to `tcp://127.0.0.1:<port>`.
 #[cfg(feature = "velo")]
-fn controller_velo_bind(is_k8s: bool, temp_root: &Path) -> BindSpec {
+fn controller_bind_and_endpoint(is_k8s: bool, temp_root: &Path) -> Result<(BindSpec, String)> {
+    let _ = temp_root;
     if is_k8s {
-        return BindSpec::TcpBind("0.0.0.0:0".parse().expect("valid ephemeral bind addr"));
+        let port: u16 = std::env::var("AIPERF_CONTROLLER_PORT")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(9500);
+        return Ok((
+            BindSpec::TcpBind(std::net::SocketAddr::from(([0, 0, 0, 0], port))),
+            String::new(),
+        ));
     }
-    #[cfg(unix)]
-    {
-        BindSpec::UdsPath(temp_root.join("controller.sock"))
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = temp_root;
-        BindSpec::TcpLoopback
-    }
-}
-
-/// The controller's bootstrap publication and the coordinate cells fetch it from.
-/// - **k8s**: serve the `PeerInfo` on the operator-hardcoded bootstrap bind
-///   (`AIPERF_CONTROLLER_BOOTSTRAP_BIND`, default `0.0.0.0:9500`); the cell fetch
-///   coordinate is supplied to the pods by the operator (`AIPERF_CELL_CONTROLLER_ADDR`),
-///   so the launcher's copy is unused here (empty).
-/// - **local**: write the `PeerInfo` to a file in the scratch tree; cells (same host)
-///   read it via a `file:` coordinate the local launcher injects.
-#[cfg(feature = "velo")]
-fn controller_bootstrap(is_k8s: bool, temp_root: &Path) -> Result<(BootstrapSource, String)> {
-    if is_k8s {
-        let bind = std::env::var("AIPERF_CONTROLLER_BOOTSTRAP_BIND")
-            .unwrap_or_else(|_| "0.0.0.0:9500".to_owned());
-        Ok((BootstrapSource::Tcp(bind), String::new()))
-    } else {
-        let path = temp_root.join("controller-peer.rmp");
-        let coordinate = format!("file:{}", path.display());
-        Ok((BootstrapSource::File(path), coordinate))
-    }
+    let listener =
+        std::net::TcpListener::bind("127.0.0.1:0").context("binding controller loopback")?;
+    let addr = listener
+        .local_addr()
+        .context("controller loopback local_addr")?;
+    Ok((BindSpec::TcpListener(listener), format!("tcp://{addr}")))
 }
 
 /// The deadline for collecting every cell's partition. Covers the whole run (cells
