@@ -71,7 +71,11 @@ async fn test_graph_cellular_from_python_frontend() {
         ),
         120,
     );
-    assert!(baseline.success(), "1-cell graph run failed: {}", baseline.stderr);
+    assert!(
+        baseline.success(),
+        "1-cell graph run failed: {}",
+        baseline.stderr
+    );
     assert!(
         baseline
             .artifacts
@@ -86,7 +90,10 @@ async fn test_graph_cellular_from_python_frontend() {
     );
     let cell_isl = &json["input_sequence_length"];
     let base_isl = &baseline.artifacts.json()["input_sequence_length"];
-    assert!(!base_isl.is_null(), "baseline must report input_sequence_length");
+    assert!(
+        !base_isl.is_null(),
+        "baseline must report input_sequence_length"
+    );
     assert_eq!(
         cell_isl, base_isl,
         "3-cell graph run must reproduce the 1-cell input-token distribution \

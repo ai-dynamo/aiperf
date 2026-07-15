@@ -38,6 +38,25 @@ use crate::protocol::{
     TraceSynthesisSpec,
 };
 
+/// Recorded-graph trajectory-start (`t*`) window bound to a prepared input.
+///
+/// Carries the C1 protocol-v2 synthesis knobs
+/// (`trajectory_start_min_ratio` / `trajectory_start_max_ratio` /
+/// `t_star_random_seed`) forward to the graph phase runtime, where each phase
+/// samples a per-trace `t*` via [`aiperf::graph::tstar::WindowTStarSampler`] and
+/// applies the warmup/profiling snapshot split. The default `[0.0, 0.0]` window
+/// with seed `0` yields `t* = 0` for every trace, i.e. full native replay:
+/// profiling runs the whole graph unchanged and warmup is empty.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TStarWindow {
+    /// Lower window bound as a fraction of each trace's replayable span.
+    pub start_min_ratio: f64,
+    /// Upper window bound as a fraction of each trace's replayable span.
+    pub start_max_ratio: f64,
+    /// Base RNG seed salted per `(trace_id, lane)` by the sampler.
+    pub random_seed: u64,
+}
+
 /// Canonical result retained after one selected graph-input adapter load.
 pub struct PreparedRunnerGraphInput {
     /// Complete executable Graph-IR roots plus their frozen segment arena.
@@ -48,6 +67,8 @@ pub struct PreparedRunnerGraphInput {
     pub default_output_tokens: usize,
     /// Whether phase admission may recycle a finite recorded root corpus.
     pub allow_dataset_wrap: bool,
+    /// Trajectory-start (`t*`) window for the warmup/profiling snapshot split.
+    pub t_star_window: TStarWindow,
 }
 
 // `GraphInputBundle` holds an `Arc<dyn SegmentStore>` that is not `Debug`, so
@@ -61,6 +82,7 @@ impl fmt::Debug for PreparedRunnerGraphInput {
             .field("random_seed", &self.random_seed)
             .field("default_output_tokens", &self.default_output_tokens)
             .field("allow_dataset_wrap", &self.allow_dataset_wrap)
+            .field("t_star_window", &self.t_star_window)
             .finish_non_exhaustive()
     }
 }
@@ -245,6 +267,10 @@ impl DagJsonlRunnerGraphInputAdapter {
             random_seed: prepared.random_seed,
             default_output_tokens: prepared.default_output_tokens,
             allow_dataset_wrap: true,
+            // Authored `dag_jsonl` programs carry no recorded timing, so the
+            // trajectory-start split never engages: the default window yields
+            // `t* = 0` (profiling full, warmup empty).
+            t_star_window: TStarWindow::default(),
         })
     }
 }
@@ -295,6 +321,7 @@ impl AiperfTraceRunnerGraphInputAdapter {
         let random_seed = prepared.random_seed;
         let default_output_tokens = prepared.default_output_tokens;
         let allow_dataset_wrap = prepared.allow_dataset_wrap;
+        let t_star_window = prepared.t_star_window;
         let bundle = compile_aiperf_trace_input(prepared.input, context.tokenizer)
             .await
             .map_err(|error| anyhow!(error.to_string()))
@@ -304,6 +331,7 @@ impl AiperfTraceRunnerGraphInputAdapter {
             random_seed,
             default_output_tokens,
             allow_dataset_wrap,
+            t_star_window,
             self.format(),
         )
     }
@@ -360,6 +388,7 @@ impl WekaTraceRunnerGraphInputAdapter {
         let random_seed = prepared.random_seed;
         let default_output_tokens = prepared.default_output_tokens;
         let allow_dataset_wrap = prepared.allow_dataset_wrap;
+        let t_star_window = prepared.t_star_window;
         let bundle = compile_weka_trace_input(prepared.input, context.tokenizer)
             .await
             .map_err(|error| anyhow!(error.to_string()))
@@ -369,6 +398,7 @@ impl WekaTraceRunnerGraphInputAdapter {
             random_seed,
             default_output_tokens,
             allow_dataset_wrap,
+            t_star_window,
             self.format(),
         )
     }
@@ -393,6 +423,7 @@ impl DynamoTraceRunnerGraphInputAdapter {
         let random_seed = prepared.random_seed;
         let default_output_tokens = prepared.default_output_tokens;
         let allow_dataset_wrap = prepared.allow_dataset_wrap;
+        let t_star_window = prepared.t_star_window;
         let bundle = compile_dynamo_trace_input(prepared.input, context.tokenizer)
             .await
             .map_err(|error| anyhow!(error.to_string()))
@@ -402,6 +433,7 @@ impl DynamoTraceRunnerGraphInputAdapter {
             random_seed,
             default_output_tokens,
             allow_dataset_wrap,
+            t_star_window,
             self.format(),
         )
     }
@@ -455,11 +487,13 @@ impl From<FileDatasetSpec> for RecordedFileInput {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn finish_recorded_input(
     bundle: GraphInputBundle,
     random_seed: Option<u64>,
     default_output_tokens: usize,
     allow_dataset_wrap: bool,
+    t_star_window: TStarWindow,
     expected_format: &str,
 ) -> Result<PreparedRunnerGraphInput> {
     ensure!(
@@ -476,6 +510,7 @@ fn finish_recorded_input(
         random_seed,
         default_output_tokens,
         allow_dataset_wrap,
+        t_star_window,
     })
 }
 
@@ -484,6 +519,7 @@ struct PreparedRecordedInput {
     random_seed: Option<u64>,
     default_output_tokens: usize,
     allow_dataset_wrap: bool,
+    t_star_window: TStarWindow,
 }
 
 fn prepare_recorded_file(
@@ -542,6 +578,16 @@ fn prepare_recorded_file(
     let idle_gap_cap_seconds = synthesis
         .as_ref()
         .map_or(Some(60.0), |value| value.idle_gap_cap_seconds);
+    // The trajectory-start window travels to the phase runtime, which samples a
+    // per-trace `t*` and applies the warmup/profiling snapshot split. The C1
+    // defaults `[0.0, 0.0]` with seed `0` collapse to `t* = 0` (full replay).
+    let t_star_window = synthesis
+        .as_ref()
+        .map_or_else(TStarWindow::default, |value| TStarWindow {
+            start_min_ratio: value.trajectory_start_min_ratio,
+            start_max_ratio: value.trajectory_start_max_ratio,
+            random_seed: value.t_star_random_seed,
+        });
     let corpus = PromptCorpus::parse(
         synthesis
             .as_ref()
@@ -565,6 +611,7 @@ fn prepare_recorded_file(
         random_seed,
         default_output_tokens,
         allow_dataset_wrap,
+        t_star_window,
     })
 }
 
@@ -637,6 +684,9 @@ fn prepare_recorded_public(
         random_seed: input.random_seed,
         default_output_tokens: 1,
         allow_dataset_wrap: false,
+        // Public recorded sources carry no synthesis block, so the trajectory
+        // window defaults to full replay.
+        t_star_window: TStarWindow::default(),
     })
 }
 
@@ -1030,6 +1080,37 @@ mod tests {
         assert_eq!(prepared.bundle.metadata.node_count, 1);
         assert!(prepared.bundle.plans[0].graph.nodes.contains_key("7:0"));
         assert_eq!(prepared.random_seed, Some(91));
+    }
+
+    #[test]
+    fn recorded_request_carries_tstar_window_on_synthesis() {
+        // A protocol-v2 recorded-graph dataset request carries the trajectory
+        // start (t*) window and derived seed on its synthesis block; the strict
+        // recorded decode retains them for C2 to bind.
+        let RecordedDatasetInput::File(input) = serde_json::from_value(json!({
+            "type": "file",
+            "format": "weka_trace",
+            "sampling": "sequential",
+            "records": {"id": "root", "models": ["m"], "block_size": 16,
+                "hash_id_scope": "global", "requests": []},
+            "synthesis": {
+                "speedup_ratio": 1.0,
+                "prefix_len_multiplier": 1.0,
+                "prefix_root_multiplier": 1,
+                "prompt_len_multiplier": 1.0,
+                "output_len_multiplier": 1.0,
+                "trajectory_start_min_ratio": 0.1,
+                "trajectory_start_max_ratio": 0.9,
+                "t_star_random_seed": 777
+            }
+        }))
+        .expect("recorded request with t* synthesis knobs decodes") else {
+            panic!("expected a file-backed recorded input")
+        };
+        let synthesis = input.synthesis.expect("synthesis block present");
+        assert_eq!(synthesis.trajectory_start_min_ratio, 0.1);
+        assert_eq!(synthesis.trajectory_start_max_ratio, 0.9);
+        assert_eq!(synthesis.t_star_random_seed, 777);
     }
 
     #[tokio::test]

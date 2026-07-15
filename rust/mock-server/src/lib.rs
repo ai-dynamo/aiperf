@@ -10,6 +10,7 @@ pub mod app;
 pub mod balancer;
 pub mod config;
 pub mod dcgm;
+pub mod grpc;
 pub mod handlers;
 pub mod latency;
 pub mod listener;

@@ -65,11 +65,14 @@ pub struct VersionCapture {
 }
 
 struct StoreInner {
-    specs: BTreeMap<String, ChannelSpec>,
+    /// Channel definitions — immutable for the run, so this is `Rc`-shared from
+    /// the executor rather than deep-cloned into every per-trace store.
+    specs: Rc<BTreeMap<String, ChannelSpec>>,
     logs: BTreeMap<String, Vec<LogEntry>>,
     arrival_count: BTreeMap<String, i64>,
     producers_remaining: BTreeMap<String, i64>,
-    producers_declared: BTreeMap<String, i64>,
+    /// Declared producer counts — immutable for the run, `Rc`-shared like `specs`.
+    producers_declared: Rc<BTreeMap<String, i64>>,
     /// The last committed write sequence number (0 when only init seeds exist).
     last_seq: i64,
     /// One `Notify` per channel; readers park on it and re-check their arrival
@@ -87,24 +90,23 @@ pub struct VersionedChannelStore {
 }
 
 impl VersionedChannelStore {
+    /// Build a per-trace store over `Rc`-shared, run-immutable channel `specs`
+    /// and `producers_declared`. Only the mutable per-trace state (logs, arrival
+    /// counts, remaining producers, notifiers) is allocated here; the shared maps
+    /// are cloned as `Rc` pointer bumps rather than deep-copied every trace.
     pub fn new(
         initial: &BTreeMap<String, Value>,
-        channel_specs: &BTreeMap<String, ChannelSpec>,
-        producers_per_channel: &BTreeMap<String, i64>,
+        specs: Rc<BTreeMap<String, ChannelSpec>>,
+        producers_declared: Rc<BTreeMap<String, i64>>,
     ) -> Result<Self, StoreError> {
-        let specs = channel_specs.clone();
-        let mut logs: BTreeMap<String, Vec<LogEntry>> = channel_specs
+        let mut logs: BTreeMap<String, Vec<LogEntry>> =
+            specs.keys().map(|c| (c.clone(), Vec::new())).collect();
+        let arrival_count: BTreeMap<String, i64> = specs.keys().map(|c| (c.clone(), 0)).collect();
+        let producers_remaining: BTreeMap<String, i64> = specs
             .keys()
-            .map(|c| (c.clone(), Vec::new()))
+            .map(|c| (c.clone(), *producers_declared.get(c).unwrap_or(&0)))
             .collect();
-        let arrival_count: BTreeMap<String, i64> =
-            channel_specs.keys().map(|c| (c.clone(), 0)).collect();
-        let producers_remaining: BTreeMap<String, i64> = channel_specs
-            .keys()
-            .map(|c| (c.clone(), *producers_per_channel.get(c).unwrap_or(&0)))
-            .collect();
-        let producers_declared = producers_remaining.clone();
-        let notifiers: BTreeMap<String, Rc<Notify>> = channel_specs
+        let notifiers: BTreeMap<String, Rc<Notify>> = specs
             .keys()
             .map(|c| (c.clone(), Rc::new(Notify::new())))
             .collect();

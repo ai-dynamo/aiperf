@@ -56,6 +56,12 @@ class TestPrefixAppliedToEveryExport:
     def test_raw_jsonl(self):
         assert self._cfg().profile_export_raw_jsonl_file.name == "foo_raw.jsonl"
 
+    def test_per_record_parquet(self):
+        assert self._cfg().profile_export_parquet_file.name == "foo.parquet"
+
+    def test_per_record_csv(self):
+        assert self._cfg().profile_export_records_csv_file.name == "foo_records.csv"
+
     def test_gpu_telemetry_jsonl(self):
         assert (
             self._cfg().profile_export_gpu_telemetry_jsonl_file.name

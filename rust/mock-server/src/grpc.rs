@@ -1,0 +1,786 @@
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//! KServe Open Inference Protocol (OIP) v2 gRPC target.
+//!
+//! Serves the KServe `GRPCInferenceService` so AIPerf's native gRPC KServe
+//! client (`aiperf::transport_grpc`) has a mock inference target, mirroring
+//! ai-dynamo's frontend at
+//! `dynamo-aiperf-native/lib/llm/src/grpc/service/kserve.rs` (dispatching tensor
+//! requests to a chat/completion flavor). The five methods AIPerf dials are
+//! implemented: `ModelInfer` (unary), `ModelStreamInfer` (server-streaming),
+//! `ModelReady`, plus trivial `ServerLive` / `ServerReady` health.
+//!
+//! The wire contract is guaranteed by construction: the request/response
+//! messages are the *same* prost structs the client encodes/decodes
+//! (`aiperf::transport_grpc::proto`), so there is no second schema to drift.
+//! There is no build-time `protoc` / `tonic-build`; the service is a
+//! hand-routed `tower` service dispatched by method path (the server mirror of
+//! the client's hand-rolled `RawBytesCodec` + `PathAndQuery`), served over the
+//! same hyper h2 stack as the HTTP frontend.
+//!
+//! Content comes from the mock's existing generation seam: a KServe
+//! `ModelInferRequest` is lowered to a synthetic [`ChatCompletionRequest`] and
+//! run through [`crate::handlers::RequestCtx`], so token generation, latency /
+//! prefix-cache / scheduler pacing, and `/metrics` accounting are shared with
+//! the HTTP handlers rather than re-implemented. `text_input` (BYTES) carries
+//! the prompt and an optional `max_tokens` (INT32) tensor caps output; the reply
+//! is a `text_output` (BYTES) tensor.
+//!
+//! Extensibility: routing is by method path, so a second gRPC dialect (e.g.
+//! Riva) is an added `(path -> handler)` arm plus its prost messages, reusing
+//! the same lower-to-[`ChatCompletionRequest`] → generate → tensor seam. Only
+//! KServe is served today; the structure does not hardcode it as the only one.
+
+use std::convert::Infallible;
+use std::marker::PhantomData;
+use std::net::SocketAddr;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::time::Instant;
+
+use bytes::{Buf, Bytes};
+use futures::Stream;
+use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::server::conn::auto::Builder as ConnBuilder;
+use serde_json::Value;
+use tonic::body::Body;
+use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
+use tonic::server::Grpc;
+use tonic::{Request, Response, Status};
+
+use aiperf::transport_grpc::proto::model_infer_request::InferInputTensor;
+use aiperf::transport_grpc::proto::model_infer_response::InferOutputTensor;
+use aiperf::transport_grpc::proto::{
+    InferTensorContents, ModelInferRequest, ModelInferResponse, ModelReadyRequest,
+    ModelReadyResponse, ModelStreamInferResponse,
+};
+
+use crate::handlers::RequestCtx;
+use crate::listener::build_listener;
+use crate::metrics::LLMLatencyInfo;
+use crate::models::{ChatCompletionRequest, Message};
+use crate::state::AppState;
+use crate::tokens::{GenRequest, TokenizedText};
+
+/// KServe `GRPCInferenceService` method paths AIPerf's client dials.
+const MODEL_INFER: &str = "/inference.GRPCInferenceService/ModelInfer";
+const MODEL_STREAM_INFER: &str = "/inference.GRPCInferenceService/ModelStreamInfer";
+const MODEL_READY: &str = "/inference.GRPCInferenceService/ModelReady";
+const SERVER_LIVE: &str = "/inference.GRPCInferenceService/ServerLive";
+const SERVER_READY: &str = "/inference.GRPCInferenceService/ServerReady";
+
+/// Default KServe v2 tensor names (`V2InferBehavior` in `aiperf::endpoints`).
+const DEFAULT_INPUT_NAME: &str = "text_input";
+const DEFAULT_OUTPUT_NAME: &str = "text_output";
+/// Model name reported when the request omits one.
+const DEFAULT_MODEL: &str = "mock-kserve";
+
+/// Health messages KServe defines but AIPerf's client never decodes, so they
+/// live here instead of the shared `aiperf::transport_grpc::proto` (which only
+/// carries the messages the client uses).
+#[derive(Clone, PartialEq, ::prost::Message)]
+struct ServerLiveRequest {}
+
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+struct ServerLiveResponse {
+    #[prost(bool, tag = "1")]
+    live: bool,
+}
+
+#[derive(Clone, PartialEq, ::prost::Message)]
+struct ServerReadyRequest {}
+
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+struct ServerReadyResponse {
+    #[prost(bool, tag = "1")]
+    ready: bool,
+}
+
+/// Server-streaming response stream for `ModelStreamInfer`.
+type InferStream = Pin<Box<dyn Stream<Item = Result<ModelStreamInferResponse, Status>> + Send>>;
+
+// ===========================================================================
+// Prost codec (server mirror of the client's `RawBytesCodec`; no `tonic-prost`)
+// ===========================================================================
+
+/// A tonic [`Codec`] that decodes `D` and encodes `E` via `prost`. Generic over
+/// the two message types because each RPC has a distinct request/response pair.
+struct ProstCodec<D, E>(PhantomData<(D, E)>);
+
+impl<D, E> Default for ProstCodec<D, E> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<D, E> Codec for ProstCodec<D, E>
+where
+    D: prost::Message + Default + Send + 'static,
+    E: prost::Message + Send + 'static,
+{
+    type Encode = E;
+    type Decode = D;
+    type Encoder = ProstEncoder<E>;
+    type Decoder = ProstDecoder<D>;
+
+    fn encoder(&mut self) -> Self::Encoder {
+        ProstEncoder(PhantomData)
+    }
+
+    fn decoder(&mut self) -> Self::Decoder {
+        ProstDecoder(PhantomData)
+    }
+}
+
+struct ProstEncoder<E>(PhantomData<E>);
+
+impl<E: prost::Message> Encoder for ProstEncoder<E> {
+    type Item = E;
+    type Error = Status;
+
+    fn encode(&mut self, item: Self::Item, dst: &mut EncodeBuf<'_>) -> Result<(), Status> {
+        item.encode(dst)
+            .map_err(|error| Status::internal(format!("encode KServe protobuf: {error}")))
+    }
+}
+
+struct ProstDecoder<D>(PhantomData<D>);
+
+impl<D: prost::Message + Default> Decoder for ProstDecoder<D> {
+    type Item = D;
+    type Error = Status;
+
+    fn decode(&mut self, src: &mut DecodeBuf<'_>) -> Result<Option<Self::Item>, Status> {
+        // tonic hands us exactly one complete length-delimited frame; read it
+        // whole (like the client's `RawBytesDecoder`) and prost-decode.
+        let bytes: Bytes = src.copy_to_bytes(src.remaining());
+        D::decode(bytes)
+            .map(Some)
+            .map_err(|error| Status::internal(format!("decode KServe protobuf: {error}")))
+    }
+}
+
+// ===========================================================================
+// Request lowering + response construction
+// ===========================================================================
+
+/// Extract the prompt (`text_input` BYTES) and optional `max_tokens` (INT32)
+/// from a KServe `ModelInferRequest`, honoring typed contents first and falling
+/// back to `raw_input_contents` for non-AIPerf clients (e.g. `grpcurl`).
+fn decode_infer_inputs(msg: &ModelInferRequest) -> Result<(String, Option<usize>), Status> {
+    let mut prompt: Option<String> = None;
+    let mut fallback_text: Option<String> = None;
+    let mut max_tokens: Option<usize> = None;
+
+    for (index, tensor) in msg.inputs.iter().enumerate() {
+        let raw = msg.raw_input_contents.get(index);
+        if tensor.name == "max_tokens" {
+            if let Some(value) = tensor_first_int(tensor, raw)
+                && value > 0
+            {
+                max_tokens = Some(value as usize);
+            }
+            continue;
+        }
+        if tensor.name == DEFAULT_INPUT_NAME {
+            prompt = tensor_first_text(tensor, raw);
+            continue;
+        }
+        // Remember the first text-bearing tensor as a fallback prompt source in
+        // case the input tensor was renamed via `v2_input_name`.
+        if fallback_text.is_none() {
+            fallback_text = tensor_first_text(tensor, raw);
+        }
+    }
+
+    let prompt = prompt.or(fallback_text).ok_or_else(|| {
+        Status::invalid_argument("KServe ModelInferRequest is missing a text_input BYTES tensor")
+    })?;
+    Ok((prompt, max_tokens))
+}
+
+/// First value of a tensor as text: typed BYTES contents, else a length-prefixed
+/// raw BYTES payload (4-byte little-endian length + bytes).
+fn tensor_first_text(tensor: &InferInputTensor, raw: Option<&Vec<u8>>) -> Option<String> {
+    if let Some(contents) = &tensor.contents
+        && let Some(first) = contents.bytes_contents.first()
+    {
+        return Some(String::from_utf8_lossy(first).into_owned());
+    }
+    if let Some(raw) = raw
+        && raw.len() >= 4
+    {
+        let length = u32::from_le_bytes(raw[0..4].try_into().expect("checked len")) as usize;
+        let end = (4 + length).min(raw.len());
+        return Some(String::from_utf8_lossy(&raw[4..end]).into_owned());
+    }
+    None
+}
+
+/// First value of a tensor as an integer: typed INT32/INT64/UINT32 contents,
+/// else the leading 4 raw bytes as little-endian INT32.
+fn tensor_first_int(tensor: &InferInputTensor, raw: Option<&Vec<u8>>) -> Option<i64> {
+    if let Some(contents) = &tensor.contents {
+        if let Some(value) = contents.int_contents.first() {
+            return Some(i64::from(*value));
+        }
+        if let Some(value) = contents.int64_contents.first() {
+            return Some(*value);
+        }
+        if let Some(value) = contents.uint_contents.first() {
+            return Some(i64::from(*value));
+        }
+    }
+    if let Some(raw) = raw
+        && raw.len() >= 4
+    {
+        return Some(i64::from(i32::from_le_bytes(
+            raw[0..4].try_into().expect("checked len"),
+        )));
+    }
+    None
+}
+
+/// Requested output tensor name, defaulting to `text_output`.
+fn requested_output_name(msg: &ModelInferRequest) -> String {
+    msg.outputs
+        .first()
+        .map(|output| output.name.clone())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| DEFAULT_OUTPUT_NAME.to_string())
+}
+
+/// Resolved model name for the request.
+fn model_name(msg: &ModelInferRequest) -> String {
+    if msg.model_name.is_empty() {
+        DEFAULT_MODEL.to_string()
+    } else {
+        msg.model_name.clone()
+    }
+}
+
+/// Lower a KServe inference request to the shared chat generation input.
+fn synth_chat(model: &str, prompt: &str, max_tokens: Option<usize>) -> ChatCompletionRequest {
+    ChatCompletionRequest {
+        model: model.to_string(),
+        messages: vec![Message {
+            role: "user".to_string(),
+            content: Value::String(prompt.to_string()),
+        }],
+        stream: false,
+        stream_options: None,
+        max_tokens,
+        max_completion_tokens: None,
+        ignore_eos: false,
+        min_tokens: None,
+        reasoning_effort: None,
+        priority: None,
+    }
+}
+
+/// A `text_output` BYTES tensor carrying one generated string.
+fn text_output_tensor(name: &str, text: &str) -> InferOutputTensor {
+    InferOutputTensor {
+        name: name.to_string(),
+        datatype: "BYTES".to_string(),
+        shape: vec![1],
+        parameters: Default::default(),
+        contents: Some(InferTensorContents {
+            bytes_contents: vec![text.as_bytes().to_vec()],
+            ..Default::default()
+        }),
+    }
+}
+
+/// Build a `ModelInferResponse` with a single `text_output` tensor.
+fn build_infer_response(
+    id: &str,
+    model: &str,
+    output_name: &str,
+    text: &str,
+) -> ModelInferResponse {
+    ModelInferResponse {
+        model_name: model.to_string(),
+        model_version: String::new(),
+        id: id.to_string(),
+        parameters: Default::default(),
+        outputs: vec![text_output_tensor(output_name, text)],
+        raw_output_contents: Vec::new(),
+    }
+}
+
+/// The full generated token sequence for a KServe `text_output`: reasoning
+/// tokens (if any) followed by output tokens.
+///
+/// KServe text has no separate reasoning channel, so a reasoning model's
+/// thinking is folded into the single text output. This also keeps the
+/// server-streaming response non-empty when a small `max_tokens` budget was
+/// fully consumed by reasoning (leaving zero output tokens): an empty gRPC
+/// server stream is rejected by strict clients — including AIPerf's own runner —
+/// as a failed request, so a reasoning model over streaming gRPC must still emit
+/// at least the reasoning tokens.
+fn generated_tokens(tokenized: &TokenizedText) -> Vec<&str> {
+    tokenized
+        .reasoning_content_tokens
+        .iter()
+        .chain(tokenized.tokens.iter())
+        .map(String::as_str)
+        .collect()
+}
+
+/// Wrap one incremental chunk as a streaming envelope.
+fn stream_chunk(id: &str, model: &str, output_name: &str, text: &str) -> ModelStreamInferResponse {
+    ModelStreamInferResponse {
+        error_message: String::new(),
+        infer_response: Some(build_infer_response(id, model, output_name, text)),
+    }
+}
+
+// ===========================================================================
+// RPC handlers
+// ===========================================================================
+
+/// `ModelInfer` (unary): generate the full text and return it in one response.
+async fn model_infer(
+    state: Arc<AppState>,
+    request: Request<ModelInferRequest>,
+) -> Result<Response<ModelInferResponse>, Status> {
+    if state.inject_error() {
+        return Err(Status::internal("Simulated error"));
+    }
+    let msg = request.into_inner();
+    let (prompt, max_tokens) = decode_infer_inputs(&msg)?;
+    let output_name = requested_output_name(&msg);
+    let model = model_name(&msg);
+
+    let start = Instant::now();
+    state.recorder.init_model_config(&model);
+    let chat = synth_chat(&model, &prompt, max_tokens);
+    let req_gen = GenRequest::Chat(&chat);
+    let ctx = RequestCtx::build("grpcinfer", &req_gen, MODEL_INFER, start, &state);
+
+    let tokens = generated_tokens(&ctx.tokenized);
+    state.recorder.record_request_start(MODEL_INFER, &ctx.model);
+    state.recorder.record_llm_inflight_start(&ctx.model);
+    let (prefill, _decode) = ctx.latency_sim.wait_for_tokens(tokens.len()).await;
+    let latency = start.elapsed();
+    let info = LLMLatencyInfo {
+        e2e: latency,
+        prefill,
+        decode: latency.saturating_sub(prefill),
+    };
+    let text = tokens.concat();
+    let response = build_infer_response(&msg.id, &ctx.model, &output_name, &text);
+
+    state
+        .recorder
+        .record_request_bytes(MODEL_INFER, prompt.len() as u64, text.len() as u64);
+    state.recorder.record_llm_success(
+        MODEL_INFER,
+        &ctx.model,
+        latency.as_secs_f64(),
+        &ctx.usage,
+        &info,
+    );
+    state.recorder.record_llm_inflight_end(&ctx.model);
+    state.recorder.record_request_end(MODEL_INFER);
+
+    Ok(Response::new(response))
+}
+
+/// `ModelStreamInfer` (server-streaming): one envelope per generated token,
+/// paced by the shared latency simulator so the client measures real TTFT/ITL.
+async fn model_stream_infer(
+    state: Arc<AppState>,
+    request: Request<ModelInferRequest>,
+) -> Result<Response<InferStream>, Status> {
+    if state.inject_error() {
+        return Err(Status::internal("Simulated error"));
+    }
+    let msg = request.into_inner();
+    let (prompt, max_tokens) = decode_infer_inputs(&msg)?;
+    let output_name = requested_output_name(&msg);
+    let model = model_name(&msg);
+    let id = msg.id.clone();
+
+    let stream = async_stream::stream! {
+        let start = Instant::now();
+        state.recorder.init_model_config(&model);
+        let chat = synth_chat(&model, &prompt, max_tokens);
+        let req_gen = GenRequest::Chat(&chat);
+        let ctx = RequestCtx::build("grpcinfer", &req_gen, MODEL_STREAM_INFER, start, &state);
+        let labeled = state.recorder.labeled(MODEL_STREAM_INFER, &ctx.model);
+        state.recorder.record_streaming_start(MODEL_STREAM_INFER, &ctx.model);
+        state.recorder.record_request_start(MODEL_STREAM_INFER, &ctx.model);
+        state.recorder.record_llm_inflight_start(&ctx.model);
+
+        let tokens = generated_tokens(&ctx.tokenized);
+        let mut first_emit: Option<Instant> = None;
+        let mut last_emit: Option<Instant> = None;
+        for (index, token) in tokens.iter().enumerate() {
+            let emit_at = ctx.latency_sim.wait_for_index(index).await;
+            if first_emit.is_none() {
+                first_emit = Some(emit_at);
+                state
+                    .recorder
+                    .record_ttft_fast(&labeled, emit_at.duration_since(start).as_secs_f64());
+            } else if let Some(last) = last_emit {
+                state
+                    .recorder
+                    .record_itl_fast(&labeled, emit_at.duration_since(last).as_secs_f64());
+            }
+            last_emit = Some(emit_at);
+            state.recorder.record_streamed_token_fast(&labeled);
+            yield Ok(stream_chunk(&id, &ctx.model, &output_name, token));
+        }
+
+        let latency = start.elapsed();
+        let prefill = first_emit
+            .map(|instant| instant.duration_since(start))
+            .unwrap_or_default();
+        let info = LLMLatencyInfo {
+            e2e: latency,
+            prefill,
+            decode: latency.saturating_sub(prefill),
+        };
+        state.recorder.record_llm_success(
+            MODEL_STREAM_INFER,
+            &ctx.model,
+            latency.as_secs_f64(),
+            &ctx.usage,
+            &info,
+        );
+        state.recorder.record_llm_inflight_end(&ctx.model);
+        state.recorder.record_request_end(MODEL_STREAM_INFER);
+    };
+
+    Ok(Response::new(Box::pin(stream)))
+}
+
+/// `ModelReady`: the mock always has its model ready.
+async fn model_ready(
+    _state: Arc<AppState>,
+    _request: Request<ModelReadyRequest>,
+) -> Result<Response<ModelReadyResponse>, Status> {
+    Ok(Response::new(ModelReadyResponse { ready: true }))
+}
+
+async fn server_live(
+    _state: Arc<AppState>,
+    _request: Request<ServerLiveRequest>,
+) -> Result<Response<ServerLiveResponse>, Status> {
+    Ok(Response::new(ServerLiveResponse { live: true }))
+}
+
+async fn server_ready(
+    _state: Arc<AppState>,
+    _request: Request<ServerReadyRequest>,
+) -> Result<Response<ServerReadyResponse>, Status> {
+    Ok(Response::new(ServerReadyResponse { ready: true }))
+}
+
+// ===========================================================================
+// Routing + serving
+// ===========================================================================
+
+/// Route one gRPC request to its handler by method path. Unknown methods get a
+/// gRPC `Unimplemented` status. Returns `Infallible` because every path — RPC or
+/// not — resolves to a well-formed gRPC HTTP response.
+pub async fn route(
+    state: Arc<AppState>,
+    req: http::Request<hyper::body::Incoming>,
+) -> Result<http::Response<Body>, Infallible> {
+    let response = match req.uri().path() {
+        MODEL_INFER => {
+            let service = tower::service_fn(move |r: Request<ModelInferRequest>| {
+                let state = state.clone();
+                async move { model_infer(state, r).await }
+            });
+            Grpc::new(ProstCodec::<ModelInferRequest, ModelInferResponse>::default())
+                .unary(service, req)
+                .await
+        }
+        MODEL_STREAM_INFER => {
+            let service = tower::service_fn(move |r: Request<ModelInferRequest>| {
+                let state = state.clone();
+                async move { model_stream_infer(state, r).await }
+            });
+            Grpc::new(ProstCodec::<ModelInferRequest, ModelStreamInferResponse>::default())
+                .server_streaming(service, req)
+                .await
+        }
+        MODEL_READY => {
+            let service = tower::service_fn(move |r: Request<ModelReadyRequest>| {
+                let state = state.clone();
+                async move { model_ready(state, r).await }
+            });
+            Grpc::new(ProstCodec::<ModelReadyRequest, ModelReadyResponse>::default())
+                .unary(service, req)
+                .await
+        }
+        SERVER_LIVE => {
+            let service = tower::service_fn(move |r: Request<ServerLiveRequest>| {
+                let state = state.clone();
+                async move { server_live(state, r).await }
+            });
+            Grpc::new(ProstCodec::<ServerLiveRequest, ServerLiveResponse>::default())
+                .unary(service, req)
+                .await
+        }
+        SERVER_READY => {
+            let service = tower::service_fn(move |r: Request<ServerReadyRequest>| {
+                let state = state.clone();
+                async move { server_ready(state, r).await }
+            });
+            Grpc::new(ProstCodec::<ServerReadyRequest, ServerReadyResponse>::default())
+                .unary(service, req)
+                .await
+        }
+        other => Status::unimplemented(format!("unknown gRPC method: {other}")).into_http(),
+    };
+    Ok(response)
+}
+
+/// Serve the KServe gRPC service on `addr` until the process exits. Runs its own
+/// accept loop on the shared runtime with `TCP_NODELAY`, sharing `state` (and
+/// thus recorder / prefix-cache / scheduler) with the HTTP frontend. gRPC is
+/// h2c; hyper's auto builder serves the HTTP/2-prior-knowledge preface tonic
+/// clients send.
+pub async fn serve_grpc(addr: SocketAddr, state: Arc<AppState>) -> anyhow::Result<()> {
+    let listener = build_listener(addr)?;
+    tracing::info!(%addr, "KServe gRPC listening");
+    loop {
+        let (stream, peer) = match listener.accept().await {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!("grpc accept error: {error}");
+                continue;
+            }
+        };
+        let _ = stream.set_nodelay(true);
+        let state = state.clone();
+        tokio::spawn(async move {
+            let io = TokioIo::new(stream);
+            let service = hyper::service::service_fn(move |req| {
+                let state = state.clone();
+                async move { route(state, req).await }
+            });
+            if let Err(error) = ConnBuilder::new(TokioExecutor::new())
+                .serve_connection(io, service)
+                .await
+            {
+                tracing::debug!(%peer, "grpc connection error: {error}");
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aiperf::transport_grpc::proto::InferTensorContents;
+
+    fn fast_state() -> Arc<AppState> {
+        let config = crate::config::MockServerConfig {
+            fast: true,
+            no_tokenizer: true,
+            ..crate::config::MockServerConfig::default()
+        }
+        .apply_flags();
+        AppState::build(config)
+    }
+
+    fn infer_request(prompt: &str, max_tokens: Option<i32>) -> ModelInferRequest {
+        let mut inputs = vec![InferInputTensor {
+            name: DEFAULT_INPUT_NAME.to_string(),
+            datatype: "BYTES".to_string(),
+            shape: vec![1],
+            parameters: Default::default(),
+            contents: Some(InferTensorContents {
+                bytes_contents: vec![prompt.as_bytes().to_vec()],
+                ..Default::default()
+            }),
+        }];
+        if let Some(max_tokens) = max_tokens {
+            inputs.push(InferInputTensor {
+                name: "max_tokens".to_string(),
+                datatype: "INT32".to_string(),
+                shape: vec![1],
+                parameters: Default::default(),
+                contents: Some(InferTensorContents {
+                    int_contents: vec![max_tokens],
+                    ..Default::default()
+                }),
+            });
+        }
+        ModelInferRequest {
+            model_name: "test-model".to_string(),
+            model_version: String::new(),
+            id: "req-1".to_string(),
+            parameters: Default::default(),
+            inputs,
+            outputs: Vec::new(),
+            raw_input_contents: Vec::new(),
+        }
+    }
+
+    fn output_text(response: &ModelInferResponse, name: &str) -> String {
+        let tensor = response
+            .outputs
+            .iter()
+            .find(|output| output.name == name)
+            .expect("output tensor present");
+        let bytes = tensor
+            .contents
+            .as_ref()
+            .expect("typed contents")
+            .bytes_contents
+            .first()
+            .expect("one value");
+        String::from_utf8_lossy(bytes).into_owned()
+    }
+
+    #[test]
+    fn decode_inputs_reads_prompt_and_max_tokens() {
+        let msg = infer_request("hello world this is a prompt", Some(7));
+        let (prompt, max_tokens) = decode_infer_inputs(&msg).expect("decode");
+        assert_eq!(prompt, "hello world this is a prompt");
+        assert_eq!(max_tokens, Some(7));
+    }
+
+    #[test]
+    fn decode_inputs_missing_text_input_errors() {
+        let msg = ModelInferRequest {
+            model_name: "m".to_string(),
+            inputs: Vec::new(),
+            ..Default::default()
+        };
+        let error = decode_infer_inputs(&msg).expect_err("must error");
+        assert_eq!(error.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[test]
+    fn decode_inputs_falls_back_to_raw_bytes() {
+        // A renamed input tensor carrying its text in raw_input_contents
+        // (4-byte LE length prefix + bytes), as a non-AIPerf client might send.
+        let prompt = "raw prompt";
+        let mut raw = (prompt.len() as u32).to_le_bytes().to_vec();
+        raw.extend_from_slice(prompt.as_bytes());
+        let msg = ModelInferRequest {
+            model_name: "m".to_string(),
+            inputs: vec![InferInputTensor {
+                name: "prompt".to_string(),
+                datatype: "BYTES".to_string(),
+                shape: vec![1],
+                parameters: Default::default(),
+                contents: None,
+            }],
+            raw_input_contents: vec![raw],
+            ..Default::default()
+        };
+        let (decoded, _) = decode_infer_inputs(&msg).expect("decode");
+        assert_eq!(decoded, prompt);
+    }
+
+    #[tokio::test]
+    async fn model_infer_returns_text_output() {
+        let state = fast_state();
+        let response = model_infer(
+            state,
+            Request::new(infer_request("generate some text here", None)),
+        )
+        .await
+        .expect("infer ok")
+        .into_inner();
+        assert_eq!(response.id, "req-1");
+        assert_eq!(response.model_name, "test-model");
+        let text = output_text(&response, DEFAULT_OUTPUT_NAME);
+        assert!(!text.is_empty(), "expected non-empty generated text");
+    }
+
+    #[tokio::test]
+    async fn model_infer_honors_max_tokens() {
+        let state = fast_state();
+        // ignore_eos is off, so max_tokens is an upper bound; assert the reply
+        // does not exceed it. Use a long prompt so the natural length would be
+        // large without the cap.
+        let long = "word ".repeat(200);
+        let response = model_infer(state, Request::new(infer_request(&long, Some(5))))
+            .await
+            .expect("infer ok")
+            .into_inner();
+        let text = output_text(&response, DEFAULT_OUTPUT_NAME);
+        let token_count = crate::tokens::count_tokens(&text);
+        assert!(token_count <= 5, "expected <= 5 tokens, got {token_count}");
+    }
+
+    #[tokio::test]
+    async fn model_stream_infer_yields_chunks() {
+        use futures::StreamExt;
+        let state = fast_state();
+        let unary = model_infer(
+            state.clone(),
+            Request::new(infer_request("stream this prompt text", None)),
+        )
+        .await
+        .expect("unary ok")
+        .into_inner();
+        let expected = output_text(&unary, DEFAULT_OUTPUT_NAME);
+
+        let mut stream = model_stream_infer(
+            state,
+            Request::new(infer_request("stream this prompt text", None)),
+        )
+        .await
+        .expect("stream ok")
+        .into_inner();
+        let mut chunks = 0usize;
+        let mut assembled = String::new();
+        while let Some(item) = stream.next().await {
+            let envelope = item.expect("chunk ok");
+            assert!(envelope.error_message.is_empty());
+            let infer = envelope.infer_response.expect("infer_response present");
+            assembled.push_str(&output_text(&infer, DEFAULT_OUTPUT_NAME));
+            chunks += 1;
+        }
+        assert!(chunks > 0, "expected at least one streamed chunk");
+        // Deterministic generation: the concatenated stream equals the unary text.
+        assert_eq!(assembled, expected);
+    }
+
+    #[tokio::test]
+    async fn model_stream_infer_reasoning_model_is_not_empty() {
+        // Regression: a reasoning model with a small max_tokens budget spends it
+        // all on reasoning tokens, leaving zero *output* tokens. The stream must
+        // still emit the reasoning tokens — an empty gRPC server stream is a
+        // failed request to strict clients (the runner). Caught only end-to-end.
+        use futures::StreamExt;
+        let state = fast_state();
+        let mut msg = infer_request("think hard about this prompt please", Some(4));
+        "openai/gpt-oss-120b".clone_into(&mut msg.model_name);
+        let mut stream = model_stream_infer(state, Request::new(msg))
+            .await
+            .expect("stream ok")
+            .into_inner();
+        let mut chunks = 0usize;
+        while let Some(item) = stream.next().await {
+            item.expect("chunk ok");
+            chunks += 1;
+        }
+        assert!(
+            chunks > 0,
+            "reasoning model must not produce an empty gRPC stream"
+        );
+    }
+
+    #[tokio::test]
+    async fn model_ready_is_true() {
+        let state = fast_state();
+        let response = model_ready(state, Request::new(ModelReadyRequest::default()))
+            .await
+            .expect("ready ok")
+            .into_inner();
+        assert!(response.ready);
+    }
+}

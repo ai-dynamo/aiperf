@@ -106,6 +106,8 @@ pub fn run(parent: MockServerConfig, processes: usize) -> anyhow::Result<()> {
         child_cfg.host = Ipv4Addr::LOCALHOST.to_string();
         child_cfg.port = port;
         child_cfg.workers = child_workers;
+        // The balancer is HTTP-only; children must not each bind the gRPC port.
+        child_cfg.grpc_port = None;
 
         let json = serde_json::to_string(&child_cfg).context("serializing child config")?;
         let mut cmd = Command::new(&exe);

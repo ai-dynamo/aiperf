@@ -72,7 +72,13 @@ fn observed_arrival_offsets(result: &RunResult) -> Vec<f64> {
         "expected >= {COUNT} records with metadata.credit_issued_ns, got {} (exit={}, stderr tail: {})",
         issued.len(),
         result.exit_code,
-        result.stderr.lines().rev().take(6).collect::<Vec<_>>().join(" | ")
+        result
+            .stderr
+            .lines()
+            .rev()
+            .take(6)
+            .collect::<Vec<_>>()
+            .join(" | ")
     );
     issued.sort_unstable();
     issued.truncate(COUNT);
@@ -125,9 +131,16 @@ fn run_python_poisson(harness: &AIPerfHarness, backend: &str) -> Vec<f64> {
         ],
     );
     assert_eq!(
-        result.exit_code, 0,
+        result.exit_code,
+        0,
         "python/{backend} run failed; stderr tail: {}",
-        result.stderr.lines().rev().take(8).collect::<Vec<_>>().join(" | ")
+        result
+            .stderr
+            .lines()
+            .rev()
+            .take(8)
+            .collect::<Vec<_>>()
+            .join(" | ")
     );
     gaps(&observed_arrival_offsets(&result))
 }
@@ -151,7 +164,10 @@ async fn test_seeded_poisson_schedule_parity() {
     let parity_gaps = run_python_poisson(&harness, "rust_parity");
     let legacy_gaps = run_python_poisson(&harness, "legacy");
 
-    let n = reference_gaps.len().min(parity_gaps.len()).min(legacy_gaps.len());
+    let n = reference_gaps
+        .len()
+        .min(parity_gaps.len())
+        .min(legacy_gaps.len());
     let reference_gaps = &reference_gaps[..n];
     let parity_err = mean_abs_error(&parity_gaps[..n], reference_gaps);
     let legacy_err = mean_abs_error(&legacy_gaps[..n], reference_gaps);
@@ -160,9 +176,21 @@ async fn test_seeded_poisson_schedule_parity() {
     // Persist all three schedules as JSONL artifacts for inspection.
     let out_dir = std::env::temp_dir().join("aiperf_poisson_parity");
     std::fs::create_dir_all(&out_dir).expect("create schedule output dir");
-    write_schedule_jsonl(&out_dir.join("poisson_rust_reference.jsonl"), "rust", reference_gaps);
-    write_schedule_jsonl(&out_dir.join("poisson_python_parity.jsonl"), "python-parity", &parity_gaps[..n]);
-    write_schedule_jsonl(&out_dir.join("poisson_python_legacy.jsonl"), "python-legacy", &legacy_gaps[..n]);
+    write_schedule_jsonl(
+        &out_dir.join("poisson_rust_reference.jsonl"),
+        "rust",
+        reference_gaps,
+    );
+    write_schedule_jsonl(
+        &out_dir.join("poisson_python_parity.jsonl"),
+        "python-parity",
+        &parity_gaps[..n],
+    );
+    write_schedule_jsonl(
+        &out_dir.join("poisson_python_legacy.jsonl"),
+        "python-legacy",
+        &legacy_gaps[..n],
+    );
 
     eprintln!(
         "seeded-poisson parity: n={n} mean_interval={mean_interval:.6}s \

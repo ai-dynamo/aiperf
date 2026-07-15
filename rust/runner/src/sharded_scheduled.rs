@@ -89,7 +89,7 @@ use aiperf::metrics_core::Phase;
 use aiperf::phase_runtime::ScheduledPhaseSidecar;
 use anyhow::{Context, Result, anyhow, bail};
 
-use crate::cellular_controller::owned_positions;
+use crate::cell_launcher::owned_positions;
 use crate::execute::{
     ScheduledShardOutcome, ShardRecords, ShardedShared, execute_scheduled_shard, metrics_phase,
 };

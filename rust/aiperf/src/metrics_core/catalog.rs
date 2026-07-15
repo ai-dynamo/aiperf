@@ -1016,7 +1016,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             UsagePromptTokensDiffPct,
-            "Usage Prompt Diff %",
+            "Usage Prompt Diff",
             Percent,
             Record,
             None,
@@ -1025,7 +1025,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             UsageCompletionTokensDiffPct,
-            "Usage Completion Diff %",
+            "Usage Completion Diff",
             Percent,
             Record,
             None,
@@ -1034,7 +1034,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             UsageReasoningTokensDiffPct,
-            "Usage Reasoning Diff %",
+            "Usage Reasoning Diff",
             Percent,
             Record,
             None,
@@ -1063,7 +1063,7 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
         ),
         spec!(
             OslMismatchDiffPct,
-            "OSL Mismatch Diff %",
+            "OSL Mismatch Diff",
             Percent,
             Record,
             None,
@@ -1987,6 +1987,60 @@ pub fn spec_for(tag: MetricTag) -> Option<&'static MetricSpec> {
     CATALOG.iter().find(|spec| spec.tag == tag)
 }
 
+/// One per-request metric exposed as a column in a per-record artifact (the
+/// Parquet sidecar and the records CSV): the metric tag, its human display
+/// header, and its constant display unit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordMetricColumn {
+    /// Metric tag — the machine key (Parquet column name, JSONL metric key).
+    pub tag: String,
+    /// Human display header (e.g. `Request Latency`), used by the records CSV.
+    pub header: String,
+    /// Constant display unit (e.g. `ms`, `tokens`, `tokens/sec`).
+    pub unit: String,
+}
+
+impl RecordMetricColumn {
+    /// The records-CSV column name: `{header} ({unit})`, matching the summary CSV
+    /// (`aiperf::export::genai_perf::format_metric_name` /
+    /// `metrics_csv_exporter.py::_format_metric_name`). The unit is omitted when it
+    /// is empty or `count`/`requests` (case-insensitive), and the parenthesized
+    /// unit stands alone when the header is empty.
+    pub fn csv_display_name(&self) -> String {
+        let lower = self.unit.to_ascii_lowercase();
+        if self.unit.is_empty() || lower == "count" || lower == "requests" {
+            self.header.clone()
+        } else if self.header.is_empty() {
+            format!("({})", self.unit)
+        } else {
+            format!("{} ({})", self.header, self.unit)
+        }
+    }
+}
+
+/// The ordered per-request metric columns: every [`MetricType::Record`] metric
+/// that is not hidden from individual records, in catalog order.
+///
+/// The filter is kept identical to the runner's per-record JSONL projection
+/// (`rust/runner/src/records.rs::record_metrics`) — `MetricType::Record` minus
+/// `NO_INDIVIDUAL_RECORDS | INTERNAL | EXPERIMENTAL` — so the Parquet/CSV metric
+/// columns line up exactly with the JSONL metric keys. Deriving from the static
+/// catalog makes the column set deterministic across runs of the same binary.
+/// The unit is the metric's display unit (`display_unit` falling back to `unit`).
+pub fn record_metric_columns() -> Vec<RecordMetricColumn> {
+    let hidden =
+        MetricFlags::NO_INDIVIDUAL_RECORDS | MetricFlags::INTERNAL | MetricFlags::EXPERIMENTAL;
+    CATALOG
+        .iter()
+        .filter(|spec| spec.kind == MetricType::Record && !spec.flags.intersects(hidden))
+        .map(|spec| RecordMetricColumn {
+            tag: spec.tag.as_str().to_string(),
+            header: spec.header.to_string(),
+            unit: spec.display_unit.unwrap_or(spec.unit).as_str().to_string(),
+        })
+        .collect()
+}
+
 /// Validates catalog uniqueness, dependency resolution, tier rules, and acyclicity.
 pub fn validate_catalog() -> Result<Vec<MetricTag>, String> {
     let mut seen = BTreeSet::new();
@@ -2102,6 +2156,9 @@ mod tests {
     fn catalog_identity_matches_the_source_grounded_snapshot() {
         // Covers the 103 Python identities plus the 16 native sweep identities.
         // Any intentional metadata change must be re-audited before updating this value.
-        assert_eq!(catalog_fingerprint(), 9_668_288_044_080_706_792);
+        // Updated 2026-07-14: dropped the redundant trailing " %" from the four
+        // Percent-unit diff headers (OSL Mismatch Diff, Usage {Prompt,Completion,
+        // Reasoning} Diff) so `{Header} ({unit})` renders "… Diff (%)", not "… Diff % (%)".
+        assert_eq!(catalog_fingerprint(), 6_796_016_298_316_141_378);
     }
 }

@@ -8,6 +8,13 @@
 //! dataset construction, phase scheduling, HTTP dispatch, measurement, and the
 //! authoritative native-v2 report.
 pub mod application;
+pub mod cell_launcher;
+pub mod cellular_cell;
+// The controller orchestration (cell launch + velo transport + merge) is only
+// reachable with the `velo` feature; `owned_positions` (needed by the non-velo
+// sharded runtime) lives in `cell_launcher` instead.
+#[cfg(feature = "velo")]
+pub mod cellular_controller;
 pub mod control_plane_http;
 pub mod coordinator;
 pub mod dataset_input;
@@ -18,11 +25,9 @@ mod gpu_telemetry;
 mod graph_execution;
 pub mod graph_input;
 mod graph_phase_runtime;
-mod heartbeat_lane;
-pub mod cellular_cell;
-pub mod cellular_controller;
 pub mod grpc_execution;
 pub mod grpc_turn_execution;
+mod heartbeat_lane;
 mod live_streaming;
 mod network_latency;
 #[cfg(feature = "dynosim")]

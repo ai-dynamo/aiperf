@@ -200,41 +200,42 @@ impl Dataset {
     /// at dispatch. Idempotent: a second call finds every eligible turn already
     /// carrying `messages` and is a no-op.
     pub fn lower_messages_for_endpoint(&mut self, lowerer: &dyn TurnMessageLowerer) -> Result<()> {
+        // Thaw preserves every existing handle; new `Message` wires are appended
+        // and the store is refrozen once. Conversations are mutated in place when
+        // uniquely owned (the load path) so lowering never clones the whole
+        // O(entries) conversation vector to high-water alongside the growing pool,
+        // and each turn's transient `EndpointTurn` — with any `serde_json::Value`
+        // it built — is confined to `lower_turn_in_place` and dropped before the
+        // next turn. The lowering high-water mark is therefore one turn's
+        // intermediates plus the pool, flat in entry count.
         let mut pool = SegmentPool::thaw(self.segments.as_ref());
-        let mut conversations: Vec<Conversation> = self.conversations.to_vec();
+        let total = self.conversations.len();
         let mut changed = false;
-        for conversation in &mut conversations {
-            for turn in &mut conversation.turns {
-                if !turn_is_lowerable(turn) {
-                    continue;
+
+        if let Some(conversations) = Arc::get_mut(&mut self.conversations) {
+            for (position, conversation) in conversations.iter_mut().enumerate() {
+                for turn in &mut conversation.turns {
+                    changed |= lower_turn_in_place(turn, &mut pool, lowerer)?;
                 }
-                let endpoint_turn = resolve_turn(&pool, turn)?;
-                // A shape that cannot render this content (e.g. audio under the
-                // Anthropic Messages shape) is left unlowered so the identical
-                // error surfaces at dispatch, not at load.
-                let Ok(wires) = lowerer.lower_turn(&endpoint_turn) else {
-                    continue;
-                };
-                let role = turn.role.clone().unwrap_or_else(|| Role::new("user"));
-                let mut handles: SmallVec<[Handle; 1]> = SmallVec::new();
-                let mut parent = None;
-                for wire in wires {
-                    // Empty token vector: the lowered `Message` identity keys on
-                    // its wire + role + prefix (never re-read for accounting,
-                    // which uses the turn's precomputed `input_tokens`), so
-                    // identical content dedups regardless of token IDs.
-                    let handle =
-                        pool.intern_message(parent, role.clone(), wire, Vec::<u32>::new())?;
-                    parent = Some(handle);
-                    handles.push(handle);
+                report_build_progress("lowering", position + 1, total);
+            }
+        } else {
+            // The conversation arena is shared (e.g. the dataset was cloned before
+            // lowering); fall back to a single clone-mutate-replace pass.
+            let mut conversations: Vec<Conversation> = self.conversations.to_vec();
+            for (position, conversation) in conversations.iter_mut().enumerate() {
+                for turn in &mut conversation.turns {
+                    changed |= lower_turn_in_place(turn, &mut pool, lowerer)?;
                 }
-                turn.body = handles;
-                changed = true;
+                report_build_progress("lowering", position + 1, total);
+            }
+            if changed {
+                self.conversations = conversations.into();
             }
         }
+
         if changed {
             self.segments = Arc::new(pool.freeze());
-            self.conversations = conversations.into();
         }
         Ok(())
     }
@@ -334,6 +335,7 @@ impl Dataset {
                     }
                 }
                 plans.push(turn_plans);
+                report_build_progress("body plans", plans.len(), self.conversations.len());
             }
             plans
         };
@@ -723,6 +725,56 @@ fn static_endpoint_turns(
         | ConversationContextMode::MessageArrayWithoutResponses => Err(DatasetError::Validation(
             "static_endpoint_turns called for a dynamic context mode".into(),
         )),
+    }
+}
+
+/// Lower one static content turn to pre-serialized `Message` segment(s) in
+/// `pool`, returning whether the turn's `body` was rewritten. The transient
+/// [`EndpointTurn`] (and any `serde_json::Value` it built) lives only for this
+/// call, so a streaming lowering pass keeps at most one turn's intermediates
+/// alive at a time rather than the whole dataset's.
+fn lower_turn_in_place(
+    turn: &mut Turn,
+    pool: &mut SegmentPool,
+    lowerer: &dyn TurnMessageLowerer,
+) -> Result<bool> {
+    if !turn_is_lowerable(turn) {
+        return Ok(false);
+    }
+    let endpoint_turn = resolve_turn(&*pool, turn)?;
+    // A shape that cannot render this content (e.g. audio under the Anthropic
+    // Messages shape) is left unlowered so the identical error surfaces at
+    // dispatch, not at load.
+    let Ok(wires) = lowerer.lower_turn(&endpoint_turn) else {
+        return Ok(false);
+    };
+    let role = turn.role.clone().unwrap_or_else(|| Role::new("user"));
+    let mut handles: SmallVec<[Handle; 1]> = SmallVec::new();
+    let mut parent = None;
+    for wire in wires {
+        // Empty token vector: the lowered `Message` identity keys on its wire +
+        // role + prefix (never re-read for accounting, which uses the turn's
+        // precomputed `input_tokens`), so identical content dedups regardless of
+        // token IDs.
+        let handle = pool.intern_message(parent, role.clone(), wire, Vec::<u32>::new())?;
+        parent = Some(handle);
+        handles.push(handle);
+    }
+    turn.body = handles;
+    Ok(true)
+}
+
+/// Emit a throttled dataset-build progress line — at roughly every 5% and always
+/// on the final conversation — so long synthetic builds and lowering passes are
+/// observable without per-conversation log spam. Cheap enough to call in the hot
+/// loop: one modulo and an early return off the logging path.
+pub(crate) fn report_build_progress(phase: &str, done: usize, total: usize) {
+    if total == 0 {
+        return;
+    }
+    let step = (total / 20).max(1);
+    if done == total || done % step == 0 {
+        tracing::info!("dataset build: {done}/{total} conversations ({phase})");
     }
 }
 

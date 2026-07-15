@@ -110,6 +110,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "velo 0.5.0",
  "webpki-roots 0.26.11",
 ]
 
@@ -119,10 +120,12 @@ version = "0.0.0"
 dependencies = [
  "aiperf",
  "aiperf-mock-server",
+ "arrow",
  "axum",
  "base64 0.22.1",
  "glob",
  "nix 0.29.0",
+ "parquet 58.3.0",
  "regex",
  "reqwest",
  "serde_json",
@@ -145,6 +148,7 @@ dependencies = [
  "clap",
  "dashmap",
  "futures",
+ "http 1.4.2",
  "hyper 1.10.1",
  "hyper-util",
  "libc",
@@ -152,11 +156,13 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "prometheus 0.13.4",
+ "prost 0.14.4",
  "reqwest",
  "serde",
  "serde_json",
  "socket2 0.5.10",
  "tokio",
+ "tonic 0.14.6",
  "tower",
  "tracing",
  "tracing-subscriber",
@@ -2254,7 +2260,7 @@ dependencies = [
  "tracing",
  "uuid",
  "validator",
- "velo",
+ "velo 0.1.0",
 ]
 
 [[package]]
@@ -2974,6 +2980,11 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash 0.2.0",
+]
 
 [[package]]
 name = "heck"
@@ -3742,7 +3753,7 @@ dependencies = [
  "tokio",
  "tracing",
  "validator",
- "velo",
+ "velo 0.1.0",
 ]
 
 [[package]]
@@ -3774,7 +3785,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "uuid",
- "velo",
+ "velo 0.1.0",
 ]
 
 [[package]]
@@ -3831,7 +3842,7 @@ dependencies = [
  "tracing",
  "uuid",
  "validator",
- "velo",
+ "velo 0.1.0",
 ]
 
 [[package]]
@@ -4048,6 +4059,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f66e8d5d03f609abc3a39e6f08e4164ebf1447a732906d39eb9b99b7919ef39"
 dependencies = [
  "hashbrown 0.16.1",
+]
+
+[[package]]
+name = "lru"
+version = "0.18.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b6180140927ee907000b0aa540091f6ea512ead4447c92b8fc35bc72788a5a6"
+dependencies = [
+ "hashbrown 0.17.1",
 ]
 
 [[package]]
@@ -4391,6 +4411,7 @@ dependencies = [
  "cfg-if",
  "cfg_aliases",
  "libc",
+ "memoffset",
 ]
 
 [[package]]
@@ -7615,6 +7636,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "velo"
+version = "0.5.0"
+source = "git+https://github.com/ai-dynamo/velo.git?tag=v0.5.0#c53fea2daf297b88ba71d3d0e61426ee4f0c5f8c"
+dependencies = [
+ "anyhow",
+ "async-stream",
+ "bs58",
+ "bytes",
+ "dashmap",
+ "derive-getters",
+ "derive_builder",
+ "flume",
+ "fs4",
+ "futures",
+ "lru 0.18.1",
+ "nix 0.31.3",
+ "parking_lot",
+ "prometheus 0.14.0",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+ "socket2 0.6.4",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tonic-build 0.13.1",
+ "tracing",
+ "uuid",
+ "velo-ext",
+ "xxhash-rust",
+]
+
+[[package]]
 name = "velo-common"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7666,6 +7720,26 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "uuid",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "velo-ext"
+version = "0.2.0"
+source = "git+https://github.com/ai-dynamo/velo.git?tag=v0.5.0#c53fea2daf297b88ba71d3d0e61426ee4f0c5f8c"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "flume",
+ "futures",
+ "rmp-serde",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
  "uuid",
  "xxhash-rust",
 ]

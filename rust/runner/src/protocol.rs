@@ -148,6 +148,16 @@ pub struct ArtifactSpec {
     /// Per-request metrics JSONL path, or absent when records are disabled.
     #[serde(default)]
     pub records_path: Option<PathBuf>,
+    /// Wide per-request metrics Parquet sidecar path, or absent when the columnar
+    /// export is disabled. Decodes on every build; a runner built without the
+    /// `parquet` feature warns and skips it (the field stays present so the wire
+    /// still decodes, mirroring `ParquetExportConfig`).
+    #[serde(default)]
+    pub records_parquet_path: Option<PathBuf>,
+    /// Per-request metrics CSV sidecar path (`profile_export_records.csv`), or
+    /// absent when the CSV export is disabled.
+    #[serde(default)]
+    pub records_csv_path: Option<PathBuf>,
     /// Python-compatible raw request/response JSONL path, or absent when raw
     /// capture is disabled.
     #[serde(default)]
@@ -342,6 +352,12 @@ pub struct PhaseCommonSpec {
     /// Optional single-run adaptive load controller.
     #[serde(default)]
     pub adaptive_scale: Option<AdaptiveScaleSpec>,
+    /// Optional agentic cache-warmup duration in seconds, carried on the warmup
+    /// phase. Python projects the Config `agentic_cache_warmup_duration`; C2
+    /// lowers it into the recorded-graph cache-pressure window. Absent leaves the
+    /// pair's default cache-warmup policy unchanged.
+    #[serde(default)]
+    pub agentic_cache_warmup_duration: Option<f64>,
 }
 
 /// Fully resolved adaptive-scale policy for one profiling phase.
@@ -517,5 +533,58 @@ impl PhaseSpec {
             | Self::UserCentric { rate, .. } => Some(*rate),
             Self::Concurrency { .. } | Self::FixedSchedule { .. } => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn phase_common_carries_agentic_cache_warmup_duration() {
+        // The warmup phase carries the agentic cache-warmup duration; C2 lowers
+        // it into the recorded-graph cache-pressure window.
+        let phase: PhaseSpec = serde_json::from_str(
+            r#"{
+                "type": "concurrency",
+                "name": "warmup",
+                "exclude_from_results": true,
+                "concurrency": 1,
+                "agentic_cache_warmup_duration": 12.5
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(phase.common().agentic_cache_warmup_duration, Some(12.5));
+    }
+
+    #[test]
+    fn phase_common_cache_warmup_defaults_to_absent() {
+        let phase: PhaseSpec = serde_json::from_str(
+            r#"{
+                "type": "concurrency",
+                "name": "profiling",
+                "exclude_from_results": false,
+                "concurrency": 1
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(phase.common().agentic_cache_warmup_duration, None);
+    }
+
+    #[test]
+    fn phase_common_rejects_unknown_fields() {
+        let result = serde_json::from_str::<PhaseSpec>(
+            r#"{
+                "type": "concurrency",
+                "name": "warmup",
+                "exclude_from_results": true,
+                "concurrency": 1,
+                "unknown_phase_field": true
+            }"#,
+        );
+        let Err(error) = result else {
+            panic!("phase accepted an unknown field")
+        };
+        assert!(error.to_string().contains("unknown field"));
     }
 }

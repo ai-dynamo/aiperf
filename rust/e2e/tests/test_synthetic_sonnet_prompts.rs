@@ -26,9 +26,7 @@ fn contains_window(corpus: &[u32], needle: &[u32]) -> bool {
     if needle.is_empty() || needle.len() > corpus.len() {
         return false;
     }
-    corpus
-        .windows(needle.len())
-        .any(|window| window == needle)
+    corpus.windows(needle.len()).any(|window| window == needle)
 }
 
 #[tokio::test]

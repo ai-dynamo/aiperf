@@ -14,7 +14,7 @@ description = "Versioned single-benchmark subprocess runner for the Python AIPer
 # a plain `cargo build -p aiperf-runner` producing a non-dynosim binary was a
 # recurring footgun (a stale default build silently drops the transport). This
 # requires the sibling `dynamo-aiperf-native/lib/mocker` checkout at build time.
-default = ["dynosim", "parquet"]
+default = ["dynosim", "parquet", "velo"]
 # The runner is the only native executable, so every optional AIPerf/Dynamo
 # composition feature must terminate here rather than requiring another binary.
 dynosim = ["aiperf/dynosim"]
@@ -35,6 +35,10 @@ dynamo-full = [
     "dynamo-profile",
 ]
 dynamo-parity = ["dynamo-full", "aiperf/dynamo-parity"]
+# Cellular cross-host cell transport over ai-dynamo/velo. Gates the velo
+# controller/cell path; in the default build. A lean `--no-default-features`
+# runner drops it: `cells=1` is byte-unchanged and `cells>1` fails closed.
+velo = ["aiperf/velo"]
 
 [dependencies]
 # Declared directly (not via workspace inheritance) so the runner can opt out of
