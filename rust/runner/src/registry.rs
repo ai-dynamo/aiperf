@@ -1,14 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Frozen transport/workload/pair composition for protocol-v2 runs.
+//! Frozen transport/workload composition for protocol-v2 runs.
 //!
-//! Transport and workload factories validate their own authored objects. A third
-//! pair factory performs open double dispatch: the coordinator never matches on
-//! component strings, and a future remote placement can register a new transport
-//! plus compatible pairs without changing scheduling, workload, or reporting
-//! core code. Factory lookup and downcasting happen only during preparation;
-//! hot request/token loops retain their typed implementations.
+//! Transport and workload factories validate their own authored objects. There
+//! is no transport×workload cell object and no compatibility predicate: any
+//! registered workload runs over any registered transport. The coordinator never
+//! matches on component strings; it resolves the two factories by id, dispatches
+//! run-level validation and preparation to the workload factory, and the
+//! workload selects the transport-specific execution path from the validated
+//! transport by id/type — failing closed there if it cannot serve that
+//! transport. A future remote placement registers one transport and every
+//! workload can drive it with no pair registration.
 
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
@@ -50,17 +53,20 @@ pub enum RunnerClockKind {
 }
 
 /// Deterministic capability facts for one linked transport factory.
+///
+/// These feed the `--capabilities` [`RunnerCatalog`] only. There is no
+/// transport×workload compatibility predicate: any registered workload runs over
+/// any registered transport, and transport-specific execution is resolved by the
+/// workload's `prepare_with_context` from the validated transport by id/type.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct RunnerTransportDescriptor {
     /// Stable registry ID.
     pub id: &'static str,
     /// Human-readable implementation description.
     pub description: &'static str,
-    /// Clock family exposed to compatible workloads.
+    /// Clock family exposed by this transport (catalog fact).
     pub clock: RunnerClockKind,
-    /// Whether responses contain model-semantic answer text.
-    pub semantic_responses: bool,
-    /// Statically compiled transport feature IDs.
+    /// Statically compiled transport feature IDs (catalog fact).
     pub features: &'static [&'static str],
 }
 
@@ -71,22 +77,17 @@ pub struct RunnerWorkloadDescriptor {
     pub id: &'static str,
     /// Human-readable implementation description.
     pub description: &'static str,
-    /// Whether the workload requires semantic model responses.
-    pub requires_semantic_responses: bool,
-    /// Clock families this workload can consume.
-    pub clock_kinds: &'static [RunnerClockKind],
-    /// Transport features required for every run of this workload.
-    pub required_transport_features: &'static [&'static str],
 }
 
 /// Config-specific requirements computed by a workload factory.
+///
+/// This gates config-level transport policy (e.g. the isolated control-plane
+/// HTTP client) and authored resource presence. It is **not** a compatibility
+/// predicate: no field admits or rejects a transport×workload combination.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WorkloadRequirements {
-    /// Whether this authored config needs semantic response text.
-    pub semantic_responses: bool,
-    /// Accepted transport clock families.
-    pub clock_kinds: BTreeSet<RunnerClockKind>,
-    /// Required transport feature IDs.
+    /// Required transport feature IDs for config-level transport gating (e.g.
+    /// `control_plane_http`). Empty for every built-in workload today.
     pub transport_features: BTreeSet<String>,
     /// Required/optional/forbidden authored resource blocks.
     pub resources: ResourceRequirementsV2,
@@ -215,6 +216,44 @@ pub trait RunnerWorkloadFactory: Debug + Send + Sync {
 
     /// Derive transport requirements from the validated authored config.
     fn requirements(&self, config: &dyn ValidatedWorkloadConfig) -> Result<WorkloadRequirements>;
+
+    /// Check run-level invariants for one authored run over the resolved
+    /// transport, without external IO or artifact creation.
+    ///
+    /// The workload owns workload-level checks; any transport-specific endpoint
+    /// check is resolved by `transport_id` (a map lookup, never a runtime string
+    /// switch in the coordinator). The default performs no extra validation.
+    fn validate_run(
+        &self,
+        _run: &AuthoredRunSpecV2,
+        _context: &RunnerRunContext,
+        _transport: &dyn ValidatedTransportConfig,
+        _workload: &dyn ValidatedWorkloadConfig,
+        _transport_id: &str,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    /// Complete workload preparation over the already-validated transport.
+    ///
+    /// The workload lowers its own authored config once and resolves the
+    /// transport's dispatcher/placement factory from the coordinator-frozen
+    /// [`RunnerExecutionFactories`] by `transport_id`; it is otherwise
+    /// transport-blind. The default rejects execution so a descriptor-only
+    /// workload cannot silently run.
+    fn prepare_with_context(
+        &self,
+        _run: &AuthoredRunSpecV2,
+        _context: &RunnerRunContext,
+        _transport: Box<dyn ValidatedTransportConfig>,
+        _workload: Box<dyn ValidatedWorkloadConfig>,
+        _transport_id: &str,
+    ) -> Result<Box<dyn PreparedRunnerOperation>> {
+        bail!(
+            "workload {:?} is not executable in this runner distribution",
+            self.descriptor().id
+        )
+    }
 }
 
 /// One-shot lifecycle acknowledgement after durable report persistence.
@@ -353,71 +392,19 @@ pub trait PreparedRunnerOperation: Debug {
     fn execute(self: Box<Self>) -> Result<PreparedRunOutcome>;
 }
 
-/// Open composition adapter for one transport/workload pair.
-///
-/// Pair factories are the deliberate double-dispatch seam Rust otherwise
-/// lacks for two open trait-object families. They may downcast only the two
-/// validated startup values registered for their exact key. The coordinator
-/// remains unchanged when a new transport, workload, or remote placement is
-/// statically linked.
-pub trait RunnerPairFactory: Debug + Send + Sync {
-    /// Transport registry ID consumed by this adapter.
-    fn transport_id(&self) -> &'static str;
-
-    /// Workload registry ID consumed by this adapter.
-    fn workload_id(&self) -> &'static str;
-
-    /// Check cross-component invariants without IO or artifact creation.
-    fn validate_pair(
-        &self,
-        transport: &dyn ValidatedTransportConfig,
-        workload: &dyn ValidatedWorkloadConfig,
-    ) -> Result<()>;
-
-    /// Check run-level invariants against the already validated product
-    /// registry and endpoint profiles without performing external IO.
-    fn validate_run(
-        &self,
-        _run: &AuthoredRunSpecV2,
-        _context: &RunnerRunContext,
-        transport: &dyn ValidatedTransportConfig,
-        workload: &dyn ValidatedWorkloadConfig,
-    ) -> Result<()> {
-        self.validate_pair(transport, workload)
-    }
-
-    /// Complete pair-specific preparation after all static validation passes.
-    fn prepare(
-        &self,
-        run: &AuthoredRunSpecV2,
-        transport: Box<dyn ValidatedTransportConfig>,
-        workload: Box<dyn ValidatedWorkloadConfig>,
-    ) -> Result<Box<dyn PreparedRunnerOperation>>;
-
-    /// Prepare with the coordinator-owned frozen product registry and
-    /// normalized endpoint profiles.
-    ///
-    /// Existing context-free adapters retain the default. Online adapters
-    /// override this hook so every pair consumes the one registry composed by
-    /// the process coordinator instead of building a private registry.
-    fn prepare_with_context(
-        &self,
-        run: &AuthoredRunSpecV2,
-        _context: &RunnerRunContext,
-        transport: Box<dyn ValidatedTransportConfig>,
-        workload: Box<dyn ValidatedWorkloadConfig>,
-    ) -> Result<Box<dyn PreparedRunnerOperation>> {
-        self.prepare(run, transport, workload)
-    }
-}
-
 /// Fully validated component selection retained between validation and prepare.
+///
+/// There is no transport×workload cell object: the selection retains the two
+/// independently resolved factories and the descriptor predicate has already
+/// admitted the pair. Run-level validation and preparation are dispatched to the
+/// workload factory, which resolves the transport's dispatcher/placement factory
+/// by `transport_id`.
 pub struct ValidatedRunnerSelection {
     transport_id: String,
     workload_id: String,
     transport: Box<dyn ValidatedTransportConfig>,
     workload: Box<dyn ValidatedWorkloadConfig>,
-    pair: Arc<dyn RunnerPairFactory>,
+    workload_factory: Arc<dyn RunnerWorkloadFactory>,
 }
 
 impl Debug for ValidatedRunnerSelection {
@@ -447,7 +434,6 @@ impl ValidatedRunnerSelection {
 pub struct RunnerRegistryBuilder {
     transports: BTreeMap<String, Arc<dyn RunnerTransportFactory>>,
     workloads: BTreeMap<String, Arc<dyn RunnerWorkloadFactory>>,
-    pairs: BTreeMap<(String, String), Arc<dyn RunnerPairFactory>>,
 }
 
 impl RunnerRegistryBuilder {
@@ -476,46 +462,16 @@ impl RunnerRegistryBuilder {
         Ok(())
     }
 
-    /// Register one explicit pair adapter, rejecting duplicate keys.
-    pub fn register_pair(&mut self, factory: Arc<dyn RunnerPairFactory>) -> Result<()> {
-        let transport = checked_descriptor_id(factory.transport_id(), "pair transport")?;
-        let workload = checked_descriptor_id(factory.workload_id(), "pair workload")?;
-        let key = (transport.into_string(), workload.into_string());
-        if self.pairs.contains_key(&key) {
-            bail!(
-                "duplicate runner transport/workload pair ({:?}, {:?})",
-                key.0,
-                key.1
-            );
-        }
-        self.pairs.insert(key, factory);
-        Ok(())
-    }
-
-    /// Freeze the complete registry after reference and descriptor validation.
+    /// Freeze the complete registry.
+    ///
+    /// There is no pair table and no compatibility predicate to validate: any
+    /// registered workload runs over any registered transport, with
+    /// transport-specific execution resolved inside the workload at prepare time.
+    /// Freeze therefore only seals the two independent registries.
     pub fn freeze(self) -> Result<RunnerRegistry> {
-        for ((transport_id, workload_id), pair) in &self.pairs {
-            let transport = self.transports.get(transport_id).ok_or_else(|| {
-                anyhow!(
-                    "runner pair ({transport_id:?}, {workload_id:?}) references an unregistered transport"
-                )
-            })?;
-            let workload = self.workloads.get(workload_id).ok_or_else(|| {
-                anyhow!(
-                    "runner pair ({transport_id:?}, {workload_id:?}) references an unregistered workload"
-                )
-            })?;
-            ensure!(
-                pair.transport_id() == transport.descriptor().id
-                    && pair.workload_id() == workload.descriptor().id,
-                "runner pair key changed while the registry was being frozen"
-            );
-            validate_descriptor_compatibility(transport.descriptor(), workload.descriptor())?;
-        }
         Ok(RunnerRegistry {
             transports: self.transports,
             workloads: self.workloads,
-            pairs: self.pairs,
         })
     }
 }
@@ -524,7 +480,6 @@ impl RunnerRegistryBuilder {
 pub struct RunnerRegistry {
     transports: BTreeMap<String, Arc<dyn RunnerTransportFactory>>,
     workloads: BTreeMap<String, Arc<dyn RunnerWorkloadFactory>>,
-    pairs: BTreeMap<(String, String), Arc<dyn RunnerPairFactory>>,
 }
 
 impl RunnerRegistry {
@@ -541,14 +496,6 @@ impl RunnerRegistry {
         self.workloads
             .values()
             .map(|factory| factory.descriptor())
-            .collect()
-    }
-
-    /// Return explicitly linked compatible pairs in deterministic tuple order.
-    pub fn supported_pairs(&self) -> Vec<(&str, &str)> {
-        self.pairs
-            .keys()
-            .map(|(transport, workload)| (transport.as_str(), workload.as_str()))
             .collect()
     }
 
@@ -592,33 +539,26 @@ impl RunnerRegistry {
             .transports
             .get(transport.id.as_str())
             .ok_or_else(|| unknown_component("transport", &transport.id, self.transports.keys()))?;
-        validate_requirements(transport_factory.descriptor(), &requirements)?;
         let validated_transport = transport_factory
             .validate(&transport.config, &requirements)
             .map_err(|error| anyhow!("transport {:?}: {error:#}", transport.id.as_str()))?;
 
-        let pair_key = (
-            transport.id.as_str().to_owned(),
-            workload.id.as_str().to_owned(),
-        );
-        let pair = self.pairs.get(&pair_key).cloned().ok_or_else(|| {
-            anyhow!(
-                "runner distribution does not contain transport/workload pair ({:?}, {:?})",
-                pair_key.0,
-                pair_key.1
-            )
-        })?;
-        pair.validate_pair(validated_transport.as_ref(), validated_workload.as_ref())?;
+        // There is no transport×workload compatibility predicate: any registered
+        // workload runs over any registered transport. The coordinator resolves
+        // the two factories by id and dispatches run-level validation and
+        // preparation to the workload, which selects the transport-specific
+        // execution path from the validated transport by id/type and fails
+        // closed there if it cannot serve that transport.
         Ok(ValidatedRunnerSelection {
-            transport_id: pair_key.0,
-            workload_id: pair_key.1,
+            transport_id: transport.id.as_str().to_owned(),
+            workload_id: workload.id.as_str().to_owned(),
             transport: validated_transport,
             workload: validated_workload,
-            pair,
+            workload_factory: workload_factory.clone(),
         })
     }
 
-    /// Apply pair-owned run-level validation after component configs and
+    /// Apply workload-owned run-level validation after component configs and
     /// endpoint profiles have been strictly decoded.
     pub fn validate_run(
         &self,
@@ -626,37 +566,33 @@ impl RunnerRegistry {
         context: &RunnerRunContext,
         selection: &ValidatedRunnerSelection,
     ) -> Result<()> {
-        selection.pair.validate_run(
+        selection.workload_factory.validate_run(
             run,
             context,
             selection.transport.as_ref(),
             selection.workload.as_ref(),
+            &selection.transport_id,
         )
-    }
-
-    /// Prepare one previously validated selection without repeating lookup or
-    /// central transport/workload branching.
-    pub fn prepare(
-        &self,
-        run: &AuthoredRunSpecV2,
-        selection: ValidatedRunnerSelection,
-    ) -> Result<Box<dyn PreparedRunnerOperation>> {
-        selection
-            .pair
-            .prepare(run, selection.transport, selection.workload)
     }
 
     /// Prepare through the coordinator-owned product registry and normalized
     /// endpoint-profile context.
+    ///
+    /// Preparation is dispatched to the workload factory, which resolves the
+    /// transport's dispatcher/placement factory by `transport_id`.
     pub fn prepare_with_context(
         &self,
         run: &AuthoredRunSpecV2,
         context: &RunnerRunContext,
         selection: ValidatedRunnerSelection,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
-        selection
-            .pair
-            .prepare_with_context(run, context, selection.transport, selection.workload)
+        selection.workload_factory.prepare_with_context(
+            run,
+            context,
+            selection.transport,
+            selection.workload,
+            &selection.transport_id,
+        )
     }
 }
 
@@ -664,60 +600,6 @@ fn checked_descriptor_id(value: &str, kind: &str) -> Result<RunnerComponentId> {
     value
         .parse()
         .map_err(|error: String| anyhow!("invalid runner {kind} descriptor ID: {error}"))
-}
-
-fn validate_descriptor_compatibility(
-    transport: &RunnerTransportDescriptor,
-    workload: &RunnerWorkloadDescriptor,
-) -> Result<()> {
-    ensure!(
-        workload.clock_kinds.contains(&transport.clock),
-        "runner pair ({:?}, {:?}) has incompatible clock descriptors",
-        transport.id,
-        workload.id
-    );
-    ensure!(
-        !workload.requires_semantic_responses || transport.semantic_responses,
-        "runner pair ({:?}, {:?}) requires semantic responses from a non-semantic transport",
-        transport.id,
-        workload.id
-    );
-    for feature in workload.required_transport_features {
-        ensure!(
-            transport.features.contains(feature),
-            "runner pair ({:?}, {:?}) requires missing transport feature {:?}",
-            transport.id,
-            workload.id,
-            feature
-        );
-    }
-    Ok(())
-}
-
-fn validate_requirements(
-    transport: &RunnerTransportDescriptor,
-    requirements: &WorkloadRequirements,
-) -> Result<()> {
-    ensure!(
-        requirements.clock_kinds.contains(&transport.clock),
-        "transport {:?} uses {:?} clock, which the authored workload does not support",
-        transport.id,
-        transport.clock
-    );
-    ensure!(
-        !requirements.semantic_responses || transport.semantic_responses,
-        "transport {:?} cannot provide the semantic responses required by the workload",
-        transport.id
-    );
-    for feature in &requirements.transport_features {
-        ensure!(
-            transport.features.contains(&feature.as_str()),
-            "transport {:?} is missing required compiled feature {:?}",
-            transport.id,
-            feature
-        );
-    }
-    Ok(())
 }
 
 fn validate_resource_requirements(
@@ -775,9 +657,10 @@ pub trait RunnerRegistryFactory {
 
 /// Stock protocol-v2 registry composition.
 ///
-/// Optional feature modules extend the same builder before it freezes. Merely
-/// registering transport/workload descriptors does not advertise execution:
-/// [`RunnerRegistry::supported_pairs`] contains only explicit pair factories.
+/// Optional feature modules register additional transports before the registry
+/// freezes. The transport and workload registries are independent — any
+/// registered workload runs over any registered transport, with no per-cell
+/// object and no compatibility predicate.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BuiltinRunnerRegistryFactory;
 
@@ -786,22 +669,20 @@ impl RunnerRegistryFactory for BuiltinRunnerRegistryFactory {
         let mut builder = RunnerRegistryBuilder::new();
         builder.register_transport(Arc::new(OnlineGrpcTransportFactoryV2))?;
         builder.register_transport(Arc::new(OnlineHttpTransportFactoryV2))?;
-        builder.register_workload(Arc::new(ScheduledWorkloadFactoryV2))?;
-        builder.register_workload(Arc::new(GraphWorkloadFactoryV2))?;
+        crate::online_execution::register_online_workloads(&mut builder)?;
         register_optional_builtin_components(&mut builder)?;
         builder.freeze()
     }
 }
 
 fn register_optional_builtin_components(builder: &mut RunnerRegistryBuilder) -> Result<()> {
-    // Feature-bearing modules add registrations here without changing lookup,
-    // validation, or dispatch. Keeping the composition function even in the
-    // base build prevents capability code from growing mode string branches.
-    crate::online_execution::register_http_pairs(builder)?;
-    crate::online_execution::register_http_scheduled_pair(builder)?;
-    crate::grpc_execution::register_grpc_pairs(builder)?;
+    // Feature-bearing modules register their transports here; the workload
+    // registry and the descriptor predicate light up every compatible cell
+    // without a per-cell registration or a mode string branch.
     #[cfg(feature = "dynosim")]
     crate::offline_execution::register_dynosim_transport(builder)?;
+    #[cfg(not(feature = "dynosim"))]
+    let _ = builder;
     Ok(())
 }
 
@@ -989,11 +870,11 @@ pub struct ValidatedEndpointProfileV2 {
     pub session_header: Option<String>,
 }
 
-/// Coordinator-owned immutable context shared by static pair validation and
+/// Coordinator-owned immutable context shared by static run-level validation and
 /// complete execution preparation.
 ///
-/// One fresh runner process builds exactly one [`AiperfRegistry`]. Pair
-/// adapters clone this cheap handle into their prepared operation; they never
+/// One fresh runner process builds exactly one [`AiperfRegistry`]. Workload
+/// factories clone this cheap handle into their prepared operation; they never
 /// invoke a built-in registry factory or independently decode endpoint policy.
 #[derive(Clone)]
 pub struct RunnerRunContext {
@@ -1362,7 +1243,6 @@ pub static ONLINE_HTTP_TRANSPORT_DESCRIPTOR: RunnerTransportDescriptor =
         id: "http",
         description: "Clock-injected native HTTP transport over a real clock",
         clock: RunnerClockKind::Real,
-        semantic_responses: true,
         features: &["control_plane_http", "h1", "h2c", "http", "tls", "uds"],
     };
 
@@ -1372,7 +1252,6 @@ pub static ONLINE_GRPC_TRANSPORT_DESCRIPTOR: RunnerTransportDescriptor =
         id: "grpc",
         description: "Clock-injected native gRPC transport over Tonic HTTP/2 channels",
         clock: RunnerClockKind::Real,
-        semantic_responses: true,
         features: &["grpc", "h2", "tls"],
     };
 
@@ -1380,19 +1259,20 @@ pub static ONLINE_GRPC_TRANSPORT_DESCRIPTOR: RunnerTransportDescriptor =
 pub static SCHEDULED_WORKLOAD_DESCRIPTOR: RunnerWorkloadDescriptor = RunnerWorkloadDescriptor {
     id: "scheduled",
     description: "Clock-paced scheduled request and session workloads",
-    requires_semantic_responses: false,
-    clock_kinds: &[RunnerClockKind::Real, RunnerClockKind::Sim],
-    required_transport_features: &[],
 };
 
 /// Built-in direct Graph-IR workload descriptor.
 pub static GRAPH_WORKLOAD_DESCRIPTOR: RunnerWorkloadDescriptor = RunnerWorkloadDescriptor {
     id: "graph",
     description: "Direct authored DAG lowering and whole-trace Graph-IR execution",
-    requires_semantic_responses: false,
-    clock_kinds: &[RunnerClockKind::Real, RunnerClockKind::Sim],
-    required_transport_features: &[],
 };
+
+/// Built-in static-accuracy workload descriptor (HTTP only).
+pub static STATIC_ACCURACY_WORKLOAD_DESCRIPTOR: RunnerWorkloadDescriptor =
+    RunnerWorkloadDescriptor {
+        id: "static_accuracy",
+        description: "Canonical-evaluator static accuracy over the scheduled HTTP path",
+    };
 
 #[derive(Debug)]
 struct OnlineHttpTransportFactoryV2;
@@ -1447,56 +1327,7 @@ impl RunnerTransportFactory for OnlineGrpcTransportFactoryV2 {
     }
 }
 
-#[derive(Debug)]
-struct ScheduledWorkloadFactoryV2;
-
-impl RunnerWorkloadFactory for ScheduledWorkloadFactoryV2 {
-    fn descriptor(&self) -> &'static RunnerWorkloadDescriptor {
-        &SCHEDULED_WORKLOAD_DESCRIPTOR
-    }
-
-    fn validate(&self, authored: &RawValue) -> Result<Box<dyn ValidatedWorkloadConfig>> {
-        let config =
-            strict_decode::<ScheduledWorkloadConfigV2>(authored, "scheduled workload config")?;
-        validate_common_workload(
-            config.worker_count,
-            &config.dataset,
-            &config.tokenizer,
-            &config.phases,
-        )?;
-        Ok(Box::new(config))
-    }
-
-    fn requirements(&self, _config: &dyn ValidatedWorkloadConfig) -> Result<WorkloadRequirements> {
-        Ok(requirements_from_descriptor(self.descriptor()))
-    }
-}
-
-#[derive(Debug)]
-struct GraphWorkloadFactoryV2;
-
-impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
-    fn descriptor(&self) -> &'static RunnerWorkloadDescriptor {
-        &GRAPH_WORKLOAD_DESCRIPTOR
-    }
-
-    fn validate(&self, authored: &RawValue) -> Result<Box<dyn ValidatedWorkloadConfig>> {
-        let config = strict_decode::<GraphWorkloadConfigV2>(authored, "graph workload config")?;
-        validate_common_workload(
-            config.worker_count,
-            &config.dataset,
-            &config.tokenizer,
-            &config.phases,
-        )?;
-        Ok(Box::new(config))
-    }
-
-    fn requirements(&self, _config: &dyn ValidatedWorkloadConfig) -> Result<WorkloadRequirements> {
-        Ok(requirements_from_descriptor(self.descriptor()))
-    }
-}
-
-fn strict_decode<T>(authored: &RawValue, label: &str) -> Result<T>
+pub(crate) fn strict_decode<T>(authored: &RawValue, label: &str) -> Result<T>
 where
     T: DeserializeOwned,
 {
@@ -1513,7 +1344,7 @@ where
     serde_json::from_value(value).map_err(|error| anyhow!("{label}: {error}"))
 }
 
-fn validate_common_workload(
+pub(crate) fn validate_common_workload(
     worker_count: usize,
     dataset: &RawValue,
     tokenizer: &RawValue,
@@ -1554,15 +1385,14 @@ fn raw_object(raw: &RawValue, label: &str) -> Result<Map<String, Value>> {
         .ok_or_else(|| anyhow!("{label} must be a JSON object"))
 }
 
-fn requirements_from_descriptor(descriptor: &RunnerWorkloadDescriptor) -> WorkloadRequirements {
+/// Config-level requirements for a built-in inference workload.
+///
+/// No workload declares a transport feature today (the `control_plane_http`
+/// gate stays available for a future control-plane workload), so this is the
+/// inference resource matrix with empty transport features.
+pub(crate) fn inference_workload_requirements() -> WorkloadRequirements {
     WorkloadRequirements {
-        semantic_responses: descriptor.requires_semantic_responses,
-        clock_kinds: descriptor.clock_kinds.iter().copied().collect(),
-        transport_features: descriptor
-            .required_transport_features
-            .iter()
-            .map(|feature| (*feature).to_owned())
-            .collect(),
+        transport_features: BTreeSet::new(),
         resources: ResourceRequirementsV2::inference(),
     }
 }
@@ -1578,15 +1408,11 @@ mod tests {
         id: "acme_remote",
         description: "fixture remote placement",
         clock: RunnerClockKind::Real,
-        semantic_responses: true,
         features: &["http"],
     };
     static WORKLOAD: RunnerWorkloadDescriptor = RunnerWorkloadDescriptor {
         id: "acme_workload",
         description: "fixture workload",
-        requires_semantic_responses: true,
-        clock_kinds: &[RunnerClockKind::Real],
-        required_transport_features: &["http"],
     };
 
     #[derive(Debug, Deserialize)]
@@ -1644,30 +1470,18 @@ mod tests {
                 .ok_or_else(|| anyhow!("wrong workload config type"))?;
             ensure!(!config.message.is_empty(), "message cannot be empty");
             Ok(WorkloadRequirements {
-                semantic_responses: true,
-                clock_kinds: BTreeSet::from([RunnerClockKind::Real]),
                 transport_features: BTreeSet::from(["http".to_owned()]),
                 resources: ResourceRequirementsV2::inference(),
             })
         }
-    }
 
-    #[derive(Debug)]
-    struct Pair;
-
-    impl RunnerPairFactory for Pair {
-        fn transport_id(&self) -> &'static str {
-            TRANSPORT.id
-        }
-
-        fn workload_id(&self) -> &'static str {
-            WORKLOAD.id
-        }
-
-        fn validate_pair(
+        fn validate_run(
             &self,
+            _run: &AuthoredRunSpecV2,
+            _context: &RunnerRunContext,
             transport: &dyn ValidatedTransportConfig,
             workload: &dyn ValidatedWorkloadConfig,
+            _transport_id: &str,
         ) -> Result<()> {
             let transport = transport
                 .as_any()
@@ -1682,11 +1496,13 @@ mod tests {
             Ok(())
         }
 
-        fn prepare(
+        fn prepare_with_context(
             &self,
             _run: &AuthoredRunSpecV2,
+            _context: &RunnerRunContext,
             transport: Box<dyn ValidatedTransportConfig>,
             workload: Box<dyn ValidatedWorkloadConfig>,
+            _transport_id: &str,
         ) -> Result<Box<dyn PreparedRunnerOperation>> {
             let node = ValidatedTransportConfig::as_any(transport.as_ref())
                 .downcast_ref::<TransportConfig>()
@@ -1728,7 +1544,6 @@ mod tests {
         let mut builder = RunnerRegistryBuilder::new();
         builder.register_transport(Arc::new(Transport)).unwrap();
         builder.register_workload(Arc::new(Workload)).unwrap();
-        builder.register_pair(Arc::new(Pair)).unwrap();
         builder.freeze().unwrap()
     }
 
@@ -1754,7 +1569,7 @@ mod tests {
     }
 
     #[test]
-    fn custom_pair_validates_without_a_core_enum_or_match() {
+    fn custom_selection_validates_without_a_core_enum_or_match() {
         let registry = registry();
         let selection = registry
             .validate_selection(
@@ -1764,10 +1579,6 @@ mod tests {
             .unwrap();
         assert_eq!(selection.transport_id(), "acme_remote");
         assert_eq!(selection.workload_id(), "acme_workload");
-        assert_eq!(
-            registry.supported_pairs(),
-            vec![("acme_remote", "acme_workload")]
-        );
     }
 
     #[test]
@@ -1838,10 +1649,6 @@ mod tests {
         let registry = registry();
         assert_eq!(registry.transport_descriptors(), vec![&TRANSPORT]);
         assert_eq!(registry.workload_descriptors(), vec![&WORKLOAD]);
-        assert_eq!(
-            registry.supported_pairs(),
-            vec![(TRANSPORT.id, WORKLOAD.id)]
-        );
     }
 
     #[test]
@@ -1968,7 +1775,6 @@ mod tests {
         let control_requirements = WorkloadRequirements {
             transport_features: BTreeSet::from(["control_plane_http".to_owned()]),
             resources: ResourceRequirementsV2::inference(),
-            ..Default::default()
         };
         let valid = RawValue::from_string(
             serde_json::json!({"client": {"connect_timeout_ns": 50_000_000_i64}}).to_string(),
@@ -2008,6 +1814,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             expected_transports
         );
+        // Workloads and transports are two independent registries; there is no
+        // pair/cross-product inventory. Any registered workload runs over any
+        // registered transport (grpc + graph included), with transport-specific
+        // execution resolved inside the workload's prepare.
         let expected_workloads = vec!["graph", "scheduled"];
         assert_eq!(
             registry
@@ -2017,27 +1827,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             expected_workloads
         );
-        #[cfg(feature = "dynosim")]
-        let expected_supported = vec![
-            ("dynosim_offline", "graph"),
-            ("dynosim_offline", "scheduled"),
-            ("dynosim_online", "graph"),
-            ("dynosim_online", "scheduled"),
-            ("grpc", "scheduled"),
-            ("http", "graph"),
-            ("http", "scheduled"),
-        ];
-        #[cfg(not(feature = "dynosim"))]
-        let expected_supported = vec![
-            ("grpc", "scheduled"),
-            ("http", "graph"),
-            ("http", "scheduled"),
-        ];
-        assert_eq!(registry.supported_pairs(), expected_supported);
     }
 
     #[test]
-    fn builtin_factory_configs_fail_closed_before_pair_lookup() {
+    fn builtin_factory_configs_fail_closed_before_execution() {
         let registry = BuiltinRunnerRegistryFactory.build().unwrap();
         let transport = component("http", serde_json::json!({}));
         let workload = component(

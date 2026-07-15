@@ -72,7 +72,8 @@ impl std::fmt::Debug for RunnerV2Coordinator {
         formatter
             .debug_struct("RunnerV2Coordinator")
             .field("distribution_id", &self.distribution_id)
-            .field("supported_pairs", &self.runner_registry.supported_pairs())
+            .field("transports", &self.runner_registry.transport_descriptors())
+            .field("workloads", &self.runner_registry.workload_descriptors())
             .finish_non_exhaustive()
     }
 }

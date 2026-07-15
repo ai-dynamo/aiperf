@@ -72,11 +72,9 @@ pub(crate) enum GraphTransportKind {
     Http,
     /// Clock-injected Tonic gRPC dispatch (`GrpcTransportSink`).
     ///
-    /// The endpoint runtime factory builds this arm on request (proven by the
-    /// unit tests); production routing selects it once the `*Pair` layer is
-    /// removed and the graph workload resolves its transport by id, so no
-    /// non-test caller constructs it yet.
-    #[allow(dead_code)]
+    /// Production routing selects this arm when the graph workload resolves a
+    /// gRPC transport by id/type (`online_execution::lower_graph`), so `grpc +
+    /// graph` dispatches graph nodes over Tonic.
     Grpc,
 }
 

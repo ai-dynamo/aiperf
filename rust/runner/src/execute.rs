@@ -469,63 +469,30 @@ pub(crate) struct NativeGraphDatasetPlan {
     pub(crate) allow_dataset_wrap: bool,
 }
 
-/// Execute a plan whose graph input, if present, is already fully prepared.
+/// Execute a protocol-v2 plan through a transport-selected request executor.
 ///
-/// Protocol-v2 pair preparation uses this entry point. Its signature omits a
-/// graph-input resolver on purpose: once the selected adapter has returned a
-/// canonical [`GraphInputBundle`], the execution harness cannot load or
-/// reinterpret the authored source a second time.
-pub(crate) fn execute_prepared_native_plan_uncommitted_with_factories(
+/// The workload resolves the transport's turn-placement factory by
+/// `transport_id` (HTTP vs gRPC `RequestExecutorFactory`) and passes it here
+/// with an optional readiness plan (present only for transports that expose a
+/// readiness control plane). The graph placement and its `transport_kind` arm
+/// are resolved from the shared factories, so both scheduled and graph plans run
+/// over either transport through one entry point. Graph input, if present, is
+/// already fully prepared: once the workload has returned a canonical
+/// `GraphInputBundle`, the harness cannot reinterpret the authored source again.
+pub(crate) fn execute_prepared_native_plan_uncommitted_selected(
     plan: NativeRunSpec,
-    transport_factory: Arc<dyn RequestExecutorFactory>,
-    graph_placement: &dyn RunnerGraphPlacementFactory,
-    registry: &AiperfRegistry,
-) -> Result<NativeReport> {
-    execute_prepared_native_plan_uncommitted_with_all_factories(
-        plan,
-        transport_factory,
-        graph_placement,
-        registry,
-        &BuiltinNativeSidecarResourceFactory,
-    )
-}
-
-/// Execute a protocol-v2 plan through the exact coordinator-frozen factories.
-///
-/// Readiness was already expanded into an immutable endpoint-owned plan during
-/// pair preparation. Activation happens on the run-owned Clock before the
-/// exclusive artifact target is created.
-pub(crate) fn execute_prepared_native_plan_uncommitted_with_execution_factories(
-    plan: NativeRunSpec,
+    request_executor: Arc<dyn RequestExecutorFactory>,
     factories: &RunnerExecutionFactories,
     registry: &AiperfRegistry,
-    readiness: Box<dyn PreparedOnlineReadiness>,
+    readiness: Option<Box<dyn PreparedOnlineReadiness>>,
 ) -> Result<NativeReport> {
     execute_prepared_native_plan_uncommitted_with_runtime_factories(
         plan,
-        factories.http_handle(),
+        request_executor,
         factories.graph(),
         registry,
         &BuiltinNativeSidecarResourceFactory,
-        Some((readiness, factories.readiness_transport())),
-    )
-}
-
-/// Execute one fully prepared plan with sidecar resource construction injected.
-pub(crate) fn execute_prepared_native_plan_uncommitted_with_all_factories(
-    plan: NativeRunSpec,
-    transport_factory: Arc<dyn RequestExecutorFactory>,
-    graph_placement: &dyn RunnerGraphPlacementFactory,
-    registry: &AiperfRegistry,
-    sidecar_factory: &dyn NativeSidecarResourceFactory,
-) -> Result<NativeReport> {
-    execute_prepared_native_plan_uncommitted_with_runtime_factories(
-        plan,
-        transport_factory,
-        graph_placement,
-        registry,
-        sidecar_factory,
-        None,
+        readiness.map(|readiness| (readiness, factories.readiness_transport())),
     )
 }
 
