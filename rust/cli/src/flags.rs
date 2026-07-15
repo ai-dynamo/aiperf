@@ -86,6 +86,38 @@ pub struct ProfileFlags {
     #[arg(long = "num-warmup-sessions")]
     pub num_warmup_sessions: Option<u64>,
 
+    /// Warmup prefill concurrency (`--warmup-prefill-concurrency`).
+    #[arg(long = "warmup-prefill-concurrency")]
+    pub warmup_prefill_concurrency: Option<u32>,
+
+    /// Warmup concurrency-ramp duration (`--warmup-concurrency-ramp-duration`).
+    #[arg(long = "warmup-concurrency-ramp-duration")]
+    pub warmup_concurrency_ramp_duration: Option<f64>,
+
+    /// Warmup rate-ramp duration (`--warmup-request-rate-ramp-duration`).
+    #[arg(long = "warmup-request-rate-ramp-duration")]
+    pub warmup_request_rate_ramp_duration: Option<f64>,
+
+    /// Warmup duration bound, seconds (`--warmup-duration`).
+    #[arg(long = "warmup-duration")]
+    pub warmup_duration: Option<f64>,
+
+    /// Warmup grace period, seconds (`--warmup-grace-period`).
+    #[arg(long = "warmup-grace-period")]
+    pub warmup_grace_period: Option<f64>,
+
+    /// Disable GPU telemetry collection (`--no-gpu-telemetry`).
+    #[arg(long = "no-gpu-telemetry", default_value_t = false)]
+    pub no_gpu_telemetry: bool,
+
+    /// Disable server-metrics collection (`--no-server-metrics`).
+    #[arg(long = "no-server-metrics", default_value_t = false)]
+    pub no_server_metrics: bool,
+
+    /// Server-metrics output formats (`--server-metrics-formats`).
+    #[arg(long = "server-metrics-formats", num_args = 1..)]
+    pub server_metrics_formats: Vec<String>,
+
     /// Synthetic input length mean (`--isl` / `--synthetic-input-tokens-mean`);
     /// comma ⇒ sweep.
     #[arg(long = "isl", visible_alias = "synthetic-input-tokens-mean")]

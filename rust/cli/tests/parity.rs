@@ -63,6 +63,9 @@ const FIXTURES: &[&str] = &[
     "user_centric",
     "endpoint_extra",
     "prefill",
+    "warmup_extra",
+    "no_telemetry",
+    "sm_formats",
 ];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).

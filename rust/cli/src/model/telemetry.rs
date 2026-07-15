@@ -145,6 +145,12 @@ pub struct ServerMetricsSidecar {
     pub urls: Vec<String>,
     /// Output formats.
     pub formats: Vec<String>,
+    /// Per-scrape JSONL path (present when `jsonl` in formats).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jsonl_path: Option<String>,
+    /// Parquet wire-record path (present when `parquet` in formats).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parquet_wire_path: Option<String>,
 }
 
 /// The lowered `cfg.sidecars` block.
@@ -191,7 +197,24 @@ impl ServerMetricsSidecar {
             reachability_timeout_ns: REACHABILITY_TIMEOUT_NS,
             urls,
             formats: vec!["json".to_string(), "csv".to_string()],
+            jsonl_path: None,
+            parquet_wire_path: None,
         }
+    }
+
+    /// Apply the output formats, deriving the per-format artifact paths
+    /// (`_server_metrics`: `jsonl` → jsonl_path, `parquet` → parquet_wire_path).
+    pub fn with_formats(mut self, formats: Vec<String>) -> Self {
+        self.jsonl_path = formats
+            .iter()
+            .any(|f| f == "jsonl")
+            .then(|| "server_metrics_export.jsonl".to_string());
+        self.parquet_wire_path = formats
+            .iter()
+            .any(|f| f == "parquet")
+            .then(|| ".aiperf-server-metrics-parquet-wire.jsonl".to_string());
+        self.formats = formats;
+        self
     }
 }
 

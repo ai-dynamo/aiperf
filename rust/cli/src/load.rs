@@ -49,6 +49,16 @@ pub(crate) struct Warmup {
     pub requests: Option<u64>,
     /// Warmup session bound.
     pub sessions: Option<u64>,
+    /// Warmup prefill concurrency.
+    pub prefill_concurrency: Option<u32>,
+    /// Warmup concurrency-ramp duration.
+    pub concurrency_ramp: Option<f64>,
+    /// Warmup rate-ramp duration.
+    pub rate_ramp: Option<f64>,
+    /// Warmup duration bound.
+    pub duration: Option<f64>,
+    /// Warmup grace period.
+    pub grace_period: Option<f64>,
 }
 
 /// Normalized inputs both surfaces (flags / YAML) resolve to before building.
@@ -69,6 +79,9 @@ pub(crate) struct Inputs {
     pub apply_chat_template: bool,
     pub prefill_concurrency: Option<u32>,
     pub prefill_ramp: Option<f64>,
+    pub gpu_telemetry_enabled: bool,
+    pub server_metrics_enabled: bool,
+    pub server_metrics_formats: Option<Vec<String>>,
     pub api_key: Option<String>,
     pub headers: std::collections::BTreeMap<String, String>,
     pub tokenizer_name: Option<String>,
@@ -194,6 +207,11 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         && flags.warmup_concurrency.is_none()
         && flags.warmup_request_rate.is_none()
         && flags.num_warmup_sessions.is_none()
+        && flags.warmup_prefill_concurrency.is_none()
+        && flags.warmup_concurrency_ramp_duration.is_none()
+        && flags.warmup_request_rate_ramp_duration.is_none()
+        && flags.warmup_duration.is_none()
+        && flags.warmup_grace_period.is_none()
     {
         None
     } else {
@@ -202,6 +220,11 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
             rate: flags.warmup_request_rate,
             requests: flags.warmup_request_count,
             sessions: flags.num_warmup_sessions,
+            prefill_concurrency: flags.warmup_prefill_concurrency,
+            concurrency_ramp: flags.warmup_concurrency_ramp_duration,
+            rate_ramp: flags.warmup_request_rate_ramp_duration,
+            duration: flags.warmup_duration,
+            grace_period: flags.warmup_grace_period,
         })
     };
 
@@ -234,6 +257,10 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         apply_chat_template: flags.apply_chat_template,
         prefill_concurrency: flags.prefill_concurrency,
         prefill_ramp: flags.prefill_concurrency_ramp_duration,
+        gpu_telemetry_enabled: !flags.no_gpu_telemetry,
+        server_metrics_enabled: !flags.no_server_metrics,
+        server_metrics_formats: (!flags.server_metrics_formats.is_empty())
+            .then(|| flags.server_metrics_formats.clone()),
         api_key: flags.api_key.clone(),
         headers: parse_headers(&flags.headers)?,
         tokenizer_name: flags.tokenizer.clone(),
@@ -482,7 +509,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     let mut phases = Vec::new();
     if let Some(warmup) = inputs.warmup {
         let concurrency = warmup.concurrency.or(inputs.concurrency);
-        phases.push(build_phase(
+        let mut wp = build_phase(
             "warmup",
             true,
             concurrency.unwrap_or(1),
@@ -492,9 +519,13 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             concurrency,
             warmup.requests,
             warmup.sessions,
-            None,
-            None,
-        ));
+            warmup.duration,
+            warmup.grace_period,
+        );
+        wp.common.prefill_concurrency = warmup.prefill_concurrency;
+        wp.common.concurrency_ramp = warmup.concurrency_ramp.map(linear_ramp);
+        wp.common.rate_ramp = warmup.rate_ramp.map(linear_ramp);
+        phases.push(wp);
     }
     phases.push(profiling);
 
@@ -507,16 +538,28 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         inputs.transport,
         Transport::DynosimOffline | Transport::DynosimOnline
     );
-    let sidecars = if is_dynosim {
-        None
-    } else {
-        Some(crate::model::telemetry::Sidecars {
-            gpu_telemetry: Some(crate::model::telemetry::GpuTelemetrySidecar::default_dcgm()),
-            server_metrics: Some(
-                crate::model::telemetry::ServerMetricsSidecar::from_endpoint_urls(&endpoint_urls),
-            ),
-        })
+    // DynoSim forces all sidecars off; otherwise GPU-telemetry and
+    // server-metrics scraping are enabled by default and independently toggled.
+    let gpu_enabled = inputs.gpu_telemetry_enabled && !is_dynosim;
+    let server_enabled = inputs.server_metrics_enabled && !is_dynosim;
+    let sidecars = crate::model::telemetry::Sidecars {
+        gpu_telemetry: gpu_enabled.then(crate::model::telemetry::GpuTelemetrySidecar::default_dcgm),
+        server_metrics: server_enabled.then(|| {
+            let sc =
+                crate::model::telemetry::ServerMetricsSidecar::from_endpoint_urls(&endpoint_urls);
+            match &inputs.server_metrics_formats {
+                Some(formats) => sc.with_formats(formats.clone()),
+                None => sc,
+            }
+        }),
     };
+    let mut gpu_cfg = crate::model::telemetry::GpuTelemetryConfig::default();
+    gpu_cfg.enabled = inputs.gpu_telemetry_enabled;
+    let mut server_cfg = crate::model::telemetry::ServerMetricsConfig::default();
+    server_cfg.enabled = inputs.server_metrics_enabled;
+    if let Some(formats) = &inputs.server_metrics_formats {
+        server_cfg.formats = formats.clone();
+    }
     let mut cfg = BenchmarkConfig {
         models: Some(models),
         endpoint: Some(endpoint),
@@ -533,10 +576,10 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         datasets: Some(vec![dataset]),
         phases: Some(phases),
         export: None,
-        gpu_telemetry: Some(crate::model::telemetry::GpuTelemetryConfig::default()),
-        server_metrics: Some(crate::model::telemetry::ServerMetricsConfig::default()),
+        gpu_telemetry: Some(gpu_cfg),
+        server_metrics: Some(server_cfg),
         network_latency: Some(crate::model::telemetry::NetworkLatencyConfig::default()),
-        sidecars,
+        sidecars: Some(sidecars),
     };
 
     let benchmark_id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();

@@ -1,0 +1,1 @@
+--model Qwen/Qwen3-0.6B --url 127.0.0.1:8000 --endpoint-type chat --streaming --concurrency 4 --request-count 8 --artifact-dir /tmp/x --warmup-duration 10 --warmup-grace-period 2 --warmup-concurrency-ramp-duration 3 --warmup-prefill-concurrency 2
