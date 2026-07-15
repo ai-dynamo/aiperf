@@ -457,11 +457,19 @@ impl GraphLaneLedger {
 /// replayable span the per-lane resample feeds back into
 /// [`WindowTStarSampler::sample_t_star`] so a recycle lane's salted `t*` uses the
 /// same duration lane 0 did (`graph_ir_replay.py:_plan_for_lane`, lines 743-772).
+#[derive(Clone)]
 struct PressureTemplate {
     plan: GraphTracePlan,
     template_id: String,
     t_star_us: f64,
     duration_us: f64,
+    /// The ORIGINAL (pre-warmup-rewrite) full plan, retained so a higher recycle
+    /// lane can re-prime the graph at ITS OWN lane-salted `t*`
+    /// (`rewrite_for_warmup(parsed, lane_t*)`) instead of dispatching lane 0's
+    /// prebuilt warmup graph. Lane 0 reuses `plan` verbatim, so the original is
+    /// consulted only on an active (non-default) window
+    /// (`graph_ir_replay.py:_plan_for_lane`/`_lane_source`, lines 743-791).
+    original_plan: GraphTracePlan,
 }
 
 /// Prepared warmup cache-pressure recycle inputs, carried on the warmup
@@ -607,6 +615,50 @@ fn sample_lane_tstar(template: &PressureTemplate, lane: u64, t_star: TStarWindow
     sampler.sample_t_star(&template.template_id, lane, template.duration_us)
 }
 
+/// Resolve the per-lane WARMUP GRAPH a recycle dispatch primes on `lane`.
+///
+/// Direct port of `graph_ir_replay.py:_plan_for_lane`/`_lane_source`
+/// (lines 743-791, branch `ajc/aiperf-graph-ir`): lane `0` (and the default
+/// `[0, 0]` window, whose every lane collapses to `t*=0`) reuses the prebuilt
+/// lane-0 warmup graph (`template.plan`), byte-identical to the single-pass
+/// path. A higher lane on an ACTIVE window re-primes the ORIGINAL graph at ITS
+/// OWN lane-salted `t*` (`rewrite_for_warmup(parsed, lane_t*)`) so the executed
+/// nodes match the `t*` that lane's [`GraphLaneIdentity`] records — the two are
+/// the SAME `lane_t_star_us` value, so identity and dispatched graph can never
+/// diverge. The rewritten graph is cached by `(template_index, lane)` (Python's
+/// `_lane_plans`) so repeated recycle passes onto the same lane re-rewrite once.
+fn pressure_plan_for_lane(
+    templates: &[PressureTemplate],
+    template_index: usize,
+    lane: u64,
+    lane_t_star_us: f64,
+    t_star: TStarWindow,
+    cache: &RefCell<HashMap<(usize, u64), GraphTracePlan>>,
+) -> GraphTracePlan {
+    let template = &templates[template_index];
+    // Lane 0, or the default window (every lane `t*=0`): dispatch the prebuilt
+    // lane-0 warmup graph verbatim — no per-lane divergence, no cache entry.
+    if lane == 0 || (t_star.start_min_ratio == 0.0 && t_star.start_max_ratio == 0.0) {
+        return template.plan.clone();
+    }
+    let key = (template_index, lane);
+    if let Some(cached) = cache.borrow().get(&key) {
+        return cached.clone();
+    }
+    // Re-prime the ORIGINAL (pre-warmup) graph at the lane's own `t*`, the same
+    // `rewrite_for_warmup` [`apply_tstar_split`] applied for lane 0 — just at the
+    // lane-salted instant instead of lane 0's.
+    let parsed = single_trace_parsed(&template.original_plan);
+    let rewritten = rewrite_for_warmup(&parsed, lane_t_star_us);
+    let plan = GraphTracePlan {
+        graph: rewritten.graph,
+        trace: template.original_plan.trace.clone(),
+        arrival_offset_ns: template.original_plan.arrival_offset_ns,
+    };
+    cache.borrow_mut().insert(key, plan.clone());
+    plan
+}
+
 /// Measure one root plan's intrinsic replayable span in microseconds.
 ///
 /// The single-trace [`ParsedGraph`] view + [`trace_duration_us`] shared by
@@ -715,6 +767,14 @@ impl GraphPressureRecycle {
         // Shared recycle cursor: one event loop mutates it, so a plain `Cell`
         // has the atomicity Python's single-loop instance attr had.
         let next_index = Rc::new(Cell::new(cursor));
+        // Per-lane warmup-graph cache shared across every lane task, the native
+        // `_lane_plans` (`graph_ir_replay.py:_plan_for_lane`, lines 743-772): a
+        // higher lane's re-primed warmup graph is computed once per
+        // `(template_index, lane)` and reused across recycle passes. A plain
+        // `Rc<RefCell<_>>` has the single-loop atomicity Python's instance attr
+        // had (one event loop mutates it).
+        let lane_plans: Rc<RefCell<HashMap<(usize, u64), GraphTracePlan>>> =
+            Rc::new(RefCell::new(HashMap::new()));
         let (done_tx, mut done_rx) = mpsc::unbounded_channel::<()>();
         for (lane_index, &start_template) in pass0.iter().enumerate() {
             let clock = self.clock.clone();
@@ -723,6 +783,7 @@ impl GraphPressureRecycle {
             let templates = self.templates.clone();
             let cancelled = self.cancelled.clone();
             let next_index = next_index.clone();
+            let lane_plans = lane_plans.clone();
             let done_tx = done_tx.clone();
             let t_star = self.t_star;
             let lane = lane_index as u64;
@@ -740,8 +801,6 @@ impl GraphPressureRecycle {
                     // recycle is a distinct correlation id.
                     let instance_id =
                         format!("{}::{}", template.template_id, Uuid::new_v4().simple());
-                    let mut plan = template.plan.clone();
-                    plan.trace.id = instance_id.clone();
                     // Per-lane `t*` salt: lane 0 reuses the prebuilt lane-0 `t*`
                     // (byte-identical to the single-pass plan); a higher recycle
                     // lane draws its OWN `sha256(seed:trace_id:lane)`-salted `t*`
@@ -749,6 +808,21 @@ impl GraphPressureRecycle {
                     // distinct snapshot instant (`graph_ir_replay.py:_plan_for_lane`,
                     // lines 743-791). Default `[0, 0]` window => every lane `t*=0`.
                     let lane_t_star_us = sample_lane_tstar(template, lane, t_star);
+                    // Per-lane WARMUP GRAPH: lane 0 / default window dispatch the
+                    // prebuilt lane-0 warmup graph; a higher lane on an active
+                    // window primes the ORIGINAL graph re-rewritten at THIS lane's
+                    // `t*` (the very `lane_t_star_us` registered below), so the
+                    // executed-node set and the identity `t*` stay consistent
+                    // (`graph_ir_replay.py:_plan_for_lane`, lines 743-791).
+                    let mut plan = pressure_plan_for_lane(
+                        &templates,
+                        template_index,
+                        lane,
+                        lane_t_star_us,
+                        t_star,
+                        &lane_plans,
+                    );
+                    plan.trace.id = instance_id.clone();
                     // Register BEFORE dispatch so the instance's terminal node
                     // returns (drain path -> `observe_lane_return`) attribute to
                     // this lane; re-registering the lane on recycle overwrites its
@@ -2172,6 +2246,7 @@ fn build_pressure_recycle(
             template_id: warmup_plan.trace.id.clone(),
             t_star_us: sample_plan_tstar(original_plan, t_star),
             duration_us: plan_trace_duration_us(original_plan),
+            original_plan: original_plan.clone(),
         })
         .collect::<Vec<_>>();
     let lane_target = phase.concurrency().unwrap_or(1).max(1);
@@ -2849,6 +2924,10 @@ mod tests {
 
     fn node_ids(plans: &[GraphTracePlan]) -> Vec<String> {
         plans[0].graph.nodes.keys().cloned().collect()
+    }
+
+    fn plan_node_ids(plan: &GraphTracePlan) -> Vec<String> {
+        plan.graph.nodes.keys().cloned().collect()
     }
 
     #[test]
@@ -3616,18 +3695,21 @@ mod tests {
                 template_id: "a".into(),
                 t_star_us: 0.0,
                 duration_us: 0.0,
+                original_plan: pressure_one_node_plan("a"),
             },
             PressureTemplate {
                 plan: empty,
                 template_id: "b".into(),
                 t_star_us: 0.0,
                 duration_us: 0.0,
+                original_plan: pressure_one_node_plan("b"),
             },
             PressureTemplate {
                 plan: pressure_one_node_plan("c"),
                 template_id: "c".into(),
                 t_star_us: 0.0,
                 duration_us: 0.0,
+                original_plan: pressure_one_node_plan("c"),
             },
         ];
         let (pass0, cursor) = pressure_resolve_pass0_lanes(&templates, 2);
@@ -3663,6 +3745,7 @@ mod tests {
             template_id: "t".into(),
             t_star_us: lane0_expected,
             duration_us,
+            original_plan: pressure_one_node_plan("t"),
         };
 
         // Lane 0 is byte-identical to the prebuilt single-pass lane-0 value.
@@ -3684,6 +3767,7 @@ mod tests {
             template_id: "t".into(),
             t_star_us: 0.0,
             duration_us,
+            original_plan: pressure_one_node_plan("t"),
         };
         for lane in 0..3u64 {
             assert_eq!(
@@ -3692,6 +3776,107 @@ mod tests {
                 "default window lane {lane} must stay at t*=0"
             );
         }
+    }
+
+    /// Build the recycle template for the 3-turn chain fixture exactly as
+    /// [`build_pressure_recycle`] does for one root: the prebuilt `plan` is the
+    /// lane-0 warmup rewrite, `original_plan` is the full pre-warmup graph, and
+    /// the lane-0 `t*`/`duration_us` come from the original.
+    fn tstar_chain_pressure_template(window: TStarWindow) -> PressureTemplate {
+        let original = tstar_chain_plan().remove(0);
+        let lane0_t_star = sample_plan_tstar(&original, window);
+        let parsed = single_trace_parsed(&original);
+        let warmup = rewrite_for_warmup(&parsed, lane0_t_star);
+        PressureTemplate {
+            plan: GraphTracePlan {
+                graph: warmup.graph,
+                trace: original.trace.clone(),
+                arrival_offset_ns: original.arrival_offset_ns,
+            },
+            template_id: original.trace.id.clone(),
+            t_star_us: lane0_t_star,
+            duration_us: plan_trace_duration_us(&original),
+            original_plan: original,
+        }
+    }
+
+    #[test]
+    fn pressure_plan_for_lane_reprimes_higher_lanes_at_their_own_tstar() {
+        // DF1b: a higher recycle lane must dispatch a warmup graph re-primed at
+        // ITS OWN lane-salted t* (the same value its `GraphLaneIdentity` records),
+        // not lane 0's prebuilt graph. `graph_ir_replay.py:_plan_for_lane` 743-791.
+        let window = TStarWindow {
+            start_min_ratio: 0.2,
+            start_max_ratio: 0.8,
+            random_seed: 0,
+        };
+        let template = tstar_chain_pressure_template(window);
+        let templates = vec![template.clone()];
+        let cache: RefCell<HashMap<(usize, u64), GraphTracePlan>> = RefCell::new(HashMap::new());
+
+        // HARD guard: lane 0 dispatches the prebuilt lane-0 warmup graph, and
+        // never populates the per-lane cache.
+        let lane0 = pressure_plan_for_lane(&templates, 0, 0, template.t_star_us, window, &cache);
+        assert_eq!(plan_node_ids(&lane0), plan_node_ids(&template.plan));
+        assert_eq!(lane0.graph.edges.len(), template.plan.graph.edges.len());
+        assert!(cache.borrow().is_empty(), "lane 0 must not cache a rewrite");
+
+        // A higher lane's dispatched graph equals `rewrite_for_warmup` at the SAME
+        // t* the lane's identity carries (`sample_lane_tstar`), proving the
+        // executed-node set and the identity t* can never diverge.
+        let lane1_t_star = sample_lane_tstar(&template, 1, window);
+        let expected = GraphTracePlan {
+            graph: rewrite_for_warmup(&single_trace_parsed(&template.original_plan), lane1_t_star)
+                .graph,
+            trace: template.original_plan.trace.clone(),
+            arrival_offset_ns: template.original_plan.arrival_offset_ns,
+        };
+        let lane1 = pressure_plan_for_lane(&templates, 0, 1, lane1_t_star, window, &cache);
+        assert_eq!(plan_node_ids(&lane1), plan_node_ids(&expected));
+        assert_eq!(lane1.graph.edges.len(), expected.graph.edges.len());
+        // Cached by `(template_index, lane)`; a repeat pass returns the same graph.
+        assert_eq!(cache.borrow().len(), 1);
+        let lane1_again = pressure_plan_for_lane(&templates, 0, 1, lane1_t_star, window, &cache);
+        assert_eq!(plan_node_ids(&lane1_again), plan_node_ids(&lane1));
+        assert_eq!(cache.borrow().len(), 1, "repeat pass must reuse the cache");
+
+        // Real divergence: over the [0.2, 0.8]*2e6 window (straddling the mid-chain
+        // 1e6 arrival) SOME lane primes a DIFFERENT boundary-node set than lane 0.
+        let lane0_nodes = plan_node_ids(&lane0);
+        let diverged = (1..32u64).any(|lane| {
+            let t = sample_lane_tstar(&template, lane, window);
+            let plan = pressure_plan_for_lane(&templates, 0, lane, t, window, &cache);
+            plan_node_ids(&plan) != lane0_nodes
+        });
+        assert!(
+            diverged,
+            "no higher lane primed a boundary set distinct from lane 0"
+        );
+    }
+
+    #[test]
+    fn pressure_plan_for_lane_default_window_is_lane0_for_every_lane() {
+        // HARD guard: the default `[0, 0]` window collapses every lane to t*=0, so
+        // each lane dispatches the prebuilt lane-0 warmup graph with NO per-lane
+        // divergence and NO cache population (the product/default path).
+        let window = TStarWindow::default();
+        let template = tstar_chain_pressure_template(window);
+        let templates = vec![template.clone()];
+        let cache: RefCell<HashMap<(usize, u64), GraphTracePlan>> = RefCell::new(HashMap::new());
+        for lane in 0..5u64 {
+            let t = sample_lane_tstar(&template, lane, window);
+            let plan = pressure_plan_for_lane(&templates, 0, lane, t, window, &cache);
+            assert_eq!(
+                plan_node_ids(&plan),
+                plan_node_ids(&template.plan),
+                "default window lane {lane} must reuse the prebuilt lane-0 graph"
+            );
+            assert_eq!(plan.graph.edges.len(), template.plan.graph.edges.len());
+        }
+        assert!(
+            cache.borrow().is_empty(),
+            "default window must never cache a per-lane rewrite"
+        );
     }
 
     /// Placement stub that advances the injected clock a fixed amount per
@@ -3744,12 +3929,14 @@ mod tests {
                 template_id: "a".into(),
                 t_star_us: 0.0,
                 duration_us: 0.0,
+                original_plan: pressure_one_node_plan("a"),
             },
             PressureTemplate {
                 plan: pressure_one_node_plan("b"),
                 template_id: "b".into(),
                 t_star_us: 0.0,
                 duration_us: 0.0,
+                original_plan: pressure_one_node_plan("b"),
             },
         ]);
         let recycle = Rc::new(GraphPressureRecycle {
