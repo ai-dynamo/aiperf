@@ -154,13 +154,18 @@ AIPERF_CONTENT_SERVER_ENABLED=true \
 # Cellular (multi-process) mode: `--cells N` (or `runtime.cells: N`) makes the launched
 # runner a controller that spawns N `aiperf-runner --cell` children over a
 # (cell_id, cell_count) budget partition and merges their records into one report.
-# `--cells 1` (default) is the unchanged single-process path. Supported for synthetic,
-# single-turn HTTP runs with request-bounded phases; a run seed and single URL are NOT
+# `--cells 1` (default) is the unchanged single-process path. Supported for synthetic
+# and file/public HTTP runs with request-bounded phases; a run seed and single URL are NOT
 # required (seedless auto-derives a shared seed, multi-URL round-robins cell-locally,
-# ramps/rate/cancellation are aggregate-equivalent, warned). Graph programs
-# (dag_jsonl/weka_trace/dynamo_trace) also partition across cells (trace-level,
-# concatenation-merged). Fails closed on non-HTTP/gRPC/offline + scheduled
-# multi-turn/duration/adaptive. E2e: test_cellular.rs (scheduled) + test_graph_cellular.rs.
+# ramps/rate/cancellation are aggregate-equivalent, warned). MULTI-TURN runs (a `sessions`
+# / --num-conversations budget) partition per CONVERSATION and are supported on the
+# exact-fold merge path (metrics-only concat merge, order-independent): the controller
+# slices the sessions budget per cell (owned_positions, tiles exactly) and rejects
+# multi-turn on the retain path (a live-reply inputs.json forces retain) with a clear
+# message. Graph programs (dag_jsonl/weka_trace/dynamo_trace) also partition across cells
+# (trace-level, concatenation-merged). Fails closed on non-HTTP/gRPC/offline + scheduled
+# duration/adaptive, and on multi-turn with a random sampler (sequential/shuffle only).
+# E2e: test_cellular.rs + test_cellular_multiturn.rs (scheduled) + test_graph_cellular.rs.
 aiperf profile --config benchmark.yaml --cells 4
 
 # Developer-only protocol inventory; normal children are launched by Python.
