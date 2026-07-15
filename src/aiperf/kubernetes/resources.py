@@ -130,42 +130,40 @@ class ConfigMapSpec(AIPerfBaseModel):
         }
 
     @classmethod
-    def from_benchmark_run(
+    def from_config(
         cls,
         name: str,
         namespace: str,
-        run: Any,
+        config: Any,
         job_id: str,
     ) -> "ConfigMapSpec":
-        """Create a ConfigMapSpec from a BenchmarkRun.
+        """Create a ConfigMapSpec carrying the Config v2 file for the aiperf frontend.
 
-        Projects the BenchmarkRun through ``rust_wire`` into the strict protocol-v2
-        run envelope and serializes THAT as ``run_config.json`` -- the exact shape
-        the native ``aiperf-runner`` (controller and cell) parses from its mounted
-        ``--config``. This is the config seam between the operator and the runner:
-        the runner is protocol-v2-only, so the ConfigMap must carry the envelope
-        (``{protocol_version, operation, run}``), not the raw BenchmarkRun the retired
-        mesh consumed via ``aiperf service --benchmark-run``.
+        The pods run the Python ``aiperf`` frontend subcommands (``aiperf controller``
+        / ``aiperf cell``), NOT the bare native runner: the frontend is the
+        orchestrator -- it reads this Config v2, projects it through ``rust_wire``,
+        launches ``aiperf-runner`` over stdio, forwards progress, loads the native
+        report, and runs the native export plane (see
+        ``orchestrator/rust_executor.py``). So the ConfigMap carries the same Config
+        v2 YAML ``aiperf ... --config`` reads locally -- one file for every pod; the
+        controller/cell subcommand plus the CELL_* env differentiate the roles.
 
         Args:
             name: ConfigMap name.
             namespace: Kubernetes namespace.
-            run: BenchmarkRun instance.
+            config: AIPerfConfig for this run.
             job_id: Unique benchmark job ID.
 
         Returns:
             ConfigMapSpec instance.
         """
-        import orjson
+        from aiperf.config import dump_config
 
-        from aiperf.orchestrator.rust_wire import build_authored_run_request
-
-        envelope = build_authored_run_request(run, operation="execute")
-        run_json = orjson.dumps(envelope, option=orjson.OPT_INDENT_2).decode()
+        config_yaml = dump_config(config)
         spec = cls(
             name=name,
             namespace=namespace,
-            data={"run_config.json": run_json},
+            data={"config.yaml": config_yaml},
             labels={
                 AIPerfLabels.APP_KEY: AIPerfLabels.APP_VALUE,
                 AIPerfLabels.JOB_ID: job_id,
@@ -392,11 +390,11 @@ class KubernetesDeployment(AIPerfBaseModel):
         )
 
     def get_configmap_spec(self) -> ConfigMapSpec:
-        """Get the ConfigMap spec from the stored BenchmarkRun."""
-        spec = ConfigMapSpec.from_benchmark_run(
+        """Get the ConfigMap spec carrying the Config v2 file for the aiperf frontend."""
+        spec = ConfigMapSpec.from_config(
             name=self.configmap_name,
             namespace=self.effective_namespace,
-            run=self.run,
+            config=self.config,
             job_id=self.job_id,
         )
         if self.name:

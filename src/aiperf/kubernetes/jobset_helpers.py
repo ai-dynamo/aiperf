@@ -171,37 +171,46 @@ def build_container_ports(
 
 
 # ---------------------------------------------------------------------------
-# Native cross-pod cellular topology (aiperf-runner controller + cell pods).
+# Native cross-pod cellular topology (aiperf frontend controller + cell pods).
 #
 # Replaces the retired Python service mesh: instead of one controller pod of
 # {system_controller, dataset_manager, timing_manager, records_manager, api}
 # services plus worker pods wired over ZMQ, a cellular run is one controller pod
 # (which binds a routable transport and merges shards) and `cells` cell pods
-# (each an aiperf-runner slice that streams its RecordsShardPartition back).
+# (each a slice that streams its RecordsShardPartition back).
 #
-# The exact runner sub-commands, flags, and cell<->controller bootstrap contract
-# below are PLACEHOLDERS finalized by the ai-dynamo/velo cell-transport work; the
-# operator only owns the pod topology, the config mount, the budget partition
-# (CELL_ID/CELL_COUNT), and the controller address the cells dial. The velo
-# integration replaces the raw TCP CELL_CONTROLLER_ADDR with velo discovery.
+# The pods run the PYTHON aiperf frontend subcommands (`aiperf controller` /
+# `aiperf cell`), not the bare native runner: the frontend is the orchestrator
+# (orchestrator/rust_executor.py) -- it reads Config v2, projects it through
+# rust_wire, launches aiperf-runner over stdio, forwards progress, loads the
+# native report, and runs the native export plane. The operator only owns the pod
+# topology, the Config v2 mount, the budget partition (CELL_ID/CELL_COUNT), and
+# the controller address the cells dial.
+#
+# The `aiperf controller` / `aiperf cell` subcommands and the cell<->controller
+# bootstrap contract are the ai-dynamo/velo integration point; velo replaces the
+# raw TCP CELL_CONTROLLER_ADDR with velo discovery. The operator side is stable.
 # ---------------------------------------------------------------------------
 
 # Port the controller binds its (routable) cell transport on, and cells dial.
 CELL_CONTROLLER_PORT: int = 7000
-# Env contract the aiperf-runner cell reads for its partition + controller.
+# Env contract the aiperf cell frontend reads for its partition + controller.
 CELL_ID_ENV = "AIPERF_CELL_ID"
 CELL_COUNT_ENV = "AIPERF_CELL_COUNT"
 CELL_CONTROLLER_ADDR_ENV = "AIPERF_CELL_CONTROLLER_ADDR"
+# Port the controller frontend binds its cell transport on (matches the port in
+# each cell's CELL_CONTROLLER_ADDR).
+CELL_CONTROLLER_PORT_ENV = "AIPERF_CELL_CONTROLLER_PORT"
 
 # HF tokenizer cache dir; the runner tokenizes in-process, so it is the one piece
 # of the mesh container env the native pods still need. Matches the tokenizer-cache
-# volume mount from build_volume_mounts.
+# volume mount from build_runner_volume_mounts.
 _HF_HOME = "/aiperf/hf_home"
 
 
-def _run_config_path() -> str:
-    """Path of the mounted protocol-v2 run envelope (rust_wire output)."""
-    return f"{K8sEnvironment.JOBSET.CONFIG_MOUNT_PATH}/run_config.json"
+def _config_path() -> str:
+    """Path of the mounted Config v2 file the aiperf frontend reads via --config."""
+    return f"{K8sEnvironment.JOBSET.CONFIG_MOUNT_PATH}/config.yaml"
 
 
 def build_runner_env_vars(pod_template: PodTemplateConfig) -> list[dict[str, Any]]:
@@ -224,35 +233,28 @@ def build_runner_env_vars(pod_template: PodTemplateConfig) -> list[dict[str, Any
     return env
 
 
-def build_runner_controller_args(cells: int) -> list[str]:
-    """Build the aiperf-runner controller-mode args for the controller pod.
+def build_controller_args() -> list[str]:
+    """Build the `aiperf controller` frontend args for the controller pod.
 
-    The controller reads the protocol-v2 run envelope, partitions the budget by
-    `(cell_id, cell_count=cells)`, binds its cell transport on a routable address
-    so the sibling cell pods can dial it, collects one records-shard partition per
-    cell, merges them into the single authoritative report, and runs the native
-    export plane. Flags are the velo-finalized placeholder contract.
+    The controller frontend reads Config v2 (cells count included as
+    runtime.cells), projects it through rust_wire, launches aiperf-runner in
+    controller mode -- binding its cell transport on CELL_CONTROLLER_PORT so the
+    sibling cell pods can dial it -- collects one records-shard partition per cell,
+    merges them into the single authoritative report, and runs the native export
+    plane over the merged result. Subcommand/flags are the velo integration point.
     """
-    return [
-        "--controller",
-        "--cells",
-        str(cells),
-        "--bind",
-        f"0.0.0.0:{CELL_CONTROLLER_PORT}",
-        "--config",
-        _run_config_path(),
-    ]
+    return ["controller", "--config", _config_path()]
 
 
-def build_runner_cell_args() -> list[str]:
-    """Build the aiperf-runner cell-mode args for a cell pod.
+def build_cell_args() -> list[str]:
+    """Build the `aiperf cell` frontend args for a cell pod.
 
-    The cell derives its budget slice from the full envelope + CELL_ID/CELL_COUNT
-    (build_cell_envelope is pure in `(envelope, cell_id, cell_count)`), runs its
-    slice single-process, and ships its records-shard partition to the controller
-    at CELL_CONTROLLER_ADDR. Flags are the velo-finalized placeholder contract.
+    The cell frontend reads the same Config v2, derives its budget slice from
+    CELL_ID/CELL_COUNT, projects through rust_wire, launches aiperf-runner in cell
+    mode, and ships its records-shard partition to CELL_CONTROLLER_ADDR.
+    Subcommand/flags are the velo integration point.
     """
-    return ["--cell-standalone", "--config", _run_config_path()]
+    return ["cell", "--config", _config_path()]
 
 
 def build_cell_env_vars(*, cells: int, controller_dns: str) -> list[dict[str, Any]]:
@@ -279,6 +281,14 @@ def build_cell_env_vars(*, cells: int, controller_dns: str) -> list[dict[str, An
             "value": f"{controller_dns}:{CELL_CONTROLLER_PORT}",
         },
     ]
+
+
+def build_controller_env_vars() -> list[dict[str, Any]]:
+    """Env for the controller pod: the port its cell transport binds on.
+
+    Matches the port each cell's CELL_CONTROLLER_ADDR dials (CELL_CONTROLLER_PORT).
+    """
+    return [{"name": CELL_CONTROLLER_PORT_ENV, "value": str(CELL_CONTROLLER_PORT)}]
 
 
 def build_runner_volumes(

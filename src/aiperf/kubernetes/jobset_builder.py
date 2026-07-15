@@ -17,13 +17,14 @@ from aiperf.kubernetes.enums import RestartPolicy
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset_helpers import (
     CELL_CONTROLLER_PORT,
+    build_cell_args,
     build_cell_env_vars,
     build_container_args,
     build_container_ports,
+    build_controller_args,
+    build_controller_env_vars,
     build_env_vars,
     build_health_probe,
-    build_runner_cell_args,
-    build_runner_controller_args,
     build_runner_env_vars,
     build_runner_volume_mounts,
     build_security_context,
@@ -501,12 +502,15 @@ class _JobSetManifestBuilder:
             name="controller",
             image=self.spec.image,
             image_pull_policy=self.spec.image_pull_policy,
-            # aiperf-runner is the native binary (not the `aiperf` Python CLI the
-            # mesh services used). Exact sub-command/flags are the velo-finalized
-            # placeholder contract in jobset_helpers.build_runner_controller_args.
-            command=["aiperf-runner"],
-            args=build_runner_controller_args(self.spec.cells),
-            env=build_runner_env_vars(self.spec.pod_template),
+            # The Python `aiperf` frontend is the orchestrator; `aiperf controller`
+            # reads Config v2, projects via rust_wire, and launches aiperf-runner in
+            # controller mode over stdio (see jobset_helpers cellular section).
+            command=["aiperf"],
+            args=build_controller_args(),
+            env=[
+                *build_runner_env_vars(self.spec.pod_template),
+                *build_controller_env_vars(),
+            ],
             resources=self._resolve_pod_resources("SYSTEM_CONTROLLER"),
             volume_mounts=build_runner_volume_mounts(self.spec.pod_template),
             ports=[{"containerPort": CELL_CONTROLLER_PORT, "name": "cell-ctl"}],
@@ -520,8 +524,10 @@ class _JobSetManifestBuilder:
             name="cell",
             image=self.spec.image,
             image_pull_policy=self.spec.image_pull_policy,
-            command=["aiperf-runner"],
-            args=build_runner_cell_args(),
+            # `aiperf cell` frontend: reads Config v2 + CELL_* env, projects via
+            # rust_wire, launches aiperf-runner in cell mode, ships its shard.
+            command=["aiperf"],
+            args=build_cell_args(),
             env=[
                 *build_runner_env_vars(self.spec.pod_template),
                 *build_cell_env_vars(cells=self.spec.cells, controller_dns=controller_dns),
