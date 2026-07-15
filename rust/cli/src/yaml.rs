@@ -248,6 +248,12 @@ impl Benchmark {
             custom_dataset_type: None,
             public_dataset: None,
             fixed_schedule: None,
+            fixed_schedule_start_offset: None,
+            fixed_schedule_end_offset: None,
+            model_strategy: None,
+            slice_duration: None,
+            isl_block_size: None,
+            sketch_metrics: false,
             artifact_dir: artifact_dir.unwrap_or_else(|| PathBuf::from("artifacts")),
         })
     }

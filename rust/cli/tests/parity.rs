@@ -71,6 +71,9 @@ const FIXTURES: &[&str] = &[
     "netlat_fixed",
     "netlat_probe",
     "otel",
+    "config_extra",
+    "sched_offset",
+    "sketch",
 ];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).
@@ -156,7 +159,11 @@ fn assert_export_static(fixture: &str, built: &serde_json::Value, golden: &serde
             built["otel"]["endpoint"], golden["otel"]["endpoint"],
             "[{fixture}] export.otel.endpoint diverges"
         );
-        for attr in ["aiperf.endpoint.type", "aiperf.model.name", "service.instance.id"] {
+        for attr in [
+            "aiperf.endpoint.type",
+            "aiperf.model.name",
+            "service.instance.id",
+        ] {
             assert_eq!(
                 built["otel"]["resource_attributes"][attr],
                 golden["otel"]["resource_attributes"][attr],

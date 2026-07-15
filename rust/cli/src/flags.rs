@@ -282,6 +282,35 @@ pub struct ProfileFlags {
     #[arg(long = "fixed-schedule-auto-offset")]
     pub fixed_schedule_auto_offset: Option<bool>,
 
+    /// Fixed-schedule start offset (`--fixed-schedule-start-offset`).
+    #[arg(long = "fixed-schedule-start-offset")]
+    pub fixed_schedule_start_offset: Option<i64>,
+
+    /// Fixed-schedule end offset (`--fixed-schedule-end-offset`).
+    #[arg(long = "fixed-schedule-end-offset")]
+    pub fixed_schedule_end_offset: Option<i64>,
+
+    /// Model-selection strategy (`--model-selection-strategy`):
+    /// `round_robin`/`random`/`weighted`.
+    #[arg(long = "model-selection-strategy")]
+    pub model_selection_strategy: Option<String>,
+
+    /// Timeslice window, seconds (`--slice-duration`).
+    #[arg(long = "slice-duration")]
+    pub slice_duration: Option<f64>,
+
+    /// Synthetic input-token block size (`--synthetic-input-tokens-block-size`
+    /// / `--isl-block-size`).
+    #[arg(
+        long = "synthetic-input-tokens-block-size",
+        visible_alias = "isl-block-size"
+    )]
+    pub isl_block_size: Option<u32>,
+
+    /// Bounded-memory metric retention (`--sketch-metrics`).
+    #[arg(long = "sketch-metrics", default_value_t = false)]
+    pub sketch_metrics: bool,
+
     /// Deterministic random seed (`--random-seed`).
     #[arg(long = "random-seed")]
     pub random_seed: Option<u64>,

@@ -66,6 +66,9 @@ pub struct Prompts {
     /// Shared-prefix length (present when authored).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix_prompt_length: Option<u32>,
+    /// Input-token block size (present when authored).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_size: Option<u32>,
 }
 
 /// The typed synthetic dataset body.
@@ -167,6 +170,7 @@ mod tests {
                 osl: None,
                 num_prefix_prompts: None,
                 prefix_prompt_length: None,
+                block_size: None,
             },
             sampling: Sampling("sequential".into()),
             turns: None,

@@ -49,6 +49,12 @@ def main() -> int:
     _command, bound, _ = app.parse_args(["profile", *argv], exit_on_error=False)
     cli_config = bound.arguments["cli_config"]
 
+    # Mirror profile.py: --sketch-metrics toggles the env-backed runtime setting
+    # that rust_wire reads when projecting metrics/artifacts.
+    if getattr(cli_config, "sketch_metrics", False):
+        from aiperf.common.environment import Environment
+        Environment.METRICS.SKETCH = True
+
     config = resolve_config(cli_config, cli_config.config_file)
     plan = build_benchmark_plan(config)
     if not plan.is_single_run:

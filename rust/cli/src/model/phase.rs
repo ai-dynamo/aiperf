@@ -124,10 +124,10 @@ pub enum PhaseKind {
         auto_offset: bool,
         /// Optional explicit start offset.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        start_offset: Option<f64>,
+        start_offset: Option<i64>,
         /// Optional explicit end offset.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        end_offset: Option<f64>,
+        end_offset: Option<i64>,
     },
 }
 

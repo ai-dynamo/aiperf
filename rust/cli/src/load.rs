@@ -137,6 +137,17 @@ pub(crate) struct Inputs {
     pub public_dataset: Option<String>,
     /// Fixed-schedule replay (timestamp-driven); carries the auto-offset flag.
     pub fixed_schedule: Option<bool>,
+    /// Fixed-schedule start/end offsets.
+    pub fixed_schedule_start_offset: Option<i64>,
+    pub fixed_schedule_end_offset: Option<i64>,
+    /// Model-selection strategy override.
+    pub model_strategy: Option<ModelStrategy>,
+    /// Timeslice window, seconds.
+    pub slice_duration: Option<f64>,
+    /// Synthetic input-token block size.
+    pub isl_block_size: Option<u32>,
+    /// Bounded-memory sketch metric retention.
+    pub sketch_metrics: bool,
     pub artifact_dir: PathBuf,
 }
 
@@ -186,8 +197,10 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("--fixed-schedule requires --input-file"))?;
         let count = count_schedule_entries(path)?;
+        let default_auto = flags.fixed_schedule_start_offset.is_none()
+            && flags.fixed_schedule_end_offset.is_none();
         (
-            Some(flags.fixed_schedule_auto_offset.unwrap_or(true)),
+            Some(flags.fixed_schedule_auto_offset.unwrap_or(default_auto)),
             Some(count),
         )
     } else {
@@ -330,6 +343,16 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         custom_dataset_type: flags.custom_dataset_type.clone(),
         public_dataset: flags.public_dataset.clone(),
         fixed_schedule,
+        fixed_schedule_start_offset: flags.fixed_schedule_start_offset,
+        fixed_schedule_end_offset: flags.fixed_schedule_end_offset,
+        model_strategy: flags
+            .model_selection_strategy
+            .as_deref()
+            .map(parse_model_strategy)
+            .transpose()?,
+        slice_duration: flags.slice_duration,
+        isl_block_size: flags.isl_block_size,
+        sketch_metrics: flags.sketch_metrics,
         artifact_dir: flags
             .artifact_dir
             .clone()
@@ -344,7 +367,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     let primary_model = inputs.model_names[0].clone();
 
     let models = Models {
-        strategy: ModelStrategy::RoundRobin,
+        strategy: inputs.model_strategy.unwrap_or(ModelStrategy::RoundRobin),
         items: inputs
             .model_names
             .iter()
@@ -443,6 +466,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 osl: inputs.osl.clone(),
                 num_prefix_prompts: None,
                 prefix_prompt_length: None,
+                block_size: inputs.isl_block_size,
             },
             sampling: Sampling(inputs.sampling.clone()),
             turns: inputs.turns.clone(),
@@ -495,8 +519,8 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             },
             kind: PhaseKind::FixedSchedule {
                 auto_offset,
-                start_offset: None,
-                end_offset: None,
+                start_offset: inputs.fixed_schedule_start_offset,
+                end_offset: inputs.fixed_schedule_end_offset,
             },
         }
     } else {
@@ -603,13 +627,16 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         runtime: Some(Runtime::default()),
         metrics: Some(Metrics {
             slos: inputs.slos.clone(),
-            ..Metrics::default()
+            slice_duration_seconds: inputs.slice_duration,
+            sketch: inputs.sketch_metrics.then_some(true),
         }),
         slos: (!inputs.slos.is_empty()).then(|| inputs.slos.clone()),
         artifacts: Some(Artifacts {
             trace: false,
             inputs_path: "inputs.json".to_string(),
-            records_path: Some("profile_export.jsonl".to_string()),
+            // Sketch retention keeps no per-record values, so the per-record
+            // JSONL is dropped (mirrors `_authored_artifacts`).
+            records_path: (!inputs.sketch_metrics).then(|| "profile_export.jsonl".to_string()),
             ..Default::default()
         }),
         datasets: Some(vec![dataset]),
@@ -741,6 +768,16 @@ fn parse_goodput(
         slos.insert(metric.to_string(), serde_json::json!(threshold));
     }
     Ok(slos)
+}
+
+/// Parse `--model-selection-strategy`.
+fn parse_model_strategy(s: &str) -> anyhow::Result<ModelStrategy> {
+    Ok(match s {
+        "round_robin" => ModelStrategy::RoundRobin,
+        "random" => ModelStrategy::Random,
+        "weighted" => ModelStrategy::Weighted,
+        other => anyhow::bail!("unknown --model-selection-strategy {other:?}"),
+    })
 }
 
 /// Parse `--connection-reuse-strategy`.
