@@ -291,6 +291,23 @@ def build_controller_env_vars() -> list[dict[str, Any]]:
     return [{"name": CELL_CONTROLLER_PORT_ENV, "value": str(CELL_CONTROLLER_PORT)}]
 
 
+def build_cr_identity_env(*, job_id: str, namespace: str) -> list[dict[str, Any]]:
+    """The AIPerfJob CR identity a run pod needs to patch its own .status.
+
+    Live progress is reported kubectl-natively: the aiperf frontend patches the
+    owning AIPerfJob's ``.status`` (phase + per-phase requestsCompleted/rate) from
+    the runner's progress, and the operator's orchestration-level results_server
+    serves that status back -- so there is no per-run progress API service. The pods
+    already carry RBAC to patch ``aiperfjobs/status`` (benchmark-rbac.yaml); this is
+    the identity they resolve the CR by. (Distinct from the retired mesh env: these
+    two vars name the CR to patch, they are not ZMQ/service wiring.)
+    """
+    return [
+        {"name": "AIPERF_JOB_ID", "value": job_id},
+        {"name": "AIPERF_NAMESPACE", "value": namespace},
+    ]
+
+
 def build_runner_volumes(
     jobset_name: str, pod_template: PodTemplateConfig
 ) -> list[dict[str, Any]]:

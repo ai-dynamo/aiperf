@@ -23,6 +23,7 @@ from aiperf.kubernetes.jobset_helpers import (
     build_container_ports,
     build_controller_args,
     build_controller_env_vars,
+    build_cr_identity_env,
     build_env_vars,
     build_health_probe,
     build_runner_env_vars,
@@ -509,6 +510,9 @@ class _JobSetManifestBuilder:
             args=build_controller_args(),
             env=[
                 *build_runner_env_vars(self.spec.pod_template),
+                *build_cr_identity_env(
+                    job_id=self.spec.job_id, namespace=self.spec.namespace
+                ),
                 *build_controller_env_vars(),
             ],
             resources=self._resolve_pod_resources("SYSTEM_CONTROLLER"),
@@ -530,6 +534,9 @@ class _JobSetManifestBuilder:
             args=build_cell_args(),
             env=[
                 *build_runner_env_vars(self.spec.pod_template),
+                *build_cr_identity_env(
+                    job_id=self.spec.job_id, namespace=self.spec.namespace
+                ),
                 *build_cell_env_vars(cells=self.spec.cells, controller_dns=controller_dns),
             ],
             resources=self._resolve_pod_resources("WORKER_POD"),
