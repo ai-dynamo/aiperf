@@ -51,7 +51,7 @@ pub use loader::{
 };
 pub use materialize::{
     AssemblyItem, MessageSpliceResolver, Overrides, SegmentItemsMaterializer,
-    build_message_body_from_wires,
+    build_message_body_from_wire_parts, build_message_body_from_wires,
 };
 pub use media::{InlineMediaResolver, MediaResolver};
 pub use model::{

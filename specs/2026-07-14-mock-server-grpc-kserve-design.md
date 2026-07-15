@@ -26,7 +26,7 @@ in-repo gRPC mock to test/benchmark that client against. This adds one.
   encodes/decodes — guaranteeing wire parity by construction. This matches the workspace discipline:
   the runner checks in prost types by hand and hand-rolls its client with `RawBytesCodec` +
   `PathAndQuery`; no crate in the workspace uses `tonic-build`/`prost-build`/`protoc`.
-- **Listener:** **opt-in** `--grpc-port` (env `AIPERF_MOCK_GRPC_PORT`). HTTP is unchanged on `--port`;
+- **Listener:** **opt-in** `--grpc-port` (env `MOCK_SERVER_GRPC_PORT`). HTTP is unchanged on `--port`;
   gRPC starts only when the flag is set. Zero behavior change to existing runs.
 - **Balancer:** **deferred.** Ship gRPC on the single-process path. If `--processes > 1` **and**
   `--grpc-port` is set, warn and skip the gRPC listener (HTTP balancer behavior unchanged). Full
@@ -88,7 +88,7 @@ symmetric and parity is structural, not test-enforced.
    duplicated. If a small shared helper needs extracting from `handlers.rs` (the chat/text path) to
    avoid copy-paste, do that as a targeted refactor rather than re-implementing.
 
-4. **`config.rs`** — add `grpc_port: Option<u16>` (clap `--grpc-port`, env `AIPERF_MOCK_GRPC_PORT`).
+4. **`config.rs`** — add `grpc_port: Option<u16>` (clap `--grpc-port`, env `MOCK_SERVER_GRPC_PORT`).
 
 5. **`main.rs`** — after building `AppState`, if `config.grpc_port` is `Some` and not skipped by
    balancer mode, `tokio::spawn(serve_grpc(...))` alongside the existing HTTP accept loop; both run to
@@ -140,10 +140,29 @@ client only decodes `ModelReadyResponse`, so `ServerLive`/`ServerReady` messages
    - `ModelStreamInfer` yields ≥1 chunk and the concatenation matches the unary text shape;
    - `ModelReady` returns `ready: true`;
    - malformed request → `invalid_argument`.
-2. **E2e (`rust/e2e/tests/`)** — drive AIPerf's real KServe gRPC client end-to-end: launch the mock
-   with `--grpc-port`, run a `transport.type: grpc`, `grpc://127.0.0.1:<port>` KServe config, assert
-   the run produces the expected request/token metrics. Closes the client↔server loop over the shared
-   prost types. Use `127.0.0.1` (not `localhost`) to avoid the IPv6/IPv4 mock mismatch.
+2. **Wire round-trip (`rust/mock-server/tests/grpc_integration.rs`)** — a real tonic client drives
+   `serve_grpc` over h2 using AIPerf's own `aiperf::transport_grpc` encode/decode helpers, exercising
+   the framing/trailers/prost round-trip the handler unit tests bypass (unary, server-streaming,
+   readiness).
+3. **Full-stack e2e (`rust/e2e/tests/test_kserve_grpc_endpoint.rs`)** — the real `python -m aiperf
+   profile` CLI (Python frontend → native `aiperf-runner` → its production gRPC KServe client) drives
+   the mock's `serve_grpc` listener, enabled via the harness's `MockServer::start_with_grpc`
+   /`AIPerfHarness::new_with_grpc` (a second in-process listener sharing the mock's `AppState`),
+   selected via a Config-v2 YAML with `transport.type: grpc` + `grpc://127.0.0.1:<port>` + endpoint
+   `kserve_v2_infer`, for both `streaming: true` (`ModelStreamInfer`) and `streaming: false`
+   (`ModelInfer`). Asserts the run succeeds and `request_count` matches. This is the layer that caught
+   the reasoning-model empty-stream bug (below) — the default harness model `openai/gpt-oss-120b` is a
+   reasoning model, so streaming exercises the reasoning path that lower-level tests missed. Use
+   `127.0.0.1` (not `localhost`) to avoid the IPv6/IPv4 mock mismatch.
+
+**Reasoning-model streaming (bug found by the e2e).** The mock lowers a KServe request to a synthetic
+`ChatCompletionRequest`; for a reasoning model (`gpt-oss`/`qwen`) with a small `max_tokens` budget the
+tokenizer spends the whole budget on reasoning tokens, leaving zero *output* tokens. The unary path
+tolerates an empty `text_output`, but a server-streaming response that yields **zero** messages is a
+failed request to strict gRPC clients — including AIPerf's own runner. Both handlers therefore emit the
+full generation (`generated_tokens` = reasoning tokens followed by output tokens), folding reasoning
+into the single KServe `text_output` (KServe text has no separate reasoning channel) so the stream is
+never spuriously empty. Regression-locked by `grpc::tests::model_stream_infer_reasoning_model_is_not_empty`.
 
 ## Extensibility notes (repo non-negotiable)
 

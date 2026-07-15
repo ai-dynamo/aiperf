@@ -509,13 +509,25 @@ where
     I: hyper::rt::Read + hyper::rt::Write + Unpin + 'static,
 {
     if use_h2 {
-        let (sender, conn) = hyper::client::conn::http2::handshake(LocalExec, io)
-            .await
-            .map_err(|e| ErrorDetails {
-                kind: ErrorKind::Connect,
-                code: None,
-                message: format!("h2 handshake: {e}"),
-            })?;
+        // hyper caps locally-reset streams at 1024 (the Rapid-Reset / CVE-2023-44487
+        // guard). At very high in-flight concurrency (100k+), a duration bound or
+        // per-request timeout cancels many streams at once and trips that cap,
+        // tearing the connection down and failing every remaining stream. Raise it
+        // via `AIPERF_H2_MAX_RESET_STREAMS` for concurrent-request stress tests;
+        // absent the env var the hyper default (1024) is preserved. Mirrors the
+        // mock server's `--max-concurrent-streams`.
+        let mut builder = hyper::client::conn::http2::Builder::new(LocalExec);
+        if let Some(cap) = std::env::var("AIPERF_H2_MAX_RESET_STREAMS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+        {
+            builder.max_concurrent_reset_streams(cap);
+        }
+        let (sender, conn) = builder.handshake(io).await.map_err(|e| ErrorDetails {
+            kind: ErrorKind::Connect,
+            code: None,
+            message: format!("h2 handshake: {e}"),
+        })?;
         tokio::task::spawn_local(async move {
             let _ = conn.await;
         });

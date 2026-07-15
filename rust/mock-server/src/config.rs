@@ -47,6 +47,14 @@ pub struct MockServerConfig {
     #[arg(long, env = "MOCK_SERVER_PROCESSES", default_value_t = 1)]
     pub processes: usize,
 
+    /// HTTP/2 `SETTINGS_MAX_CONCURRENT_STREAMS` advertised to clients. Bounds how
+    /// many requests a single h2 connection may have in flight at once; hyper's
+    /// default (~200) caps concurrent-request stress tests. Raise it (e.g.
+    /// `2000000`) to hold hundreds of thousands / millions of simultaneous
+    /// streams on one connection. `0` leaves hyper's default untouched.
+    #[arg(long, env = "MOCK_SERVER_MAX_CONCURRENT_STREAMS", default_value_t = 0)]
+    pub max_concurrent_streams: u32,
+
     #[arg(short = 't', long, env = "MOCK_SERVER_TTFT", default_value_t = 20.0)]
     pub ttft: f64,
 

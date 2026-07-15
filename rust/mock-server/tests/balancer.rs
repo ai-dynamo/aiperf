@@ -113,7 +113,8 @@ fn balancer_serves_health_and_chat_through_one_port() {
 
     // Drive a batch of chat completions through the single public port; every
     // one must succeed, proving spawn + health-gate + proxy end-to-end.
-    let payload = r#"{"model":"mock-model","messages":[{"role":"user","content":"hi"}],"max_tokens":4}"#;
+    let payload =
+        r#"{"model":"mock-model","messages":[{"role":"user","content":"hi"}],"max_tokens":4}"#;
     for i in 0..30 {
         let (status, body) = http_post_json(addr, "/v1/chat/completions", payload)
             .unwrap_or_else(|e| panic!("request {i} failed: {e}"));
@@ -150,7 +151,10 @@ fn balancer_distributes_connections_across_backends() {
             ok += 1;
         }
     }
-    assert_eq!(ok, 64, "all 64 concurrent requests should succeed through the balancer");
+    assert_eq!(
+        ok, 64,
+        "all 64 concurrent requests should succeed through the balancer"
+    );
 }
 
 #[test]

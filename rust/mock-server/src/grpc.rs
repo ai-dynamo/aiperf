@@ -43,7 +43,6 @@ use bytes::{Buf, Bytes};
 use futures::Stream;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as ConnBuilder;
-use prost::Message as _;
 use serde_json::Value;
 use tonic::body::Body;
 use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
@@ -62,7 +61,7 @@ use crate::listener::build_listener;
 use crate::metrics::LLMLatencyInfo;
 use crate::models::{ChatCompletionRequest, Message};
 use crate::state::AppState;
-use crate::tokens::GenRequest;
+use crate::tokens::{GenRequest, TokenizedText};
 
 /// KServe `GRPCInferenceService` method paths AIPerf's client dials.
 const MODEL_INFER: &str = "/inference.GRPCInferenceService/ModelInfer";
@@ -295,7 +294,12 @@ fn text_output_tensor(name: &str, text: &str) -> InferOutputTensor {
 }
 
 /// Build a `ModelInferResponse` with a single `text_output` tensor.
-fn build_infer_response(id: &str, model: &str, output_name: &str, text: &str) -> ModelInferResponse {
+fn build_infer_response(
+    id: &str,
+    model: &str,
+    output_name: &str,
+    text: &str,
+) -> ModelInferResponse {
     ModelInferResponse {
         model_name: model.to_string(),
         model_version: String::new(),
@@ -304,6 +308,25 @@ fn build_infer_response(id: &str, model: &str, output_name: &str, text: &str) ->
         outputs: vec![text_output_tensor(output_name, text)],
         raw_output_contents: Vec::new(),
     }
+}
+
+/// The full generated token sequence for a KServe `text_output`: reasoning
+/// tokens (if any) followed by output tokens.
+///
+/// KServe text has no separate reasoning channel, so a reasoning model's
+/// thinking is folded into the single text output. This also keeps the
+/// server-streaming response non-empty when a small `max_tokens` budget was
+/// fully consumed by reasoning (leaving zero output tokens): an empty gRPC
+/// server stream is rejected by strict clients — including AIPerf's own runner —
+/// as a failed request, so a reasoning model over streaming gRPC must still emit
+/// at least the reasoning tokens.
+fn generated_tokens(tokenized: &TokenizedText) -> Vec<&str> {
+    tokenized
+        .reasoning_content_tokens
+        .iter()
+        .chain(tokenized.tokens.iter())
+        .map(String::as_str)
+        .collect()
 }
 
 /// Wrap one incremental chunk as a streaming envelope.
@@ -337,16 +360,17 @@ async fn model_infer(
     let req_gen = GenRequest::Chat(&chat);
     let ctx = RequestCtx::build("grpcinfer", &req_gen, MODEL_INFER, start, &state);
 
+    let tokens = generated_tokens(&ctx.tokenized);
     state.recorder.record_request_start(MODEL_INFER, &ctx.model);
     state.recorder.record_llm_inflight_start(&ctx.model);
-    let (prefill, _decode) = ctx.latency_sim.wait_for_tokens(ctx.tokenized.count()).await;
+    let (prefill, _decode) = ctx.latency_sim.wait_for_tokens(tokens.len()).await;
     let latency = start.elapsed();
     let info = LLMLatencyInfo {
         e2e: latency,
         prefill,
         decode: latency.saturating_sub(prefill),
     };
-    let text = ctx.tokenized.content();
+    let text = tokens.concat();
     let response = build_infer_response(&msg.id, &ctx.model, &output_name, &text);
 
     state
@@ -391,9 +415,10 @@ async fn model_stream_infer(
         state.recorder.record_request_start(MODEL_STREAM_INFER, &ctx.model);
         state.recorder.record_llm_inflight_start(&ctx.model);
 
+        let tokens = generated_tokens(&ctx.tokenized);
         let mut first_emit: Option<Instant> = None;
         let mut last_emit: Option<Instant> = None;
-        for (index, token) in ctx.tokenized.tokens.iter().enumerate() {
+        for (index, token) in tokens.iter().enumerate() {
             let emit_at = ctx.latency_sim.wait_for_index(index).await;
             if first_emit.is_none() {
                 first_emit = Some(emit_at);
@@ -407,7 +432,7 @@ async fn model_stream_infer(
             }
             last_emit = Some(emit_at);
             state.recorder.record_streamed_token_fast(&labeled);
-            yield Ok(stream_chunk(&id, &ctx.model, &output_name, token.as_str()));
+            yield Ok(stream_chunk(&id, &ctx.model, &output_name, token));
         }
 
         let latency = start.elapsed();
@@ -661,10 +686,13 @@ mod tests {
     #[tokio::test]
     async fn model_infer_returns_text_output() {
         let state = fast_state();
-        let response = model_infer(state, Request::new(infer_request("generate some text here", None)))
-            .await
-            .expect("infer ok")
-            .into_inner();
+        let response = model_infer(
+            state,
+            Request::new(infer_request("generate some text here", None)),
+        )
+        .await
+        .expect("infer ok")
+        .into_inner();
         assert_eq!(response.id, "req-1");
         assert_eq!(response.model_name, "test-model");
         let text = output_text(&response, DEFAULT_OUTPUT_NAME);
@@ -691,16 +719,22 @@ mod tests {
     async fn model_stream_infer_yields_chunks() {
         use futures::StreamExt;
         let state = fast_state();
-        let unary = model_infer(state.clone(), Request::new(infer_request("stream this prompt text", None)))
-            .await
-            .expect("unary ok")
-            .into_inner();
+        let unary = model_infer(
+            state.clone(),
+            Request::new(infer_request("stream this prompt text", None)),
+        )
+        .await
+        .expect("unary ok")
+        .into_inner();
         let expected = output_text(&unary, DEFAULT_OUTPUT_NAME);
 
-        let mut stream = model_stream_infer(state, Request::new(infer_request("stream this prompt text", None)))
-            .await
-            .expect("stream ok")
-            .into_inner();
+        let mut stream = model_stream_infer(
+            state,
+            Request::new(infer_request("stream this prompt text", None)),
+        )
+        .await
+        .expect("stream ok")
+        .into_inner();
         let mut chunks = 0usize;
         let mut assembled = String::new();
         while let Some(item) = stream.next().await {
@@ -713,6 +747,31 @@ mod tests {
         assert!(chunks > 0, "expected at least one streamed chunk");
         // Deterministic generation: the concatenated stream equals the unary text.
         assert_eq!(assembled, expected);
+    }
+
+    #[tokio::test]
+    async fn model_stream_infer_reasoning_model_is_not_empty() {
+        // Regression: a reasoning model with a small max_tokens budget spends it
+        // all on reasoning tokens, leaving zero *output* tokens. The stream must
+        // still emit the reasoning tokens — an empty gRPC server stream is a
+        // failed request to strict clients (the runner). Caught only end-to-end.
+        use futures::StreamExt;
+        let state = fast_state();
+        let mut msg = infer_request("think hard about this prompt please", Some(4));
+        "openai/gpt-oss-120b".clone_into(&mut msg.model_name);
+        let mut stream = model_stream_infer(state, Request::new(msg))
+            .await
+            .expect("stream ok")
+            .into_inner();
+        let mut chunks = 0usize;
+        while let Some(item) = stream.next().await {
+            item.expect("chunk ok");
+            chunks += 1;
+        }
+        assert!(
+            chunks > 0,
+            "reasoning model must not produce an empty gRPC stream"
+        );
     }
 
     #[tokio::test]

@@ -621,36 +621,51 @@ mod rest {
     }
 
     async fn resolve_experiment(base: &str, name: &str) -> anyhow::Result<String> {
-        let url = format!("{base}/api/2.0/mlflow/experiments/get-by-name");
-        let body = serde_json::json!({ "experiment_name": name });
-        let (status, bytes) = send_json(Method::POST, &url, body.to_string().into_bytes()).await?;
-        if status == 200 {
-            let value: serde_json::Value = serde_json::from_slice(&bytes)?;
-            if let Some(id) = value
-                .get("experiment")
-                .and_then(|e| e.get("experiment_id"))
-                .and_then(|v| v.as_str())
-            {
-                return Ok(id.to_string());
-            }
+        // Look up the experiment first. `get-by-name` is a GET in the MLflow REST
+        // API (POST returns 405), with the name passed as a query parameter.
+        if let Some(id) = get_experiment_by_name(base, name).await? {
+            return Ok(id);
         }
-        // Not found (or any non-200): create it. A concurrent create losing the
-        // race surfaces as an error the caller logs and swallows.
+        // Not found: create it.
         let url = format!("{base}/api/2.0/mlflow/experiments/create");
         let body = serde_json::json!({ "name": name });
         let (status, bytes) = send_json(Method::POST, &url, body.to_string().into_bytes()).await?;
+        if status == 200 {
+            let value: serde_json::Value = serde_json::from_slice(&bytes)?;
+            return value
+                .get("experiment_id")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .ok_or_else(|| anyhow::anyhow!("MLflow create-experiment response missing id"));
+        }
+        // A concurrent create losing the race (or a name registered between the
+        // lookup and the create) surfaces as RESOURCE_ALREADY_EXISTS; re-fetch.
+        if let Some(id) = get_experiment_by_name(base, name).await? {
+            return Ok(id);
+        }
+        anyhow::bail!(
+            "MLflow create-experiment failed (HTTP {status}): {}",
+            String::from_utf8_lossy(&bytes)
+        )
+    }
+
+    /// GET `experiments/get-by-name`, returning the experiment id when it exists.
+    /// A non-200 (e.g. 404 RESOURCE_DOES_NOT_EXIST) maps to `None` so the caller
+    /// creates it.
+    async fn get_experiment_by_name(base: &str, name: &str) -> anyhow::Result<Option<String>> {
+        let encoded: String = url::form_urlencoded::byte_serialize(name.as_bytes()).collect();
+        let url =
+            format!("{base}/api/2.0/mlflow/experiments/get-by-name?experiment_name={encoded}");
+        let (status, bytes) = send_json(Method::GET, &url, Vec::new()).await?;
         if status != 200 {
-            anyhow::bail!(
-                "MLflow create-experiment failed (HTTP {status}): {}",
-                String::from_utf8_lossy(&bytes)
-            );
+            return Ok(None);
         }
         let value: serde_json::Value = serde_json::from_slice(&bytes)?;
-        value
-            .get("experiment_id")
+        Ok(value
+            .get("experiment")
+            .and_then(|e| e.get("experiment_id"))
             .and_then(|v| v.as_str())
-            .map(str::to_string)
-            .ok_or_else(|| anyhow::anyhow!("MLflow create-experiment response missing id"))
+            .map(str::to_string))
     }
 
     async fn create_run(

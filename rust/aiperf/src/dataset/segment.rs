@@ -130,8 +130,12 @@ pub enum Payload {
         role: Role,
         /// Exact UTF-8 bytes.
         bytes: Bytes,
-        /// Token IDs produced at composition time.
-        tokens: Box<[u32]>,
+        /// Number of authoritative tokens produced at composition time. The token
+        /// IDs are folded into the segment identity at intern time (see
+        /// [`SegmentPool::intern_text`]) but not retained: text endpoints splice
+        /// `bytes` verbatim and input-token accounting only needs the count, so
+        /// storing the full `Box<[u32]>` per text segment was pure overhead.
+        token_count: u32,
     },
     /// Exact JSON wire for a raw body, raw message list, tools, headers, or extras.
     Raw {
@@ -215,7 +219,8 @@ impl Payload {
     /// Number of authoritative input tokens carried by this payload, when tokenized.
     pub fn token_count(&self) -> Option<usize> {
         match self {
-            Self::Message { tokens, .. } | Self::Text { tokens, .. } => Some(tokens.len()),
+            Self::Message { tokens, .. } => Some(tokens.len()),
+            Self::Text { token_count, .. } => Some(*token_count as usize),
             Self::TokenIds { token_ids } => Some(token_ids.len()),
             Self::Raw { .. } | Self::Media { .. } | Self::TraceHashIds { .. } => None,
         }
@@ -314,17 +319,37 @@ impl SegmentPool {
     }
 
     /// Intern one payload under an optional prefix parent.
+    ///
+    /// Text is interned through [`intern_text`](Self::intern_text) rather than
+    /// this generic entry point, because a stored [`Payload::Text`] no longer
+    /// retains its token IDs: its identity is folded from the authoritative
+    /// tokens at composition time, which this path cannot see.
     pub fn intern(&mut self, parent: Option<Handle>, payload: Payload) -> Result<Handle> {
-        let parent_id = match parent {
-            Some(handle) => Some(
+        let parent_id = self.parent_segment_id(parent)?;
+        let id = payload_id(parent_id, &payload);
+        self.push_interned(parent, id, payload)
+    }
+
+    /// Resolve the content identity of an optional prefix parent.
+    fn parent_segment_id(&self, parent: Option<Handle>) -> Result<Option<SegmentId>> {
+        match parent {
+            Some(handle) => Ok(Some(
                 self.arena
                     .get(handle.as_usize())
                     .ok_or(DatasetError::UnknownParent(handle))?
                     .id,
-            ),
-            None => None,
-        };
-        let id = payload_id(parent_id, &payload);
+            )),
+            None => Ok(None),
+        }
+    }
+
+    /// Deduplicate on a precomputed identity, or append a fresh dense segment.
+    fn push_interned(
+        &mut self,
+        parent: Option<Handle>,
+        id: SegmentId,
+        payload: Payload,
+    ) -> Result<Handle> {
         if let Some(handle) = self.ids.get(&id) {
             // A content-addressed collision must be a true duplicate: with the
             // wire folded into the `Message` identity (multimodal correctness), a
@@ -373,6 +398,12 @@ impl SegmentPool {
     }
 
     /// Intern plain text under the disjoint `text-only` hash domain.
+    ///
+    /// The authoritative `tokens` are folded into the content identity here (so
+    /// dedup stays byte-for-byte identical to when the IDs were retained) but are
+    /// not stored: only their count survives on [`Payload::Text`], which is all
+    /// input-token accounting reads. The `tokens` allocation is released as this
+    /// call returns.
     pub fn intern_text(
         &mut self,
         parent: Option<Handle>,
@@ -380,12 +411,19 @@ impl SegmentPool {
         bytes: impl Into<Bytes>,
         tokens: impl Into<Box<[u32]>>,
     ) -> Result<Handle> {
-        self.intern(
+        let role = role.into();
+        let tokens = tokens.into();
+        let parent_id = self.parent_segment_id(parent)?;
+        let id = text_payload_id(parent_id, &role, &tokens);
+        let token_count =
+            u32::try_from(tokens.len()).map_err(|_| DatasetError::SegmentCapacityExceeded)?;
+        self.push_interned(
             parent,
+            id,
             Payload::Text {
-                role: role.into(),
+                role,
                 bytes: bytes.into(),
-                tokens: tokens.into(),
+                token_count,
             },
         )
     }
@@ -507,14 +545,16 @@ fn payload_id(parent: Option<SegmentId>, payload: &Payload) -> SegmentId {
             hasher.update(b"\0");
             hasher.update(wire);
         }
-        Payload::Text { role, tokens, .. } => {
+        Payload::Text { role, .. } => {
+            // A stored text payload no longer carries its token IDs — those are
+            // folded into the identity by `text_payload_id` at intern time, which
+            // is the sole path that produces text segments. This generic branch is
+            // unreachable for real text (kept total for exhaustiveness) and keys on
+            // role + parent only.
             hasher.update(b"text-only\0");
             hash_parent(&mut hasher, parent);
             hasher.update(role.as_str().as_bytes());
             hasher.update(b"\0");
-            for token in tokens {
-                hasher.update(&token.to_le_bytes());
-            }
         }
         Payload::Raw { wire } => {
             hasher.update(b"raw\0");
@@ -546,6 +586,25 @@ fn payload_id(parent: Option<SegmentId>, payload: &Payload) -> SegmentId {
                 hasher.update(&hash_id.to_le_bytes());
             }
         }
+    }
+    SegmentId(*hasher.finalize().as_bytes())
+}
+
+/// Content identity of a `text-only` segment, keyed on its authoritative token
+/// IDs exactly as the retired [`Payload::Text`] `tokens` field once was — the
+/// stored payload keeps only the count, so the IDs are hashed here at intern time
+/// and then dropped. Emits the identical byte sequence the folded-in text arm of
+/// [`payload_id`] produced, keeping segment IDs (and therefore dedup and every
+/// downstream wire) byte-for-byte stable across this storage change.
+fn text_payload_id(parent: Option<SegmentId>, role: &Role, tokens: &[u32]) -> SegmentId {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(HASH_VERSION);
+    hasher.update(b"text-only\0");
+    hash_parent(&mut hasher, parent);
+    hasher.update(role.as_str().as_bytes());
+    hasher.update(b"\0");
+    for token in tokens {
+        hasher.update(&token.to_le_bytes());
     }
     SegmentId(*hasher.finalize().as_bytes())
 }

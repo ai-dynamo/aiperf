@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: Apache-2.0
+# Minimal pynvml GPU-telemetry smoke test (Rust runner path).
+#
+# Purpose: prove the full chain works on real hardware —
+#   aiperf-runner -> spawns `python -m aiperf.gpu_telemetry.worker`
+#   -> PyNVMLTelemetryCollector -> libnvidia-ml -> records
+#   -> Rust Clock-driven scrape/accumulate -> *_gpu_telemetry.jsonl
+#
+# Prereqs on the GPU box:
+#   - NVIDIA driver + `pip install nvidia-ml-py` (import name: pynvml)
+#   - a running OpenAI-compatible inference server (edit url/model below)
+#
+# Fail-fast: `aiperf config validate pynvml_smoke.yaml` will error at
+# validate time if pynvml can't be imported (collector.validate_environment()).
+#
+# Run:
+#   aiperf config validate pynvml_smoke.yaml
+#   aiperf profile --config pynvml_smoke.yaml
+# Then check:
+#   ls artifacts/pynvml_smoke/*_gpu_telemetry.jsonl
+#   grep -o 'pynvml://localhost' artifacts/pynvml_smoke/*_gpu_telemetry.jsonl | head
+
+schemaVersion: "2.0"
+
+randomSeed: 42
+
+benchmark:
+  model: Qwen/Qwen3-0.6B                          # served by the in-repo mock server
+  endpoint:
+    url: http://127.0.0.1:8000/v1/chat/completions # in-repo aiperf-mock-server (IPv4, not localhost)
+    type: chat
+    streaming: true
+    timeout: 600.0
+
+  dataset:
+    type: synthetic
+    entries: 50
+    isl: {mean: 128, stddev: 0}
+    osl: {mean: 128, stddev: 0}
+
+  profiling:
+    type: concurrency
+    concurrency: 4
+    requests: 50
+
+  gpuTelemetry:
+    enabled: true
+    collector: pynvml     # local NVML — reads the driver directly, no DCGM container
+    mode: summary
+    # NOTE: `urls` MUST be omitted/empty for pynvml — a local collector paired
+    # with DCGM URLs is rejected at config-validation time.
+
+  artifacts:
+    dir: ./artifacts/pynvml_smoke
+    summary: [json]
+    records: [jsonl]

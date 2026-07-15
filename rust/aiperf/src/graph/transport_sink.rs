@@ -9,6 +9,8 @@
 //! assistant text + per-token arrival times, and feeds the shared
 //! [`RequestObserver`] the measurement events.
 
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use anyhow::Result;
@@ -17,7 +19,7 @@ use bytes::Bytes;
 use uuid::Uuid;
 
 use crate::clock::Clock;
-use crate::dataset::{Overrides, build_message_body_from_wires};
+use crate::dataset::{Overrides, build_message_body_from_wire_parts};
 use crate::transport_http::config::ClientConfig;
 use crate::transport_http::models::{HttpVersion, RequestConfig, Response};
 use crate::transport_http::sse::ChatChunk;
@@ -38,6 +40,14 @@ pub struct TransportChatSink {
     start_ns: i64,
     observer: Rc<dyn RequestObserver>,
     default_max_tokens: usize,
+    /// Pre-serialized override tails (the inner bytes of
+    /// `{model, stream, stream_options, max_tokens}`, braces stripped), keyed by
+    /// the resolved `max_tokens`. Model/stream/include_usage are constant per
+    /// sink, so a whole run usually has one distinct tail; each is serialized
+    /// once here and cloned per dispatch instead of rebuilt through serde on the
+    /// hot path. Interior-mutable because the sink is shared (`Rc`, single
+    /// worker thread) across every trace's fire tasks.
+    override_tails: RefCell<BTreeMap<u32, Bytes>>,
 }
 
 impl TransportChatSink {
@@ -72,7 +82,28 @@ impl TransportChatSink {
             start_ns,
             observer,
             default_max_tokens,
+            override_tails: RefCell::new(BTreeMap::new()),
         }
+    }
+
+    /// Return the pre-serialized override tail for `max_tokens`, building and
+    /// caching it on first use. Byte-identical to serializing a fresh
+    /// `{model, stream, stream_options: {include_usage}, max_tokens}` object and
+    /// stripping its braces.
+    fn override_tail(&self, max_tokens: u32) -> Result<Bytes> {
+        if let Some(tail) = self.override_tails.borrow().get(&max_tokens) {
+            return Ok(tail.clone());
+        }
+        let mut overrides = Overrides::new();
+        overrides.set_model(&self.model);
+        overrides.set_stream(true);
+        overrides.set_include_usage(true);
+        overrides.set_max_tokens("max_tokens", max_tokens);
+        let tail = Bytes::from(overrides.inner_bytes()?);
+        self.override_tails
+            .borrow_mut()
+            .insert(max_tokens, tail.clone());
+        Ok(tail)
     }
 
     fn ms(&self, ns: i64) -> f64 {
@@ -111,15 +142,10 @@ impl GraphSink<OpenAiChatMessage> for TransportChatSink {
         // No scheduler admission on the HTTP path; admit == dispatch time.
         let admit_ms = self.ms(self.clock.now_ns());
 
-        let mut overrides = Overrides::new();
-        overrides.set_model(&self.model);
-        overrides.set_stream(true);
-        overrides.set_include_usage(true);
-        overrides.set_max_tokens(
-            "max_tokens",
-            u32::try_from(max_tokens.unwrap_or(self.default_max_tokens)).unwrap_or(u32::MAX),
-        );
-        let payload = build_message_body_from_wires(&messages, &overrides)?;
+        let resolved_max_tokens =
+            u32::try_from(max_tokens.unwrap_or(self.default_max_tokens)).unwrap_or(u32::MAX);
+        let override_tail = self.override_tail(resolved_max_tokens)?;
+        let payload = build_message_body_from_wire_parts(&messages, &override_tail);
 
         let mut cfg = RequestConfig::new(&self.url);
         cfg.cancel_after_ns = options.cancel_after_ns;

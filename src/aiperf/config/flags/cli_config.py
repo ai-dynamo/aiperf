@@ -2310,13 +2310,18 @@ class CLIConfig(BaseConfig):
     ] = None
 
     mlflow_tags: Annotated[
-        list[tuple[str, Any]] | None,
+        # `Any` (not `list[tuple[str, Any]]`) with a `[]` default: mirrors the
+        # working `--header`/`--extra-inputs` flags exactly. A tuple element type
+        # makes the parser demand two positional args per flag, and a `None`
+        # default makes cyclopts treat the flag as scalar (consuming only the
+        # first `key:value` token and leaving the rest as "unused tokens"); a
+        # list default restores multi-value `consume_multiple` behavior.
+        Any,
         Field(
-            default=None,
             description=(
-                "Additional MLflow run tags to attach on upload. "
-                "Specify as key:value pairs (e.g., --mlflow-tag team:perf) "
-                "or as JSON string."
+                "Additional MLflow run tags to attach on upload. Specify as "
+                "key:value pairs (e.g., --mlflow-tag team:perf env:staging) "
+                "or as a JSON string."
             ),
         ),
         BeforeValidator(parse_str_or_dict_as_tuple_list),
@@ -2325,7 +2330,7 @@ class CLIConfig(BaseConfig):
             consume_multiple=True,
             group=Groups.OUTPUT,
         ),
-    ] = None
+    ] = []
 
     mlflow_parent_run_id: Annotated[
         str | None,

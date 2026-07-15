@@ -1643,6 +1643,7 @@ impl RunnerPairFactory for DynosimGraphPairFactory {
             artifact_target: run.artifact_target.clone(),
             default_max_tokens,
             allow_dataset_wrap,
+            t_star_window: prepared.t_star_window,
             worker_count: workload.worker_count,
             phase_count: workload.phases.len(),
         }))
@@ -1740,6 +1741,7 @@ struct PreparedDynosimGraphOperation {
     artifact_target: PathBuf,
     default_max_tokens: usize,
     allow_dataset_wrap: bool,
+    t_star_window: crate::graph_input::TStarWindow,
     worker_count: usize,
     phase_count: usize,
 }
@@ -1768,6 +1770,7 @@ impl PreparedRunnerOperation for PreparedDynosimGraphOperation {
             artifact_target,
             default_max_tokens,
             allow_dataset_wrap,
+            t_star_window,
             worker_count,
             phase_count,
         } = *self;
@@ -1799,6 +1802,7 @@ impl PreparedRunnerOperation for PreparedDynosimGraphOperation {
                         clock,
                         rng_root,
                         allow_dataset_wrap,
+                        t_star_window,
                         phase_sidecars,
                         &backends,
                         // Offline replay keeps its historical fail-fast graph

@@ -462,6 +462,7 @@ pub(crate) struct NativeGraphDatasetPlan {
     pub(crate) random_seed: Option<u64>,
     pub(crate) default_output_tokens: usize,
     pub(crate) allow_dataset_wrap: bool,
+    pub(crate) t_star_window: crate::graph_input::TStarWindow,
 }
 
 /// Execute a plan whose graph input, if present, is already fully prepared.
@@ -1154,6 +1155,7 @@ async fn execute_graph_native(
     let graph_random_seed = graph.random_seed;
     let graph_default_output_tokens = graph.default_output_tokens;
     let allow_dataset_wrap = graph.allow_dataset_wrap;
+    let t_star_window = graph.t_star_window;
     let metrics_config =
         metrics_config(&request.metrics, request.endpoint.use_server_token_count())?;
     let tokenizer = load_tokenizer(Some(&request.tokenizer.name))?;
@@ -1233,6 +1235,7 @@ async fn execute_graph_native(
         clock.clone(),
         rng_root,
         allow_dataset_wrap,
+        t_star_window,
         phase_sidecars,
         &backends,
         on_failure,
