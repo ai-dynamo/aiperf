@@ -42,6 +42,13 @@ use std::rc::Rc;
 use aiperf::metrics_core::MetricsConfig;
 use anyhow::{Context, Result};
 
+#[cfg(feature = "parquet")]
+use aiperf::export::per_record_parquet::{
+    DEFAULT_ROW_GROUP_ROWS, StreamingPerRecordParquetWriter, record_metric_columns,
+};
+
+#[cfg(feature = "parquet")]
+use crate::records::per_record_parquet_row;
 use crate::records::{
     CapturedRecord, record_csv_header, record_csv_row, write_raw_record_jsonl_row,
     write_record_jsonl_row,
@@ -110,6 +117,13 @@ pub(crate) struct RecordArtifactLane {
     records: Option<RefCell<BufWriter<File>>>,
     raw: Option<RefCell<BufWriter<File>>>,
     csv: Option<RefCell<CsvLaneWriter>>,
+    /// Held-open incremental Parquet writer (task S3): each completed record's wide
+    /// row is buffered and flushed as a bounded row group, so the columnar sidecar
+    /// streams without retaining every record. `None` when no Parquet artifact is
+    /// requested. Only compiled under the `parquet` feature — a lite runner never
+    /// streams Parquet (and such a run is not exact-fold-eligible for it).
+    #[cfg(feature = "parquet")]
+    parquet: RefCell<Option<StreamingPerRecordParquetWriter>>,
     include_trace: bool,
 }
 
@@ -123,9 +137,20 @@ impl RecordArtifactLane {
         records_path: Option<PathBuf>,
         raw_path: Option<PathBuf>,
         csv_path: Option<PathBuf>,
+        records_parquet_path: Option<PathBuf>,
         include_trace: bool,
     ) -> Result<Option<Rc<Self>>> {
-        if records_path.is_none() && raw_path.is_none() && csv_path.is_none() {
+        // On a lite build the Parquet path never streams (the exact-fold gate keeps
+        // Parquet disqualifying), so it does not count toward the "any artifact
+        // requested" decision and is ignored here.
+        #[cfg(feature = "parquet")]
+        let any_parquet = records_parquet_path.is_some();
+        #[cfg(not(feature = "parquet"))]
+        let any_parquet = {
+            let _ = &records_parquet_path;
+            false
+        };
+        if records_path.is_none() && raw_path.is_none() && csv_path.is_none() && !any_parquet {
             return Ok(None);
         }
         let records = records_path
@@ -143,10 +168,24 @@ impl RecordArtifactLane {
                 writer: None,
             })
         });
+        // The Parquet writer defers file creation to its first row (matching the
+        // batch writer's empty-rows-no-file contract), so it is built here without
+        // touching the filesystem.
+        #[cfg(feature = "parquet")]
+        let parquet = RefCell::new(records_parquet_path.map(|path| {
+            StreamingPerRecordParquetWriter::new(
+                path,
+                record_metric_columns(),
+                include_trace,
+                DEFAULT_ROW_GROUP_ROWS,
+            )
+        }));
         Ok(Some(Rc::new(Self {
             records,
             raw,
             csv,
+            #[cfg(feature = "parquet")]
+            parquet,
             include_trace,
         })))
     }
@@ -170,6 +209,12 @@ impl RecordArtifactLane {
         if let Some(csv) = &self.csv {
             csv.borrow_mut().write(captured, config)?;
         }
+        #[cfg(feature = "parquet")]
+        if let Some(parquet) = self.parquet.borrow_mut().as_mut() {
+            parquet
+                .push(per_record_parquet_row(captured, config, self.include_trace))
+                .context("streaming per-record parquet row")?;
+        }
         Ok(())
     }
 
@@ -189,6 +234,15 @@ impl RecordArtifactLane {
         }
         if let Some(csv) = &self.csv {
             csv.borrow_mut().finish()?;
+        }
+        // `StreamingPerRecordParquetWriter::finish` consumes the writer (closing the
+        // Arrow file footer), so take it out of the cell. A writer that saw no row
+        // never created its file, matching the batch writer.
+        #[cfg(feature = "parquet")]
+        if let Some(parquet) = self.parquet.borrow_mut().take() {
+            parquet
+                .finish()
+                .context("finalizing streaming per-record parquet")?;
         }
         Ok(())
     }
@@ -280,6 +334,7 @@ mod tests {
             Some(dir.join("profile_export.jsonl")),
             Some(dir.join("profile_export_raw.jsonl")),
             Some(dir.join("profile_export_records.csv")),
+            None,
             include_trace,
         )
         .unwrap()
@@ -386,7 +441,7 @@ mod tests {
     #[test]
     fn new_returns_none_when_no_artifact_requested() {
         assert!(
-            RecordArtifactLane::new(None, None, None, false)
+            RecordArtifactLane::new(None, None, None, None, false)
                 .unwrap()
                 .is_none()
         );
@@ -401,6 +456,7 @@ mod tests {
             None,
             None,
             Some(dir.path().join("profile_export_records.csv")),
+            None,
             false,
         )
         .unwrap()
@@ -413,5 +469,50 @@ mod tests {
         assert!(dir.path().join("profile_export_records.csv").exists());
         assert!(!dir.path().join("profile_export.jsonl").exists());
         assert!(!dir.path().join("profile_export_raw.jsonl").exists());
+    }
+
+    /// The lane wires the streaming Parquet sidecar (task S3): a parquet-only lane
+    /// pushes each record's wide row and, on finish, materializes a non-empty file
+    /// while emitting none of the other artifacts. The columnar row-set parity vs the
+    /// batch writer is proven in `aiperf::export::per_record_parquet` (the runner crate
+    /// has no direct `arrow`/`parquet` dependency to read the file back here).
+    #[cfg(feature = "parquet")]
+    #[test]
+    fn lane_streams_parquet_only() {
+        let config = MetricsConfig::default();
+        let records = sample_records();
+        let dir = tempfile::tempdir().unwrap();
+        let lane_path = dir.path().join("profile_export.parquet");
+
+        let lane = RecordArtifactLane::new(None, None, None, Some(lane_path.clone()), false)
+            .unwrap()
+            .expect("parquet artifact requested");
+        for captured in &records {
+            lane.write(captured, &config).unwrap();
+        }
+        lane.finish().unwrap();
+
+        assert!(lane_path.exists(), "the streamed parquet sidecar exists");
+        assert!(
+            std::fs::metadata(&lane_path).unwrap().len() > 0,
+            "the streamed parquet sidecar is non-empty"
+        );
+        assert!(!dir.path().join("profile_export.jsonl").exists());
+        assert!(!dir.path().join("profile_export_raw.jsonl").exists());
+        assert!(!dir.path().join("profile_export_records.csv").exists());
+    }
+
+    /// A parquet-only lane that never sees a row leaves no file, matching the batch
+    /// writer's empty-rows contract.
+    #[cfg(feature = "parquet")]
+    #[test]
+    fn empty_parquet_lane_leaves_no_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let lane_path = dir.path().join("profile_export.parquet");
+        let lane = RecordArtifactLane::new(None, None, None, Some(lane_path.clone()), false)
+            .unwrap()
+            .expect("parquet artifact requested");
+        lane.finish().unwrap();
+        assert!(!lane_path.exists());
     }
 }

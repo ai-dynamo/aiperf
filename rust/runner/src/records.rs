@@ -355,8 +355,12 @@ fn phase_str(phase: Phase) -> &'static str {
 }
 
 /// Map one [`CapturedRecord`] into the crate-neutral wide Parquet row.
+///
+/// Shared by the batch [`write_records_parquet`] and the streaming
+/// [`crate::record_lane::RecordArtifactLane`] so both produce the identical wide
+/// row for the same record.
 #[cfg(feature = "parquet")]
-fn per_record_parquet_row(
+pub(crate) fn per_record_parquet_row(
     captured: &CapturedRecord,
     config: &MetricsConfig,
     include_trace: bool,

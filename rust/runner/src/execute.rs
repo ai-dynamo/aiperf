@@ -791,17 +791,26 @@ fn validate_plan(request: &NativeRunSpec) -> Result<()> {
 /// `records.jsonl`, `raw.jsonl`, and the per-record CSV are NO LONGER here (task S2):
 /// the streaming [`RecordArtifactLane`] writes each of those one row per record at
 /// completion, then the fold drops the record, so an artifact-present run can still
-/// fold-and-drop. What remains disqualifying is what still needs the full retained
-/// record set at end-of-run: `outputs.json` and `inputs.json` (task S4), the columnar
-/// Parquet sidecar (task S3), and the per-record OTLP histograms (task S3).
+/// fold-and-drop. Task S3 additionally removed the columnar Parquet sidecar (now
+/// streamed as bounded row groups through the same lane) and the per-record OTLP
+/// histograms (now folded at completion into an order-independent accumulator). What
+/// remains disqualifying is what still needs the full retained record set at
+/// end-of-run: `outputs.json` and `inputs.json` (task S4).
+///
+/// Parquet is only streamable under the `parquet` feature; a lite runner cannot emit
+/// it, so a requested Parquet sidecar still disqualifies exact-fold on a lite build
+/// (the run then falls to the retain path, which warns and skips the artifact).
 fn wants_per_record_artifacts(
     artifacts: &crate::protocol::ArtifactSpec,
     native_otel_enabled: bool,
 ) -> bool {
-    artifacts.outputs_path.is_some()
-        || artifacts.inputs_path.is_some()
-        || artifacts.records_parquet_path.is_some()
-        || native_otel_enabled
+    // Per-record OTLP folds at completion (S3), so it no longer forces the retain path.
+    let _ = native_otel_enabled;
+    #[cfg(feature = "parquet")]
+    let parquet_needs_retain = false;
+    #[cfg(not(feature = "parquet"))]
+    let parquet_needs_retain = artifacts.records_parquet_path.is_some();
+    artifacts.outputs_path.is_some() || artifacts.inputs_path.is_some() || parquet_needs_retain
 }
 
 /// Force-disable switch for exact-fold, mirroring the `AIPERF_RUNTIME_*` env toggles
@@ -2117,6 +2126,9 @@ async fn execute_native_inner(
             HeartbeatLane::enabled_by_env(),
             wants_per_record_artifacts(&request.artifacts, request.native_otel_enabled),
         );
+    // Per-record OTLP folded at completion by the exact-fold capture (task S3); the
+    // retain/sharded arms leave this `None` and fold their retained records post-run.
+    let mut folded_otel: Option<OtelRecordAccumulator> = None;
     let (captured, input_sessions, was_cancelled, has_warmup, start_ns) = if !shardable {
         let execution_backend = transport_factory.build(HttpExecutionBackendConfig {
             workers: request.workers,
@@ -2158,6 +2170,12 @@ async fn execute_native_inner(
                     .as_ref()
                     .map(|path| artifact_path(&request.artifact_dir, path, "records_csv_path"))
                     .transpose()?,
+                request
+                    .artifacts
+                    .records_parquet_path
+                    .as_ref()
+                    .map(|path| artifact_path(&request.artifact_dir, path, "records_parquet_path"))
+                    .transpose()?,
                 request.artifacts.trace,
             )?
         } else {
@@ -2174,7 +2192,10 @@ async fn execute_native_inner(
                 wants_adaptive_record,
                 exact_fold,
             )
-            .with_record_lane(record_lane),
+            .with_record_lane(record_lane)
+            // Per-record OTLP (task S3) folds at completion only on the exact-fold
+            // path; the retain path still folds the retained records post-run.
+            .with_otel(exact_fold && request.native_otel_enabled),
         );
         let execution_result = async {
             execution_backend.set_run_origin(start_ns)?;
@@ -2337,6 +2358,10 @@ async fn execute_native_inner(
             // lane at completion (task S2); flush and close it now that every record has
             // folded. A no-op when no lane is attached (sketch, or no lane artifact).
             capture.finish_record_lane()?;
+            // Exact-fold folded each profiling record's OTLP histogram at completion
+            // (task S3); take that accumulator for the report tail. `None` in sketch
+            // mode / when native OTLP is off.
+            folded_otel = capture.take_otel();
             let (streamed, errored) = capture.take_streamed();
             accumulator
                 .merge(&streamed)
@@ -2549,13 +2574,13 @@ async fn execute_native_inner(
             server_metrics.summarize(MetricsPhase::Warmup, metrics_config.slice_duration_ns)
         });
     // The exact-fold path already streamed records.jsonl / raw.jsonl / the per-record
-    // CSV row-by-row through the artifact lane (and flushed it at the finalize), so
-    // `captured` here holds only the retained errored records — running the batch
-    // writers over it would truncate the streamed files to the errored subset. Skip
-    // the three streamed batch writers under exact-fold; the retain path (and every
-    // non-folding mode) still writes them here. Parquet, outputs.json, and inputs.json
-    // stay disqualifying for exact-fold (tasks S3/S4), so their writers below remain
-    // inert under exact-fold and need no guard.
+    // CSV AND the columnar Parquet sidecar row-by-row through the artifact lane (and
+    // flushed it at the finalize), so `captured` here holds only the retained errored
+    // records — running the batch writers over it would truncate the streamed files to
+    // the errored subset. Skip all four streamed batch writers under exact-fold; the
+    // retain path (and every non-folding mode) still writes them here. outputs.json and
+    // inputs.json stay disqualifying for exact-fold (task S4), so their writers below
+    // remain inert under exact-fold and need no guard.
     if !exact_fold {
         if let Some(records_path) = &request.artifacts.records_path {
             let records_path = artifact_path(&request.artifact_dir, records_path, "records_path")?;
@@ -2571,8 +2596,8 @@ async fn execute_native_inner(
             let raw_path = artifact_path(&request.artifact_dir, raw_path, "raw_path")?;
             write_raw_records_jsonl(&raw_path, &captured)?;
         }
+        write_records_parquet_artifact(&request, &captured, &metrics_config)?;
     }
-    write_records_parquet_artifact(&request, &captured, &metrics_config)?;
     if let Some(outputs_path) = &request.artifacts.outputs_path {
         let outputs_path = artifact_path(&request.artifact_dir, outputs_path, "outputs_path")?;
         write_outputs_json(&outputs_path, &captured, &metrics_config)?;
@@ -2651,12 +2676,21 @@ async fn execute_native_inner(
     // scheduled online path runs one current-thread worker set that already
     // joins its per-worker records into `captured`).
     if request.native_otel_enabled {
-        let mut otel_records = OtelRecordAccumulator::new();
-        for record in &captured {
-            if record.ingest.phase == MetricsPhase::Profiling {
-                observe_otel_record(&mut otel_records, record, &metrics_config);
+        // Exact-fold already folded each profiling record at completion (task S3);
+        // reuse that order-independent accumulator. The retain/sharded arms retain the
+        // full record set, so fold it here. Both produce identical histograms.
+        let otel_records = match folded_otel.take() {
+            Some(folded) => folded,
+            None => {
+                let mut otel_records = OtelRecordAccumulator::new();
+                for record in &captured {
+                    if record.ingest.phase == MetricsPhase::Profiling {
+                        observe_otel_record(&mut otel_records, record, &metrics_config);
+                    }
+                }
+                otel_records
             }
-        }
+        };
         if !otel_records.is_empty() {
             report.otel_per_record = Some(otel_records);
         }
@@ -4205,6 +4239,12 @@ struct RunCapture {
     /// `None` on the legacy retain path (which uses the batch writers) and whenever no
     /// lane artifact is requested. Set once at construction via [`Self::with_record_lane`].
     record_lane: Option<Rc<RecordArtifactLane>>,
+    /// Per-record OTLP histogram accumulator (task S3): when native OTLP is enabled on
+    /// the exact-fold path, each completed profiling record is folded here at
+    /// completion (an order-independent fold) and then dropped, instead of iterating
+    /// the retained record set post-run. `None` when native OTLP is off. Set once at
+    /// construction via [`Self::with_otel`].
+    otel: Option<RefCell<OtelRecordAccumulator>>,
 }
 
 impl RunCapture {
@@ -4338,6 +4378,7 @@ impl RunCapture {
             fold_dispatch_next: Cell::new(0),
             fold_dispatch_ordinals: RefCell::new(HashMap::new()),
             record_lane: None,
+            otel: None,
         }
     }
 
@@ -4348,6 +4389,27 @@ impl RunCapture {
     fn with_record_lane(mut self, lane: Option<Rc<RecordArtifactLane>>) -> Self {
         self.record_lane = lane;
         self
+    }
+
+    /// Enable per-record OTLP folding at completion (task S3). When `enabled`, each
+    /// completed profiling record is folded into a bounded [`OtelRecordAccumulator`]
+    /// in [`Self::fold_record`] and dropped, so the OTLP histograms need no retained
+    /// record set. Builder-style so only the exact-fold call site with native OTLP
+    /// opts in; every other construction leaves it `None` and the retain path folds
+    /// the retained records post-run.
+    fn with_otel(mut self, enabled: bool) -> Self {
+        if enabled {
+            self.otel = Some(RefCell::new(OtelRecordAccumulator::new()));
+        }
+        self
+    }
+
+    /// Move the folded per-record OTLP accumulator out for the finalize, if one was
+    /// attached. Consumed once at run end (leaves an empty accumulator behind).
+    fn take_otel(&self) -> Option<OtelRecordAccumulator> {
+        self.otel
+            .as_ref()
+            .map(|cell| std::mem::take(&mut *cell.borrow_mut()))
     }
 
     /// Flush and close the streaming per-record artifact lane, if one is attached.
@@ -4758,13 +4820,18 @@ impl RunCapture {
         }
         self.accumulator.borrow_mut().process_record(&ingest);
         let errored = ingest.errored || ingest.canceled;
+        // Per-record OTLP (task S3) folds every PROFILING record (success and error
+        // alike, matching the retain path's post-run loop) into the order-independent
+        // accumulator; warmup records never contribute.
+        let wants_otel = self.otel.is_some() && phase == MetricsPhase::Profiling;
         // Materialize a CapturedRecord only when something consumes it: the streaming
-        // artifact lane (task S2) writes every record's rows, and the error grouping
-        // retains errored records. The raw HTTP exchange captured for this uuid is
-        // pulled out here (present only when `raw_path` is enabled) so raw.jsonl and
-        // the error classification see the same transport facts the retain path does;
-        // the drop keeps `raw_exchanges` bounded to in-flight work.
-        if self.record_lane.is_some() || errored {
+        // artifact lane (task S2) writes every record's rows, the per-record OTLP fold
+        // (task S3) observes each profiling record, and the error grouping retains
+        // errored records. The raw HTTP exchange captured for this uuid is pulled out
+        // here (present only when `raw_path` is enabled) so raw.jsonl and the error
+        // classification see the same transport facts the retain path does; the drop
+        // keeps `raw_exchanges` bounded to in-flight work.
+        if self.record_lane.is_some() || errored || wants_otel {
             let raw = self.raw_exchanges.borrow_mut().remove(&uuid);
             let captured = CapturedRecord {
                 uuid,
@@ -4777,6 +4844,9 @@ impl RunCapture {
             };
             if let Some(lane) = &self.record_lane {
                 lane.write(&captured, &self.metrics_config)?;
+            }
+            if wants_otel && let Some(cell) = &self.otel {
+                observe_otel_record(&mut cell.borrow_mut(), &captured, &self.metrics_config);
             }
             if errored {
                 self.streaming_errored.borrow_mut().push(captured);
@@ -5168,11 +5238,12 @@ mod tests {
 
     use super::*;
 
-    /// Task S2 relaxes the exact-fold gate: records.jsonl / raw.jsonl / the per-record
-    /// CSV are streamed row-by-row through [`RecordArtifactLane`], so they no longer
-    /// disqualify the fold; outputs.json, inputs.json, the Parquet sidecar, and the
-    /// per-record OTLP histograms still need the full retained set (tasks S3/S4) and
-    /// stay disqualifying.
+    /// Task S2/S3 relax the exact-fold gate: records.jsonl / raw.jsonl / the per-record
+    /// CSV (S2) and the columnar Parquet sidecar + per-record OTLP histograms (S3) all
+    /// stream / fold at completion, so none of them disqualify the fold. outputs.json
+    /// and inputs.json still need the full retained set (task S4) and stay
+    /// disqualifying. (Parquet only streams under the `parquet` feature; a lite build
+    /// keeps it disqualifying — asserted below under the matching cfg.)
     #[test]
     fn exact_fold_gate_accepts_streamed_artifacts_and_rejects_retained_ones() {
         use crate::protocol::ArtifactSpec;
@@ -5204,7 +5275,28 @@ mod tests {
         };
         assert!(eligible(&streamed, false));
 
-        // Each still-retained artifact independently disqualifies the fold.
+        // Per-record OTLP (native_otel_enabled) folds at completion (S3), so it no
+        // longer disqualifies — even alongside the streamed artifacts.
+        assert!(eligible(&streamed, true));
+
+        // The Parquet sidecar streams under the `parquet` feature (S3), so it no longer
+        // disqualifies; on a lite build it still needs the retain path.
+        let parquet = ArtifactSpec {
+            records_parquet_path: Some("profile_export.parquet".into()),
+            ..ArtifactSpec::default()
+        };
+        #[cfg(feature = "parquet")]
+        assert!(
+            eligible(&parquet, false),
+            "parquet streams under the parquet feature"
+        );
+        #[cfg(not(feature = "parquet"))]
+        assert!(
+            !eligible(&parquet, false),
+            "a lite build cannot stream parquet, so it disqualifies exact-fold"
+        );
+
+        // outputs.json and inputs.json still need the full retained set (task S4).
         for artifacts in [
             ArtifactSpec {
                 outputs_path: Some("outputs.json".into()),
@@ -5214,19 +5306,12 @@ mod tests {
                 inputs_path: Some("inputs.json".into()),
                 ..ArtifactSpec::default()
             },
-            ArtifactSpec {
-                records_parquet_path: Some("profile_export.parquet".into()),
-                ..ArtifactSpec::default()
-            },
         ] {
             assert!(
                 !eligible(&artifacts, false),
                 "retained artifact must disqualify exact-fold: {artifacts:?}"
             );
         }
-        // Per-record OTLP (native_otel_enabled) also disqualifies, even alongside the
-        // now-streamed artifacts.
-        assert!(!eligible(&streamed, true));
     }
 
     fn synthetic(value: serde_json::Value) -> SyntheticDatasetSpec {
@@ -6007,6 +6092,105 @@ mod tests {
             reference_summary(MetricsPhase::Warmup),
             subject_summary(MetricsPhase::Warmup),
             "warmup window must be byte-identical to the retain path",
+        );
+    }
+
+    /// Task S3: the exact-fold capture folds each profiling record's per-record OTLP
+    /// histogram at completion (`with_otel` + `fold_record`), and `take_otel` yields
+    /// the byte-identical accumulator the retain path builds by looping the retained
+    /// records post-run — for the same record sequence. Warmup records never
+    /// contribute, matching the post-run loop's `phase == Profiling` filter.
+    #[test]
+    fn fold_record_folds_otel_matching_post_run_loop() {
+        let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
+        let config = MetricsConfig::default();
+
+        // (uuid, isl, osl, end_ns, phase, errored) — a mix of profiling successes, one
+        // errored profiling record, and one warmup record the OTLP fold must ignore.
+        let make = |isl: u64, osl: u64, end_ns: i64, phase: MetricsPhase| -> RecordIngest {
+            let mut ingest = RecordIngest::minimal(1_000_000, end_ns, phase);
+            ingest.first_token_ns = Some(3_000_000);
+            ingest.token_arrival_ns = vec![3_000_000, 5_000_000, end_ns];
+            ingest.tokens = aiperf::metrics_core::TokenCounts {
+                input: Some(isl),
+                output: Some(osl),
+                requested_output: Some(osl),
+                ..Default::default()
+            };
+            ingest
+        };
+        let specs: Vec<(Uuid, RecordIngest, bool)> = vec![
+            (
+                Uuid::from_u128(0x1),
+                make(8, 3, 11_000_000, MetricsPhase::Profiling),
+                false,
+            ),
+            (
+                Uuid::from_u128(0x2),
+                make(16, 5, 21_000_000, MetricsPhase::Profiling),
+                false,
+            ),
+            (
+                Uuid::from_u128(0x3),
+                make(64, 1, 4_000_000, MetricsPhase::Profiling),
+                true,
+            ),
+            (
+                Uuid::from_u128(0x4),
+                make(8, 3, 11_000_000, MetricsPhase::Warmup),
+                false,
+            ),
+        ];
+
+        // Exact-fold path: fold each record at completion with native OTLP enabled.
+        let capture = RunCapture::new(
+            clock.clone(),
+            0,
+            config.clone(),
+            false,
+            false,
+            false,
+            false,
+            true,
+        )
+        .with_otel(true);
+        for (i, (uuid, ingest, errored)) in specs.iter().enumerate() {
+            let mut ingest = ingest.clone();
+            ingest.errored = *errored;
+            let phase = ingest.phase;
+            capture
+                .fold_record(ingest, *uuid, "corr", phase, i as u64, None, Some(i))
+                .unwrap();
+        }
+        let folded = capture.take_otel().expect("otel enabled");
+
+        // Retain path: build the equivalent stamped records and fold the profiling
+        // subset via the post-run loop, in the same order.
+        let mut post_run = OtelRecordAccumulator::new();
+        for (i, (uuid, ingest, errored)) in specs.iter().enumerate() {
+            let mut ingest = ingest.clone();
+            ingest.errored = *errored;
+            ingest.session_num = i as u64;
+            ingest.request_index = Some(i);
+            if ingest.phase == MetricsPhase::Profiling {
+                let captured = CapturedRecord {
+                    uuid: *uuid,
+                    x_correlation_id: "corr".into(),
+                    output: CapturedModelOutput::default(),
+                    raw: None,
+                    ingest,
+                };
+                observe_otel_record(&mut post_run, &captured, &config);
+            }
+        }
+
+        assert!(
+            !folded.is_empty(),
+            "profiling records populate the histograms"
+        );
+        assert_eq!(
+            folded, post_run,
+            "fold-at-completion OTLP must equal the post-run-loop OTLP for the same sequence"
         );
     }
 
