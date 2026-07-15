@@ -84,6 +84,9 @@ const FIXTURES: &[&str] = &[
     "prefix_shared",
     "prefix_pool",
     "mlflow_wandb",
+    "endpoint_extra2",
+    "sm_urls",
+    "arrival",
 ];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).

@@ -76,6 +76,11 @@ pub(crate) struct Inputs {
     pub timeout_seconds: Option<f64>,
     pub use_legacy_max_tokens: bool,
     pub use_server_token_count: bool,
+    pub download_video_content: bool,
+    /// Extra request-body inputs (endpoint.extra).
+    pub extra: serde_json::Map<String, serde_json::Value>,
+    /// Custom server-metrics scrape URLs.
+    pub server_metrics_urls: Vec<String>,
     pub connection_reuse: Option<ConnectionReuse>,
     pub request_content_type: Option<RequestContentType>,
     pub wait_for_model_timeout: Option<f64>,
@@ -283,6 +288,9 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         timeout_seconds: flags.request_timeout_seconds,
         use_legacy_max_tokens: flags.use_legacy_max_tokens,
         use_server_token_count: flags.use_server_token_count,
+        download_video_content: flags.download_video_content,
+        extra: parse_extra_inputs(&flags.extra_inputs)?,
+        server_metrics_urls: flags.server_metrics.clone(),
         connection_reuse: flags
             .connection_reuse_strategy
             .as_deref()
@@ -345,7 +353,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         turn_delay_ratio: flags.session_delay_ratio.unwrap_or(1.0),
         turn_delay_ms,
         session_header: flags.session_header.clone(),
-        batch_size: 1,
+        batch_size: flags.batch_size.unwrap_or(1),
         sampling: flags
             .dataset_sampling_strategy
             .clone()
@@ -360,8 +368,11 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         sessions: num_conversations.or(num_sessions).map(u64::from),
         concurrency,
         request_rate,
-        rate_mode: flags.request_rate_mode.clone(),
-        smoothness: flags.arrival_smoothness,
+        rate_mode: flags
+            .request_rate_mode
+            .clone()
+            .or_else(|| flags.arrival_pattern.clone()),
+        smoothness: flags.arrival_smoothness.or(flags.vllm_burstiness),
         concurrency_ramp: flags.concurrency_ramp_duration,
         rate_ramp: flags.request_rate_ramp_duration,
         cancellation: match (
@@ -437,8 +448,8 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         ssl_verify: true,
         connection_limit: DEFAULT_CONNECTION_LIMIT,
         keepalive_timeout: DEFAULT_KEEPALIVE_TIMEOUT,
-        download_video_content: false,
-        extra: serde_json::Map::new(),
+        download_video_content: inputs.download_video_content,
+        extra: inputs.extra.clone(),
         headers: inputs.headers,
         http2: false,
         wait_for_model_timeout: inputs.wait_for_model_timeout.unwrap_or(0.0),
@@ -679,8 +690,9 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     let sidecars = crate::model::telemetry::Sidecars {
         gpu_telemetry: gpu_enabled.then(crate::model::telemetry::GpuTelemetrySidecar::default_dcgm),
         server_metrics: server_enabled.then(|| {
-            let sc =
-                crate::model::telemetry::ServerMetricsSidecar::from_endpoint_urls(&endpoint_urls);
+            let mut all_urls = endpoint_urls.clone();
+            all_urls.extend(inputs.server_metrics_urls.iter().cloned());
+            let sc = crate::model::telemetry::ServerMetricsSidecar::from_endpoint_urls(&all_urls);
             match &inputs.server_metrics_formats {
                 Some(formats) => sc.with_formats(formats.clone()),
                 None => sc,
@@ -692,6 +704,11 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     gpu_cfg.enabled = inputs.gpu_telemetry_enabled;
     let mut server_cfg = crate::model::telemetry::ServerMetricsConfig::default();
     server_cfg.enabled = inputs.server_metrics_enabled;
+    server_cfg.urls = inputs
+        .server_metrics_urls
+        .iter()
+        .map(|u| crate::model::telemetry::normalize_metrics_url(u))
+        .collect();
     if let Some(formats) = &inputs.server_metrics_formats {
         server_cfg.formats = formats.clone();
     }
@@ -827,6 +844,30 @@ fn parse_headers(raw: &[String]) -> anyhow::Result<std::collections::BTreeMap<St
         headers.insert(name.trim().to_string(), value.trim().to_string());
     }
     Ok(headers)
+}
+
+/// Parse repeatable `--extra-inputs key:value` into a typed JSON map (int/float/
+/// bool inference, else string), mirroring the Python CLI.
+fn parse_extra_inputs(
+    raw: &[String],
+) -> anyhow::Result<serde_json::Map<String, serde_json::Value>> {
+    let mut extra = serde_json::Map::new();
+    for entry in raw {
+        let (key, value) = entry.split_once(':').ok_or_else(|| {
+            anyhow::anyhow!("invalid --extra-inputs {entry:?}; expected key:value")
+        })?;
+        let v = if let Ok(i) = value.parse::<i64>() {
+            serde_json::json!(i)
+        } else if let Ok(f) = value.parse::<f64>() {
+            serde_json::json!(f)
+        } else if value == "true" || value == "false" {
+            serde_json::json!(value == "true")
+        } else {
+            serde_json::json!(value)
+        };
+        extra.insert(key.to_string(), v);
+    }
+    Ok(extra)
 }
 
 /// Parse `--goodput` (`metric:threshold` space-separated) into an SLO map.

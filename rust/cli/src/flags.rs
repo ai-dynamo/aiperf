@@ -139,6 +139,30 @@ pub struct ProfileFlags {
     #[arg(long = "streaming", default_value_t = false)]
     pub streaming: bool,
 
+    /// Prompts per request (`--batch-size`).
+    #[arg(long = "batch-size")]
+    pub batch_size: Option<u32>,
+
+    /// Download video content from responses (`--download-video-content`).
+    #[arg(long = "download-video-content", default_value_t = false)]
+    pub download_video_content: bool,
+
+    /// Extra request-body inputs `key:value` (`--extra-inputs`), repeatable.
+    #[arg(long = "extra-inputs", num_args = 1..)]
+    pub extra_inputs: Vec<String>,
+
+    /// Custom server-metrics scrape URLs (`--server-metrics`), repeatable.
+    #[arg(long = "server-metrics", num_args = 1..)]
+    pub server_metrics: Vec<String>,
+
+    /// Arrival distribution alias (`--arrival-pattern`): poisson/gamma/constant.
+    #[arg(long = "arrival-pattern")]
+    pub arrival_pattern: Option<String>,
+
+    /// Gamma burstiness alias (`--vllm-burstiness`).
+    #[arg(long = "vllm-burstiness")]
+    pub vllm_burstiness: Option<f64>,
+
     /// Per-request timeout, seconds (`--request-timeout-seconds`).
     #[arg(long = "request-timeout-seconds")]
     pub request_timeout_seconds: Option<f64>,
