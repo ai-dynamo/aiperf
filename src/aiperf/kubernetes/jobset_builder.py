@@ -501,7 +501,7 @@ class _JobSetManifestBuilder:
         timing/records manager, and no API service.
         """
         controller = AIPerfContainerSpec(
-            name="controller",
+            name=Containers.CELL_CONTROLLER,
             image=self.spec.image,
             image_pull_policy=self.spec.image_pull_policy,
             # The Python `aiperf` frontend is the orchestrator; `aiperf controller`

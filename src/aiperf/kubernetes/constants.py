@@ -105,7 +105,13 @@ class Containers:
     """Container names used in pod specs and CLI commands."""
 
     CONTROL_PLANE: str = "control-plane"
-    """SystemController and orchestration logic."""
+    """SystemController and orchestration logic (legacy mesh controller pod)."""
+
+    CELL_CONTROLLER: str = "controller"
+    """The native cellular controller container (``aiperf controller``): the
+    aggregate role that binds the velo cell transport, merges cell shards, and
+    reports up to the CR. The cellular successor to CONTROL_PLANE; the two never
+    coexist in one pod, so the completion/orphan-recovery gate checks for either."""
 
     DATASET_MANAGER: str = "dataset-manager"
     """Dataset generation and memory-map serving."""

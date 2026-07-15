@@ -948,7 +948,13 @@ async def _benchmark_appears_complete(
         # Both are detectable by looking at the JobSet itself.
         return await _jobset_has_terminal_condition(api, namespace, jobset_name)
     statuses = (pod.status.container_statuses or []) if pod.status else []
-    controller_status = _container_status_by_name(statuses, Containers.CONTROL_PLANE)
+    # Native cellular runs name the aggregate container ``controller``
+    # (Containers.CELL_CONTROLLER); the legacy mesh pod named it
+    # ``control-plane``. The two never coexist, so accept whichever is present —
+    # otherwise the orphan-recovery gate silently never fires for cellular runs.
+    controller_status = _container_status_by_name(
+        statuses, Containers.CELL_CONTROLLER
+    ) or _container_status_by_name(statuses, Containers.CONTROL_PLANE)
     if controller_status is None:
         return False
     terminated = (
