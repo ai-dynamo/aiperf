@@ -291,6 +291,16 @@ pub(crate) fn build(inputs: Inputs) -> BenchmarkRun {
     phases.push(profiling);
 
     let endpoint_type = endpoint.endpoint_type.0.clone();
+    let endpoint_urls = endpoint.urls.clone();
+    // GPU telemetry + server-metrics scraping are enabled by default; lower them
+    // into the sidecars block (server-metrics scrapes each endpoint's /metrics,
+    // GPU telemetry scrapes the default DCGM endpoints).
+    let sidecars = crate::model::telemetry::Sidecars {
+        gpu_telemetry: Some(crate::model::telemetry::GpuTelemetrySidecar::default_dcgm()),
+        server_metrics: Some(
+            crate::model::telemetry::ServerMetricsSidecar::from_endpoint_urls(&endpoint_urls),
+        ),
+    };
     let mut cfg = BenchmarkConfig {
         models: Some(models),
         endpoint: Some(endpoint),
@@ -307,6 +317,10 @@ pub(crate) fn build(inputs: Inputs) -> BenchmarkRun {
         datasets: Some(vec![dataset]),
         phases: Some(phases),
         export: None,
+        gpu_telemetry: Some(crate::model::telemetry::GpuTelemetryConfig::default()),
+        server_metrics: Some(crate::model::telemetry::ServerMetricsConfig::default()),
+        network_latency: Some(crate::model::telemetry::NetworkLatencyConfig::default()),
+        sidecars: Some(sidecars),
     };
 
     let benchmark_id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();

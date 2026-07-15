@@ -37,6 +37,7 @@ pub mod models;
 pub mod phase;
 pub mod resolved;
 pub mod runtime;
+pub mod telemetry;
 pub mod tokenizer;
 pub mod transport;
 

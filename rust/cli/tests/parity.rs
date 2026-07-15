@@ -31,6 +31,10 @@ const PORTED_CFG_SECTIONS: &[&str] = &[
     "artifacts",
     "datasets",
     "phases",
+    "gpu_telemetry",
+    "server_metrics",
+    "network_latency",
+    "sidecars",
 ];
 
 /// Run-level (non-`cfg`) fields the native type currently models byte-exact.

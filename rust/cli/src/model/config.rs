@@ -21,6 +21,7 @@ use super::metrics::Metrics;
 use super::models::Models;
 use super::phase::Phase;
 use super::runtime::Runtime;
+use super::telemetry::{GpuTelemetryConfig, NetworkLatencyConfig, ServerMetricsConfig, Sidecars};
 use super::tokenizer::Tokenizer;
 use super::transport::Transport;
 
@@ -64,5 +65,17 @@ pub struct BenchmarkConfig {
     /// Post-report export policy (`cfg.export`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub export: Option<Export>,
-    // Further sections (slos, sidecars, …) are added here as ported.
+    /// Raw GPU-telemetry policy (`cfg.gpu_telemetry`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_telemetry: Option<GpuTelemetryConfig>,
+    /// Raw server-metrics policy (`cfg.server_metrics`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_metrics: Option<ServerMetricsConfig>,
+    /// Raw network-latency policy (`cfg.network_latency`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_latency: Option<NetworkLatencyConfig>,
+    /// Lowered side-channel sidecars (`cfg.sidecars`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidecars: Option<Sidecars>,
+    // Further sections (slos, …) are added here as ported.
 }
