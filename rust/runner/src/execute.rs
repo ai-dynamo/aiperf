@@ -654,6 +654,23 @@ fn validate_plan(request: &NativeRunSpec) -> Result<()> {
     );
     ensure!(!request.phases.is_empty(), "at least one phase is required");
     ensure!(request.workers > 0, "workers must be greater than zero");
+    // Sketch retention keeps no per-record values, so per-record artifacts and the
+    // native per-record OTLP histograms are impossible. The frontend already drops
+    // these from the projection; this fail-closed check guards a hand-authored plan.
+    if request.metrics.sketch {
+        ensure!(
+            request.artifacts.records_path.is_none()
+                && request.artifacts.raw_path.is_none()
+                && request.artifacts.outputs_path.is_none(),
+            "sketch metrics mode cannot emit per-record artifacts \
+             (records_path/raw_path/outputs_path); disable them or the sketch flag"
+        );
+        ensure!(
+            !request.native_otel_enabled,
+            "sketch metrics mode cannot emit per-record OTLP histograms; \
+             disable native OTLP or the sketch flag"
+        );
+    }
     ensure!(
         request
             .phases
@@ -2676,10 +2693,18 @@ pub(crate) fn metrics_config(
         );
         slos.push(SloThreshold::from_display(metric.tag, *value)?);
     }
+    let storage_mode = if spec.sketch {
+        aiperf::metrics_core::MetricsStorageMode::Sketch {
+            compression: aiperf::metrics_core::SKETCH_DEFAULT_COMPRESSION,
+        }
+    } else {
+        aiperf::metrics_core::MetricsStorageMode::Exact
+    };
     Ok(MetricsConfig {
         slice_duration_ns,
         slos,
         use_server_token_count,
+        storage_mode,
         ..MetricsConfig::default()
     })
 }

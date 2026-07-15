@@ -615,10 +615,7 @@ impl MetricsAccumulator {
         }
     }
 
-    fn compute_result_map_sketch(
-        &self,
-        phase: Option<Phase>,
-    ) -> BTreeMap<String, MetricResult> {
+    fn compute_result_map_sketch(&self, phase: Option<Phase>) -> BTreeMap<String, MetricResult> {
         let sketch = self
             .store
             .sketch()
@@ -1396,7 +1393,10 @@ fn aggregate_values(values: &[f64], kind: AggregationKind) -> f64 {
 
 /// Reduces one tag's sketch to its aggregate scalar, matching [`aggregate_values`]
 /// but reading the sketch's exact running sum/min/max instead of a value vector.
-fn aggregate_from_sketch(sketch: &crate::metrics_core::store::TagSketch, kind: AggregationKind) -> f64 {
+fn aggregate_from_sketch(
+    sketch: &crate::metrics_core::store::TagSketch,
+    kind: AggregationKind,
+) -> f64 {
     match kind {
         AggregationKind::Sum => sketch.sum(),
         AggregationKind::Max => sketch.max(),
@@ -1741,7 +1741,11 @@ mod tests {
     fn sketch_partitions_merge_associatively() {
         let mut next = lcg_stream(0xABCDEF);
         let mut whole = sketch_accumulator();
-        let mut shards = [sketch_accumulator(), sketch_accumulator(), sketch_accumulator()];
+        let mut shards = [
+            sketch_accumulator(),
+            sketch_accumulator(),
+            sketch_accumulator(),
+        ];
         for index in 0..12_000i64 {
             let record = latency_record(index, 10.0 + next() * 200.0);
             whole.process_record(&record);

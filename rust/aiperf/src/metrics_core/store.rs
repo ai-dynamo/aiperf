@@ -495,9 +495,10 @@ fn category_hash<T: Hash + ?Sized>(value: &T) -> u64 {
 /// linear in the record count. Sketch retention streams each Record-metric value
 /// into a bounded-memory t-digest (approximate percentiles; exact count/sum/min/max)
 /// so memory stays O(1) in the record count — the opt-in high-request-rate mode.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum MetricsStorageMode {
     /// Retain every per-record value (exact percentiles, O(records) memory).
+    #[default]
     Exact,
     /// Stream each value into a per-tag t-digest sketch (approximate percentiles,
     /// exact count/sum/min/max, O(1) memory).
@@ -505,12 +506,6 @@ pub enum MetricsStorageMode {
         /// t-digest compression (δ); larger keeps more centroids, finer quantiles.
         compression: f64,
     },
-}
-
-impl Default for MetricsStorageMode {
-    fn default() -> Self {
-        Self::Exact
-    }
 }
 
 /// One tag's streaming aggregate: a t-digest for approximate percentiles plus an
@@ -1028,8 +1023,11 @@ impl<B: ListMetricBackend> ColumnStore<B> {
             let Some(other_backend) = &other.ragged[tag.index()] else {
                 continue;
             };
-            self.ragged_backend_or_insert(tag)
-                .append_shifted(other_backend, row_offset, other_rows);
+            self.ragged_backend_or_insert(tag).append_shifted(
+                other_backend,
+                row_offset,
+                other_rows,
+            );
         }
     }
 
