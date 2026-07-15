@@ -351,8 +351,8 @@ struct DatasetSection {
 struct ImageSection {
     #[serde(default, alias = "batchSize")]
     batch_size: Option<u32>,
-    width: Option<DistFields>,
-    height: Option<DistFields>,
+    width: Option<NumOrDist>,
+    height: Option<NumOrDist>,
     format: Option<String>,
     source: Option<String>,
     #[serde(default, alias = "sourceSampling")]
@@ -363,7 +363,7 @@ struct ImageSection {
 struct AudioSection {
     #[serde(default, alias = "batchSize")]
     batch_size: Option<u32>,
-    length: Option<DistFields>,
+    length: Option<NumOrDist>,
     format: Option<String>,
     /// Sample rates (raw config units; not converted, unlike the flag path).
     #[serde(default, alias = "sampleRates")]
@@ -604,8 +604,8 @@ impl Benchmark {
                 .map(|i| crate::model::dataset::ImageSpec {
                     batch_size: i.batch_size.unwrap_or(1),
                     format: i.format.clone().unwrap_or_else(|| "jpeg".to_string()),
-                    height: i.height.as_ref().map(dist_from).unwrap_or_else(load::default_media_dim),
-                    width: i.width.as_ref().map(dist_from).unwrap_or_else(load::default_media_dim),
+                    height: i.height.as_ref().map(clone_num_or_dist).unwrap_or_else(load::default_media_dim),
+                    width: i.width.as_ref().map(clone_num_or_dist).unwrap_or_else(load::default_media_dim),
                     source: i.source.clone().unwrap_or_else(|| "noise".to_string()),
                     source_sampling: i
                         .source_sampling
@@ -621,7 +621,7 @@ impl Benchmark {
                     channels: a.channels.unwrap_or(1),
                     depths: a.depths.clone().unwrap_or_else(|| vec![16]),
                     format: a.format.clone().unwrap_or_else(|| "wav".to_string()),
-                    length: a.length.as_ref().map(dist_from).unwrap_or_else(load::default_media_dim),
+                    length: a.length.as_ref().map(clone_num_or_dist).unwrap_or_else(load::default_media_dim),
                     sample_rates: a.sample_rates.clone().unwrap_or_else(|| vec![16.0]),
                 });
         let video_spec = dataset.as_ref().and_then(|d| d.video.as_ref()).map(|v| {
