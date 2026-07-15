@@ -311,6 +311,31 @@ pub struct ProfileFlags {
     #[arg(long = "sketch-metrics", default_value_t = false)]
     pub sketch_metrics: bool,
 
+    /// Synthetic image width mean, pixels (`--image-width-mean`).
+    #[arg(long = "image-width-mean")]
+    pub image_width_mean: Option<f64>,
+    /// Synthetic image width stddev (`--image-width-stddev`).
+    #[arg(long = "image-width-stddev")]
+    pub image_width_stddev: Option<f64>,
+    /// Synthetic image height mean, pixels (`--image-height-mean`).
+    #[arg(long = "image-height-mean")]
+    pub image_height_mean: Option<f64>,
+    /// Synthetic image height stddev (`--image-height-stddev`).
+    #[arg(long = "image-height-stddev")]
+    pub image_height_stddev: Option<f64>,
+    /// Synthetic images per request (`--image-batch-size`).
+    #[arg(long = "image-batch-size")]
+    pub image_batch_size: Option<u32>,
+    /// Synthetic image format (`--image-format`).
+    #[arg(long = "image-format")]
+    pub image_format: Option<String>,
+    /// Synthetic image source (`--image-source`).
+    #[arg(long = "image-source")]
+    pub image_source: Option<String>,
+    /// Synthetic image source sampling (`--image-source-sampling`).
+    #[arg(long = "image-source-sampling")]
+    pub image_source_sampling: Option<String>,
+
     /// Deterministic random seed (`--random-seed`).
     #[arg(long = "random-seed")]
     pub random_seed: Option<u64>,

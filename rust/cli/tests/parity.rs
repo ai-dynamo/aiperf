@@ -74,6 +74,7 @@ const FIXTURES: &[&str] = &[
     "config_extra",
     "sched_offset",
     "sketch",
+    "image",
 ];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).

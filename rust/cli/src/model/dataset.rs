@@ -71,11 +71,31 @@ pub struct Prompts {
     pub block_size: Option<u32>,
 }
 
+/// Synthetic image-generation policy (`synthetic.images`).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ImageSpec {
+    /// Images per request.
+    pub batch_size: u32,
+    /// Image format (`png`/`jpeg`/…).
+    pub format: String,
+    /// Height distribution, pixels.
+    pub height: Distribution,
+    /// Width distribution, pixels.
+    pub width: Distribution,
+    /// Image source (`noise`/…).
+    pub source: String,
+    /// Source sampling strategy.
+    pub source_sampling: String,
+}
+
 /// The typed synthetic dataset body.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Synthetic {
     /// Prompt-generation policy.
     pub prompts: Prompts,
+    /// Synthetic image generation (present when authored).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub images: Option<ImageSpec>,
     /// Sampling order.
     pub sampling: Sampling,
     /// Turns-per-session distribution (multi-turn; present when authored).
@@ -172,6 +192,7 @@ mod tests {
                 prefix_prompt_length: None,
                 block_size: None,
             },
+            images: None,
             sampling: Sampling("sequential".into()),
             turns: None,
             turn_delay_ratio: 1.0,

@@ -17,7 +17,7 @@ use std::path::PathBuf;
 
 use crate::flags::ProfileFlags;
 use crate::model::artifacts::Artifacts;
-use crate::model::dataset::{Dataset, Distribution, Prompts, Sampling, Synthetic};
+use crate::model::dataset::{Dataset, Distribution, ImageSpec, Prompts, Sampling, Synthetic};
 use crate::model::endpoint::{
     ConnectionReuse, Endpoint, EndpointType, RequestContentType, WaitForModelMode,
 };
@@ -148,6 +148,8 @@ pub(crate) struct Inputs {
     pub isl_block_size: Option<u32>,
     /// Bounded-memory sketch metric retention.
     pub sketch_metrics: bool,
+    /// Synthetic image spec (present when any image flag is set).
+    pub image_spec: Option<ImageSpec>,
     pub artifact_dir: PathBuf,
 }
 
@@ -353,6 +355,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         slice_duration: flags.slice_duration,
         isl_block_size: flags.isl_block_size,
         sketch_metrics: flags.sketch_metrics,
+        image_spec: build_image_spec(flags),
         artifact_dir: flags
             .artifact_dir
             .clone()
@@ -468,6 +471,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 prefix_prompt_length: None,
                 block_size: inputs.isl_block_size,
             },
+            images: inputs.image_spec.clone(),
             sampling: Sampling(inputs.sampling.clone()),
             turns: inputs.turns.clone(),
             turn_delay_ratio: inputs.turn_delay_ratio,
@@ -768,6 +772,52 @@ fn parse_goodput(
         slos.insert(metric.to_string(), serde_json::json!(threshold));
     }
     Ok(slos)
+}
+
+/// A default synthetic media dimension (`{value: 512}`) used when unset.
+fn default_media_dim() -> Distribution {
+    Distribution {
+        value: Some(512.0),
+        ..Default::default()
+    }
+}
+
+/// Build the synthetic image spec when any `--image-*` flag is set.
+fn build_image_spec(flags: &ProfileFlags) -> Option<ImageSpec> {
+    let any = flags.image_width_mean.is_some()
+        || flags.image_height_mean.is_some()
+        || flags.image_batch_size.is_some()
+        || flags.image_format.is_some()
+        || flags.image_source.is_some()
+        || flags.image_source_sampling.is_some();
+    if !any {
+        return None;
+    }
+    let dim = |mean: Option<f64>, stddev: Option<f64>| match mean {
+        Some(mean) => Distribution {
+            mean: Some(mean),
+            stddev: Some(stddev.unwrap_or(0.0)),
+            ..Default::default()
+        },
+        None => default_media_dim(),
+    };
+    Some(ImageSpec {
+        batch_size: flags.image_batch_size.unwrap_or(1),
+        format: flags
+            .image_format
+            .clone()
+            .unwrap_or_else(|| "jpeg".to_string()),
+        height: dim(flags.image_height_mean, flags.image_height_stddev),
+        width: dim(flags.image_width_mean, flags.image_width_stddev),
+        source: flags
+            .image_source
+            .clone()
+            .unwrap_or_else(|| "noise".to_string()),
+        source_sampling: flags
+            .image_source_sampling
+            .clone()
+            .unwrap_or_else(|| "random-with-replacement".to_string()),
+    })
 }
 
 /// Parse `--model-selection-strategy`.

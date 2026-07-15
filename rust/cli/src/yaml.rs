@@ -254,6 +254,7 @@ impl Benchmark {
             slice_duration: None,
             isl_block_size: None,
             sketch_metrics: false,
+            image_spec: None,
             artifact_dir: artifact_dir.unwrap_or_else(|| PathBuf::from("artifacts")),
         })
     }
