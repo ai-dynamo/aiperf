@@ -193,10 +193,35 @@ CELL_ID_ENV = "AIPERF_CELL_ID"
 CELL_COUNT_ENV = "AIPERF_CELL_COUNT"
 CELL_CONTROLLER_ADDR_ENV = "AIPERF_CELL_CONTROLLER_ADDR"
 
+# HF tokenizer cache dir; the runner tokenizes in-process, so it is the one piece
+# of the mesh container env the native pods still need. Matches the tokenizer-cache
+# volume mount from build_volume_mounts.
+_HF_HOME = "/aiperf/hf_home"
+
 
 def _run_config_path() -> str:
     """Path of the mounted protocol-v2 run envelope (rust_wire output)."""
     return f"{K8sEnvironment.JOBSET.CONFIG_MOUNT_PATH}/run_config.json"
+
+
+def build_runner_env_vars(pod_template: PodTemplateConfig) -> list[dict[str, Any]]:
+    """The clean base env for an aiperf-runner (controller or cell) pod.
+
+    Deliberately NOT build_env_vars: the native runner reads none of the mesh
+    container env (AIPERF_DATASET_MMAP_BASE_PATH, AIPERF_SERVICE_HEALTH_*,
+    AIPERF_SERVICE_REGISTRATION_TIMEOUT, AIPERF_CONTROLLER_POD,
+    AIPERF_UI_REALTIME_METRICS_ENABLED, AIPERF_K8S_ZMQ_CONTROLLER_HOST) — those are
+    ZMQ registration / service-health / dataset-manager wiring for the retired
+    service mesh. A cellular pod needs only the HF tokenizer cache location plus any
+    user-supplied podTemplate env (HF_TOKEN, proxies, etc.); the cell partition env
+    is layered on top by build_cell_env_vars.
+    """
+    env: list[dict[str, Any]] = [{"name": "HF_HOME", "value": _HF_HOME}]
+    reserved = {item["name"] for item in env}
+    env.extend(
+        item for item in pod_template.env if (item or {}).get("name") not in reserved
+    )
+    return env
 
 
 def build_runner_controller_args(cells: int) -> list[str]:
@@ -254,6 +279,42 @@ def build_cell_env_vars(*, cells: int, controller_dns: str) -> list[dict[str, An
             "value": f"{controller_dns}:{CELL_CONTROLLER_PORT}",
         },
     ]
+
+
+def build_runner_volumes(
+    jobset_name: str, pod_template: PodTemplateConfig
+) -> list[dict[str, Any]]:
+    """Pod-level volumes for a cellular runner pod (controller or cell).
+
+    Drops the mesh-only `ipc` (ZMQ IPC socket dir) and `datasets` (dataset-manager
+    mmap) volumes from build_shared_volumes: the runner speaks no ZMQ and resolves
+    its dataset in-process. Keeps the mounted protocol-v2 run envelope (config), the
+    exported results, the HF tokenizer cache, and scratch.
+    """
+    volumes: list[dict[str, Any]] = [
+        {"name": "config", "configMap": {"name": f"{jobset_name}-config"}},
+        {"name": "results", "emptyDir": {}},
+        {"name": "tokenizer-cache", "emptyDir": {}},
+        {"name": "tmp", "emptyDir": {}},
+    ]
+    volumes.extend(pod_template.volumes)
+    return volumes
+
+
+def build_runner_volume_mounts(pod_template: PodTemplateConfig) -> list[dict[str, Any]]:
+    """Volume mounts for a cellular runner container (matches build_runner_volumes)."""
+    mounts: list[dict[str, Any]] = [
+        {
+            "name": "config",
+            "mountPath": K8sEnvironment.JOBSET.CONFIG_MOUNT_PATH,
+            "readOnly": True,
+        },
+        {"name": "results", "mountPath": "/results"},
+        {"name": "tokenizer-cache", "mountPath": _HF_HOME},
+        {"name": "tmp", "mountPath": "/tmp"},
+    ]
+    mounts.extend(pod_template.volume_mounts)
+    return mounts
 
 
 def build_env_vars(

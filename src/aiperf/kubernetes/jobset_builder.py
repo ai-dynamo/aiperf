@@ -24,6 +24,8 @@ from aiperf.kubernetes.jobset_helpers import (
     build_health_probe,
     build_runner_cell_args,
     build_runner_controller_args,
+    build_runner_env_vars,
+    build_runner_volume_mounts,
     build_security_context,
     build_service_probes,
     build_startup_probe,
@@ -504,9 +506,9 @@ class _JobSetManifestBuilder:
             # placeholder contract in jobset_helpers.build_runner_controller_args.
             command=["aiperf-runner"],
             args=build_runner_controller_args(self.spec.cells),
-            env=self._create_env_vars(include_pod_index=False, controller_pod=True),
+            env=build_runner_env_vars(self.spec.pod_template),
             resources=self._resolve_pod_resources("SYSTEM_CONTROLLER"),
-            volume_mounts=build_volume_mounts(self.spec.pod_template),
+            volume_mounts=build_runner_volume_mounts(self.spec.pod_template),
             ports=[{"containerPort": CELL_CONTROLLER_PORT, "name": "cell-ctl"}],
             security_context=build_security_context(self.spec.pod_template),
         )
@@ -521,11 +523,11 @@ class _JobSetManifestBuilder:
             command=["aiperf-runner"],
             args=build_runner_cell_args(),
             env=[
-                *self._create_env_vars(include_pod_index=False),
+                *build_runner_env_vars(self.spec.pod_template),
                 *build_cell_env_vars(cells=self.spec.cells, controller_dns=controller_dns),
             ],
             resources=self._resolve_pod_resources("WORKER_POD"),
-            volume_mounts=build_volume_mounts(self.spec.pod_template),
+            volume_mounts=build_runner_volume_mounts(self.spec.pod_template),
             security_context=build_security_context(self.spec.pod_template),
         )
         return [cell]

@@ -17,7 +17,7 @@ from aiperf.kubernetes.constants import AIPerfLabels, KueueLabels
 from aiperf.kubernetes.cr_refs import JOBSET_API_VERSION
 from aiperf.kubernetes.enums import ImagePullPolicy
 from aiperf.kubernetes.environment import K8sEnvironment
-from aiperf.kubernetes.jobset_helpers import build_shared_volumes
+from aiperf.kubernetes.jobset_helpers import build_runner_volumes
 from aiperf.kubernetes.jobset_specs import AIPerfContainerSpec, AIPerfReplicatedJobSpec
 from aiperf.kubernetes.jobset_urls import (
     JOBSET_FALLBACK_VERSION,
@@ -246,7 +246,7 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
         """Generate the complete JobSet Kubernetes manifest."""
         builder = self._builder()
         controller_dns = controller_dns_name(self.name, self.namespace)
-        volumes = build_shared_volumes(self.name, self.pod_template)
+        volumes = build_runner_volumes(self.name, self.pod_template)
 
         # Native cross-pod cellular topology: one aiperf-runner controller pod that
         # binds the cell transport + merges shards, and `cells` cell pods that each
