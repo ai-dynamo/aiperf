@@ -96,7 +96,12 @@ struct Benchmark {
     /// Expanded `datasets:` list (first entry used on the single-run path).
     datasets: Option<Vec<DatasetSection>>,
     tokenizer: Option<TokenizerSection>,
-    phases: Phases,
+    /// Advanced multi-phase list (mutually exclusive with `warmup`/`profiling`).
+    phases: Option<Phases>,
+    /// Simple-config leading warmup phase (paired with `profiling`).
+    warmup: Option<PhaseSection>,
+    /// Simple-config profiling phase (the `warmup`/`profiling` form).
+    profiling: Option<PhaseSection>,
     /// Output artifacts block (`dir` is the run's artifact target).
     artifacts: Option<ArtifactsSection>,
     /// Goodput SLO thresholds (`benchmark.slos`: metric -> ms).
@@ -602,14 +607,34 @@ impl Benchmark {
             (None, None)
         };
 
-        // Single phase on the single-run path.
-        let phase = match self.phases {
-            Phases::One(p) => p,
-            Phases::Many(mut v) => v
+        // The profiling phase comes from `phases:` (flat or list) or the simple
+        // `profiling:` block; the two forms are mutually exclusive (as in Config).
+        let phase = match (self.phases, self.profiling) {
+            (Some(_), Some(_)) => {
+                anyhow::bail!("'phases' cannot be combined with 'warmup'/'profiling'")
+            }
+            (Some(Phases::One(p)), None) => p,
+            (Some(Phases::Many(mut v)), None) => v
                 .drain(..)
                 .next()
                 .ok_or_else(|| anyhow::anyhow!("phases must have at least one entry"))?,
+            (None, Some(p)) => p,
+            (None, None) => anyhow::bail!("a phase is required (set `phases` or `profiling`)"),
         };
+
+        // A leading `warmup:` block (simple-config form) becomes the run's warmup
+        // axes, excluded from results and run before profiling.
+        let warmup = self.warmup.map(|w| Warmup {
+            concurrency: w.concurrency,
+            rate: w.rate,
+            requests: w.requests,
+            sessions: w.sessions,
+            prefill_concurrency: w.prefill_concurrency,
+            concurrency_ramp: w.concurrency_ramp,
+            rate_ramp: w.rate_ramp,
+            duration: w.duration,
+            grace_period: w.grace_period,
+        });
 
         // Phase arrival pattern. A rate `type` selects the arrival distribution;
         // `user_centric` binds (rate, users); `concurrency` (default) has no rate.
@@ -812,7 +837,7 @@ impl Benchmark {
             request_count: phase.requests,
             benchmark_duration: phase.duration,
             grace_period: phase.grace_period,
-            warmup: None::<Warmup>,
+            warmup,
             runtime_workers,
             runtime_workers_min,
             runtime_cells,
