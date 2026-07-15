@@ -26,7 +26,7 @@ use crate::model::endpoint::{
 };
 use crate::model::metrics::Metrics;
 use crate::model::models::{ModelItem, ModelStrategy, Models};
-use crate::model::phase::{Phase, PhaseCommon, PhaseKind};
+use crate::model::phase::{AdaptiveScale, Phase, PhaseCommon, PhaseKind, SlaFilter};
 use crate::model::runtime::Runtime;
 use crate::model::tokenizer::Tokenizer;
 use crate::model::transport::Transport;
@@ -157,6 +157,8 @@ pub(crate) struct Inputs {
     pub audio_spec: Option<AudioSpec>,
     /// Synthetic video spec.
     pub video_spec: Option<VideoSpec>,
+    /// Adaptive-scale controller (present when --adaptive-scale is set).
+    pub adaptive_scale: Option<AdaptiveScale>,
     pub artifact_dir: PathBuf,
 }
 
@@ -365,6 +367,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         image_spec: build_image_spec(flags),
         audio_spec: build_audio_spec(flags),
         video_spec: build_video_spec(flags),
+        adaptive_scale: build_adaptive_scale(flags, concurrency)?,
         artifact_dir: flags
             .artifact_dir
             .clone()
@@ -508,6 +511,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 rate_ramp: None,
                 cancellation: None,
                 agentic_cache_warmup_duration: None,
+                adaptive_scale: None,
             },
             kind: PhaseKind::UserCentric {
                 rate,
@@ -531,6 +535,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 rate_ramp: None,
                 cancellation: None,
                 agentic_cache_warmup_duration: None,
+                adaptive_scale: None,
             },
             kind: PhaseKind::FixedSchedule {
                 auto_offset,
@@ -552,6 +557,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             inputs.benchmark_duration,
             inputs.grace_period,
         );
+        phase.common.adaptive_scale = inputs.adaptive_scale.clone();
         phase.common.prefill_concurrency = inputs.prefill_concurrency;
         phase.common.prefill_ramp = inputs.prefill_ramp.map(linear_ramp);
         phase.common.concurrency_ramp = inputs.concurrency_ramp.map(linear_ramp);
@@ -747,6 +753,7 @@ fn build_phase(
             rate_ramp: None,
             cancellation: None,
             agentic_cache_warmup_duration: None,
+            adaptive_scale: None,
         },
         kind,
     }
@@ -783,6 +790,69 @@ fn parse_goodput(
         slos.insert(metric.to_string(), serde_json::json!(threshold));
     }
     Ok(slos)
+}
+
+/// Build the adaptive-scale controller when `--adaptive-scale` is set. Requires
+/// `--adaptive-sustain-duration` and at least one `--adaptive-scale-sla`.
+fn build_adaptive_scale(
+    flags: &ProfileFlags,
+    concurrency: Option<u32>,
+) -> anyhow::Result<Option<AdaptiveScale>> {
+    if !flags.adaptive_scale {
+        return Ok(None);
+    }
+    let sustain = flags
+        .adaptive_sustain_duration
+        .ok_or_else(|| anyhow::anyhow!("--adaptive-scale requires --adaptive-sustain-duration"))?;
+    anyhow::ensure!(
+        !flags.adaptive_scale_sla.is_empty(),
+        "--adaptive-scale requires at least one --adaptive-scale-sla"
+    );
+    let control_variable = flags
+        .adaptive_control_variable
+        .clone()
+        .unwrap_or_else(|| "concurrency".to_string());
+    // For the concurrency axis the ceiling defaults to the phase concurrency.
+    let maximum = flags
+        .adaptive_control_max
+        .or_else(|| concurrency.map(i64::from))
+        .ok_or_else(|| anyhow::anyhow!("--adaptive-scale could not resolve a maximum"))?;
+    let sla_filters = flags
+        .adaptive_scale_sla
+        .iter()
+        .map(|s| parse_sla_filter(s))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(Some(AdaptiveScale {
+        control_variable,
+        minimum: flags.adaptive_control_min.unwrap_or(1),
+        maximum,
+        assessment_period_seconds: flags.adaptive_assessment_period.unwrap_or(30.0),
+        sustain_duration_seconds: sustain,
+        min_completed_requests: 1,
+        strategy_type: "ramp_until_fail".to_string(),
+        step_policy: "sla_margin".to_string(),
+        base_step: 10,
+        max_step_multiplier: 4,
+        step_percent: 25.0,
+        sla_filters,
+    }))
+}
+
+/// Parse `metric:stat:op:threshold` into an SLA filter.
+fn parse_sla_filter(s: &str) -> anyhow::Result<SlaFilter> {
+    let parts: Vec<&str> = s.split(':').collect();
+    anyhow::ensure!(
+        parts.len() == 4,
+        "invalid --adaptive-scale-sla {s:?}; expected metric:stat:op:threshold"
+    );
+    Ok(SlaFilter {
+        metric_tag: parts[0].to_string(),
+        stat: parts[1].to_string(),
+        op: parts[2].to_string(),
+        threshold: parts[3]
+            .parse()
+            .map_err(|e| anyhow::anyhow!("invalid SLA threshold in {s:?}: {e}"))?,
+    })
 }
 
 /// A default synthetic media dimension (`{value: 512}`) used when unset.

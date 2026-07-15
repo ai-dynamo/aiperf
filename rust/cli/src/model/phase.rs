@@ -28,6 +28,48 @@ pub struct Cancellation {
     pub delay: f64,
 }
 
+/// One adaptive-scale SLA pass/fail filter (`metric:stat:op:threshold`).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SlaFilter {
+    /// Metric tag.
+    pub metric_tag: String,
+    /// Statistic (`p99`/`avg`/…).
+    pub stat: String,
+    /// Comparison op (`le`/`ge`/…).
+    pub op: String,
+    /// Threshold value.
+    pub threshold: f64,
+}
+
+/// The adaptive-scale controller block (`_adaptive_scale`).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AdaptiveScale {
+    /// Controlled axis (`concurrency`/`request_rate`/…).
+    pub control_variable: String,
+    /// Lower bound.
+    pub minimum: i64,
+    /// Upper bound.
+    pub maximum: i64,
+    /// Assessment period, seconds.
+    pub assessment_period_seconds: f64,
+    /// Sustain duration, seconds.
+    pub sustain_duration_seconds: f64,
+    /// Minimum completed requests per step.
+    pub min_completed_requests: u64,
+    /// Controller strategy id.
+    pub strategy_type: String,
+    /// Step policy id.
+    pub step_policy: String,
+    /// Base step size.
+    pub base_step: i64,
+    /// Max step multiplier.
+    pub max_step_multiplier: i64,
+    /// Step percent.
+    pub step_percent: f64,
+    /// SLA pass/fail filters.
+    pub sla_filters: Vec<SlaFilter>,
+}
+
 /// Fields common to every phase.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PhaseCommon {
@@ -67,9 +109,9 @@ pub struct PhaseCommon {
     /// Agentic cache-warmup duration, seconds (present on scenario configs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agentic_cache_warmup_duration: Option<f64>,
-    // NOTE: `adaptive_scale` is intentionally deferred — its projection is a
-    // large nested block (`_adaptive_scale`) exercised only by adaptive configs,
-    // added when that path is ported.
+    /// Adaptive-scale controller (present when `--adaptive-scale` is set).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adaptive_scale: Option<AdaptiveScale>,
 }
 
 /// The `type`-discriminated phase body.
@@ -163,6 +205,7 @@ mod tests {
                 rate_ramp: None,
                 cancellation: None,
                 agentic_cache_warmup_duration: None,
+                adaptive_scale: None,
             },
             kind: PhaseKind::Concurrency { concurrency: 1 },
         };

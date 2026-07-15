@@ -383,6 +383,28 @@ pub struct ProfileFlags {
     #[arg(long = "video-batch-size")]
     pub video_batch_size: Option<u32>,
 
+    /// Enable adaptive scaling (`--adaptive-scale`).
+    #[arg(long = "adaptive-scale", default_value_t = false)]
+    pub adaptive_scale: bool,
+    /// Adaptive control variable (`--adaptive-control-variable`).
+    #[arg(long = "adaptive-control-variable")]
+    pub adaptive_control_variable: Option<String>,
+    /// Adaptive control minimum (`--adaptive-control-min`).
+    #[arg(long = "adaptive-control-min")]
+    pub adaptive_control_min: Option<i64>,
+    /// Adaptive control maximum (`--adaptive-control-max`).
+    #[arg(long = "adaptive-control-max")]
+    pub adaptive_control_max: Option<i64>,
+    /// Adaptive assessment period, seconds (`--adaptive-assessment-period`).
+    #[arg(long = "adaptive-assessment-period")]
+    pub adaptive_assessment_period: Option<f64>,
+    /// Adaptive sustain duration, seconds (`--adaptive-sustain-duration`).
+    #[arg(long = "adaptive-sustain-duration")]
+    pub adaptive_sustain_duration: Option<f64>,
+    /// Adaptive SLA filters `metric:stat:op:threshold` (`--adaptive-scale-sla`).
+    #[arg(long = "adaptive-scale-sla", num_args = 1..)]
+    pub adaptive_scale_sla: Vec<String>,
+
     /// Deterministic random seed (`--random-seed`).
     #[arg(long = "random-seed")]
     pub random_seed: Option<u64>,

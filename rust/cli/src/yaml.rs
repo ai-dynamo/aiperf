@@ -257,6 +257,7 @@ impl Benchmark {
             image_spec: None,
             audio_spec: None,
             video_spec: None,
+            adaptive_scale: None,
             artifact_dir: artifact_dir.unwrap_or_else(|| PathBuf::from("artifacts")),
         })
     }
