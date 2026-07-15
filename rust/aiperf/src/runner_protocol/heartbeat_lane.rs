@@ -181,25 +181,40 @@ impl HeartbeatLane {
         {
             return;
         }
-        let event = HeartbeatEvent {
-            protocol_version: HEARTBEAT_PROTOCOL_VERSION,
-            event: "metrics_heartbeat",
-            observed_at_ns: heartbeat.observed_at_ns,
-            counters: heartbeat.counters,
-            saturation: heartbeat.saturation,
-            ttft_ms: SketchProjection::from_sketch(&heartbeat.ttft_ms),
-            itl_ms: SketchProjection::from_sketch(&heartbeat.itl_ms),
-            latency_ms: SketchProjection::from_sketch(&heartbeat.latency_ms),
+        let Some(mut line) = heartbeat_event_line(heartbeat) else {
+            return;
         };
+        line.push(b'\n');
         let mut writer = self.writer.borrow_mut();
-        match serde_json::to_vec(&event) {
-            Ok(mut line) => {
-                line.push(b'\n');
-                if let Err(error) = writer.write_all(&line).and_then(|()| writer.flush()) {
-                    tracing::warn!(error = %error, "failed to write cellular heartbeat line");
-                }
-            }
-            Err(error) => tracing::warn!(error = %error, "failed to serialize cellular heartbeat"),
+        if let Err(error) = writer.write_all(&line).and_then(|()| writer.flush()) {
+            tracing::warn!(error = %error, "failed to write cellular heartbeat line");
+        }
+    }
+}
+
+/// Serializes one [`MetricsHeartbeat`] into its NDJSON `metrics_heartbeat` line
+/// (counters + saturation + percentile-projected TTFT/ITL/latency sketches), or
+/// `None` on a serialization error. The full native-v2-level metric snapshot the
+/// single-process lane writes and the cellular controller emits as its live
+/// cross-cell aggregate, so both surfaces (and the k8s CR-status snapshot the
+/// frontend patches from it) carry the identical shape. No trailing newline —
+/// the caller frames the stream.
+pub(crate) fn heartbeat_event_line(heartbeat: &MetricsHeartbeat) -> Option<Vec<u8>> {
+    let event = HeartbeatEvent {
+        protocol_version: HEARTBEAT_PROTOCOL_VERSION,
+        event: "metrics_heartbeat",
+        observed_at_ns: heartbeat.observed_at_ns,
+        counters: heartbeat.counters,
+        saturation: heartbeat.saturation,
+        ttft_ms: SketchProjection::from_sketch(&heartbeat.ttft_ms),
+        itl_ms: SketchProjection::from_sketch(&heartbeat.itl_ms),
+        latency_ms: SketchProjection::from_sketch(&heartbeat.latency_ms),
+    };
+    match serde_json::to_vec(&event) {
+        Ok(line) => Some(line),
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to serialize cellular heartbeat");
+            None
         }
     }
 }

@@ -119,6 +119,55 @@ async def report_benchmark_progress(
         return False
 
 
+async def report_benchmark_snapshot(snapshot: dict[str, Any]) -> bool:
+    """Patch a full native-v2-level metric snapshot into the AIPerfJob ``.status.snapshot``.
+
+    Kubernetes-native metric visibility: ``kubectl get aiperfjob -o json`` (and the
+    operator's dashboard/API, which watch ``.status``) surface the run's metrics at
+    the same fidelity as ``native-v2.json`` -- counters plus the TTFT / ITL / request-
+    latency (and any other) distributions with min/max/percentiles -- without
+    downloading the results PVC. Called by the ``aiperf controller`` frontend both
+    live (from the running cross-cell aggregate the controller emits) and once at
+    completion (the final ``native-v2.json``), so the snapshot converges to the
+    committed report. The whole ``snapshot`` dict replaces ``.status.snapshot``
+    (strategic keys under it are merge-patched); keep it well under etcd's ~1.5 MB
+    object cap -- the native-v2 metric summary is a few tens of KB.
+
+    Best-effort: a transient API error logs and returns False; the next tick retries.
+
+    Args:
+        snapshot: The native-v2-level metric snapshot to store under ``.status.snapshot``.
+
+    Returns:
+        True if the status subresource was patched successfully.
+    """
+    identity = _cr_identity()
+    if identity is None:
+        return False
+    job_id, namespace = identity
+    patch_body: dict[str, Any] = {"status": {"snapshot": snapshot}}
+
+    try:
+        from kubernetes_asyncio import client
+
+        from aiperf.kubernetes.client import k8s_client
+
+        async with k8s_client() as api:
+            await client.CustomObjectsApi(api).patch_namespaced_custom_object_status(
+                group=AIPERF_GROUP,
+                version=AIPERF_VERSION,
+                plural=AIPERF_PLURAL,
+                namespace=namespace,
+                name=job_id,
+                body=patch_body,
+                _content_type="application/merge-patch+json",
+            )
+        return True
+    except (ApiException, aiohttp.ClientError, OSError) as e:
+        logger.warning(f"Failed to report benchmark snapshot: {e}")
+        return False
+
+
 async def signal_benchmark_complete() -> bool:
     """Patch the AIPerfJob CR annotation to signal benchmark completion.
 

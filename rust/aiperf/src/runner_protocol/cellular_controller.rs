@@ -134,45 +134,51 @@ impl CellularRunKind {
     }
 }
 
-/// Appends one live cross-cell aggregate progress line to
+/// Appends one live cross-cell aggregate `metrics_heartbeat` line to
 /// `AIPERF_CELLULAR_HEARTBEAT_LOG` while the run is in flight, so the `aiperf
-/// controller` frontend can tail it and push live `requestsCompleted` into the
-/// AIPerfJob `.status.phases.profiling` (the single-process live lane writes the
-/// same NDJSON shape; a cross-host controller has no single process, so it emits
-/// the running sum of every cell's latest heartbeat counters here instead).
+/// controller` frontend can tail it and patch a native-v2-level snapshot into the
+/// AIPerfJob `.status` (counters into `.status.phases.profiling`, the metric
+/// percentiles into `.status.snapshot`). A cross-host controller has no single
+/// load-gen process to run the [`crate::runner_protocol::heartbeat_lane`] lane, so
+/// it emits the running aggregate of every cell's latest heartbeat here instead.
 ///
-/// Only the counters are emitted (not the latency sketches the final
-/// `cellular-heartbeat.json` carries): the frontend's progress push reads only
-/// `counters.completed`, and merging sketches on the hot receive path is
-/// needless. Best-effort — no log path (env unset, e.g. a local `--cells` run
-/// whose frontend does not set it) or a transient write error just skips the tick;
-/// the authoritative counts still come from the merged partitions at finalize.
+/// Emits the FULL native-v2-level snapshot: counters summed and the TTFT/ITL/latency
+/// t-digests merged across cells (via [`MetricsHeartbeat::merge`]), serialized to the
+/// identical NDJSON shape the single-process lane writes ([`heartbeat_event_line`]),
+/// so the live CR snapshot converges to the final `native-v2.json` metrics. Best-effort
+/// — no log path (env unset, e.g. a local `--cells` run whose frontend does not set
+/// it) or a transient write error just skips the tick; the authoritative report still
+/// comes from the merged partitions at finalize.
 #[cfg(feature = "velo")]
-fn emit_live_progress(
-    log_path: Option<&Path>,
-    heartbeats: &BTreeMap<u32, MetricsHeartbeat>,
-) {
+fn emit_live_progress(log_path: Option<&Path>, heartbeats: &BTreeMap<u32, MetricsHeartbeat>) {
     use std::io::Write as _;
     let Some(path) = log_path else {
         return;
     };
-    let (mut issued, mut completed, mut errored) = (0u64, 0u64, 0u64);
+    // Merge every cell's latest heartbeat into the cross-cell aggregate: counters
+    // summed, latency sketches t-digest-merged — the same fold the finalize path does.
+    let mut merged: Option<MetricsHeartbeat> = None;
     for heartbeat in heartbeats.values() {
-        issued += heartbeat.counters.issued;
-        completed += heartbeat.counters.completed;
-        errored += heartbeat.counters.errored;
+        match merged {
+            Some(ref mut aggregate) => aggregate.merge(heartbeat),
+            None => merged = Some(heartbeat.clone()),
+        }
     }
-    let line = serde_json::json!({
-        "protocol_version": 1,
-        "event": "metrics_heartbeat",
-        "counters": { "issued": issued, "completed": completed, "errored": errored },
-    });
+    let Some(merged) = merged else {
+        return;
+    };
+    let Some(mut line) =
+        crate::runner_protocol::heartbeat_lane::heartbeat_event_line(&merged)
+    else {
+        return;
+    };
+    line.push(b'\n');
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(path)
     {
-        let _ = writeln!(file, "{line}");
+        let _ = file.write_all(&line);
     }
 }
 

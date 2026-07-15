@@ -139,12 +139,44 @@ async def _run_controller(run: BenchmarkRun) -> None:
     if not result.success:
         raise RuntimeError(f"controller run failed: {result.error}")
 
-    # Push the terminal progress snapshot, then signal completion -- same ordering as
-    # the mesh SystemController (report-then-complete after export).
+    # Push the terminal progress + the FULL native-v2 report snapshot, then signal
+    # completion -- same ordering as the mesh SystemController (report-then-complete
+    # after export). The final snapshot supersedes the live approximations with the
+    # committed, exact report metrics.
     await reporter.report_once(final=True)
+    await _report_final_snapshot(run)
     from aiperf.kubernetes.completion_signal import signal_benchmark_complete
 
     await signal_benchmark_complete()
+
+
+async def _report_final_snapshot(run: BenchmarkRun) -> None:
+    """Patch the committed ``native-v2.json`` metrics into ``.status.snapshot``.
+
+    After export the controller's ``native-v2.json`` holds the exact, full metric set
+    (every catalog metric, not just the live heartbeat's TTFT/ITL/latency); mirror its
+    ``metrics`` block (+ summary) into the CR so ``kubectl get aiperfjob`` carries the
+    authoritative report snapshot. Best-effort: a missing/oversized report just leaves
+    the last live snapshot in place.
+    """
+    import orjson
+
+    from aiperf.kubernetes.completion_signal import report_benchmark_snapshot
+
+    report_path = run.artifact_dir / "native-v2.json"
+    try:
+        report = orjson.loads(report_path.read_bytes())
+    except (OSError, orjson.JSONDecodeError) as e:
+        logger.warning("final snapshot: could not read %s: %s", report_path, e)
+        return
+    snapshot = {
+        "source": "report",
+        "schemaVersion": report.get("schema_version"),
+        "metrics": report.get("metrics") or {},
+        "summary": report.get("summary") or {},
+    }
+    with contextlib.suppress(Exception):
+        await report_benchmark_snapshot(snapshot)
 
 
 def _prepare_heartbeat(path: Path) -> None:
@@ -191,6 +223,7 @@ class _ControllerProgressReporter:
         self._path = heartbeat_path
         self._total = _profiling_request_budget(run)
         self._completed = 0
+        self._latest_event: dict[str, Any] | None = None
 
     async def run(self) -> None:
         """Push progress on a fixed cadence until cancelled."""
@@ -199,11 +232,20 @@ class _ControllerProgressReporter:
             await self.report_once()
 
     async def report_once(self, *, final: bool = False) -> None:
-        """Read the latest heartbeat and patch the CR status once (best-effort)."""
-        self._read_latest_completed()
+        """Read the latest heartbeat and patch the CR status once (best-effort).
+
+        Pushes two things: the counter into ``.status.phases.profiling`` (progress
+        bar) and the native-v2-level metric snapshot (counters + TTFT/ITL/latency
+        distributions) into ``.status.snapshot``, so ``kubectl get aiperfjob`` shows
+        live metrics at report fidelity.
+        """
+        self._read_latest_event()
         if self._completed == 0 and not final:
             return
-        from aiperf.kubernetes.completion_signal import report_benchmark_progress
+        from aiperf.kubernetes.completion_signal import (
+            report_benchmark_progress,
+            report_benchmark_snapshot,
+        )
 
         with contextlib.suppress(Exception):
             await report_benchmark_progress(
@@ -215,13 +257,16 @@ class _ControllerProgressReporter:
                 # the per-phase name lives in .status.phases.profiling, not here.
                 overall_phase="Running",
             )
+        snapshot = self._live_snapshot()
+        if snapshot is not None:
+            with contextlib.suppress(Exception):
+                await report_benchmark_snapshot(snapshot)
 
-    def _read_latest_completed(self) -> None:
-        """Parse the last heartbeat line's ``counters.completed`` into state.
+    def _read_latest_event(self) -> None:
+        """Keep the last complete heartbeat line (full event) + its completed count.
 
         Reads the whole (small, one-line-per-cadence) file and keeps the last valid
-        line; the counter is monotonic so a partial final line is simply ignored
-        until the next tick.
+        line; a partial final line fails to parse and is ignored until the next tick.
         """
         try:
             text = self._path.read_text()
@@ -235,7 +280,40 @@ class _ControllerProgressReporter:
                 event: dict[str, Any] = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            self._latest_event = event
             completed = (event.get("counters") or {}).get("completed")
             if isinstance(completed, int):
                 self._completed = max(self._completed, completed)
-                return
+            return
+
+    def _live_snapshot(self) -> dict[str, Any] | None:
+        """Shape the latest heartbeat event into a native-v2-level ``.status.snapshot``.
+
+        Reprojects the runner's ``metrics_heartbeat`` (counters + percentile-projected
+        TTFT / ITL / request-latency sketches) into the report's metric vocabulary, so
+        the live snapshot key-for-key foreshadows the final ``native-v2.json`` metrics.
+        """
+        event = self._latest_event
+        if event is None:
+            return None
+        metrics: dict[str, Any] = {}
+        for source, tag in (
+            ("ttft_ms", "time_to_first_token"),
+            ("itl_ms", "inter_token_latency"),
+            ("latency_ms", "request_latency"),
+        ):
+            sketch = event.get(source)
+            if isinstance(sketch, dict) and sketch.get("count"):
+                metrics[tag] = {
+                    "unit": "ms",
+                    "count": sketch.get("count"),
+                    "min": sketch.get("min"),
+                    "max": sketch.get("max"),
+                    "percentiles": sketch.get("percentiles") or {},
+                }
+        return {
+            "source": "live",
+            "counters": event.get("counters") or {},
+            "saturation": event.get("saturation") or {},
+            "metrics": metrics,
+        }
