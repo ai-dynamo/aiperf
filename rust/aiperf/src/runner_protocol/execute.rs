@@ -919,16 +919,20 @@ fn exact_fold_enabled_by_env() -> bool {
 /// controller appends every cell's store (`merge_store_partitions`) into the merged
 /// report — the same within-tolerance bar as the in-process sharded merge.
 ///
-/// A cellular run does NOT emit per-record FILE artifacts (records/raw/CSV/parquet/
-/// outputs) on EITHER path — this gate does not change that. A cellular run that
-/// requests per-record artifacts keeps its cells on retain when `wants_per_record_artifacts`
-/// is set (e.g. a lite build's Parquet), but that only affects each cell's in-scratch
-/// writing: the controller discards every cell's scratch tree and merges only the shipped
-/// metrics, so no per-record file reaches the run's artifact dir regardless of the path
-/// taken. Cellular per-record file emission (a cell→controller artifact-file channel) is
-/// deferred Stage D; the controller warns at startup when such artifacts are requested
-/// (`warn_dropped_per_record_artifacts`). `is_cellular` is retained as an explicit input
-/// axis but (like `shardable`) deliberately not read here — it does not gate exact-fold.
+/// A SAME-HOST cellular run now DOES emit per-record FILE artifacts (records/raw/CSV/
+/// parquet/outputs) (Stage D) — this gate is what makes that free: exact-fold does not
+/// disqualify on `wants_per_record_artifacts` alone (the streaming lane writes each row),
+/// so a cell writes its merged per-record artifacts into its controller-local
+/// `temp_root/cell-{id}` dir (its artifact_dir) exactly like a single-process run, and
+/// the controller concatenates every cell dir into the real artifact dir at finalize
+/// (`cellular_controller::run_cellular` → `shard_artifacts::concatenate_cell_artifacts`).
+/// A cellular run that hits `wants_per_record_artifacts` (e.g. a lite build's Parquet)
+/// keeps its cells on retain, and the batch tail still writes those files into the cell
+/// dir for the same concat. Only a CROSS-HOST (k8s) run still drops them — the cell pod
+/// writes to its own filesystem, unreachable by the controller (warned at startup by
+/// `warn_dropped_per_record_artifacts`); byte-shipping them is the cross-host follow-up.
+/// `is_cellular` is retained as an explicit input axis but (like `shardable`) deliberately
+/// not read here — it does not gate exact-fold.
 ///
 /// (The scheduled path never carries a graph dataset — that is a separate executor —
 /// so "not graph" is implicit here.)
