@@ -37,7 +37,13 @@ const PORTED_CFG_SECTIONS: &[&str] = &[
 const PORTED_RUN_FIELDS: &[&str] = &["resolved"];
 
 /// Golden fixtures the native path reproduces byte-exact (name = fixture stem).
-const FIXTURES: &[&str] = &["minimal_chat", "rate_chat"];
+const FIXTURES: &[&str] = &[
+    "minimal_chat",
+    "rate_chat",
+    "completions",
+    "duration",
+    "warmup",
+];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).
 fn load_golden(name: &str) -> serde_json::Value {

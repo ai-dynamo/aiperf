@@ -54,6 +54,26 @@ pub struct ProfileFlags {
     #[arg(long = "request-count")]
     pub request_count: Option<String>,
 
+    /// Maximum benchmark runtime, seconds (`--benchmark-duration`); comma ⇒ sweep.
+    #[arg(long = "benchmark-duration")]
+    pub benchmark_duration: Option<String>,
+
+    /// Grace period after duration ends, seconds (`--benchmark-grace-period`).
+    #[arg(long = "benchmark-grace-period")]
+    pub benchmark_grace_period: Option<f64>,
+
+    /// Warmup request count (`--warmup-request-count` / `--num-warmup-requests`).
+    #[arg(long = "warmup-request-count", visible_alias = "num-warmup-requests")]
+    pub warmup_request_count: Option<u64>,
+
+    /// Warmup concurrency (`--warmup-concurrency`); defaults to profiling value.
+    #[arg(long = "warmup-concurrency")]
+    pub warmup_concurrency: Option<u32>,
+
+    /// Warmup request rate (`--warmup-request-rate`).
+    #[arg(long = "warmup-request-rate")]
+    pub warmup_request_rate: Option<f64>,
+
     /// Artifact output directory (`--artifact-dir`).
     #[arg(long = "artifact-dir")]
     pub artifact_dir: Option<PathBuf>,

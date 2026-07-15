@@ -33,6 +33,8 @@ const DEFAULT_CONNECTION_LIMIT: u32 = 2500;
 const DEFAULT_KEEPALIVE_TIMEOUT: f64 = 300.0;
 const DEFAULT_WAIT_FOR_MODEL_INTERVAL: f64 = 5.0;
 const DEFAULT_ISL_MEAN: f64 = 550.0;
+/// Default synthetic conversation count when no request bound is given.
+const DEFAULT_ENTRIES: u32 = 100;
 
 /// Resolve `profile` flags into one native run, or a clear error.
 ///
@@ -46,6 +48,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
     reject_sweep("--concurrency", flags.concurrency.as_deref())?;
     reject_sweep("--request-count", flags.request_count.as_deref())?;
     reject_sweep("--request-rate", flags.request_rate.as_deref())?;
+    reject_sweep("--benchmark-duration", flags.benchmark_duration.as_deref())?;
 
     anyhow::ensure!(
         !flags.model_names.is_empty(),
@@ -61,6 +64,8 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
     let concurrency = parse_single::<u32>("--concurrency", flags.concurrency.as_deref())?;
     let request_count = parse_single::<u64>("--request-count", flags.request_count.as_deref())?;
     let request_rate = parse_single::<f64>("--request-rate", flags.request_rate.as_deref())?;
+    let benchmark_duration =
+        parse_single::<f64>("--benchmark-duration", flags.benchmark_duration.as_deref())?;
 
     let models = Models {
         strategy: ModelStrategy::RoundRobin,
@@ -123,40 +128,30 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         },
         sampling: Sampling("sequential".to_string()),
         turn_delay_ratio: 1.0,
-        // The synthetic corpus is sized to the request bound (one entry per
-        // request); Python projects `entries == request_count` on this path.
-        entries: request_count.map(|n| n as u32),
+        // The synthetic corpus is sized to the request bound (`entries ==
+        // request_count`); with no request bound it falls back to the default
+        // conversation count (100).
+        entries: Some(request_count.map(|n| n as u32).unwrap_or(DEFAULT_ENTRIES)),
         num_conversations: None,
         turn_delay_ms: None,
     });
 
-    // One profiling phase. A request rate selects a Poisson arrival phase;
-    // otherwise a fixed-concurrency phase (default concurrency 1).
-    let kind = if let Some(rate) = request_rate {
-        PhaseKind::Poisson { rate, concurrency }
-    } else {
-        PhaseKind::Concurrency {
-            concurrency: concurrency.unwrap_or(1),
-        }
-    };
-    let phase = Phase {
-        common: PhaseCommon {
-            name: "profiling".to_string(),
-            exclude_from_results: false,
-            seamless: false,
-            requests: request_count,
-            sessions: None,
-            duration: None,
-            prefill_concurrency: None,
-            grace_period: None,
-            concurrency_ramp: None,
-            prefill_ramp: None,
-            rate_ramp: None,
-            cancellation: None,
-            agentic_cache_warmup_duration: None,
-        },
-        kind,
-    };
+    // The profiling phase, plus an optional leading warmup phase.
+    let profiling = build_phase(
+        "profiling",
+        false,
+        concurrency.unwrap_or(1),
+        request_rate,
+        concurrency,
+        request_count,
+        benchmark_duration,
+        flags.benchmark_grace_period,
+    );
+    let mut phases = Vec::new();
+    if let Some(phase) = build_warmup_phase(flags, concurrency) {
+        phases.push(phase);
+    }
+    phases.push(profiling);
 
     let cfg = BenchmarkConfig {
         models: Some(models),
@@ -172,7 +167,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
             ..Default::default()
         }),
         datasets: Some(vec![dataset]),
-        phases: Some(vec![phase]),
+        phases: Some(phases),
     };
 
     let artifact_dir = flags
@@ -193,6 +188,68 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         resolved: Resolved::default(),
         variables: serde_json::Map::new(),
     })
+}
+
+/// Build one phase from resolved axes. A request rate selects a Poisson arrival
+/// phase (with optional concurrency cap); otherwise a fixed-concurrency phase.
+#[allow(clippy::too_many_arguments)]
+fn build_phase(
+    name: &str,
+    exclude_from_results: bool,
+    default_concurrency: u32,
+    rate: Option<f64>,
+    concurrency: Option<u32>,
+    requests: Option<u64>,
+    duration: Option<f64>,
+    grace_period: Option<f64>,
+) -> Phase {
+    let kind = if let Some(rate) = rate {
+        PhaseKind::Poisson { rate, concurrency }
+    } else {
+        PhaseKind::Concurrency {
+            concurrency: concurrency.unwrap_or(default_concurrency),
+        }
+    };
+    Phase {
+        common: PhaseCommon {
+            name: name.to_string(),
+            exclude_from_results,
+            seamless: false,
+            requests,
+            sessions: None,
+            duration,
+            prefill_concurrency: None,
+            grace_period,
+            concurrency_ramp: None,
+            prefill_ramp: None,
+            rate_ramp: None,
+            cancellation: None,
+            agentic_cache_warmup_duration: None,
+        },
+        kind,
+    }
+}
+
+/// Build a leading warmup phase when any warmup axis is set. Warmup inherits the
+/// profiling concurrency unless `--warmup-concurrency` overrides it.
+fn build_warmup_phase(flags: &ProfileFlags, profiling_concurrency: Option<u32>) -> Option<Phase> {
+    if flags.warmup_request_count.is_none()
+        && flags.warmup_concurrency.is_none()
+        && flags.warmup_request_rate.is_none()
+    {
+        return None;
+    }
+    let concurrency = flags.warmup_concurrency.or(profiling_concurrency);
+    Some(build_phase(
+        "warmup",
+        true,
+        concurrency.unwrap_or(1),
+        flags.warmup_request_rate,
+        concurrency,
+        flags.warmup_request_count,
+        None,
+        None,
+    ))
 }
 
 /// Normalize a base URL to include a scheme (Python prepends `http://` when the
