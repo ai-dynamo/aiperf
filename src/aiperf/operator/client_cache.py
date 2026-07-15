@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import MutableMapping
 from typing import Any
 
 import aiohttp
@@ -257,12 +258,20 @@ async def try_claim_completion(
         # handle_completion -> maybe_raise_for_transient_fetch_failure can read
         # the claim age (the apiserver patch above is not reflected back into
         # this dict). Mirrors the in-process _shutdown_sent fast-path latch.
-        metadata = body.setdefault("metadata", {})
-        annotations = metadata.get("annotations")
-        if annotations is None:
-            annotations = {}
-            metadata["annotations"] = annotations
-        annotations[Annotations.COMPLETION_CLAIMED] = timestamp
+        #
+        # kopf hands handlers a read-only ``Body`` mapping (no ``setdefault``);
+        # only plain-dict callers (tests, synthesized bodies) are mutable. When
+        # body is immutable, skip the latch: the claim is already durably
+        # persisted to the apiserver above, so the transient-fetch retry gate
+        # reads it from the apiserver-fresh body on the next monitor tick
+        # instead of same-tick. Correctness never depends on the latch.
+        if isinstance(body, MutableMapping):
+            metadata = body.setdefault("metadata", {})
+            annotations = metadata.get("annotations")
+            if annotations is None:
+                annotations = {}
+                metadata["annotations"] = annotations
+            annotations[Annotations.COMPLETION_CLAIMED] = timestamp
         await _post_dashboard_refresh()
         return True
     if claimed is False:

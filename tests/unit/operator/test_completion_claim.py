@@ -173,6 +173,40 @@ class TestTryClaimCompletion:
         )
 
     @pytest.mark.asyncio
+    async def test_successful_claim_with_readonly_kopf_body(self) -> None:
+        """A winning claim must not crash when kopf hands a read-only ``Body``.
+
+        kopf dispatches handlers with a read-only ``Body`` mapping (no
+        ``setdefault``); the same-tick claim latch must be skipped rather than
+        raising ``AttributeError`` (which previously aborted
+        ``on_benchmark_complete`` and left the CR stuck in ``Running``). The
+        claim is still durably persisted via the apiserver patch, so the call
+        returns True.
+        """
+        from kopf._cogs.structs.bodies import Body
+
+        body = Body(_body_without_annotation())
+        mock_api = MagicMock()
+        mock_custom = MagicMock()
+        mock_custom.patch_namespaced_custom_object = AsyncMock(return_value={})
+
+        with (
+            mock_patch(
+                "aiperf.operator.client_cache.k8s_client",
+                return_value=_fake_k8s_client(mock_api),
+            ),
+            mock_patch(
+                "kubernetes_asyncio.client.CustomObjectsApi",
+                return_value=mock_custom,
+            ),
+        ):
+            result = await try_claim_completion("ns", "j", body)
+
+        assert result is True
+        assert "ns/j" in _shutdown_sent
+        mock_custom.patch_namespaced_custom_object.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_successful_claim_with_null_annotations(self) -> None:
         """If metadata.annotations is missing, patch adds the dict first."""
         body = {"metadata": {}}
