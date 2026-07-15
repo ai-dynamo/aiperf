@@ -155,6 +155,75 @@ impl OtelExport {
     }
 }
 
+/// Fixed MLflow artifact glob list (`_mlflow_frontend_projection`).
+fn mlflow_artifact_globs() -> Vec<String> {
+    [
+        "*.json",
+        "*.csv",
+        "*.jsonl",
+        "*.parquet",
+        "*_timeslices.*",
+        "**/*.png",
+        "**/*.jpg",
+        "**/*.jpeg",
+        "**/*.svg",
+        "**/*.html",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
+/// The MLflow REST uploader sink (mirrors `MlflowExportConfig`). Envelope-ish
+/// fields (`params`) are best-effort; the config fields are byte-exact.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MlflowExport {
+    /// Whether the sink runs.
+    pub enabled: bool,
+    /// aiperf-v1 version.
+    pub aiperf_version: String,
+    /// Artifact globs to upload.
+    pub artifact_globs: Vec<String>,
+    /// Run identifier.
+    pub benchmark_id: String,
+    /// Tracking server URI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tracking_uri: Option<String>,
+    /// Experiment name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub experiment: Option<String>,
+    /// Run name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_name: Option<String>,
+    /// Run tags.
+    pub tags: std::collections::BTreeMap<String, String>,
+    /// Logged params (best-effort; Python includes cli_command).
+    pub params: std::collections::BTreeMap<String, String>,
+}
+
+/// The Weights & Biases sink (mirrors `WandbExportConfig`). `config_json` /
+/// `cli_command` are best-effort; the config fields are byte-exact.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WandbExport {
+    /// aiperf-v1 version.
+    pub aiperf_version: String,
+    /// Run identifier.
+    pub benchmark_id: String,
+    /// Redacted invoking command (best-effort).
+    pub cli_command: String,
+    /// Serialized config (best-effort).
+    pub config_json: String,
+    /// W&B entity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity: Option<String>,
+    /// W&B project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    /// W&B run name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_name: Option<String>,
+}
+
 /// The typed `export` policy. Only the sinks the frontend enables are modeled;
 /// omitted sinks decode to the runner's all-disabled defaults.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -166,6 +235,66 @@ pub struct Export {
     /// OTLP/HTTP metrics sink (present when `--otel-url` is set).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub otel: Option<OtelExport>,
+    /// MLflow uploader (present when `--mlflow-tracking-uri` is set).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mlflow: Option<MlflowExport>,
+    /// W&B sink (present when `--wandb-project` is set).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wandb: Option<WandbExport>,
+}
+
+/// Parameters for building the optional MLflow sink.
+pub struct MlflowParams {
+    /// Tracking server URI (the enable signal).
+    pub tracking_uri: Option<String>,
+    /// Experiment name.
+    pub experiment: Option<String>,
+    /// Run name.
+    pub run_name: Option<String>,
+}
+
+/// Parameters for building the optional W&B sink.
+pub struct WandbParams {
+    /// Project (the enable signal).
+    pub project: Option<String>,
+    /// Entity.
+    pub entity: Option<String>,
+    /// Run name.
+    pub run_name: Option<String>,
+}
+
+impl MlflowExport {
+    /// Build the MLflow sink when a tracking URI is configured.
+    pub fn build(params: &MlflowParams, benchmark_id: &str) -> Option<Self> {
+        params.tracking_uri.as_ref()?;
+        Some(Self {
+            enabled: true,
+            aiperf_version: AIPERF_V1_VERSION.to_string(),
+            artifact_globs: mlflow_artifact_globs(),
+            benchmark_id: benchmark_id.to_string(),
+            tracking_uri: params.tracking_uri.clone(),
+            experiment: params.experiment.clone(),
+            run_name: params.run_name.clone(),
+            tags: std::collections::BTreeMap::new(),
+            params: std::collections::BTreeMap::new(),
+        })
+    }
+}
+
+impl WandbExport {
+    /// Build the W&B sink when a project is configured.
+    pub fn build(params: &WandbParams, benchmark_id: &str) -> Option<Self> {
+        params.project.as_ref()?;
+        Some(Self {
+            aiperf_version: AIPERF_V1_VERSION.to_string(),
+            benchmark_id: benchmark_id.to_string(),
+            cli_command: String::new(),
+            config_json: "{}".to_string(),
+            entity: params.entity.clone(),
+            project: params.project.clone(),
+            run_name: params.run_name.clone(),
+        })
+    }
 }
 
 impl Export {
@@ -203,6 +332,8 @@ impl Export {
                 metrics: META.console_metrics.clone(),
             },
             otel: None,
+            mlflow: None,
+            wandb: None,
         }
     }
 }

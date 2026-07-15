@@ -216,6 +216,16 @@ impl Benchmark {
             network_latency_mean: None,
             network_latency_probe: None,
             otel_url: None,
+            mlflow: crate::model::export::MlflowParams {
+                tracking_uri: None,
+                experiment: None,
+                run_name: None,
+            },
+            wandb: crate::model::export::WandbParams {
+                project: None,
+                entity: None,
+                run_name: None,
+            },
             api_key: None,
             headers: std::collections::BTreeMap::new(),
             tokenizer_name,

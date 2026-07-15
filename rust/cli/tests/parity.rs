@@ -83,6 +83,7 @@ const FIXTURES: &[&str] = &[
     "video_audio",
     "prefix_shared",
     "prefix_pool",
+    "mlflow_wandb",
 ];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).
@@ -161,6 +162,30 @@ fn assert_export_static(fixture: &str, built: &serde_json::Value, golden: &serde
         built["genai_perf"]["envelope"].is_object(),
         "[{fixture}] export.genai_perf.envelope must be present"
     );
+    // MLflow/W&B config fields are byte-exact; params/config_json/cli_command
+    // are best-effort (invocation-specific) and not compared.
+    if !golden["mlflow"].is_null() {
+        for key in [
+            "enabled",
+            "artifact_globs",
+            "tracking_uri",
+            "experiment",
+            "run_name",
+        ] {
+            assert_eq!(
+                built["mlflow"][key], golden["mlflow"][key],
+                "[{fixture}] export.mlflow.{key} diverges"
+            );
+        }
+    }
+    if !golden["wandb"].is_null() {
+        for key in ["project", "entity", "run_name", "aiperf_version"] {
+            assert_eq!(
+                built["wandb"][key], golden["wandb"][key],
+                "[{fixture}] export.wandb.{key} diverges"
+            );
+        }
+    }
     // The OTLP sink is byte-exact except for the invocation-specific
     // `aiperf.benchmark.id` resource attribute (fresh uuid vs pinned golden).
     if !golden["otel"].is_null() {

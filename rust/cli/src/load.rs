@@ -95,6 +95,10 @@ pub(crate) struct Inputs {
     pub network_latency_probe: Option<f64>,
     /// OTLP collector URL (`--otel-url`).
     pub otel_url: Option<String>,
+    /// MLflow sink params.
+    pub mlflow: crate::model::export::MlflowParams,
+    /// W&B sink params.
+    pub wandb: crate::model::export::WandbParams,
     pub api_key: Option<String>,
     pub headers: std::collections::BTreeMap<String, String>,
     pub tokenizer_name: Option<String>,
@@ -309,6 +313,16 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
             .network_latency_automatic
             .then(|| flags.network_latency_ping_interval.unwrap_or(1.0)),
         otel_url: flags.otel_url.clone(),
+        mlflow: crate::model::export::MlflowParams {
+            tracking_uri: flags.mlflow_tracking_uri.clone(),
+            experiment: flags.mlflow_experiment.clone(),
+            run_name: flags.mlflow_run_name.clone(),
+        },
+        wandb: crate::model::export::WandbParams {
+            project: flags.wandb_project.clone(),
+            entity: flags.wandb_entity.clone(),
+            run_name: flags.wandb_run_name.clone(),
+        },
         api_key: flags.api_key.clone(),
         headers: parse_headers(&flags.headers)?,
         tokenizer_name: flags.tokenizer.clone(),
@@ -730,6 +744,8 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             &primary_model,
         ));
     }
+    export.mlflow = crate::model::export::MlflowExport::build(&inputs.mlflow, &benchmark_id);
+    export.wandb = crate::model::export::WandbExport::build(&inputs.wandb, &benchmark_id);
     cfg.export = Some(export);
 
     Ok(BenchmarkRun {

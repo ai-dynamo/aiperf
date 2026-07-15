@@ -467,6 +467,26 @@ pub struct ProfileFlags {
     #[arg(long = "otel-url")]
     pub otel_url: Option<String>,
 
+    /// MLflow tracking server URI (`--mlflow-tracking-uri`).
+    #[arg(long = "mlflow-tracking-uri")]
+    pub mlflow_tracking_uri: Option<String>,
+    /// MLflow experiment name (`--mlflow-experiment`).
+    #[arg(long = "mlflow-experiment")]
+    pub mlflow_experiment: Option<String>,
+    /// MLflow run name (`--mlflow-run-name`).
+    #[arg(long = "mlflow-run-name")]
+    pub mlflow_run_name: Option<String>,
+
+    /// W&B project (`--wandb-project`).
+    #[arg(long = "wandb-project")]
+    pub wandb_project: Option<String>,
+    /// W&B entity (`--wandb-entity`).
+    #[arg(long = "wandb-entity")]
+    pub wandb_entity: Option<String>,
+    /// W&B run name (`--wandb-run-name`).
+    #[arg(long = "wandb-run-name")]
+    pub wandb_run_name: Option<String>,
+
     /// YAML configuration file (`--config` / `-f`).
     #[arg(long = "config", short = 'f')]
     pub config_file: Option<PathBuf>,
