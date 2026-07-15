@@ -78,6 +78,9 @@ const FIXTURES: &[&str] = &[
     "audio",
     "video",
     "adaptive",
+    "hf_subset",
+    "interturn_cap",
+    "video_audio",
 ];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).

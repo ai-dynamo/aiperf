@@ -274,6 +274,24 @@ pub struct ProfileFlags {
     #[arg(long = "custom-dataset-type")]
     pub custom_dataset_type: Option<String>,
 
+    /// HuggingFace subset for `--public-dataset` (`--hf-subset`).
+    #[arg(long = "hf-subset")]
+    pub hf_subset: Option<String>,
+
+    /// Cap on inter-turn delay, seconds (`--inter-turn-delay-cap-seconds`).
+    #[arg(long = "inter-turn-delay-cap-seconds")]
+    pub inter_turn_delay_cap_seconds: Option<f64>,
+
+    /// Synthetic video audio channels (`--video-audio-num-channels`).
+    #[arg(long = "video-audio-num-channels")]
+    pub video_audio_num_channels: Option<u32>,
+    /// Synthetic video audio bit depth (`--video-audio-depth`).
+    #[arg(long = "video-audio-depth")]
+    pub video_audio_depth: Option<u32>,
+    /// Synthetic video audio sample rate, Hz (`--video-audio-sample-rate`).
+    #[arg(long = "video-audio-sample-rate")]
+    pub video_audio_sample_rate: Option<f64>,
+
     /// Replay requests by their timestamps (`--fixed-schedule`).
     #[arg(long = "fixed-schedule", default_value_t = false)]
     pub fixed_schedule: bool,

@@ -41,6 +41,8 @@ const DEFAULT_WAIT_FOR_MODEL_INTERVAL: f64 = 5.0;
 const DEFAULT_ISL_MEAN: f64 = 550.0;
 /// Default synthetic conversation count when no request bound is given.
 pub(crate) const DEFAULT_ENTRIES: u32 = 100;
+/// Default request bound when no count/duration/schedule bounds the run.
+const DEFAULT_REQUEST_COUNT: u64 = 10;
 
 /// A leading warmup phase's axes.
 pub(crate) struct Warmup {
@@ -111,6 +113,8 @@ pub(crate) struct Inputs {
     pub batch_size: u32,
     pub sampling: String,
     pub entries: u32,
+    /// Explicit entry count for file/public datasets (None when defaulted).
+    pub dataset_entries: Option<u32>,
     /// Profiling-phase session bound (from `num_conversations`).
     pub sessions: Option<u64>,
     pub concurrency: Option<u32>,
@@ -138,6 +142,10 @@ pub(crate) struct Inputs {
     pub custom_dataset_type: Option<String>,
     /// Named public dataset (mutually exclusive with synthetic/file).
     pub public_dataset: Option<String>,
+    /// HuggingFace subset override for the public dataset.
+    pub hf_subset: Option<String>,
+    /// Inter-turn delay cap, seconds (file datasets).
+    pub inter_turn_delay_cap_seconds: Option<f64>,
     /// Fixed-schedule replay (timestamp-driven); carries the auto-offset flag.
     pub fixed_schedule: Option<bool>,
     /// Fixed-schedule start/end offsets.
@@ -327,6 +335,9 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
             .or(num_sessions)
             .or(request_count.map(|n| n as u32))
             .unwrap_or(DEFAULT_ENTRIES),
+        dataset_entries: num_conversations
+            .or(num_sessions)
+            .or(request_count.map(|n| n as u32)),
         sessions: num_conversations.or(num_sessions).map(u64::from),
         concurrency,
         request_rate,
@@ -353,6 +364,8 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         input_file: flags.input_file.clone(),
         custom_dataset_type: flags.custom_dataset_type.clone(),
         public_dataset: flags.public_dataset.clone(),
+        hf_subset: flags.hf_subset.clone(),
+        inter_turn_delay_cap_seconds: flags.inter_turn_delay_cap_seconds,
         fixed_schedule,
         fixed_schedule_start_offset: flags.fixed_schedule_start_offset,
         fixed_schedule_end_offset: flags.fixed_schedule_end_offset,
@@ -445,13 +458,17 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         ) {
             options.insert("max_conversations".to_string(), serde_json::json!(max));
         }
+        let mut source = meta.source.clone();
+        if let (Some(subset), Some(obj)) = (&inputs.hf_subset, source.as_object_mut()) {
+            obj.insert("subset".to_string(), serde_json::json!(subset));
+        }
         Dataset::Public(crate::model::dataset::PublicDataset {
             name: name.clone(),
             format: meta.format.clone(),
-            source: meta.source.clone(),
+            source,
             options,
             sampling: Sampling(inputs.sampling.clone()),
-            entries: Some(inputs.entries),
+            entries: inputs.dataset_entries,
             random_seed: inputs.random_seed,
         })
     } else if let Some(path) = &inputs.input_file {
@@ -461,14 +478,23 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 .clone()
                 .unwrap_or_else(|| "single_turn".to_string()),
             sampling: Sampling(inputs.sampling.clone()),
-            options: serde_json::Map::new(),
+            options: {
+                let mut o = serde_json::Map::new();
+                if let Some(cap) = inputs.inter_turn_delay_cap_seconds {
+                    o.insert(
+                        "inter_turn_delay_cap_seconds".to_string(),
+                        serde_json::json!(cap),
+                    );
+                }
+                o
+            },
             path: Some(absolute_path(path)),
             // Fixed-schedule derives the count into the phase's `requests`, not
-            // the dataset's `entries` (which stays unset).
+            // the dataset's `entries`; otherwise the explicit count (if any).
             entries: if inputs.fixed_schedule.is_some() {
                 None
             } else {
-                Some(inputs.entries)
+                inputs.dataset_entries
             },
             random_seed: inputs.random_seed,
             osl: inputs.osl.clone(),
@@ -495,6 +521,14 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         })
     };
 
+    // An unbounded run (no count, duration, schedule, or user-centric mode)
+    // defaults to a fixed request count.
+    let effective_requests = inputs.request_count.or_else(|| {
+        (inputs.benchmark_duration.is_none()
+            && inputs.fixed_schedule.is_none()
+            && inputs.user_centric.is_none())
+        .then_some(DEFAULT_REQUEST_COUNT)
+    });
     let profiling = if let Some((rate, users)) = inputs.user_centric {
         Phase {
             common: PhaseCommon {
@@ -552,7 +586,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             inputs.rate_mode.as_deref(),
             inputs.smoothness,
             inputs.concurrency,
-            inputs.request_count,
+            effective_requests,
             inputs.sessions,
             inputs.benchmark_duration,
             inputs.grace_period,
@@ -962,9 +996,12 @@ fn build_video_spec(flags: &ProfileFlags) -> Option<VideoSpec> {
     }
     Some(VideoSpec {
         audio: VideoAudio {
-            channels: 0,
-            depth: 16,
-            sample_rate: 44.1,
+            channels: flags.video_audio_num_channels.unwrap_or(0),
+            depth: flags.video_audio_depth.unwrap_or(16),
+            sample_rate: flags
+                .video_audio_sample_rate
+                .map(|r| r / 1000.0)
+                .unwrap_or(44.1),
         },
         batch_size: flags.video_batch_size.unwrap_or(1),
         codec: flags
