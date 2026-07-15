@@ -20,10 +20,13 @@
 //! docs on `super`) so t-digest `+inf` and NaN metric values survive the wire.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use bytes::Bytes;
+use serde::{Deserialize, Serialize};
+use tokio::sync::Notify;
 use tokio::sync::mpsc;
-use velo::{Context, Handler, PeerInfo, Velo};
+use velo::{Context, EventHandle, Handler, PeerInfo, Velo};
 
 use super::{
     CellAck, CellClient, CellMessage, CellPartitionShip, CellRegister, CellTransportError,
@@ -34,6 +37,18 @@ use super::{
 /// `None` if the `cell_id` is out of range. The controller precomputes every
 /// cell's spec before binding, so the register handler is a pure lookup.
 pub type SpecFor = Arc<dyn Fn(u32) -> Option<Vec<u8>> + Send + Sync>;
+
+/// The controller's reply to a cell's registration: the cell's sliced execute
+/// envelope plus the handle of the run-wide **START** event. The cell awaits that
+/// event before dispatching, so every cell begins the benchmark together once the
+/// controller has seen all `cell_count` registrations (synchronized start).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegisterReply {
+    /// The cell's sliced execute envelope (protocol-v2 JSON bytes).
+    pub envelope: Vec<u8>,
+    /// The controller-owned START event handle the cell awaits before dispatching.
+    pub start_event: EventHandle,
+}
 
 fn encode(error: impl std::fmt::Display) -> CellTransportError {
     CellTransportError::Encode(error.to_string())
@@ -52,19 +67,34 @@ pub struct VeloControllerTransport {
     /// transport; dropping it tears the messaging plane down.
     _velo: Arc<Velo>,
     receiver: mpsc::Receiver<Result<CellMessage, CellTransportError>>,
+    /// Notified once every `cell_count` cell has registered — the controller then
+    /// triggers the START event (synchronized start).
+    all_registered: Arc<Notify>,
 }
 
 impl VeloControllerTransport {
     /// Register the register/heartbeat/partition handlers on `velo` and return the
     /// controller transport. `spec_for` supplies each registering cell's
-    /// `CellLaunchSpec` bytes.
-    pub fn bind_controller(velo: Arc<Velo>, spec_for: SpecFor) -> Result<Self, CellTransportError> {
+    /// `CellLaunchSpec` bytes; `start_event` is the run-wide START handle returned
+    /// to each cell; the barrier fires once all `cell_count` cells have registered.
+    pub fn bind_controller(
+        velo: Arc<Velo>,
+        spec_for: SpecFor,
+        cell_count: u32,
+        start_event: EventHandle,
+    ) -> Result<Self, CellTransportError> {
         let (sender, receiver) = mpsc::channel(1024);
+        let all_registered = Arc::new(Notify::new());
+        let registered = Arc::new(AtomicU32::new(0));
 
-        // register (unary): learn the cell, return its spec bytes.
+        // register (unary): learn the cell, count it toward the start barrier, and
+        // return its spec + the START handle it must await before dispatching.
+        let reg_notify = all_registered.clone();
         velo.register_handler(
             Handler::unary_handler_async(HANDLER_REGISTER, move |ctx: Context| {
                 let spec_for = spec_for.clone();
+                let registered = registered.clone();
+                let reg_notify = reg_notify.clone();
                 async move {
                     let register: CellRegister = rmp_serde::from_slice(&ctx.payload)
                         .map_err(|error| anyhow::anyhow!("decode CellRegister: {error}"))?;
@@ -73,13 +103,24 @@ impl VeloControllerTransport {
                     ctx.msg
                         .register_peer(peer)
                         .map_err(|error| anyhow::anyhow!("register_peer cell: {error}"))?;
-                    match spec_for(register.cell_id) {
-                        Some(spec) => Ok(Some(Bytes::from(spec))),
-                        None => Err(anyhow::anyhow!(
+                    let Some(envelope) = spec_for(register.cell_id) else {
+                        return Err(anyhow::anyhow!(
                             "no launch spec for cell {}",
                             register.cell_id
-                        )),
+                        ));
+                    };
+                    // Each cell registers exactly once; the Nth registration releases
+                    // the start barrier so the controller triggers START.
+                    if registered.fetch_add(1, Ordering::SeqCst) + 1 == cell_count {
+                        reg_notify.notify_one();
                     }
+                    let reply = RegisterReply {
+                        envelope,
+                        start_event,
+                    };
+                    let bytes = rmp_serde::to_vec(&reply)
+                        .map_err(|error| anyhow::anyhow!("encode RegisterReply: {error}"))?;
+                    Ok(Some(Bytes::from(bytes)))
                 }
             })
             .build(),
@@ -141,7 +182,14 @@ impl VeloControllerTransport {
         Ok(Self {
             _velo: velo,
             receiver,
+            all_registered,
         })
+    }
+
+    /// Resolves once every `cell_count` cell has registered. The controller awaits
+    /// this (with a deadline) before triggering the START event.
+    pub async fn await_all_registered(&self) {
+        self.all_registered.notified().await;
     }
 }
 
@@ -172,9 +220,9 @@ impl VeloCellClient {
         Ok(Self { velo, controller })
     }
 
-    /// Send the registration request and return the controller's reply — this
-    /// cell's serialized (`rmp`) `CellLaunchSpec` bytes.
-    pub async fn register(&self, cell_id: u32) -> Result<Vec<u8>, CellTransportError> {
+    /// Send the registration request and return the controller's [`RegisterReply`]
+    /// (the cell's sliced execute envelope + the START event handle to await).
+    pub async fn register(&self, cell_id: u32) -> Result<RegisterReply, CellTransportError> {
         let cell_peer = rmp_serde::to_vec(&self.velo.peer_info()).map_err(encode)?;
         let body = rmp_serde::to_vec(&CellRegister { cell_id, cell_peer }).map_err(encode)?;
         let reply: Bytes = self
@@ -186,7 +234,19 @@ impl VeloCellClient {
             .send()
             .await
             .map_err(io)?;
-        Ok(reply.to_vec())
+        rmp_serde::from_slice(&reply).map_err(decode)
+    }
+
+    /// Block until the controller triggers the run-wide START event (a synchronized
+    /// start: every cell resumes together once all cells have registered). A
+    /// poisoned event (the controller aborted before starting) surfaces as an error.
+    pub async fn await_start(&self, start_event: EventHandle) -> Result<(), CellTransportError> {
+        self.velo
+            .event_manager()
+            .awaiter(start_event)
+            .map_err(io)?
+            .await
+            .map_err(io)
     }
 }
 
@@ -263,17 +323,21 @@ mod tests {
             .await
             .expect("controller velo");
         let controller_peer = controller_velo.peer_info();
+        let start = controller_velo.event_manager().new_event().expect("start event");
+        let start_handle = start.handle();
         let spec_for: SpecFor = Arc::new(|cell_id: u32| Some(vec![cell_id as u8, 0xAB]));
         let mut controller =
-            VeloControllerTransport::bind_controller(controller_velo, spec_for).expect("bind");
+            VeloControllerTransport::bind_controller(controller_velo, spec_for, 1, start_handle)
+                .expect("bind");
 
         // Cell: bind velo, register (controller peer handed directly, as the
         // bootstrap would), verify the spec reply, then ship a heartbeat + partition.
         let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
         let mut cell = VeloCellClient::connect(cell_velo, controller_peer).expect("connect");
 
-        let spec = cell.register(3).await.expect("register");
-        assert_eq!(spec, vec![3_u8, 0xAB]);
+        let reply = cell.register(3).await.expect("register");
+        assert_eq!(reply.envelope, vec![3_u8, 0xAB]);
+        assert_eq!(reply.start_event, start_handle);
 
         cell.send(&CellMessage::Heartbeat {
             cell_id: 3,
@@ -313,9 +377,12 @@ mod tests {
             .await
             .expect("controller velo");
         let controller_peer = controller_velo.peer_info();
+        let start = controller_velo.event_manager().new_event().expect("start event");
+        let start_handle = start.handle();
         let spec_for: SpecFor = Arc::new(|_| Some(vec![1_u8]));
         let mut controller =
-            VeloControllerTransport::bind_controller(controller_velo, spec_for).expect("bind");
+            VeloControllerTransport::bind_controller(controller_velo, spec_for, 1, start_handle)
+                .expect("bind");
 
         // Register with instance A.
         let cell_a = build_velo(BindSpec::TcpLoopback).await.expect("cell A");
@@ -334,5 +401,39 @@ mod tests {
             CellMessage::Partition(partition) => assert_eq!(partition.len(), 1),
             other => panic!("expected partition, got {other:?}"),
         }
+    }
+
+    /// The synchronized-start barrier: two cells register, the controller's
+    /// `await_all_registered` releases once both have, and both cells' `await_start`
+    /// resolve after the controller triggers the START event.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn synchronized_start_releases_all_cells_together() {
+        let controller_velo = build_velo(BindSpec::TcpLoopback)
+            .await
+            .expect("controller velo");
+        let controller_peer = controller_velo.peer_info();
+        let start = controller_velo.event_manager().new_event().expect("start event");
+        let start_handle = start.handle();
+        let spec_for: SpecFor = Arc::new(|_| Some(vec![9_u8]));
+        let controller =
+            VeloControllerTransport::bind_controller(controller_velo, spec_for, 2, start_handle)
+                .expect("bind");
+
+        let cell_a_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell A");
+        let cell_a = VeloCellClient::connect(cell_a_velo, controller_peer.clone()).expect("A");
+        let cell_b_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell B");
+        let cell_b = VeloCellClient::connect(cell_b_velo, controller_peer).expect("B");
+
+        let reply_a = cell_a.register(0).await.expect("register A");
+        let reply_b = cell_b.register(1).await.expect("register B");
+        assert_eq!(reply_a.start_event, start_handle);
+
+        // Both cells registered, so the barrier is released immediately; trigger START.
+        controller.await_all_registered().await;
+        start.trigger().expect("trigger start");
+
+        // Both cells' awaits resolve now that START fired.
+        cell_a.await_start(reply_a.start_event).await.expect("A start");
+        cell_b.await_start(reply_b.start_event).await.expect("B start");
     }
 }

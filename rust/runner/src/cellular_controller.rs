@@ -192,6 +192,16 @@ pub fn run_cellular(
         let velo = build_velo(controller_velo_bind(is_k8s, &temp_root))
             .await
             .context("building controller velo")?;
+        // The run-wide synchronized-START event: cells await it after registering,
+        // and the controller triggers it once every cell has registered so they all
+        // begin dispatching together. Created before `velo` moves into the transport;
+        // held here so a bail (before trigger) drop-poisons it and unblocks every
+        // waiting cell with an error rather than a hang.
+        let start_event = velo
+            .event_manager()
+            .new_event()
+            .context("creating cellular start event")?;
+        let start_handle = start_event.handle();
         let (serve_source, cell_coordinate) = controller_bootstrap(is_k8s, &temp_root)?;
         let _bootstrap = serve_bootstrap(&serve_source, &velo.peer_info())
             .await
@@ -222,8 +232,9 @@ pub fn run_cellular(
             let specs = specs.clone();
             std::sync::Arc::new(move |cell_id: u32| specs.get(cell_id as usize).cloned())
         };
-        let mut transport = VeloControllerTransport::bind_controller(velo, spec_for)
-            .context("binding controller transport")?;
+        let mut transport =
+            VeloControllerTransport::bind_controller(velo, spec_for, cell_count, start_handle)
+                .context("binding controller transport")?;
 
         // Launch (local subprocesses) or expect (k8s pods) the cells.
         let launch_ctx = CellLaunchContext {
@@ -250,10 +261,27 @@ pub fn run_cellular(
         }
         drop(failure_tx);
 
+        // Synchronized start: wait for every cell to register (bounded — cells only
+        // fetch their envelope, no work yet), then trigger the START event so all
+        // cells begin dispatching together. A cell that dies before registering, or a
+        // registration timeout, aborts the run (dropping `start_event` poisons it, so
+        // any already-waiting cell unblocks with an error rather than hanging).
+        tokio::select! {
+            biased;
+            () = transport.await_all_registered() => {}
+            Some(failure) = failure_rx.recv() => bail!("{failure}"),
+            () = tokio::time::sleep(register_timeout()) => {
+                bail!("cells did not all register within the registration timeout")
+            }
+        }
+        start_event
+            .trigger()
+            .context("triggering cellular benchmark start")?;
+
         // Collect exactly one partition per cell (plus the latest heartbeat), with a
-        // generous deadline so a cell that never registers (a k8s pod with no child
-        // to watch) aborts loudly instead of hanging forever. The `select!` is
-        // `biased`, so a ready cell message is taken before a cell-exit failure — the
+        // generous deadline so a cell that never ships (a k8s pod with no child to
+        // watch) aborts loudly instead of hanging forever. The `select!` is `biased`,
+        // so a ready cell message is taken before a cell-exit failure — the
         // ship-then-exit race resolves in the cell's favour when both land together.
         let deadline = tokio::time::sleep(collect_timeout());
         tokio::pin!(deadline);
@@ -418,6 +446,19 @@ fn collect_timeout() -> std::time::Duration {
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(7200);
+    std::time::Duration::from_secs(secs)
+}
+
+/// The deadline for every cell to REGISTER (before the synchronized start). Cells
+/// only fetch their envelope here — no benchmark work yet — so this is a short
+/// startup bound (env `AIPERF_CELL_REGISTER_TIMEOUT_SECS`, default 5 minutes),
+/// unlike [`collect_timeout`] which must span the whole run.
+#[cfg(feature = "velo")]
+fn register_timeout() -> std::time::Duration {
+    let secs = std::env::var("AIPERF_CELL_REGISTER_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(300);
     std::time::Duration::from_secs(secs)
 }
 

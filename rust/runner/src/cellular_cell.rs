@@ -141,10 +141,18 @@ pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
     let controller = resolve_controller_peer(&source).await?;
     let client = VeloCellClient::connect(velo, controller)
         .map_err(|error| anyhow::anyhow!("cell {cell_id} connect: {error}"))?;
-    client
+    let reply = client
         .register(cell_id)
         .await
-        .map_err(|error| anyhow::anyhow!("cell {cell_id} register: {error}"))
+        .map_err(|error| anyhow::anyhow!("cell {cell_id} register: {error}"))?;
+    // Block until the controller triggers the synchronized START — every cell
+    // resumes together once all cells have registered. A poisoned event (the
+    // controller aborted before starting) surfaces here as an error.
+    client
+        .await_start(reply.start_event)
+        .await
+        .map_err(|error| anyhow::anyhow!("cell {cell_id} await start: {error}"))?;
+    Ok(reply.envelope)
 }
 
 /// Ships a cell's final records-shard partition + heartbeat to the controller over
