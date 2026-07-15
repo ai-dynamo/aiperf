@@ -411,6 +411,18 @@ fn build_cell_envelope(
         .and_then(serde_json::Value::as_object_mut)
     {
         runtime.insert("cells".to_owned(), serde_json::Value::from(1));
+        // Divide the thread-per-core worker count uniformly across the cells so N cell
+        // processes on one host target ~`workers` total threads, not N×`workers`
+        // (core over-subscription). UNIFORM integer division is required: the two-level
+        // (cell × thread) partition `(c + cells*t, cells*W)` assumes every cell has the
+        // same W, so round-robin (`owned_positions`) is wrong here — the remainder
+        // (`workers % cell_count`) is dropped, `.max(1)` keeps every cell threaded.
+        // Applies to both kinds: scheduled reads W in the sharded runtime, graph as its
+        // thread-per-core `worker_count`.
+        if let Some(workers) = runtime.get("workers").and_then(serde_json::Value::as_u64) {
+            let per_cell = (workers / u64::from(cell_count)).max(1);
+            runtime.insert("workers".to_owned(), serde_json::Value::from(per_cell));
+        }
     }
     let phases = run
         .get_mut("cfg")
