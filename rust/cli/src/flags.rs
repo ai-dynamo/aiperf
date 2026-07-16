@@ -219,6 +219,11 @@ pub struct ProfileFlags {
     #[arg(long = "no-fixed-schedule", default_value_t = false)]
     pub no_fixed_schedule: bool,
 
+    /// Public-dataset loader filters as `key=value` (`--dataset-filter`, repeatable).
+    /// Requires `--public-dataset`; merged into the dataset's loader options.
+    #[arg(long = "dataset-filter", num_args = 1..)]
+    pub dataset_filter: Option<Vec<String>>,
+
     /// Trials per variation (`--num-profile-runs`); `>1` repeats each run.
     #[arg(long = "num-profile-runs")]
     pub num_profile_runs: Option<u32>,

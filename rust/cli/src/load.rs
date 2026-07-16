@@ -199,6 +199,8 @@ pub(crate) struct Inputs {
     pub accuracy: Option<crate::model::config::Accuracy>,
     /// Recorded-graph synthesis block (present when a `--synthesis-*` flag is set).
     pub synthesis: Option<serde_json::Value>,
+    /// Parsed public-dataset loader filters (`--dataset-filter key=value`).
+    pub dataset_filters: Option<serde_json::Map<String, serde_json::Value>>,
     /// File dataset format id (`--custom-dataset-type`).
     pub custom_dataset_type: Option<String>,
     /// Named public dataset (mutually exclusive with synthetic/file).
@@ -525,6 +527,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         rankings: build_rankings(flags),
         accuracy: build_accuracy(flags),
         synthesis: build_synthesis(flags),
+        dataset_filters: parse_dataset_filters(flags)?,
         artifact_dir: flags
             .artifact_dir
             .clone()
@@ -595,6 +598,13 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         let meta = crate::model::public_catalog::lookup(name)
             .ok_or_else(|| anyhow::anyhow!("unknown public dataset {name:?}"))?;
         let mut options = meta.options.clone();
+        // `--dataset-filter key=value` pairs merge into the loader options
+        // (Python `rust_wire` `options.update(dataset.filters)`).
+        if let Some(filters) = &inputs.dataset_filters {
+            for (k, v) in filters {
+                options.insert(k.clone(), v.clone());
+            }
+        }
         if let Some(max) = crate::model::public_catalog::max_conversations(
             meta,
             Some(inputs.entries),
@@ -1191,6 +1201,33 @@ fn build_image_spec(flags: &ProfileFlags) -> Option<ImageSpec> {
 }
 
 /// Build the prefix-prompts block from the shared/user or pool flags.
+/// Parse `--dataset-filter key=value` flags into a filters map (Python
+/// `_parse_dataset_filters`): split on the first `=`, reject duplicates, require
+/// `--public-dataset`. Returns `None` when no filter is set.
+fn parse_dataset_filters(
+    flags: &ProfileFlags,
+) -> anyhow::Result<Option<serde_json::Map<String, serde_json::Value>>> {
+    let Some(entries) = flags.dataset_filter.as_ref().filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        flags.public_dataset.is_some(),
+        "--dataset-filter requires --public-dataset"
+    );
+    let mut map = serde_json::Map::new();
+    for entry in entries {
+        let (key, value) = entry
+            .split_once('=')
+            .ok_or_else(|| anyhow::anyhow!("--dataset-filter {entry:?} must be key=value"))?;
+        anyhow::ensure!(
+            !map.contains_key(key),
+            "--dataset-filter key {key:?} specified more than once"
+        );
+        map.insert(key.to_string(), serde_json::Value::String(value.to_string()));
+    }
+    Ok(Some(map))
+}
+
 /// Build the recorded-graph synthesis block from the `--synthesis-*` flags
 /// (Python `_apply_synthesis` + `_project_trajectory_knobs`). Present only when a
 /// synthesis flag is set; it carries the full `SynthesisConfig` (defaults filled),

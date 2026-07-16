@@ -1065,6 +1065,7 @@ impl Benchmark {
             rankings: None,
             accuracy: None,
             synthesis: None,
+            dataset_filters: None,
             artifact_dir: artifact_dir
                 .or_else(|| config_artifact_dir.map(PathBuf::from))
                 .unwrap_or_else(|| PathBuf::from("artifacts")),
