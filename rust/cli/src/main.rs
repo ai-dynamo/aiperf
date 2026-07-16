@@ -43,16 +43,13 @@ unsafe extern "C" {
 }
 
 fn main() {
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_ansi(false)
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("AIPERF_LOG")
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
-        )
-        .init();
-
     let argv: Vec<String> = std::env::args().skip(1).collect();
+
+    // Install the tracing subscriber (stderr console + deferred `logs/aiperf.log`
+    // file layer) at INFO by default, honoring `--verbose`/`--extra-verbose`/
+    // `--log-level` and the `AIPERF_LOG` env. Done before the `--execute`
+    // interception below so the re-exec child inherits the same subscriber.
+    aiperf_cli::logging::init(&argv);
 
     // Internal re-exec protocol: the front door spawns `aiperf --execute` (and the
     // cellular launcher `aiperf --cell` / `--aggregator`) for one run's execution.

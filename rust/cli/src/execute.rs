@@ -71,6 +71,10 @@ pub fn run_once(
 ) -> anyhow::Result<Terminal> {
     let mut child = Command::new(exec_bin)
         .arg(crate::execute_mode::EXECUTE_FLAG)
+        // Hand the resolved log-level directive to the child: its argv is just
+        // `--execute`, so the parent's level is the only way it inherits one
+        // (mirrors Python, where the parent owns the log config).
+        .env(crate::logging::LOG_ENV, crate::logging::current_directive())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -98,7 +102,11 @@ pub fn run_once(
         let reader = BufReader::new(stderr);
         for line in reader.lines().map_while(Result::ok) {
             if !line.trim().is_empty() {
-                eprintln!("aiperf-exec: {line}");
+                // Forward each child (execution-engine) stderr line through our
+                // own tracing so it reaches the console AND `logs/aiperf.log`,
+                // mirroring Python's `_forward_runner_stderr_line`
+                // (`logger.info("aiperf-runner: %s", line)`).
+                tracing::info!(target: "aiperf_runner", "aiperf-runner: {line}");
             }
         }
     });

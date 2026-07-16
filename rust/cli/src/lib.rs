@@ -27,6 +27,7 @@ pub mod flags;
 #[cfg(feature = "search-pyo3")]
 pub mod isotonic;
 pub mod load;
+pub mod logging;
 pub mod model;
 pub mod profile;
 #[cfg(feature = "search-pyo3")]
