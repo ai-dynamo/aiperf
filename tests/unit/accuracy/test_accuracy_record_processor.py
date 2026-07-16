@@ -143,11 +143,15 @@ class TestAccuracyRecordProcessorSessionBounds:
             worker_id="worker-9",
             request_end_ns=1_234_567_890,
             benchmark_phase=CreditPhase.PROFILING,
+            conversation_id="session_000004",
+            x_request_id="req-abc",
         )
         result = await processor.process_record(sample_parsed_record, metadata)
 
         assert isinstance(result, AccuracyRecordsData)
         assert result.session_num == 4
+        assert result.conversation_id == "session_000004"
+        assert result.x_request_id == "req-abc"
         assert result.worker_id == "worker-9"
         assert result.benchmark_phase == CreditPhase.PROFILING
         assert result.timestamp_ns == 1_234_567_890

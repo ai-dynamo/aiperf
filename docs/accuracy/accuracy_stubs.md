@@ -88,6 +88,8 @@ and `TelemetryRecord`.
 class AccuracyRecordsData(AIPerfBaseModel):
     record_type: ClassVar[str] = "accuracy"
     session_num: int          # session/conversation index
+    conversation_id: str | None = None  # problem id; key into inputs.json for the prompt
+    x_request_id: str | None = None      # unique per-request id
     worker_id: str            # record processor that produced this record
     benchmark_phase: CreditPhase  # warmup vs profiling
     timestamp_ns: int         # wall-clock ns when grading completed

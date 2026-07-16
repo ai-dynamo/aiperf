@@ -96,6 +96,16 @@ class AccuracyRecordsData(AIPerfBaseModel):
         ge=0,
         description="Conversation/session index this response came from, used to map to task",
     )
+    conversation_id: str | None = Field(
+        default=None,
+        description="Stable id of the benchmark problem/conversation this response "
+        "answered; the key to look up the full prompt in inputs.json",
+    )
+    x_request_id: str | None = Field(
+        default=None,
+        description="Unique per-request id (X-Request-ID) for tracing this exact "
+        "graded response back to the raw records",
+    )
     worker_id: str = Field(
         description="ID of the record processor that produced this record"
     )

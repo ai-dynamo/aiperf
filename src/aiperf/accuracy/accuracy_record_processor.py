@@ -116,6 +116,8 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
 
         return AccuracyRecordsData(
             session_num=metadata.session_num,
+            conversation_id=metadata.conversation_id,
+            x_request_id=metadata.x_request_id,
             worker_id=metadata.worker_id,
             benchmark_phase=metadata.benchmark_phase,
             timestamp_ns=metadata.request_end_ns,

@@ -361,8 +361,10 @@ unparsed_rate`.
 **Per-record JSONL:** `<artifact_dir>/accuracy_export.jsonl` (or
 `<prefix>_accuracy.jsonl` when an artifact prefix is configured) — one JSON line
 per graded response with the full grading detail that the summary rolls up.
-Each line carries: `session_num`, `worker_id`, `benchmark_phase`,
-`timestamp_ns`, `task`, `grader_name`, `passed`, `unparsed`, `confidence`,
+Each line carries: `session_num`, `conversation_id` (the problem id — the key to
+look up the full prompt in `inputs.json`), `x_request_id`, `worker_id`,
+`benchmark_phase`, `timestamp_ns`, `task`, `grader_name`, `passed`, `unparsed`,
+`confidence`,
 `expected` (ground truth), `actual` (extracted answer), `reasoning` (the
 grader's decision trace), `model_output` (the full answer content the model
 returned), and `model_thinking` (the model's reasoning/`reasoning_content`
