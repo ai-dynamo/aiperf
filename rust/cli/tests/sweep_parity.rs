@@ -146,29 +146,16 @@ fn yaml_sweep_cells_match_oracle() {
 fn search_recipe_cells_match_oracle() {
     // A grid `--search-recipe` expands its log-spaced search space into a static
     // sweep; native must reproduce the oracle's per-cell list byte-exact.
-    for name in ["recipe_ramp"] {
+    for name in ["recipe_ramp", "recipe_prefill", "recipe_decode"] {
         let golden = load_golden(name);
         let cells_g = golden["cells"].as_array().expect("cells array");
         let flags = ProfileFlags::parse_from_args(&fixture_args(name))
             .unwrap_or_else(|e| panic!("[{name}] flags: {e}"));
-        // Apply the recipe expansion (as `profile::run` does) before sweeping.
-        let flags = match aiperf_cli::search::expand_grid_recipe(&flags).expect("recipe") {
-            Some(exp) => exp.apply(&flags),
-            None => flags,
-        };
-        let expansion = sweep::expand(&flags, sweep::SweepType::Grid)
-            .unwrap_or_else(|e| panic!("[{name}] expand: {e}"));
-        let cells = run::plan_cells(
-            &flags,
-            &expansion,
-            1,
-            IterationOrder::Repeated,
-            "parity-sweep",
-            aiperf_cli::profile::seed_policy(&flags),
-            true,
-            load::resolve,
-        )
-        .unwrap_or_else(|e| panic!("[{name}] plan_cells: {e}"));
+        let recipe = aiperf_cli::search::expand_recipe(&flags)
+            .expect("recipe")
+            .expect("recipe present");
+        let cells = aiperf_cli::profile::plan_recipe_cells(&flags, &recipe, "parity-sweep")
+            .unwrap_or_else(|e| panic!("[{name}] plan_recipe_cells: {e}"));
         assert_eq!(cells.len(), cells_g.len(), "[{name}] cell count");
         let ported = ["phases", "datasets", "endpoint", "models"];
         for (i, (cell, want)) in cells.iter().zip(cells_g).enumerate() {

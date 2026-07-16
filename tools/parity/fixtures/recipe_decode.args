@@ -1,0 +1,1 @@
+--model Qwen/Qwen3-0.6B --url 127.0.0.1:8000 --endpoint-type chat --streaming --request-count 10 --search-recipe decode-itl-curve --concurrency-min 1 --concurrency-max 100 --concurrency-steps 3 --osl-min 64 --osl-max 256 --osl-steps 2 --artifact-dir /tmp/aiperf-parity/decode

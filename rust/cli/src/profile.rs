@@ -49,13 +49,12 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         return run_single(run);
     }
 
-    // A grid `--search-recipe` expands its search space into swept flags, then
-    // the normal sweep path takes over. (bayes/isotonic recipes run a dynamic
-    // ask-tell loop, handled elsewhere.)
-    let flags = match crate::search::expand_grid_recipe(&flags)? {
-        Some(expansion) => expansion.apply(&flags),
-        None => flags,
-    };
+    // A grid `--search-recipe` expands its search space into a static grid sweep
+    // over config paths (mutating the built cfg per variation). (bayes/isotonic
+    // recipes run a dynamic ask-tell loop, handled elsewhere.)
+    if let Some(recipe) = crate::search::expand_recipe(&flags)? {
+        return run_recipe_sweep(&flags, recipe);
+    }
 
     let sweep_type = match flags.sweep_type.as_str() {
         "grid" => sweep::SweepType::Grid,
@@ -116,6 +115,68 @@ fn run_yaml_sweep(
     let sweep_id = uuid::Uuid::new_v4().simple().to_string();
     let cells = plan_yaml_cells(flags.artifact_dir.clone(), &base, &sweep, &sweep_id)?;
     run_cells(flags, &cells)
+}
+
+/// Execute a grid `--search-recipe`: expand its config-path axes into a static
+/// grid, resolve the base run once, mutate the built cfg per variation, stamp the
+/// sweep envelope, and run every cell. Byte-exact vs the Python recipe → sweep.
+fn run_recipe_sweep(flags: &ProfileFlags, recipe: crate::search::RecipeSweep) -> anyhow::Result<i32> {
+    let sweep_id = uuid::Uuid::new_v4().simple().to_string();
+    let cells = plan_recipe_cells(flags, &recipe, &sweep_id)?;
+    run_cells(flags, &cells)
+}
+
+/// Build the stamped per-cell runs for a grid `--search-recipe` (testable
+/// independently of execution): resolve the base run, mutate the built cfg at
+/// each recipe axis per variation, and stamp the sweep envelope + artifact dir.
+pub fn plan_recipe_cells(
+    flags: &ProfileFlags,
+    recipe: &crate::search::RecipeSweep,
+    sweep_id: &str,
+) -> anyhow::Result<Vec<sweep_run::Cell>> {
+    let variations = recipe.expand();
+    let seed = seed_policy(flags);
+    let base = load::resolve(flags)?;
+
+    let mut cells = Vec::with_capacity(variations.len());
+    for v in &variations {
+        let mut run = base.clone();
+        // Mutate the built cfg at each recipe axis (concurrency / isl / osl scalar).
+        let mut cfg = serde_json::to_value(&run.cfg)?;
+        for (kind, value) in &v.overrides {
+            crate::search::apply_override(&mut cfg, *kind, *value);
+        }
+        run.cfg = serde_json::from_value(cfg)?;
+        let dir = crate::sweep::artifact_dir::resolve(
+            &run.artifact_dir,
+            true,
+            1,
+            &v.dir_name,
+            0,
+            IterationOrder::Repeated,
+        );
+        run.sweep_id = Some(sweep_id.to_string());
+        let values: serde_json::Map<String, serde_json::Value> = v
+            .values
+            .iter()
+            .map(|(k, val)| (k.clone(), serde_json::Value::from(*val)))
+            .collect();
+        run.variation = Some(serde_json::json!({
+            "index": v.index,
+            "label": v.label,
+            "values": values,
+        }));
+        run.random_seed = seed.seed(v.index);
+        run.trial = 0;
+        run.artifact_dir = dir;
+        cells.push(sweep_run::Cell {
+            index: v.index,
+            trial: 0,
+            label: v.label.clone(),
+            run,
+        });
+    }
+    Ok(cells)
 }
 
 /// Expand a YAML `sweep:` block into stamped per-cell runs (single trial each).
