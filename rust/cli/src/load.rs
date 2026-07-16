@@ -295,6 +295,20 @@ pub(crate) fn default_isl() -> Distribution {
 ///
 /// Rejects multi-run (any comma-list sweep axis) since multi-run/orchestration
 /// is deferred.
+/// Map `--export-level` (`summary`/`records`/`raw`, or unset) to the per-record
+/// format list plus the raw-JSONL flag. Shared by the flags path and the
+/// `--config` override so both interpret the flag identically (Python
+/// `_converter_runtime`). `raw` forces `profile_export_raw.jsonl` on.
+pub(crate) fn export_level_formats(level: Option<&str>) -> anyhow::Result<(Vec<String>, bool)> {
+    Ok(match level {
+        None => (vec!["jsonl".to_string()], false),
+        Some("summary") => (Vec::new(), false),
+        Some("records") => (vec!["jsonl".to_string()], false),
+        Some("raw") => (vec!["jsonl".to_string()], true),
+        Some(other) => anyhow::bail!("unknown --export-level {other:?} (summary/records/raw)"),
+    })
+}
+
 pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
     reject_sweep("--concurrency", flags.concurrency.as_deref())?;
     reject_sweep("--request-count", flags.request_count.as_deref())?;
@@ -330,13 +344,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
     // Export level maps to the per-record format list + raw flag (Python
     // `_converter_runtime`): summary => no per-record files; records => JSONL;
     // raw => JSONL + raw JSONL. Unset keeps the default JSONL.
-    let (records_formats, export_raw) = match flags.export_level.as_deref() {
-        None => (vec!["jsonl".to_string()], false),
-        Some("summary") => (Vec::new(), false),
-        Some("records") => (vec!["jsonl".to_string()], false),
-        Some("raw") => (vec!["jsonl".to_string()], true),
-        Some(other) => anyhow::bail!("unknown --export-level {other:?} (summary/records/raw)"),
-    };
+    let (records_formats, export_raw) = export_level_formats(flags.export_level.as_deref())?;
     // Fixed-schedule replays each timestamped entry once, so the request bound is
     // the schedule length (the input file's non-empty line count).
     let (fixed_schedule, request_count) = if flags.fixed_schedule {

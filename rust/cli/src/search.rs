@@ -94,9 +94,11 @@ impl PostProcess {
     /// Compute this handler's artifact payload from the parsed sweep aggregate.
     fn compute(&self, sweep_json: &Value) -> anyhow::Result<Value> {
         match self {
-            PostProcess::SlaBreach(spec) => {
-                Ok(sla_breach::process(sweep_json, &spec.swept_param, &spec.filters))
-            }
+            PostProcess::SlaBreach(spec) => Ok(sla_breach::process(
+                sweep_json,
+                &spec.swept_param,
+                &spec.filters,
+            )),
             PostProcess::DegradationKnee(spec) => degradation::process(sweep_json, spec),
             PostProcess::TtftCurve(spec) => curve::process(sweep_json, spec),
             PostProcess::ItlSurface(spec) => surface::process(sweep_json, spec),

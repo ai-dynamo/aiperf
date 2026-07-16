@@ -51,7 +51,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
             return run_yaml_sweep(&flags, base, sweep);
         }
         let expanded = crate::expand::render_with_context(base)?;
-        let run = yaml::resolve_expanded_value(expanded, flags.artifact_dir.clone())?;
+        let run = yaml::resolve_expanded_value(expanded, flags.artifact_dir.clone(), Some(&flags))?;
         return run_single(run);
     }
 
@@ -218,7 +218,13 @@ fn run_yaml_sweep(
     sweep: crate::sweep::yaml_sweep::YamlSweep,
 ) -> anyhow::Result<i32> {
     let sweep_id = uuid::Uuid::new_v4().simple().to_string();
-    let cells = plan_yaml_cells(flags.artifact_dir.clone(), &base, &sweep, &sweep_id)?;
+    let cells = plan_yaml_cells(
+        flags.artifact_dir.clone(),
+        &base,
+        &sweep,
+        &sweep_id,
+        Some(flags),
+    )?;
     run_cells(flags, &cells, true, IterationOrder::Repeated)
 }
 
@@ -242,9 +248,9 @@ fn run_recipe_sweep(
     // Optional post-process (e.g. the SLA-breach knee): runs after the sweep
     // aggregate lands so it can read the per-combination metrics back off disk.
     if let (Some(spec), Some(base)) = (recipe.post_process.as_ref(), base.as_ref())
-        && let Err(e) = write_sla_breach(base, spec)
+        && let Err(e) = crate::search::run_post_process(base, spec)
     {
-        tracing::warn!("failed to write sla_breach.json: {e}");
+        tracing::warn!("failed to write {}: {e}", spec.output_filename());
     }
     Ok(code)
 }
@@ -1047,6 +1053,7 @@ pub fn plan_yaml_cells(
     base: &serde_json::Value,
     sweep: &crate::sweep::yaml_sweep::YamlSweep,
     sweep_id: &str,
+    overrides: Option<&crate::flags::ProfileFlags>,
 ) -> anyhow::Result<Vec<sweep_run::Cell>> {
     let variations = sweep.expand(base)?;
     // Base seed: the config's `randomSeed` (or the shared default), then `+index`.
@@ -1063,7 +1070,7 @@ pub fn plan_yaml_cells(
     let mut cells = Vec::with_capacity(variations.len());
     for v in &variations {
         let expanded = crate::expand::render_with_context(v.config.clone())?;
-        let mut run = yaml::resolve_expanded_value(expanded, artifact_dir.clone())?;
+        let mut run = yaml::resolve_expanded_value(expanded, artifact_dir.clone(), overrides)?;
         let dir = crate::sweep::artifact_dir::resolve(
             &run.artifact_dir,
             true,

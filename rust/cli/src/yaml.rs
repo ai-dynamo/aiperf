@@ -47,7 +47,7 @@ pub(crate) fn resolve_str(
     let raw: serde_json::Value =
         serde_yaml::from_str(text).map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))?;
     let expanded = crate::expand::expand_config(raw)?;
-    resolve_expanded_value(expanded, artifact_dir)
+    resolve_expanded_value(expanded, artifact_dir, None)
 }
 
 /// Resolve an already `${ENV}`+Jinja-expanded config value into one run. Shared
@@ -56,6 +56,7 @@ pub(crate) fn resolve_str(
 pub(crate) fn resolve_expanded_value(
     expanded: serde_json::Value,
     artifact_dir: Option<PathBuf>,
+    overrides: Option<&crate::flags::ProfileFlags>,
 ) -> anyhow::Result<crate::model::BenchmarkRun> {
     let mut file: ConfigFile = serde_json::from_value(expanded)
         .map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))?;
@@ -67,34 +68,54 @@ pub(crate) fn resolve_expanded_value(
         file.benchmark.runtime = file.runtime.take();
     }
     let mut inputs = file.benchmark.into_inputs(artifact_dir, random_seed)?;
-    // CLI over config: an explicit `--tokenizer` on the `aiperf profile` command
-    // line wins over the config's `tokenizer.name` (matching Python's flag-merge
-    // order, where CLI args override the loaded config). The parsed `ProfileFlags`
-    // live in the front-door command (`profile.rs`), which does not thread them
-    // into this resolver, so the override is read from the process argv here — the
-    // config resolver is only ever reached via `aiperf profile --config`, so a
-    // `--tokenizer` present in argv is unambiguously the user's intent.
-    if let Some(name) = cli_tokenizer_override() {
-        inputs.tokenizer_name = Some(name);
-    }
+    apply_cli_overrides(&mut inputs, overrides)?;
     load::build(inputs)
 }
 
-/// Read an explicit `--tokenizer <name>` / `--tokenizer=<name>` from the process
-/// argv, if present. Used to let the CLI flag win over a config file's
-/// `tokenizer.name` on the `--config` path (whose call site does not thread the
-/// parsed flags into the resolver).
-fn cli_tokenizer_override() -> Option<String> {
-    let mut args = std::env::args();
-    while let Some(arg) = args.next() {
-        if arg == "--tokenizer" {
-            return args.next().filter(|v| !v.is_empty());
-        }
-        if let Some(v) = arg.strip_prefix("--tokenizer=") {
-            return (!v.is_empty()).then(|| v.to_string());
-        }
+/// Apply explicit `aiperf profile` flags over a config-file-derived run.
+///
+/// The `--config` path builds the run from the file; a flag the user *also*
+/// passed on the command line must win (Python's flag-merge order: CLI over
+/// loaded config). Without this, operational flags beside `--config` are
+/// silently dropped — e.g. `--config foo.yaml --export-level raw` would never
+/// write `profile_export_raw.jsonl`, and `--cells 4` would run single-process.
+///
+/// Only options the user actually set (a `Some`/non-empty flag) override; unset
+/// flags keep the config's value. Content that belongs in the config (model,
+/// dataset shape, endpoint, phases) is intentionally NOT overridden here — those
+/// are authored in the file, not layered from the CLI.
+fn apply_cli_overrides(
+    inputs: &mut Inputs,
+    overrides: Option<&crate::flags::ProfileFlags>,
+) -> anyhow::Result<()> {
+    let Some(flags) = overrides else {
+        return Ok(());
+    };
+    // `--tokenizer` over `tokenizer.name`.
+    if let Some(name) = flags.tokenizer.clone() {
+        inputs.tokenizer_name = Some(name);
     }
-    None
+    // `--export-level` (summary/records/raw) over `artifacts.records`/`artifacts.raw`.
+    if let Some(level) = flags.export_level.as_deref() {
+        let (records_formats, export_raw) = load::export_level_formats(Some(level))?;
+        inputs.records_formats = records_formats;
+        inputs.export_raw = export_raw;
+    }
+    // `--cells N` over `runtime.cells`.
+    if let Some(cells) = flags.cells {
+        inputs.runtime_cells = cells;
+    }
+    // `--random-seed S` over the config seed (sets both run and dataset seed,
+    // matching the flags-only path).
+    if let Some(seed) = flags.random_seed {
+        inputs.random_seed = Some(seed);
+        inputs.dataset_random_seed = Some(seed);
+    }
+    // `--server-metrics-formats` over `serverMetrics` export formats.
+    if !flags.server_metrics_formats.is_empty() {
+        inputs.server_metrics_formats = Some(flags.server_metrics_formats.clone());
+    }
+    Ok(())
 }
 
 /// Parse a config file to its raw value and apply only `${ENV}` substitution
@@ -318,11 +339,47 @@ struct RuntimeSection {
     cells: Option<u32>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 struct ModelsSection {
     items: Vec<ModelItem>,
     /// Model-selection strategy (`round_robin`/`random`/`weighted`).
     strategy: Option<String>,
+}
+
+// Byte-exact with the Python `models` normalizer
+// (`src/aiperf/config/loader/normalizers.py::_normalize_models`): the `models:`
+// field accepts a single model-name string, a list of model-name strings, or the
+// advanced `{items, strategy}` map. All three normalize to `items` here, so
+// `models: [gpt-4]` and `models: gpt-4` are valid shorthands, not just the
+// advanced object.
+impl<'de> Deserialize<'de> for ModelsSection {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            One(String),
+            Many(Vec<String>),
+            Advanced {
+                items: Vec<ModelItem>,
+                #[serde(default)]
+                strategy: Option<String>,
+            },
+        }
+        Ok(match Raw::deserialize(deserializer)? {
+            Raw::One(name) => ModelsSection {
+                items: vec![ModelItem { name }],
+                strategy: None,
+            },
+            Raw::Many(names) => ModelsSection {
+                items: names.into_iter().map(|name| ModelItem { name }).collect(),
+                strategy: None,
+            },
+            Raw::Advanced { items, strategy } => ModelsSection { items, strategy },
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]

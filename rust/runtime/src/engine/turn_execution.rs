@@ -1,14 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Pluggable placement for HTTP turn execution.
+//! Transport-neutral placement for turn execution.
 //!
-//! The benchmark has one scheduler and one logical `TurnDispatcher`. This
-//! module places only its prepared HTTP commands: either directly on the
-//! coordinator reactor or across thread-per-core reactors. The factory and
-//! backend traits are the injection point for a future cross-node transport;
-//! phase, workload, admission, observer, and reporting code never knows where a
-//! command ran.
+//! The benchmark has one scheduler and one logical `TurnDispatcher`. This module
+//! owns the ONE execution model — direct on the coordinator reactor, or across
+//! thread-per-core reactors — parameterized only by a [`WorkerSink`] (the Rust
+//! analogue of Python's `BaseTransport.send_request`). HTTP, gRPC, and any future
+//! socket transport plug in a sink via [`ExecutionSinkBuilder`]; the worker loop,
+//! measurement, drain, cancellation, and streaming relay are written once here.
+//! The factory and backend traits are the injection point for a future
+//! cross-node transport; phase, workload, admission, observer, and reporting code
+//! never knows where or over what transport a command ran.
 
 use std::cell::{Cell, RefCell};
 use std::future::poll_fn;
@@ -39,7 +42,7 @@ const WORKER_QUEUE_CAPACITY: usize = 256;
 const WORKER_RESPONSE_CAPACITY: usize = 256;
 
 /// Inputs available to an execution-placement factory for one benchmark run.
-pub struct HttpExecutionBackendConfig {
+pub struct ExecutionBackendConfig {
     /// Number of HTTP execution workers requested by resolved Config v2.
     pub workers: usize,
     /// Coordinator-local clock used by direct execution.
@@ -56,7 +59,7 @@ pub struct HttpExecutionBackendConfig {
     ///
     /// The factory runs independently on every native worker, preserving the
     /// same dense-key table contract a future remote placement can implement.
-    pub prepared_endpoints: Option<Arc<dyn HttpPreparedEndpointTableFactory>>,
+    pub prepared_endpoints: Option<Arc<dyn PreparedEndpointTableFactory>>,
 }
 
 /// Worker-local prepared endpoint table construction.
@@ -64,7 +67,7 @@ pub struct HttpExecutionBackendConfig {
 /// Implementations retain registry/factory state only. Each placement worker
 /// calls this seam before accepting commands, so prepared endpoint objects and
 /// credentials never cross a thread or remote execution boundary.
-pub trait HttpPreparedEndpointTableFactory: Send + Sync {
+pub trait PreparedEndpointTableFactory: Send + Sync {
     /// Build one complete deterministic dense-key table for a worker.
     fn prepare_worker(&self) -> Result<PreparedEndpointTable>;
 }
@@ -72,7 +75,161 @@ pub trait HttpPreparedEndpointTableFactory: Send + Sync {
 /// Composition seam for local, thread-per-core, or remote execution placement.
 pub trait RequestExecutorFactory: Send + Sync {
     /// Construct the backend used below the run's single logical dispatcher.
-    fn build(&self, config: HttpExecutionBackendConfig) -> Result<Rc<dyn RequestExecutor>>;
+    fn build(&self, config: ExecutionBackendConfig) -> Result<Rc<dyn RequestExecutor>>;
+}
+
+/// The worker-facing contract of a transport sink — the Rust analogue of the
+/// Python `BaseTransport.send_request` seam.
+///
+/// This is the ONLY thing that differs between native transports: given a
+/// prepared turn, drive it to terminal against a real server and feed the
+/// worker-local observer. The thread-per-core execution machinery
+/// ([`ThreadPerCoreExecutor`]) is written once over this trait, so HTTP, gRPC,
+/// and any future socket transport share one worker loop, one measurement path,
+/// one drain, one cancellation, and one streaming relay — a transport never
+/// brings its own execution model, only its sink.
+#[async_trait(?Send)]
+pub trait WorkerSink {
+    /// Anchor the sink's timestamp origin to the run origin (shared with the
+    /// worker observer so TTFT/ITL are not offset by setup duration).
+    fn set_run_origin(&self, origin_ns: i64);
+
+    /// Report the coordinator-known inference dimensions for one turn (used by
+    /// the dimension probe; no IO).
+    fn inference_dimensions(&self, turn: &TurnToSend) -> InferenceDimensions;
+
+    /// Whether this sink can stream intermediate responses to a live observer.
+    fn supports_response_streaming(&self) -> bool;
+
+    /// Drive one prepared turn to terminal, recording into `observer`. When the
+    /// sink streams and `responses` is `Some`, intermediate parsed responses are
+    /// forwarded live; otherwise `responses` is ignored.
+    async fn dispatch_measured(
+        &self,
+        observer: &NativeMetricsObserver,
+        turn: PreparedTurn,
+        context: &MeasuredContext,
+        on_first_token: &dyn Fn(i64),
+        responses: Option<&dyn TurnResponseObserver>,
+    ) -> Result<DispatchResult>;
+
+    /// Optional one-shot warm round-trip discarded before timed issuance. The
+    /// default is a no-op for transports that do not warm connections.
+    async fn prewarm(&self, _turn: PreparedTurn) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[async_trait(?Send)]
+impl WorkerSink for TransportSink {
+    fn set_run_origin(&self, origin_ns: i64) {
+        TransportSink::set_run_origin(self, origin_ns);
+    }
+
+    fn inference_dimensions(&self, turn: &TurnToSend) -> InferenceDimensions {
+        <TransportSink as crate::scheduled::TurnDispatcher>::inference_dimensions(self, turn)
+    }
+
+    fn supports_response_streaming(&self) -> bool {
+        true
+    }
+
+    async fn dispatch_measured(
+        &self,
+        observer: &NativeMetricsObserver,
+        turn: PreparedTurn,
+        context: &MeasuredContext,
+        on_first_token: &dyn Fn(i64),
+        responses: Option<&dyn TurnResponseObserver>,
+    ) -> Result<DispatchResult> {
+        TransportSink::dispatch_measured(self, observer, turn, context, on_first_token, responses)
+            .await
+    }
+
+    async fn prewarm(&self, turn: PreparedTurn) -> Result<()> {
+        <TransportSink as RequestExecutor>::prewarm(self, turn).await
+    }
+}
+
+/// Worker-local sink construction — the transport-specific half of execution.
+///
+/// One implementation per transport (HTTP, gRPC). Everything above it — worker
+/// threads, measurement, drain, cancellation, streaming — is generic over this
+/// builder, so adding a transport means writing a builder, never a second
+/// execution backend. The builder is `Send + Sync` (moved across worker threads)
+/// and constructs the `!Send` sink inside each worker.
+pub trait ExecutionSinkBuilder: Send + Sync + 'static {
+    /// The worker-local sink this transport drives.
+    type Sink: WorkerSink + RequestExecutor + 'static;
+
+    /// Short worker-thread name infix (e.g. `"http"`, `"grpc"`).
+    fn label(&self) -> &'static str;
+
+    /// Build one worker-local sink on `clock` for `worker_id`.
+    fn build_sink(&self, clock: Rc<dyn Clock>, worker_id: usize) -> Result<Self::Sink>;
+}
+
+/// Built-in HTTP sink builder: constructs a worker-local [`TransportSink`].
+pub struct HttpSinkBuilder {
+    base_urls: Vec<String>,
+    model: String,
+    transport: TransportSinkConfig,
+    prepared_endpoints: Option<Arc<dyn PreparedEndpointTableFactory>>,
+}
+
+impl HttpSinkBuilder {
+    /// Capture the per-run HTTP sink inputs from the resolved backend config.
+    pub fn from_config(config: &ExecutionBackendConfig) -> Self {
+        Self {
+            base_urls: config.base_urls.clone(),
+            model: config.model.clone(),
+            transport: config.transport.clone(),
+            prepared_endpoints: config.prepared_endpoints.clone(),
+        }
+    }
+}
+
+impl ExecutionSinkBuilder for HttpSinkBuilder {
+    type Sink = TransportSink;
+
+    fn label(&self) -> &'static str {
+        "http"
+    }
+
+    fn build_sink(&self, clock: Rc<dyn Clock>, _worker_id: usize) -> Result<TransportSink> {
+        prepare_transport_sink(
+            clock,
+            0,
+            &self.base_urls,
+            self.model.clone(),
+            self.transport.clone(),
+            self.prepared_endpoints.as_deref(),
+        )
+    }
+}
+
+/// Build the native execution backend for any transport sink builder.
+///
+/// One worker keeps the sink on the coordinator reactor; two or more create the
+/// generic [`ThreadPerCoreExecutor`] over `builder`. This is the single entry the
+/// HTTP and gRPC factories share — there is one execution model, selected only by
+/// the sink builder handed in.
+pub(crate) fn build_native<B: ExecutionSinkBuilder>(
+    builder: B,
+    workers: usize,
+    coordinator_clock: Rc<dyn Clock>,
+    real_clock_anchor: RealClockAnchor,
+) -> Result<Rc<dyn RequestExecutor>> {
+    ensure!(workers > 0, "execution workers must be positive");
+    if workers == 1 {
+        return Ok(Rc::new(builder.build_sink(coordinator_clock, 0)?));
+    }
+    Ok(Rc::new(ThreadPerCoreExecutor::new(
+        builder,
+        workers,
+        coordinator_clock,
+        real_clock_anchor,
+    )?))
 }
 
 /// Native local execution factory.
@@ -81,25 +238,19 @@ pub trait RequestExecutorFactory: Send + Sync {
 /// workers create one current-thread Tokio runtime and one transport stack per
 /// OS thread; no worker owns scheduling or benchmark policy.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct NativeRequestExecutorFactory;
+pub struct HttpExecutionFactory;
 
-impl RequestExecutorFactory for NativeRequestExecutorFactory {
-    fn build(&self, config: HttpExecutionBackendConfig) -> Result<Rc<dyn RequestExecutor>> {
-        ensure!(
-            config.workers > 0,
-            "HTTP execution workers must be positive"
-        );
-        if config.workers == 1 {
-            return Ok(Rc::new(prepare_transport_sink(
-                config.coordinator_clock,
-                0,
-                &config.base_urls,
-                config.model,
-                config.transport,
-                config.prepared_endpoints.as_deref(),
-            )?));
-        }
-        Ok(Rc::new(ThreadPerCoreRequestExecutor::new(config)?))
+impl RequestExecutorFactory for HttpExecutionFactory {
+    fn build(&self, config: ExecutionBackendConfig) -> Result<Rc<dyn RequestExecutor>> {
+        let workers = config.workers;
+        let coordinator_clock = config.coordinator_clock.clone();
+        let anchor = config.real_clock_anchor;
+        build_native(
+            HttpSinkBuilder::from_config(&config),
+            workers,
+            coordinator_clock,
+            anchor,
+        )
     }
 }
 
@@ -202,53 +353,52 @@ impl Drop for PlacementCancellationGuard {
 }
 
 /// Local thread-per-core placement behind the single dispatcher.
-struct ThreadPerCoreRequestExecutor {
+/// Generic thread-per-core placement behind the single dispatcher.
+///
+/// One worker loop for every transport: the sink type is the only variable,
+/// supplied by `B::Sink`. Worker threads, measurement, drain, cancellation, and
+/// streaming are written once here.
+struct ThreadPerCoreExecutor<B: ExecutionSinkBuilder> {
     senders: RefCell<Option<Vec<mpsc::Sender<WorkerMessage>>>>,
     threads: RefCell<Vec<JoinHandle<Result<()>>>>,
     next_worker: Cell<usize>,
     run_origin_ns: Cell<Option<i64>>,
-    dimension_sink: TransportSink,
+    dimension_sink: B::Sink,
 }
 
-impl ThreadPerCoreRequestExecutor {
-    fn new(config: HttpExecutionBackendConfig) -> Result<Self> {
+impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
+    fn new(
+        builder: B,
+        workers: usize,
+        coordinator_clock: Rc<dyn Clock>,
+        real_clock_anchor: RealClockAnchor,
+    ) -> Result<Self> {
         ensure!(
-            config.workers > 1,
+            workers > 1,
             "thread-per-core execution requires at least two workers"
         );
-        let dimension_sink = prepare_transport_sink(
-            config.coordinator_clock.clone(),
-            0,
-            &config.base_urls,
-            config.model.clone(),
-            config.transport.clone(),
-            config.prepared_endpoints.as_deref(),
-        )?;
-        let mut senders = Vec::with_capacity(config.workers);
-        let mut threads = Vec::with_capacity(config.workers);
+        let label = builder.label();
+        let dimension_sink = builder.build_sink(coordinator_clock, 0)?;
+        let builder = Arc::new(builder);
+        let mut senders = Vec::with_capacity(workers);
+        let mut threads = Vec::with_capacity(workers);
 
-        for worker_id in 0..config.workers {
+        for worker_id in 0..workers {
             let (sender, receiver) = mpsc::channel::<WorkerMessage>(WORKER_QUEUE_CAPACITY);
             let (started_tx, started_rx) = std::sync::mpsc::sync_channel(1);
-            let base_urls = config.base_urls.clone();
-            let model = config.model.clone();
-            let transport = config.transport.clone();
-            let prepared_endpoints = config.prepared_endpoints.clone();
-            let anchor = config.real_clock_anchor;
+            let builder = builder.clone();
             let thread = match std::thread::Builder::new()
-                .name(format!("aiperf-http-{worker_id}"))
+                .name(format!("aiperf-{label}-{worker_id}"))
                 .spawn(move || {
                     let result = run_worker_thread(
                         receiver,
-                        anchor,
-                        base_urls,
-                        model,
-                        transport,
-                        prepared_endpoints,
+                        real_clock_anchor,
+                        builder,
+                        worker_id,
                         started_tx,
                     );
                     if let Err(error) = &result {
-                        tracing::error!(worker_id, error = %error, "HTTP execution worker failed");
+                        tracing::error!(worker_id, error = %error, "execution worker failed");
                     }
                     result
                 }) {
@@ -256,7 +406,7 @@ impl ThreadPerCoreRequestExecutor {
                 Err(error) => {
                     drop(senders);
                     join_worker_threads(threads)?;
-                    return Err(error).context("spawning HTTP execution worker");
+                    return Err(error).context("spawning execution worker");
                 }
             };
             match started_rx.recv() {
@@ -270,7 +420,7 @@ impl ThreadPerCoreRequestExecutor {
                     drop(senders);
                     join_worker_threads(threads)?;
                     return Err(anyhow!(message))
-                        .context(format!("starting HTTP execution worker {worker_id}"));
+                        .context(format!("starting execution worker {worker_id}"));
                 }
                 Err(error) => {
                     drop(sender);
@@ -278,7 +428,7 @@ impl ThreadPerCoreRequestExecutor {
                     drop(senders);
                     join_worker_threads(threads)?;
                     return Err(error)
-                        .context(format!("receiving HTTP worker {worker_id} startup status"));
+                        .context(format!("receiving worker {worker_id} startup status"));
                 }
             }
         }
@@ -301,38 +451,35 @@ impl ThreadPerCoreRequestExecutor {
 }
 
 #[async_trait(?Send)]
-impl RequestExecutor for ThreadPerCoreRequestExecutor {
+impl<B: ExecutionSinkBuilder> RequestExecutor for ThreadPerCoreExecutor<B> {
     fn set_run_origin(&self, start_ns: i64) -> Result<()> {
         ensure!(
             self.run_origin_ns.replace(Some(start_ns)).is_none(),
-            "HTTP execution run origin was configured more than once"
+            "execution run origin was configured more than once"
         );
         Ok(())
     }
 
     fn inference_dimensions(&self, turn: &TurnToSend) -> InferenceDimensions {
-        <TransportSink as crate::scheduled::TurnDispatcher>::inference_dimensions(
-            &self.dimension_sink,
-            turn,
-        )
+        WorkerSink::inference_dimensions(&self.dimension_sink, turn)
     }
 
     fn supports_response_streaming(&self) -> bool {
-        true
+        WorkerSink::supports_response_streaming(&self.dimension_sink)
     }
 
     fn configure_measurement(&self, config: MetricsConfig, origin_ns: i64) -> Result<()> {
         let senders = self.senders.borrow();
         let senders = senders
             .as_ref()
-            .ok_or_else(|| anyhow!("HTTP execution backend is shut down"))?;
+            .ok_or_else(|| anyhow!("execution backend is shut down"))?;
         for sender in senders.iter() {
             sender
                 .try_send(WorkerMessage::Configure {
                     config: config.clone(),
                     origin_ns,
                 })
-                .map_err(|_| anyhow!("HTTP execution worker rejected measurement configuration"))?;
+                .map_err(|_| anyhow!("execution worker rejected measurement configuration"))?;
         }
         Ok(())
     }
@@ -403,7 +550,7 @@ impl RequestExecutor for ThreadPerCoreRequestExecutor {
             let senders = self.senders.borrow();
             senders
                 .as_ref()
-                .ok_or_else(|| anyhow!("HTTP execution backend is shut down"))?
+                .ok_or_else(|| anyhow!("execution backend is shut down"))?
                 .clone()
         };
         // Each worker finalizes its observer once its in-flight jobs complete and
@@ -416,14 +563,14 @@ impl RequestExecutor for ThreadPerCoreRequestExecutor {
                     end_ns,
                     reply: reply_tx,
                 })
-                .map_err(|_| anyhow!("HTTP execution worker rejected a drain request"))?;
+                .map_err(|_| anyhow!("execution worker rejected a drain request"))?;
             receivers.push(reply_rx);
         }
         let mut records = Vec::new();
         for receiver in receivers {
             let worker_records = receiver
                 .recv()
-                .map_err(|_| anyhow!("HTTP execution worker dropped before draining records"))?;
+                .map_err(|_| anyhow!("execution worker dropped before draining records"))?;
             records.extend(worker_records);
         }
         Ok(records)
@@ -434,11 +581,11 @@ impl RequestExecutor for ThreadPerCoreRequestExecutor {
     }
 }
 
-impl ThreadPerCoreRequestExecutor {
+impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
     fn origin(&self) -> Result<i64> {
         self.run_origin_ns
             .get()
-            .ok_or_else(|| anyhow!("HTTP execution run origin is not configured"))
+            .ok_or_else(|| anyhow!("execution run origin is not configured"))
     }
 
     async fn execute_command(
@@ -453,7 +600,7 @@ impl ThreadPerCoreRequestExecutor {
             let senders = self.senders.borrow();
             let senders = senders
                 .as_ref()
-                .ok_or_else(|| anyhow!("HTTP execution backend is shut down"))?;
+                .ok_or_else(|| anyhow!("execution backend is shut down"))?;
             let index = self.next_worker.get() % senders.len();
             self.next_worker.set(index.wrapping_add(1));
             senders[index].clone()
@@ -473,7 +620,7 @@ impl ThreadPerCoreRequestExecutor {
                 cancellation,
             })))
             .await
-            .map_err(|_| anyhow!("HTTP execution worker stopped before accepting a command"))?;
+            .map_err(|_| anyhow!("execution worker stopped before accepting a command"))?;
 
         let mut first_token_channel_done = false;
         let mut response_channel_done = responses.is_none();
@@ -499,7 +646,7 @@ impl ThreadPerCoreRequestExecutor {
                 }
                 completed = &mut completed_rx => {
                     break completed.map_err(|_| {
-                        anyhow!("HTTP execution worker dropped a command before completion")
+                        anyhow!("execution worker dropped a command before completion")
                     })?;
                 }
             }
@@ -518,22 +665,19 @@ impl ThreadPerCoreRequestExecutor {
     }
 }
 
-impl Drop for ThreadPerCoreRequestExecutor {
+impl<B: ExecutionSinkBuilder> Drop for ThreadPerCoreExecutor<B> {
     fn drop(&mut self) {
         if let Err(error) = self.shutdown_workers() {
-            tracing::error!(error = %error, "failed to shut down HTTP execution workers");
+            tracing::error!(error = %error, "failed to shut down execution workers");
         }
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_worker_thread(
+fn run_worker_thread<B: ExecutionSinkBuilder>(
     receiver: mpsc::Receiver<WorkerMessage>,
     anchor: RealClockAnchor,
-    base_urls: Vec<String>,
-    model: String,
-    transport: TransportSinkConfig,
-    prepared_endpoints: Option<Arc<dyn HttpPreparedEndpointTableFactory>>,
+    builder: Arc<B>,
+    worker_id: usize,
     started: std::sync::mpsc::SyncSender<std::result::Result<(), String>>,
 ) -> Result<()> {
     let runtime = match tokio::runtime::Builder::new_current_thread()
@@ -543,22 +687,15 @@ fn run_worker_thread(
         Ok(runtime) => runtime,
         Err(error) => {
             let _ = started.send(Err(error.to_string()));
-            return Err(error).context("creating HTTP worker Tokio runtime");
+            return Err(error).context("creating worker Tokio runtime");
         }
     };
     let clock = RealClock::from_anchor(anchor);
-    let sink = match prepare_transport_sink(
-        clock.clone(),
-        0,
-        &base_urls,
-        model,
-        transport,
-        prepared_endpoints.as_deref(),
-    ) {
+    let sink = match builder.build_sink(clock.clone(), worker_id) {
         Ok(sink) => Rc::new(sink),
         Err(error) => {
             let _ = started.send(Err(error.to_string()));
-            return Err(error).context("constructing worker-local HTTP transport");
+            return Err(error).context("constructing worker-local transport sink");
         }
     };
     if started.send(Ok(())).is_err() {
@@ -575,7 +712,7 @@ fn prepare_transport_sink(
     base_urls: &[String],
     model: String,
     transport: TransportSinkConfig,
-    prepared_endpoints: Option<&dyn HttpPreparedEndpointTableFactory>,
+    prepared_endpoints: Option<&dyn PreparedEndpointTableFactory>,
 ) -> Result<TransportSink> {
     let sink = TransportSink::new_multi_configured(clock, start_ns, base_urls, model, transport)?;
     match prepared_endpoints {
@@ -584,9 +721,9 @@ fn prepare_transport_sink(
     }
 }
 
-async fn run_worker(
+async fn run_worker<S: WorkerSink + 'static>(
     mut receiver: mpsc::Receiver<WorkerMessage>,
-    sink: Rc<TransportSink>,
+    sink: Rc<S>,
     clock: Rc<dyn Clock>,
 ) {
     let mut jobs = JoinSet::new();
@@ -693,8 +830,8 @@ impl TurnResponseObserver for WorkerResponseObserver {
     }
 }
 
-async fn execute_worker_command(
-    sink: Rc<TransportSink>,
+async fn execute_worker_command<S: WorkerSink + 'static>(
+    sink: Rc<S>,
     worker_observer: Option<Rc<NativeMetricsObserver>>,
     command: WorkerCommand,
 ) {
@@ -819,7 +956,7 @@ mod tests {
         url: String,
     }
 
-    impl HttpPreparedEndpointTableFactory for StreamingEndpointTableFactory {
+    impl PreparedEndpointTableFactory for StreamingEndpointTableFactory {
         fn prepare_worker(&self) -> Result<PreparedEndpointTable> {
             let endpoint = self.registry.prepare(
                 &EndpointId::new("chat")?,
@@ -864,8 +1001,8 @@ mod tests {
             registry: EndpointRegistry::builtin().unwrap(),
             url: url.clone(),
         });
-        let backend = NativeRequestExecutorFactory
-            .build(HttpExecutionBackendConfig {
+        let backend = HttpExecutionFactory
+            .build(ExecutionBackendConfig {
                 workers: 2,
                 coordinator_clock: clock.clone(),
                 real_clock_anchor: anchor,

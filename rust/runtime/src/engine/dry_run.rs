@@ -66,7 +66,7 @@ use crate::engine::registry::{
     NativeTransportExecution, RunnerClockKind, RunnerRunContext, RunnerTransportDescriptor,
     RunnerTransportFactory, ValidatedTransportConfig, WorkloadRequirements, strict_decode,
 };
-use crate::engine::turn_execution::{HttpExecutionBackendConfig, RequestExecutorFactory};
+use crate::engine::turn_execution::{ExecutionBackendConfig, RequestExecutorFactory};
 use crate::extensions::AIPerfRegistry;
 use crate::http::{
     DispatchResult, MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor,
@@ -256,7 +256,7 @@ impl FakeRequestExecutorFactory {
 }
 
 impl RequestExecutorFactory for FakeRequestExecutorFactory {
-    fn build(&self, config: HttpExecutionBackendConfig) -> Result<Rc<dyn RequestExecutor>> {
+    fn build(&self, config: ExecutionBackendConfig) -> Result<Rc<dyn RequestExecutor>> {
         ensure!(
             config.workers > 0,
             "dry_run execution workers must be positive"
@@ -481,7 +481,7 @@ mod tests {
         let anchor = RealClockAnchor::now();
         let clock: Rc<dyn Clock> = RealClock::from_anchor(anchor);
         let executor = FakeRequestExecutorFactory::new(params)
-            .build(HttpExecutionBackendConfig {
+            .build(ExecutionBackendConfig {
                 workers: 1,
                 coordinator_clock: clock.clone(),
                 real_clock_anchor: anchor,

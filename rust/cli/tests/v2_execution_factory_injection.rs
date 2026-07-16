@@ -24,7 +24,7 @@ use aiperf_runtime::engine::readiness::{
 };
 use aiperf_runtime::engine::sidecar_input::BuiltinRunnerSidecarInputAdapterResolver;
 use aiperf_runtime::engine::turn_execution::{
-    HttpExecutionBackendConfig, NativeRequestExecutorFactory, RequestExecutorFactory,
+    ExecutionBackendConfig, HttpExecutionFactory, RequestExecutorFactory,
 };
 use aiperf_runtime::extensions::BuiltinAIPerfRegistryFactory;
 use aiperf_runtime::graph::errors::TraceError;
@@ -74,7 +74,7 @@ struct FailingOriginFactory {
 }
 
 impl RequestExecutorFactory for FailingOriginFactory {
-    fn build(&self, _config: HttpExecutionBackendConfig) -> Result<Rc<dyn RequestExecutor>> {
+    fn build(&self, _config: ExecutionBackendConfig) -> Result<Rc<dyn RequestExecutor>> {
         assert!(!self.artifact_target.exists());
         Ok(Rc::new(FailingOriginBackend {
             shutdowns: self.shutdowns.clone(),
@@ -199,7 +199,7 @@ fn v2_graph_run_uses_injected_whole_trace_placement() {
     let builds = Arc::new(AtomicUsize::new(0));
     let traces = Arc::new(AtomicUsize::new(0));
     let coordinator = coordinator(
-        Arc::new(NativeRequestExecutorFactory),
+        Arc::new(HttpExecutionFactory),
         Arc::new(RecordingGraphPlacement {
             builds: builds.clone(),
             traces: traces.clone(),
