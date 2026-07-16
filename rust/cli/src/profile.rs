@@ -13,7 +13,7 @@ use std::path::Path;
 use crate::model::{Operation, RunnerRequest};
 use crate::sweep::artifact_dir::IterationOrder;
 use crate::sweep::{self, run as sweep_run};
-use crate::{delegate, execute, flags::ProfileFlags, load, runner_install, yaml};
+use crate::{execute, flags::ProfileFlags, load, runner_install, yaml};
 
 /// Eagerly create the artifact dir and remove any prior `native-v2.json` so a
 /// re-run into the same directory doesn't trip the runner's write-once guard
@@ -29,18 +29,6 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     let flags = match ProfileFlags::parse_from_args(args) {
         Ok(flags) => flags,
         Err(err) => {
-            use clap::error::ErrorKind;
-            // A flag the native front door doesn't model is very likely a
-            // Python-only surface (accuracy benchmarks, adaptive/BO search
-            // recipes, synthesis knobs, …). Rather than fail, transparently
-            // delegate the whole run to the pure-Python `aiperf profile`, so the
-            // native binary is at least as capable as Python for every flag
-            // (100% parity by construction). The native fast path still owns
-            // every flag it DOES model. `--help`/`--version` and genuine value
-            // errors are surfaced normally.
-            if matches!(err.kind(), ErrorKind::UnknownArgument) {
-                return delegate::exec_python_profile(args);
-            }
             err.print().ok();
             return Ok(err.exit_code());
         }

@@ -73,13 +73,6 @@ pub fn run(argv: &[String]) -> anyhow::Result<i32> {
     let cli = match ConfigCli::try_parse_from(&full) {
         Ok(cli) => cli,
         Err(err) => {
-            use clap::error::ErrorKind;
-            // Mirror the profile fallback: a config flag/subcommand the native
-            // surface doesn't model delegates to the pure-Python `aiperf config`
-            // so native parity == Python parity.
-            if matches!(err.kind(), ErrorKind::UnknownArgument | ErrorKind::InvalidSubcommand) {
-                return crate::delegate::exec_python(&full);
-            }
             err.print().ok();
             return Ok(err.exit_code());
         }
