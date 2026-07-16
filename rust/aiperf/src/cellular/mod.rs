@@ -49,6 +49,7 @@ pub mod broadcast;
 pub mod heartbeat;
 pub mod issuance;
 pub mod partition;
+pub mod phaser;
 pub mod shard;
 pub mod sketch;
 pub mod transport;
