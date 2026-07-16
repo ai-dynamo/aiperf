@@ -114,6 +114,35 @@ The Records Manager handles the collection, organization, and storage of benchma
 - Supporting the generation of reports and artifacts for performance evaluation
 - Managing the final export of aggregated performance summaries and per-request details
 
+#### Record-Type Channels
+
+The Records Manager does not hard-wire one handler per producer. Instead, every typed record carries a `record_type` class attribute and is fanned out through a metadata-driven routing table: each accumulator and stream exporter declares the record types it consumes via `record_types` in `plugins.yaml`, and `_dispatch_record` routes each record by `getattr(record, "record_type")` to all registered handlers. This makes each record type a dedicated channel.
+
+Accuracy benchmarking is one such dedicated channel, joining `metric_records`, `gpu_telemetry`, and `server_metrics`:
+
+| Channel (`record_type`) | Producer | Message | Consumers (`record_types`) |
+|---|---|---|---|
+| `metric_records` | Record Processor | `MetricRecordsMessage` | `MetricsAccumulator`, JSONL/OTel stream exporters |
+| `gpu_telemetry` | GPU Telemetry Manager | `TelemetryRecordsMessage` | `GPUTelemetryAccumulator`, GPU JSONL writer |
+| `server_metrics` | Server Metrics Manager | `ServerMetricsRecordMessage` | `ServerMetricsAccumulator`, server-metrics JSONL writer |
+| `accuracy` | Record Processor (`AccuracyRecordProcessor`) | `AccuracyRecordsMessage` | `AccuracyAccumulator`, `AccuracyJSONLWriter` |
+
+The `AccuracyRecordProcessor` grades each parsed response against ground truth and returns an `AccuracyRecordsData` (`session_num`, `worker_id`, `benchmark_phase`, `timestamp_ns`, `task`, `grader_name`, `passed`, `unparsed`, `confidence`, `expected`, `actual`, `reasoning`). The `RecordProcessorService` partitions these typed records off the metric-dict stream and pushes an `AccuracyRecordsMessage` to the Records Manager, which fans each record out to the `AccuracyAccumulator` (rolls records into an `AccuracySummary` of overall + per-task pass/unparsed rates) and the `AccuracyJSONLWriter` (streams the full per-response grading detail to `accuracy_export.jsonl`).
+
+At end of the profiling phase, `RecordsManager._publish_accuracy_results(phase)` exports the phase-scoped `AccuracySummary` and publishes a `ProcessAccuracyResultMessage`. The `SystemController` receives it, stores the summary, and hands it to the exporters via `ExporterConfig.accuracy_results` — gated in shutdown like the telemetry and server-metrics results. The `AccuracyConsoleExporter` and `AccuracyDataExporter` render from that structured summary rather than filtering tagged metric results.
+
+```mermaid
+flowchart TD
+    W[Worker] -->|raw response| RP[AccuracyRecordProcessor<br/>grade vs ground truth]
+    RP -->|AccuracyRecordsData<br/>record_type=accuracy| RM[RecordsManager<br/>routing table]
+    RM -->|process_record| ACC[AccuracyAccumulator<br/>AccuracySummary]
+    RM -->|process_record| JW[AccuracyJSONLWriter<br/>accuracy_export.jsonl]
+    ACC -->|export_results phase=PROFILING| PUB[_publish_accuracy_results]
+    PUB -->|ProcessAccuracyResultMessage| SC[SystemController<br/>stores AccuracySummary]
+    SC -->|ExporterConfig.accuracy_results| CE[AccuracyConsoleExporter]
+    SC -->|ExporterConfig.accuracy_results| DE[AccuracyDataExporter<br/>accuracy_results.csv]
+```
+
 ### GPU Telemetry Manager
 
 The GPU Telemetry Manager collects GPU metrics during benchmarking runs via pluggable collectors.

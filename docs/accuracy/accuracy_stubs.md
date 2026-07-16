@@ -7,6 +7,8 @@
 
 This document catalogs every stubbed method in the accuracy benchmarking scaffolding. The scaffolding is fully integrated into the plugin system, CLI, and config pipeline — the performance benchmarking path is unaffected.
 
+> **Pipeline note:** Accuracy is now a first-class **dedicated `accuracy` record-type channel** (like `gpu_telemetry` and `server_metrics`), not a shoehorn on the shared `metric_records` channel. Graded responses flow as typed `AccuracyRecordsData` and are rolled up by `AccuracyAccumulator` into a structured `AccuracySummary`; a per-record `AccuracyJSONLWriter` streams the full grading detail. The old `AccuracyResultsProcessor` (which returned `list[MetricResult]` on the `metric_records` channel via `accuracy.` tags) has been removed. See [Record-Type Channels](../architecture.md#record-type-channels) for the current data flow. The registrations below have been updated accordingly.
+
 **Status summary:** All accuracy scaffolding is now implemented end-to-end. The eight graders (`MultipleChoiceGrader`, `MathGrader`, `CodeExecutionGrader`, `LightevalExprGrader`, `LightevalLatexGrader`, `LightevalGPQAGrader`, `LightevalGSM8KGrader`, `ExactMatchGrader`) and ten benchmark loaders (`MMLUBenchmark`, `AIMEBenchmark`, `HellaSwagBenchmark`, `BigBenchBenchmark`, `AIME24Benchmark`, `AIME25Benchmark`, `Math500Benchmark`, `GPQADiamondBenchmark`, `LCBCodeGenerationBenchmark`, `GSM8KBenchmark`) are all wired into the plugin system, CLI, config pipeline, and processor/exporter chain. There are no remaining stubs.
 
 ## Table of Contents
@@ -32,9 +34,14 @@ graph TD
     A --> C[AccuracyGrader<br/>4 graders<br/>grade + extract]
     B --> D[AccuracyRecordProcessor<br/>process_record]
     C --> D
-    D --> E[AccuracyResultsProcessor<br/>process_result<br/>summarize]
+    D --> E[AccuracyAccumulator<br/>export_results<br/>AccuracySummary]
+    D --> J[AccuracyJSONLWriter<br/>accuracy_export.jsonl]
     E --> F[AccuracyConsoleExporter<br/>AccuracyDataExporter]
 ```
+
+`AccuracyRecordProcessor.process_record` returns a typed `AccuracyRecordsData`
+that flows on the dedicated `accuracy` channel; the Records Manager fans it out
+to `AccuracyAccumulator` and `AccuracyJSONLWriter`.
 
 All processors and exporters **self-disable** when `cfg.accuracy.enabled is False` by raising their respective `Disabled` exceptions in `__init__`. This is the same pattern used by `RawRecordWriterProcessor`, `ServerMetricsCsvExporter`, etc.
 
@@ -69,6 +76,45 @@ class BenchmarkProblem(AIPerfBaseModel):
     task: str                         # Task/subtask name within the benchmark
     metadata: dict = {}               # Additional problem metadata
     raw_messages: list[dict] | None = None # Preformatted messages, when supplied by a loader
+```
+
+### AccuracyRecordsData
+
+Typed per-graded-response record carried on the dedicated `accuracy` channel.
+`record_type` is a plain `ClassVar` (`"accuracy"`), mirroring `ServerMetricsRecord`
+and `TelemetryRecord`.
+
+```python
+class AccuracyRecordsData(AIPerfBaseModel):
+    record_type: ClassVar[str] = "accuracy"
+    session_num: int          # session/conversation index
+    worker_id: str            # record processor that produced this record
+    benchmark_phase: CreditPhase  # warmup vs profiling
+    timestamp_ns: int         # wall-clock ns when grading completed
+    task: str | None          # accuracy task/subtask (None when unlabeled)
+    grader_name: str          # which grader scored this response
+    passed: bool              # graded correct (from GradingResult.correct)
+    unparsed: bool = False    # needed a regex fallback (from GradingResult.unparsed)
+    confidence: float         # grading confidence 0.0-1.0
+    expected: str             # ground truth (from GradingResult.ground_truth)
+    actual: str               # extracted answer (from GradingResult.extracted_answer)
+    reasoning: str            # grader's explanation
+```
+
+### AccuracySummary
+
+Structured accumulator result (replaces the old `list[MetricResult]`).
+`AccuracyAccumulator` builds it; the console/CSV exporters render from it.
+`to_csv()` emits per-task rows plus a trailing `OVERALL` row.
+
+```python
+class AccuracySummary(AIPerfBaseModel):
+    total_evaluated: int
+    total_passed: int
+    accuracy_rate: float
+    overall_unparsed: int
+    grader_name: str | None
+    per_task: dict[str, TaskAccuracyStats]  # total/passed/unparsed/accuracy_rate/unparsed_rate
 ```
 
 ---
@@ -205,27 +251,45 @@ This class is fully implemented and serves as the canonical reference for wiring
 ```python
 async def process_record(
     self, record: ParsedResponseRecord, metadata: MetricRecordMetadata
-) -> MetricRecordDict                                                          # IMPLEMENTED in PR #815
+) -> AccuracyRecordsData                                                        # typed record on the accuracy channel
 ```
 
 **Reference implementation:** `MetricRecordProcessor` in `src/aiperf/post_processors/metric_record_processor.py`
 
-### AccuracyResultsProcessor — IMPLEMENTED in PR #815
+### AccuracyAccumulator — accuracy channel
 
-**File:** `src/aiperf/accuracy/accuracy_results_processor.py`
-**Parent:** `AIPerfLifecycleMixin`
-**Implements:** `AccumulatorProtocol`
-**Plugin key:** `accuracy_results` (under `accumulator`)
+**File:** `src/aiperf/accuracy/accumulator.py`
+**Parent:** `BaseMetricsProcessor`
+**Plugin key:** `accuracy` (under `accumulator`, `record_types: [accuracy]`)
 **Disables via:** `PostProcessorDisabled` when `not cfg.accuracy.enabled`
 
-This class is fully implemented and serves as the canonical reference for aggregating per-task accuracy metrics from routed `metric_records`.
+Ingests per-graded-response `AccuracyRecordsData` and rolls them up into a
+structured `AccuracySummary` (overall + per-task pass rates and unparsed
+counts). Phase-scoped export mirrors `ServerMetricsAccumulator`.
 
 ```python
-async def process_record(self, record_data: MetricRecordsData) -> None         # IMPLEMENTED in PR #815
-async def summarize(self) -> list[MetricResult]                                # IMPLEMENTED in PR #815
+async def process_record(self, record: AccuracyRecordsData) -> None
+async def export_results(self, ctx: ExportContext) -> AccuracySummary | None    # phase-scoped
+async def summarize(self, ctx: SummaryContext | None = None) -> AccuracySummary | None
 ```
 
-**Reference implementation:** `MetricsAccumulator` in `src/aiperf/metrics/accumulator.py`
+**Reference implementation:** `ServerMetricsAccumulator` in `src/aiperf/server_metrics/accumulator.py`
+
+### AccuracyJSONLWriter — accuracy channel (per-record stream)
+
+**File:** `src/aiperf/accuracy/jsonl_writer.py`
+**Parent:** `BaseMetricsProcessor`, `BufferedJSONLWriterMixin[AccuracyRecordsData]`
+**Plugin key:** `accuracy_jsonl_writer` (under `stream_exporter`, `record_types: [accuracy]`)
+**Disables via:** `PostProcessorDisabled` when `not cfg.accuracy.enabled`
+
+Streams each `AccuracyRecordsData` to `<artifact_dir>/accuracy_export.jsonl`
+(one JSON line per graded response) — the per-record grading detail that was
+previously discarded.
+
+```python
+async def process_record(self, record: AccuracyRecordsData) -> None
+async def finalize(self) -> None
+```
 
 ---
 
@@ -284,12 +348,13 @@ All stubs are registered in `src/aiperf/plugin/plugins.yaml` and `src/aiperf/plu
 
 ### Registrations in Existing Categories
 
-| Category | Plugin Key | Class |
-|----------|-----------|-------|
-| `record_processor` | `accuracy_record` | `AccuracyRecordProcessor` |
-| `accumulator` | `accuracy_results` | `AccuracyResultsProcessor` |
-| `console_exporter` | `accuracy` | `AccuracyConsoleExporter` |
-| `data_exporter` | `accuracy_csv` | `AccuracyDataExporter` |
+| Category | Plugin Key | Class | Metadata |
+|----------|-----------|-------|----------|
+| `record_processor` | `accuracy_record` | `AccuracyRecordProcessor` | — |
+| `accumulator` | `accuracy` | `AccuracyAccumulator` | `record_types: [accuracy]` |
+| `stream_exporter` | `accuracy_jsonl_writer` | `AccuracyJSONLWriter` | `record_types: [accuracy]` |
+| `console_exporter` | `accuracy` | `AccuracyConsoleExporter` | — |
+| `data_exporter` | `accuracy_csv` | `AccuracyDataExporter` | — |
 
 ---
 
@@ -302,11 +367,12 @@ All stubs are registered in `src/aiperf/plugin/plugins.yaml` and `src/aiperf/plu
 | Graders | 7 (all) | 0 | — | 0 |
 | Benchmarks | 9 (all) | 0 | — | 0 |
 | Record Processor | 1 (`AccuracyRecordProcessor`) | 0 | — | 0 |
-| Accuracy Accumulator | 1 (`AccuracyResultsProcessor`) | 0 | — | 0 |
+| Accuracy Accumulator | 1 (`AccuracyAccumulator`) | 0 | — | 0 |
+| Accuracy JSONL Writer | 1 (`AccuracyJSONLWriter`) | 0 | — | 0 |
 | Console Exporter | 1 (`AccuracyConsoleExporter`) | 0 | — | 0 |
 | Data Exporter | 1 (`AccuracyDataExporter`) | 0 | — | 0 |
 | Stub-plugin Validator | 1 (`AccuracyConfig._reject_stub_plugins`, idle until next stub) | 0 | — | 0 |
-| **Total** | **21** | **0** | | **0** |
+| **Total** | **22** | **0** | | **0** |
 
 ### Self-Disabling Pattern
 
@@ -323,7 +389,8 @@ The processors, exporters, all seven graders, and all nine benchmarks are wired 
 | **Canonical grader** | `src/aiperf/accuracy/graders/multiple_choice.py` |
 | **Canonical benchmark** | `src/aiperf/accuracy/benchmarks/mmlu.py` |
 | **Canonical record processor** | `src/aiperf/accuracy/accuracy_record_processor.py` |
-| **Canonical accuracy accumulator** | `src/aiperf/accuracy/accuracy_results_processor.py` |
+| **Canonical accuracy accumulator** | `src/aiperf/accuracy/accumulator.py` |
+| **Accuracy per-record JSONL writer** | `src/aiperf/accuracy/jsonl_writer.py` |
 | **Canonical console exporter** | `src/aiperf/accuracy/accuracy_console_exporter.py` |
 | **Canonical data exporter** | `src/aiperf/accuracy/accuracy_data_exporter.py` |
 | Disabled exception pattern | `src/aiperf/post_processors/raw_record_writer_processor.py:47` |

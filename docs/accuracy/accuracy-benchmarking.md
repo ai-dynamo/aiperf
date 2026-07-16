@@ -332,29 +332,50 @@ When extraction fell back past the `\boxed{}` step (i.e. the model didn't follow
 
 ## Output
 
-Accuracy results are displayed in the console and exported to CSV:
+Accuracy flows on a dedicated `accuracy` record-type channel (alongside the
+`metric_records`, `gpu_telemetry`, and `server_metrics` channels — see
+[Record-Type Channels](../architecture.md#record-type-channels)). Each graded
+response is routed to two sinks: an accumulator that produces the per-task
+summary, and a per-record JSONL writer.
+
+Accuracy results are displayed in the console and exported to CSV. The console
+table and the CSV both carry a per-task `Unparsed` count (responses where the
+grader needed a regex fallback because the model output did not match the
+expected format):
 
 ```text
-                  Accuracy Benchmark Results
-┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━┓
-┃ Task                    ┃ Correct ┃ Total ┃ Accuracy ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━┩
-│ abstract_algebra        │      35 │   100 │   35.00% │
-│ ...                     │     ... │   ... │      ... │
-│ OVERALL                 │    8368 │ 14042 │   59.59% │
-└─────────────────────────┴─────────┴───────┴──────────┘
+                        Accuracy Benchmark Results
+┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Task                    ┃ Correct ┃ Total ┃ Unparsed ┃ Accuracy ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━┩
+│ abstract_algebra        │      35 │   100 │        2 │   35.00% │
+│ ...                     │     ... │   ... │      ... │      ... │
+│ OVERALL                 │    8368 │ 14042 │       61 │   59.59% │
+└─────────────────────────┴─────────┴───────┴──────────┴──────────┘
 ```
 
-CSV file: `<artifact_dir>/accuracy_results.csv`
+**Summary CSV:** `<artifact_dir>/accuracy_results.csv` — one row per task plus a
+trailing `OVERALL` row. Columns: `task, total, passed, unparsed, accuracy_rate,
+unparsed_rate`.
+
+**Per-record JSONL:** `<artifact_dir>/accuracy_export.jsonl` (or
+`<prefix>_accuracy.jsonl` when an artifact prefix is configured) — one JSON line
+per graded response with the full grading detail that the summary rolls up.
+Each line carries: `session_num`, `worker_id`, `benchmark_phase`,
+`timestamp_ns`, `task`, `grader_name`, `passed`, `unparsed`, `confidence`,
+`expected` (ground truth), `actual` (extracted answer), and `reasoning`. Use it
+for per-response post-hoc analysis — e.g. finding which prompts were graded
+`unparsed` and why.
 
 ## Architecture
 
-```text
-AccuracyDatasetLoader          → Conversation/Turn objects (dataset pipeline)
-AccuracyRecordProcessor        → grades each response (record pipeline)
-AccuracyResultsProcessor       → aggregates per-task accuracy (results pipeline)
-AccuracyConsoleExporter         → Rich table output
-AccuracyDataExporter            → CSV export
+```mermaid
+flowchart LR
+    DL[AccuracyDatasetLoader] -->|Conversation/Turn objects| RP[AccuracyRecordProcessor<br/>grades each response]
+    RP -->|AccuracyRecordsData<br/>on the accuracy channel| ACC[AccuracyAccumulator<br/>per-task AccuracySummary]
+    RP -->|AccuracyRecordsData| JW[AccuracyJSONLWriter<br/>accuracy_export.jsonl]
+    ACC --> CE[AccuracyConsoleExporter<br/>Rich table]
+    ACC --> DE[AccuracyDataExporter<br/>accuracy_results.csv]
 ```
 
 All components self-disable when `--accuracy-benchmark` is not set.
