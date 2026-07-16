@@ -4,10 +4,16 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.enums import CommAddress, CommandType, CreditPhase, MessageType
+from aiperf.common.enums import (
+    CommAddress,
+    CommandType,
+    CreditPhase,
+    MessageType,
+    make_result_producer_capability,
+)
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_command, on_message, on_stop
 from aiperf.common.messages import (
@@ -50,6 +56,10 @@ class ServerMetricsManager(BaseComponentService):
         run: BenchmarkRun carrying the BenchmarkConfig + per-run state.
         service_id: Optional unique identifier for this service instance
     """
+
+    extra_capabilities: ClassVar[tuple[str, ...]] = (
+        make_result_producer_capability("server_metrics"),
+    )
 
     def __init__(
         self,

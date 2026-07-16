@@ -77,9 +77,8 @@ service:
   records_manager:
     class: aiperf.records.records_manager:RecordsManager
     description: |
-      Record aggregation and results management service. Aggregates metrics from all
-      record processors, manages results processors, and coordinates final results
-      export.
+      Record aggregation and results management service. Routes records to
+      accumulators and stream exporters, and coordinates final results export.
     metadata:
       required: true
       auto_start: true
@@ -516,6 +515,17 @@ custom_dataset_loader:
     metadata:
       is_trace: true
       default_block_size: 16
+
+  baseten_trace:
+    class: aiperf.dataset.loader.baseten_trace:BasetenTraceDatasetLoader
+    description: |
+      Baseten completion trace dataset loader for Parquet exports that include
+      prompts, timestamps, session identifiers, output tokens, and optional
+      hash-based KV-cache metadata. Supports fixed_schedule timing replay for
+      /v1/completions workloads.
+    metadata:
+      is_trace: true
+      default_block_size: 64
 
   mooncake_trace:
     class: aiperf.dataset.loader.mooncake_trace:MooncakeTraceDatasetLoader
@@ -961,10 +971,10 @@ ramp:
       Provides stochastic burstiness while guaranteeing completion within duration.
 
 # =============================================================================
-# Record Processors
+# Record Processors (Producers)
 # =============================================================================
-# Record processors stream records and compute metrics in a distributed manner.
-# One-to-many mapping: multiple processors can be loaded simultaneously.
+# Record PRODUCERS parse a record and emit one typed result on a declared
+# record-type channel. One-to-many mapping: multiple producers loaded simultaneously.
 # =============================================================================
 record_processor:
   metric_record:
@@ -973,86 +983,43 @@ record_processor:
       Streaming record processor that computes metrics from MetricType.RECORD and
       MetricType.AGGREGATE. First stage of distributed processing pipeline.
       Always loaded.
-
-  raw_record_writer:
-    class: aiperf.post_processors.raw_record_writer_processor:RawRecordWriterProcessor
-    description: |
-      Raw record writer that streams raw request/response data to JSONL files
-      for detailed analysis and debugging. Enabled when export_level is RAW.
+    metadata:
+      record_type: metric_records
 
   accuracy_record:
     class: aiperf.accuracy.accuracy_record_processor:AccuracyRecordProcessor
     description: |
       Accuracy record processor that grades LLM responses against ground truth
       for accuracy benchmarking. Self-disables when accuracy mode is off.
+    metadata:
+      record_type: accuracy
+
+# =============================================================================
+# Record Observers
+# =============================================================================
+# Record OBSERVERS view the produced results + the record and act (e.g. write
+# JSONL); they return nothing and emit no channel record.
+# One-to-many mapping: multiple observers loaded simultaneously.
+# =============================================================================
+record_observer:
+  raw_record_writer:
+    class: aiperf.post_processors.raw_record_writer_processor:RawRecordWriterProcessor
+    description: |
+      Raw record writer that streams raw request/response data to JSONL files
+      for detailed analysis and debugging. Enabled when export_level is RAW.
 
   outputs_json:
     class: aiperf.post_processors.outputs_json_record_processor:OutputsJsonRecordProcessor
     description: |
-      Outputs JSON record processor that captures model response text per request.
+      Outputs JSON record observer that captures model response text per request.
       Enabled when --export-outputs-json is set. Writes per-processor fragment files.
-
-# =============================================================================
-# Results Processors
-# =============================================================================
-# Results processors aggregate results from record processors and compute derived metrics.
-# One-to-many mapping: multiple processors can be loaded simultaneously.
-# =============================================================================
-results_processor:
-  gpu_telemetry_accumulator:
-    class: aiperf.gpu_telemetry.accumulator:GPUTelemetryAccumulator
-    description: |
-      GPU telemetry accumulator that aggregates GPU telemetry records and computes
-      metrics in a hierarchical structure. Loaded when telemetry is enabled.
-
-  metric_results:
-    class: aiperf.post_processors.metric_results_processor:MetricResultsProcessor
-    description: |
-      Results processor that computes metrics from MetricType.DERIVED and
-      aggregates results from all record processors. Final stage of metrics
-      pipeline. Always loaded.
-
-  network_latency_jsonl_writer:
-    class: aiperf.network_latency.jsonl_writer:NetworkLatencyJSONLWriter
-    description: |
-      Network latency JSONL writer that exports per-sample TCP-handshake RTT
-      probes to a JSONL file. Enabled when network latency calibration is
-      actively probing (no mean_ms).
-
-  otel_metrics_streamer:
-    class: aiperf.post_processors.otel_metrics_results_processor:OTelMetricsResultsProcessor
-    description: |
-      Streams per-record metrics to a user-provided OpenTelemetry collector
-      with periodic export.
-      Enabled when --otel-url is configured.
-
-  server_metrics_accumulator:
-    class: aiperf.server_metrics.accumulator:ServerMetricsAccumulator
-    description: |
-      Server metrics accumulator that aggregates Prometheus server metrics records
-      and computes summary statistics. Supports Gauge, Counter, and Histogram metrics.
-
-  timeslice:
-    class: aiperf.post_processors.timeslice_metric_results_processor:TimesliceMetricResultsProcessor
-    description: |
-      Timeslice results processor that computes metrics for user-configurable
-      time slices, enabling time-series analysis of benchmark performance.
-      Enabled when timeslice config is set.
-
-  accuracy_results:
-    class: aiperf.accuracy.accuracy_results_processor:AccuracyResultsProcessor
-    description: |
-      Accuracy results processor that aggregates grading results and computes
-      summary accuracy metrics. Self-disables when accuracy mode is off.
 
 # =============================================================================
 # Accumulators
 # =============================================================================
 # Accumulators ingest records, support time-range queries, and produce summaries.
-# Primary data stores in the records pipeline (RecordsManager). The
-# MetricsAccumulator is the summary engine for the records pipeline; the legacy
-# results_processor:metric_results (MetricResultsProcessor) is gated OFF when
-# the accumulator path is active to avoid double-compute.
+# Primary data stores in the records pipeline (RecordsManager). Each accumulator
+# declares the record types it consumes in metadata.record_types.
 # One-to-many mapping: multiple accumulators loaded simultaneously.
 # =============================================================================
 accumulator:
@@ -1081,6 +1048,15 @@ accumulator:
     metadata:
       record_types: [server_metrics]
 
+  accuracy:
+    class: aiperf.accuracy.accumulator:AccuracyAccumulator
+    description: |
+      Accuracy accumulator that aggregates graded accuracy records on the
+      dedicated accuracy channel and computes overall/per-task pass rates and
+      unparsed counts. Loaded when accuracy evaluation is enabled.
+    metadata:
+      record_types: [accuracy]
+
 # =============================================================================
 # Stream Exporters
 # =============================================================================
@@ -1097,6 +1073,33 @@ stream_exporter:
       export config.
     metadata:
       record_types: [gpu_telemetry]
+
+  accuracy_jsonl_writer:
+    class: aiperf.accuracy.jsonl_writer:AccuracyJSONLWriter
+    description: |
+      Accuracy JSONL writer that exports per-record graded accuracy data
+      (pass/unparsed/confidence/expected/actual/reasoning) to a JSONL file.
+      Enabled when accuracy evaluation is enabled.
+    metadata:
+      record_types: [accuracy]
+
+  network_latency_jsonl_writer:
+    class: aiperf.network_latency.jsonl_writer:NetworkLatencyJSONLWriter
+    description: |
+      Network latency JSONL writer that exports per-sample TCP-handshake RTT
+      probes to a JSONL file. Enabled when network latency calibration is
+      actively probing (no mean_ms).
+    metadata:
+      record_types: [network_latency]
+
+  otel_metrics_streamer:
+    class: aiperf.post_processors.otel_metrics_results_processor:OTelMetricsResultsProcessor
+    description: |
+      Streams per-record metrics and timing snapshots to a user-provided
+      OpenTelemetry collector with periodic export. Enabled when --otel-url or
+      MLflow live streaming is configured.
+    metadata:
+      record_types: [metric_records, credit_phase_stats]
 
   record_export:
     class: aiperf.post_processors.record_export_jsonl_writer:RecordExportJSONLWriter
@@ -1115,30 +1118,22 @@ stream_exporter:
       record_types: [server_metrics]
 
 # =============================================================================
-# GPU Telemetry Processors
+# Analyzers
 # =============================================================================
-# GPU telemetry processors aggregate and export GPU telemetry records locally
-# within GPUTelemetryManager. One-to-many mapping.
+# Summarize-time analyzers that join across accumulators via the SummaryContext.
 # =============================================================================
-gpu_telemetry_processor:
-  gpu_telemetry_accumulator:
-    class: aiperf.gpu_telemetry.accumulator:GPUTelemetryAccumulator
+analyzer:
+  energy_efficiency:
+    class: aiperf.metrics.energy_efficiency_analyzer:EnergyEfficiencyAnalyzer
     description: |
-      GPU telemetry accumulator that aggregates GPU telemetry records and computes
-      metrics in a hierarchical structure. Loaded when telemetry is enabled.
-
-# =============================================================================
-# Server Metrics Processors
-# =============================================================================
-# Server metrics processors aggregate and export Prometheus server metrics
-# records locally within ServerMetricsManager. One-to-many mapping.
-# =============================================================================
-server_metrics_processor:
-  server_metrics_accumulator:
-    class: aiperf.server_metrics.accumulator:ServerMetricsAccumulator
-    description: |
-      Server metrics accumulator that aggregates Prometheus server metrics records
-      and computes summary statistics. Supports Gauge, Counter, and Histogram metrics.
+      Joins GPU-telemetry energy/power with inference token totals to emit
+      energy-efficiency metrics (joules per token, performance per watt, energy
+      delay product, ...). Skipped when GPU telemetry is not collected.
+    metadata:
+      # Live GPU accumulator (windowed energy/power query) + metrics summary
+      # (token/duration totals). These are AccumulatorType names, not record types.
+      required_accumulators: [gpu_telemetry]
+      required_summaries: [metric_results]
 
 # =============================================================================
 # Artifact Publishers
@@ -1517,6 +1512,13 @@ accuracy_grader:
       "####" marker when present). Compares numerically so "24" and "24.0"
       match. Pure-regex; no lighteval install required.
 
+  mmlu_pro:
+    class: aiperf.accuracy.graders.mmlu_pro:MMLUProGrader
+    description: |
+      MMLU-Pro grader. Extracts the final A-J letter from chain-of-thought
+      output via the upstream 3-tier cascade ("answer is (X)" ->
+      "Answer: X" -> last lone A-J letter). No optional dependencies.
+
 # =============================================================================
 # Accuracy Benchmarks
 # =============================================================================
@@ -1532,6 +1534,18 @@ accuracy_benchmark:
     metadata:
       default_grader: multiple_choice
       default_n_shots: 5
+
+  mmlu_pro:
+    class: aiperf.accuracy.benchmarks.mmlu_pro:MMLUProBenchmark
+    description: |
+      MMLU-Pro benchmark (TIGER-Lab/MMLU-Pro): 14 categories, up to 10 options
+      (A-J), chain-of-thought prompting at parity with the TIGER-AI-Lab
+      evaluate_from_api.py reference. Answer extracted via the "The answer is
+      (X)" cascade.
+    metadata:
+      default_grader: mmlu_pro
+      default_n_shots: 5
+      default_enable_cot: true
 
   aime:
     class: aiperf.accuracy.benchmarks.aime:AIMEBenchmark

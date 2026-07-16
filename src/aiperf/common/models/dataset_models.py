@@ -214,7 +214,8 @@ class Turn(AIPerfBaseModel):
         description="Non-native per-turn request-body fields (temperature, "
         "top_p, seed, stop, vendor tunables like ignore_eos/min_tokens). "
         "Merged into the top level of the chat-completions payload at "
-        "dispatch time, matching the OpenAI SDK's extra_body convention.",
+        "dispatch time, after endpoint-level extra values, matching the "
+        "OpenAI SDK's extra_body convention.",
     )
     extra_headers: dict[str, str] | None = Field(
         default=None,
