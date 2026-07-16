@@ -14,20 +14,12 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// Resolve the Python interpreter: `$VIRTUAL_ENV/bin/python`, else `python3`.
-fn python_binary() -> String {
-    if let Ok(venv) = std::env::var("VIRTUAL_ENV") {
-        let candidate = std::path::PathBuf::from(&venv).join("bin").join("python");
-        if candidate.exists() {
-            return candidate.display().to_string();
-        }
-    }
-    "python3".to_string()
-}
-
-/// Spawn `python -m aiperf profile <args> --artifact-dir <dir> --tokenizer <model>`,
-/// wait for the "AIPerf System is PROFILING" log line, delay `sigint_delay`, send SIGINT,
-/// and wait for the process to flush partial artifacts and exit.
+/// Spawn `aiperf profile <args> --artifact-dir <dir> --tokenizer <model>` — the
+/// unified native binary (the product entry point) — wait for the
+/// "AIPerf System is PROFILING" log line, delay `sigint_delay`, send SIGINT, and
+/// wait for the process to flush partial artifacts and exit. SIGINT is handled by
+/// the native entry point's signal handler, which forwards graceful cancellation
+/// to its `--execute` child.
 ///
 /// Returns a `RunResult` reading the emitted artifact tree.
 fn run_with_sigint(
@@ -36,7 +28,7 @@ fn run_with_sigint(
     sigint_delay: Duration,
     wait_for_profiling: bool,
 ) -> RunResult {
-    let python = python_binary();
+    let bin = exec_binary();
 
     let mut full_args = vec!["profile".to_string()];
     for a in profile_args.split_whitespace() {
@@ -47,8 +39,7 @@ fn run_with_sigint(
     full_args.push("--tokenizer".to_string());
     full_args.push(DEFAULT_MODEL.to_string());
 
-    let mut cmd = Command::new(&python);
-    cmd.arg("-m").arg("aiperf");
+    let mut cmd = Command::new(&bin);
     cmd.args(&full_args);
     cmd.env("HF_HUB_OFFLINE", "1")
         .env("TRANSFORMERS_OFFLINE", "1")
@@ -61,7 +52,7 @@ fn run_with_sigint(
 
     let mut child = cmd
         .spawn()
-        .unwrap_or_else(|e| panic!("failed to spawn `{python} -m aiperf`: {e}"));
+        .unwrap_or_else(|e| panic!("failed to spawn `{bin}`: {e}"));
 
     // Shared, incrementally-appended capture so we can watch for the PROFILING
     // marker while still collecting the full stream.

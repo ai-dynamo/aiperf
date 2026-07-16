@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Drive the native ``aiperf`` binary for one benchmark run from Python.
 
-The one native ``aiperf`` binary is BOTH the front door and the execution engine.
+The one native ``aiperf`` binary is BOTH the entry point and the execution engine.
 When a Python frontend entry point needs to execute a run it does so here: resolve
 the binary, project the authored Config-v2 run to a protocol-v2 ``execute``
 envelope, drive one ``aiperf --execute`` child over stdio, and parse its terminal

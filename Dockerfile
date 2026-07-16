@@ -134,7 +134,7 @@ COPY Cargo.toml Cargo.lock /workspace/
 COPY .cargo /workspace/.cargo
 COPY rust /workspace/rust
 
-# Build the unified `aiperf` binary (front door + execution engine, lto=fat) per
+# Build the unified `aiperf` binary (entry point + execution engine, lto=fat) per
 # AIPERF_RUNNER_PROFILE, then build the ONE maturin wheel and repack it. maturin
 # compiles the rust/pyext `aiperf._native` cdylib, packages `src/aiperf`, and runs
 # its built-in auditwheel repair to emit a manylinux-tagged wheel; the repack step

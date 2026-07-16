@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Resolve the `aiperf` binary to re-exec for one run's execution.
 //!
-//! There is no separate execution binary anymore: the front door re-execs
+//! There is no separate execution binary anymore: the entry point re-execs
 //! **itself** (`aiperf --execute`) for each run/probe/cell. The happy path is
 //! therefore `current_exe()`. A single non-"runner" override, `AIPERF_EXEC_BIN`,
 //! lets dev/test point the execution child at a different-features build (e.g. a
-//! `--features dynosim` binary) without rebuilding the front door.
+//! `--features dynosim` binary) without rebuilding the entry point.
 
 use std::path::PathBuf;
 

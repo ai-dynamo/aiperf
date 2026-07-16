@@ -89,7 +89,7 @@ fn maybe_inject_error(state: &AppState) -> Option<AppError> {
 
 /// Shared context for a tokenized LLM request.
 ///
-/// `pub(crate)` so alternative front doors (e.g. the KServe gRPC service in
+/// `pub(crate)` so alternative entry points (e.g. the KServe gRPC service in
 /// [`crate::grpc`]) reuse the exact tokenize → usage → latency/prefix-cache head
 /// the HTTP handlers use, rather than re-deriving it.
 pub(crate) struct RequestCtx {
@@ -104,7 +104,7 @@ pub(crate) struct RequestCtx {
     pub(crate) null_object_chunk: bool,
     /// Present when the seeded `--tool-call-rate` draw fires for this request:
     /// the chat response answers with this function tool call. Set only on the
-    /// chat endpoint (see [`chat_completions`]); every other front door leaves
+    /// chat endpoint (see [`chat_completions`]); every other entry point leaves
     /// it `None`, so their payloads are unchanged.
     pub(crate) tool_call: Option<ToolCallSpec>,
 }
@@ -165,7 +165,7 @@ impl RequestCtx {
         // with the (seeded) correct-or-wrong answer, formatted for the grader,
         // optionally as CoT or an adversarial parser-choke shape. All endpoints
         // and both streaming and non-streaming paths serialize
-        // `tokenized.content()`, so this single seam covers every front door.
+        // `tokenized.content()`, so this single seam covers every entry point.
         let mut null_object_chunk = false;
         if let Some(ds) = &state.accuracy {
             if let Some(entry) = ds.lookup(&tokenized.text) {

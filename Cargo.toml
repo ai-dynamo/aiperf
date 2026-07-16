@@ -5,7 +5,7 @@
 resolver = "3"
 # The 16 aiperf-* library crates were absorbed into `rust/aiperf`. The separate
 # `aiperf-runner` executable was obliterated: `rust/cli` (binary `aiperf`) is now
-# BOTH the front door and the execution engine, re-execing itself (`aiperf
+# BOTH the entry point and the execution engine, re-execing itself (`aiperf
 # --execute`) over the protocol-v2 stdio seam for each run/probe/cell.
 members = [
     "rust/loadgen-core",

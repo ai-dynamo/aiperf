@@ -4,8 +4,8 @@
 //! The `aiperf` binary's execution modes — one benchmark run over the stdio seam.
 //!
 //! This is the relocated body of the deleted `aiperf-runner` binary. The single
-//! `aiperf` binary is BOTH the front door and the execution engine: for each
-//! run/probe/cell the front door re-execs **itself** (`aiperf --execute`) and the
+//! `aiperf` binary is BOTH the entry point and the execution engine: for each
+//! run/probe/cell the entry point re-execs **itself** (`aiperf --execute`) and the
 //! child enters [`dispatch`] here, preserving the process/SIGINT/panic isolation
 //! boundary the separate runner binary used to provide.
 //!
@@ -53,10 +53,10 @@ pub const CELL_FLAG: &str = "--cell";
 pub const AGGREGATOR_FLAG: &str = "--aggregator";
 
 /// Whether `args` (the arguments after argv[0]) select an execution mode. The
-/// front door routes these to [`dispatch`] before ordinary subcommand parsing.
+/// entry point routes these to [`dispatch`] before ordinary subcommand parsing.
 ///
 /// Capabilities is NOT here: it is an in-process function ([`capabilities_catalog`]),
-/// never a subprocess mode — the front door and execution engine are one binary.
+/// never a subprocess mode — the entry point and execution engine are one binary.
 pub fn is_execution_mode(args: &[String]) -> bool {
     matches!(
         args,

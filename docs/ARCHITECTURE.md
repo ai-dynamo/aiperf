@@ -15,7 +15,7 @@
 
 AIPerf is a **Rust-executed** load generator and measurement front end for
 inference servers. The human-facing `aiperf` binary (crate `aiperf-cli`) is BOTH the native
-front door — it owns Config-v2, sweep/trial planning, and presentation natively — AND the
+entry point — it owns Config-v2, sweep/trial planning, and presentation natively — AND the
 execution engine. For each run it projects exactly one **protocol-v2 JSON envelope** and pipes
 it to a fresh `aiperf --execute` child over stdin (with `AIPERF_NATIVE=0`, the pure-Python
 frontend spawns the same `aiperf --execute` child). The `aiperf` binary is the **only Rust
@@ -97,7 +97,7 @@ backend**.
 |---|---|---|
 | `loadgen-core` | The `{transport}` seam + trace collector. Zero engine/HTTP deps. | — |
 | `aiperf-runtime` | Library-only runtime: clocks, transports, endpoints, datasets, RNG, timing/scheduling, graph engine, metrics, exporters, adaptive, accuracy, side-channel telemetry, cellular, dynosim. 16 former `aiperf-*` crates are now modules. Owns the single unified `AIPerfRegistry`/`AIPerfExtension` seam (`extensions`) and — behind the `runner-protocol` Cargo feature — hosts the v2 layer `runner_protocol` (protocol/registry, execution factories and `*_execution` drivers, `RunnerV2Coordinator`/`RunnerApplication`, cellular controller/cell, control-plane HTTP, GPU/network/server side-channels). **No binary.** | `loadgen-core` (+ optional `dynamo-mocker` under `dynosim`) |
-| `aiperf-cli` | The ONE product binary `aiperf`: BOTH the native front door (owns `profile`/`config` natively) AND the execution engine. It re-execs ITSELF (`aiperf --execute`, an internal hidden mode) once per run/cell; the execution child is the strict process/stdio/signal harness that composes the v2 layer `aiperf_runtime::runner_protocol` (feature `runner-protocol`). Protocol-v2 only. | `aiperf-runtime` (with `runner-protocol`), `loadgen-core` |
+| `aiperf-cli` | The ONE product binary `aiperf`: BOTH the native entry point (owns `profile`/`config` natively) AND the execution engine. It re-execs ITSELF (`aiperf --execute`, an internal hidden mode) once per run/cell; the execution child is the strict process/stdio/signal harness that composes the v2 layer `aiperf_runtime::runner_protocol` (feature `runner-protocol`). Protocol-v2 only. | `aiperf-runtime` (with `runner-protocol`), `loadgen-core` |
 | `aiperf-mock-server` | Standalone online test/benchmark inference target (OpenAI/Anthropic/TGI/…); launched independently, **not** in the execution-engine dep graph. | `aiperf-runtime` (only for `aiperf_runtime::rng`) |
 
 `rust/runtime/src/lib.rs` declares the module universe: `clock`, `transport_http`, `transport_grpc`,
@@ -123,7 +123,7 @@ backend**.
 ## 3. End-to-end flow: command line → results
 
 ```
-┌─ `aiperf profile --config x.yaml`  (front door, crate aiperf-cli) ────────────────────┐
+┌─ `aiperf profile --config x.yaml`  (entry point, crate aiperf-cli) ────────────────────┐
 │  Config-v2 → BenchmarkRun → ONE protocol-v2 JSON envelope                             │
 └───────────────────────────────┬───────────────────────────────────────────────────────┘
                                  │  stdin (JSONL)  →  self-exec `aiperf --execute`
@@ -173,14 +173,14 @@ backend**.
 │  → RunTerminalV2 { success:true, report_path, provenance{transport,workload,…} } exit 0 │
 └───────────────────────────────┬───────────────────────────────────────────────────────┘
                                  ▼
-        The front door (or the Python frontend when AIPERF_NATIVE=0) reads the terminal
+        The entry point (or the Python frontend when AIPERF_NATIVE=0) reads the terminal
         line + opens native-v2.json + artifact files
 ```
 
 Every failure funnels to a **typed** `RunTerminalV2`/`RunValidationV2` with a
 `RunnerFailureStageV2 ∈ {Protocol, Validation, Preparation, Execution, Reporting}`, redacted
 diagnostic, and exit code (0 ok / 1 validated failure / 2 protocol failure). A caught panic
-becomes a typed failure, never a bare crash — the front door always sees one JSONL line.
+becomes a typed failure, never a bare crash — the entry point always sees one JSONL line.
 
 ---
 
@@ -211,7 +211,7 @@ becomes a typed failure, never a bare crash — the front door always sees one J
 - `BenchmarkRunWireV2` — `benchmark_id`, `artifact_dir`, `cfg: BenchmarkConfigWireV2`, plus
   retained-but-uninterpreted `resolved`, `sweep_id`, `variation`, `trial`, `label`,
   `cli_command`, `random_seed`, `variables`.
-- `BenchmarkConfigWireV2` — deliberately **not** `deny_unknown_fields` (the front door dumps the whole
+- `BenchmarkConfigWireV2` — deliberately **not** `deny_unknown_fields` (the entry point dumps the whole
   BenchmarkConfig): `models`, `endpoint`, `endpoint_profiles`, `datasets`, `phases`,
   `tokenizer`, `transport`, `runtime`, `artifacts`, `metrics`, `failure_policy`, `slos`,
   `goodput`, `gpu_telemetry`, `server_metrics`, `network_latency`, `content_server`, `sidecars`,
@@ -752,7 +752,7 @@ crosses a `dyn` boundary it is object-safe, where it is hot-path it is monomorph
 - **NaN/Inf discipline** — every metric value crossing a serialization boundary is finite or
   explicitly absent; cellular wire uses MessagePack because NaN-sparsity + `+inf` need a
   self-describing binary format.
-- **One product entry path** — the `aiperf` front door projects exactly one side-effect-free
+- **One product entry path** — the `aiperf` entry point projects exactly one side-effect-free
   protocol-v2 request; the `aiperf --execute` engine is v2-only and fails closed on any
   unregistered transport/workload/endpoint id.
 - **Redaction at the boundary** — every diagnostic is credential-scrubbed before stdout; secrets

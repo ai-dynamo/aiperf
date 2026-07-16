@@ -14,7 +14,7 @@
 //!      single-process `aiperf-mock-server` bound to one internal port, carrying
 //!      the *exact* parent config (passed as JSON via [`CONFIG_JSON_ENV`], so no
 //!      fragile argv reconstruction) with `processes = 1`.
-//!   3. Health-gate every child (raw `GET /health`) before opening the front door.
+//!   3. Health-gate every child (raw `GET /health`) before opening the entry point.
 //!   4. Bind the public `--host:--port` and, for each accepted connection, splice
 //!      it byte-for-byte to the next backend in rotation via
 //!      [`tokio::io::copy_bidirectional`].

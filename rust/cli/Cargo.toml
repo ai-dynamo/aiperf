@@ -5,7 +5,7 @@ name = "aiperf-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Native Rust front door for AIPerf; owns `aiperf profile` (single run)."
+description = "Native Rust entry point for AIPerf; owns `aiperf profile` (single run)."
 
 [lib]
 name = "aiperf_cli"
@@ -16,7 +16,7 @@ name = "aiperf"
 path = "src/main.rs"
 
 [features]
-# The `aiperf` binary is BOTH the front door and the execution engine: it
+# The `aiperf` binary is BOTH the entry point and the execution engine: it
 # re-execs itself (`aiperf --execute`) over the protocol-v2 stdio seam for each
 # run/probe/cell. The heavy execution features live here as OPT-IN so the default
 # `cargo build -p aiperf-cli` stays lean and sibling-free (HTTP/gRPC/scheduled/

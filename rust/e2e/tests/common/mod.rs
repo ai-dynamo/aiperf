@@ -4,8 +4,12 @@
 //! Full-stack integration-test harness.
 //!
 //! Boots the `aiperf-mock-server` Axum router in-process on a random loopback port
-//! and drives the canonical Python frontend (`python -m aiperf profile ...`)
-//! against it as a subprocess, then reads back the emitted artifact tree.
+//! and drives the unified native `aiperf` binary (`aiperf profile ...`) — the
+//! product entry point — against it as a subprocess, then reads back the emitted
+//! artifact tree. (The one exception is a test that opts into the legacy Python
+//! execution engine via `AIPERF_RUNTIME_ENGINE=python`, which routes that leg
+//! through `python -m aiperf.cli` since the native entry point doesn't honor that
+//! switch.)
 //!
 //! The whole point is apples-to-apples product coverage: the exact same
 //! `aiperf profile` CLI a user runs, pointed at a deterministic mock target,
@@ -275,7 +279,7 @@ impl AIPerfHarness {
         self.artifact_dir.path()
     }
 
-    /// Run `python -m aiperf profile <args> --artifact-dir <dir> --tokenizer <model>`.
+    /// Run `aiperf profile <args> --artifact-dir <dir> --tokenizer <model>`.
     pub fn run(&self, profile_args: &str) -> RunResult {
         self.run_timeout(profile_args, DEFAULT_TIMEOUT_SECS)
     }
@@ -327,10 +331,29 @@ impl AIPerfHarness {
         timeout_secs: u64,
         extra_env: &[(&str, &str)],
     ) -> RunResult {
-        let python = python_binary();
+        // Default: invoke the unified `aiperf` binary directly — it IS the native
+        // entry point that owns `profile`/`config` (and delegates other subcommands
+        // to Python internally), so we exercise the real product entry path rather
+        // than a Python wrapper. The ONE exception is a test that opts into the
+        // legacy pure-Python execution engine via `AIPERF_RUNTIME_ENGINE=python`:
+        // the native entry point does not honor that switch (only the Python
+        // frontend does), so that leg routes through `python -m aiperf.cli`
+        // (dispatches `aiperf.cli:app` directly — the same Cyclopts tree as
+        // `aiperf.entrypoint:main`).
+        let wants_python_engine = extra_env
+            .iter()
+            .any(|(k, v)| *k == "AIPERF_RUNTIME_ENGINE" && *v == "python");
 
-        let mut cmd = Command::new(&python);
-        cmd.arg("-m").arg("aiperf");
+        let (program, mut cmd) = if wants_python_engine {
+            let python = python_binary();
+            let mut c = Command::new(&python);
+            c.arg("-m").arg("aiperf.cli");
+            (format!("{python} -m aiperf.cli"), c)
+        } else {
+            let bin = exec_binary();
+            let c = Command::new(&bin);
+            (bin, c)
+        };
         cmd.args(&args);
         cmd.env("HF_HUB_OFFLINE", "1")
             .env("TRANSFORMERS_OFFLINE", "1")
@@ -345,7 +368,7 @@ impl AIPerfHarness {
         }
 
         let mut child = cmd.spawn().unwrap_or_else(|e| {
-            panic!("failed to spawn `{python} -m aiperf`: {e}");
+            panic!("failed to spawn `{program}`: {e}");
         });
 
         // Drain both pipes on dedicated threads so a full OS pipe buffer can
@@ -417,7 +440,9 @@ fn cancel_child(child: &std::process::Child) {
 #[cfg(not(unix))]
 fn cancel_child(_child: &std::process::Child) {}
 
-/// Resolve the Python interpreter: `$VIRTUAL_ENV/bin/python`, else `python3`.
+/// Resolve the Python interpreter: `$VIRTUAL_ENV/bin/python`, else `python3`. Used
+/// only for the legacy `AIPERF_RUNTIME_ENGINE=python` leg, which runs
+/// `python -m aiperf.cli` (dispatching `aiperf.cli:app`).
 fn python_binary() -> String {
     if let Ok(venv) = std::env::var("VIRTUAL_ENV") {
         let candidate = PathBuf::from(&venv).join("bin").join("python");
@@ -428,10 +453,12 @@ fn python_binary() -> String {
     "python3".to_string()
 }
 
-/// Resolve the unified `aiperf` execution binary (front door + execution engine).
+/// Resolve the unified `aiperf` execution binary (entry point + execution engine).
 ///
-/// The Python orchestrator (`python -m aiperf`) reads `AIPERF_EXEC_BIN` and spawns
-/// this binary in its internal `--execute` mode. Priority:
+/// The harness spawns this binary directly as the entry point; it re-execs itself
+/// (`current_exe()`) in the internal `--execute` mode, or honors `AIPERF_EXEC_BIN`
+/// as an override. On the legacy `aiperf-python` leg the Python orchestrator reads
+/// the same `AIPERF_EXEC_BIN` to locate the execution child. Priority:
 /// 1. `AIPERF_EXEC_BIN` env var (already set by the user or outer harness)
 /// 2. `target/release/aiperf` then `target/debug/aiperf` relative to the Cargo
 ///    workspace root (derived from this file's `CARGO_MANIFEST_DIR` at compile time)

@@ -373,7 +373,7 @@ pub struct ProfileFlags {
     pub stream: bool,
 
     // --- Service / UI / logging flags (accepted for CLI parity; the native
-    //     front door does not project these into the runner request) ----------
+    //     entry point does not project these into the runner request) ----------
     /// Controller API host (`--api-host`).
     #[arg(long = "api-host")]
     pub api_host: Option<String>,

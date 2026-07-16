@@ -109,7 +109,7 @@ HTTP/1.1 keep-alive, HTTP/2, and SSE all pass through untouched (the balancer ne
 HTTP).
 
 ```bash
-# 4 backend processes behind one round-robin front door on :8000.
+# 4 backend processes behind one round-robin entry point on :8000.
 ./target/release/aiperf-mock-server --processes 4 --no-tokenizer --port 8000
 # --processes 0 = auto = one process per CPU.
 ```

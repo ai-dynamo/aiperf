@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! End-to-end verification of the native `aiperf` front door's logging parity
+//! End-to-end verification of the native `aiperf` entry point's logging parity
 //! with the Python frontend (`src/aiperf/common/logging.py`).
 //!
 //! Unlike the rest of the e2e suite (which drives `python -m aiperf`), this test
-//! runs the native `aiperf` binary DIRECTLY as the front door, so it exercises
+//! runs the native `aiperf` binary DIRECTLY as the entry point, so it exercises
 //! the Rust logging stack end to end:
 //!
 //! - the default level is INFO (no verbosity flag given),
-//! - the front-door lifecycle lines (`Starting native AIPerf run` … `Native
+//! - the entry-point lifecycle lines (`Starting native AIPerf run` … `Native
 //!   AIPerf run completed`) are emitted,
 //! - the `--execute` child's runtime narrative (dataset / phase lifecycle /
 //!   export) is forwarded as `aiperf-runner:` lines, and
@@ -104,12 +104,12 @@ async fn native_front_door_writes_full_log_narrative() {
     assert_eq!(exit, 0, "native aiperf profile run should exit 0");
 
     // Python's `setup_rich_logging` writes to `<artifact_dir>/logs/aiperf.log`;
-    // the native front door must produce the same file.
+    // the native entry point must produce the same file.
     let log_path = dir.path().join("logs").join("aiperf.log");
     let log = std::fs::read_to_string(&log_path)
         .unwrap_or_else(|e| panic!("logs/aiperf.log missing at {}: {e}", log_path.display()));
 
-    // The run's milestone narrative, in the order it must appear. Front-door
+    // The run's milestone narrative, in the order it must appear. Entry-point
     // lines come from `aiperf_cli`; the runtime lines are forwarded from the
     // `--execute` child as `aiperf-runner:` lines. Wording mirrors the Python
     // frontend so existing log-scraping keeps matching on the native path.

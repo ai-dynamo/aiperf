@@ -14,7 +14,7 @@ described historically here are **superseded by**
 BenchmarkRun-shaped wire and the plugins.yaml-shaped runner catalog.
 **Decision:** every end-user AIPerf execution backed by the native Rust implementation enters
 through the `aiperf` binary's versioned execution operation (`aiperf --execute`, the internal hidden
-mode the front door re-execs). There is no separate second Rust executable, Python inference
+mode the entry point re-execs). There is no separate second Rust executable, Python inference
 fallback, direct Python-to-Rust library binding, or mode-specific process surface.
 
 **Companions:**

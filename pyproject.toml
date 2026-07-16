@@ -4,7 +4,7 @@
 # Build
 #
 # maturin compiles the pyo3 `aiperf._native` module (rust/pyext) and interns the
-# unified native `aiperf` executable (front door + execution engine) into this one
+# unified native `aiperf` executable (entry point + execution engine) into this one
 # wheel as package data (`aiperf/_bin/aiperf`) — see [tool.maturin] below.
 # Because the wheel carries a compiled binary it is platform + CPython-ABI specific
 # (no longer `py3-none-any`).
@@ -85,7 +85,7 @@ dependencies = [
 
 # CLI Entrypoints
 [project.scripts]
-# The `aiperf` command IS the native Rust binary (crate aiperf-cli: front door +
+# The `aiperf` command IS the native Rust binary (crate aiperf-cli: entry point +
 # execution engine). The wheel installs that binary DIRECTLY into the scripts dir
 # via a post-build repack (Makefile `wheel` -> tools/wheel_repack.py), so there is
 # NO Python launcher shim and no `[project.scripts] aiperf` entry. The pure-Python
@@ -99,7 +99,7 @@ aiperf = "aiperf.plugin:plugins.yaml"
 
 # maturin build backend. It compiles the pyo3 cdylib at rust/pyext into
 # `aiperf/_native.<abi>.so` and packages the `src/aiperf` Python tree. The
-# unified `aiperf` binary (front door + execution engine) is NOT built by maturin
+# unified `aiperf` binary (entry point + execution engine) is NOT built by maturin
 # (`bindings = "bin"` is illegal alongside `[project.scripts]`) and is NOT interned
 # as package data; instead the Makefile `wheel` target repacks the built wheel to
 # inject the binary into `aiperf-<ver>.data/scripts/aiperf` so pip installs it

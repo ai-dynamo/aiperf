@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Drive one execution child (`aiperf --execute`) over stdio for a single run.
 //!
-//! There is no separate runner binary: the front door re-execs itself in the
+//! There is no separate runner binary: the entry point re-execs itself in the
 //! internal `--execute` mode ([`crate::execute_mode`]). The protocol is unchanged:
 //! write the request JSON to the child's stdin and close it; the child streams
 //! human-readable lifecycle/readiness lines to stderr and writes exactly one

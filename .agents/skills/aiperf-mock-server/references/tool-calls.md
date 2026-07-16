@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 
 Make a seeded fraction of **chat** requests answer with a function tool call instead of a
 plain assistant turn, so the runner's tool-call parsing and streamed-argument merge are
-exercised. Only affects the OpenAI-compatible chat endpoint; every other front door is
+exercised. Only affects the OpenAI-compatible chat endpoint; every other entry point is
 unchanged. Source: `rust/mock-server/src/config.rs`, `ToolCallSpec` / `tool_call_frames` /
 `build_chat_response` in `rust/mock-server/src/handlers.rs`.
 

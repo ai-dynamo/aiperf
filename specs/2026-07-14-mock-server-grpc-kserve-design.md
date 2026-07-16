@@ -83,7 +83,7 @@ symmetric and parity is structural, not test-enforced.
    with HTTP: `recorder` (metrics), `prefix_cache`, `scheduler`, `config`, `clock_anchor`.
 
 3. **Generation seam (`tokens.rs` + `latency.rs` + `scheduler.rs`)** — reused unchanged. gRPC is a
-   new front-door onto the mock's existing brain: `tokenize_request` → usage (prompt/completion
+   new entry-point onto the mock's existing brain: `tokenize_request` → usage (prompt/completion
    tokens) → `wait_for_processing` (latency/scheduler pacing) → token generation. No content logic is
    duplicated. If a small shared helper needs extracting from `handlers.rs` (the chat/text path) to
    avoid copy-paste, do that as a targeted refactor rather than re-implementing.

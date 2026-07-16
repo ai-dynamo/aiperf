@@ -91,7 +91,7 @@ pub fn current_directive() -> String {
 /// Begin also writing every log line to `<artifact_dir>/logs/aiperf.log` (Python
 /// `setup_rich_logging`'s `FileHandler`). Idempotent and best-effort: a failure to
 /// create the folder or open the file logs a warning and leaves logging
-/// console-only. Called by the front door once a run's artifact dir is resolved.
+/// console-only. Called by the entry point once a run's artifact dir is resolved.
 pub fn set_log_file(artifact_dir: &Path) {
     if LOG_FILE.get().is_some() {
         return;

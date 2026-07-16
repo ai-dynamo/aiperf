@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Native `aiperf` front door AND execution engine.
+//! Native `aiperf` entry point AND execution engine.
 //!
 //! The single `aiperf` binary owns both roles: `profile`/`config` (and the other
-//! subcommands) as the human-facing front door, and — behind an INTERNAL protocol
-//! the front door re-execs itself over — one benchmark run's execution
+//! subcommands) as the human-facing entry point, and — behind an INTERNAL protocol
+//! the entry point re-execs itself over — one benchmark run's execution
 //! ([`aiperf_cli::execute_mode`]). The re-exec modes (`--execute`, `--cell`,
 //! `--aggregator`) are intercepted here BEFORE clap parses, so they never appear
 //! in `--help` and are not part of the public CLI surface; they exist only for
-//! the front door → child re-exec seam. (Capabilities is an in-process function,
+//! the entry point → child re-exec seam. (Capabilities is an in-process function,
 //! not a subprocess mode.)
 
 use aiperf_cli::{dispatch, execute_mode};
@@ -51,7 +51,7 @@ fn main() {
     // interception below so the re-exec child inherits the same subscriber.
     aiperf_cli::logging::init(&argv);
 
-    // Internal re-exec protocol: the front door spawns `aiperf --execute` (and the
+    // Internal re-exec protocol: the entry point spawns `aiperf --execute` (and the
     // cellular launcher `aiperf --cell` / `--aggregator`) for one run's execution.
     // Intercept before clap so these stay off the public CLI surface entirely and
     // the stdin protocol channel is never touched by argument parsing.

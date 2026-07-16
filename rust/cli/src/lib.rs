@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Native Rust front door for AIPerf.
+//! Native Rust entry point for AIPerf.
 //!
 //! This crate owns the `aiperf profile`/`config` commands natively AND the
 //! execution engine: it parses the profile CLI flags and YAML Config v2 into

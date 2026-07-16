@@ -38,7 +38,7 @@ SHELL := /bin/bash
 
 # Default the make-driven workflow to the native Rust execution path. These are
 # already the code defaults (src/aiperf/common/environment.py); exporting them
-# here makes every make-invoked `aiperf` run use the Rust front door + hot path
+# here makes every make-invoked `aiperf` run use the Rust entry point + hot path
 # unless the caller overrides them. Set AIPERF_NATIVE=0 / AIPERF_RUNTIME_ENGINE=python
 # to fall back to the legacy pure-Python frontend and service mesh.
 export AIPERF_NATIVE ?= 1
@@ -166,7 +166,7 @@ install-app: bundle-cli #? install the project in editable mode and place the na
 	cp target/release/aiperf $(VENV_PATH)/bin/aiperf
 	chmod +x $(VENV_PATH)/bin/aiperf
 
-native-cli: #? build the unified native Rust `aiperf` binary (front door + execution engine).
+native-cli: #? build the unified native Rust `aiperf` binary (entry point + execution engine).
 	cargo build --release -p aiperf-cli $(CLI_FEATURES)
 
 install-native: native-cli #? install the pure-Rust `aiperf` into dist/native-bin (no Python on the profile/config path).
