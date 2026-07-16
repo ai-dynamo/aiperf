@@ -22,12 +22,15 @@ from aiperf.metrics.accumulator import (
 )
 from aiperf.metrics.column_store import ColumnStore
 from aiperf.metrics.metric_dicts import MetricResultsDict, metric_result_from_array
+from aiperf.metrics.types.inter_chunk_latency_metric import InterChunkLatencyMetric
+from aiperf.metrics.types.max_response_metric import MaxResponseTimestampMetric
+from aiperf.metrics.types.min_request_metric import MinRequestTimestampMetric
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
 from tests.unit.post_processors.conftest import (
     create_accumulator_with_metrics,
-    create_metric_records_message,
+    create_metric_records_data,
 )
 
 
@@ -51,25 +54,25 @@ class TestMetricsAccumulator:
         processor = MetricsAccumulator(mock_run)
         processor._tags_to_types = {"test_record": MetricType.RECORD}
 
-        message = create_metric_records_message(
+        message = create_metric_records_data(
             x_request_id="test-1",
             session_num=0,
             results=[{"test_record": 42.0}],
         )
-        await processor.process_record(message.to_data())
+        await processor.process_record(message)
 
         assert "test_record" in processor._column_store.numeric_tags()
         values = processor._column_store.numeric("test_record")
         assert list(values[~np.isnan(values)]) == [42.0]
 
         # New data should expand the column store
-        message2 = create_metric_records_message(
+        message2 = create_metric_records_data(
             x_request_id="test-2",
             session_num=1,
             request_start_ns=1_000_000_001,
             results=[{"test_record": 84.0}],
         )
-        await processor.process_record(message2.to_data())
+        await processor.process_record(message2)
         values = processor._column_store.numeric("test_record")
         assert list(values[~np.isnan(values)]) == [42.0, 84.0]
 
@@ -81,12 +84,12 @@ class TestMetricsAccumulator:
         processor = MetricsAccumulator(mock_run)
         processor._tags_to_types = {"test_record": MetricType.RECORD}
 
-        message = create_metric_records_message(
+        message = create_metric_records_data(
             x_request_id="test-1",
             session_num=0,
             results=[{"test_record": [10.0, 20.0, 30.0]}],
         )
-        await processor.process_record(message.to_data())
+        await processor.process_record(message)
 
         assert "test_record" in processor._column_store.ragged_tags()
         ragged = processor._column_store.ragged("test_record")
@@ -103,24 +106,24 @@ class TestMetricsAccumulator:
             RequestCountMetric.tag: AggregationKind.SUM,
         }
 
-        message1 = create_metric_records_message(
+        message1 = create_metric_records_data(
             x_request_id="test-1",
             session_num=0,
             results=[{RequestCountMetric.tag: 5}],
         )
-        await processor.process_record(message1.to_data())
+        await processor.process_record(message1)
 
         assert RequestCountMetric.tag in processor._column_store.numeric_tags()
         values = processor._column_store.numeric(RequestCountMetric.tag)
         assert list(values[~np.isnan(values)]) == [5.0]
 
-        message2 = create_metric_records_message(
+        message2 = create_metric_records_data(
             x_request_id="test-2",
             session_num=1,
             request_start_ns=1_000_000_001,
             results=[{RequestCountMetric.tag: 3}],
         )
-        await processor.process_record(message2.to_data())
+        await processor.process_record(message2)
         values = processor._column_store.numeric(RequestCountMetric.tag)
         assert list(values[~np.isnan(values)]) == [5.0, 3.0]
 
@@ -137,13 +140,13 @@ class TestMetricsAccumulator:
         processor._metric_classes = {RequestCountMetric.tag: RequestCountMetric}
 
         for i in range(3):
-            msg = create_metric_records_message(
+            msg = create_metric_records_data(
                 x_request_id=f"test-{i}",
                 session_num=i,
                 request_start_ns=1_000_000_000 + i,
                 results=[{RequestCountMetric.tag: 5}],
             )
-            await processor.process_record(msg.to_data())
+            await processor.process_record(msg)
 
         results = processor._compute_results()
         assert results[RequestCountMetric.tag].avg == 15.0
@@ -154,13 +157,13 @@ class TestMetricsAccumulator:
         processor = MetricsAccumulator(mock_run)
         processor._tags_to_types = {}
 
-        msg1 = create_metric_records_message(x_request_id="test-1", session_num=0)
-        msg2 = create_metric_records_message(
+        msg1 = create_metric_records_data(x_request_id="test-1", session_num=0)
+        msg2 = create_metric_records_data(
             x_request_id="test-2", session_num=1, request_start_ns=1_000_000_001
         )
 
-        await processor.process_record(msg1.to_data())
-        await processor.process_record(msg2.to_data())
+        await processor.process_record(msg1)
+        await processor.process_record(msg2)
 
         assert processor.record_count == 2
 
@@ -173,14 +176,14 @@ class TestMetricsAccumulator:
         processor._tags_to_types = {RequestLatencyMetric.tag: MetricType.RECORD}
         processor._metric_classes = {RequestLatencyMetric.tag: RequestLatencyMetric}
 
-        warmup_msg = create_metric_records_message(
+        warmup_msg = create_metric_records_data(
             session_num=0,
             benchmark_phase=CreditPhase.WARMUP,
             request_start_ns=1_000_000_000,
             request_end_ns=1_100_000_000,
             results=[{RequestLatencyMetric.tag: 100_000_000.0}],
         )
-        profiling_msg = create_metric_records_message(
+        profiling_msg = create_metric_records_data(
             session_num=0,
             benchmark_phase=CreditPhase.PROFILING,
             request_start_ns=2_000_000_000,
@@ -188,8 +191,8 @@ class TestMetricsAccumulator:
             results=[{RequestLatencyMetric.tag: 200_000_000.0}],
         )
 
-        await processor.process_record(warmup_msg.to_data())
-        await processor.process_record(profiling_msg.to_data())
+        await processor.process_record(warmup_msg)
+        await processor.process_record(profiling_msg)
 
         assert processor.record_count == 2
 
@@ -219,7 +222,7 @@ class TestMetricsAccumulator:
         }
         processor._aggregation_kinds = {RequestCountMetric.tag: AggregationKind.SUM}
 
-        warmup_msg = create_metric_records_message(
+        warmup_msg = create_metric_records_data(
             session_num=0,
             benchmark_phase=CreditPhase.WARMUP,
             request_start_ns=1_000_000_000,
@@ -231,7 +234,7 @@ class TestMetricsAccumulator:
                 }
             ],
         )
-        profiling_msg = create_metric_records_message(
+        profiling_msg = create_metric_records_data(
             session_num=0,
             benchmark_phase=CreditPhase.PROFILING,
             request_start_ns=2_000_000_000,
@@ -244,8 +247,8 @@ class TestMetricsAccumulator:
             ],
         )
 
-        await processor.process_record(warmup_msg.to_data())
-        await processor.process_record(profiling_msg.to_data())
+        await processor.process_record(warmup_msg)
+        await processor.process_record(profiling_msg)
 
         assert processor.record_count == 2
 
@@ -255,6 +258,141 @@ class TestMetricsAccumulator:
         assert summary.results[RequestLatencyMetric.tag].avg == pytest.approx(200.0)
         # Request count reflects only the single profiling record, not both.
         assert summary.results[RequestCountMetric.tag].avg == pytest.approx(1.0)
+
+    @pytest.mark.asyncio
+    async def test_process_record_metric_accumulates_values(self, mock_run) -> None:
+        accumulator = MetricsAccumulator(mock_run)
+
+        for idx, value in enumerate([42_000_000.0, 84_000_000.0]):
+            message = create_metric_records_data(
+                x_request_id=f"test-{idx}",
+                request_start_ns=1_000_000_000 + idx,
+                request_end_ns=1_100_000_000 + idx,
+                results=[{RequestLatencyMetric.tag: value}],
+            )
+            await accumulator.process_record(message)
+
+        summary = await accumulator.summarize()
+        result = summary.results[RequestLatencyMetric.tag]
+
+        assert accumulator.record_count == 2
+        assert result.unit == "ms"
+        assert result.count == 2
+        assert result.avg == pytest.approx(63.0)
+        assert result.sum == pytest.approx(126.0)
+
+    @pytest.mark.asyncio
+    async def test_process_record_list_metric_summarizes_distribution(
+        self, mock_run
+    ) -> None:
+        accumulator = MetricsAccumulator(mock_run)
+        message = create_metric_records_data(
+            x_request_id="test-1",
+            results=[
+                {
+                    InterChunkLatencyMetric.tag: [
+                        10_000_000.0,
+                        20_000_000.0,
+                        30_000_000.0,
+                    ]
+                }
+            ],
+        )
+
+        await accumulator.process_record(message)
+
+        summary = await accumulator.summarize()
+        result = summary.results[InterChunkLatencyMetric.tag]
+        assert result.count == 3
+        assert result.sum == pytest.approx(60.0)
+        assert result.min == pytest.approx(10.0)
+        assert result.max == pytest.approx(30.0)
+
+    @pytest.mark.asyncio
+    async def test_process_aggregate_metric_sums_values(self, mock_run) -> None:
+        accumulator = MetricsAccumulator(mock_run)
+
+        for idx, value in enumerate([5, 3]):
+            message = create_metric_records_data(
+                x_request_id=f"test-{idx}",
+                request_start_ns=1_000_000_000 + idx,
+                results=[{RequestCountMetric.tag: value}],
+            )
+            await accumulator.process_record(message)
+
+        summary = await accumulator.summarize()
+
+        assert summary.results[RequestCountMetric.tag].avg == 8
+
+    @pytest.mark.asyncio
+    async def test_derived_metrics_are_computed_from_accumulated_results(
+        self, mock_run
+    ) -> None:
+        accumulator = MetricsAccumulator(mock_run)
+        message = create_metric_records_data(
+            x_request_id="test-1",
+            results=[
+                {
+                    RequestCountMetric.tag: 100,
+                    MinRequestTimestampMetric.tag: 0,
+                    MaxResponseTimestampMetric.tag: 10 * NANOS_PER_SECOND,
+                }
+            ],
+        )
+
+        await accumulator.process_record(message)
+        summary = await accumulator.summarize()
+
+        assert summary.results[RequestThroughputMetric.tag].avg == pytest.approx(10.0)
+
+    @pytest.mark.asyncio
+    async def test_derived_metrics_ignore_no_metric_value(self, mock_run) -> None:
+        accumulator = MetricsAccumulator(mock_run)
+
+        def failing_derive_func(results_dict: MetricResultsDict) -> float:
+            raise NoMetricValue("Cannot derive value")
+
+        accumulator._derive_funcs = {RequestThroughputMetric.tag: failing_derive_func}
+
+        with patch.object(accumulator, "debug") as mock_debug:
+            summary = await accumulator.summarize()
+
+        assert RequestThroughputMetric.tag not in summary.results
+        assert any(
+            "No metric value for derived metric" in str(call.args[0])
+            for call in mock_debug.call_args_list
+        )
+
+    @pytest.mark.asyncio
+    async def test_derived_metrics_warn_on_unexpected_exception(self, mock_run) -> None:
+        accumulator = MetricsAccumulator(mock_run)
+
+        def failing_derive_func(results_dict: MetricResultsDict) -> float:
+            raise ValueError("Calculation error")
+
+        accumulator._derive_funcs = {RequestThroughputMetric.tag: failing_derive_func}
+
+        with patch.object(accumulator, "warning") as mock_warning:
+            summary = await accumulator.summarize()
+
+        assert RequestThroughputMetric.tag not in summary.results
+        mock_warning.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_summarize_returns_typed_summary(self, mock_run) -> None:
+        accumulator = MetricsAccumulator(mock_run)
+        await accumulator.process_record(
+            create_metric_records_data(
+                x_request_id="test-1",
+                results=[{RequestLatencyMetric.tag: 42_000_000.0}],
+            )
+        )
+
+        summary = await accumulator.summarize()
+
+        assert isinstance(summary, AccumulatorMetricsSummary)
+        assert summary.results[RequestLatencyMetric.tag].unit == "ms"
+        assert summary.results[RequestLatencyMetric.tag].avg == pytest.approx(42.0)
 
 
 class TestComputeResultsWindowBounds:
@@ -281,12 +419,12 @@ class TestComputeResultsWindowBounds:
         processor._derive_funcs = {RequestThroughputMetric.tag: spy_derive}
         processor._metric_classes[RequestThroughputMetric.tag] = RequestThroughputMetric
 
-        msg = create_metric_records_message(
+        msg = create_metric_records_data(
             x_request_id="test-1",
             session_num=0,
             results=[{RequestCountMetric.tag: 10}],
         )
-        await processor.process_record(msg.to_data())
+        await processor.process_record(msg)
 
         processor._compute_results(
             window_start_ns=1_000_000_000, window_end_ns=5_000_000_000
@@ -317,12 +455,12 @@ class TestComputeResultsWindowBounds:
         processor._derive_funcs = {RequestThroughputMetric.tag: spy_derive}
         processor._metric_classes[RequestThroughputMetric.tag] = RequestThroughputMetric
 
-        msg = create_metric_records_message(
+        msg = create_metric_records_data(
             x_request_id="test-1",
             session_num=0,
             results=[{RequestCountMetric.tag: 10}],
         )
-        await processor.process_record(msg.to_data())
+        await processor.process_record(msg)
 
         mask = np.ones(processor._column_store.count, dtype=bool)
         processor.compute_results_for_mask(
@@ -378,9 +516,9 @@ class TestQueryTimeRange:
     ) -> None:
         processor = MetricsAccumulator(mock_run)
         processor._tags_to_types = {}
-        record = create_metric_records_message(
+        record = create_metric_records_data(
             x_request_id="test-1", session_num=0, request_start_ns=5_000
-        ).to_data()
+        )
         await processor.process_record(record)
         mask = processor.query_time_range(0, 10_000)
         assert mask.sum() == 1
@@ -391,9 +529,9 @@ class TestQueryTimeRange:
     ) -> None:
         processor = MetricsAccumulator(mock_run)
         processor._tags_to_types = {}
-        record = create_metric_records_message(
+        record = create_metric_records_data(
             x_request_id="test-1", session_num=0, request_start_ns=15_000
-        ).to_data()
+        )
         await processor.process_record(record)
         mask = processor.query_time_range(0, 10_000)
         assert mask.sum() == 0
@@ -404,12 +542,12 @@ class TestQueryTimeRange:
     ) -> None:
         processor = MetricsAccumulator(mock_run)
         processor._tags_to_types = {}
-        record1 = create_metric_records_message(
+        record1 = create_metric_records_data(
             x_request_id="test-1", session_num=0, request_start_ns=1_000
-        ).to_data()
-        record2 = create_metric_records_message(
+        )
+        record2 = create_metric_records_data(
             x_request_id="test-2", session_num=1, request_start_ns=2_000
-        ).to_data()
+        )
         await processor.process_record(record1)
         await processor.process_record(record2)
         # [1_000, 2_000) should include 1_000 but exclude 2_000
@@ -425,9 +563,9 @@ class TestQueryTimeRange:
         processor = MetricsAccumulator(mock_run)
         processor._tags_to_types = {}
         for i, ts in enumerate([100, 200, 300, 400, 500]):
-            r = create_metric_records_message(
+            r = create_metric_records_data(
                 x_request_id=f"test-{i}", session_num=i, request_start_ns=ts
-            ).to_data()
+            )
             await processor.process_record(r)
 
         mask = processor.query_time_range(200, 400)
@@ -446,12 +584,12 @@ class TestSummarize:
         processor._metric_classes = {RequestLatencyMetric.tag: RequestLatencyMetric}
 
         # Inject data via process_record
-        msg = create_metric_records_message(
+        msg = create_metric_records_data(
             x_request_id="test-1",
             session_num=0,
             results=[{RequestLatencyMetric.tag: 42.0}],
         )
-        await processor.process_record(msg.to_data())
+        await processor.process_record(msg)
 
         summary = await processor.summarize()
 
@@ -531,23 +669,23 @@ class TestTimesliceSummarize:
         processor._metric_classes = {"test_record": RequestLatencyMetric}
 
         # Process records in two different 1-second windows
-        msg1 = create_metric_records_message(
+        msg1 = create_metric_records_data(
             x_request_id="test-1",
             session_num=0,
             request_start_ns=int(0.5 * NANOS_PER_SECOND),
             request_end_ns=int(0.6 * NANOS_PER_SECOND),
             results=[{"test_record": 42.0}],
         )
-        await processor.process_record(msg1.to_data())
+        await processor.process_record(msg1)
 
-        msg2 = create_metric_records_message(
+        msg2 = create_metric_records_data(
             x_request_id="test-2",
             session_num=1,
             request_start_ns=int(1.5 * NANOS_PER_SECOND),
             request_end_ns=int(2.5 * NANOS_PER_SECOND),
             results=[{"test_record": 84.0}],
         )
-        await processor.process_record(msg2.to_data())
+        await processor.process_record(msg2)
 
         summary = await processor.summarize()
 
@@ -567,12 +705,12 @@ class TestTimesliceSummarize:
         processor._tags_to_types = {"test_record": MetricType.RECORD}
         processor._metric_classes = {"test_record": RequestLatencyMetric}
 
-        msg = create_metric_records_message(
+        msg = create_metric_records_data(
             x_request_id="test-1",
             session_num=0,
             results=[{"test_record": 42.0}],
         )
-        await processor.process_record(msg.to_data())
+        await processor.process_record(msg)
 
         summary = await processor.summarize()
         assert summary.timeslices is None
@@ -588,21 +726,21 @@ class TestTimesliceSummarize:
         processor._metric_classes = {"test_record": RequestLatencyMetric}
 
         # Two records in same 1-second window
-        msg1 = create_metric_records_message(
+        msg1 = create_metric_records_data(
             x_request_id="test-1",
             session_num=0,
             request_start_ns=int(0.3 * NANOS_PER_SECOND),
             results=[{"test_record": 10.0}],
         )
-        await processor.process_record(msg1.to_data())
+        await processor.process_record(msg1)
 
-        msg2 = create_metric_records_message(
+        msg2 = create_metric_records_data(
             x_request_id="test-2",
             session_num=1,
             request_start_ns=int(0.7 * NANOS_PER_SECOND),
             results=[{"test_record": 20.0}],
         )
-        await processor.process_record(msg2.to_data())
+        await processor.process_record(msg2)
 
         summary = await processor.summarize()
         assert summary.timeslices is not None
@@ -623,33 +761,33 @@ class TestTimesliceSummarize:
         processor._metric_classes = {RequestCountMetric.tag: RequestCountMetric}
 
         # First timeslice: 5 + 3 = 8
-        msg1 = create_metric_records_message(
+        msg1 = create_metric_records_data(
             x_request_id="test-1",
             session_num=0,
             request_start_ns=int(0.5 * NANOS_PER_SECOND),
             request_end_ns=int(0.6 * NANOS_PER_SECOND),
             results=[{RequestCountMetric.tag: 5}],
         )
-        await processor.process_record(msg1.to_data())
+        await processor.process_record(msg1)
 
-        msg2 = create_metric_records_message(
+        msg2 = create_metric_records_data(
             x_request_id="test-2",
             session_num=1,
             request_start_ns=int(0.7 * NANOS_PER_SECOND),
             request_end_ns=int(0.8 * NANOS_PER_SECOND),
             results=[{RequestCountMetric.tag: 3}],
         )
-        await processor.process_record(msg2.to_data())
+        await processor.process_record(msg2)
 
         # Second timeslice: 7
-        msg3 = create_metric_records_message(
+        msg3 = create_metric_records_data(
             x_request_id="test-3",
             session_num=2,
             request_start_ns=int(1.5 * NANOS_PER_SECOND),
             request_end_ns=int(2.5 * NANOS_PER_SECOND),
             results=[{RequestCountMetric.tag: 7}],
         )
-        await processor.process_record(msg3.to_data())
+        await processor.process_record(msg3)
 
         summary = await processor.summarize()
         assert summary.timeslices is not None
@@ -670,23 +808,23 @@ class TestTimesliceSummarize:
         processor = MetricsAccumulator(mock_run)
         processor._tags_to_types = {"max_ts": MetricType.AGGREGATE}
         processor._aggregation_kinds = {"max_ts": AggregationKind.MAX}
-        processor._metric_classes = {"max_ts": RequestLatencyMetric}
+        processor._metric_classes = {"max_ts": RequestCountMetric}
 
-        msg1 = create_metric_records_message(
+        msg1 = create_metric_records_data(
             x_request_id="test-1",
             session_num=0,
             request_start_ns=int(0.3 * NANOS_PER_SECOND),
             results=[{"max_ts": 100}],
         )
-        await processor.process_record(msg1.to_data())
+        await processor.process_record(msg1)
 
-        msg2 = create_metric_records_message(
+        msg2 = create_metric_records_data(
             x_request_id="test-2",
             session_num=1,
             request_start_ns=int(0.7 * NANOS_PER_SECOND),
             results=[{"max_ts": 300}],
         )
-        await processor.process_record(msg2.to_data())
+        await processor.process_record(msg2)
 
         summary = await processor.summarize()
         assert summary.timeslices is not None
@@ -702,23 +840,23 @@ class TestTimesliceSummarize:
         processor = MetricsAccumulator(mock_run)
         processor._tags_to_types = {"min_ts": MetricType.AGGREGATE}
         processor._aggregation_kinds = {"min_ts": AggregationKind.MIN}
-        processor._metric_classes = {"min_ts": RequestLatencyMetric}
+        processor._metric_classes = {"min_ts": RequestCountMetric}
 
-        msg1 = create_metric_records_message(
+        msg1 = create_metric_records_data(
             x_request_id="test-1",
             session_num=0,
             request_start_ns=int(0.3 * NANOS_PER_SECOND),
             results=[{"min_ts": 500}],
         )
-        await processor.process_record(msg1.to_data())
+        await processor.process_record(msg1)
 
-        msg2 = create_metric_records_message(
+        msg2 = create_metric_records_data(
             x_request_id="test-2",
             session_num=1,
             request_start_ns=int(0.7 * NANOS_PER_SECOND),
             results=[{"min_ts": 200}],
         )
-        await processor.process_record(msg2.to_data())
+        await processor.process_record(msg2)
 
         summary = await processor.summarize()
         assert summary.timeslices is not None
@@ -735,23 +873,23 @@ class TestTimesliceSummarize:
         processor._tags_to_types = {"test_record": MetricType.RECORD}
         processor._metric_classes = {"test_record": RequestLatencyMetric}
 
-        msg1 = create_metric_records_message(
+        msg1 = create_metric_records_data(
             x_request_id="test-1",
             session_num=0,
             request_start_ns=int(0.5 * NANOS_PER_SECOND),
             request_end_ns=int(0.6 * NANOS_PER_SECOND),
             results=[{"test_record": 42.0}],
         )
-        await processor.process_record(msg1.to_data())
+        await processor.process_record(msg1)
 
-        msg2 = create_metric_records_message(
+        msg2 = create_metric_records_data(
             x_request_id="test-2",
             session_num=1,
             request_start_ns=int(1.5 * NANOS_PER_SECOND),
             request_end_ns=int(2.5 * NANOS_PER_SECOND),
             results=[{"test_record": 84.0}],
         )
-        await processor.process_record(msg2.to_data())
+        await processor.process_record(msg2)
 
         summary = await processor.summarize()
 
@@ -776,12 +914,12 @@ class TestTimesliceSummarize:
         processor._tags_to_types = {"test_record": MetricType.RECORD}
         processor._metric_classes = {"test_record": RequestLatencyMetric}
 
-        msg = create_metric_records_message(
+        msg = create_metric_records_data(
             x_request_id="test-1",
             session_num=0,
             results=[{"test_record": 42.0}],
         )
-        await processor.process_record(msg.to_data())
+        await processor.process_record(msg)
 
         summary = await processor.summarize()
         assert summary.timeslices is None
@@ -800,23 +938,23 @@ class TestTimesliceSummarize:
         processor._metric_classes = {"test_record": RequestLatencyMetric}
 
         # Run extends from 0.5s to 1.7s — slice 1 [1.5, 2.5) overshoots.
-        msg1 = create_metric_records_message(
+        msg1 = create_metric_records_data(
             x_request_id="test-1",
             session_num=0,
             request_start_ns=int(0.5 * NANOS_PER_SECOND),
             request_end_ns=int(1.4 * NANOS_PER_SECOND),
             results=[{"test_record": 1.0}],
         )
-        await processor.process_record(msg1.to_data())
+        await processor.process_record(msg1)
 
-        msg2 = create_metric_records_message(
+        msg2 = create_metric_records_data(
             x_request_id="test-2",
             session_num=1,
             request_start_ns=int(1.5 * NANOS_PER_SECOND),
             request_end_ns=int(1.7 * NANOS_PER_SECOND),
             results=[{"test_record": 2.0}],
         )
-        await processor.process_record(msg2.to_data())
+        await processor.process_record(msg2)
 
         summary = await processor.summarize()
         assert summary.timeslices is not None
@@ -924,28 +1062,6 @@ class TestProtocolConformance:
         assert isinstance(summary, AccumulatorResult)
 
 
-class TestFullMetrics:
-    @pytest.mark.asyncio
-    async def test_full_metrics_with_derived(
-        self, mock_metric_registry: Mock, mock_run
-    ) -> None:
-        """Test full_metrics returns the complete results dict including derived metrics."""
-
-        def mock_derive_func(results_dict: MetricResultsDict) -> float:
-            return 200.0
-
-        processor = MetricsAccumulator(mock_run)
-        processor._derive_funcs = {RequestThroughputMetric.tag: mock_derive_func}
-        processor._metric_classes = {
-            RequestThroughputMetric.tag: RequestThroughputMetric
-        }
-
-        full_results = await processor.full_metrics()
-        assert RequestThroughputMetric.tag in full_results
-        assert isinstance(full_results[RequestThroughputMetric.tag], MetricResult)
-        assert full_results[RequestThroughputMetric.tag].avg == 200.0
-
-
 class TestMetricResultFromArray:
     """Test metric_result_from_array computes correct statistics."""
 
@@ -1045,7 +1161,7 @@ class TestTimesliceSweepMetrics:
         )
 
         # One request: 0.5s start, 0.8s end, 10 output tokens, 50ms TTFT
-        msg = create_metric_records_message(
+        msg = create_metric_records_data(
             session_num=0,
             request_start_ns=int(0.5 * NANOS_PER_SECOND),
             request_end_ns=int(0.8 * NANOS_PER_SECOND),
@@ -1057,7 +1173,7 @@ class TestTimesliceSweepMetrics:
                 }
             ],
         )
-        await acc.process_record(msg.to_data())
+        await acc.process_record(msg)
 
         summary = await acc.summarize()
         assert summary.timeslices is not None
@@ -1092,7 +1208,7 @@ class TestTimesliceSweepMetrics:
         for i, (start, end) in enumerate(
             [(0.1, 1.5), (0.5, 1.8)],
         ):
-            msg = create_metric_records_message(
+            msg = create_metric_records_data(
                 session_num=i,
                 request_start_ns=int(start * NANOS_PER_SECOND),
                 request_end_ns=int(end * NANOS_PER_SECOND),
@@ -1104,7 +1220,7 @@ class TestTimesliceSweepMetrics:
                     }
                 ],
             )
-            await acc.process_record(msg.to_data())
+            await acc.process_record(msg)
 
         summary = await acc.summarize()
         assert summary.timeslices is not None
@@ -1122,7 +1238,7 @@ class TestTimesliceSweepMetrics:
             mock_run, latency_cls, output_cls, ttft_cls
         )
 
-        msg = create_metric_records_message(
+        msg = create_metric_records_data(
             session_num=0,
             request_start_ns=int(0.1 * NANOS_PER_SECOND),
             request_end_ns=int(0.9 * NANOS_PER_SECOND),
@@ -1134,7 +1250,7 @@ class TestTimesliceSweepMetrics:
                 }
             ],
         )
-        await acc.process_record(msg.to_data())
+        await acc.process_record(msg)
 
         summary = await acc.summarize()
         assert summary.timeslices is not None
@@ -1150,13 +1266,13 @@ class TestTimesliceSweepMetrics:
         latency_cls, _, _, _ = _make_sweep_metric_classes()
         acc = create_accumulator_with_metrics(mock_run, latency_cls)
 
-        msg = create_metric_records_message(
+        msg = create_metric_records_data(
             session_num=0,
             request_start_ns=int(0.2 * NANOS_PER_SECOND),
             request_end_ns=int(0.7 * NANOS_PER_SECOND),
             results=[{"request_latency": 500_000_000.0}],
         )
-        await acc.process_record(msg.to_data())
+        await acc.process_record(msg)
 
         summary = await acc.summarize()
         assert summary.timeslices is not None
@@ -1182,7 +1298,7 @@ class TestTimesliceSweepMetrics:
             (2, 2.1, 2.9, 800e6, 30.0, 50e6),
         ]
         for session_num, start, end, latency, tokens, ttft in records:
-            msg = create_metric_records_message(
+            msg = create_metric_records_data(
                 session_num=session_num,
                 request_start_ns=int(start * NANOS_PER_SECOND),
                 request_end_ns=int(end * NANOS_PER_SECOND),
@@ -1194,7 +1310,7 @@ class TestTimesliceSweepMetrics:
                     }
                 ],
             )
-            await acc.process_record(msg.to_data())
+            await acc.process_record(msg)
 
         summary = await acc.summarize()
         assert summary.timeslices is not None
@@ -1230,7 +1346,7 @@ class TestOverallSweepMetrics:
             mock_run, latency_cls, output_cls, ttft_cls
         )
 
-        msg = create_metric_records_message(
+        msg = create_metric_records_data(
             session_num=0,
             request_start_ns=int(0.1 * NANOS_PER_SECOND),
             request_end_ns=int(0.9 * NANOS_PER_SECOND),
@@ -1242,7 +1358,7 @@ class TestOverallSweepMetrics:
                 }
             ],
         )
-        await acc.process_record(msg.to_data())
+        await acc.process_record(msg)
 
         summary = await acc.summarize()
         assert "effective_concurrency" in summary.results
@@ -1269,7 +1385,7 @@ class TestOverallSweepMetrics:
         )
 
         for i, (start, end) in enumerate([(0.1, 1.5), (0.5, 1.8)]):
-            msg = create_metric_records_message(
+            msg = create_metric_records_data(
                 session_num=i,
                 request_start_ns=int(start * NANOS_PER_SECOND),
                 request_end_ns=int(end * NANOS_PER_SECOND),
@@ -1281,7 +1397,7 @@ class TestOverallSweepMetrics:
                     }
                 ],
             )
-            await acc.process_record(msg.to_data())
+            await acc.process_record(msg)
 
         summary = await acc.summarize()
         assert summary.results["effective_concurrency"].avg > 1.0
@@ -1296,7 +1412,7 @@ class TestOverallSweepMetrics:
             mock_run, latency_cls, output_cls, ttft_cls
         )
 
-        msg = create_metric_records_message(
+        msg = create_metric_records_data(
             session_num=0,
             request_start_ns=int(0.1 * NANOS_PER_SECOND),
             request_end_ns=int(0.9 * NANOS_PER_SECOND),
@@ -1308,7 +1424,7 @@ class TestOverallSweepMetrics:
                 }
             ],
         )
-        await acc.process_record(msg.to_data())
+        await acc.process_record(msg)
 
         summary = await acc.summarize()
         assert summary.results["effective_decode_throughput"].avg > 0.0
@@ -1321,13 +1437,13 @@ class TestOverallSweepMetrics:
         latency_cls, _, _, _ = _make_sweep_metric_classes()
         acc = create_accumulator_with_metrics(mock_run, latency_cls)
 
-        msg = create_metric_records_message(
+        msg = create_metric_records_data(
             session_num=0,
             request_start_ns=int(0.2 * NANOS_PER_SECOND),
             request_end_ns=int(0.7 * NANOS_PER_SECOND),
             results=[{"request_latency": 500_000_000.0}],
         )
-        await acc.process_record(msg.to_data())
+        await acc.process_record(msg)
 
         summary = await acc.summarize()
         assert summary.results["effective_decode_throughput"].avg == 0.0
@@ -1356,7 +1472,7 @@ class TestOverallSweepMetrics:
             mock_run, latency_cls, output_cls, ttft_cls, isl_cls
         )
 
-        msg = create_metric_records_message(
+        msg = create_metric_records_data(
             session_num=0,
             request_start_ns=int(0.1 * NANOS_PER_SECOND),
             request_end_ns=int(0.9 * NANOS_PER_SECOND),
@@ -1369,7 +1485,7 @@ class TestOverallSweepMetrics:
                 }
             ],
         )
-        await acc.process_record(msg.to_data())
+        await acc.process_record(msg)
 
         summary = await acc.summarize()
         assert summary.results["effective_prefill_throughput"].avg > 0.0
@@ -1384,7 +1500,7 @@ class TestOverallSweepMetrics:
             mock_run, latency_cls, output_cls, ttft_cls
         )
 
-        msg = create_metric_records_message(
+        msg = create_metric_records_data(
             session_num=0,
             request_start_ns=int(0.2 * NANOS_PER_SECOND),
             request_end_ns=int(0.7 * NANOS_PER_SECOND),
@@ -1396,7 +1512,7 @@ class TestOverallSweepMetrics:
                 }
             ],
         )
-        await acc.process_record(msg.to_data())
+        await acc.process_record(msg)
 
         summary = await acc.summarize()
         assert summary.results["effective_prefill_throughput"].avg == 0.0
@@ -1417,10 +1533,10 @@ class TestListMetricBackendSwitch:
         processor = MetricsAccumulator(mock_run)
         processor._tags_to_types = {"test_list": MetricType.RECORD}
 
-        message = create_metric_records_message(
+        message = create_metric_records_data(
             session_num=0, results=[{"test_list": [1.0, 2.0, 3.0]}]
         )
-        await processor.process_record(message.to_data())
+        await processor.process_record(message)
 
         backend = processor._column_store.ragged("test_list")
         assert isinstance(backend, RaggedSeries)
@@ -1440,10 +1556,10 @@ class TestListMetricBackendSwitch:
             processor = MetricsAccumulator(mock_run)
             processor._tags_to_types = {"test_list": MetricType.RECORD}
 
-            message = create_metric_records_message(
+            message = create_metric_records_data(
                 session_num=0, results=[{"test_list": [10.0, 20.0, 30.0, 40.0]}]
             )
-            await processor.process_record(message.to_data())
+            await processor.process_record(message)
 
             backend = processor._column_store.ragged("test_list")
             assert isinstance(backend, TDigestListMetricAggregator)
@@ -1479,10 +1595,10 @@ class TestListMetricBackendSwitch:
                     )
                 }
                 for i, lst in enumerate(chunk_lists):
-                    msg = create_metric_records_message(
+                    msg = create_metric_records_data(
                         session_num=i, results=[{"inter_chunk_latency": lst}]
                     )
-                    await processor.process_record(msg.to_data())
+                    await processor.process_record(msg)
                 results = processor._compute_results()
                 return results["inter_chunk_latency"]
 
@@ -1523,11 +1639,11 @@ class TestListMetricBackendSwitch:
             processor = MetricsAccumulator(mock_run)
             processor._tags_to_types = {"inter_chunk_latency": MetricType.RECORD}
 
-            msg = create_metric_records_message(
+            msg = create_metric_records_data(
                 session_num=0,
                 results=[{"inter_chunk_latency": [10.0, 20.0, 30.0]}],
             )
-            await processor.process_record(msg.to_data())
+            await processor.process_record(msg)
 
             # ICL is recorded but the backend doesn't support replay.
             assert "inter_chunk_latency" in processor._column_store.ragged_tags()
@@ -1559,8 +1675,8 @@ class TestMetadataColumnEncoding:
                 benchmark_phase="profiling",
                 was_cancelled=cancelled,
             )
-            msg = create_metric_records_message(metadata=meta)
-            await processor.process_record(msg.to_data())
+            msg = create_metric_records_data(metadata=meta)
+            await processor.process_record(msg)
 
         store = processor._column_store
         # has_error and was_cancelled should now be in _metadata_bool, not _metadata_numeric
@@ -1586,12 +1702,12 @@ class TestMetadataColumnEncoding:
 
         worker_ids = ["worker_a", "worker_b", "worker_a", "worker_c", "worker_b"]
         for i, wid in enumerate(worker_ids):
-            msg = create_metric_records_message(
+            msg = create_metric_records_data(
                 session_num=i,
                 request_start_ns=1_000_000_000 + i,
                 worker_id=wid,
             )
-            await processor.process_record(msg.to_data())
+            await processor.process_record(msg)
 
         store = processor._column_store
         assert "worker_id" in store._metadata_categorical
@@ -1620,13 +1736,13 @@ class TestMetadataColumnEncoding:
         ``mask_for_categorical``."""
         processor = MetricsAccumulator(mock_run)
 
-        msg = create_metric_records_message(
+        msg = create_metric_records_data(
             session_num=0,
             x_request_id="req-deadbeef",
             x_correlation_id="corr-cafebabe",
             conversation_id="conv-12345",
         )
-        await processor.process_record(msg.to_data())
+        await processor.process_record(msg)
 
         store = processor._column_store
         # x_request_id no longer stored anywhere — exporters read it off
@@ -1650,12 +1766,12 @@ class TestMetadataColumnEncoding:
         # Three "conversations" interleaved across six records
         correlations = ["conv_a", "conv_b", "conv_a", "conv_c", "conv_b", "conv_a"]
         for i, cid in enumerate(correlations):
-            msg = create_metric_records_message(
+            msg = create_metric_records_data(
                 session_num=i,
                 request_start_ns=1_000_000_000 + i,
                 x_correlation_id=cid,
             )
-            await processor.process_record(msg.to_data())
+            await processor.process_record(msg)
 
         store = processor._column_store
         # Enumerate unique values
@@ -1703,8 +1819,8 @@ class TestDerivedLatencyMetrics:
                 benchmark_phase="profiling",
                 turn_index=0,
             )
-            msg = create_metric_records_message(metadata=meta)
-            await processor.process_record(msg.to_data())
+            msg = create_metric_records_data(metadata=meta)
+            await processor.process_record(msg)
 
         summary = await processor.summarize()
         assert "credit_to_start_latency" in summary.results
@@ -1901,14 +2017,14 @@ class TestPhaseScopedExportCoarseClock:
         phase: CreditPhase = CreditPhase.PROFILING,
     ) -> None:
         for i, start_ns in enumerate(starts):
-            msg = create_metric_records_message(
+            msg = create_metric_records_data(
                 session_num=i,
                 benchmark_phase=phase,
                 request_start_ns=start_ns,
                 request_end_ns=start_ns + 1_000_000,
                 results=[{RequestCountMetric.tag: 1}],
             )
-            await processor.process_record(msg.to_data())
+            await processor.process_record(msg)
 
     @pytest.mark.asyncio
     async def test_export_results_straggler_stamped_at_window_end_included(

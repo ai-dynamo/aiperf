@@ -1,24 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 Baseten.co. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Derived-metric instance state is scoped per processor (per run), not
-process-wide via the MetricRegistry singleton: the degraded warn-once latch
-must fire once per run, and derive funcs must be bound to per-processor
-instances."""
+"""Derived-metric instance state is scoped per accumulator (per run), not
+process-wide via the MetricRegistry singleton: derive funcs must be bound to
+fresh per-run instances so any instance state (e.g. the degraded warn-once
+latch) fires once per run rather than once per process."""
 
-import logging
 import uuid
 
 import pytest
 
-from aiperf.common.constants import NANOS_PER_MILLIS
-from aiperf.metrics.metric_dicts import MetricArray
+from aiperf.metrics.accumulator import MetricsAccumulator
 from aiperf.metrics.metric_registry import MetricRegistry
-from aiperf.metrics.types.replay_sched_lag_metrics import (
-    ReplaySchedDegradedMetric,
-    ReplaySendScheduleOffsetMetric,
-)
+from aiperf.metrics.types.replay_sched_lag_metrics import ReplaySchedDegradedMetric
 from aiperf.plugin.enums import EndpointType
-from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
 
 
 @pytest.fixture
@@ -46,45 +40,21 @@ def fixed_schedule_run():
     )
 
 
-def _feed_degraded_offsets(processor: MetricResultsProcessor) -> None:
-    arr = MetricArray()
-    arr.extend([0] * 5 + [int(600 * NANOS_PER_MILLIS)] * 5)
-    processor._results[ReplaySendScheduleOffsetMetric.tag] = arr
-
-
-@pytest.mark.asyncio
-async def test_degraded_warning_fires_once_per_run_not_once_per_process(
-    fixed_schedule_run, caplog: pytest.LogCaptureFixture
-):
+def test_derive_funcs_bound_to_fresh_per_run_instances(fixed_schedule_run) -> None:
+    """Each accumulator binds derive funcs to its own metric instances, distinct
+    from other runs and from the MetricRegistry singleton, so per-instance state
+    (e.g. warn-once latches) is scoped to the run rather than the process."""
     tag = ReplaySchedDegradedMetric.tag
 
-    with caplog.at_level(logging.WARNING):
-        # Run 1: two summarize ticks -> exactly one warning.
-        p1 = MetricResultsProcessor(fixed_schedule_run)
-        assert tag in p1.derive_funcs
-        _feed_degraded_offsets(p1)
-        await p1.update_derived_metrics()
-        assert p1._results[tag] == 1
-        await p1.update_derived_metrics()
+    acc1 = MetricsAccumulator(fixed_schedule_run)
+    acc2 = MetricsAccumulator(fixed_schedule_run)
 
-        run1_warnings = [
-            r for r in caplog.records if "Replay schedule degraded" in r.message
-        ]
-        assert len(run1_warnings) == 1
+    assert tag in acc1._derive_funcs
+    assert tag in acc2._derive_funcs
 
-        # Run 2 (same process): fresh processor -> the warning fires again.
-        p2 = MetricResultsProcessor(fixed_schedule_run)
-        _feed_degraded_offsets(p2)
-        await p2.update_derived_metrics()
-        assert p2._results[tag] == 1
-
-    all_warnings = [
-        r for r in caplog.records if "Replay schedule degraded" in r.message
-    ]
-    assert len(all_warnings) == 2
-
-    # The latch lives on per-processor instances, not the registry singleton.
-    f1, f2 = p1.derive_funcs[tag], p2.derive_funcs[tag]
+    f1 = acc1._derive_funcs[tag]
+    f2 = acc2._derive_funcs[tag]
+    # Bound to per-run instances, not shared and not the registry singleton.
     assert f1.__self__ is not f2.__self__
     singleton = MetricRegistry.get_instance(tag)
     assert f1.__self__ is not singleton
