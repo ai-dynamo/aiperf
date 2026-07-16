@@ -64,5 +64,6 @@ AIPERF_MOCK_AMDSMI=1 AIPERF_MOCK_AMDSMI_MODEL=mi300x AIPERF_MOCK_AMDSMI_NUM_GPUS
   --gpu-telemetry amdsmi ...
 ```
 
-The console summary and JSON/CSV exports will show `platform: "amd"` and populated
-`amd_*` metrics.
+The console summary and JSON/CSV exports will show populated `amd_*` metrics.
+Once the GPU-telemetry vendor-namespacing work lands, `platform: "amd"` will also
+appear.

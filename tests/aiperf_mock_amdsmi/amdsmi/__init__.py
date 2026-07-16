@@ -177,7 +177,7 @@ def amdsmi_get_temp_metric(handle: _Handle, sensor: int, metric: int) -> float:
         raise AmdSmiException("EDGE temperature not supported on this device")
     if sensor in (AmdSmiTemperatureType.JUNCTION, AmdSmiTemperatureType.HOTSPOT):
         return handle.config.junction_temp_c
-    return handle.config.junction_temp_c
+    raise AmdSmiException(f"Unsupported temperature sensor: {sensor}")
 
 
 def amdsmi_get_gpu_total_ecc_count(handle: _Handle) -> dict[str, Any]:
