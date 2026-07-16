@@ -19,7 +19,20 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/health", get(handlers::health))
         // OpenAI-compatible model listing.
         .route("/v1/models", get(handlers::list_models))
-        .route("/v1/models/{id}", get(handlers::get_model))
+        // GET is the OpenAI model-info / KServe v1 readiness route; POST on the
+        // same path is the KServe v1 `:predict` inference verb (the model name
+        // and `:predict` suffix arrive as one path segment).
+        .route(
+            "/v1/models/{id}",
+            get(handlers::get_model).post(handlers::kserve_v1_predict),
+        )
+        // KServe Open Inference Protocol v2 (HTTP) + readiness.
+        .route("/v2/models/{model}/infer", post(handlers::kserve_v2_infer))
+        .route(
+            "/v2/models/{model}/ready",
+            get(handlers::kserve_v2_model_ready),
+        )
+        .route("/v2/health/ready", get(handlers::kserve_v2_health_ready))
         // LLM endpoints
         .route("/v1/chat/completions", post(handlers::chat_completions))
         .route("/v1/messages", post(handlers::messages))
@@ -50,6 +63,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/v1/images/generations", post(handlers::image_generation))
         .route("/v1/images/edits", post(handlers::image_edit))
         .route("/v1/image/infer", post(handlers::image_retrieval))
+        // Alias: the runner's `image_retrieval` endpoint defaults to `/v1/infer`.
+        .route("/v1/infer", post(handlers::image_retrieval))
         // Custom endpoints
         .route("/v1/custom-multimodal", post(handlers::custom_multimodal))
         .route("/rag/api/prompt", post(handlers::solido_rag))

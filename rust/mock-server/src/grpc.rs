@@ -40,9 +40,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bytes::{Buf, Bytes};
+use clap::ValueEnum;
 use futures::Stream;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as ConnBuilder;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tonic::body::Body;
 use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
@@ -75,6 +77,64 @@ const DEFAULT_INPUT_NAME: &str = "text_input";
 const DEFAULT_OUTPUT_NAME: &str = "text_output";
 /// Model name reported when the request omits one.
 const DEFAULT_MODEL: &str = "mock-kserve";
+
+/// Default KServe v2 rankings tensor names (`V2RankingsBehavior` in
+/// `aiperf::endpoints`): a `query` BYTES input, a `passages` BYTES input, and a
+/// numeric `scores` output the runner reads back per-passage.
+const RANKINGS_QUERY_NAME: &str = "query";
+const RANKINGS_PASSAGES_NAME: &str = "passages";
+const RANKINGS_OUTPUT_NAME: &str = "scores";
+/// Default KServe v2 image-generation tensor names (`V2ImagesBehavior`): a
+/// `prompt` BYTES input and a `generated_image` BYTES output.
+const IMAGES_PROMPT_NAME: &str = "prompt";
+const IMAGES_OUTPUT_NAME: &str = "generated_image";
+/// Default KServe v2 VLM image input tensor name (`V2VlmBehavior`).
+const VLM_IMAGE_NAME: &str = "image";
+
+/// Which output tensor(s) the KServe inference handler emits for a request.
+///
+/// `Auto` (the default) keys the decision off the request's INPUT tensor names,
+/// so a single mock instance serves every KServe v2 dialect the runner drives
+/// (`kserve_v2_infer` / `_vlm` / `_rankings` / `_images`) without per-run
+/// reconfiguration — the runner's own endpoint factories name their inputs
+/// distinctly (`text_input`, `query`+`passages`, `prompt`). The explicit
+/// variants force one behavior regardless of the inputs, for a single-purpose
+/// target or a non-AIPerf client whose tensor names differ. See
+/// [`crate::config::MockServerConfig::grpc_behavior`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
+#[serde(rename_all = "snake_case")]
+#[clap(rename_all = "snake_case")]
+pub enum GrpcBehavior {
+    /// Detect the behavior from the request's input tensor names.
+    #[default]
+    Auto,
+    /// Always generate text and emit a `text_output` BYTES tensor.
+    Text,
+    /// Always emit a numeric `scores` FP32 tensor (one score per passage).
+    Rankings,
+    /// Always emit a `generated_image` BYTES tensor (a base64 mock JPEG).
+    Images,
+}
+
+impl GrpcBehavior {
+    /// Resolve `Auto` against the request's input tensor names; the explicit
+    /// variants pass through unchanged. Rankings wins when a `passages` tensor is
+    /// present; images when a `prompt` tensor is present without a `text_input`;
+    /// text otherwise (covers `kserve_v2_infer` and `kserve_v2_vlm`).
+    fn resolve(self, msg: &ModelInferRequest) -> GrpcBehavior {
+        if self != GrpcBehavior::Auto {
+            return self;
+        }
+        let has = |name: &str| msg.inputs.iter().any(|tensor| tensor.name == name);
+        if has(RANKINGS_PASSAGES_NAME) {
+            GrpcBehavior::Rankings
+        } else if has(IMAGES_PROMPT_NAME) && !has(DEFAULT_INPUT_NAME) {
+            GrpcBehavior::Images
+        } else {
+            GrpcBehavior::Text
+        }
+    }
+}
 
 /// Health messages KServe defines but AIPerf's client never decodes, so they
 /// live here instead of the shared `aiperf::transport_grpc::proto` (which only
@@ -187,6 +247,11 @@ fn decode_infer_inputs(msg: &ModelInferRequest) -> Result<(String, Option<usize>
             prompt = tensor_first_text(tensor, raw);
             continue;
         }
+        // The VLM `image` tensor (base64 image bytes) is consumed but never a
+        // prompt source — skip it so it can't masquerade as the text fallback.
+        if tensor.name == VLM_IMAGE_NAME {
+            continue;
+        }
         // Remember the first text-bearing tensor as a fallback prompt source in
         // case the input tensor was renamed via `v2_input_name`.
         if fallback_text.is_none() {
@@ -198,6 +263,46 @@ fn decode_infer_inputs(msg: &ModelInferRequest) -> Result<(String, Option<usize>
         Status::invalid_argument("KServe ModelInferRequest is missing a text_input BYTES tensor")
     })?;
     Ok((prompt, max_tokens))
+}
+
+/// All BYTES values of the first input tensor named `name`, decoded as UTF-8.
+/// Reads typed `bytes_contents` first, falling back to the length-prefixed
+/// `raw_input_contents` frame for non-AIPerf clients.
+fn tensor_all_text(msg: &ModelInferRequest, name: &str) -> Vec<String> {
+    for (index, tensor) in msg.inputs.iter().enumerate() {
+        if tensor.name != name {
+            continue;
+        }
+        if let Some(contents) = &tensor.contents
+            && !contents.bytes_contents.is_empty()
+        {
+            return contents
+                .bytes_contents
+                .iter()
+                .map(|value| String::from_utf8_lossy(value).into_owned())
+                .collect();
+        }
+        if let Some(raw) = msg.raw_input_contents.get(index) {
+            return decode_raw_bytes_tensor(raw);
+        }
+    }
+    Vec::new()
+}
+
+/// Decode a length-prefixed KServe raw BYTES tensor frame (repeated 4-byte
+/// little-endian length + payload) into UTF-8 strings.
+fn decode_raw_bytes_tensor(raw: &[u8]) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut offset = 0usize;
+    while offset + 4 <= raw.len() {
+        let length =
+            u32::from_le_bytes(raw[offset..offset + 4].try_into().expect("checked len")) as usize;
+        offset += 4;
+        let end = raw.len().min(offset + length);
+        values.push(String::from_utf8_lossy(&raw[offset..end]).into_owned());
+        offset = end;
+    }
+    values
 }
 
 /// First value of a tensor as text: typed BYTES contents, else a length-prefixed
@@ -344,6 +449,73 @@ fn build_embedding_response(
     }
 }
 
+/// An `FP32` numeric output tensor of shape `[len]`, carrying one relevance
+/// score per passage in the same order the passages arrived. The runner's
+/// `V2RankingsBehavior::parse_response` reads `data` positionally, assigning
+/// each score to its passage index, so the order — not a sort — is the contract.
+fn scores_output_tensor(name: &str, scores: &[f32]) -> InferOutputTensor {
+    InferOutputTensor {
+        name: name.to_string(),
+        datatype: "FP32".to_string(),
+        shape: vec![scores.len() as i64],
+        parameters: Default::default(),
+        contents: Some(InferTensorContents {
+            fp32_contents: scores.to_vec(),
+            ..Default::default()
+        }),
+    }
+}
+
+/// Build a `ModelInferResponse` carrying one numeric `scores` tensor.
+fn build_scores_response(
+    id: &str,
+    model: &str,
+    output_name: &str,
+    scores: &[f32],
+) -> ModelInferResponse {
+    ModelInferResponse {
+        model_name: model.to_string(),
+        model_version: String::new(),
+        id: id.to_string(),
+        parameters: Default::default(),
+        outputs: vec![scores_output_tensor(output_name, scores)],
+        raw_output_contents: Vec::new(),
+    }
+}
+
+/// A `generated_image` BYTES output tensor carrying one base64-encoded mock
+/// JPEG. The runner's `V2ImagesBehavior::parse_response` reads each `data`
+/// element as a base64 image string (`b64_json`).
+fn image_output_tensor(name: &str, b64_image: &str) -> InferOutputTensor {
+    InferOutputTensor {
+        name: name.to_string(),
+        datatype: "BYTES".to_string(),
+        shape: vec![1],
+        parameters: Default::default(),
+        contents: Some(InferTensorContents {
+            bytes_contents: vec![b64_image.as_bytes().to_vec()],
+            ..Default::default()
+        }),
+    }
+}
+
+/// Build a `ModelInferResponse` carrying one `generated_image` tensor.
+fn build_image_response(
+    id: &str,
+    model: &str,
+    output_name: &str,
+    b64_image: &str,
+) -> ModelInferResponse {
+    ModelInferResponse {
+        model_name: model.to_string(),
+        model_version: String::new(),
+        id: id.to_string(),
+        parameters: Default::default(),
+        outputs: vec![image_output_tensor(output_name, b64_image)],
+        raw_output_contents: Vec::new(),
+    }
+}
+
 /// The full generated token sequence for a KServe `text_output`: reasoning
 /// tokens (if any) followed by output tokens.
 ///
@@ -384,9 +556,20 @@ async fn model_infer(
         return Err(Status::internal("Simulated error"));
     }
     let msg = request.into_inner();
+    let model = model_name(&msg);
+
+    // Non-text output-tensor variants: keyed off the request's input tensor
+    // names (or a forced `--grpc-behavior`). Rankings/images carry no
+    // `text_input`, so this must precede `decode_infer_inputs` (which requires
+    // one). See [`GrpcBehavior`].
+    match state.config.grpc_behavior.resolve(&msg) {
+        GrpcBehavior::Rankings => return model_infer_rankings(state, &msg, &model).await,
+        GrpcBehavior::Images => return model_infer_images(state, &msg, &model).await,
+        GrpcBehavior::Text | GrpcBehavior::Auto => {}
+    }
+
     let (prompt, max_tokens) = decode_infer_inputs(&msg)?;
     let output_name = requested_output_name(&msg);
-    let model = model_name(&msg);
 
     // Non-LLM embedding mode: consume the input text and return a single FP32
     // embedding tensor (one encoder forward pass, no token generation).
@@ -481,6 +664,77 @@ async fn model_infer_embedding(
     state.recorder.record_llm_inflight_end(&ctx.model);
     state.recorder.record_request_end(MODEL_INFER);
 
+    Ok(Response::new(response))
+}
+
+/// `ModelInfer` rankings variant: read the `query` and `passages` BYTES input
+/// tensors and return a numeric `scores` FP32 tensor with one relevance score
+/// per passage (positional, unsorted — the runner assigns the passage index).
+/// Scores reuse the HTTP reranker's deterministic `(query, passage)` hash so the
+/// same inputs yield the same scores across transports.
+async fn model_infer_rankings(
+    state: Arc<AppState>,
+    msg: &ModelInferRequest,
+    model: &str,
+) -> Result<Response<ModelInferResponse>, Status> {
+    let endpoint = MODEL_INFER;
+    let start = Instant::now();
+    let query = tensor_all_text(msg, RANKINGS_QUERY_NAME)
+        .into_iter()
+        .next()
+        .unwrap_or_default();
+    let passages = tensor_all_text(msg, RANKINGS_PASSAGES_NAME);
+    let output_name = msg
+        .outputs
+        .first()
+        .map(|output| output.name.clone())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| RANKINGS_OUTPUT_NAME.to_string());
+
+    state.recorder.record_request_start(endpoint, model);
+    let scores: Vec<f32> = passages
+        .iter()
+        .map(|passage| crate::handlers::compute_mock_score(&query, passage) as f32)
+        .collect();
+    let latency = start.elapsed();
+    let response = build_scores_response(&msg.id, model, &output_name, &scores);
+    state
+        .recorder
+        .record_basic_success(endpoint, latency.as_secs_f64());
+    state.recorder.record_request_end(endpoint);
+    Ok(Response::new(response))
+}
+
+/// `ModelInfer` images variant: read the `prompt` BYTES input tensor and return
+/// a `generated_image` BYTES tensor carrying one base64 mock JPEG (the same
+/// deterministic generator the HTTP `/v1/images/generations` route uses).
+async fn model_infer_images(
+    state: Arc<AppState>,
+    msg: &ModelInferRequest,
+    model: &str,
+) -> Result<Response<ModelInferResponse>, Status> {
+    let endpoint = MODEL_INFER;
+    let start = Instant::now();
+    let prompt = tensor_all_text(msg, IMAGES_PROMPT_NAME)
+        .into_iter()
+        .next()
+        .or_else(|| decode_infer_inputs(msg).ok().map(|(prompt, _)| prompt))
+        .unwrap_or_default();
+    let output_name = msg
+        .outputs
+        .first()
+        .map(|output| output.name.clone())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| IMAGES_OUTPUT_NAME.to_string());
+
+    state.recorder.record_request_start(endpoint, model);
+    let b64_image = crate::handlers::mock_jpeg_b64(&prompt, 0);
+    let latency = start.elapsed();
+    let response = build_image_response(&msg.id, model, &output_name, &b64_image);
+    state
+        .recorder
+        .record_basic_success(endpoint, latency.as_secs_f64());
+    state.recorder.record_request_end(endpoint);
     Ok(Response::new(response))
 }
 
@@ -867,6 +1121,108 @@ mod tests {
             chunks > 0,
             "reasoning model must not produce an empty gRPC stream"
         );
+    }
+
+    fn bytes_tensor(name: &str, values: &[&str]) -> InferInputTensor {
+        InferInputTensor {
+            name: name.to_string(),
+            datatype: "BYTES".to_string(),
+            shape: vec![values.len() as i64],
+            parameters: Default::default(),
+            contents: Some(InferTensorContents {
+                bytes_contents: values.iter().map(|v| v.as_bytes().to_vec()).collect(),
+                ..Default::default()
+            }),
+        }
+    }
+
+    fn scores_of(response: &ModelInferResponse, name: &str) -> Vec<f32> {
+        response
+            .outputs
+            .iter()
+            .find(|output| output.name == name)
+            .expect("output tensor present")
+            .contents
+            .as_ref()
+            .expect("typed contents")
+            .fp32_contents
+            .clone()
+    }
+
+    #[test]
+    fn auto_behavior_detects_rankings_and_images() {
+        let rankings = ModelInferRequest {
+            inputs: vec![
+                bytes_tensor("query", &["q"]),
+                bytes_tensor("passages", &["p0", "p1"]),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(
+            GrpcBehavior::Auto.resolve(&rankings),
+            GrpcBehavior::Rankings
+        );
+
+        let images = ModelInferRequest {
+            inputs: vec![bytes_tensor("prompt", &["draw a cat"])],
+            ..Default::default()
+        };
+        assert_eq!(GrpcBehavior::Auto.resolve(&images), GrpcBehavior::Images);
+
+        let vlm = ModelInferRequest {
+            inputs: vec![
+                bytes_tensor("text_input", &["describe"]),
+                bytes_tensor("image", &["base64data"]),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(GrpcBehavior::Auto.resolve(&vlm), GrpcBehavior::Text);
+
+        // Explicit override wins over the input tensor names.
+        assert_eq!(GrpcBehavior::Text.resolve(&rankings), GrpcBehavior::Text);
+    }
+
+    #[tokio::test]
+    async fn model_infer_rankings_returns_one_score_per_passage() {
+        let state = fast_state();
+        let msg = ModelInferRequest {
+            model_name: "reranker".to_string(),
+            id: "rk-1".to_string(),
+            inputs: vec![
+                bytes_tensor("query", &["what is ai"]),
+                bytes_tensor("passages", &["p0", "p1", "p2"]),
+            ],
+            ..Default::default()
+        };
+        let response = model_infer(state, Request::new(msg))
+            .await
+            .expect("rankings ok")
+            .into_inner();
+        let scores = scores_of(&response, "scores");
+        assert_eq!(scores.len(), 3, "one score per passage");
+        // Deterministic: the score matches the HTTP reranker's hash.
+        for (passage, score) in ["p0", "p1", "p2"].iter().zip(&scores) {
+            let expected = crate::handlers::compute_mock_score("what is ai", passage) as f32;
+            assert!((score - expected).abs() < 1e-6);
+        }
+    }
+
+    #[tokio::test]
+    async fn model_infer_images_returns_generated_image() {
+        let state = fast_state();
+        let msg = ModelInferRequest {
+            model_name: "diffusion".to_string(),
+            id: "im-1".to_string(),
+            inputs: vec![bytes_tensor("prompt", &["a red bicycle"])],
+            ..Default::default()
+        };
+        let response = model_infer(state, Request::new(msg))
+            .await
+            .expect("images ok")
+            .into_inner();
+        let image = output_text(&response, "generated_image");
+        assert!(!image.is_empty(), "expected a base64 image string");
+        assert_eq!(image, crate::handlers::mock_jpeg_b64("a red bicycle", 0));
     }
 
     #[tokio::test]

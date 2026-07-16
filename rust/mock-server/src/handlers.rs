@@ -1074,7 +1074,7 @@ pub fn generate_embedding(text: &str, dim: usize) -> Vec<f64> {
 // Rankings
 // ============================================================================
 
-fn compute_mock_score(query: &str, passage: &str) -> f64 {
+pub(crate) fn compute_mock_score(query: &str, passage: &str) -> f64 {
     let mut hasher = Blake2s256::new();
     hasher.update(query.as_bytes());
     hasher.update(b"|");
@@ -1302,6 +1302,308 @@ pub async fn image_retrieval(
 }
 
 // ============================================================================
+// KServe Open Inference Protocol (v1 predict + v2 infer) over HTTP
+//
+// The runner drives these dialects over EITHER transport; the gRPC target lives
+// in `crate::grpc`, and these HTTP routes mirror the same lowering so a run with
+// `transport.type: http` against a `kserve_v*` endpoint has a target. The v2
+// route auto-detects text / rankings / images from the request's input tensor
+// names (matching `aiperf::endpoints::kserve`'s factories: `text_input`,
+// `query`+`passages`, `prompt`), overridable with `--grpc-behavior`. Text is
+// non-streaming JSON here (the streaming KServe path is exercised over gRPC).
+// ============================================================================
+
+const KSERVE_V2_TEXT_INPUT: &str = "text_input";
+const KSERVE_V2_QUERY: &str = "query";
+const KSERVE_V2_QUERIES: &str = "queries";
+const KSERVE_V2_PASSAGES: &str = "passages";
+const KSERVE_V2_PROMPT: &str = "prompt";
+
+/// All string values of the first v2 input tensor named `name`.
+fn v2_tensor_texts(body: &Value, name: &str) -> Vec<String> {
+    body.get("inputs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_object)
+        .find(|tensor| tensor.get("name").and_then(Value::as_str) == Some(name))
+        .and_then(|tensor| tensor.get("data").and_then(Value::as_array))
+        .map(|data| {
+            data.iter()
+                .map(|value| match value {
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// First integer value of the v2 input tensor named `name` (e.g. `max_tokens`).
+fn v2_tensor_first_int(body: &Value, name: &str) -> Option<i64> {
+    body.get("inputs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_object)
+        .find(|tensor| tensor.get("name").and_then(Value::as_str) == Some(name))
+        .and_then(|tensor| tensor.get("data").and_then(Value::as_array))
+        .and_then(|data| data.first())
+        .and_then(|value| value.as_i64().or_else(|| value.as_str()?.parse().ok()))
+}
+
+/// True when a v2 input tensor named `name` is present.
+fn v2_has_input(body: &Value, name: &str) -> bool {
+    body.get("inputs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_object)
+        .any(|tensor| tensor.get("name").and_then(Value::as_str) == Some(name))
+}
+
+/// The single KServe text output for a generated turn: reasoning tokens (if the
+/// model is a reasoning model) folded in front of the output tokens. KServe text
+/// has no separate reasoning channel, and a reasoning model with a small
+/// `max_tokens` budget can spend it all on reasoning, leaving `content()` empty —
+/// folding keeps `text_output` non-empty, matching `crate::grpc::generated_tokens`.
+fn kserve_text_output(tokenized: &TokenizedText) -> String {
+    let mut text = tokenized.reasoning_content_tokens.concat();
+    text.push_str(&tokenized.content());
+    text
+}
+
+/// One KServe v2 output tensor as JSON.
+fn v2_output(name: &str, datatype: &str, shape: Vec<usize>, data: Vec<Value>) -> Value {
+    json!({"name": name, "datatype": datatype, "shape": shape, "data": data})
+}
+
+/// Wrap output tensors into a KServe v2 `ModelInferResponse` JSON body.
+fn v2_response(model: &str, id: &str, outputs: Vec<Value>) -> Value {
+    json!({"model_name": model, "id": id, "outputs": outputs})
+}
+
+/// Resolve the effective behavior for an HTTP v2 infer request from the config
+/// override, falling back to auto-detection on the input tensor names.
+fn resolve_v2_behavior(state: &AppState, body: &Value) -> crate::grpc::GrpcBehavior {
+    use crate::grpc::GrpcBehavior;
+    match state.config.grpc_behavior {
+        GrpcBehavior::Auto => {
+            if v2_has_input(body, KSERVE_V2_PASSAGES) {
+                GrpcBehavior::Rankings
+            } else if v2_has_input(body, KSERVE_V2_PROMPT)
+                && !v2_has_input(body, KSERVE_V2_TEXT_INPUT)
+            {
+                GrpcBehavior::Images
+            } else {
+                GrpcBehavior::Text
+            }
+        }
+        forced => forced,
+    }
+}
+
+/// KServe v2 Open Inference Protocol: `POST /v2/models/{model}/infer`.
+pub async fn kserve_v2_infer(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(model): axum::extract::Path<String>,
+    Json(body): Json<Value>,
+) -> AppResult<Response> {
+    if let Some(e) = maybe_inject_error(&state) {
+        return Err(e);
+    }
+    let endpoint = "/v2/models/{model}/infer";
+    let start = Instant::now();
+    let req_id = make_request_id("kserve");
+
+    match resolve_v2_behavior(&state, &body) {
+        crate::grpc::GrpcBehavior::Rankings => {
+            let query = v2_tensor_texts(&body, KSERVE_V2_QUERY)
+                .into_iter()
+                .next()
+                .or_else(|| v2_tensor_texts(&body, KSERVE_V2_QUERIES).into_iter().next())
+                .unwrap_or_default();
+            let passages = v2_tensor_texts(&body, KSERVE_V2_PASSAGES);
+            state.recorder.record_request_start(endpoint, &model);
+            let scores: Vec<Value> = passages
+                .iter()
+                .map(|p| json!(compute_mock_score(&query, p)))
+                .collect();
+            let outputs = vec![v2_output("scores", "FP32", vec![scores.len()], scores)];
+            state
+                .recorder
+                .record_basic_success(endpoint, start.elapsed().as_secs_f64());
+            state.recorder.record_request_end(endpoint);
+            Ok(Json(v2_response(&model, &req_id, outputs)).into_response())
+        }
+        crate::grpc::GrpcBehavior::Images => {
+            let prompt = v2_tensor_texts(&body, KSERVE_V2_PROMPT)
+                .into_iter()
+                .next()
+                .unwrap_or_default();
+            state.recorder.record_request_start(endpoint, &model);
+            let b64 = mock_jpeg_b64(&prompt, 0);
+            let outputs = vec![v2_output(
+                "generated_image",
+                "BYTES",
+                vec![1],
+                vec![Value::String(b64)],
+            )];
+            state
+                .recorder
+                .record_basic_success(endpoint, start.elapsed().as_secs_f64());
+            state.recorder.record_request_end(endpoint);
+            Ok(Json(v2_response(&model, &req_id, outputs)).into_response())
+        }
+        // Text / VLM: `text_input` prompt (any `image` tensor is consumed but
+        // ignored), optional `max_tokens` cap, generated `text_output`.
+        crate::grpc::GrpcBehavior::Text | crate::grpc::GrpcBehavior::Auto => {
+            let prompt = v2_tensor_texts(&body, KSERVE_V2_TEXT_INPUT)
+                .into_iter()
+                .next()
+                .unwrap_or_default();
+            let max_tokens = v2_tensor_first_int(&body, "max_tokens")
+                .filter(|value| *value > 0)
+                .map(|value| value as usize);
+            let mock_chat = ChatCompletionRequest {
+                model: model.clone(),
+                messages: vec![Message {
+                    role: "user".into(),
+                    content: Value::String(prompt),
+                }],
+                stream: false,
+                stream_options: None,
+                max_tokens,
+                max_completion_tokens: None,
+                ignore_eos: false,
+                min_tokens: None,
+                reasoning_effort: None,
+                priority: None,
+            };
+            let req_gen = GenRequest::Chat(&mock_chat);
+            let ctx = RequestCtx::build("kserve", &req_gen, endpoint, start, &state);
+
+            state.recorder.init_model_config(&model);
+            state.recorder.record_request_start(endpoint, &model);
+            state.recorder.record_llm_inflight_start(&model);
+            let (prefill, _decode) = ctx.latency_sim.wait_for_tokens(ctx.tokenized.count()).await;
+            let latency = start.elapsed();
+            let info = LLMLatencyInfo {
+                e2e: latency,
+                prefill,
+                decode: latency.saturating_sub(prefill),
+            };
+            let text = kserve_text_output(&ctx.tokenized);
+            let outputs = vec![v2_output(
+                "text_output",
+                "BYTES",
+                vec![1],
+                vec![Value::String(text)],
+            )];
+            state.recorder.record_llm_success(
+                endpoint,
+                &model,
+                latency.as_secs_f64(),
+                &ctx.usage,
+                &info,
+            );
+            state.recorder.record_llm_inflight_end(&model);
+            state.recorder.record_request_end(endpoint);
+            Ok(Json(v2_response(&model, &ctx.request_id, outputs)).into_response())
+        }
+    }
+}
+
+/// KServe v1 inference: `POST /v1/models/{model}:predict`. The path parameter
+/// arrives as `{model}:predict`; the `:predict` verb suffix is stripped. Reads
+/// `instances[].text` (or the first string field), generates text, and returns
+/// `{"predictions": [{"output": "<text>"}]}`.
+pub async fn kserve_v1_predict(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(model_verb): axum::extract::Path<String>,
+    Json(body): Json<Value>,
+) -> AppResult<Response> {
+    if let Some(e) = maybe_inject_error(&state) {
+        return Err(e);
+    }
+    let endpoint = "/v1/models/{model}:predict";
+    let start = Instant::now();
+    let model = model_verb
+        .strip_suffix(":predict")
+        .unwrap_or(&model_verb)
+        .to_string();
+
+    let text = body
+        .get("instances")
+        .and_then(Value::as_array)
+        .and_then(|instances| instances.first())
+        .and_then(|instance| {
+            instance
+                .as_object()
+                .and_then(|object| {
+                    object
+                        .get("text")
+                        .or_else(|| object.values().find(|value| value.is_string()))
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                })
+                .or_else(|| instance.as_str().map(ToString::to_string))
+        })
+        .unwrap_or_default();
+
+    let mock_chat = ChatCompletionRequest {
+        model: model.clone(),
+        messages: vec![Message {
+            role: "user".into(),
+            content: Value::String(text),
+        }],
+        stream: false,
+        stream_options: None,
+        max_tokens: None,
+        max_completion_tokens: None,
+        ignore_eos: false,
+        min_tokens: None,
+        reasoning_effort: None,
+        priority: None,
+    };
+    let req_gen = GenRequest::Chat(&mock_chat);
+    let ctx = RequestCtx::build("kserve-v1", &req_gen, endpoint, start, &state);
+
+    state.recorder.init_model_config(&model);
+    state.recorder.record_request_start(endpoint, &model);
+    state.recorder.record_llm_inflight_start(&model);
+    let (prefill, _decode) = ctx.latency_sim.wait_for_tokens(ctx.tokenized.count()).await;
+    let latency = start.elapsed();
+    let info = LLMLatencyInfo {
+        e2e: latency,
+        prefill,
+        decode: latency.saturating_sub(prefill),
+    };
+    let output = kserve_text_output(&ctx.tokenized);
+    state
+        .recorder
+        .record_llm_success(endpoint, &model, latency.as_secs_f64(), &ctx.usage, &info);
+    state.recorder.record_llm_inflight_end(&model);
+    state.recorder.record_request_end(endpoint);
+
+    Ok(Json(json!({
+        "predictions": [{"output": output}],
+    }))
+    .into_response())
+}
+
+/// KServe v2 model readiness: `GET /v2/models/{model}/ready` — the mock's model
+/// is always ready.
+pub async fn kserve_v2_model_ready() -> impl IntoResponse {
+    Json(json!({"name": "", "ready": true}))
+}
+
+/// KServe v2 server readiness: `GET /v2/health/ready`.
+pub async fn kserve_v2_health_ready() -> impl IntoResponse {
+    Json(json!({"ready": true}))
+}
+
+// ============================================================================
 // Custom multimodal
 // ============================================================================
 
@@ -1465,7 +1767,7 @@ pub async fn tgi_generate_stream(
 // Image generation
 // ============================================================================
 
-fn mock_jpeg_b64(prompt: &str, index: u32) -> String {
+pub(crate) fn mock_jpeg_b64(prompt: &str, index: u32) -> String {
     let combined = format!("{prompt}|{index}");
     let mut hasher = Blake2s256::new();
     hasher.update(combined.as_bytes());
@@ -2939,5 +3241,150 @@ mod stream_frame_tests {
         };
         let (head, tail) = spec.split_arguments();
         assert_eq!(format!("{head}{tail}"), spec.arguments);
+    }
+}
+
+#[cfg(test)]
+mod kserve_http_tests {
+    use super::*;
+    use crate::grpc::GrpcBehavior;
+
+    fn fast_state() -> Arc<AppState> {
+        let config = crate::config::MockServerConfig {
+            fast: true,
+            no_tokenizer: true,
+            ..crate::config::MockServerConfig::default()
+        }
+        .apply_flags();
+        AppState::build(config)
+    }
+
+    fn v2_body(inputs: Value) -> Value {
+        json!({"inputs": inputs})
+    }
+
+    #[test]
+    fn tensor_text_and_int_extraction() {
+        let body = v2_body(json!([
+            {"name": "text_input", "datatype": "BYTES", "shape": [1], "data": ["hello world"]},
+            {"name": "max_tokens", "datatype": "INT32", "shape": [1], "data": [16]},
+        ]));
+        assert_eq!(v2_tensor_texts(&body, "text_input"), vec!["hello world"]);
+        assert_eq!(v2_tensor_first_int(&body, "max_tokens"), Some(16));
+        assert!(v2_has_input(&body, "text_input"));
+        assert!(!v2_has_input(&body, "passages"));
+    }
+
+    #[tokio::test]
+    async fn behavior_detection_from_input_tensors() {
+        let state = fast_state();
+        let rankings = v2_body(json!([
+            {"name": "query", "datatype": "BYTES", "shape": [1], "data": ["q"]},
+            {"name": "passages", "datatype": "BYTES", "shape": [2], "data": ["p0", "p1"]},
+        ]));
+        assert_eq!(
+            resolve_v2_behavior(&state, &rankings),
+            GrpcBehavior::Rankings
+        );
+
+        let images = v2_body(json!([
+            {"name": "prompt", "datatype": "BYTES", "shape": [1], "data": ["draw"]},
+        ]));
+        assert_eq!(resolve_v2_behavior(&state, &images), GrpcBehavior::Images);
+
+        let text = v2_body(json!([
+            {"name": "text_input", "datatype": "BYTES", "shape": [1], "data": ["hi"]},
+        ]));
+        assert_eq!(resolve_v2_behavior(&state, &text), GrpcBehavior::Text);
+    }
+
+    #[tokio::test]
+    async fn v2_infer_text_returns_text_output() {
+        let state = fast_state();
+        let body = v2_body(json!([
+            {"name": "text_input", "datatype": "BYTES", "shape": [1], "data": ["generate some text here"]},
+        ]));
+        let resp = kserve_v2_infer(
+            State(state),
+            axum::extract::Path("m".to_string()),
+            Json(body),
+        )
+        .await
+        .expect("v2 infer ok");
+        let value = response_json(resp).await;
+        let outputs = value["outputs"].as_array().expect("outputs array");
+        assert_eq!(outputs[0]["name"], "text_output");
+        assert_eq!(outputs[0]["datatype"], "BYTES");
+        let text = outputs[0]["data"][0].as_str().expect("text output");
+        assert!(!text.is_empty());
+    }
+
+    #[tokio::test]
+    async fn v2_infer_rankings_returns_scores() {
+        let state = fast_state();
+        let body = v2_body(json!([
+            {"name": "query", "datatype": "BYTES", "shape": [1], "data": ["what is ai"]},
+            {"name": "passages", "datatype": "BYTES", "shape": [3], "data": ["p0", "p1", "p2"]},
+        ]));
+        let resp = kserve_v2_infer(
+            State(state),
+            axum::extract::Path("reranker".to_string()),
+            Json(body),
+        )
+        .await
+        .expect("v2 rankings ok");
+        let value = response_json(resp).await;
+        let outputs = value["outputs"].as_array().expect("outputs array");
+        assert_eq!(outputs[0]["name"], "scores");
+        let data = outputs[0]["data"].as_array().expect("scores data");
+        assert_eq!(data.len(), 3);
+        for (passage, score) in ["p0", "p1", "p2"].iter().zip(data) {
+            let expected = compute_mock_score("what is ai", passage);
+            assert!((score.as_f64().unwrap() - expected).abs() < 1e-9);
+        }
+    }
+
+    #[tokio::test]
+    async fn v2_infer_images_returns_generated_image() {
+        let state = fast_state();
+        let body = v2_body(json!([
+            {"name": "prompt", "datatype": "BYTES", "shape": [1], "data": ["a red bicycle"]},
+        ]));
+        let resp = kserve_v2_infer(
+            State(state),
+            axum::extract::Path("diffusion".to_string()),
+            Json(body),
+        )
+        .await
+        .expect("v2 images ok");
+        let value = response_json(resp).await;
+        let outputs = value["outputs"].as_array().expect("outputs array");
+        assert_eq!(outputs[0]["name"], "generated_image");
+        assert_eq!(outputs[0]["data"][0], mock_jpeg_b64("a red bicycle", 0));
+    }
+
+    #[tokio::test]
+    async fn v1_predict_strips_verb_and_returns_predictions() {
+        let state = fast_state();
+        let body = json!({"instances": [{"text": "translate this sentence"}]});
+        let resp = kserve_v1_predict(
+            State(state),
+            axum::extract::Path("mymodel:predict".to_string()),
+            Json(body),
+        )
+        .await
+        .expect("v1 predict ok");
+        let value = response_json(resp).await;
+        let predictions = value["predictions"].as_array().expect("predictions array");
+        let output = predictions[0]["output"].as_str().expect("output text");
+        assert!(!output.is_empty());
+    }
+
+    /// Collect an axum `Response` body and parse it as JSON.
+    async fn response_json(resp: Response) -> Value {
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .expect("read body");
+        serde_json::from_slice(&bytes).expect("json body")
     }
 }

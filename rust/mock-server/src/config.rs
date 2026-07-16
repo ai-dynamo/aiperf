@@ -7,6 +7,7 @@ use clap::Parser;
 use serde::{Deserialize, Serialize};
 
 use crate::accuracy::{AccuracyFormat, AccuracyMatch};
+use crate::grpc::GrpcBehavior;
 use crate::prefix_cache::EvictionPolicy;
 
 #[derive(Debug, Clone, Parser, Serialize, Deserialize)]
@@ -40,6 +41,25 @@ pub struct MockServerConfig {
     /// streamed.
     #[arg(long, env = "MOCK_SERVER_GRPC_EMBEDDING_DIM")]
     pub grpc_embedding_dim: Option<usize>,
+
+    /// Output-tensor behavior for the KServe gRPC (and HTTP `/v2/.../infer`)
+    /// inference handler. `auto` (the default) inspects the request's INPUT
+    /// tensor names to decide what to emit — a `passages` tensor means the
+    /// `kserve_v2_rankings` path (emit a numeric `scores` FP32 tensor), a
+    /// `prompt` tensor with no `text_input` means the `kserve_v2_images` path
+    /// (emit a `generated_image` BYTES tensor), and anything else (`text_input`,
+    /// with or without an `image` tensor for `kserve_v2_vlm`) generates text and
+    /// emits a `text_output` BYTES tensor. The explicit `text` / `rankings` /
+    /// `images` values force one behavior regardless of the input tensors, for a
+    /// single-purpose target. `grpc_embedding_dim`, when set, still overrides all
+    /// of these for unary `ModelInfer` (FP32 embedding output).
+    #[arg(
+        long,
+        env = "MOCK_SERVER_GRPC_BEHAVIOR",
+        value_enum,
+        default_value = "auto"
+    )]
+    pub grpc_behavior: GrpcBehavior,
 
     /// Tokio worker-thread count. `0` (the default) means auto = nproc; any
     /// explicit value, including `1`, is honored verbatim.
