@@ -101,6 +101,9 @@ futures = "0.3"
 rustls = "0.23"
 tokio-rustls = "0.26"
 webpki-roots = "0.26"
+# Parse the in-cluster Kubernetes CA PEM for the native `aiperf controller` CR
+# reporter (`crate::k8s`).
+rustls-pemfile = "2"
 # Embedding (not extension-module): `auto-initialize` starts a CPython
 # interpreter inside the native binary so the search planners can call the exact
 # scipy/optuna numerical primitives. Optional + feature-gated (see `search-pyo3`).

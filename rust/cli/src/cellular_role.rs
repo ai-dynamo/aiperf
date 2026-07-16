@@ -33,10 +33,84 @@ use std::path::PathBuf;
 /// `AIPERF_CELL_LAUNCHER=k8s` so the launcher expects the operator-created cell
 /// pods rather than spawning children.
 pub fn run_controller(args: &[String]) -> anyhow::Result<i32> {
-    // TODO(SP-A slice 2): wrap the run with in-cluster CR progress/snapshot/
-    // completion reporting + the results-ready marker (native port of the Python
-    // `completion_signal`/`results_sidecar`). Off-cluster this stays a plain run.
-    crate::profile::run(args)
+    let reporter = crate::k8s::CrReporter::from_env();
+
+    // Run the benchmark (native cellular controller when `runtime.cells > 1`).
+    let exit = crate::profile::run(args)?;
+
+    // On-cluster, after a successful run, push the final metric snapshot, write
+    // the results-ready marker, and set the completion annotation the operator
+    // watches — in that order, so the operator's fetch (triggered by the
+    // annotation) never races ahead of the marker. Off-cluster this is a no-op.
+    // (Live in-run progress/snapshot streaming is a follow-up: SP-A slice 2b.)
+    if reporter.active() {
+        if exit == 0 {
+            if let Some(artifact_dir) = resolve_artifact_dir(args) {
+                report_completion(&reporter, &artifact_dir);
+            } else {
+                tracing::warn!(
+                    "could not resolve the artifact directory; skipping k8s completion reporting"
+                );
+                reporter.signal_complete();
+            }
+        } else {
+            // A failed run still signals completion so the operator stops waiting.
+            reporter.signal_complete();
+        }
+    }
+    Ok(exit)
+}
+
+/// Push the final `native-v2.json` snapshot into `.status.snapshot`, write the
+/// results-ready marker, then set the completion annotation. Every step is
+/// best-effort (the reporter swallows API errors) so reporting never masks the
+/// run's own exit code.
+fn report_completion(reporter: &crate::k8s::CrReporter, artifact_dir: &std::path::Path) {
+    let native_v2 = artifact_dir.join("native-v2.json");
+    match std::fs::read(&native_v2) {
+        Ok(bytes) => match serde_json::from_slice::<serde_json::Value>(&bytes) {
+            Ok(snapshot) => reporter.patch_status(&crate::k8s::snapshot_body(snapshot)),
+            Err(e) => {
+                tracing::warn!(error = %e, "native-v2.json is not valid JSON; skipping snapshot")
+            }
+        },
+        Err(e) => {
+            tracing::warn!(error = %e, path = %native_v2.display(), "native-v2.json unreadable; skipping snapshot")
+        }
+    }
+    if let Err(e) = crate::k8s::write_ready_marker(artifact_dir, false) {
+        tracing::warn!(error = %e, "failed to write the results-ready marker");
+    }
+    reporter.signal_complete();
+}
+
+/// Resolve the run's artifact directory: the `--artifact-dir` flag if present,
+/// else the mounted config's `benchmark.artifacts.dir` (`artifacts.dir`). Used
+/// to locate `native-v2.json` and place the results-ready marker.
+fn resolve_artifact_dir(args: &[String]) -> Option<PathBuf> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if let Some(rest) = a.strip_prefix("--artifact-dir=") {
+            return Some(PathBuf::from(rest));
+        }
+        if a == "--artifact-dir" {
+            return it.next().map(PathBuf::from);
+        }
+    }
+    let config = config_flag(args)?;
+    let value = crate::yaml::read_env_substituted(&config).ok()?;
+    for path in [
+        value.pointer("/benchmark/artifacts/dir"),
+        value.pointer("/artifacts/dir"),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if let Some(dir) = path.as_str() {
+            return Some(PathBuf::from(dir));
+        }
+    }
+    None
 }
 
 /// `aiperf cell` — one cellular cell pod. Enters the native `--cell` mode, which
