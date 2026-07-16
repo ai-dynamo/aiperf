@@ -357,6 +357,60 @@ pub struct ProfileFlags {
     #[arg(long = "stream", default_value_t = false)]
     pub stream: bool,
 
+    // --- Service / UI / logging flags (accepted for CLI parity; the native
+    //     front door does not project these into the runner request) ----------
+    /// Controller API host (`--api-host`).
+    #[arg(long = "api-host")]
+    pub api_host: Option<String>,
+    /// Controller API port (`--api-port`).
+    #[arg(long = "api-port")]
+    pub api_port: Option<u16>,
+    /// Log level (`--log-level`).
+    #[arg(long = "log-level")]
+    pub log_level: Option<String>,
+    /// Verbose logging (`--verbose`).
+    #[arg(long = "verbose", short = 'v', default_value_t = false)]
+    pub verbose: bool,
+    /// Extra-verbose logging (`--extra-verbose`).
+    #[arg(long = "extra-verbose", default_value_t = false)]
+    pub extra_verbose: bool,
+    /// UI type (`--ui-type` / `--ui`).
+    #[arg(long = "ui-type", visible_alias = "ui")]
+    pub ui_type: Option<String>,
+    /// Max worker processes (`--workers-max` / `--max-workers`).
+    #[arg(long = "workers-max", visible_alias = "max-workers")]
+    pub workers_max: Option<u32>,
+    /// Record-processor service count (`--record-processor-service-count` / `--record-processors`).
+    #[arg(long = "record-processor-service-count", visible_alias = "record-processors")]
+    pub record_processor_service_count: Option<u32>,
+    /// Live stats refresh interval, seconds (`--stats-interval`).
+    #[arg(long = "stats-interval")]
+    pub stats_interval: Option<f64>,
+    /// Show per-request trace timing (`--show-trace-timing`).
+    #[arg(long = "show-trace-timing", default_value_t = false)]
+    pub show_trace_timing: bool,
+    /// Auto-generate plots after the run (`--auto-plot` / `--no-auto-plot`).
+    #[arg(long = "auto-plot", overrides_with = "no_auto_plot", default_value_t = false)]
+    pub auto_plot: bool,
+    /// Inverse of `--auto-plot`.
+    #[arg(long = "no-auto-plot", default_value_t = false)]
+    pub no_auto_plot: bool,
+    /// Fail the run if plotting fails (`--plot-required`).
+    #[arg(long = "plot-required", default_value_t = false)]
+    pub plot_required: bool,
+    /// Export file prefix (`--profile-export-prefix` / `--profile-export-file`).
+    #[arg(long = "profile-export-prefix", visible_alias = "profile-export-file")]
+    pub profile_export_prefix: Option<String>,
+    /// ZMQ TCP host (`--zmq-host`).
+    #[arg(long = "zmq-host")]
+    pub zmq_host: Option<String>,
+    /// ZMQ IPC path (`--zmq-ipc-path`).
+    #[arg(long = "zmq-ipc-path")]
+    pub zmq_ipc_path: Option<String>,
+    /// ZMQ dual-bind mode (`--zmq-dual-bind`).
+    #[arg(long = "zmq-dual-bind", default_value_t = false)]
+    pub zmq_dual_bind: bool,
+
     /// Trials per variation (`--num-profile-runs`); `>1` repeats each run.
     #[arg(long = "num-profile-runs")]
     pub num_profile_runs: Option<u32>,
