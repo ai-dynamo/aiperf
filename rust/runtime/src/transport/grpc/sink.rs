@@ -19,8 +19,8 @@ use serde_json::Value;
 
 use crate::clock::Clock;
 use crate::endpoints::{
-    EndpointKey, ParsedResponse, PreparedEndpoint, PreparedEndpointTable,
-    RequestRecord as EndpointRequestRecord, ResponseData, ServerResponse, Turn, UsageView,
+    EndpointKey, PreparedEndpoint, PreparedEndpointTable, RequestRecord as EndpointRequestRecord,
+    ResponseData, ServerResponse,
 };
 use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest, RequestTrace};
 use crate::transport::core::{
@@ -30,10 +30,12 @@ use crate::transport::grpc::{
     ConnectionReuseStrategy as GrpcConnectionReuseStrategy, GrpcBindingRegistry, GrpcClientConfig,
     GrpcErrorKind, GrpcRequestConfig, GrpcRequestRecord, GrpcTransport,
 };
+use crate::transport::reduce::{
+    absorb_endpoint_metrics, absorb_response_data, absorb_usage, assistant_message, token_kind,
+};
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::{
-    Dispatchable, ObservedEndpointMetrics, ObservedTokenKind, ObservedUsage, RequestObserver,
-    RequestSink,
+    Dispatchable, ObservedEndpointMetrics, ObservedUsage, RequestObserver, RequestSink,
 };
 use uuid::Uuid;
 
@@ -623,147 +625,6 @@ fn meaningful_response(endpoint: &dyn PreparedEndpoint, response: &ServerRespons
         })
 }
 
-fn token_kind(data: &ResponseData) -> ObservedTokenKind {
-    match data {
-        ResponseData::Reasoning { reasoning, .. } if !reasoning.is_empty() => {
-            ObservedTokenKind::Reasoning
-        }
-        _ => ObservedTokenKind::Output,
-    }
-}
-
-fn absorb_response_data(data: &ResponseData, metadata: &mut ModelResponseMetadata) -> String {
-    match data {
-        ResponseData::Text { text } => append_text(&mut metadata.content, text),
-        ResponseData::Reasoning { content, reasoning } => {
-            metadata.content.get_or_insert_with(String::new);
-            append_text(&mut metadata.reasoning, reasoning);
-            if let Some(content) = content {
-                append_text(&mut metadata.content, content);
-            }
-        }
-        ResponseData::ToolCall {
-            tool_call_text,
-            content,
-        } => {
-            if let Some(content) = content {
-                append_text(&mut metadata.content, content);
-            }
-            append_text(&mut metadata.content, tool_call_text);
-        }
-        ResponseData::TokenIds { token_ids } => {
-            metadata
-                .output_token_ids
-                .get_or_insert_with(Vec::new)
-                .extend_from_slice(token_ids);
-        }
-        ResponseData::Embeddings { .. }
-        | ResponseData::Rankings { .. }
-        | ResponseData::ImageRetrieval { .. }
-        | ResponseData::Images(_)
-        | ResponseData::Audio(_)
-        | ResponseData::Video(_) => {}
-    }
-    data.get_text()
-}
-
-fn append_text(target: &mut Option<String>, text: &str) {
-    target.get_or_insert_with(String::new).push_str(text);
-}
-
-fn absorb_usage(parsed: &ParsedResponse, observed: &mut ObservedUsage) {
-    let Some(usage) = parsed.usage.as_ref().and_then(UsageView::from_value) else {
-        return;
-    };
-    observed.prompt_tokens = usage
-        .prompt_tokens()
-        .and_then(|value| usize::try_from(value).ok())
-        .or(observed.prompt_tokens);
-    observed.completion_tokens = usage
-        .completion_tokens()
-        .and_then(|value| usize::try_from(value).ok())
-        .or(observed.completion_tokens);
-    observed.total_tokens = usage
-        .total_tokens()
-        .and_then(|value| usize::try_from(value).ok())
-        .or(observed.total_tokens);
-    observed.reasoning_tokens = usage
-        .reasoning_tokens()
-        .and_then(|value| usize::try_from(value).ok())
-        .or(observed.reasoning_tokens);
-    observed.prompt_cache_read_tokens = usage
-        .prompt_cache_read_tokens()
-        .and_then(|value| usize::try_from(value).ok())
-        .or(observed.prompt_cache_read_tokens);
-    observed.prompt_cache_write_tokens = usage
-        .prompt_cache_write_tokens()
-        .and_then(|value| usize::try_from(value).ok())
-        .or(observed.prompt_cache_write_tokens);
-    observed.prompt_cache_miss_tokens = usage
-        .prompt_cache_miss_tokens()
-        .and_then(|value| usize::try_from(value).ok())
-        .or(observed.prompt_cache_miss_tokens);
-    observed.prompt_audio_tokens = usage
-        .prompt_audio_tokens()
-        .and_then(|value| usize::try_from(value).ok())
-        .or(observed.prompt_audio_tokens);
-    observed.completion_audio_tokens = usage
-        .completion_audio_tokens()
-        .and_then(|value| usize::try_from(value).ok())
-        .or(observed.completion_audio_tokens);
-    observed.accepted_prediction_tokens = usage
-        .accepted_prediction_tokens()
-        .and_then(|value| usize::try_from(value).ok())
-        .or(observed.accepted_prediction_tokens);
-    observed.rejected_prediction_tokens = usage
-        .rejected_prediction_tokens()
-        .and_then(|value| usize::try_from(value).ok())
-        .or(observed.rejected_prediction_tokens);
-    observed.tool_use_prompt_tokens = usage
-        .tool_use_prompt_tokens()
-        .and_then(|value| usize::try_from(value).ok())
-        .or(observed.tool_use_prompt_tokens);
-    observed.prompt_audio_seconds = usage
-        .prompt_audio_seconds()
-        .or(observed.prompt_audio_seconds);
-}
-
-fn absorb_endpoint_metrics(data: &ResponseData, metrics: &mut ObservedEndpointMetrics) {
-    let ResponseData::Video(video) = data else {
-        return;
-    };
-    metrics.video_inference_seconds = video
-        .inference_time_s
-        .filter(|value| value.is_finite())
-        .or(metrics.video_inference_seconds);
-    metrics.video_peak_memory_mb = video
-        .peak_memory_mb
-        .filter(|value| value.is_finite())
-        .or(metrics.video_peak_memory_mb);
-}
-
-fn assistant_message(turn: &Turn) -> Option<Value> {
-    if let Some(message) = turn
-        .raw_messages
-        .as_ref()
-        .and_then(|messages| messages.first())
-    {
-        return Some(message.clone());
-    }
-    let content = turn
-        .texts
-        .iter()
-        .flat_map(|media| &media.contents)
-        .cloned()
-        .collect::<String>();
-    (!content.is_empty()).then(|| {
-        serde_json::json!({
-            "role": turn.role.as_deref().unwrap_or("assistant"),
-            "content": content,
-        })
-    })
-}
-
 fn absorb_grpc_error(
     record: &GrpcRequestRecord,
     terminal: ReplayTerminalStatus,
@@ -884,34 +745,6 @@ fn nonzero_usize(value: usize) -> Option<usize> {
 mod tests {
     use super::*;
     use crate::endpoints::{EndpointId, EndpointRegistry, RawEndpointConfig};
-
-    #[test]
-    fn usage_absorption_retains_extended_endpoint_facts() {
-        let parsed = ParsedResponse {
-            perf_ns: 1,
-            data: None,
-            usage: Some(serde_json::json!({
-                "prompt_tokens_details": {"audio_tokens": 2},
-                "completion_tokens_details": {
-                    "audio_tokens": 3,
-                    "accepted_prediction_tokens": 4,
-                    "rejected_prediction_tokens": 5
-                },
-                "toolUsePromptTokenCount": 6,
-                "prompt_audio_seconds": 1.5
-            })),
-            sources: None,
-        };
-        let mut observed = ObservedUsage::default();
-        absorb_usage(&parsed, &mut observed);
-
-        assert_eq!(observed.prompt_audio_tokens, Some(2));
-        assert_eq!(observed.completion_audio_tokens, Some(3));
-        assert_eq!(observed.accepted_prediction_tokens, Some(4));
-        assert_eq!(observed.rejected_prediction_tokens, Some(5));
-        assert_eq!(observed.tool_use_prompt_tokens, Some(6));
-        assert_eq!(observed.prompt_audio_seconds, Some(1.5));
-    }
 
     #[test]
     fn riva_tts_audio_is_meaningful_without_becoming_model_text() {

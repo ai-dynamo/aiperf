@@ -11,3 +11,4 @@ pub mod core;
 #[cfg(feature = "grpc")]
 pub mod grpc;
 pub mod http;
+pub(crate) mod reduce;

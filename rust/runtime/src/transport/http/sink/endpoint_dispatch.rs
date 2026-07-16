@@ -18,7 +18,7 @@ use serde_json::Value;
 
 use crate::endpoints::{
     EndpointDescriptor, EndpointResult, ExtractedPayload, ParsedResponse, PreparedEndpoint,
-    RequestRecord as EndpointRequestRecord, ResponseData, ServerResponse, Turn, UsageView,
+    RequestRecord as EndpointRequestRecord, ResponseData, ServerResponse, Turn,
 };
 use crate::metrics_core::RequestTrace;
 use crate::transport::core::{ErrorDetails, ErrorKind, RequestRecord};
@@ -27,12 +27,13 @@ use crate::transport::http::transport::endpoint_binding::{
     MetadataHttpEndpointBinding, prepare_request,
 };
 use loadgen_core::collector::ReplayTerminalStatus;
-use loadgen_core::sink::{
-    ObservedEndpointMetrics, ObservedTokenKind, ObservedUsage, RequestObserver,
-};
+use loadgen_core::sink::{ObservedEndpointMetrics, ObservedUsage, RequestObserver};
 
 use crate::multiturn::TurnDataPolicy;
 use crate::scheduled::{ModelResponseMetadata, TurnResponseObserver};
+use crate::transport::reduce::{
+    absorb_endpoint_metrics, absorb_response_data, absorb_usage, assistant_message, token_kind,
+};
 
 use super::{
     HttpCollectedDispatch, HttpDispatchResult, Request, TransportSink, absorb_transport_error,
@@ -533,152 +534,6 @@ fn parse_endpoint_response<A: RuntimeEndpointAdapter + ?Sized>(
         json: Some(Value::Object(object)),
         raw: response.raw.clone(),
     })
-}
-
-fn token_kind(data: &ResponseData) -> ObservedTokenKind {
-    match data {
-        ResponseData::Reasoning { reasoning, .. } if !reasoning.is_empty() => {
-            ObservedTokenKind::Reasoning
-        }
-        _ => ObservedTokenKind::Output,
-    }
-}
-
-fn absorb_response_data(data: &ResponseData, metadata: &mut ModelResponseMetadata) -> String {
-    match data {
-        ResponseData::Text { text } => {
-            append_metadata_text(&mut metadata.content, text);
-        }
-        ResponseData::Reasoning { content, reasoning } => {
-            metadata.content.get_or_insert_with(String::new);
-            append_metadata_text(&mut metadata.reasoning, reasoning);
-            if let Some(content) = content {
-                append_metadata_text(&mut metadata.content, content);
-            }
-        }
-        ResponseData::ToolCall {
-            tool_call_text,
-            content,
-        } => {
-            if let Some(content) = content {
-                append_metadata_text(&mut metadata.content, content);
-            }
-            append_metadata_text(&mut metadata.content, tool_call_text);
-        }
-        ResponseData::TokenIds { token_ids } => {
-            metadata
-                .output_token_ids
-                .get_or_insert_with(Vec::new)
-                .extend_from_slice(token_ids);
-        }
-        ResponseData::Embeddings { .. }
-        | ResponseData::Rankings { .. }
-        | ResponseData::ImageRetrieval { .. }
-        | ResponseData::Images(_)
-        | ResponseData::Audio(_)
-        | ResponseData::Video(_) => {}
-    }
-    data.get_text()
-}
-
-fn append_metadata_text(target: &mut Option<String>, text: &str) {
-    target.get_or_insert_with(String::new).push_str(text);
-}
-
-fn assistant_message(turn: &Turn) -> Option<Value> {
-    if let Some(message) = turn
-        .raw_messages
-        .as_ref()
-        .and_then(|messages| messages.first())
-    {
-        return Some(message.clone());
-    }
-    let content = turn
-        .texts
-        .iter()
-        .flat_map(|media| &media.contents)
-        .cloned()
-        .collect::<String>();
-    (!content.is_empty()).then(|| {
-        serde_json::json!({
-            "role": turn.role.as_deref().unwrap_or("assistant"),
-            "content": content,
-        })
-    })
-}
-
-fn absorb_endpoint_metrics(data: &ResponseData, metrics: &mut ObservedEndpointMetrics) {
-    let ResponseData::Video(video) = data else {
-        return;
-    };
-    metrics.video_inference_seconds = video
-        .inference_time_s
-        .filter(|value| value.is_finite())
-        .or(metrics.video_inference_seconds);
-    metrics.video_peak_memory_mb = video
-        .peak_memory_mb
-        .filter(|value| value.is_finite())
-        .or(metrics.video_peak_memory_mb);
-}
-
-fn absorb_usage(parsed: &ParsedResponse, observed: &mut ObservedUsage) {
-    let Some(usage) = parsed.usage.as_ref() else {
-        return;
-    };
-    let Some(usage) = UsageView::from_value(usage) else {
-        return;
-    };
-    observed.prompt_tokens = usage
-        .prompt_tokens()
-        .and_then(|value| usize::try_from(value).ok())
-        .or(observed.prompt_tokens);
-    observed.completion_tokens = usage
-        .completion_tokens()
-        .and_then(|value| usize::try_from(value).ok())
-        .or(observed.completion_tokens);
-    observed.total_tokens = usage
-        .total_tokens()
-        .and_then(|value| usize::try_from(value).ok())
-        .or(observed.total_tokens);
-    observed.reasoning_tokens = usage
-        .reasoning_tokens()
-        .and_then(|value| usize::try_from(value).ok())
-        .or(observed.reasoning_tokens);
-    observed.prompt_cache_read_tokens = usage
-        .prompt_cache_read_tokens()
-        .and_then(|value| usize::try_from(value).ok())
-        .or(observed.prompt_cache_read_tokens);
-    observed.prompt_cache_write_tokens = usage
-        .prompt_cache_write_tokens()
-        .and_then(|value| usize::try_from(value).ok())
-        .or(observed.prompt_cache_write_tokens);
-    observed.prompt_cache_miss_tokens = usage
-        .prompt_cache_miss_tokens()
-        .and_then(|value| usize::try_from(value).ok())
-        .or(observed.prompt_cache_miss_tokens);
-    observed.prompt_audio_tokens = usage
-        .prompt_audio_tokens()
-        .and_then(|value| usize::try_from(value).ok())
-        .or(observed.prompt_audio_tokens);
-    observed.completion_audio_tokens = usage
-        .completion_audio_tokens()
-        .and_then(|value| usize::try_from(value).ok())
-        .or(observed.completion_audio_tokens);
-    observed.accepted_prediction_tokens = usage
-        .accepted_prediction_tokens()
-        .and_then(|value| usize::try_from(value).ok())
-        .or(observed.accepted_prediction_tokens);
-    observed.rejected_prediction_tokens = usage
-        .rejected_prediction_tokens()
-        .and_then(|value| usize::try_from(value).ok())
-        .or(observed.rejected_prediction_tokens);
-    observed.tool_use_prompt_tokens = usage
-        .tool_use_prompt_tokens()
-        .and_then(|value| usize::try_from(value).ok())
-        .or(observed.tool_use_prompt_tokens);
-    observed.prompt_audio_seconds = usage
-        .prompt_audio_seconds()
-        .or(observed.prompt_audio_seconds);
 }
 
 fn http_trace(record: &RequestRecord) -> RequestTrace {
