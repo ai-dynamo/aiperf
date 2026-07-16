@@ -85,13 +85,16 @@ router over it as HTTP/1.1 (the runner's UDS transport is h1-only). A stale sock
 path is unlinked first; a non-socket file is refused. The TCP frontend on `--port` keeps
 serving in parallel. HTTP-only under `--processes N` (warned-and-skipped).
 
-**Known runner-side limitation:** `aiperf profile` has **no UDS/`unix://` URL knob today**. The
-runner transport *can* connect a `UnixStream` when `ClientConfig.uds_path` is set, but nothing
-on the product path wires a URL/flag through to it (the protocol-v2 `EndpointProfileConfigV2`
-has no `uds` field, and the Python frontend has no `uds`/`unix://` option). So the mock's UDS
-listener is proven end-to-end by a **direct HTTP/1.1 client** over the socket
-(`test_uds.rs`), not via `aiperf profile`. State this plainly when asked — a `unix://` run is
-not drivable through the frontend as shipped.
+**Driving it from `aiperf profile`:** set `endpoint.uds_path` in the Config-v2 YAML (Python
+field `EndpointConfig.uds_path`, projected by `rust_wire` into the protocol-v2
+`EndpointProfileConfigV2.uds_path` → the runner's HTTP `ClientConfig`, forcing HTTP/1.1). Keep
+`endpoint.url` a normal `http://…` value — it only supplies the request path + `Host` header;
+the socket carries the transport. **UDS e2e recipe** (`test_uds.rs`): serve the mock over a
+temp socket, then run `aiperf profile --config uds.yaml` with `endpoint.url:
+http://127.0.0.1:1/...` (a **closed** TCP port) + `endpoint.udsPath: <socket>` +
+`waitForModelTimeout: 0.0`. A valid raw-record export proves every request went over the Unix
+socket, since the TCP port is dead. (The file also keeps a direct HTTP/1.1-over-socket test as
+extra listener coverage.)
 
 ## TLS / HTTPS (`--tls-cert` / `--tls-key` / `--tls-self-signed`)
 
@@ -112,11 +115,13 @@ terminates the same certificate as `grpcs` (ALPN `h2`).
 runner install a `NoCertificateVerification` verifier so the self-signed cert is accepted.
 Asserts TTFT/ITL/OSL against the tuned mock (with extra TTFT tolerance for the handshake RTT).
 
-**Known runner-side limitation (`grpcs`):** the runner's tonic `grpcs` client trusts **system
-roots only** (`ClientTlsConfig::new().with_enabled_roots()` — no accept-invalid / `ssl_verify`
-toggle, no custom-CA injection). A fresh self-signed cert is not in the system roots, so a
-`grpcs://` `aiperf profile` run against a self-signed mock **fails the handshake by design**.
-The mock's `grpcs` listener is therefore proven by a direct rustls ALPN handshake at the crate
-level (`rust/mock-server/tests/tls_integration.rs`), not via `aiperf profile`. HTTPS, by
-contrast, exposes `ssl_verify=false`, so the full product path is reachable over `https://`.
-State both limitations plainly.
+**`grpcs` e2e recipe** (`test_tls.rs`): the runner's tonic `grpcs` client now honors
+`endpoint.ssl_verify=false` — it installs the SAME `NoCertificateVerification` verifier the HTTP
+transport uses (via tonic `Endpoint::tls_config_with_verifier`,
+`rust/aiperf/src/transport_grpc/transport.rs`), so a self-signed `grpcs://` server is drivable.
+Serve the mock with a self-signed acceptor on a gRPC port (`serve_grpc_with_tls`), then run
+`aiperf profile --config grpcs.yaml` where the YAML sets `endpoint.urls: ["grpcs://127.0.0.1:PORT"]`,
+`endpoint.type: kserve_v2_infer`, `sslVerify: false`, `transport.type: grpc`. A successful
+raw-record export proves the TLS handshake completed with the insecure verifier. (A direct
+rustls ALPN handshake test remains at `rust/mock-server/tests/tls_integration.rs` as crate-level
+coverage.)
