@@ -32,6 +32,52 @@ use crate::model::tokenizer::Tokenizer;
 use crate::model::transport::Transport;
 use crate::model::{BenchmarkConfig, BenchmarkRun, Resolved};
 
+/// Exact-match placeholder words used as an entire model name (Python
+/// `tokenizer_fake_names._FAKE_MODEL_EXACT`).
+const FAKE_MODEL_EXACT: &[&str] = &[
+    "test",
+    "mock",
+    "fake",
+    "dummy",
+    "example",
+    "sample",
+    "placeholder",
+];
+
+/// Compound placeholder markers, each requiring a `-` separator so real names
+/// (e.g. "contestant") don't false-positive (Python
+/// `tokenizer_fake_names._FAKE_MODEL_SUBSTRINGS`).
+const FAKE_MODEL_SUBSTRINGS: &[&str] = &[
+    "mock-",
+    "-mock",
+    "fake-",
+    "-fake",
+    "test-model",
+    "-test-model",
+    "your-model",
+    "my-model",
+    "model-name",
+    "model-id",
+];
+
+/// Return true if `name` looks like an LLM-hallucinated placeholder model name.
+/// Byte-exact port of `aiperf.common.tokenizer_fake_names::is_fake_model_name`:
+/// reject path-like input, lowercase + `_`→`-` normalize, then match the exact
+/// or substring sets.
+fn is_fake_model_name(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    if name.contains('/') || name.contains('\\') || name.starts_with('.') || name.starts_with('~') {
+        return false;
+    }
+    let normalized = name.to_lowercase().replace('_', "-");
+    if FAKE_MODEL_EXACT.contains(&normalized.as_str()) {
+        return true;
+    }
+    FAKE_MODEL_SUBSTRINGS.iter().any(|s| normalized.contains(s))
+}
+
 // Python single-run synthetic defaults (see `src/aiperf/config/endpoint.py`,
 // `dataset/*`), proven against the goldens.
 const DEFAULT_TIMEOUT_SECONDS: f64 = 21600.0;
@@ -276,8 +322,10 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
     // Explicit dataset entry count wins over conversations/request-count for the
     // synthetic dataset size (Python `_resolve_entries`), but does NOT set the
     // profiling-phase session bound.
-    let num_dataset_entries =
-        parse_single::<u32>("--num-dataset-entries", flags.num_dataset_entries.as_deref())?;
+    let num_dataset_entries = parse_single::<u32>(
+        "--num-dataset-entries",
+        flags.num_dataset_entries.as_deref(),
+    )?;
 
     // Export level maps to the per-record format list + raw flag (Python
     // `_converter_runtime`): summary => no per-record files; records => JSONL;
@@ -445,11 +493,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         export_raw,
         export_trace: flags.export_http_trace,
         export_outputs_json: false,
-        sequence_distribution: flags
-            .seq_dist
-            .as_deref()
-            .map(parse_seq_dist)
-            .transpose()?,
+        sequence_distribution: flags.seq_dist.as_deref().map(parse_seq_dist).transpose()?,
         batch_size: flags.batch_size.unwrap_or(1),
         sampling: flags
             .dataset_sampling_strategy
@@ -583,10 +627,23 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         response_field: None,
     };
 
+    // Placeholder-model → builtin tokenizer fallback (ports
+    // `tokenizer_validator._resolve_tokenizer_names` +
+    // `tokenizer_fake_names.is_fake_model_name`): when `--tokenizer` is unset
+    // and EVERY model name looks like an LLM-hallucinated placeholder
+    // (`mock-model`, `test-model`, …), Python substitutes the zero-network
+    // `builtin` tiktoken tokenizer instead of attempting a doomed HF Hub lookup.
+    // Explicit `--tokenizer` always wins; a single real model keeps the
+    // model-name-derived tokenizer.
+    let tokenizer_name = inputs.tokenizer_name.clone().unwrap_or_else(|| {
+        if inputs.model_names.iter().all(|m| is_fake_model_name(m)) {
+            "builtin".to_string()
+        } else {
+            primary_model.clone()
+        }
+    });
     let tokenizer = Tokenizer {
-        name: inputs
-            .tokenizer_name
-            .unwrap_or_else(|| primary_model.clone()),
+        name: tokenizer_name,
         revision: inputs
             .tokenizer_revision
             .unwrap_or_else(|| "main".to_string()),
@@ -1223,7 +1280,10 @@ fn parse_dataset_filters(
             !map.contains_key(key),
             "--dataset-filter key {key:?} specified more than once"
         );
-        map.insert(key.to_string(), serde_json::Value::String(value.to_string()));
+        map.insert(
+            key.to_string(),
+            serde_json::Value::String(value.to_string()),
+        );
     }
     Ok(Some(map))
 }
@@ -1245,13 +1305,32 @@ fn build_synthesis(flags: &ProfileFlags) -> Option<serde_json::Value> {
     if !any {
         return None;
     }
-    let f = |v: f64| serde_json::Number::from_f64(v).map(serde_json::Value::Number).unwrap();
+    let f = |v: f64| {
+        serde_json::Number::from_f64(v)
+            .map(serde_json::Value::Number)
+            .unwrap()
+    };
     let mut m = serde_json::Map::new();
-    m.insert("speedup_ratio".into(), f(flags.synthesis_speedup_ratio.unwrap_or(1.0)));
-    m.insert("prefix_len_multiplier".into(), f(flags.synthesis_prefix_len_multiplier.unwrap_or(1.0)));
-    m.insert("prefix_root_multiplier".into(), serde_json::Value::from(flags.synthesis_prefix_root_multiplier.unwrap_or(1)));
-    m.insert("prompt_len_multiplier".into(), f(flags.synthesis_prompt_len_multiplier.unwrap_or(1.0)));
-    m.insert("output_len_multiplier".into(), f(flags.synthesis_output_len_multiplier.unwrap_or(1.0)));
+    m.insert(
+        "speedup_ratio".into(),
+        f(flags.synthesis_speedup_ratio.unwrap_or(1.0)),
+    );
+    m.insert(
+        "prefix_len_multiplier".into(),
+        f(flags.synthesis_prefix_len_multiplier.unwrap_or(1.0)),
+    );
+    m.insert(
+        "prefix_root_multiplier".into(),
+        serde_json::Value::from(flags.synthesis_prefix_root_multiplier.unwrap_or(1)),
+    );
+    m.insert(
+        "prompt_len_multiplier".into(),
+        f(flags.synthesis_prompt_len_multiplier.unwrap_or(1.0)),
+    );
+    m.insert(
+        "output_len_multiplier".into(),
+        f(flags.synthesis_output_len_multiplier.unwrap_or(1.0)),
+    );
     // `max_isl`/`max_osl` are `None`-default (excluded when unset).
     if let Some(v) = flags.synthesis_max_isl {
         m.insert("max_isl".into(), serde_json::Value::from(v));
@@ -1259,16 +1338,31 @@ fn build_synthesis(flags: &ProfileFlags) -> Option<serde_json::Value> {
     if let Some(v) = flags.synthesis_max_osl {
         m.insert("max_osl".into(), serde_json::Value::from(v));
     }
-    m.insert("idle_gap_cap_seconds".into(), f(flags.synthesis_idle_gap_cap.unwrap_or(60.0)));
+    m.insert(
+        "idle_gap_cap_seconds".into(),
+        f(flags.synthesis_idle_gap_cap.unwrap_or(60.0)),
+    );
     m.insert(
         "dataset_sampling_strategy".into(),
         serde_json::Value::String(
-            flags.dataset_sampling_strategy.clone().unwrap_or_else(|| "sequential".to_string()),
+            flags
+                .dataset_sampling_strategy
+                .clone()
+                .unwrap_or_else(|| "sequential".to_string()),
         ),
     );
-    m.insert("trajectory_start_min_ratio".into(), f(flags.trajectory_start_min_ratio.unwrap_or(0.0)));
-    m.insert("trajectory_start_max_ratio".into(), f(flags.trajectory_start_max_ratio.unwrap_or(0.0)));
-    m.insert("t_star_random_seed".into(), serde_json::Value::from(flags.random_seed.unwrap_or(0)));
+    m.insert(
+        "trajectory_start_min_ratio".into(),
+        f(flags.trajectory_start_min_ratio.unwrap_or(0.0)),
+    );
+    m.insert(
+        "trajectory_start_max_ratio".into(),
+        f(flags.trajectory_start_max_ratio.unwrap_or(0.0)),
+    );
+    m.insert(
+        "t_star_random_seed".into(),
+        serde_json::Value::from(flags.random_seed.unwrap_or(0)),
+    );
     Some(serde_json::Value::Object(m))
 }
 
@@ -1310,7 +1404,11 @@ fn build_rankings(flags: &ProfileFlags) -> Option<crate::model::dataset::Ranking
         return None;
     }
     Some(crate::model::dataset::Rankings {
-        passages: rankings_dist(flags.rankings_passages_mean, flags.rankings_passages_stddev, 10.0),
+        passages: rankings_dist(
+            flags.rankings_passages_mean,
+            flags.rankings_passages_stddev,
+            10.0,
+        ),
         passage_tokens: rankings_dist(
             flags.rankings_passages_prompt_token_mean,
             flags.rankings_passages_prompt_token_stddev,
@@ -1485,9 +1583,7 @@ pub(crate) fn parse_duration_secs(s: &str) -> anyhow::Result<f64> {
 /// Parse a `--seq-dist` string into weighted `(isl, osl)` pairs, mirroring
 /// Python's `DistributionParser` semicolon form: `isl[|std],osl[|std]:prob`
 /// entries separated by `;` (probabilities are percentages).
-pub(crate) fn parse_seq_dist(
-    s: &str,
-) -> anyhow::Result<Vec<crate::model::dataset::SeqDistEntry>> {
+pub(crate) fn parse_seq_dist(s: &str) -> anyhow::Result<Vec<crate::model::dataset::SeqDistEntry>> {
     use crate::model::dataset::{Distribution, SeqDistEntry};
     let dim = |part: &str| -> anyhow::Result<Distribution> {
         let (mean, stddev) = match part.split_once('|') {
@@ -1503,12 +1599,12 @@ pub(crate) fn parse_seq_dist(
     s.split(';')
         .filter(|e| !e.trim().is_empty())
         .map(|entry| {
-            let (pair, prob) = entry
-                .rsplit_once(':')
-                .ok_or_else(|| anyhow::anyhow!("invalid --seq-dist entry {entry:?}: missing :prob"))?;
-            let (isl, osl) = pair
-                .split_once(',')
-                .ok_or_else(|| anyhow::anyhow!("invalid --seq-dist entry {entry:?}: missing isl,osl"))?;
+            let (pair, prob) = entry.rsplit_once(':').ok_or_else(|| {
+                anyhow::anyhow!("invalid --seq-dist entry {entry:?}: missing :prob")
+            })?;
+            let (isl, osl) = pair.split_once(',').ok_or_else(|| {
+                anyhow::anyhow!("invalid --seq-dist entry {entry:?}: missing isl,osl")
+            })?;
             Ok(SeqDistEntry {
                 isl: dim(isl)?,
                 osl: dim(osl)?,
@@ -1640,7 +1736,39 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::is_truthy_env;
+    use super::{is_fake_model_name, is_truthy_env};
+
+    #[test]
+    fn fake_model_name_matches_python() {
+        // Placeholders (Python `is_fake_model_name` docstring examples + the
+        // exact/substring sets) resolve the tokenizer to `builtin`.
+        for t in [
+            "mock-model",
+            "test-model",
+            "mock-llama",
+            "Test_Model_v2",
+            "fake",
+            "MOCK",
+            "sample",
+            "my-model",
+            "model-id",
+            "llama-fake",
+        ] {
+            assert!(is_fake_model_name(t), "{t:?} should be a placeholder");
+        }
+        // Real names / path-like input are never placeholders.
+        for f in [
+            "Qwen/Qwen3-0.6B",
+            "./local-model",
+            "~/model",
+            "meta-llama/Llama-3.1-8B-Instruct",
+            "contestant",
+            "gpt2",
+            "",
+        ] {
+            assert!(!is_fake_model_name(f), "{f:?} should not be a placeholder");
+        }
+    }
 
     #[test]
     fn truthy_env_matches_pydantic() {

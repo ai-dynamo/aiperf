@@ -49,6 +49,16 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         return run_single(run);
     }
 
+    // `max-concurrency-under-sla --search-style monotonic` runs a dynamic
+    // ask-tell loop (exponential probe + bisection) rather than a static sweep:
+    // each probe is one runner invocation whose feasibility verdict steers the
+    // next probe. Intercept it before the static-grid recipe expander.
+    if flags.search_recipe.as_deref() == Some("max-concurrency-under-sla")
+        && flags.search_style.as_deref() == Some("monotonic")
+    {
+        return run_search_loop(&flags);
+    }
+
     // A grid `--search-recipe` expands its search space into a static grid sweep
     // over config paths (mutating the built cfg per variation). (bayes/isotonic
     // recipes run a dynamic ask-tell loop, handled elsewhere.)
@@ -120,10 +130,175 @@ fn run_yaml_sweep(
 /// Execute a grid `--search-recipe`: expand its config-path axes into a static
 /// grid, resolve the base run once, mutate the built cfg per variation, stamp the
 /// sweep envelope, and run every cell. Byte-exact vs the Python recipe → sweep.
-fn run_recipe_sweep(flags: &ProfileFlags, recipe: crate::search::RecipeSweep) -> anyhow::Result<i32> {
+fn run_recipe_sweep(
+    flags: &ProfileFlags,
+    recipe: crate::search::RecipeSweep,
+) -> anyhow::Result<i32> {
     let sweep_id = uuid::Uuid::new_v4().simple().to_string();
     let cells = plan_recipe_cells(flags, &recipe, &sweep_id)?;
     run_cells(flags, &cells)
+}
+
+/// Drive the dynamic monotonic SLA-saturation search (`max-concurrency-under-sla
+/// --search-style monotonic`): a byte-exact [`crate::search::MonotonicPlanner`]
+/// (verified against the production planner in `tests/monotonic_parity.rs`)
+/// proposes one concurrency to probe at a time; each probe is one
+/// `aiperf-runner` invocation whose per-iteration SLA feasibility verdict (all
+/// filters satisfied by a successful run) is fed back to steer the next probe.
+/// Ports the orchestrator's `while planner.ask()` loop (`orchestrator.py`).
+fn run_search_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
+    let spec = crate::search::MonotonicSpec::from_flags(flags)?;
+    let filters = spec.sla_filters.clone();
+    let mut planner = crate::search::MonotonicPlanner::new(spec);
+
+    // Resolve the base run once with concurrency neutralized (the planner owns
+    // the swept concurrency); mirrors `plan_recipe_cells`.
+    let mut base_flags = flags.clone();
+    base_flags.concurrency = Some("1".to_string());
+    let base = load::resolve(&base_flags)?;
+    let base_artifact_dir = base.artifact_dir.clone();
+
+    let sweep_id = uuid::Uuid::new_v4().simple().to_string();
+    let seed = seed_policy(flags);
+    let runner = runner_install::resolve()?;
+    let child_pid = crate::signals::install();
+
+    eprintln!("aiperf: monotonic SLA search (probe + bisection)");
+    let mut any_failure = false;
+    while let Some(value) = planner.ask() {
+        let iter = planner.iteration();
+        let label = format!("search_iter_{iter:04}");
+
+        // Build this probe's run: mutate the built cfg's profiling concurrency.
+        let mut run = base.clone();
+        let mut cfg = serde_json::to_value(&run.cfg)?;
+        crate::search::apply_override(&mut cfg, crate::search::AxisKind::PhaseConcurrency, value);
+        run.cfg = serde_json::from_value(cfg)?;
+        let dir = crate::sweep::artifact_dir::resolve(
+            &base_artifact_dir,
+            true,
+            1,
+            &label,
+            0,
+            IterationOrder::Repeated,
+        );
+        run.sweep_id = Some(sweep_id.clone());
+        run.variation = Some(serde_json::json!({
+            "index": iter,
+            "label": label,
+            "values": { "phases.profiling.concurrency": value },
+        }));
+        run.random_seed = seed.seed(iter as usize);
+        run.trial = 0;
+        run.artifact_dir = dir.clone();
+
+        eprintln!(
+            "aiperf: [iter {iter}] concurrency={value} -> {}",
+            dir.display()
+        );
+        clear_prior_report(&dir);
+        let request = RunnerRequest::new(Operation::Execute, run);
+        let payload = serde_json::to_vec(&request)?;
+        let terminal = execute::run_once(&runner, &payload, &child_pid)?;
+
+        // Per-iteration feasibility: a successful run whose every SLA filter is
+        // satisfied is feasible; a failed run (or any unmeasurable/breached
+        // filter) is infeasible (mirrors `iteration_feasibility`).
+        let feasible = terminal.success
+            && terminal
+                .report_path
+                .as_deref()
+                .map(|p| report_feasible(p, &filters))
+                .unwrap_or(false);
+        if !terminal.success {
+            any_failure = true;
+            eprintln!(
+                "aiperf: [iter {iter}] run failed (treated as infeasible): {}",
+                terminal.error.as_deref().unwrap_or("(no detail)")
+            );
+        } else {
+            eprintln!(
+                "aiperf: [iter {iter}] concurrency={value} -> {}",
+                if feasible { "FEASIBLE" } else { "infeasible" }
+            );
+        }
+        planner.tell(feasible);
+    }
+
+    let reason = planner.convergence_reason().unwrap_or("converged");
+    println!(
+        "\naiperf: monotonic SLA boundary\n  max feasible concurrency: {}\n  min infeasible concurrency: {}\n  convergence: {reason}{}",
+        planner
+            .feasible_max
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "-".into()),
+        planner
+            .infeasible_min
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "-".into()),
+        if planner.non_monotonic_warning {
+            "\n  warning: non-monotonic SLA boundary observed"
+        } else {
+            ""
+        },
+    );
+    write_search_boundary(&base_artifact_dir, &planner, reason)?;
+
+    Ok(if any_failure { 1 } else { 0 })
+}
+
+/// Read one metric stat from a `native-v2.json` report (scalar `value`, or a
+/// distribution `avg`/`min`/`max`/`std`/`count` / `percentiles.pNN`). Shares the
+/// shape of `sweep::aggregate::headline_value`.
+fn report_metric(report: &serde_json::Value, tag: &str, stat: &str) -> Option<f64> {
+    let stats = report
+        .get("metrics")?
+        .get(tag)?
+        .get("series")?
+        .as_array()?
+        .first()?
+        .get("stats")?;
+    if let Some(v) = stats.get("value").and_then(serde_json::Value::as_f64) {
+        return Some(v);
+    }
+    match stat {
+        "avg" | "min" | "max" | "std" | "count" => stats.get(stat)?.as_f64(),
+        p => stats.get("percentiles")?.get(p)?.as_f64(),
+    }
+}
+
+/// True iff the report at `report_path` satisfies every SLA filter (a missing /
+/// unreadable report or any breached/unmeasurable filter is infeasible).
+fn report_feasible(report_path: &str, filters: &[crate::search::SlaFilter]) -> bool {
+    let Ok(bytes) = std::fs::read(report_path) else {
+        return false;
+    };
+    let Ok(report) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return false;
+    };
+    filters
+        .iter()
+        .all(|f| f.satisfied_by(report_metric(&report, &f.metric_tag, &f.stat)))
+}
+
+/// Persist the native monotonic-search boundary summary beside the run artifacts.
+fn write_search_boundary(
+    base_artifact_dir: &Path,
+    planner: &crate::search::MonotonicPlanner,
+    reason: &str,
+) -> anyhow::Result<()> {
+    let _ = std::fs::create_dir_all(base_artifact_dir);
+    let summary = serde_json::json!({
+        "swept_dim_path": "phases.profiling.concurrency",
+        "feasible_max": planner.feasible_max,
+        "infeasible_min": planner.infeasible_min,
+        "non_monotonic_warning": planner.non_monotonic_warning,
+        "convergence_reason": reason,
+    });
+    let path = base_artifact_dir.join("search_boundary.json");
+    std::fs::write(&path, serde_json::to_vec_pretty(&summary)?)
+        .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", path.display()))?;
+    Ok(())
 }
 
 /// Build the stamped per-cell runs for a grid `--search-recipe` (testable
@@ -218,8 +393,11 @@ pub fn plan_yaml_cells(
             IterationOrder::Repeated,
         );
         run.sweep_id = Some(sweep_id.to_string());
-        let values: serde_json::Map<String, serde_json::Value> =
-            v.values.iter().map(|(k, val)| (k.clone(), val.clone())).collect();
+        let values: serde_json::Map<String, serde_json::Value> = v
+            .values
+            .iter()
+            .map(|(k, val)| (k.clone(), val.clone()))
+            .collect();
         run.variation = Some(serde_json::json!({
             "index": v.index,
             "label": v.label,
