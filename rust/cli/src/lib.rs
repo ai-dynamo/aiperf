@@ -35,4 +35,5 @@ pub mod runner_install;
 pub mod search;
 pub mod signals;
 pub mod sweep;
+pub mod validate;
 pub mod yaml;
