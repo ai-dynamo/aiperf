@@ -255,7 +255,9 @@ class _JobSetManifestBuilder:
             name=Containers.RESULTS_SIDECAR,
             image=self.spec.image,
             image_pull_policy=self.spec.image_pull_policy,
-            command=["python", "-m", "aiperf.kubernetes.results_sidecar"],
+            # Native results server (`crate::results_sidecar`): zero-Python pod,
+            # same `/healthz` + `/api/results/*` contract + `AIPERF_RESULTS_*` env.
+            command=["aiperf", "results-sidecar"],
             env=[
                 {"name": "AIPERF_RESULTS_DIR", "value": "/results"},
                 {

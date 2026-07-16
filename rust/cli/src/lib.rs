@@ -38,6 +38,7 @@ pub mod pyfit;
 pub mod pyopt;
 pub mod redact;
 pub mod render;
+pub mod results_sidecar;
 pub mod search;
 pub mod search_history;
 pub mod signals;
