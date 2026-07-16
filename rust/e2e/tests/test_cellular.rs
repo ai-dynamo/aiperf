@@ -653,3 +653,59 @@ async fn test_cellular_phaser_start_matches_event_start() {
         );
     }
 }
+
+/// Ultimate spec §3 (dataset fan-out data plane) + §4.5 (dispatch state machine): with
+/// `AIPERF_CELL_DATASET_FANOUT=1` the controller generates the dataset's request-ids once
+/// and broadcasts them (advancing the phaser `ShardsAvailable` per chunk); each cell
+/// subscribes over velo, builds its owned index (round-robin owned-filter → O(1/N) RAM),
+/// and runs the dispatch state machine over its owned slice (exactly-once, counted
+/// `DistributionMiss`). The fan-out is additive verification — it does not change the
+/// benchmark — so an ON run reproduces the OFF run's deterministic metrics exactly, and
+/// (via the runner's fail-closed miss guard) succeeding proves every cell received its
+/// full owned shard with zero distribution misses.
+#[tokio::test]
+async fn test_cellular_dataset_fanout_matches_baseline() {
+    let args = |url: &str| {
+        format!(
+            "--model {DEFAULT_MODEL} --url {url} --endpoint-type chat \
+             --request-count 48 --concurrency 6 --cells 4 --random-seed 42 \
+             --synthetic-input-tokens-mean 220 --synthetic-input-tokens-stddev 40 \
+             --output-tokens-mean 8 --output-tokens-stddev 0 --ui simple"
+        )
+    };
+    let sketch = ("AIPERF_METRICS_SKETCH", "1");
+
+    let h_off = AIPerfHarness::new().await;
+    let off = h_off.run_env(&args(&h_off.mock.url), &[sketch]);
+    assert!(off.success(), "baseline run failed: {}", off.stderr);
+
+    // Fan-out ON (with the phaser availability interlock). The cell fails closed on any
+    // distribution miss, so success == every owned shard delivered completely.
+    let h_on = AIPerfHarness::new().await;
+    let on = h_on.run_env(
+        &args(&h_on.mock.url),
+        &[
+            sketch,
+            ("AIPERF_CELL_DATASET_FANOUT", "1"),
+            ("AIPERF_CELL_PHASER_START", "1"),
+        ],
+    );
+    assert!(on.success(), "dataset fan-out run failed: {}", on.stderr);
+
+    assert_eq!(
+        off.artifacts.request_count() as u32,
+        on.artifacts.request_count() as u32,
+        "dataset fan-out must not change the dispatched request count"
+    );
+    let off_json = off.artifacts.json();
+    let on_json = on.artifacts.json();
+    for metric in DETERMINISTIC_METRICS {
+        let a = &off_json[metric];
+        let b = &on_json[metric];
+        assert!(!a.is_null(), "baseline report missing metric {metric}");
+        assert_eq!(
+            a, b,
+            "§3 dataset-fanout {metric} diverged from baseline: off={a}  on={b}"
+        );
+    }
+}

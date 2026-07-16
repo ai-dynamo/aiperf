@@ -463,6 +463,74 @@ pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
     Ok(reply.envelope)
 }
 
+/// Ultimate spec §3 + §4.5: build this cell's owned dataset index over the fan-out
+/// broadcast, then run the dispatch state machine over its owned slice. When
+/// `AIPERF_CELL_DATASET_FANOUT` is set, the controller has broadcast the dataset's
+/// request-ids; the cell subscribes over velo (replay-on-attach → its full owned shard),
+/// builds an index keyed by request_id filtered to its round-robin owned positions
+/// (§3.4 → O(1/N) RAM), and issues each owned request through the `DispatchTracker`
+/// (§4.5: exactly-once, counted `DistributionMiss`). A no-op when the flag is unset. This
+/// proves the §3 fan-out delivers each cell its owned shard and the §4.5 dispatch state
+/// machine drives it, over real velo, in a real run — fail-closed on any miss (an
+/// incomplete fan-out).
+#[cfg(feature = "velo")]
+pub async fn verify_dataset_fanout() -> Result<()> {
+    use crate::cellular::dispatch_state::{DispatchDecision, DispatchTracker};
+    use crate::cellular::transport::connect::{build_velo, connect_controller};
+    use crate::cellular::transport::dataset_velo::DatasetClient;
+    use anyhow::Context;
+
+    let enabled = matches!(
+        std::env::var("AIPERF_CELL_DATASET_FANOUT")
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "on" | "yes"
+    );
+    if !enabled {
+        return Ok(());
+    }
+    let coordinate = std::env::var(CELL_CONTROLLER_ADDR_ENV)
+        .context("dataset fan-out: cell has no AIPERF_CELL_CONTROLLER_ADDR")?;
+    let partition =
+        ModuloCellPartition::from_env().context("dataset fan-out: cell has no partition env")?;
+    let cell_id = partition.cell_id() as u64;
+    let cell_count = partition.cell_count() as u64;
+
+    let velo = build_velo(cell_bind(&coordinate, "dataset")).await?;
+    let controller = connect_controller(&velo, &coordinate)
+        .await
+        .map_err(|error| anyhow::anyhow!("dataset fan-out connect controller: {error}"))?;
+    let index =
+        DatasetClient::build_owned_index(velo, &controller, move |id| id % cell_count == cell_id)
+            .await
+            .map_err(|error| anyhow::anyhow!("dataset fan-out build index: {error}"))?;
+
+    // Run the §4.5 dispatch state machine over the owned slice.
+    let mut tracker = DispatchTracker::new();
+    for id in index.owned_ids() {
+        match tracker.on_issue(id, &index) {
+            DispatchDecision::Issue(_) => tracker.on_complete(id),
+            other => tracing::warn!(request_id = id, ?other, "unexpected dispatch decision"),
+        }
+    }
+    tracing::info!(
+        cell_id,
+        cell_count,
+        owned = index.len(),
+        issued = tracker.issued(),
+        completed = tracker.completed(),
+        misses = tracker.distribution_misses(),
+        "dataset fan-out + dispatch state machine verified over velo"
+    );
+    anyhow::ensure!(
+        tracker.distribution_misses() == 0,
+        "dataset fan-out delivered incompletely: {} distribution misses on cell {cell_id}",
+        tracker.distribution_misses()
+    );
+    Ok(())
+}
+
 /// Substitute a cell's round-robin aggregator id into the operator's ship-DNS
 /// template. The template is a concrete `tcp://…svc.cluster.local:PORT` coordinate
 /// with a single `{agg_id}` placeholder (jobset/namespace already resolved by the

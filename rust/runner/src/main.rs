@@ -142,6 +142,15 @@ fn run_cell() -> ! {
                 std::process::exit(2);
             }
         };
+    // Ultimate spec §3 + §4.5: when dataset fan-out is enabled, build this cell's owned
+    // index over the controller's broadcast and run the dispatch state machine over it
+    // (a no-op otherwise). Done before dropping the fetch runtime, after START.
+    if let Err(error) =
+        runtime.block_on(aiperf::runner_protocol::cellular_cell::verify_dataset_fanout())
+    {
+        tracing::error!(error = format!("{error:#}"), "cell dataset fan-out failed");
+        std::process::exit(2);
+    }
     drop(runtime);
     // Stage G: before the ordinary execute path compiles the dataset, ship a
     // cross-host `file`/`path` dataset source from the controller and rewrite the

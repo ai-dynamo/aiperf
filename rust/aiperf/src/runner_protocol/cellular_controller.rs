@@ -52,6 +52,12 @@ pub const CELL_BARRIER_FREE_ENV: &str = "AIPERF_CELL_BARRIER_FREE";
 /// tested event path.
 pub const CELL_PHASER_START_ENV: &str = "AIPERF_CELL_PHASER_START";
 
+/// Env toggle (ultimate spec §3) for the dataset fan-out data plane: the controller
+/// generates the dataset request-ids once and broadcasts them; each cell builds its
+/// owned index over velo and runs the §4.5 dispatch state machine over it. Default off
+/// (per-cell seed regeneration / Stage-G file serve, unchanged).
+pub const CELL_DATASET_FANOUT_ENV: &str = "AIPERF_CELL_DATASET_FANOUT";
+
 /// The outcome of a cellular run: the merged report path plus a live view of the
 /// last heartbeat each cell reported (for diagnostics/logging).
 pub struct CellularRunOutcome {
@@ -240,6 +246,17 @@ pub fn run_cellular(
             .as_str(),
         "1" | "true" | "on" | "yes"
     );
+    // Ultimate spec §3: opt-in dataset fan-out. The controller generates the dataset's
+    // request-ids once and broadcasts them; each cell builds its owned index over velo
+    // and runs the §4.5 dispatch state machine over it (default off = per-cell seed
+    // regeneration / Stage-G file serve, unchanged).
+    let dataset_fanout = matches!(
+        std::env::var(CELL_DATASET_FANOUT_ENV)
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "on" | "yes"
+    );
     // The run's artifact spec, parsed once (the same `AuthoredRunSpecV2` shape the
     // cell's execute path reads), for the Stage E shipping decision and the Stage D
     // concat below.
@@ -423,6 +440,53 @@ pub fn run_cellular(
                 .context("binding phaser control plane")?,
             ),
             None => None,
+        };
+
+        // Ultimate spec §3: dataset fan-out. Bind the dataset service, generate the
+        // dataset's request-ids once, broadcast them chunk-by-chunk (advancing the phaser
+        // `ShardsAvailable` per chunk when the phaser is active — the §4 availability
+        // interlock), and finalize. A bounded run distributes fully up front (§4.6); each
+        // cell then subscribes and builds its owned index over velo. Held for the run so
+        // the service's handlers/pumps stay alive.
+        let _dataset_server = if dataset_fanout {
+            let publisher =
+                crate::cellular::dataset_session::DatasetPublisher::<Vec<u8>>::new();
+            let server = crate::cellular::transport::dataset_velo::DatasetServer::bind(
+                velo.clone(),
+                publisher.clone(),
+            )
+            .context("binding dataset fan-out plane")?;
+            let total = profiling_request_budget(envelope).unwrap_or(0);
+            const CHUNK: u64 = 16;
+            let mut start = 0;
+            while start < total {
+                let end = (start + CHUNK).min(total);
+                let requests = (start..end)
+                    .map(|request_id| crate::cellular::dataset_session::DatasetRequest {
+                        request_id,
+                        // The payload the cell would dispatch; a compact marker here (the
+                        // fan-out proves delivery + owned-filter + dispatch, not the
+                        // request body, which the ControlledIssuer follow-on materializes).
+                        payload: request_id.to_le_bytes().to_vec(),
+                    })
+                    .collect();
+                let chunk_id = publisher.add(requests);
+                if let Some(phaser) = &phaser {
+                    phaser.advance(
+                        crate::cellular::phaser::PhaseTransition::ShardsAvailable(chunk_id + 1),
+                    );
+                }
+                start = end;
+            }
+            publisher.finalize();
+            tracing::info!(
+                total,
+                chunks = publisher.chunk_count(),
+                "dataset fan-out: broadcast the dataset request-ids to the cells"
+            );
+            Some(server)
+        } else {
+            None
         };
 
         // Each phase's global dispatch base (turns dispatched by prior phases): a
