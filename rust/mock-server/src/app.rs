@@ -39,6 +39,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // Custom endpoints
         .route("/v1/custom-multimodal", post(handlers::custom_multimodal))
         .route("/rag/api/prompt", post(handlers::solido_rag))
+        // Live accuracy tally for `--accuracy-dataset` runs.
+        .route("/accuracy", get(handlers::accuracy_status))
         // Metrics
         .route("/metrics", get(handlers::aiperf_mock_metrics))
         .route("/vllm/metrics", get(handlers::vllm_metrics))

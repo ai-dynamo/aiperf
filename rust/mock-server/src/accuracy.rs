@@ -39,10 +39,12 @@
 //!   `"object": null` before `[DONE]` (github #1010: crashed
 //!   `extract_chat_response_data`). The run must SURVIVE this, not crash.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use aiperf::rng::{RandomGenerator, derive_seed_parts};
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -483,6 +485,125 @@ fn apply_adversarial(
     }
 }
 
+/// Live tally of what the mock has actually answered so far this run. Updated
+/// once per served, prompt-matched request (in `RequestCtx::build`), so
+/// `correct / matched` is the accuracy the run is really achieving as it
+/// progresses — an oracle to compare against what AIPerf's grader reports. This
+/// is observed, not pre-computed: it counts real responses, including recycled
+/// prompts and whatever subset of the dataset the run actually hit.
+#[derive(Default)]
+pub struct AccuracyLive {
+    matched: AtomicU64,
+    correct: AtomicU64,
+    adversarial: AtomicU64,
+    cot: AtomicU64,
+    unmatched: AtomicU64,
+    per_task: Mutex<BTreeMap<String, TaskCounts>>,
+}
+
+#[derive(Default, Clone, Copy)]
+struct TaskCounts {
+    matched: u64,
+    correct: u64,
+}
+
+/// Per-task slice of the live tally.
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskAccuracy {
+    pub matched: u64,
+    pub correct: u64,
+    pub accuracy: f64,
+}
+
+/// A point-in-time copy of the live tally, safe to serialize.
+#[derive(Debug, Clone, Serialize)]
+pub struct AccuracyLiveSnapshot {
+    /// Requests that matched a dataset prompt and were answered.
+    pub matched: u64,
+    /// Of those, how many were answered correctly.
+    pub correct: u64,
+    /// `matched - correct`.
+    pub incorrect: u64,
+    /// `correct / matched` (0.0 when nothing matched yet).
+    pub accuracy: f64,
+    /// Accuracy-enabled requests whose prompt did NOT match any dataset row.
+    pub unmatched: u64,
+    /// How many answered responses used an adversarial parser-choke shape.
+    pub adversarial: u64,
+    /// How many answered responses were rendered as chain-of-thought.
+    pub cot: u64,
+    /// Per-task breakdown, mirroring AIPerf's per-task accuracy table.
+    pub tasks: BTreeMap<String, TaskAccuracy>,
+}
+
+fn ratio(correct: u64, matched: u64) -> f64 {
+    if matched == 0 {
+        0.0
+    } else {
+        correct as f64 / matched as f64
+    }
+}
+
+impl AccuracyLive {
+    /// Record one served, prompt-matched response.
+    pub fn record(&self, decision: &AccuracyDecision, task: Option<&str>) {
+        self.matched.fetch_add(1, Ordering::Relaxed);
+        if decision.correct {
+            self.correct.fetch_add(1, Ordering::Relaxed);
+        }
+        if decision.adversarial.is_some() {
+            self.adversarial.fetch_add(1, Ordering::Relaxed);
+        }
+        if decision.cot {
+            self.cot.fetch_add(1, Ordering::Relaxed);
+        }
+        let mut per_task = self.per_task.lock();
+        let counts = per_task
+            .entry(task.unwrap_or("unknown").to_string())
+            .or_default();
+        counts.matched += 1;
+        if decision.correct {
+            counts.correct += 1;
+        }
+    }
+
+    /// Record one accuracy-enabled request whose prompt matched no dataset row.
+    pub fn record_unmatched(&self) {
+        self.unmatched.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Take a consistent snapshot of the current tally.
+    pub fn snapshot(&self) -> AccuracyLiveSnapshot {
+        let matched = self.matched.load(Ordering::Relaxed);
+        let correct = self.correct.load(Ordering::Relaxed);
+        let tasks = self
+            .per_task
+            .lock()
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    TaskAccuracy {
+                        matched: v.matched,
+                        correct: v.correct,
+                        accuracy: ratio(v.correct, v.matched),
+                    },
+                )
+            })
+            .collect();
+        AccuracyLiveSnapshot {
+            matched,
+            correct,
+            incorrect: matched.saturating_sub(correct),
+            accuracy: ratio(correct, matched),
+            unmatched: self.unmatched.load(Ordering::Relaxed),
+            adversarial: self.adversarial.load(Ordering::Relaxed),
+            cot: self.cot.load(Ordering::Relaxed),
+            tasks,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -698,6 +819,51 @@ mod tests {
             }
         }
         assert!(found, "never drew NullObjectChunk in 64 tries");
+    }
+
+    fn decision(correct: bool, cot: bool, adversarial: Option<Adversarial>) -> AccuracyDecision {
+        AccuracyDecision {
+            content: "x".into(),
+            reasoning_content: None,
+            null_object_chunk: false,
+            correct,
+            cot,
+            adversarial,
+        }
+    }
+
+    #[test]
+    fn live_tally_counts_correct_incorrect_and_tasks() {
+        let live = AccuracyLive::default();
+        live.record(&decision(true, false, None), Some("demo"));
+        live.record(&decision(false, false, None), Some("demo"));
+        live.record(
+            &decision(true, true, Some(Adversarial::WrongCase)),
+            Some("other"),
+        );
+        live.record_unmatched();
+
+        let s = live.snapshot();
+        assert_eq!(s.matched, 3);
+        assert_eq!(s.correct, 2);
+        assert_eq!(s.incorrect, 1);
+        assert!((s.accuracy - 2.0 / 3.0).abs() < 1e-9);
+        assert_eq!(s.unmatched, 1);
+        assert_eq!(s.adversarial, 1);
+        assert_eq!(s.cot, 1);
+        assert_eq!(s.tasks["demo"].matched, 2);
+        assert_eq!(s.tasks["demo"].correct, 1);
+        assert!((s.tasks["demo"].accuracy - 0.5).abs() < 1e-9);
+        assert_eq!(s.tasks["other"].correct, 1);
+        assert!((s.tasks["other"].accuracy - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn live_tally_empty_snapshot_is_zeroed() {
+        let s = AccuracyLive::default().snapshot();
+        assert_eq!(s.matched, 0);
+        assert_eq!(s.accuracy, 0.0);
+        assert!(s.tasks.is_empty());
     }
 
     #[test]

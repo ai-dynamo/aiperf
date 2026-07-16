@@ -962,6 +962,112 @@ pub fn encode(registry: &Registry) -> Vec<u8> {
     buf
 }
 
+/// Escape a Prometheus label value (backslash, double-quote, newline).
+fn escape_label(v: &str) -> String {
+    v.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+}
+
+/// Append the live accuracy tally to an already-encoded exposition body. These
+/// metric names are not registered in the `prometheus` `Registry` (the tally is
+/// a set of plain atomics read at scrape time), so appending them as exposition
+/// text is valid — each name carries its own single `# HELP`/`# TYPE` block.
+pub fn append_accuracy_metrics(buf: &mut Vec<u8>, snap: &crate::accuracy::AccuracyLiveSnapshot) {
+    use std::fmt::Write as _;
+    let mut s = String::new();
+    let mut scalar = |name: &str, kind: &str, help: &str, value: String| {
+        let _ = writeln!(s, "# HELP aiperf_mock_{name} {help}");
+        let _ = writeln!(s, "# TYPE aiperf_mock_{name} {kind}");
+        let _ = writeln!(s, "aiperf_mock_{name} {value}");
+    };
+    scalar(
+        "accuracy_matched_total",
+        "counter",
+        "Requests matched to a dataset prompt and answered.",
+        snap.matched.to_string(),
+    );
+    scalar(
+        "accuracy_correct_total",
+        "counter",
+        "Matched requests answered correctly.",
+        snap.correct.to_string(),
+    );
+    scalar(
+        "accuracy_incorrect_total",
+        "counter",
+        "Matched requests answered incorrectly.",
+        snap.incorrect.to_string(),
+    );
+    scalar(
+        "accuracy_unmatched_total",
+        "counter",
+        "Accuracy-enabled requests whose prompt matched no dataset row.",
+        snap.unmatched.to_string(),
+    );
+    scalar(
+        "accuracy_adversarial_total",
+        "counter",
+        "Answered responses rendered as an adversarial parser-choke shape.",
+        snap.adversarial.to_string(),
+    );
+    scalar(
+        "accuracy_cot_total",
+        "counter",
+        "Answered responses rendered as chain-of-thought.",
+        snap.cot.to_string(),
+    );
+    scalar(
+        "accuracy_ratio",
+        "gauge",
+        "Live correct/matched accuracy for the run.",
+        format!("{:.6}", snap.accuracy),
+    );
+
+    if !snap.tasks.is_empty() {
+        let _ = writeln!(
+            s,
+            "# HELP aiperf_mock_accuracy_task_matched_total Per-task matched requests."
+        );
+        let _ = writeln!(s, "# TYPE aiperf_mock_accuracy_task_matched_total counter");
+        for (task, t) in &snap.tasks {
+            let _ = writeln!(
+                s,
+                "aiperf_mock_accuracy_task_matched_total{{task=\"{}\"}} {}",
+                escape_label(task),
+                t.matched
+            );
+        }
+        let _ = writeln!(
+            s,
+            "# HELP aiperf_mock_accuracy_task_correct_total Per-task correct answers."
+        );
+        let _ = writeln!(s, "# TYPE aiperf_mock_accuracy_task_correct_total counter");
+        for (task, t) in &snap.tasks {
+            let _ = writeln!(
+                s,
+                "aiperf_mock_accuracy_task_correct_total{{task=\"{}\"}} {}",
+                escape_label(task),
+                t.correct
+            );
+        }
+        let _ = writeln!(
+            s,
+            "# HELP aiperf_mock_accuracy_task_ratio Per-task live correct/matched accuracy."
+        );
+        let _ = writeln!(s, "# TYPE aiperf_mock_accuracy_task_ratio gauge");
+        for (task, t) in &snap.tasks {
+            let _ = writeln!(
+                s,
+                "aiperf_mock_accuracy_task_ratio{{task=\"{}\"}} {:.6}",
+                escape_label(task),
+                t.accuracy
+            );
+        }
+    }
+    buf.extend_from_slice(s.as_bytes());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

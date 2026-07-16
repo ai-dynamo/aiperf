@@ -216,6 +216,60 @@ async fn accuracy_cot_streams_reasoning_separately() {
     }
 }
 
+/// The mock's live `/accuracy` tally matches the actual served run: `matched`
+/// equals the raw-record count and `correct` equals the number of records that
+/// carry the correct answer. This is the oracle a user compares against what
+/// AIPerf's own grader reports.
+#[tokio::test]
+async fn accuracy_live_endpoint_matches_raw_records() {
+    let ds_dir = tempfile::TempDir::new().unwrap();
+    let n = 24;
+    let dataset = write_accuracy_dataset(ds_dir.path(), n);
+    let mut cfg = accuracy_cfg(&dataset);
+    cfg.accuracy_correct_rate = 0.5;
+
+    let h = AIPerfHarness::new_with(cfg).await;
+    let url = h.mock.url.clone();
+    let r = h.run(&format!(
+        "--model gpt-4 --url {url} --endpoint-type chat --streaming \
+         --input-file {} --custom-dataset-type single_turn \
+         --request-count {n} --concurrency 4 --workers-max 1 \
+         --random-seed 7 --export-level raw --ui simple",
+        dataset.display(),
+    ));
+    assert!(r.success(), "stderr: {}", r.stderr);
+
+    let records = r.artifacts.raw_records();
+    let raw_correct = records
+        .iter()
+        .filter(|rec| record_content(rec) == "The answer is (B)")
+        .count();
+
+    let acc: serde_json::Value = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .unwrap()
+        .get(format!("{url}/accuracy"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(acc["enabled"], true);
+    assert_eq!(
+        acc["matched"].as_u64().unwrap() as usize,
+        records.len(),
+        "live matched should equal raw-record count"
+    );
+    assert_eq!(
+        acc["correct"].as_u64().unwrap() as usize,
+        raw_correct,
+        "live correct should equal raw records carrying the correct answer"
+    );
+}
+
 /// Adversarial mode emits the parser-choking shapes (github #1010 `object:null`
 /// frame, #1136 reasoning-only content, boxed/whitespace/case mangling). The
 /// whole run must still COMPLETE — a brittle parser would crash a worker.

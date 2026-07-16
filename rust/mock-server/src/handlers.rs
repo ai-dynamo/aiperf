@@ -107,19 +107,24 @@ impl RequestCtx {
         // and both streaming and non-streaming paths serialize
         // `tokenized.content()`, so this single seam covers every front door.
         let mut null_object_chunk = false;
-        if let Some(ds) = &state.accuracy
-            && let Some(entry) = ds.lookup(&tokenized.text)
-        {
-            let decision = ds.decide(entry, &tokenized.text);
-            tokenized.tokens = crate::tokens::tokenize(&decision.content);
-            tokenized.reasoning_content_tokens = decision
-                .reasoning_content
-                .as_deref()
-                .map(crate::tokens::tokenize)
-                .unwrap_or_default();
-            tokenized.reasoning_tokens = tokenized.reasoning_content_tokens.len();
-            tokenized.finish_reason = "stop";
-            null_object_chunk = decision.null_object_chunk;
+        if let Some(ds) = &state.accuracy {
+            if let Some(entry) = ds.lookup(&tokenized.text) {
+                let decision = ds.decide(entry, &tokenized.text);
+                // Live tally: count this real, prompt-matched response so
+                // `correct / matched` reflects the run's actual accuracy.
+                state.accuracy_live.record(&decision, entry.task.as_deref());
+                tokenized.tokens = crate::tokens::tokenize(&decision.content);
+                tokenized.reasoning_content_tokens = decision
+                    .reasoning_content
+                    .as_deref()
+                    .map(crate::tokens::tokenize)
+                    .unwrap_or_default();
+                tokenized.reasoning_tokens = tokenized.reasoning_content_tokens.len();
+                tokenized.finish_reason = "stop";
+                null_object_chunk = decision.null_object_chunk;
+            } else {
+                state.accuracy_live.record_unmatched();
+            }
         }
         let mut usage = tokenized.usage();
         let model = req_gen.model().to_string();
@@ -1973,7 +1978,46 @@ pub async fn aiperf_mock_metrics(State(state): State<Arc<AppState>>) -> Response
         .aiperf
         .SERVER_UPTIME_SECONDS
         .set(state.uptime_secs());
-    prom_response(crate::prom::encode(&state.recorder.metrics.aiperf.registry))
+    let mut body = crate::prom::encode(&state.recorder.metrics.aiperf.registry);
+    // Append the live accuracy tally (computed from atomics at scrape time) when
+    // the accuracy dataset mode is active. These names are not in the registry,
+    // so appending them to the exposition text is valid.
+    if state.accuracy.is_some() {
+        crate::prom::append_accuracy_metrics(&mut body, &state.accuracy_live.snapshot());
+    }
+    prom_response(body)
+}
+
+/// `GET /accuracy` — the live accuracy tally for the current run: how many
+/// prompt-matched requests the mock has actually answered, and how many of
+/// those correctly (`correct / matched`). Returns `{"enabled": false}` when the
+/// accuracy dataset mode is off.
+pub async fn accuracy_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    match &state.accuracy {
+        None => Json(json!({ "enabled": false })),
+        Some(ds) => {
+            let snap = state.accuracy_live.snapshot();
+            Json(json!({
+                "enabled": true,
+                "config": {
+                    "format": state.config.accuracy_format,
+                    "correct_rate": state.config.accuracy_correct_rate,
+                    "cot_rate": state.config.accuracy_cot_rate,
+                    "adversarial_rate": state.config.accuracy_adversarial_rate,
+                    "reasoning_field": state.config.accuracy_reasoning_field,
+                    "dataset_rows": ds.len(),
+                },
+                "matched": snap.matched,
+                "correct": snap.correct,
+                "incorrect": snap.incorrect,
+                "accuracy": snap.accuracy,
+                "unmatched": snap.unmatched,
+                "adversarial": snap.adversarial,
+                "cot": snap.cot,
+                "tasks": snap.tasks,
+            }))
+        }
+    }
 }
 
 pub async fn vllm_metrics(State(state): State<Arc<AppState>>) -> Response {

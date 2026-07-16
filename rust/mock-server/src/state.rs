@@ -39,6 +39,9 @@ pub struct AppState {
     /// set. Requests whose prompt matches a dataset row return the (seeded)
     /// correct-or-wrong answer formatted for the benchmark grader.
     pub accuracy: Option<Arc<crate::accuracy::AccuracyDataset>>,
+    /// Live tally of what the mock has actually answered correctly this run,
+    /// exposed at `GET /accuracy` and on the Prometheus `/metrics` scrape.
+    pub accuracy_live: crate::accuracy::AccuracyLive,
 }
 
 pub struct ErrorRng {
@@ -96,6 +99,7 @@ impl AppState {
             scheduler,
             prefix_cache,
             accuracy,
+            accuracy_live: crate::accuracy::AccuracyLive::default(),
         });
 
         if config.dcgm_auto_load {

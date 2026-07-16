@@ -142,6 +142,80 @@ async fn unmatched_prompt_falls_through_to_corpus() {
 }
 
 #[tokio::test]
+async fn live_accuracy_endpoint_and_prometheus_reflect_served_requests() {
+    let ds = write_dataset(
+        "live",
+        &[
+            json!({"text": "p one", "ground_truth": "B", "task": "demo"}),
+            json!({"text": "p two", "ground_truth": "B", "task": "demo"}),
+            json!({"text": "p three", "ground_truth": "B", "task": "demo"}),
+        ],
+    );
+    let mut cfg = base_cfg(&ds);
+    cfg.accuracy_correct_rate = 1.0; // every matched answer is correct
+    let (addr, _h) = spawn_server(cfg).await;
+
+    // Three matched requests + one unmatched.
+    for p in ["p one", "p two", "p three", "totally unknown prompt"] {
+        let _ = chat_content(addr, p).await;
+    }
+
+    // JSON endpoint.
+    let acc: Value = client()
+        .get(format!("http://{addr}/accuracy"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(acc["enabled"], true);
+    assert_eq!(acc["matched"], 3);
+    assert_eq!(acc["correct"], 3);
+    assert_eq!(acc["incorrect"], 0);
+    assert_eq!(acc["accuracy"], 1.0);
+    assert_eq!(acc["unmatched"], 1);
+    assert_eq!(acc["tasks"]["demo"]["matched"], 3);
+    assert_eq!(acc["tasks"]["demo"]["correct"], 3);
+
+    // Prometheus scrape carries the same tally.
+    let prom = client()
+        .get(format!("http://{addr}/metrics"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        prom.contains("aiperf_mock_accuracy_matched_total 3"),
+        "missing matched counter:\n{prom}"
+    );
+    assert!(prom.contains("aiperf_mock_accuracy_correct_total 3"));
+    assert!(prom.contains("aiperf_mock_accuracy_ratio 1.000000"));
+    assert!(prom.contains("aiperf_mock_accuracy_task_correct_total{task=\"demo\"} 3"));
+}
+
+#[tokio::test]
+async fn accuracy_endpoint_disabled_without_dataset() {
+    let cfg = MockServerConfig {
+        fast: true,
+        no_tokenizer: true,
+        ..MockServerConfig::default()
+    };
+    let (addr, _h) = spawn_server(cfg).await;
+    let acc: Value = client()
+        .get(format!("http://{addr}/accuracy"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(acc["enabled"], false);
+}
+
+#[tokio::test]
 async fn adversarial_null_object_frame_is_served_in_stream() {
     // Many prompts at adversarial_rate 1.0: at least one draws NullObjectChunk,
     // and every streamed request still returns 200 (the run must survive it).
