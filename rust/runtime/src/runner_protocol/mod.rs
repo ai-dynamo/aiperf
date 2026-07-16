@@ -36,8 +36,14 @@ pub mod cellular_aggregator;
 // reachable with the `velo` feature; `owned_positions` (needed by the non-velo
 // sharded runtime) lives in `cell_launcher` instead.
 pub mod cell_launcher;
+// Barrier-synchronized cross-cell timing origin (opt-in, feature-agnostic): a
+// cell zeroes its record timeline at the velo START barrier instead of its
+// post-setup local run start.
+pub mod cell_origin;
 #[cfg(feature = "velo")]
 pub mod cellular_controller;
+// The scheduled-vs-graph classification both the controller and the cell name.
+pub mod cellular_kind;
 pub mod control_plane_http;
 pub mod coordinator;
 pub mod dataset_input;

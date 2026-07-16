@@ -460,6 +460,10 @@ pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
             .await
             .map_err(|error| anyhow::anyhow!("cell {cell_id} await start: {error}"))?;
     }
+    // The velo START barrier has released for every cell together: capture THIS
+    // instant as the shared cross-cell timing origin (opt-in), before the cell's
+    // per-shard dataset download + run setup skews each cell's local run start.
+    crate::runner_protocol::cell_origin::capture_cell_shared_origin();
     Ok(reply.envelope)
 }
 

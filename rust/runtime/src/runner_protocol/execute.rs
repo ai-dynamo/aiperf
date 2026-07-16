@@ -790,7 +790,12 @@ fn wants_per_record_artifacts(
     // lane at completion (S4), so neither forces the retain path any longer — the
     // now-dead `native_otel_enabled` parameter was dropped (S3/S5 cleanup).
     #[cfg(feature = "parquet")]
-    let parquet_needs_retain = false;
+    let parquet_needs_retain = {
+        // Parquet streams through the lane on a `parquet` build, so it never forces
+        // retain — the sidecar path is not read here.
+        let _ = artifacts;
+        false
+    };
     #[cfg(not(feature = "parquet"))]
     let parquet_needs_retain = artifacts.records_parquet_path.is_some();
     inputs_need_retain || parquet_needs_retain
@@ -885,6 +890,13 @@ pub(crate) fn exact_fold_enabled_by_env() -> bool {
 }
 
 /// Gate for the exact-mode per-record fold-and-drop path (task S1).
+///
+/// The single gate for BOTH executors. The scheduled path (`execute_native_inner`)
+/// builds [`ExactFoldInputs`] from its live consumers; the graph path
+/// (`execute_graph_native`) passes `false` for the consumers it structurally never
+/// wires (live sink / heartbeat / adaptive / accuracy) so the same function reduces to
+/// the graph-relevant `!sketch && !unstreamable_parquet` check — a new disqualifier
+/// added here applies to both automatically (no lockstep gate to keep in sync).
 ///
 /// Exact-fold folds each completed record's metric scalars into the EXACT accumulator
 /// (keeping the NaN-sparse columns for exact percentiles/timeslices/series) and drops
@@ -1002,51 +1014,6 @@ struct ExactFoldInputs {
     /// during-run inputs.json capture still needs the retained records
     /// ([`wants_per_record_artifacts`]).
     wants_per_record_artifacts: bool,
-}
-
-/// Gate for the graph exact-fold path (task G1, relaxed by task G2).
-///
-/// A graph run (single-process or a cell) may fold each completed record into the
-/// exact accumulator and DROP it mid-run — bounding accumulator memory to O(1) in the
-/// record count instead of retaining every `CapturedRecord` for the whole run — and a
-/// cell then ships the folded EXACT STORE (`CellMessage::StorePartition`) instead of
-/// the full record `Vec`, which the controller appends (`merge_store_partitions`) into
-/// the merged report (within-tolerance, the same bar the scheduled exact-fold cell
-/// merge meets). Per-record FILE artifacts stream to disk through the
-/// [`RecordArtifactLane`] in the fold-drop pass (task G2), so they no longer force the
-/// retain path — the lane writes each row before the fold drops the record. It is
-/// selected only when BOTH hold:
-///
-/// - NOT sketch mode (sketch has its own bounded t-digest fold with a different storage
-///   mode and no cell→controller store merge path);
-/// - the run does not request a per-record artifact the graph path CANNOT stream. Under
-///   the `parquet` feature every graph file artifact (records / raw / CSV / Parquet /
-///   outputs) streams through the lane, so none disqualify. On a LITE build without the
-///   `parquet` feature a requested Parquet sidecar is unstreamable, so it still keeps the
-///   run on the retain path (which warns and skips the artifact), mirroring the scheduled
-///   [`wants_per_record_artifacts`] Parquet rule.
-///
-/// `inputs_path` is DELIBERATELY not read: the graph path never writes `inputs.json`
-/// (`write_graph_artifacts`/the lane handle only the five per-record file artifacts
-/// above), so the always-projected wire `inputs_path` (`rust_wire`) is a no-op on the
-/// graph path and must not disqualify exact-fold. The `AIPERF_RUNTIME_EXACT_FOLD` env
-/// switch — shared with the scheduled gate ([`exact_fold_enabled_by_env`]) — is ANDed by
-/// the caller, so `AIPERF_RUNTIME_EXACT_FOLD=0` routes a graph run through the retain
-/// path for A/B exactly as it does the scheduled path.
-fn graph_exact_fold_eligible(
-    artifacts: &crate::runner_protocol::protocol::ArtifactSpec,
-    sketch: bool,
-) -> bool {
-    // Parquet streams through the lane only under the `parquet` feature; a lite runner
-    // cannot emit it, so a requested Parquet sidecar still disqualifies on a lite build.
-    #[cfg(feature = "parquet")]
-    let parquet_needs_retain = {
-        let _ = artifacts;
-        false
-    };
-    #[cfg(not(feature = "parquet"))]
-    let parquet_needs_retain = artifacts.records_parquet_path.is_some();
-    !sketch && !parquet_needs_retain
 }
 
 /// Whether the graph exact-fold fold-and-drop pass is safe to run given the per-record
@@ -1472,7 +1439,7 @@ async fn execute_graph_native(
     };
     let real_clock_anchor = sidecars.real_clock_anchor;
     let clock = sidecars.clock.clone();
-    let start_ns = clock.now_ns();
+    let start_ns = crate::runner_protocol::cell_origin::run_origin_now_ns(&clock);
     let rng_root = RngRoot::new(graph_random_seed.or(request.random_seed));
     let on_failure = OnFailure::graph_or_default(request.failure_policy);
     let backends = OnlineGraphPhaseBackendFactory {
@@ -1547,8 +1514,42 @@ async fn execute_graph_native(
     // [`RecordArtifactLane`] built below and fed in the fold-drop pass (task G2). A sketch
     // run, a lite build's Parquet sidecar, or `AIPERF_RUNTIME_EXACT_FOLD=0` still stays on
     // the legacy retain path (the batch `write_graph_artifacts` tail writes from the Vec).
+    // One gate for both executors: the graph path wires NONE of the retain-forcing
+    // per-record consumers (live sink / heartbeat / adaptive / accuracy — all rejected
+    // or never built by `execute_graph_native`; see `graph_exact_fold_drop_is_safe`),
+    // so it passes them as `false` and the shared `exact_fold_eligible` reduces to the
+    // graph-relevant `!sketch && !unstreamable_parquet` check. `inputs_need_retain` is
+    // false because the graph path never writes `inputs.json`. A new disqualifier added
+    // to `exact_fold_eligible` now applies to both executors automatically.
     let graph_exact_fold = exact_fold_enabled_by_env()
-        && graph_exact_fold_eligible(&request.artifacts, request.metrics.sketch);
+        && exact_fold_eligible(ExactFoldInputs {
+            sketch_mode: request.metrics.sketch,
+            shardable: false,
+            is_cellular: ModuloCellPartition::from_env().is_some(),
+            has_accuracy: false,
+            wants_adaptive_record: false,
+            has_live_sink: false,
+            has_heartbeat: false,
+            wants_per_record_artifacts: wants_per_record_artifacts(&request.artifacts, false),
+        });
+    // Sketch retention (bounded memory) also folds each record into the accumulator's
+    // per-(phase,tag) t-digest and drops it: `metrics_config` already carries the
+    // `MetricsStorageMode::Sketch` mode (from `metrics_config()` → the sketch storage
+    // branch), so `accumulator.process_record` folds-and-clears the row automatically.
+    // Like exact-fold, a sketch cell ships its folded STORE (a t-digest store), which
+    // the controller merges via `merge_store_partitions` (t-digest merge). Sketch cannot
+    // emit per-record artifacts (validated up front at `request.metrics.sketch`), so it
+    // never builds a record lane. It is independent of the exact-fold env switch — sketch
+    // MUST ship a store (raw-record shipping would defeat its bounded memory and the
+    // controller would rebuild an exact accumulator), so it is gated on the sketch flag
+    // alone, not `exact_fold_enabled_by_env`.
+    let graph_sketch = request.metrics.sketch;
+    // The fold-and-drop + ship-store path covers BOTH exact-fold and sketch. Only the
+    // retain path (`AIPERF_RUNTIME_EXACT_FOLD=0`, or a lite build's unstreamable Parquet
+    // sidecar) keeps the full record `Vec` and runs the batch `write_graph_artifacts`
+    // tail. `graph_exact_fold` alone still gates the streaming record lane (sketch has no
+    // per-record artifacts to stream).
+    let graph_fold = graph_exact_fold || graph_sketch;
 
     // Streaming per-record artifact lane (task G2): on the exact-fold path the fold-drop
     // pass writes each completed record's row(s) here BEFORE dropping the record, so an
@@ -1596,10 +1597,10 @@ async fn execute_graph_native(
         None
     };
 
-    // INVARIANT (task G1/G3): unlike the scheduled `exact_fold_eligible` gate, the graph
-    // gate ([`graph_exact_fold_eligible`]) does NOT disqualify on a live sink /
-    // per-record OTLP / heartbeat lane — because the graph execution path wires NONE of
-    // them (see [`graph_exact_fold_drop_is_safe`]): `execute_graph_native` builds no live
+    // INVARIANT (task G1/G3): the graph caller feeds the shared `exact_fold_eligible`
+    // gate `false` for the live-sink / per-record-OTLP / heartbeat disqualifiers —
+    // because the graph execution path wires NONE of them (see
+    // [`graph_exact_fold_drop_is_safe`]): `execute_graph_native` builds no live
     // sink, never accumulates per-record OTLP histograms (`report.otel_per_record` is set
     // only on the scheduled path), and constructs no `HeartbeatLane`. The ONLY per-record
     // consumer a graph run could carry — the live-streaming record extension — is rejected
@@ -1610,14 +1611,14 @@ async fn execute_graph_native(
     // reflect whether the graph path built the corresponding consumer (it never does), so
     // asserting on them false-tripped a legitimate summary-only graph run with OTEL export.
     debug_assert!(
-        !graph_exact_fold
+        !graph_fold
             || graph_exact_fold_drop_is_safe(
                 request.sidecars.live_streaming().ok().flatten().is_some()
             ),
         "graph exact-fold drops per-record data, but a live-streaming record consumer \
          that reads it is wired on the graph path — validate_graph_request should have \
          rejected it before execution (thread any NEW per-record consumer's disqualifier \
-         into graph_exact_fold_eligible in lockstep)"
+         into the graph caller's ExactFoldInputs by setting the matching field true)"
     );
 
     let gpu_telemetry = sidecars.gpu_telemetry.as_ref();
@@ -1666,11 +1667,14 @@ async fn execute_graph_native(
                     endpoints_successful_set.insert(url);
                 }
             }
-            if graph_exact_fold {
+            if graph_fold {
                 // Stream every record's artifact row(s) to the lane BEFORE the fold drops
-                // it (task G2). The lane sees the FULL record set (clean + errored) so its
-                // files match the batch writer's full-Vec output; only errored records are
-                // then retained (for future error grouping), the clean ones dropped.
+                // it (task G2; exact-fold only — under sketch `record_lane` is `None`). The
+                // lane sees the FULL record set (clean + errored) so its files match the
+                // batch writer's full-Vec output; only errored records are then retained
+                // (for future error grouping), the clean ones dropped. The accumulator has
+                // already folded this record (exact columns or the sketch t-digest), so
+                // dropping the clean ones bounds memory on both fold paths.
                 if let Some(lane) = &record_lane {
                     lane.write(&record, &metrics_config)?;
                 }
@@ -1695,12 +1699,14 @@ async fn execute_graph_native(
     // - RETAIN: ship the full captured record `Vec` — each carries a LOCAL per-cell
     //   `request_index` — which the controller concatenation-merges (by cell_id) into the
     //   single authoritative report.
-    // - EXACT-FOLD (task G1): the fold-and-drop pass folded every record into `accumulator`
-    //   and dropped the clean ones (`captured` holds only the retained errored records), so
-    //   there is no full record `Vec` — ship the folded EXACT STORE instead. The controller
-    //   appends every cell's store (`merge_store_partitions`) into the merged report. The
-    //   counters are exact: `issued` is the accumulator's record count, `errored` the
-    //   retained errored count, so `completed = issued - errored`.
+    // - FOLD (task G1 exact-fold, or sketch): the fold-and-drop pass folded every record
+    //   into `accumulator` and dropped the clean ones (`captured` holds only the retained
+    //   errored records), so there is no full record `Vec` — ship the folded STORE instead
+    //   (exact columns, or the sketch t-digest store). The controller appends every cell's
+    //   store (`merge_store_partitions`) into the merged report. The counters are exact:
+    //   `issued` is the accumulator's ingested count (which survives sketch's fold-and-clear
+    //   — `record_count()` is 0 for a sketch store), `errored` the retained errored count,
+    //   so `completed = issued - errored`.
     #[cfg(feature = "velo")]
     if let Some(shipper) = crate::runner_protocol::cellular_cell::CellRecordsShipper::from_env() {
         // No `capture`/wall clock is in scope on the graph path, so derive the run span
@@ -1710,8 +1716,8 @@ async fn execute_graph_native(
             .unwrap_or(0)
             .saturating_sub(run_start.unwrap_or(0))
             .max(0);
-        if graph_exact_fold {
-            let issued = accumulator.record_count() as u64;
+        if graph_fold {
+            let issued = accumulator.ingested_count();
             let counters = crate::cellular::HeartbeatCounters {
                 issued,
                 completed: issued.saturating_sub(errored_count),
@@ -1761,13 +1767,13 @@ async fn execute_graph_native(
         .map(|server_metrics| {
             server_metrics.summarize(MetricsPhase::Warmup, metrics_config.slice_duration_ns)
         });
-    // Under exact-fold `captured` holds only the retained errored records (the clean
-    // ones were dropped mid-run), and any requested per-record artifact was already
-    // STREAMED through `record_lane` in the fold-drop pass (task G2) and flushed above —
-    // so the batch writers must NOT run (they would see only the errored subset). The
-    // retain path (sketch / lite Parquet / `AIPERF_RUNTIME_EXACT_FOLD=0`) writes them from
-    // the full Vec here.
-    if !graph_exact_fold {
+    // Under either fold path `captured` holds only the retained errored records (the clean
+    // ones were dropped mid-run). Exact-fold already STREAMED any requested per-record
+    // artifact through `record_lane` (task G2, flushed above); sketch requests none (it is
+    // metrics-only by validation). So the batch writers must NOT run on the fold path (they
+    // would see only the errored subset). Only the retain path (lite Parquet /
+    // `AIPERF_RUNTIME_EXACT_FOLD=0` on a non-sketch run) writes them from the full Vec here.
+    if !graph_fold {
         write_graph_artifacts(&request, &captured, &metrics_config)?;
     }
     if let (Some(gpu_telemetry), Some(gpu_records_path)) =
@@ -2610,7 +2616,7 @@ async fn execute_native_inner(
             transport: transport_config,
             prepared_endpoints,
         })?;
-        let start_ns = clock.now_ns();
+        let start_ns = crate::runner_protocol::cell_origin::run_origin_now_ns(&clock);
         // Env-gated single-process cellular heartbeat lane; the same accumulator/t-digest
         // the controller aggregates across cells in Phase 2. It consumes the per-record
         // live clone, so it forces record capture on even without the Python sink.
@@ -2921,7 +2927,7 @@ async fn execute_native_inner(
                  degraded"
             );
         }
-        let start_ns = clock.now_ns();
+        let start_ns = crate::runner_protocol::cell_origin::run_origin_now_ns(&clock);
         // The two-level grid: this process is cell `cell_id` of `cells`
         // (`AIPERF_CELL_ID`/`_COUNT`, default the lone `(0, 1)`), sub-divided into
         // `workers` thread-per-core sub-cells.
@@ -7063,17 +7069,34 @@ mod tests {
     fn graph_exact_fold_gate_streams_artifacts_and_rejects_sketch_and_lite_parquet() {
         use crate::runner_protocol::protocol::ArtifactSpec;
 
+        // Mirror the production graph caller (`execute_graph_native`): the graph path
+        // wires NONE of the retain-forcing per-record consumers, so it feeds the shared
+        // `exact_fold_eligible` gate `false` for them and `wants_per_record_artifacts`
+        // with `inputs_need_retain = false` (the graph path never writes inputs.json).
+        let graph_gate = |artifacts: &ArtifactSpec, sketch: bool| {
+            exact_fold_eligible(ExactFoldInputs {
+                sketch_mode: sketch,
+                shardable: false,
+                is_cellular: false,
+                has_accuracy: false,
+                wants_adaptive_record: false,
+                has_live_sink: false,
+                has_heartbeat: false,
+                wants_per_record_artifacts: wants_per_record_artifacts(artifacts, false),
+            })
+        };
+
         // Metrics-only (no per-record file artifacts), not sketch → eligible.
         let metrics_only = ArtifactSpec::default();
         assert!(
-            graph_exact_fold_eligible(&metrics_only, false),
+            graph_gate(&metrics_only, false),
             "a metrics-only graph run is exact-fold-eligible"
         );
 
         // `inputs_path` is a no-op on the graph path (never written), so it must not
         // disqualify — otherwise every graph run (rust_wire always sets it) would retain.
         assert!(
-            graph_exact_fold_eligible(
+            graph_gate(
                 &ArtifactSpec {
                     inputs_path: Some("inputs.json".into()),
                     ..ArtifactSpec::default()
@@ -7085,7 +7108,7 @@ mod tests {
 
         // Sketch mode has its own bounded fold and no store-merge path → rejected.
         assert!(
-            !graph_exact_fold_eligible(&metrics_only, true),
+            !graph_gate(&metrics_only, true),
             "sketch mode is not eligible for the graph exact-fold store path"
         );
 
@@ -7124,7 +7147,7 @@ mod tests {
             ),
         ] {
             assert!(
-                graph_exact_fold_eligible(&artifacts, false),
+                graph_gate(&artifacts, false),
                 "a requested {label} now streams through the lane and stays on exact-fold (task G2)"
             );
         }
@@ -7137,12 +7160,12 @@ mod tests {
         };
         #[cfg(feature = "parquet")]
         assert!(
-            graph_exact_fold_eligible(&with_parquet, false),
+            graph_gate(&with_parquet, false),
             "a parquet build streams the Parquet sidecar through the lane (exact-fold)"
         );
         #[cfg(not(feature = "parquet"))]
         assert!(
-            !graph_exact_fold_eligible(&with_parquet, false),
+            !graph_gate(&with_parquet, false),
             "a lite build cannot stream Parquet, so it disqualifies graph exact-fold"
         );
     }

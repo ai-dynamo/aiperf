@@ -709,3 +709,105 @@ async fn test_cellular_dataset_fanout_matches_baseline() {
         );
     }
 }
+
+/// The smallest `metadata.request_start_ns` across a run's raw records — the first
+/// request's start on the run's timing origin. Panics if the run emitted no raw
+/// records (wrong `--export-level`, or the run failed).
+fn min_request_start_ns(run: &RunResult) -> i64 {
+    let records = run.artifacts.raw_records();
+    assert!(
+        !records.is_empty(),
+        "expected raw records (did the run pass --export-level raw and succeed?)"
+    );
+    records
+        .iter()
+        .filter_map(|r| r.get("metadata")?.get("request_start_ns")?.as_i64())
+        .min()
+        .expect("at least one record carries metadata.request_start_ns")
+}
+
+/// `AIPERF_CELL_SHARED_ORIGIN=1` zeroes every cell's record timeline at the shared
+/// velo START barrier instead of at each cell's own post-setup local run start.
+///
+/// Proves the barrier-synchronized origin end-to-end at the raw-record level:
+///
+/// 1. **No regression** — the shifted origin only moves ABSOLUTE timestamps; all
+///    latency/throughput/token metrics are differences, so an ON run reproduces a
+///    single-cell baseline's deterministic ISL/OSL exactly.
+/// 2. **The origin actually moved to the barrier** — with the flag ON the first
+///    request's `request_start_ns` is measured from the START barrier, so it is
+///    LATER than the flag-OFF run's (whose origin is each cell's post-setup start)
+///    by the whole per-cell setup span (dataset compile + the large-tokenizer
+///    load). That the ON minimum strictly exceeds the OFF minimum by a substantial
+///    margin is the deterministic signature of the origin having been pulled back
+///    to the shared barrier.
+#[tokio::test]
+async fn test_cellular_shared_origin_zeroes_at_the_barrier() {
+    let args = |url: &str| {
+        format!(
+            "--model {DEFAULT_MODEL} --url {url} --endpoint-type chat \
+             --request-count 60 --concurrency 6 --random-seed 42 \
+             --synthetic-input-tokens-mean 256 --synthetic-input-tokens-stddev 64 \
+             --output-tokens-mean 8 --output-tokens-stddev 0 --ui simple --export-level raw"
+        )
+    };
+
+    // Single-cell baseline for the deterministic-metric parity check.
+    let h_base = AIPerfHarness::new().await;
+    let base = h_base.run(&format!("{} --cells 1", args(&h_base.mock.url)));
+    assert!(base.success(), "baseline run failed: {}", base.stderr);
+
+    // Flag OFF: each cell's origin is its own post-setup local run start.
+    let h_off = AIPerfHarness::new().await;
+    let off = h_off.run(&format!("{} --cells 3", args(&h_off.mock.url)));
+    assert!(off.success(), "flag-off cellular run failed: {}", off.stderr);
+
+    // Flag ON: every cell zeroes at the shared velo START barrier.
+    let h_on = AIPerfHarness::new().await;
+    let on = h_on.run_env(
+        &format!("{} --cells 3", args(&h_on.mock.url)),
+        &[("AIPERF_CELL_SHARED_ORIGIN", "1")],
+    );
+    assert!(on.success(), "shared-origin cellular run failed: {}", on.stderr);
+
+    // Both cellular runs went through the controller.
+    for (label, run) in [("off", &off), ("on", &on)] {
+        assert!(
+            run.artifacts
+                .find_file("**/cellular-heartbeat.json")
+                .is_some(),
+            "{label} run must go through the controller (cellular-heartbeat.json sidecar)"
+        );
+    }
+    assert_eq!(on.artifacts.request_count() as u32, 60);
+
+    // (1) No regression: shared origin preserves the deterministic ISL/OSL exactly.
+    let base_json = base.artifacts.json();
+    let on_json = on.artifacts.json();
+    for metric in DETERMINISTIC_METRICS {
+        let a = &base_json[metric];
+        let b = &on_json[metric];
+        assert!(!a.is_null(), "baseline report missing metric {metric}");
+        assert_eq!(
+            a, b,
+            "shared-origin {metric} diverged from the single-cell baseline: base={a}  on={b}"
+        );
+    }
+
+    // (2) The origin moved to the barrier: the ON first-request timestamp is later
+    // than the OFF one by the per-cell setup span. Assert a strict, substantial
+    // shift (>50ms — setup includes the large-tokenizer load, reliably seconds).
+    let off_min = min_request_start_ns(&off);
+    let on_min = min_request_start_ns(&on);
+    assert!(
+        off_min > 0 && on_min > 0,
+        "request_start_ns must be positive on both runs (off={off_min}, on={on_min})"
+    );
+    assert!(
+        on_min > off_min + 50_000_000,
+        "shared-origin run must measure the first request from the START barrier, so its \
+         min request_start_ns ({on_min} ns) must exceed the flag-off run's ({off_min} ns) by \
+         the per-cell setup span (>50ms); diff={} ns",
+        on_min - off_min
+    );
+}
