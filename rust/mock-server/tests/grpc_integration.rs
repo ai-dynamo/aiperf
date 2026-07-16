@@ -88,6 +88,28 @@ async fn spawn_grpc() -> SocketAddr {
     addr
 }
 
+/// Spawn a mock gRPC server in NON-LLM embedding mode: `ModelInfer` returns an
+/// `FP32` embedding tensor of `dim` values instead of generated text.
+async fn spawn_grpc_embedding(dim: usize) -> SocketAddr {
+    let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral");
+    let addr = probe.local_addr().expect("local addr");
+    drop(probe);
+    let config = MockServerConfig {
+        fast: true,
+        no_tokenizer: true,
+        grpc_port: Some(addr.port()),
+        grpc_embedding_dim: Some(dim),
+        ..MockServerConfig::default()
+    }
+    .apply_flags();
+    let state = aiperf_mock_server::app::build_state(config);
+    tokio::spawn(async move {
+        let _ = serve_grpc(addr, state).await;
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    addr
+}
+
 async fn connect(addr: SocketAddr) -> Channel {
     Channel::from_shared(format!("http://{addr}"))
         .expect("valid uri")
@@ -184,6 +206,86 @@ async fn model_stream_infer_round_trip() {
     }
     assert!(chunks > 0, "expected at least one streamed chunk");
     assert!(!assembled.is_empty());
+}
+
+/// Read the FP32 values of a named output tensor.
+fn output_fp32(response: &Value, name: &str) -> Vec<f64> {
+    let outputs = response
+        .get("outputs")
+        .and_then(Value::as_array)
+        .expect("outputs array");
+    let tensor = outputs
+        .iter()
+        .find(|o| o.get("name").and_then(Value::as_str) == Some(name))
+        .expect("named output tensor");
+    assert_eq!(
+        tensor.get("datatype").and_then(Value::as_str),
+        Some("FP32"),
+        "embedding output must be FP32"
+    );
+    tensor
+        .get("data")
+        .and_then(Value::as_array)
+        .expect("data array")
+        .iter()
+        .map(|v| v.as_f64().expect("numeric FP32 value"))
+        .collect()
+}
+
+/// A non-LLM embedding model: STRING input tensor named `query` in, FP32
+/// `text_embeddings`-shaped vector out, over the real gRPC `ModelInfer` wire.
+/// Mirrors a Triton `python`-backend embedder (Yingge's `clip-l14` case).
+#[tokio::test]
+async fn model_infer_embedding_round_trip() {
+    const DIM: usize = 768;
+    let addr = spawn_grpc_embedding(DIM).await;
+    let channel = connect(addr).await;
+    let mut grpc = Grpc::new(channel);
+    grpc.ready().await.expect("channel ready");
+
+    // Input tensor named "query" (not the default "text_input"), exactly as the
+    // product `kserve_v2_embeddings` endpoint sends it with `v2_input_name=query`.
+    let payload = json!({
+        "inputs": [
+            {"name": "query", "datatype": "BYTES", "shape": [1], "data": ["a photo of a cat"]}
+        ]
+    });
+    let body = encode_model_infer_request(&payload, "clip-l14", "", "emb-1").expect("encode");
+    let path = PathAndQuery::from_static("/inference.GRPCInferenceService/ModelInfer");
+    let response = grpc
+        .unary(Request::new(body.clone()), path.clone(), RawBytesCodec)
+        .await
+        .expect("unary ok");
+    let decoded = decode_model_infer_response(&response.into_inner()).expect("decode");
+
+    assert_eq!(decoded.get("id").and_then(Value::as_str), Some("emb-1"));
+    assert_eq!(
+        decoded.get("model_name").and_then(Value::as_str),
+        Some("clip-l14")
+    );
+    let embedding = output_fp32(&decoded, "text_output");
+    assert_eq!(
+        embedding.len(),
+        DIM,
+        "embedding width matches configured dim"
+    );
+    assert!(
+        embedding.iter().all(|v| v.is_finite()),
+        "all embedding values finite"
+    );
+
+    // Determinism: the same query yields the same vector (hash-seeded generator).
+    grpc.ready().await.expect("channel ready again");
+    let response2 = grpc
+        .unary(Request::new(body), path, RawBytesCodec)
+        .await
+        .expect("unary ok");
+    let decoded2 = decode_model_infer_response(&response2.into_inner()).expect("decode");
+    assert_eq!(
+        embedding,
+        output_fp32(&decoded2, "text_output"),
+        "identical input produces identical embedding"
+    );
 }
 
 #[tokio::test]

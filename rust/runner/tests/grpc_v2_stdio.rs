@@ -329,6 +329,173 @@ fn infer_response(text: &str, request: &ModelInferRequest) -> ModelInferResponse
     }
 }
 
+/// A non-LLM embedding `ModelInfer` reply: one `FP32` tensor named
+/// `text_embeddings` of `dim` deterministic values, mirroring a Triton
+/// `python`-backend embedder.
+fn embedding_infer_response(request: &ModelInferRequest, dim: usize) -> ModelInferResponse {
+    let embedding: Vec<f32> = (0..dim).map(|index| index as f32 * 0.5).collect();
+    ModelInferResponse {
+        model_name: request.model_name.clone(),
+        id: request.id.clone(),
+        outputs: vec![InferOutputTensor {
+            name: "text_embeddings".to_owned(),
+            datatype: "FP32".to_owned(),
+            shape: vec![1, dim as i64],
+            contents: Some(InferTensorContents {
+                fp32_contents: embedding,
+                ..InferTensorContents::default()
+            }),
+            ..InferOutputTensor::default()
+        }],
+        ..ModelInferResponse::default()
+    }
+}
+
+/// Unary-only KServe service that answers every `ModelInfer` with an `FP32`
+/// embedding tensor (embeddings are never streamed).
+#[derive(Clone, Debug)]
+struct EmbeddingService {
+    requests: Arc<Mutex<Vec<ModelInferRequest>>>,
+    dim: usize,
+}
+
+impl<B> Service<http::Request<B>> for EmbeddingService
+where
+    B: HttpBody + Send + 'static,
+    B::Error: Into<StdError> + Send + 'static,
+{
+    type Response = http::Response<Body>;
+    type Error = Infallible;
+    type Future = BoxFuture<Self::Response, Self::Error>;
+
+    fn poll_ready(&mut self, _context: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, request: http::Request<B>) -> Self::Future {
+        if request.uri().path() == "/inference.GRPCInferenceService/ModelInfer" {
+            let method = EmbeddingInferSvc(self.requests.clone(), self.dim);
+            return Box::pin(async move {
+                Ok(tonic::server::Grpc::new(RawCodec)
+                    .unary(method, request)
+                    .await)
+            });
+        }
+        Box::pin(async move {
+            let mut response = http::Response::new(Body::default());
+            response
+                .headers_mut()
+                .insert(Status::GRPC_STATUS, (Code::Unimplemented as i32).into());
+            response.headers_mut().insert(
+                http::header::CONTENT_TYPE,
+                tonic::metadata::GRPC_CONTENT_TYPE,
+            );
+            Ok(response)
+        })
+    }
+}
+
+impl NamedService for EmbeddingService {
+    const NAME: &'static str = "inference.GRPCInferenceService";
+}
+
+struct EmbeddingInferSvc(Arc<Mutex<Vec<ModelInferRequest>>>, usize);
+
+impl UnaryService<Bytes> for EmbeddingInferSvc {
+    type Response = Bytes;
+    type Future = BoxFuture<Response<Self::Response>, Status>;
+
+    fn call(&mut self, request: Request<Bytes>) -> Self::Future {
+        let captured = self.0.clone();
+        let dim = self.1;
+        Box::pin(async move {
+            let request = ModelInferRequest::decode(request.into_inner())
+                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            captured.lock().unwrap().push(request.clone());
+            let response = embedding_infer_response(&request, dim);
+            Ok(Response::new(Bytes::from(response.encode_to_vec())))
+        })
+    }
+}
+
+/// Start an embedding-only gRPC server on an ephemeral port.
+async fn start_embedding_server(
+    dim: usize,
+) -> (
+    String,
+    Arc<Mutex<Vec<ModelInferRequest>>>,
+    oneshot::Sender<()>,
+    tokio::task::JoinHandle<()>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let service = EmbeddingService {
+        requests: captured.clone(),
+        dim,
+    };
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let server = tokio::spawn(async move {
+        tonic::transport::Server::builder()
+            .add_service(service)
+            .serve_with_incoming_shutdown(TcpListenerStream::new(listener), async {
+                let _ = shutdown_rx.await;
+            })
+            .await
+            .unwrap();
+    });
+    (format!("grpc://{address}"), captured, shutdown_tx, server)
+}
+
+/// A v2 request selecting the `kserve_v2_embeddings` endpoint (unary, non-LLM)
+/// with the input/output tensor names renamed to a Triton embedder's shape.
+fn embedding_request(operation: &str, artifact_dir: &std::path::Path, url: &str) -> Value {
+    json!({
+        "protocol_version": 2,
+        "operation": operation,
+        "run": {
+            "benchmark_id": "native-grpc-embeddings-v2",
+            "artifact_dir": artifact_dir,
+            "random_seed": 7,
+            "cfg": {
+                "models": {"strategy": "round_robin", "items": [{"name": "clip-l14"}]},
+                "endpoint": {
+                    "type": "kserve_v2_embeddings",
+                    "urls": [url],
+                    "streaming": false,
+                    "use_server_token_count": false,
+                    "timeout": 10.0,
+                    "connection_reuse": "pooled",
+                    "http2": false,
+                    "wait_for_model_timeout": 0.0,
+                    "extra": {"v2_input_name": "query", "v2_output_name": "text_embeddings"}
+                },
+                "datasets": [{
+                    "type": "synthetic",
+                    "entries": 2,
+                    "sampling": "sequential",
+                    "prompts": {"isl": {"value": 8.0}, "osl": {"value": 1.0}}
+                }],
+                "tokenizer": {
+                    "name": "cl100k_base",
+                    "revision": "main",
+                    "trust_remote_code": false,
+                    "apply_chat_template": false
+                },
+                "phases": [{
+                    "type": "concurrency",
+                    "name": "profiling",
+                    "exclude_from_results": false,
+                    "requests": 2,
+                    "concurrency": 2
+                }],
+                "transport": {"type": "grpc"},
+                "runtime": {"workers": 2}
+            }
+        }
+    })
+}
+
 async fn start_server() -> (
     String,
     Arc<Mutex<Vec<ModelInferRequest>>>,
@@ -537,6 +704,79 @@ benchmark:
     assert_eq!(
         report["metrics"]["request_count"]["series"][0]["stats"]["total"],
         1.0
+    );
+
+    let _ = shutdown.send(());
+    server.await.unwrap();
+}
+
+/// Full-stack process proof for the NON-LLM embedding path: the real runner
+/// binary, driven by a protocol-v2 `kserve_v2_embeddings` request over native
+/// gRPC, dispatches unary `ModelInfer` with a renamed STRING input tensor
+/// ("query") and parses the `FP32` "text_embeddings" reply into a successful
+/// run — no token-generation semantics. This is the Triton `python`-backend
+/// embedder case (Yingge's `clip-l14`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn embeddings_pair_validates_and_executes_over_native_grpc_stdio() {
+    const DIM: usize = 8;
+    let (url, captured, shutdown, server) = start_embedding_server(DIM).await;
+    assert!(
+        capabilities()["endpoint"]
+            .get("kserve_v2_embeddings")
+            .is_some(),
+        "catalog must expose the KServe v2 embeddings endpoint"
+    );
+
+    let temporary = tempfile::tempdir().unwrap();
+    let target = temporary.path().join("grpc-embeddings-run");
+
+    let validation = embedding_request("validate", &target, &url);
+    let validation_output = tokio::task::spawn_blocking(move || run_child(&validation))
+        .await
+        .unwrap();
+    let validation_response = one_json_line(&validation_output);
+    assert!(
+        validation_output.status.success(),
+        "validation={validation_response} stderr={}",
+        String::from_utf8_lossy(&validation_output.stderr)
+    );
+    assert_eq!(validation_response["success"], true);
+
+    let execution = embedding_request("execute", &target, &url);
+    let output = tokio::task::spawn_blocking(move || run_child(&execution))
+        .await
+        .unwrap();
+    let terminal = one_json_line(&output);
+    assert!(
+        output.status.success(),
+        "terminal={terminal} stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(terminal["event"], "run_terminal");
+    assert_eq!(terminal["success"], true);
+    assert_eq!(terminal["provenance"]["transport"], "grpc");
+    assert_eq!(terminal["provenance"]["workload"], "scheduled");
+
+    // The runner sent unary ModelInfer with the renamed BYTES input tensor.
+    let requests = captured.lock().unwrap().clone();
+    assert_eq!(requests.len(), 2, "one ModelInfer per synthetic entry");
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.model_name == "clip-l14"),
+        "model name threaded through"
+    );
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.inputs[0].name == "query"),
+        "v2_input_name selector renamed the input tensor to 'query'"
+    );
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.inputs[0].datatype == "BYTES"),
+        "STRING input carried as a BYTES tensor"
     );
 
     let _ = shutdown.send(());

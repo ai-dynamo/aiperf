@@ -27,6 +27,7 @@ __all__ = [
     "ConfigResolverChain",
     "DatasetResolver",
     "GpuMetricsResolver",
+    "ScenarioResolver",
     "TimingResolver",
     "TokenizerResolver",
     "build_default_resolver_chain",
@@ -328,6 +329,24 @@ class TimingResolver:
             )
 
 
+class ScenarioResolver:
+    """Apply the locked ``--scenario`` invariants to ``run.cfg`` / ``run.resolved``.
+
+    Runs between :class:`DatasetResolver` and :class:`TimingResolver` so the
+    weka-workload detection can read the dataset types DatasetResolver just
+    populated, and so the scenario's auto-filled phase durations are in place
+    before TimingResolver sums them. No-op when ``run.cfg.scenario`` is None.
+    Delegates to ``aiperf.common.scenario.apply_scenario``, which stores the
+    ``ScenarioOutcome`` on ``run.resolved.scenario_outcome``.
+    """
+
+    def resolve(self, run: BenchmarkRun) -> None:
+        """Apply the scenario lock (auto-fill defaults, validate invariants)."""
+        from aiperf.common.scenario import apply_scenario
+
+        apply_scenario(run)
+
+
 def build_default_resolver_chain() -> ConfigResolverChain:
     """Build the default resolver chain for pre-bootstrap resolution."""
     return ConfigResolverChain(
@@ -337,6 +356,7 @@ def build_default_resolver_chain() -> ConfigResolverChain:
             GpuMetricsResolver(),
             CommConfigResolver(),
             DatasetResolver(),
+            ScenarioResolver(),
             TimingResolver(),
         ]
     )

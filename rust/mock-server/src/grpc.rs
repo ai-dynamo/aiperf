@@ -37,7 +37,7 @@ use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use bytes::{Buf, Bytes};
 use futures::Stream;
@@ -310,6 +310,40 @@ fn build_infer_response(
     }
 }
 
+/// An `FP32` embedding output tensor of shape `[1, dim]`, mirroring a Triton
+/// `python`-backend embedder's single `text_embeddings` output. The KServe wire
+/// carries `FP32` as `fp32_contents`, so the client decodes the vector directly
+/// (matching `aiperf::transport_grpc::codec` typed-contents decode).
+fn embedding_output_tensor(name: &str, embedding: &[f32]) -> InferOutputTensor {
+    InferOutputTensor {
+        name: name.to_string(),
+        datatype: "FP32".to_string(),
+        shape: vec![1, embedding.len() as i64],
+        parameters: Default::default(),
+        contents: Some(InferTensorContents {
+            fp32_contents: embedding.to_vec(),
+            ..Default::default()
+        }),
+    }
+}
+
+/// Build a `ModelInferResponse` carrying one `FP32` embedding tensor.
+fn build_embedding_response(
+    id: &str,
+    model: &str,
+    output_name: &str,
+    embedding: &[f32],
+) -> ModelInferResponse {
+    ModelInferResponse {
+        model_name: model.to_string(),
+        model_version: String::new(),
+        id: id.to_string(),
+        parameters: Default::default(),
+        outputs: vec![embedding_output_tensor(output_name, embedding)],
+        raw_output_contents: Vec::new(),
+    }
+}
+
 /// The full generated token sequence for a KServe `text_output`: reasoning
 /// tokens (if any) followed by output tokens.
 ///
@@ -354,6 +388,13 @@ async fn model_infer(
     let output_name = requested_output_name(&msg);
     let model = model_name(&msg);
 
+    // Non-LLM embedding mode: consume the input text and return a single FP32
+    // embedding tensor (one encoder forward pass, no token generation).
+    if let Some(dim) = state.config.grpc_embedding_dim {
+        return model_infer_embedding(state, &msg, &prompt, max_tokens, &output_name, &model, dim)
+            .await;
+    }
+
     let start = Instant::now();
     state.recorder.init_model_config(&model);
     let chat = synth_chat(&model, &prompt, max_tokens);
@@ -376,6 +417,60 @@ async fn model_infer(
     state
         .recorder
         .record_request_bytes(MODEL_INFER, prompt.len() as u64, text.len() as u64);
+    state.recorder.record_llm_success(
+        MODEL_INFER,
+        &ctx.model,
+        latency.as_secs_f64(),
+        &ctx.usage,
+        &info,
+    );
+    state.recorder.record_llm_inflight_end(&ctx.model);
+    state.recorder.record_request_end(MODEL_INFER);
+
+    Ok(Response::new(response))
+}
+
+/// `ModelInfer` embedding variant: run one encoder forward pass (prefill only)
+/// and return a deterministic `FP32` embedding vector. Reuses the HTTP
+/// embeddings generator so the same input yields the same vector regardless of
+/// transport, and charges only the prefill (TTFT) latency — an embedding has no
+/// decode steps.
+async fn model_infer_embedding(
+    state: Arc<AppState>,
+    msg: &ModelInferRequest,
+    prompt: &str,
+    max_tokens: Option<usize>,
+    output_name: &str,
+    model: &str,
+    dim: usize,
+) -> Result<Response<ModelInferResponse>, Status> {
+    let start = Instant::now();
+    state.recorder.init_model_config(model);
+    let chat = synth_chat(model, prompt, max_tokens);
+    let req_gen = GenRequest::Chat(&chat);
+    let ctx = RequestCtx::build("grpcembed", &req_gen, MODEL_INFER, start, &state);
+
+    state.recorder.record_request_start(MODEL_INFER, &ctx.model);
+    state.recorder.record_llm_inflight_start(&ctx.model);
+    let (prefill, _decode) = ctx.latency_sim.wait_for_tokens(0).await;
+    let latency = start.elapsed();
+
+    let embedding: Vec<f32> = crate::handlers::generate_embedding(prompt, dim)
+        .into_iter()
+        .map(|value| value as f32)
+        .collect();
+    let response = build_embedding_response(&msg.id, &ctx.model, output_name, &embedding);
+
+    let info = LLMLatencyInfo {
+        e2e: latency,
+        prefill,
+        decode: Duration::ZERO,
+    };
+    state.recorder.record_request_bytes(
+        MODEL_INFER,
+        prompt.len() as u64,
+        (embedding.len() * std::mem::size_of::<f32>()) as u64,
+    );
     state.recorder.record_llm_success(
         MODEL_INFER,
         &ctx.model,

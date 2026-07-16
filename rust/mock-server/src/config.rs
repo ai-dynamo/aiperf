@@ -28,6 +28,18 @@ pub struct MockServerConfig {
     #[arg(long, env = "MOCK_SERVER_GRPC_PORT")]
     pub grpc_port: Option<u16>,
 
+    /// When set, the KServe gRPC `ModelInfer` handler behaves as a NON-LLM
+    /// embedding model (like a Triton `python`-backend embedder): it consumes the
+    /// input text tensor and returns a single `FP32` embedding tensor of this
+    /// dimension (shape `[1, dim]`) instead of a generated `BYTES` text output.
+    /// This makes the mock a target for AIPerf's `kserve_v2_embeddings` gRPC
+    /// endpoint, so the STRING-in / FP32-out embedding path can be exercised
+    /// end-to-end without an LLM. Unset (the default) keeps the token-generating
+    /// text behavior. Only affects unary `ModelInfer`; embeddings are never
+    /// streamed.
+    #[arg(long, env = "MOCK_SERVER_GRPC_EMBEDDING_DIM")]
+    pub grpc_embedding_dim: Option<usize>,
+
     /// Tokio worker-thread count. `0` (the default) means auto = nproc; any
     /// explicit value, including `1`, is honored verbatim.
     #[arg(short = 'w', long, env = "MOCK_SERVER_WORKERS", default_value_t = 0)]

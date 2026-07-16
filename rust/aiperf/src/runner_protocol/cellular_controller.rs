@@ -30,7 +30,7 @@ use crate::runner_protocol::cell_launcher::owned_positions;
 // needs the `velo` feature; the validation, budget-slicing, merge, and report
 // assembly below are plain envelope/metric logic reused by the non-velo build.
 #[cfg(feature = "velo")]
-use crate::cellular::transport::connect::{BindSpec, BootstrapSource, build_velo, serve_bootstrap};
+use crate::cellular::transport::connect::{BindSpec, build_velo};
 #[cfg(feature = "velo")]
 use crate::cellular::{CellMessage, ControllerTransport, SpecFor, VeloControllerTransport};
 #[cfg(feature = "velo")]
@@ -350,12 +350,11 @@ pub fn run_cellular(
             None
         };
 
-        // Build the controller's velo transport and publish its PeerInfo so cells
-        // reach it from the one operator-hardcoded coordinate (zero discovery).
+        // Bind the controller's velo transport at a known endpoint cells `connect`
+        // to (zero discovery — velo's `_hello` handshake resolves identity on dial).
         // `is_k8s` is resolved once above and moved in here.
-        let velo = build_velo(controller_velo_bind(is_k8s, &temp_root))
-            .await
-            .context("building controller velo")?;
+        let (bind, cell_coordinate) = controller_bind_and_endpoint(is_k8s, &temp_root)?;
+        let velo = build_velo(bind).await.context("building controller velo")?;
         // The run-wide synchronized-START event: cells await it after registering,
         // and the controller triggers it once every cell has registered so they all
         // begin dispatching together. Created before `velo` moves into the transport;
@@ -366,10 +365,6 @@ pub fn run_cellular(
             .new_event()
             .context("creating cellular start event")?;
         let start_handle = start_event.handle();
-        let (serve_source, cell_coordinate) = controller_bootstrap(is_k8s, &temp_root)?;
-        let _bootstrap = serve_bootstrap(&serve_source, &velo.peer_info())
-            .await
-            .context("serving controller bootstrap PeerInfo")?;
 
         // Each phase's global dispatch base (turns dispatched by prior phases): a
         // cell's sampler restarts each phase, so the cell adds this to its phase-local
@@ -692,43 +687,34 @@ fn controller_artifact_bind() -> std::net::SocketAddr {
         .unwrap_or_else(|| std::net::SocketAddr::from(([0, 0, 0, 0], DEFAULT_ARTIFACT_PORT)))
 }
 
-/// The controller's velo messaging bind. k8s binds an ephemeral routable TCP port
-/// (its address is advertised to cells via the bootstrap `PeerInfo`); a co-located
-/// launcher binds UDS on unix (a lower-overhead local socket) or loopback elsewhere.
+/// The controller's velo bind plus the `tcp://HOST:PORT` endpoint string cells
+/// `velo.connect` to. The coordinate stays `tcp://` everywhere so the HTTP artifact
+/// plane (which derives its authority by swapping the port on this coordinate) keeps
+/// working — hence local uses a known loopback port, not UDS.
+/// - **k8s**: bind the operator-known port (`AIPERF_CONTROLLER_PORT`, default 9500)
+///   on all interfaces; the cell endpoint is injected into the pods by the operator
+///   (`AIPERF_CELL_CONTROLLER_ADDR`), so the launcher's copy is unused (empty).
+/// - **local**: pre-bind a loopback TCP listener so the actual port is known before
+///   build; cells connect to `tcp://127.0.0.1:<port>`.
 #[cfg(feature = "velo")]
-fn controller_velo_bind(is_k8s: bool, temp_root: &Path) -> BindSpec {
+fn controller_bind_and_endpoint(is_k8s: bool, temp_root: &Path) -> Result<(BindSpec, String)> {
+    let _ = temp_root;
     if is_k8s {
-        return BindSpec::TcpBind("0.0.0.0:0".parse().expect("valid ephemeral bind addr"));
+        let port: u16 = std::env::var("AIPERF_CONTROLLER_PORT")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(9500);
+        return Ok((
+            BindSpec::TcpBind(std::net::SocketAddr::from(([0, 0, 0, 0], port))),
+            String::new(),
+        ));
     }
-    #[cfg(unix)]
-    {
-        BindSpec::UdsPath(temp_root.join("controller.sock"))
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = temp_root;
-        BindSpec::TcpLoopback
-    }
-}
-
-/// The controller's bootstrap publication and the coordinate cells fetch it from.
-/// - **k8s**: serve the `PeerInfo` on the operator-hardcoded bootstrap bind
-///   (`AIPERF_CONTROLLER_BOOTSTRAP_BIND`, default `0.0.0.0:9500`); the cell fetch
-///   coordinate is supplied to the pods by the operator (`AIPERF_CELL_CONTROLLER_ADDR`),
-///   so the launcher's copy is unused here (empty).
-/// - **local**: write the `PeerInfo` to a file in the scratch tree; cells (same host)
-///   read it via a `file:` coordinate the local launcher injects.
-#[cfg(feature = "velo")]
-fn controller_bootstrap(is_k8s: bool, temp_root: &Path) -> Result<(BootstrapSource, String)> {
-    if is_k8s {
-        let bind = std::env::var("AIPERF_CONTROLLER_BOOTSTRAP_BIND")
-            .unwrap_or_else(|_| "0.0.0.0:9500".to_owned());
-        Ok((BootstrapSource::Tcp(bind), String::new()))
-    } else {
-        let path = temp_root.join("controller-peer.rmp");
-        let coordinate = format!("file:{}", path.display());
-        Ok((BootstrapSource::File(path), coordinate))
-    }
+    let listener =
+        std::net::TcpListener::bind("127.0.0.1:0").context("binding controller loopback")?;
+    let addr = listener
+        .local_addr()
+        .context("controller loopback local_addr")?;
+    Ok((BindSpec::TcpListener(listener), format!("tcp://{addr}")))
 }
 
 /// The deadline for collecting every cell's partition. Covers the whole run (cells
@@ -870,6 +856,38 @@ fn build_cell_envelope(
     Ok(cell)
 }
 
+/// Dataset `format`s proven — in `crate::dataset::loader` — to compile exactly ONE turn
+/// per conversation, so a cellular run over a `file`/`public` source keeps the sampler's
+/// per-conversation draw index aligned with the issuer's per-turn ordinal. Verified
+/// per-format:
+/// - `single_turn` (`loader/simple.rs`: `SingleTurnComposer`, one turn per JSONL row).
+///   Residual: its composer groups rows sharing an explicit `session_id` into one
+///   multi-turn conversation (`simple.rs` ~:345-372) — a file that reuses `session_id`
+///   is the same divergence class as multi-turn and is a documented residual, not gated
+///   here (the canonical one-request-per-row format is admitted).
+/// - `raw_payload` (`loader/raw_payload.rs`: loader stamps a unique `group_key = row:{i}`
+///   ~:62, so `RawPayloadComposer` ~:116-140 makes one conversation per row, one turn).
+/// - `accuracy` (`loader/public.rs`: `AccuracyComposer` ~:237-243 builds a fresh
+///   conversation with a single turn per row, unconditionally — no session grouping).
+/// - `hf_instruction_response` (`loader/public.rs`: `HfInstructionComposer` ~:382-386,
+///   one turn per row, fresh conversation).
+///
+/// Every OTHER linear format is rejected (fail closed). Proven multi-turn / session-
+/// grouping: `multi_turn` (`simple.rs` ~:377-417), `mooncake_trace`/`bailian_trace`/
+/// `burst_gpt`/`sagemaker_data_capture` (`trace.rs`, session-keyed grouping, e.g. mooncake
+/// ~:232-247), `inputs_json` (`raw_payload.rs` ~:457-472, many payloads per session),
+/// `sharegpt` (`public.rs` ~:297-318), `hf_conversation` (`public.rs` ~:405 `multi_turn`
+/// option), `mt_bench`. Unverified turn semantics (`mmvu`, `spec_bench`, `speed_bench`,
+/// `hf_asr`, `random_pool`, `exgentic`, `exgentic_v2`, `synthetic_rankings`) are rejected
+/// conservatively. The graph formats (`dag_jsonl`/`weka_trace`/`dynamo_trace`) never reach
+/// this list — they short-circuit to the whole-trace partition above.
+const CELLULAR_SINGLE_TURN_FILE_FORMATS: [&str; 4] = [
+    "single_turn",
+    "raw_payload",
+    "accuracy",
+    "hf_instruction_response",
+];
+
 /// Whitelists a cellular run to the shape the cell topology is currently *wired* for:
 /// the shared online-scheduled executor over the `http` transport, on **synthetic,
 /// file, or public single-turn** datasets. There is no bespoke HTTP layer — a cell
@@ -894,6 +912,20 @@ fn build_cell_envelope(
 ///   ([`CellularAutonomousIssuer`]); a multi-turn conversation makes the two diverge,
 ///   so the merged report silently reorders (or, for variable turn counts, draws a
 ///   different instance set). Only `turns == 1` (the default) is sound.
+///
+/// For a `file`/`public` dataset the turn count is NOT driven by the top-level `turns`
+/// config field — it is compiled by the dataset FORMAT plus `session_id` grouping in the
+/// loader. `multi_turn` (`dataset/loader/simple.rs`), the trace formats (`mooncake_trace`,
+/// `bailian_trace`, `burst_gpt`, `sagemaker_data_capture` in `dataset/loader/trace.rs`),
+/// `inputs_json` (`dataset/loader/raw_payload.rs`), and the multi-turn public shapes
+/// (`sharegpt`, `hf_conversation`, `mt_bench`, ... in `dataset/loader/public.rs`) all
+/// group rows into MULTI-turn conversations regardless of `turns`. So the top-level
+/// `turns == 1` check alone does NOT prove single-turn for a file/public dataset — it is
+/// backstopped by [`CELLULAR_SINGLE_TURN_FILE_FORMATS`], an explicit allowlist of the
+/// formats proven (in the loader code) to compile exactly one turn per conversation. The
+/// whitelist fails closed: an absent or unlisted format is rejected, so a session-grouping
+/// or ambiguous format can never slip through. Per-conversation cellular partition (which
+/// would admit the multi-turn formats, like the graph path) is a documented follow-up.
 ///
 /// [`PartitionedSampler`]: crate::dataset::sampler
 /// [`CellularAutonomousIssuer`]: crate::cellular::CellularAutonomousIssuer
@@ -932,6 +964,28 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
              `file`/`path` dataset is shipped controller->cell over HTTP+zstd (Stage G) and \
              recompiled per cell; inline `records` and `public` URL/HF each cell resolves itself"
         );
+        // Format whitelist (file/public only): the turn count of a file/public dataset is
+        // compiled by the FORMAT + `session_id` grouping in the loader, NOT the top-level
+        // `turns` field below. Only the formats proven to emit exactly one turn per
+        // conversation preserve the one-draw==one-turn invariant; every other (including
+        // session-grouping trace formats like `mooncake_trace`) is rejected fail-closed.
+        // Synthetic regenerates single-turn conversations from the shared seed and needs
+        // no format check; graph formats already `continue`d above.
+        if matches!(kind, Some("file" | "public")) {
+            let format = dataset.get("format").and_then(serde_json::Value::as_str);
+            ensure!(
+                format.is_some_and(|format| CELLULAR_SINGLE_TURN_FILE_FORMATS.contains(&format)),
+                "cellular file/public datasets support only strictly single-turn formats ({}); got \
+                 format {format:?}. A file/public dataset's turn count is driven by its FORMAT and \
+                 `session_id` grouping, not the top-level `turns` field, so session-grouping / \
+                 multi-turn formats (multi_turn, mooncake_trace, bailian_trace, burst_gpt, \
+                 sagemaker_data_capture, inputs_json, sharegpt, hf_conversation, mt_bench, ...) \
+                 compile multi-turn conversations whose per-turn issuer ordinal diverges from the \
+                 sampler's per-conversation draw index and silently break the merged report. \
+                 Per-conversation cellular partition (like the graph path) is a documented follow-up",
+                CELLULAR_SINGLE_TURN_FILE_FORMATS.join("/")
+            );
+        }
         // Single-turn only: `turns` absent defaults to a fixed 1; a fixed `{value: 1}`
         // is the only other single-turn form. Anything else (a larger value or a
         // distribution) makes a conversation dispatch multiple turns.
@@ -1442,8 +1496,11 @@ mod tests {
             // An inline-records `file` dataset (no path) is accepted — it already
             // rides in the envelope, so no ship is needed.
             serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "file", "format": "single_turn", "records": []}]}}}),
-            // A `public` dataset is accepted — each cell fetches the URL/HF source itself.
-            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "public"}]}}}),
+            // A single-turn `public` dataset is accepted — each cell fetches the URL/HF
+            // source itself. A whitelisted single-turn format is required (below).
+            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "public", "format": "accuracy"}]}}}),
+            // `raw_payload` is strictly single-turn (unique per-row group key).
+            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "file", "format": "raw_payload", "path": "/data/p.jsonl"}]}}}),
         ] {
             assert!(
                 validate_cellular_run_shape(&ok).is_ok(),
@@ -1461,6 +1518,17 @@ mod tests {
             // A multi-turn `file` dataset (explicit turns > 1) is rejected — the
             // per-conversation partition is a documented follow-up (Stage G non-goal).
             serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "file", "format": "multi_turn", "path": "/data/t.jsonl", "turns": {"value": 3}}]}}}),
+            // A session-grouping trace format is rejected by the FORMAT whitelist even
+            // with NO top-level `turns` override: the file itself compiles multi-turn
+            // conversations (grouped by session_id), which the `turns` guard cannot see.
+            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "file", "format": "mooncake_trace", "path": "/data/t.jsonl"}]}}}),
+            // `multi_turn` with no `turns` override is still rejected by the whitelist.
+            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "file", "format": "multi_turn", "path": "/data/t.jsonl"}]}}}),
+            // A `file` dataset with an unknown/unspecified format fails closed.
+            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "file", "path": "/data/t.jsonl"}]}}}),
+            // A bare `public` dataset (no format) fails closed — its default format could
+            // be a multi-turn public shape (sharegpt / mt_bench / hf_conversation).
+            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "public"}]}}}),
         ] {
             assert!(
                 validate_cellular_run_shape(&bad).is_err(),
@@ -1489,11 +1557,11 @@ mod tests {
                 "is_graph_dataset true for {graph_format}"
             );
         }
-        // Stage G: a NON-graph linear trace format (a single-turn `file` dataset) is
-        // now ADMITTED — the controller ships the source cross-host and each cell
-        // recompiles it. It is NOT a graph dataset (takes the scheduled partition).
+        // Stage G + C1 fix: a PROVEN single-turn linear file format (single_turn) is
+        // ADMITTED — the controller ships the source cross-host and each cell recompiles
+        // it. It is NOT a graph dataset (takes the scheduled partition).
         let linear = serde_json::json!({"run": {"cfg": {
-            "datasets": [{"type": "file", "format": "mooncake_trace", "path": "/data/t.jsonl"}],
+            "datasets": [{"type": "file", "format": "single_turn", "path": "/data/t.jsonl"}],
         }}});
         assert!(
             validate_cellular_run_shape(&linear).is_ok(),
@@ -1501,7 +1569,24 @@ mod tests {
         );
         assert!(
             !is_graph_dataset(&linear),
-            "mooncake_trace is not a graph dataset (scheduled partition)"
+            "single_turn is not a graph dataset (scheduled partition)"
+        );
+        // C1 fix: `mooncake_trace` is a NON-graph, session-grouping trace format that
+        // compiles MULTI-turn conversations. It takes the scheduled partition (not the
+        // graph carve-out) where one-draw-per-turn is load-bearing, so the format
+        // whitelist must REJECT it — restoring the pre-Stage-G safety for the multi-turn
+        // case. (Before this fix it was wrongly admitted: a silent draw/ordinal
+        // divergence regression.)
+        let multi_turn_trace = serde_json::json!({"run": {"cfg": {
+            "datasets": [{"type": "file", "format": "mooncake_trace", "path": "/data/t.jsonl"}],
+        }}});
+        assert!(
+            validate_cellular_run_shape(&multi_turn_trace).is_err(),
+            "mooncake_trace (session-grouping multi-turn) must be rejected by the format whitelist"
+        );
+        assert!(
+            !is_graph_dataset(&multi_turn_trace),
+            "mooncake_trace is not a graph dataset (would take the scheduled partition)"
         );
         // is_graph_dataset is false for a synthetic (scheduled) dataset.
         let synthetic = serde_json::json!({"run": {"cfg": {"datasets": [{"type": "synthetic"}]}}});
