@@ -543,6 +543,12 @@ pub struct ProfileFlags {
     /// OTLP/HTTP metrics collector URL (`--otel-url`).
     #[arg(long = "otel-url")]
     pub otel_url: Option<String>,
+    /// GenAI provider label attached to OTLP metrics (`--gen-ai-provider`).
+    #[arg(long = "gen-ai-provider")]
+    pub gen_ai_provider: Option<String>,
+    /// Extra OTLP resource attributes (`--otel-resource-attributes k=v`), repeatable.
+    #[arg(long = "otel-resource-attributes", num_args = 1..)]
+    pub otel_resource_attributes: Vec<String>,
 
     /// MLflow tracking server URI (`--mlflow-tracking-uri`).
     #[arg(long = "mlflow-tracking-uri")]
@@ -553,6 +559,15 @@ pub struct ProfileFlags {
     /// MLflow run name (`--mlflow-run-name`).
     #[arg(long = "mlflow-run-name")]
     pub mlflow_run_name: Option<String>,
+    /// Parent MLflow run id (`--mlflow-parent-run-id`).
+    #[arg(long = "mlflow-parent-run-id")]
+    pub mlflow_parent_run_id: Option<String>,
+    /// MLflow run tags (`--mlflow-tag k:v`), repeatable.
+    #[arg(long = "mlflow-tag", num_args = 1..)]
+    pub mlflow_tag: Vec<String>,
+    /// MLflow artifact glob override (`--mlflow-artifact-glob`), repeatable.
+    #[arg(long = "mlflow-artifact-glob", num_args = 1..)]
+    pub mlflow_artifact_glob: Vec<String>,
 
     /// W&B project (`--wandb-project`).
     #[arg(long = "wandb-project")]
@@ -563,6 +578,9 @@ pub struct ProfileFlags {
     /// W&B run name (`--wandb-run-name`).
     #[arg(long = "wandb-run-name")]
     pub wandb_run_name: Option<String>,
+    /// W&B run tags (`--wandb-tag`), repeatable.
+    #[arg(long = "wandb-tag", num_args = 1..)]
+    pub wandb_tag: Vec<String>,
 
     /// YAML configuration file (`--config` / `-f`).
     #[arg(long = "config", short = 'f')]

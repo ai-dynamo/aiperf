@@ -817,6 +817,8 @@ impl Benchmark {
         };
 
         let otel_url = self.otel.as_ref().and_then(|o| o.metrics_url.clone());
+        // MLflow's `total_expected_requests` is the run's request bound.
+        let total_expected_requests = phase.requests.map(|n| n as f64);
         let mlflow = self
             .mlflow
             .as_ref()
@@ -824,11 +826,19 @@ impl Benchmark {
                 tracking_uri: m.tracking_uri.clone(),
                 experiment: m.experiment.clone(),
                 run_name: m.run_name.clone(),
+                parent_run_id: None,
+                tags: Vec::new(),
+                artifact_globs: Vec::new(),
+                total_expected_requests,
             })
             .unwrap_or(crate::model::export::MlflowParams {
                 tracking_uri: None,
                 experiment: None,
                 run_name: None,
+                parent_run_id: None,
+                tags: Vec::new(),
+                artifact_globs: Vec::new(),
+                total_expected_requests,
             });
         let wandb = self
             .wandb
@@ -837,11 +847,13 @@ impl Benchmark {
                 project: w.project.clone(),
                 entity: w.entity.clone(),
                 run_name: w.run_name.clone(),
+                tags: Vec::new(),
             })
             .unwrap_or(crate::model::export::WandbParams {
                 project: None,
                 entity: None,
                 run_name: None,
+                tags: Vec::new(),
             });
 
         // Runtime worker/cell policy.
@@ -908,6 +920,8 @@ impl Benchmark {
             network_latency_mean,
             network_latency_probe,
             otel_url,
+            otel_provider: None,
+            otel_resource_attributes: Vec::new(),
             mlflow,
             wandb,
             api_key: self.endpoint.api_key,

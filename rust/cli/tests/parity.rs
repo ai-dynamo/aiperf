@@ -94,6 +94,7 @@ const FIXTURES: &[&str] = &[
     "cells",
     "seq_dist",
     "warmup_arrival",
+    "export_extras",
 ];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).
@@ -181,6 +182,9 @@ fn assert_export_static(fixture: &str, built: &serde_json::Value, golden: &serde
             "tracking_uri",
             "experiment",
             "run_name",
+            "parent_run_id",
+            "total_expected_requests",
+            "tags",
         ] {
             assert_eq!(
                 built["mlflow"][key], golden["mlflow"][key],
@@ -189,7 +193,7 @@ fn assert_export_static(fixture: &str, built: &serde_json::Value, golden: &serde
         }
     }
     if !golden["wandb"].is_null() {
-        for key in ["project", "entity", "run_name", "aiperf_version"] {
+        for key in ["project", "entity", "run_name", "aiperf_version", "tags"] {
             assert_eq!(
                 built["wandb"][key], golden["wandb"][key],
                 "[{fixture}] export.wandb.{key} diverges"
@@ -202,6 +206,10 @@ fn assert_export_static(fixture: &str, built: &serde_json::Value, golden: &serde
         assert_eq!(
             built["otel"]["endpoint"], golden["otel"]["endpoint"],
             "[{fixture}] export.otel.endpoint diverges"
+        );
+        assert_eq!(
+            built["otel"]["provider"], golden["otel"]["provider"],
+            "[{fixture}] export.otel.provider diverges"
         );
         for attr in [
             "aiperf.endpoint.type",

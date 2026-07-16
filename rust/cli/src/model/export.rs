@@ -122,15 +122,26 @@ pub struct OtelExport {
     pub enabled: bool,
     /// OTLP metrics endpoint (`<url>/v1/metrics`).
     pub endpoint: String,
+    /// GenAI provider label (`--gen-ai-provider`), present when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
     /// Resource attributes attached to every metric.
     pub resource_attributes: std::collections::BTreeMap<String, String>,
 }
 
 impl OtelExport {
     /// Build the OTLP sink from a collector URL and run identity (mirrors
-    /// `_otel_frontend_projection`): append `/v1/metrics` when absent and attach
-    /// the canonical aiperf resource attributes.
-    pub fn build(url: &str, benchmark_id: &str, endpoint_type: &str, model: &str) -> Self {
+    /// `_otel_frontend_projection`): append `/v1/metrics` when absent, attach the
+    /// canonical aiperf resource attributes, merge any custom
+    /// `--otel-resource-attributes`, and record the `--gen-ai-provider`.
+    pub fn build(
+        url: &str,
+        benchmark_id: &str,
+        endpoint_type: &str,
+        model: &str,
+        provider: Option<&str>,
+        extra_attrs: &[(String, String)],
+    ) -> Self {
         let endpoint = if url.ends_with("/v1/metrics") {
             url.to_string()
         } else {
@@ -147,9 +158,13 @@ impl OtelExport {
             "service.instance.id".to_string(),
             "records-manager".to_string(),
         );
+        for (k, v) in extra_attrs {
+            attrs.insert(k.clone(), v.clone());
+        }
         Self {
             enabled: true,
             endpoint,
+            provider: provider.map(str::to_string),
             resource_attributes: attrs,
         }
     }
@@ -195,6 +210,12 @@ pub struct MlflowExport {
     /// Run name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_name: Option<String>,
+    /// Parent MLflow run id (`--mlflow-parent-run-id`), present when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_run_id: Option<String>,
+    /// Total expected requests (the run's request bound), present when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_expected_requests: Option<f64>,
     /// Run tags.
     pub tags: std::collections::BTreeMap<String, String>,
     /// Logged params (best-effort; Python includes cli_command).
@@ -222,6 +243,9 @@ pub struct WandbExport {
     /// W&B run name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_name: Option<String>,
+    /// W&B run tags (`--wandb-tag`), present when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
 }
 
 /// The typed `export` policy. Only the sinks the frontend enables are modeled;
@@ -251,6 +275,14 @@ pub struct MlflowParams {
     pub experiment: Option<String>,
     /// Run name.
     pub run_name: Option<String>,
+    /// Parent MLflow run id.
+    pub parent_run_id: Option<String>,
+    /// Run tags (`--mlflow-tag k:v`).
+    pub tags: Vec<(String, String)>,
+    /// Artifact glob override (`--mlflow-artifact-glob`); empty keeps the default.
+    pub artifact_globs: Vec<String>,
+    /// Total expected requests (run request bound).
+    pub total_expected_requests: Option<f64>,
 }
 
 /// Parameters for building the optional W&B sink.
@@ -261,6 +293,8 @@ pub struct WandbParams {
     pub entity: Option<String>,
     /// Run name.
     pub run_name: Option<String>,
+    /// Run tags (`--wandb-tag`).
+    pub tags: Vec<String>,
 }
 
 impl MlflowExport {
@@ -270,12 +304,18 @@ impl MlflowExport {
         Some(Self {
             enabled: true,
             aiperf_version: AIPERF_V1_VERSION.to_string(),
-            artifact_globs: mlflow_artifact_globs(),
+            artifact_globs: if params.artifact_globs.is_empty() {
+                mlflow_artifact_globs()
+            } else {
+                params.artifact_globs.clone()
+            },
             benchmark_id: benchmark_id.to_string(),
             tracking_uri: params.tracking_uri.clone(),
             experiment: params.experiment.clone(),
             run_name: params.run_name.clone(),
-            tags: std::collections::BTreeMap::new(),
+            parent_run_id: params.parent_run_id.clone(),
+            total_expected_requests: params.total_expected_requests,
+            tags: params.tags.iter().cloned().collect(),
             params: std::collections::BTreeMap::new(),
         })
     }
@@ -293,6 +333,7 @@ impl WandbExport {
             entity: params.entity.clone(),
             project: params.project.clone(),
             run_name: params.run_name.clone(),
+            tags: (!params.tags.is_empty()).then(|| params.tags.clone()),
         })
     }
 }

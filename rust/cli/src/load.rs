@@ -106,6 +106,10 @@ pub(crate) struct Inputs {
     pub network_latency_probe: Option<f64>,
     /// OTLP collector URL (`--otel-url`).
     pub otel_url: Option<String>,
+    /// GenAI provider label (`--gen-ai-provider`).
+    pub otel_provider: Option<String>,
+    /// Extra OTLP resource attributes (`--otel-resource-attributes`).
+    pub otel_resource_attributes: Vec<(String, String)>,
     /// MLflow sink params.
     pub mlflow: crate::model::export::MlflowParams,
     /// W&B sink params.
@@ -375,15 +379,23 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
             .network_latency_automatic
             .then(|| flags.network_latency_ping_interval.unwrap_or(1.0)),
         otel_url: flags.otel_url.clone(),
+        otel_provider: flags.gen_ai_provider.clone(),
+        otel_resource_attributes: parse_kv(&flags.otel_resource_attributes, '=')?,
         mlflow: crate::model::export::MlflowParams {
             tracking_uri: flags.mlflow_tracking_uri.clone(),
             experiment: flags.mlflow_experiment.clone(),
             run_name: flags.mlflow_run_name.clone(),
+            parent_run_id: flags.mlflow_parent_run_id.clone(),
+            tags: parse_kv(&flags.mlflow_tag, ':')?,
+            artifact_globs: flags.mlflow_artifact_glob.clone(),
+            // MLflow logs the run's request bound as `total_expected_requests`.
+            total_expected_requests: request_count.map(|n| n as f64),
         },
         wandb: crate::model::export::WandbParams {
             project: flags.wandb_project.clone(),
             entity: flags.wandb_entity.clone(),
             run_name: flags.wandb_run_name.clone(),
+            tags: flags.wandb_tag.clone(),
         },
         api_key: flags.api_key.clone(),
         headers: parse_headers(&flags.headers)?,
@@ -881,6 +893,8 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             &benchmark_id,
             &endpoint_type,
             &primary_model,
+            inputs.otel_provider.as_deref(),
+            &inputs.otel_resource_attributes,
         ));
     }
     export.mlflow = crate::model::export::MlflowExport::build(&inputs.mlflow, &benchmark_id);
@@ -1229,6 +1243,18 @@ fn build_video_spec(flags: &ProfileFlags) -> Option<VideoSpec> {
 }
 
 /// Parse `--model-selection-strategy`.
+/// Parse `k<sep>v` pairs (e.g. `env:prod`, `svc=aiperf`) into ordered tuples.
+fn parse_kv(items: &[String], sep: char) -> anyhow::Result<Vec<(String, String)>> {
+    items
+        .iter()
+        .map(|item| {
+            item.split_once(sep)
+                .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+                .ok_or_else(|| anyhow::anyhow!("invalid {sep}-separated pair {item:?}"))
+        })
+        .collect()
+}
+
 /// Parse a duration into seconds, mirroring Python `loader/duration.py`:
 /// a bare number is seconds; `Ns`/`Nm`/`Nh` are seconds/minutes/hours; `inf` is
 /// infinity. Used by the YAML duration fields (they accept e.g. `30s`, `5m`).
