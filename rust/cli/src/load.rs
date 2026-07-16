@@ -1220,6 +1220,20 @@ pub(crate) fn default_media_dim() -> Distribution {
 }
 
 /// Build the synthetic image spec when any `--image-*` flag is set.
+/// Default a media `batch_size` per Python `_apply_implicit_media_batch`
+/// (`_converter_dataset.py`): an explicit `--*-batch-size` wins; otherwise a
+/// *shape* trigger flag (width/height/length/duration/fps/synth-type/source/…,
+/// but NOT format or codec) defaults it to 1; otherwise it stays 0. This is why
+/// `--video-codec`/`--image-format` alone build the media spec but keep
+/// `batch_size = 0`.
+fn implicit_media_batch(explicit: Option<u32>, shape_trigger: bool) -> u32 {
+    match explicit {
+        Some(b) => b,
+        None if shape_trigger => 1,
+        None => 0,
+    }
+}
+
 fn build_image_spec(flags: &ProfileFlags) -> Option<ImageSpec> {
     let any = flags.image_width_mean.is_some()
         || flags.image_height_mean.is_some()
@@ -1239,7 +1253,15 @@ fn build_image_spec(flags: &ProfileFlags) -> Option<ImageSpec> {
         None => default_media_dim(),
     };
     Some(ImageSpec {
-        batch_size: flags.image_batch_size.unwrap_or(1),
+        batch_size: implicit_media_batch(
+            flags.image_batch_size,
+            flags.image_width_mean.is_some()
+                || flags.image_width_stddev.is_some()
+                || flags.image_height_mean.is_some()
+                || flags.image_height_stddev.is_some()
+                || flags.image_source.is_some()
+                || flags.image_source_sampling.is_some(),
+        ),
         format: flags
             .image_format
             .clone()
@@ -1485,7 +1507,10 @@ fn build_audio_spec(flags: &ProfileFlags) -> Option<AudioSpec> {
             .collect()
     };
     Some(AudioSpec {
-        batch_size: flags.audio_batch_size.unwrap_or(1),
+        batch_size: implicit_media_batch(
+            flags.audio_batch_size,
+            flags.audio_length_mean.is_some() || flags.audio_length_stddev.is_some(),
+        ),
         channels: flags.audio_num_channels.unwrap_or(1),
         depths: if flags.audio_depths.is_empty() {
             vec![16]
@@ -1524,7 +1549,14 @@ fn build_video_spec(flags: &ProfileFlags) -> Option<VideoSpec> {
                 .map(|r| r / 1000.0)
                 .unwrap_or(44.1),
         },
-        batch_size: flags.video_batch_size.unwrap_or(1),
+        batch_size: implicit_media_batch(
+            flags.video_batch_size,
+            flags.video_width.is_some()
+                || flags.video_height.is_some()
+                || flags.video_duration.is_some()
+                || flags.video_fps.is_some()
+                || flags.video_synth_type.is_some(),
+        ),
         codec: flags
             .video_codec
             .clone()
