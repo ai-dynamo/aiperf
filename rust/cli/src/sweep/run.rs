@@ -31,6 +31,7 @@ pub struct Cell {
 /// `sweep_id` is a caller-supplied stable id (one per plan). Each cell clones the
 /// base flags, applies the variation overrides, resolves the single-run request,
 /// and stamps the sweep envelope + artifact dir + seed.
+#[allow(clippy::too_many_arguments)]
 pub fn plan_cells(
     base_flags: &ProfileFlags,
     expansion: &Expansion,
@@ -38,6 +39,7 @@ pub fn plan_cells(
     order: IterationOrder,
     sweep_id: &str,
     base_seed: u64,
+    disable_warmup_after_first: bool,
     resolve: impl Fn(&ProfileFlags) -> anyhow::Result<BenchmarkRun>,
 ) -> anyhow::Result<Vec<Cell>> {
     let mut cells = Vec::new();
@@ -61,7 +63,12 @@ pub fn plan_cells(
                 trial,
                 order,
             );
-            stamp(&mut run, expansion, variation, trial, sweep_id, base_seed, &dir);
+            stamp(&mut run, variation, trial, sweep_id, base_seed, &dir);
+            // `disable_warmup_after_first` drops the warmup phase on every trial
+            // past the first (Python `BenchmarkPlan.disable_warmup_after_first`).
+            if trial > 0 && disable_warmup_after_first {
+                drop_warmup(&mut run);
+            }
             cells.push(Cell {
                 index: variation.index,
                 trial,
@@ -73,30 +80,58 @@ pub fn plan_cells(
     Ok(cells)
 }
 
+/// Render a variation's rendered scalar back to its config-typed JSON: an integer
+/// text (`"10"`) becomes a JSON integer, a fractional text (`"2.0"`) a JSON float
+/// — matching Python `SweepVariation.values` holding the config-typed value.
+fn axis_value_json(rendered: &str) -> serde_json::Value {
+    if !rendered.contains('.')
+        && let Ok(i) = rendered.parse::<i64>()
+    {
+        return serde_json::Value::from(i);
+    }
+    if let Ok(f) = rendered.parse::<f64>() {
+        return serde_json::Value::from(f);
+    }
+    serde_json::Value::String(rendered.to_string())
+}
+
+/// Remove the warmup phase from a run's `cfg.phases` (used for trials past the
+/// first when `disable_warmup_after_first` is set).
+fn drop_warmup(run: &mut BenchmarkRun) {
+    if let Some(phases) = run.cfg.phases.as_mut() {
+        phases.retain(|p| p.common.name != "warmup");
+    }
+}
+
 /// Stamp the sweep envelope onto a per-cell run.
+///
+/// Every cell in a sweep *or* a multi-run plan carries `sweep_id`, `variation`,
+/// and `random_seed` — the Python orchestrator assigns a fresh `sweep_id` even to
+/// a non-sweep single-variation plan (a "sweep of size 1"), and stamps the base
+/// variation (`{index:0,label:"base",values:{}}`) onto each trial. Values render
+/// as their config-typed JSON: an integer axis is a JSON number, a float axis a
+/// JSON float. `plan_cells` only enters this path for a real sweep or `trials>1`,
+/// so unconditional stamping is correct.
 fn stamp(
     run: &mut BenchmarkRun,
-    expansion: &Expansion,
     variation: &Variation,
     trial: u32,
     sweep_id: &str,
     base_seed: u64,
     dir: &std::path::Path,
 ) {
-    if expansion.is_sweep {
-        run.sweep_id = Some(sweep_id.to_string());
-        let values: serde_json::Map<String, serde_json::Value> = variation
-            .values
-            .iter()
-            .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-            .collect();
-        run.variation = Some(serde_json::json!({
-            "index": variation.index,
-            "label": variation.label,
-            "values": values,
-        }));
-        run.random_seed = Some(base_seed + variation.index as u64);
-    }
+    run.sweep_id = Some(sweep_id.to_string());
+    let values: serde_json::Map<String, serde_json::Value> = variation
+        .values
+        .iter()
+        .map(|(k, v)| (k.clone(), axis_value_json(v)))
+        .collect();
+    run.variation = Some(serde_json::json!({
+        "index": variation.index,
+        "label": variation.label,
+        "values": values,
+    }));
+    run.random_seed = Some(base_seed + variation.index as u64);
     run.trial = trial;
     run.artifact_dir = dir.to_path_buf();
     if let Some(cfg_artifacts) = run.cfg.artifacts.as_mut() {

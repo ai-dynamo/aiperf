@@ -93,6 +93,31 @@ pub struct ProfileFlags {
     #[arg(long = "no-sweep-table", default_value_t = false)]
     pub no_sweep_table: bool,
 
+    /// Trials per variation (`--num-profile-runs`); `>1` repeats each run.
+    #[arg(long = "num-profile-runs")]
+    pub num_profile_runs: Option<u32>,
+
+    /// Trial iteration order (`--parameter-sweep-mode`): `repeated` (trials outer,
+    /// default) or `independent` (variations outer).
+    #[arg(long = "parameter-sweep-mode", default_value = "repeated")]
+    pub parameter_sweep_mode: String,
+
+    /// Seconds to wait between trials/variations (`--profile-run-cooldown-seconds`).
+    #[arg(long = "profile-run-cooldown-seconds")]
+    pub profile_run_cooldown_seconds: Option<f64>,
+
+    /// Keep the warmup phase on trials after the first
+    /// (`--no-profile-run-disable-warmup-after-first`); default drops it.
+    #[arg(
+        long = "profile-run-disable-warmup-after-first",
+        default_value_t = true,
+        overrides_with = "no_profile_run_disable_warmup_after_first"
+    )]
+    pub profile_run_disable_warmup_after_first: bool,
+    /// Inverse of the above (keep warmup on every trial).
+    #[arg(long = "no-profile-run-disable-warmup-after-first")]
+    pub no_profile_run_disable_warmup_after_first: bool,
+
     /// Mean turns per session for multi-turn (`--session-turns-mean`).
     #[arg(long = "session-turns-mean", visible_alias = "conversation-turn-mean")]
     pub session_turns_mean: Option<f64>,

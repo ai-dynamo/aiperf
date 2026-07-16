@@ -45,10 +45,16 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         other => anyhow::bail!("unknown --sweep-type {other:?} (grid/zip)"),
     };
     let expansion = sweep::expand(&flags, sweep_type)?;
-    if !expansion.is_sweep {
+    let trials = flags.num_profile_runs.unwrap_or(1).max(1);
+    if !expansion.is_sweep && trials <= 1 {
         return run_single(load::resolve(&flags)?);
     }
-    run_sweep(&flags, &expansion)
+    let order = match flags.parameter_sweep_mode.as_str() {
+        "independent" => IterationOrder::Independent,
+        "repeated" => IterationOrder::Repeated,
+        other => anyhow::bail!("unknown --parameter-sweep-mode {other:?} (repeated/independent)"),
+    };
+    run_sweep(&flags, &expansion, trials, order)
 }
 
 /// Execute one built run through the runner and map its terminal outcome, echoing
@@ -84,24 +90,41 @@ fn run_single(run: crate::model::BenchmarkRun) -> anyhow::Result<i32> {
 
 /// Execute a sweep: run every `(variation, trial)` cell in turn, then render the
 /// sweep table and write the aggregate artifacts.
-fn run_sweep(flags: &ProfileFlags, expansion: &sweep::Expansion) -> anyhow::Result<i32> {
+fn run_sweep(
+    flags: &ProfileFlags,
+    expansion: &sweep::Expansion,
+    trials: u32,
+    order: IterationOrder,
+) -> anyhow::Result<i32> {
     let sweep_id = uuid::Uuid::new_v4().simple().to_string();
     let base_seed = flags.random_seed.unwrap_or(sweep_run::DEFAULT_SWEEP_SEED);
+    let disable_warmup = !flags.no_profile_run_disable_warmup_after_first
+        && flags.profile_run_disable_warmup_after_first;
     let cells = sweep_run::plan_cells(
         flags,
         expansion,
-        1, // trials; multi-run trial repetition is a follow-up
-        IterationOrder::Repeated,
+        trials,
+        order,
         &sweep_id,
         base_seed,
+        disable_warmup,
         load::resolve,
     )?;
 
     let runner = runner_install::resolve()?;
     let child_pid = crate::signals::install();
-    eprintln!("aiperf: sweep of {} runs", cells.len());
+    let cooldown = flags
+        .profile_run_cooldown_seconds
+        .filter(|s| *s > 0.0)
+        .map(std::time::Duration::from_secs_f64);
+    eprintln!("aiperf: {} runs ({trials} trial(s))", cells.len());
     let mut outcomes = Vec::new();
     for (n, cell) in cells.iter().enumerate() {
+        if let Some(d) = cooldown
+            && n > 0
+        {
+            std::thread::sleep(d);
+        }
         eprintln!(
             "aiperf: [{}/{}] {} -> {}",
             n + 1,
@@ -119,6 +142,8 @@ fn run_sweep(flags: &ProfileFlags, expansion: &sweep::Expansion) -> anyhow::Resu
             artifact_dir: cell.run.artifact_dir.clone(),
             report_path: terminal.report_path.clone(),
             success: terminal.success,
+            trial: cell.trial,
+            error: terminal.error.clone(),
         });
         if !terminal.success {
             eprintln!(

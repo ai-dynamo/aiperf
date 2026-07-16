@@ -121,6 +121,7 @@ dependencies = [
  "aiperf",
  "anyhow",
  "clap",
+ "nix 0.29.0",
  "serde",
  "serde_json",
  "serde_yaml",

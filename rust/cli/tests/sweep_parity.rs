@@ -32,6 +32,16 @@ const SWEEP_FIXTURES: &[(&str, sweep::SweepType)] = &[
     ("sweep_zip", sweep::SweepType::Zip),
 ];
 
+/// Multi-run (`--num-profile-runs N`) fixtures: `(name, sweep_type, trials)`.
+/// Trial iteration order defaults to REPEATED (Python `parameter_sweep_mode`).
+const MULTI_FIXTURES: &[(&str, sweep::SweepType, u32)] = &[
+    // No sweep, 2 trials: `profile_runs/run_000{1,2}`, both seed 42.
+    ("multi_run", sweep::SweepType::Grid, 2),
+    // Sweep x 2 trials (REPEATED): `profile_runs/trial_000{1,2}/concurrency_{2,4}`,
+    // seeds 42/43 (base + variation.index, constant across trials).
+    ("sweep_multi", sweep::SweepType::Grid, 2),
+];
+
 #[test]
 fn sweep_cells_match_oracle() {
     for (name, sweep_type) in SWEEP_FIXTURES {
@@ -49,7 +59,8 @@ fn sweep_cells_match_oracle() {
             IterationOrder::Repeated,
             "parity-sweep",
             run::DEFAULT_SWEEP_SEED,
-            |f| load::resolve(f),
+            true,
+            load::resolve,
         )
         .unwrap_or_else(|e| panic!("[{name}] plan_cells: {e}"));
 
@@ -77,6 +88,73 @@ fn sweep_cells_match_oracle() {
                 "[{name}] cell {i} random_seed"
             );
             let built = serde_json::to_value(&cell.run).expect("serialize");
+            for section in ported {
+                assert_eq!(
+                    built["cfg"][section], want["request"]["run"]["cfg"][section],
+                    "[{name}] cell {i} cfg.{section} diverges\n got {:#}\nwant {:#}",
+                    built["cfg"][section], want["request"]["run"]["cfg"][section]
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn multi_run_cells_match_oracle() {
+    for (name, sweep_type, trials) in MULTI_FIXTURES {
+        let golden = load_golden(name);
+        let cells_g = golden["cells"].as_array().expect("cells array");
+        assert_eq!(
+            golden["trials"].as_u64(),
+            Some(*trials as u64),
+            "[{name}] golden trials",
+        );
+
+        let flags = ProfileFlags::parse_from_args(&fixture_args(name))
+            .unwrap_or_else(|e| panic!("[{name}] flags: {e}"));
+        let expansion = sweep::expand(&flags, *sweep_type)
+            .unwrap_or_else(|e| panic!("[{name}] expand: {e}"));
+        let cells = run::plan_cells(
+            &flags,
+            &expansion,
+            *trials,
+            IterationOrder::Repeated,
+            "parity-sweep",
+            run::DEFAULT_SWEEP_SEED,
+            true,
+            load::resolve,
+        )
+        .unwrap_or_else(|e| panic!("[{name}] plan_cells: {e}"));
+
+        assert_eq!(
+            cells.len(),
+            cells_g.len(),
+            "[{name}] cell count: got {} want {}",
+            cells.len(),
+            cells_g.len()
+        );
+
+        let ported = ["phases", "datasets", "endpoint", "models", "runtime", "metrics"];
+        for (i, (cell, want)) in cells.iter().zip(cells_g).enumerate() {
+            assert_eq!(cell.trial, want["trial"].as_u64().unwrap() as u32, "[{name}] cell {i} trial");
+            assert_eq!(
+                cell.run.artifact_dir.to_str().unwrap(),
+                want["artifact_dir"].as_str().unwrap(),
+                "[{name}] cell {i} artifact_dir"
+            );
+            assert_eq!(
+                cell.run.random_seed,
+                want["random_seed"].as_u64(),
+                "[{name}] cell {i} random_seed"
+            );
+            let built = serde_json::to_value(&cell.run).expect("serialize");
+            // Sweep envelope (sweep_id/variation/trial) is stamped on every cell,
+            // including the non-sweep multi-run base variation.
+            assert_eq!(
+                built["variation"], want["request"]["run"]["variation"],
+                "[{name}] cell {i} variation diverges\n got {:#}\nwant {:#}",
+                built["variation"], want["request"]["run"]["variation"]
+            );
             for section in ported {
                 assert_eq!(
                     built["cfg"][section], want["request"]["run"]["cfg"][section],
