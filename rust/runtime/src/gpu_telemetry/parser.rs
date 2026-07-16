@@ -9,6 +9,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::gpu_telemetry::custom_metrics::CustomDcgmField;
 use crate::gpu_telemetry::fields::dcgm_metric_spec;
 use crate::gpu_telemetry::model::{GpuMetadata, GpuScrape, GpuTelemetryRecord};
 use crate::gpu_telemetry::source::GpuTelemetryError;
@@ -25,8 +26,28 @@ pub trait GpuTelemetryDecoder {
 }
 
 /// Decoder for the Prometheus text emitted by NVIDIA's DCGM exporter.
+///
+/// Beyond the built-in [`DCGM_METRICS`](crate::gpu_telemetry::fields::DCGM_METRICS)
+/// catalog, the decoder honors an optional `source_field -> `
+/// [`CustomDcgmField`] map loaded from a `--gpu-telemetry` metrics CSV so extra
+/// exporter fields (e.g. `DCGM_FI_DEV_SM_CLOCK`) are extracted and named. Built-in
+/// fields always take precedence, so a custom row can never shadow a default.
 #[derive(Debug, Default)]
-pub struct DcgmPrometheusDecoder;
+pub struct DcgmPrometheusDecoder {
+    custom_fields: BTreeMap<String, CustomDcgmField>,
+}
+
+impl DcgmPrometheusDecoder {
+    /// Builds a decoder with only the built-in DCGM field catalog.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Builds a decoder that also extracts the supplied custom DCGM fields.
+    pub fn with_custom_fields(custom_fields: BTreeMap<String, CustomDcgmField>) -> Self {
+        Self { custom_fields }
+    }
+}
 
 #[derive(Debug, Default)]
 struct PendingGpu {
@@ -65,15 +86,20 @@ impl GpuTelemetryDecoder for DcgmPrometheusDecoder {
                 continue;
             };
             let base_name = sample.name.strip_suffix("_total").unwrap_or(&sample.name);
-            let Some(spec) = dcgm_metric_spec(base_name) else {
+            // Built-in fields win over custom CSV rows so a custom entry can
+            // never shadow a default mapping (Python dedups the same way).
+            let (name, scale): (&str, f64) = if let Some(spec) = dcgm_metric_spec(base_name) {
+                (spec.name, spec.scale)
+            } else if let Some(custom) = self.custom_fields.get(base_name) {
+                (custom.name.as_str(), custom.scale)
+            } else {
                 continue;
             };
             let gpu = by_gpu.entry(gpu_index).or_default();
             if gpu.labels.is_empty() {
                 gpu.labels = sample.labels;
             }
-            gpu.metrics
-                .insert(spec.name.to_string(), sample.value * spec.scale);
+            gpu.metrics.insert(name.to_string(), sample.value * scale);
         }
 
         let records = by_gpu
@@ -247,7 +273,7 @@ DCGM_FI_DEV_POWER_VIOLATION_total{gpu="0",UUID="GPU-a",modelName="H100"} 2000
 DCGM_FI_DEV_POWER_USAGE{gpu="bad",UUID="ignored"} 1
 DCGM_FI_DEV_GPU_UTIL{gpu="1",UUID="GPU-b",modelName="H200"} NaN
 "#;
-        let scrape = DcgmPrometheusDecoder
+        let scrape = DcgmPrometheusDecoder::new()
             .decode("http://dcgm/metrics", 42, body)
             .unwrap();
         assert_eq!(scrape.records.len(), 1);
@@ -264,13 +290,13 @@ DCGM_FI_DEV_GPU_UTIL{gpu="1",UUID="GPU-b",modelName="H200"} NaN
     #[test]
     fn decoder_handles_escaped_labels_and_rejects_malformed_samples() {
         let body = r#"DCGM_FI_DEV_POWER_USAGE{gpu="0",UUID="GPU-\"a",modelName="H100\\SXM"} 1"#;
-        let scrape = DcgmPrometheusDecoder
+        let scrape = DcgmPrometheusDecoder::new()
             .decode("http://dcgm/metrics", 1, body)
             .unwrap();
         assert_eq!(scrape.records[0].metadata.gpu_uuid, "GPU-\"a");
         assert_eq!(scrape.records[0].metadata.gpu_model_name, "H100\\SXM");
 
-        let error = DcgmPrometheusDecoder
+        let error = DcgmPrometheusDecoder::new()
             .decode(
                 "http://dcgm/metrics",
                 1,

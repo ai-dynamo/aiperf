@@ -37,7 +37,7 @@ fn all_gpu_configs_have_a_parametrized_test() {
 }
 
 fn decode(text: &str) -> Vec<GpuTelemetryRecord> {
-    let scrape = DcgmPrometheusDecoder
+    let scrape = DcgmPrometheusDecoder::new()
         .decode("http://fake", 0, text)
         .expect("faker output should decode");
     scrape.records

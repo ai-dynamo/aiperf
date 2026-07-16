@@ -11,6 +11,7 @@
 
 pub mod accumulator;
 pub mod collector;
+pub mod custom_metrics;
 pub mod fields;
 pub mod model;
 pub mod parser;
@@ -20,6 +21,9 @@ pub mod source;
 pub use accumulator::{
     GpuMergeError, GpuMetricRegistrationError, GpuPhaseBoundary, GpuTelemetryAccumulator,
     GpuTelemetrySummary,
+};
+pub use custom_metrics::{
+    CustomDcgmField, CustomMetricsError, LoadedCustomMetrics, load_custom_dcgm_metrics,
 };
 pub use collector::GpuTelemetryCollector;
 pub use fields::{

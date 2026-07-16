@@ -118,7 +118,7 @@ impl DcgmTelemetrySource {
             clock,
             transport,
             endpoint_url,
-            Rc::new(DcgmPrometheusDecoder),
+            Rc::new(DcgmPrometheusDecoder::new()),
         )
     }
 
