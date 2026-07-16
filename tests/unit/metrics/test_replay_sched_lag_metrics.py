@@ -186,7 +186,7 @@ class TestInjectReplaySchedDegraded:
 
         assert results[ReplaySchedDegradedMetric.tag].avg == 1.0
         assert len(calls) == 1
-        p50, p90, p99 = calls[0]
+        _p50, _p90, p99 = calls[0]
         assert p99 == pytest.approx(600.0)
 
     def test_warn_degraded_not_called_when_healthy(self) -> None:

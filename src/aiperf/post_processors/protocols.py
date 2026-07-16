@@ -3,13 +3,13 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.common.protocols import AIPerfLifecycleProtocol
 
 if TYPE_CHECKING:
-    from aiperf.common.models.record_models import MetricRecordMetadata
+    from aiperf.common.models.record_models import MetricRecordMetadata, RecordData
     from aiperf.post_processors.record_observer_context import RecordObserverContext
 
 
@@ -20,7 +20,7 @@ class RecordProcessorProtocol(AIPerfLifecycleProtocol, Protocol):
 
     async def process_record(
         self, record: ParsedResponseRecord, metadata: MetricRecordMetadata
-    ) -> Any: ...
+    ) -> RecordData | None: ...
 
 
 @runtime_checkable

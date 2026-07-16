@@ -50,8 +50,15 @@ class LoadedAnalyzer:
     """
 
     analyzer: AnalyzerProtocol
+    """The instantiated analyzer plugin."""
+
     required_accumulators: list[str] = field(default_factory=list)
+    """AccumulatorType names whose LIVE instance the analyzer queries via
+    ``SummaryContext.get_accumulator``."""
+
     required_summaries: list[str] = field(default_factory=list)
+    """AccumulatorType names whose SUMMARY output the analyzer reads via
+    ``SummaryContext.get_output``."""
 
 
 class _LoaderHost(Protocol):

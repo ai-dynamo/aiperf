@@ -64,9 +64,9 @@ __all__ = ["Environment"]
 class _AccuracySettings(BaseSettings):
     """Accuracy benchmark settings.
 
-    Tunables for the accuracy benchmark loaders. Currently only pins the
-    LiveCodeBench dataset release so accuracy numbers are reproducible
-    across runs without requiring source edits.
+    Tunables for accuracy benchmarking: the cancel-path result-wait timeout and
+    the LiveCodeBench dataset release pin, so accuracy behavior and numbers are
+    reproducible across runs without requiring source edits.
     """
 
     model_config = SettingsConfigDict(env_prefix="AIPERF_ACCURACY_")

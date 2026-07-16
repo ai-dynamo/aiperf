@@ -26,7 +26,11 @@ class InferenceResultsMessage(BaseServiceMessage):
 class MetricRecordsData(RecordData):
     """Incoming data from the record processor service to combine metric records for the profile run."""
 
-    record_type: Literal["metric_records"] = "metric_records"
+    record_type: Literal["metric_records"] = Field(
+        default="metric_records",
+        description="Serialized discriminator routing this record to the "
+        "metric_records channel for wire reconstruction.",
+    )
 
     metadata: MetricRecordMetadata = Field(
         ..., description="The metadata of the request record."

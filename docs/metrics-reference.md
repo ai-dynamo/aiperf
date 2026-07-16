@@ -1970,8 +1970,7 @@ energy_per_user_j = total_gpu_energy / concurrency
 **Notes:**
 - Unit: `joules/user`.
 - Flagged `MetricFlags.NONE` — smaller-is-better is the default for unflagged metrics.
-- Denominator is the profiling phase's configured `concurrency`. The resolver defaults this to `1` when `--concurrency` isn't specified in concurrency-mode runs, so the metric is emitted in the common case.
-- Denominator is the profiling phase's configured `concurrency` (`run.cfg.get_profiling_phases()[0].concurrency`).
+- Denominator is the profiling phase's configured `concurrency` (`run.cfg.get_profiling_phases()[0].concurrency`). The resolver defaults this to `1` when `--concurrency` isn't specified in concurrency-mode runs, so the metric is emitted in the common case.
 - Omitted when concurrency is unset (e.g. pure `--request-rate` mode) or aggregate GPU energy is unavailable.
 
 ---

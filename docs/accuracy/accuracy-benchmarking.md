@@ -437,8 +437,9 @@ reasoning model thought before an `unparsed` answer.
 ```mermaid
 flowchart LR
     DL[AccuracyDatasetLoader] -->|Conversation/Turn objects| RP[AccuracyRecordProcessor<br/>grades each response]
-    RP -->|AccuracyRecordsData<br/>on the accuracy channel| ACC[AccuracyAccumulator<br/>per-task AccuracySummary]
-    RP -->|AccuracyRecordsData| JW[AccuracyJSONLWriter<br/>accuracy_export.jsonl]
+    RP -->|AccuracyRecordsData<br/>in RecordsMessage| RM[RecordsManager<br/>metadata-driven routing]
+    RM --> ACC[AccuracyAccumulator<br/>per-task AccuracySummary]
+    RM --> JW[AccuracyJSONLWriter<br/>accuracy_export.jsonl]
     ACC --> CE[AccuracyConsoleExporter<br/>Rich table]
     ACC --> DE[AccuracyDataExporter<br/>accuracy_results.csv]
 ```

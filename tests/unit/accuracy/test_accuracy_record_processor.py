@@ -9,6 +9,7 @@ from aiperf.accuracy.accuracy_record_processor import AccuracyRecordProcessor
 from aiperf.accuracy.models import AccuracyRecordsData, GradingResult
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models.dataset_models import ConversationMetadata, DatasetMetadata
+from aiperf.common.models.record_models import ParsedResponse, ParsedResponseRecord
 from aiperf.config import BenchmarkRun
 from aiperf.plugin.enums import (
     AccuracyBenchmarkType,
@@ -292,12 +293,7 @@ class TestExtractOutputAndThinking:
     """`_extract_output_and_thinking` splits answer content from reasoning."""
 
     @staticmethod
-    def _record(data_list: list) -> "object":
-        from aiperf.common.models.record_models import (
-            ParsedResponse,
-            ParsedResponseRecord,
-        )
-
+    def _record(data_list: list[str]) -> ParsedResponseRecord:
         record = MagicMock(spec=ParsedResponseRecord)
         record.content_responses = [
             ParsedResponse(perf_ns=i, data=d) for i, d in enumerate(data_list)

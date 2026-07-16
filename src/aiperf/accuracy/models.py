@@ -91,7 +91,11 @@ class AccuracyRecordsData(RecordData):
     boundary; the routing layer still reads it via ``getattr(record, "record_type")``.
     """
 
-    record_type: Literal["accuracy"] = "accuracy"
+    record_type: Literal["accuracy"] = Field(
+        default="accuracy",
+        description="Serialized discriminator routing this record to the accuracy "
+        "channel for wire reconstruction.",
+    )
 
     session_num: int = Field(
         ge=0,

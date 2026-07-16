@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from aiperf.common.messages.inference_messages import MetricRecordsData
 
 if TYPE_CHECKING:
     from aiperf.common.models import MetricRecordMetadata, ParsedResponseRecord
+    from aiperf.common.models.record_models import RecordData
 
 # The record_type channel the metric producer declares in plugins.yaml, which is
 # also the key the RecordProcessorService groups its output under in ``produced``.
@@ -29,15 +30,15 @@ class RecordObserverContext:
     metadata: MetricRecordMetadata
     """The metric record metadata for this record."""
 
-    produced: dict[str, list[Any]]
+    produced: dict[str, list[RecordData]]
     """Producer outputs keyed by declared record_type. Read-only by contract:
     the wire payload is snapshotted before observers run, so mutating this cannot
     change what RecordsManager ingests.
 
-    e.g. ``{"metric_records": [MetricRecordDict], "accuracy": [AccuracyRecordsData]}``.
+    e.g. ``{"metric_records": [MetricRecordsData], "accuracy": [AccuracyRecordsData]}``.
     """
 
-    def get(self, record_type: str) -> list[Any]:
+    def get(self, record_type: str) -> list[RecordData]:
         """Return the producer outputs emitted on ``record_type`` (empty if none)."""
         return self.produced.get(record_type, [])
 

@@ -35,7 +35,10 @@ def _make_accuracy_record(session_num: int = 0) -> AccuracyRecordsData:
     )
 
 
-def _make_processor_mock(producers, observers=None):
+def _make_processor_mock(
+    producers: list[tuple[str, MagicMock]],
+    observers: list[MagicMock] | None = None,
+) -> MagicMock:
     """Build a RecordProcessor MagicMock wired for the 2-stage generic ship."""
     mock_self = MagicMock(spec=RecordProcessor)
     mock_self.service_id = "rp"
