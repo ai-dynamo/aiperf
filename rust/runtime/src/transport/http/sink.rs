@@ -13,6 +13,7 @@
 //! and preserve the full-send timer invariant.
 
 use std::cell::{Cell, RefCell};
+#[cfg(test)]
 use std::collections::BTreeMap;
 use std::rc::Rc;
 

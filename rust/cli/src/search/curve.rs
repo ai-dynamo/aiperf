@@ -16,7 +16,7 @@
 //! numpy's to floating-point rounding — not guaranteed byte-identical (same
 //! caveat as the scipy-backed planner fits), but exact in algorithm.
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 use crate::search::extract::{extract_points, num};
 

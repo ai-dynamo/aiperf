@@ -26,7 +26,7 @@ use crate::graph::execution::{LocalGraphTraceExecutionBackend, TracePlacement};
 use crate::graph::materialize::SegmentItemsMaterializer;
 use crate::graph::model::{GraphTracePlan, LlmNode};
 use crate::graph::placement::{
-    GraphPlacementError, ThreadPerCoreTracePlacement, TracePlacementFactory,
+    GraphPlacementError, LocalTracePlacement, ThreadPerCoreTracePlacement, TracePlacementFactory,
 };
 use crate::graph::policy::{
     AbortTraceNodeFailurePolicy, CancellationNodePolicy, CompositeNodeDispatchPolicy,
@@ -40,9 +40,7 @@ use crate::multiturn::InputTokenCounter;
 use crate::rng::{RngRoot, namespace};
 use crate::timing::{BernoulliFixedDelay, SlotPool};
 use crate::transport::core::{Dispatcher, PreparedEndpointBinding, PreparedTurn, Request};
-#[cfg(feature = "grpc")]
-use crate::transport::grpc::GrpcBindingRegistry;
-use crate::transport::http::{PreparedEndpointReference, TransportSink, TransportSinkConfig};
+use crate::transport::http::{PreparedEndpointReference, TransportSinkConfig};
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -53,8 +51,6 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::engine::execute::DEFAULT_ENDPOINT_PROFILE_ID;
-#[cfg(feature = "grpc")]
-use crate::engine::grpc_turn_execution::grpc_sink_with_endpoints;
 use crate::engine::records::{CapturedHttpExchange, CapturedModelOutput, CapturedRecord};
 use crate::engine::registry::{NativeTransportExecution, ValidatedEndpointProfileV2};
 
@@ -213,6 +209,32 @@ impl GraphPlacementFactory for NativeRunnerGraphPlacementFactory {
             worker_count,
             worker_factory,
         )?))
+    }
+
+    fn requires_node_records(&self) -> bool {
+        true
+    }
+}
+
+/// Single-reactor whole-trace placement factory: builds a [`LocalTracePlacement`]
+/// that runs every trace inline on the caller's reactor with no worker threads.
+///
+/// This is the placement the virtual-clock (`dry_run` sim) path requires: a
+/// `SimClock` driven by `drive_sim` can only advance the one reactor it pumps, so
+/// the thread-per-core default — whose workers each own a private reactor — stalls
+/// the replay after the root node under sim. `worker_count` is ignored (a single
+/// reactor hosts every concurrently-`spawn_local`ed trace); node-record capture is
+/// identical to the thread-per-core placement.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct InlineGraphPlacementFactory;
+
+impl GraphPlacementFactory for InlineGraphPlacementFactory {
+    fn build(
+        &self,
+        _worker_count: usize,
+        worker_factory: Arc<dyn TracePlacementFactory>,
+    ) -> Result<Rc<dyn TracePlacement>, GraphPlacementError> {
+        Ok(Rc::new(LocalTracePlacement::new(worker_factory)?))
     }
 
     fn requires_node_records(&self) -> bool {
