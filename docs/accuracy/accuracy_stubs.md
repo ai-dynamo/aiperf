@@ -108,8 +108,16 @@ class AccuracyRecordsData(AIPerfBaseModel):
 ### AccuracySummary
 
 Structured accumulator result (replaces the old `list[MetricResult]`).
-`AccuracyAccumulator` builds it; the console/CSV exporters render from it.
-`to_csv()` emits per-task rows plus a trailing `OVERALL` row.
+`AccuracyAccumulator` builds it and `RecordsManager` publishes it in a
+`ProcessAccuracyResultMessage`. The accuracy exporters do **not** render from
+the `AccuracySummary` directly: `SystemController` materializes it back into
+legacy `accuracy.*` `MetricResult`s via `AccuracySummary.to_metric_results()`
+and injects them into `ProfileResults.records`
+(`SystemController._inject_accuracy_results_into_records`). The accuracy
+CSV/console exporters and the main perf CSV/JSON then read those injected
+`accuracy.*` records — this inject bridge is what keeps the exported files
+byte-identical to the pre-refactor output. (`to_csv()`/`to_json()` were removed;
+`to_metric_results()` is the only rendering path.)
 
 ```python
 class AccuracySummary(AIPerfBaseModel):
