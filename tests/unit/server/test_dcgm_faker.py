@@ -3,7 +3,7 @@
 """Unit tests for DCGMFaker using real telemetry parsing logic."""
 
 import pytest
-from aiperf_mock_server.dcgm_faker import (
+from tests.aiperf_mock_server.dcgm_faker import (
     GPU_CONFIGS,
     METRIC_MAPPINGS,
     DCGMFaker,

@@ -6,17 +6,17 @@ import os
 from unittest.mock import patch
 
 import pytest
-from aiperf_mock_server.app import asgi_app
-from aiperf_mock_server.config import MockServerConfig
-from aiperf_mock_server.dcgm_faker import GPU_CONFIGS, DCGMFaker
-from aiperf_mock_server.models import (
+from tests.aiperf_mock_server.app import asgi_app
+from tests.aiperf_mock_server.config import MockServerConfig
+from tests.aiperf_mock_server.dcgm_faker import GPU_CONFIGS, DCGMFaker
+from tests.aiperf_mock_server.models import (
     ChatCompletionRequest,
     CompletionRequest,
     EmbeddingRequest,
     Message,
     RankingRequest,
 )
-from aiperf_mock_server.tokens import TokenizedText
+from tests.aiperf_mock_server.tokens import TokenizedText
 from fastapi.testclient import TestClient
 
 pytestmark = pytest.mark.server_unit
@@ -33,7 +33,7 @@ def reset_config(monkeypatch):
     Uses fast=True for zero latency in tests.
     Sets config directly without env propagation to avoid polluting config tests.
     """
-    from aiperf_mock_server import config as config_module
+    from tests.aiperf_mock_server import config as config_module
 
     # Clear all MOCK_SERVER_* env vars before test
     for key in list(os.environ.keys()):
@@ -79,7 +79,7 @@ def test_client():
 @pytest.fixture
 def mock_server_config():
     """Mock server config with error_rate=0."""
-    with patch("aiperf_mock_server.utils.server_config") as config:
+    with patch("tests.aiperf_mock_server.utils.server_config") as config:
         config.error_rate = 0.0
         config.ttft = 20.0
         config.itl = 5.0

@@ -193,7 +193,7 @@ class TestRecordRequests:
         """The validator must collapse workers to 1 whenever recording is on —
         the recorder keeps per-request stats in-process, so a single uvicorn
         worker is the supported producer."""
-        from aiperf_mock_server.config import MockServerConfig
+        from tests.aiperf_mock_server.config import MockServerConfig
 
         cfg = MockServerConfig(record_requests="/tmp/anything.jsonl", workers=8)
         assert cfg.workers == 1
@@ -202,7 +202,7 @@ class TestRecordRequests:
         """Recording counts ISL with the real tokenizer, so disabling the
         tokenizer while requesting recording is incoherent and must fail
         fast — not crash later inside a request handler."""
-        from aiperf_mock_server.config import MockServerConfig
+        from tests.aiperf_mock_server.config import MockServerConfig
         from pydantic import ValidationError
 
         with pytest.raises(

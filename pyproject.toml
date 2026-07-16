@@ -148,6 +148,19 @@ dev = [
   "black>=25.1.0",
   "pre-commit>=4.2.0",
   "ruff>=0.14.0,<0.15.0",
+  # Runtime deps of the in-tree Python mock server (`tests/aiperf_mock_server`,
+  # imported by the test suite as `tests.aiperf_mock_server`). The mock is no
+  # longer pip-installed as its own package — the `aiperf-mock-server` command is
+  # the native Rust binary — so its Python import deps live here instead.
+  "fastapi>=0.104.1",
+  "uvicorn[standard]>=0.24.0",
+  "transformers>=4.56.0",
+  "pydantic>=2.5.0",
+  "pydantic-settings>=2.0.0",
+  "cyclopts>=3.0.0",
+  "orjson>=3.9.0",
+  "prometheus-client>=0.20.0",
+  "python-multipart>=0.0.7",
 ]
 botorch = [
   "optuna-integration>=3.6",
@@ -248,6 +261,7 @@ markers = [
     "network: marks tests that require network access",
     "requires_deepeval: tests that need the real deepeval install (i.e. the [accuracy] extras) — skipped when only the fake-deepeval harness is registered",
     "looptime: marks tests that use virtual event-loop time",
+    "e2e: marks operator UI end-to-end tests (Playwright-driven; auto-applied to tests/unit/operator/ui_e2e, skipped when Playwright is unavailable)",
 ]
 # Better console output
 console_output_style = "progress"

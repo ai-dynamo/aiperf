@@ -5,12 +5,12 @@
 import time
 
 import pytest
-from aiperf_mock_server.models import (
+from tests.aiperf_mock_server.models import (
     ChatCompletionRequest,
     CompletionRequest,
     Message,
 )
-from aiperf_mock_server.utils import (
+from tests.aiperf_mock_server.utils import (
     LatencySimulator,
     make_ctx,
     stream_chat_completion,
@@ -46,7 +46,7 @@ class TestWithErrorInjection:
 
     @pytest.mark.asyncio
     async def test_with_error_injection_no_error(self, monkeypatch):
-        monkeypatch.setattr("aiperf_mock_server.utils.server_config.error_rate", 0)
+        monkeypatch.setattr("tests.aiperf_mock_server.utils.server_config.error_rate", 0)
 
         @with_error_injection
         async def test_func():
@@ -57,8 +57,8 @@ class TestWithErrorInjection:
 
     @pytest.mark.asyncio
     async def test_with_error_injection_triggers_error(self, monkeypatch):
-        monkeypatch.setattr("aiperf_mock_server.utils.server_config.error_rate", 100)
-        monkeypatch.setattr("aiperf_mock_server.utils.random.random", lambda: 0.1)
+        monkeypatch.setattr("tests.aiperf_mock_server.utils.server_config.error_rate", 100)
+        monkeypatch.setattr("tests.aiperf_mock_server.utils.random.random", lambda: 0.1)
 
         @with_error_injection
         async def test_func():

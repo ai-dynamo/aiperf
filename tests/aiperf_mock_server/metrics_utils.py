@@ -10,10 +10,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from aiperf_mock_server.utils import RequestCtx
+    from tests.aiperf_mock_server.utils import RequestCtx
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf_mock_server.metrics import (
+from tests.aiperf_mock_server.metrics import (
     COMPLETION_TOKENS_TOTAL,
     # Dynamo decode metrics
     DYNAMO_DECODE_INFLIGHT_REQUESTS,

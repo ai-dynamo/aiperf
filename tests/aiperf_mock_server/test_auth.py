@@ -5,10 +5,10 @@ import logging
 import os
 
 import pytest
-from aiperf_mock_server import __main__ as mock_main
-from aiperf_mock_server import app as mock_app
-from aiperf_mock_server.app import InferenceAuthMiddleware
-from aiperf_mock_server.config import MockServerConfig, set_server_config
+from tests.aiperf_mock_server import __main__ as mock_main
+from tests.aiperf_mock_server import app as mock_app
+from tests.aiperf_mock_server.app import InferenceAuthMiddleware
+from tests.aiperf_mock_server.config import MockServerConfig, set_server_config
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.requests import Request
@@ -132,7 +132,7 @@ def test_serve_redacts_api_key_from_startup_logs(
 ) -> None:
     monkeypatch.setattr(mock_main.uvicorn, "run", lambda *args, **kwargs: None)
 
-    with caplog.at_level(logging.INFO, logger="aiperf_mock_server.__main__"):
+    with caplog.at_level(logging.INFO, logger="tests.aiperf_mock_server.__main__"):
         mock_main.serve(MockServerConfig(api_key="secret-key"))
 
     assert "secret-key" not in caplog.text
@@ -145,7 +145,7 @@ def test_set_server_config_redacts_api_key_from_debug_logs(
     original_config = mock_app.server_config
     original_env_value = os.environ.get("MOCK_SERVER_API_KEY")
     try:
-        with caplog.at_level(logging.DEBUG, logger="aiperf_mock_server.config"):
+        with caplog.at_level(logging.DEBUG, logger="tests.aiperf_mock_server.config"):
             set_server_config(MockServerConfig(api_key="secret-key"))
 
         assert os.environ["MOCK_SERVER_API_KEY"] == "secret-key"

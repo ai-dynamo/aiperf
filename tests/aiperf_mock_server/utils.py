@@ -15,18 +15,18 @@ from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 import orjson
-from aiperf_mock_server.config import server_config
+from tests.aiperf_mock_server.config import server_config
 
 if TYPE_CHECKING:
-    from aiperf_mock_server.config import MockServerConfig
-from aiperf_mock_server.metrics import DYNAMO_FRONTEND_DISCONNECTED_CLIENTS
-from aiperf_mock_server.metrics_utils import (
+    from tests.aiperf_mock_server.config import MockServerConfig
+from tests.aiperf_mock_server.metrics import DYNAMO_FRONTEND_DISCONNECTED_CLIENTS
+from tests.aiperf_mock_server.metrics_utils import (
     get_inflight_count,
     record_itl,
     record_streamed_token,
     record_ttft,
 )
-from aiperf_mock_server.models import (
+from tests.aiperf_mock_server.models import (
     ChatCompletionRequest,
     CohereRerankRequest,
     CompletionRequest,
@@ -38,8 +38,8 @@ from aiperf_mock_server.models import (
     SolidoRAGRequest,
     TGIGenerateRequest,
 )
-from aiperf_mock_server.request_recorder import get_global_recorder
-from aiperf_mock_server.tokens import (
+from tests.aiperf_mock_server.request_recorder import get_global_recorder
+from tests.aiperf_mock_server.tokens import (
     TokenizedText,
     _extract_osl_fingerprint,
     tokenize_request,
@@ -188,7 +188,7 @@ class LatencySimulator:
         self._cancelled = True
         cfg = self._cfg
         if cfg.scheduler_enabled:
-            from aiperf_mock_server.scheduler import get_scheduler
+            from tests.aiperf_mock_server.scheduler import get_scheduler
 
             sched = get_scheduler()
             if sched is not None:
@@ -224,7 +224,7 @@ class LatencySimulator:
         """Wait for TTFT (first token) or ITL (subsequent tokens)."""
         cfg = self._cfg
         if cfg.scheduler_enabled:
-            from aiperf_mock_server.scheduler import get_scheduler
+            from tests.aiperf_mock_server.scheduler import get_scheduler
 
             sched = get_scheduler()
             if sched is not None:
@@ -297,7 +297,7 @@ class LatencySimulator:
         """Wait for entire completion (TTFT + ITL * num_tokens)."""
         cfg = self._cfg
         if cfg.scheduler_enabled:
-            from aiperf_mock_server.scheduler import get_scheduler
+            from tests.aiperf_mock_server.scheduler import get_scheduler
 
             sched = get_scheduler()
             if sched is not None:

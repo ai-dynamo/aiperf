@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 import orjson
-from aiperf_mock_server.app import (
+from tests.aiperf_mock_server.app import (
     _build_chat_response_data,
     _build_cohere_ranking_response_data,
     _build_completion_response_data,
@@ -31,8 +31,8 @@ from aiperf_mock_server.app import (
     _compute_ranked_scores,
     _wait_for_processing,
 )
-from aiperf_mock_server.config import MockServerConfig
-from aiperf_mock_server.models import (
+from tests.aiperf_mock_server.config import MockServerConfig
+from tests.aiperf_mock_server.models import (
     ChatCompletionRequest,
     CohereRerankRequest,
     CompletionRequest,
@@ -44,7 +44,7 @@ from aiperf_mock_server.models import (
     SolidoRAGRequest,
     TGIGenerateRequest,
 )
-from aiperf_mock_server.utils import (
+from tests.aiperf_mock_server.utils import (
     RequestCtx,
     make_ctx,
     stream_chat_completion,

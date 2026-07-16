@@ -18,7 +18,7 @@
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
 		test coverage clean install install-app bundle-cli wheel docker docker-run first-time-setup \
 		ci-install check-mock-server-install \
-		test-verbose setup-venv install-mock-server test-ci test-all \
+		test-verbose setup-venv install-mock-server mock-server-native test-ci test-all \
 		integration-tests integration-tests-ci integration-tests-verbose integration-tests-ci-macos \
 		test-integration test-integration-ci test-integration-verbose test-integration-ci-macos \
 		test-component-integration test-component-integration-ci test-component-integration-verbose \
@@ -156,7 +156,7 @@ check-agent-files-sync: #? verify AGENTS.md, CLAUDE.md, .github/copilot-instruct
 coverage: #? run the tests and generate an html coverage report.
 	$(activate_venv) && pytest tests/unit -n auto --cov=src/aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not integration and not performance and not component_integration and not slow' $(args)
 
-install: install-app install-mock-server #? install the project and mock server in editable mode.
+install: install-app install-mock-server #? install the project (editable) and the native Rust mock-server command.
 
 install-app: bundle-cli #? install the project in editable mode and place the native `aiperf` binary on PATH.
 	$(activate_venv) && uv pip install -e ".[dev]"
@@ -202,11 +202,18 @@ docker-run: #? run the docker container.
 version: #? print the version of the project.
 	@PATH="$(UV_PATH):$(PATH)" uv version
 
-install-mock-server: #? install the mock server in editable mode.
-	$(activate_venv) && uv pip install -e "tests/aiperf_mock_server[dev]"
+mock-server-native: #? build the high-throughput native Rust `aiperf-mock-server` binary.
+	cargo build --release -p aiperf-mock-server
 
-check-mock-server-install: #? verify the mock server package and CLI entry point are installed.
-	$(activate_venv) && python -c "import aiperf_mock_server" && command -v aiperf-mock-server >/dev/null
+install-mock-server: mock-server-native #? install the native Rust `aiperf-mock-server` command on the venv PATH.
+	# The mock server is the native Rust binary (crate `aiperf-mock-server`). Place
+	# it on the venv PATH as `aiperf-mock-server`, mirroring how `install-app` puts
+	# the native `aiperf` binary on PATH.
+	cp target/release/aiperf-mock-server $(VENV_PATH)/bin/aiperf-mock-server
+	chmod +x $(VENV_PATH)/bin/aiperf-mock-server
+
+check-mock-server-install: #? verify the native `aiperf-mock-server` command is installed and runnable.
+	$(activate_venv) && command -v aiperf-mock-server >/dev/null && aiperf-mock-server --help >/dev/null
 
 clean: #? clean up the pytest and ruff caches, coverage reports, and *.pyc files.
 	rm -rf .pytest_cache/

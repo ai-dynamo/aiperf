@@ -3,12 +3,12 @@
 """Unit tests for tokens module."""
 
 import pytest
-from aiperf_mock_server.models import (
+from tests.aiperf_mock_server.models import (
     ChatCompletionRequest,
     CompletionRequest,
     Message,
 )
-from aiperf_mock_server.tokens import (
+from tests.aiperf_mock_server.tokens import (
     TokenizedText,
     _generate_seed,
     _tokenize,

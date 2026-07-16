@@ -17,7 +17,7 @@ import sys
 from dataclasses import dataclass
 
 import pytest
-from aiperf_mock_server.config import MockServerConfig
+from tests.aiperf_mock_server.config import MockServerConfig
 
 from aiperf.plugin.enums import ArrivalPattern
 from tests.component_integration.conftest import (
