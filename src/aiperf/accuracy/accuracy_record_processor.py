@@ -68,16 +68,16 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
         Builds the ordered list of ground-truth answers from ConversationMetadata
         so that process_record can grade without re-loading the benchmark.
         """
-        self._ground_truths = [
-            c.accuracy_ground_truth
-            for c in metadata.conversations
-            if c.accuracy_ground_truth is not None
+        # Build ground-truth and task lists from the SAME graded conversations so
+        # they stay index-aligned. Filtering tasks independently (dropping the
+        # label-less ones) would shift the modulo and mismap records to the wrong
+        # task whenever only some conversations carry an accuracy_task label. A
+        # graded conversation with no task label keeps a None entry here.
+        graded = [
+            c for c in metadata.conversations if c.accuracy_ground_truth is not None
         ]
-        self._tasks = [
-            c.accuracy_task
-            for c in metadata.conversations
-            if c.accuracy_task is not None
-        ]
+        self._ground_truths = [c.accuracy_ground_truth for c in graded]
+        self._tasks = [c.accuracy_task for c in graded]
 
     async def process_record(
         self, record: ParsedResponseRecord, metadata: MetricRecordMetadata

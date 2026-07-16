@@ -106,4 +106,9 @@ class AutoRoutedModel(BaseModel):
                 # Recurse for nested routing, otherwise validate
                 return target_class.from_json(data)
 
+        # An unregistered discriminator falls back to the base class by design:
+        # the command hierarchy routes generic commands (no dedicated subclass) to
+        # the base CommandMessage/CommandSuccessResponse. Record subclasses with
+        # required fields rely on their model being imported so it registers via
+        # __init_subclass__ (see RecordData) rather than on this fallback.
         return cls.model_validate(data)

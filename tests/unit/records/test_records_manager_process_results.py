@@ -19,6 +19,7 @@ The pipeline:
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -154,8 +155,13 @@ def _make_manager_mock(
     mgr.service_id = "test_records_manager"
     mgr.publish = AsyncMock()
 
+    # Single-flight guard state read by the real _process_results wrapper.
+    mgr._process_results_lock = asyncio.Lock()
+    mgr._processed_results = {}
+
     # Bind real methods
     mgr._process_results = RecordsManager._process_results.__get__(mgr)
+    mgr._process_results_impl = RecordsManager._process_results_impl.__get__(mgr)
     mgr._summarize_metric_record_accumulators = (
         RecordsManager._summarize_metric_record_accumulators.__get__(mgr)
     )
@@ -396,6 +402,34 @@ class TestProcessResultsAllResultsPublish:
 
         msg = _get_published_all_results(mgr)
         assert msg is not None
+
+
+class TestProcessResultsSingleFlight:
+    """``_process_results`` is single-flight per phase: the natural finalize task
+    and the PROCESS_RECORDS / PROFILE_CANCEL commands can all reach it, but only
+    the first does the work; later calls return the cached result without
+    re-publishing or re-finalizing the stream exporters."""
+
+    @pytest.mark.asyncio
+    async def test_second_call_returns_cached_and_does_not_republish(self) -> None:
+        acc = _make_summary_accumulator([_STUB_METRIC_RESULT])
+        exp = _make_stub_stream_exporter()
+        mgr = _make_manager_mock(
+            accumulators={AccumulatorType.METRIC_RESULTS: acc},
+            stream_exporters={StreamExporterType.RECORD_EXPORT: exp},
+        )
+
+        first = await mgr._process_results(phase=CreditPhase.PROFILING, cancelled=False)
+        publish_count = mgr.publish.await_count
+
+        second = await mgr._process_results(
+            phase=CreditPhase.PROFILING, cancelled=False
+        )
+
+        assert second is first
+        # No additional publishes and the exporter is finalized exactly once.
+        assert mgr.publish.await_count == publish_count
+        exp.finalize.assert_awaited_once()
 
 
 class TestProcessResultsServerMetricsFailure:

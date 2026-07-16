@@ -91,6 +91,35 @@ class TestAccuracyRecordProcessorOnDatasetConfigured:
 
         assert processor._ground_truths == ["B"]
 
+    def test_tasks_stay_aligned_with_ground_truths_when_labels_are_sparse(
+        self, monkeypatch
+    ) -> None:
+        """Graded conversations missing a task label keep a None slot so the
+        session_num modulo maps to the correct task instead of being shifted."""
+        processor = _make_processor(monkeypatch)
+        conversations = [
+            ConversationMetadata(
+                conversation_id="c0", accuracy_ground_truth="A", accuracy_task="t0"
+            ),
+            ConversationMetadata(
+                conversation_id="c1", accuracy_ground_truth="B"
+            ),  # graded, no task label
+            ConversationMetadata(
+                conversation_id="c2", accuracy_ground_truth="C", accuracy_task="t2"
+            ),
+        ]
+        metadata = DatasetMetadata(
+            conversations=conversations,
+            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+        )
+
+        processor.on_dataset_configured(metadata)
+
+        assert processor._ground_truths == ["A", "B", "C"]
+        # Index-aligned with ground truths; the label-less conversation is None,
+        # not dropped (which would have mismapped c1 -> "t2").
+        assert processor._tasks == ["t0", None, "t2"]
+
 
 @pytest.mark.asyncio
 class TestAccuracyRecordProcessorSessionBounds:

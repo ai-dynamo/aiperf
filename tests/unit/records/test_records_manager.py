@@ -676,6 +676,9 @@ class TestRecordsManagerAnalyzerMetrics:
         manager._error_tracker = MagicMock()
         manager._error_tracker.get_error_summary_for_phase.return_value = []
 
+        manager._process_results_lock = asyncio.Lock()
+        manager._processed_results = {}
+
         result = await manager._process_results(CreditPhase.PROFILING, cancelled=False)
 
         assert result.results.completed == len(request_records)
