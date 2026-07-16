@@ -25,6 +25,8 @@ navigation:
             path: ../pages-dev/tutorials/openai-text-endpoints.md
           - page: Profile the OpenAI Responses API with AIPerf
             path: ../pages-dev/tutorials/openai-responses.md
+          - page: Profile the Anthropic Messages API with AIPerf
+            path: ../pages-dev/tutorials/anthropic-messages-endpoint.md
           - page: Profile Hugging Face TGI Models with AIPerf
             path: ../pages-dev/tutorials/huggingface-tgi.md
           - page: Profile Vision Language Models with AIPerf
