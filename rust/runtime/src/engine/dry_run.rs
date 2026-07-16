@@ -33,13 +33,21 @@
 //! `itl_ms`, and `request_latency = ttft_ms + (OSL−1)·itl_ms`, all exact under a
 //! zero-jitter model — which is what the end-to-end test asserts.
 //!
+//! # Clock modes (both built)
+//!
+//! - **`clock: real`** (default) — [`FakeRequestExecutor`] fabricates instant
+//!   analytic timestamps and reuses the native worker-thread executor; the
+//!   loadgen self-benchmark path.
+//! - **`clock: sim`** — [`FakeTurnDispatcher`] *sleeps on the injected clock* and
+//!   the run is driven by a `SimClock` under `drive_sim`
+//!   ([`crate::engine::execute::prepare_dry_run_sim_scheduled`]), so arrival
+//!   pacing, duration bounds, and the analytic concurrency terms run in virtual
+//!   time — a 10-minute run finishes instantly and is byte-deterministic. This is
+//!   the dry-run analogue of dynosim's `PreparedDynosimScheduledOperation`, minus
+//!   the Dynamo backend.
+//!
 //! # Extension points left open
 //!
-//! - **Clock:** the fabrication computes analytic timestamps directly (no
-//!   sleeping), so it is correct under `RealClock` (loadgen self-benchmark) and,
-//!   once the scheduled loop is driven by `drive_sim`, under `SimClock`
-//!   (deterministic virtual-time CI). The design phases the sim-clock inline
-//!   executor as a follow-up; this module already fabricates clock-agnostically.
 //! - **Analytic model:** TTFT/ITL scale with ISL, OSL, and live in-flight
 //!   concurrency plus seeded lognormal jitter, ported byte-for-byte from
 //!   `rust/mock-server/src/latency.rs` (the dynosim/Dynamo-replay perf-model
@@ -92,6 +100,20 @@ const fn default_itl_ms() -> f64 {
 /// Default KV-cache utilization fed to the polynomial decode curve.
 const fn default_kv_utilization() -> f64 {
     0.5
+}
+
+/// Which clock drives the dry run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DryRunClock {
+    /// Real wall clock: fabricates instant timestamps, reuses the native
+    /// worker-thread executor. Loadgen self-benchmark; the default.
+    #[default]
+    Real,
+    /// Virtual `SimClock` driven by `drive_sim`: the fake dispatcher sleeps on
+    /// virtual time, so rate/duration runs finish instantly and are
+    /// byte-deterministic (concurrency-contention terms become exact).
+    Sim,
 }
 
 /// Which analytic latency curve the fake leaf uses.
@@ -173,6 +195,10 @@ pub struct DryRunTransportConfigV2 {
     /// consulted by the `aiconfigurator_polynomial` model.
     #[serde(default = "default_kv_utilization")]
     pub kv_utilization: f64,
+    /// Which clock drives the run (`real` default, or `sim` for deterministic
+    /// virtual-time execution via `drive_sim`).
+    #[serde(default)]
+    pub clock: DryRunClock,
 }
 
 impl DryRunTransportConfigV2 {
@@ -417,6 +443,20 @@ impl NativeTransportExecution for DryRunNativeExecution {
 /// Register the always-built `dry_run` transport into a mutable runner registry.
 pub fn register_dry_run_transport(registry: &mut AIPerfRegistry) -> Result<()> {
     registry.register_transport(Arc::new(DryRunTransportFactoryV2))
+}
+
+/// Return the analytic params iff `transport` is a `dry_run` transport requesting
+/// the virtual `SimClock` execution path (`clock: sim`).
+///
+/// The scheduled workload calls this to route a sim dry run to
+/// [`crate::engine::execute::prepare_dry_run_sim_scheduled`] instead of the
+/// real-clock `PreparedNativeOperation`; every other transport (and a
+/// `clock: real` dry run) returns `None` and takes the ordinary native path.
+pub fn sim_params_for(transport: &dyn ValidatedTransportConfig) -> Option<DryRunParams> {
+    ValidatedTransportConfig::as_any(transport)
+        .downcast_ref::<DryRunTransportConfigV2>()
+        .filter(|config| config.clock == DryRunClock::Sim)
+        .map(DryRunTransportConfigV2::params)
 }
 
 /// Execution-placement factory for the fake leaf.
@@ -664,6 +704,129 @@ const SYNTHETIC_TOKEN: &str = "x";
 /// Build the joined synthetic assistant text for `osl` tokens.
 fn synthetic_text(osl: usize) -> String {
     SYNTHETIC_TOKEN.repeat(osl)
+}
+
+/// Virtual-clock analogue of [`FakeRequestExecutor`]: a [`TurnDispatcher`] that
+/// *sleeps on the injected clock* for its fabricated latency, so under a
+/// `SimClock` driven by `drive_sim` the whole run advances in virtual time —
+/// arrivals, admission overlap, and the analytic concurrency terms all become
+/// exact and instant-in-wall-clock.
+///
+/// The scheduled runner ([`crate::run`]'s `run_scheduled_phases_*`) owns
+/// `on_arrival`/`on_admit` on the shared observer; this dispatcher emits the
+/// per-token, usage, and terminal callbacks, mirroring dynosim's `DynosimSink`
+/// (`crate::dynosim`) — the same seam over the Dynamo replay instead of the
+/// analytic model.
+pub struct FakeTurnDispatcher {
+    clock: Rc<dyn Clock>,
+    model: String,
+    params: DryRunParams,
+    /// Run origin (ns) shared with the observer; token timestamps are reported
+    /// relative to it, exactly as `on_arrival`'s `arrival_ms` is.
+    origin_ns: i64,
+    /// Live in-flight count feeding the analytic concurrency terms — exact under
+    /// virtual time because requests genuinely overlap while sleeping.
+    inflight: Cell<usize>,
+    /// Monotonic dispatch ordinal seeding the reproducible jitter draw.
+    ordinal: Cell<u64>,
+}
+
+impl FakeTurnDispatcher {
+    /// Build a virtual-clock dispatcher fabricating from `params`, reporting
+    /// token timestamps relative to `origin_ns`.
+    pub fn new(clock: Rc<dyn Clock>, model: String, params: DryRunParams, origin_ns: i64) -> Self {
+        Self {
+            clock,
+            model,
+            params,
+            origin_ns,
+            inflight: Cell::new(0),
+            ordinal: Cell::new(0),
+        }
+    }
+
+    fn rel_ms(&self, absolute_ns: i64) -> f64 {
+        (absolute_ns - self.origin_ns) as f64 / 1_000_000.0
+    }
+}
+
+#[async_trait(?Send)]
+impl crate::scheduled::TurnDispatcher for FakeTurnDispatcher {
+    fn inference_dimensions(&self, turn: &TurnToSend) -> InferenceDimensions {
+        InferenceDimensions {
+            endpoint_url: Some("dry_run://sim".to_string()),
+            model: turn
+                .effective_model
+                .clone()
+                .or_else(|| Some(self.model.clone())),
+        }
+    }
+
+    async fn dispatch_turn(
+        &self,
+        turn: TurnToSend,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+    ) -> Result<TurnDispatchOutcome> {
+        let uuid = turn.uuid;
+        let isl = turn.input_length;
+        let osl = turn.max_output_tokens;
+
+        let active_inflight = self.inflight.get() + 1;
+        self.inflight.set(active_inflight);
+        let ordinal = self.ordinal.get();
+        self.ordinal.set(ordinal + 1);
+        let (ttft_ns, itl_ns) =
+            self.params
+                .effective_latencies_ns(isl, osl, active_inflight, ordinal);
+
+        // Dispatch begins now (the issuer already admitted this turn); each token
+        // arrives after a real sleep on the injected clock, so virtual time — and
+        // thus TTFT/ITL — is exact under `SimClock`.
+        let start_ns = self.clock.now_ns();
+        if osl > 0 {
+            self.clock.clone().sleep(ttft_ns).await;
+            let first = self.clock.now_ns();
+            on_first_token(ttft_ns);
+            observer.on_token(uuid, self.rel_ms(first));
+            for _ in 1..osl {
+                self.clock.clone().sleep(itl_ns).await;
+                let at = self.clock.now_ns();
+                observer.on_token(uuid, self.rel_ms(at));
+            }
+        } else {
+            self.clock.clone().sleep(ttft_ns).await;
+        }
+        let end_ns = self.clock.now_ns();
+
+        observer.on_usage(
+            uuid,
+            ObservedUsage {
+                prompt_tokens: Some(isl),
+                completion_tokens: Some(osl),
+                total_tokens: Some(isl + osl),
+                ..ObservedUsage::default()
+            },
+        );
+        observer.on_terminal(uuid, ReplayTerminalStatus::Completed);
+        self.inflight.set(self.inflight.get() - 1);
+
+        let response_text = synthetic_text(osl);
+        Ok(TurnDispatchOutcome {
+            start_ns,
+            end_ns,
+            terminal: ReplayTerminalStatus::Completed,
+            response_text: response_text.clone(),
+            model_response: ModelResponseMetadata {
+                content: Some(response_text),
+                finish_reason: Some("stop".to_string()),
+                ..ModelResponseMetadata::default()
+            },
+            prompt_tokens: Some(isl as u64),
+            completion_tokens: Some(osl as u64),
+            http: HttpTrace::default(),
+        })
+    }
 }
 
 #[cfg(test)]

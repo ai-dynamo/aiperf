@@ -424,6 +424,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
                 seed: flags.dry_run_seed,
                 latency_model: flags.dry_run_latency_model.clone(),
                 kv_utilization: flags.dry_run_kv_utilization,
+                clock: flags.dry_run_clock.clone(),
             })
         } else {
             Transport::Http
@@ -1038,7 +1039,11 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     // The genai-perf-v1 envelope echoes the config; the runner treats it as an
     // opaque passthrough, so a projection of the native cfg (best-effort vs
     // Python's exclude_unset dump) keeps the aiperf-v1 exports emitting.
-    let input_config = serde_json::to_value(&cfg).unwrap_or(serde_json::Value::Null);
+    let mut input_config = serde_json::to_value(&cfg).unwrap_or(serde_json::Value::Null);
+    // Redact endpoint credentials in the echoed config (Python
+    // `EndpointConfig` field_serializer). The runtime keeps the real
+    // `cfg.endpoint.api_key` for HTTP auth; this only masks the export copy.
+    crate::redact::redact_input_config(&mut input_config);
     let mut export = crate::model::export::Export::build(
         &endpoint_type,
         true,
@@ -1062,6 +1067,25 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     }
     export.mlflow = crate::model::export::MlflowExport::build(&inputs.mlflow, &benchmark_id);
     export.wandb = crate::model::export::WandbExport::build(&inputs.wandb, &benchmark_id);
+    // Server-metrics summary + parquet sinks (rust_wire.py
+    // `_server_metrics_frontend_projection` / `_parquet_frontend_projection`).
+    // Formats come from the populated `cfg.server_metrics` block; `input_config`
+    // is the same cfg projection (cfg.export is still None here, so serializing
+    // cfg is safe).
+    let sm_formats = cfg
+        .server_metrics
+        .as_ref()
+        .map(|s| s.formats.clone())
+        .unwrap_or_default();
+    let sm_input_config = serde_json::to_value(&cfg).unwrap_or(serde_json::Value::Null);
+    export.server_metrics = crate::model::export::ServerMetricsExport::build(
+        &sm_formats,
+        server_enabled,
+        crate::model::export::AIPERF_V1_VERSION,
+        &benchmark_id,
+        sm_input_config,
+    );
+    export.parquet = crate::model::export::ParquetExport::build(&sm_formats, server_enabled);
     cfg.export = Some(export);
 
     Ok(BenchmarkRun {
@@ -1753,8 +1777,32 @@ fn linear_ramp(duration: f64) -> crate::model::phase::Ramp {
     }
 }
 
-/// Count the non-empty lines of a fixed-schedule input file (its entry count).
+/// Count the non-empty lines of a fixed-schedule input (its entry count). A
+/// directory input (e.g. a SageMaker capture dir) is recursed for `*.jsonl` and
+/// the non-empty lines summed across files — the same set the loader reads.
 fn count_schedule_entries(path: &std::path::Path) -> anyhow::Result<u64> {
+    if path.is_dir() {
+        let mut total = 0u64;
+        let mut stack = vec![path.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir)
+                .map_err(|e| anyhow::anyhow!("failed to read schedule dir {}: {e}", dir.display()))?
+            {
+                let p = entry
+                    .map_err(|e| anyhow::anyhow!("failed to read schedule dir entry: {e}"))?
+                    .path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.extension().is_some_and(|e| e == "jsonl") {
+                    let text = std::fs::read_to_string(&p).map_err(|e| {
+                        anyhow::anyhow!("failed to read schedule {}: {e}", p.display())
+                    })?;
+                    total += text.lines().filter(|l| !l.trim().is_empty()).count() as u64;
+                }
+            }
+        }
+        return Ok(total);
+    }
     let text = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("failed to read schedule {}: {e}", path.display()))?;
     Ok(text.lines().filter(|l| !l.trim().is_empty()).count() as u64)

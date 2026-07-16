@@ -242,6 +242,14 @@ impl RunnerWorkloadFactory for ScheduledWorkloadFactoryV2 {
                 let workload =
                     workload_config::<ScheduledWorkloadConfigV2>(workload.as_ref(), "scheduled")?;
                 let plan = lower_scheduled(run, context, workload, self.tokenizers.as_ref())?;
+                // A `dry_run` transport with `clock: sim` runs the deterministic
+                // virtual-time path (SimClock + drive_sim + fake dispatcher)
+                // instead of the real-clock worker-thread executor.
+                if let Some(params) = crate::engine::dry_run::sim_params_for(transport.as_ref()) {
+                    return crate::engine::execute::prepare_dry_run_sim_scheduled(
+                        plan, params, context,
+                    );
+                }
                 prepare_native_operation(run, context, plan, binding)
             }
             None => {

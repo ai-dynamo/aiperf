@@ -1029,6 +1029,10 @@ pub struct ProfileFlags {
     /// (`--dry-run-kv-utilization`).
     #[arg(long = "dry-run-kv-utilization")]
     pub dry_run_kv_utilization: Option<f64>,
+    /// Clock driver for `--dry-run` (`--dry-run-clock`): `real` (default,
+    /// self-benchmark) or `sim` (deterministic instant virtual time).
+    #[arg(long = "dry-run-clock")]
+    pub dry_run_clock: Option<String>,
 }
 
 impl ProfileFlags {

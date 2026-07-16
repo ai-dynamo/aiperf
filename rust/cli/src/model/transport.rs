@@ -91,6 +91,9 @@ pub struct DryRunConfig {
     /// KV-cache utilization for the polynomial decode curve.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kv_utilization: Option<f64>,
+    /// Clock driver: `real` (default) or `sim` (deterministic virtual time).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clock: Option<String>,
 }
 
 /// The typed `transport.config` field surface for the DynoSim transports.
