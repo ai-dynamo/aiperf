@@ -108,16 +108,8 @@ fn run_chat_over_stdin(url: &str, stdin_text: &str, extra_args: &[&str]) -> Stri
     use std::io::{Read, Write};
     use std::process::{Command, Stdio};
 
-    let python = std::env::var("VIRTUAL_ENV")
-        .ok()
-        .map(|v| format!("{v}/bin/python"))
-        .filter(|p| std::path::Path::new(p).exists())
-        .unwrap_or_else(|| "python3".to_string());
-
-    let mut cmd = Command::new(&python);
-    cmd.arg("-m")
-        .arg("aiperf")
-        .arg("chat")
+    let mut cmd = Command::new(exec_binary());
+    cmd.arg("chat")
         .arg("--model")
         .arg("mock-model")
         .arg("--url")

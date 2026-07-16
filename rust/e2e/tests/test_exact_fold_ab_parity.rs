@@ -50,7 +50,7 @@
 
 mod common;
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use arrow::array::{Array, Float64Array, Int64Array, StringArray};
 use common::*;
@@ -587,18 +587,6 @@ fn metrics_only_config(url: &str, entries: u32, requests: u32, concurrency: u32)
     )
 }
 
-/// Resolve the venv interpreter the same way the harness does (VIRTUAL_ENV, else
-/// `python3`).
-fn python_bin() -> String {
-    if let Ok(venv) = std::env::var("VIRTUAL_ENV") {
-        let c = PathBuf::from(&venv).join("bin").join("python");
-        if c.exists() {
-            return c.display().to_string();
-        }
-    }
-    "python3".to_string()
-}
-
 /// Peak `VmHWM` (KiB) of any live `aiperf-runner` process, sampled from `/proc`.
 /// `VmHWM` is a monotonic high-water mark, so the max over frequent samples is the
 /// process peak even though the process exits before the final read.
@@ -640,10 +628,8 @@ fn measure_runner_vmhwm(url: &str, exact_fold: bool, entries: u32, requests: u32
     let art = tmp.path().join("artifacts");
     std::fs::create_dir_all(&art).unwrap();
 
-    let mut cmd = Command::new(python_bin());
-    cmd.arg("-m")
-        .arg("aiperf")
-        .arg("profile")
+    let mut cmd = Command::new(exec_binary());
+    cmd.arg("profile")
         .arg("--config")
         .arg(&cfg)
         .arg("--artifact-dir")
