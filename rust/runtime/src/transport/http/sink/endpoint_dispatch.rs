@@ -18,7 +18,7 @@ use serde_json::Value;
 
 use crate::endpoints::{
     EndpointDescriptor, EndpointResult, ExtractedPayload, ParsedResponse, PreparedEndpoint,
-    RequestRecord as EndpointRequestRecord, ResponseData, ServerResponse, Turn,
+    RequestRecord as EndpointRequestRecord, ServerResponse, Turn,
 };
 use crate::metrics_core::RequestTrace;
 use crate::transport::core::{ErrorDetails, ErrorKind, RequestRecord};
@@ -32,7 +32,7 @@ use loadgen_core::sink::{ObservedEndpointMetrics, ObservedUsage, RequestObserver
 use crate::multiturn::TurnDataPolicy;
 use crate::scheduled::{ModelResponseMetadata, TurnResponseObserver};
 use crate::transport::reduce::{
-    absorb_endpoint_metrics, absorb_response_data, absorb_usage, assistant_message, token_kind,
+    EndpointReduceAccumulators, TokenEmitter, assistant_message, reduce_parsed_response,
 };
 
 use super::{
@@ -308,6 +308,16 @@ impl TransportSink {
         let mut response_text = String::new();
         let mut model_response = ModelResponseMetadata::default();
         let mut observed_usage = ObservedUsage::default();
+        let to_ms = |ns| self.ms(ns);
+        let emitter = TokenEmitter {
+            uuid,
+            produces_tokens: endpoint.descriptor().produces_tokens,
+            start_ns: record.start_ns,
+            obs,
+            to_ms: &to_ms,
+            first_token_released: &first_token_released,
+            on_first_token,
+        };
         for response in &record.responses {
             let Some(server_response) = binding.decode_response(response) else {
                 continue;
@@ -339,31 +349,17 @@ impl TransportSink {
             };
             let Some(parsed) = parsed else { continue };
             parsed_any = true;
-            absorb_usage(&parsed, &mut observed_usage);
-            let Some(data) = parsed.data.as_ref() else {
-                continue;
-            };
-            parsed_content = true;
-            absorb_endpoint_metrics(data, &mut endpoint_metrics);
-            let text = absorb_response_data(data, &mut model_response);
-            response_text.push_str(&text);
-            if endpoint.descriptor().produces_tokens {
-                let at_ns = i64::try_from(parsed.perf_ns).unwrap_or(i64::MAX);
-                if let ResponseData::TokenIds { token_ids } = data
-                    && !token_ids.is_empty()
-                {
-                    if !first_token_released.replace(true) {
-                        on_first_token(at_ns.saturating_sub(record.start_ns));
-                    }
-                    let timestamps = vec![self.ms(at_ns); token_ids.len()];
-                    obs.on_output_tokens(uuid, &timestamps);
-                } else if !text.is_empty() {
-                    if !first_token_released.replace(true) {
-                        on_first_token(at_ns.saturating_sub(record.start_ns));
-                    }
-                    obs.on_classified_token(uuid, self.ms(at_ns), token_kind(data));
-                }
-            }
+            let carried_content = reduce_parsed_response(
+                &parsed,
+                &emitter,
+                EndpointReduceAccumulators {
+                    response_text: &mut response_text,
+                    model_response: &mut model_response,
+                    endpoint_metrics: &mut endpoint_metrics,
+                    observed_usage: &mut observed_usage,
+                },
+            );
+            parsed_content |= carried_content;
         }
 
         if endpoint.descriptor().requires_raw_token_ids {
@@ -566,6 +562,7 @@ mod tests {
     use super::*;
     use crate::endpoints::PreparedEndpoint;
     use crate::transport::core::SseMessage;
+    use crate::transport::reduce::absorb_usage;
     use crate::transport::http::transport::endpoint_binding::decode_sse_response;
 
     /// Prepare a builtin streaming endpoint by its open ID.

@@ -31,7 +31,7 @@ use crate::transport::grpc::{
     GrpcErrorKind, GrpcRequestConfig, GrpcRequestRecord, GrpcTransport,
 };
 use crate::transport::reduce::{
-    absorb_endpoint_metrics, absorb_response_data, absorb_usage, assistant_message, token_kind,
+    EndpointReduceAccumulators, TokenEmitter, assistant_message, reduce_parsed_response,
 };
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::{
@@ -416,6 +416,16 @@ impl GrpcTransportSink {
         let mut model_response = ModelResponseMetadata::default();
         let mut usage = ObservedUsage::default();
         let mut endpoint_responses = Vec::with_capacity(record.responses.len());
+        let to_ms = |ns| self.ms(ns);
+        let emitter = TokenEmitter {
+            uuid,
+            produces_tokens: endpoint.descriptor().produces_tokens,
+            start_ns: record.start_ns,
+            obs: observer,
+            to_ms: &to_ms,
+            first_token_released: &first_token_released,
+            on_first_token,
+        };
         for response in &record.responses {
             let server_response = ServerResponse {
                 perf_ns: u64::try_from(response.perf_ns).unwrap_or(u64::MAX),
@@ -432,31 +442,17 @@ impl GrpcTransportSink {
                 }
             };
             let Some(parsed) = parsed else { continue };
-            absorb_usage(&parsed, &mut usage);
-            let Some(data) = parsed.data.as_ref() else {
-                continue;
-            };
-            parsed_content = true;
-            absorb_endpoint_metrics(data, &mut endpoint_metrics);
-            let text = absorb_response_data(data, &mut model_response);
-            response_text.push_str(&text);
-            if endpoint.descriptor().produces_tokens {
-                let at_ns = i64::try_from(parsed.perf_ns).unwrap_or(i64::MAX);
-                if let ResponseData::TokenIds { token_ids } = data
-                    && !token_ids.is_empty()
-                {
-                    if !first_token_released.replace(true) {
-                        on_first_token(at_ns.saturating_sub(record.start_ns));
-                    }
-                    let timestamps = vec![self.ms(at_ns); token_ids.len()];
-                    observer.on_output_tokens(uuid, &timestamps);
-                } else if !text.is_empty() {
-                    if !first_token_released.replace(true) {
-                        on_first_token(at_ns.saturating_sub(record.start_ns));
-                    }
-                    observer.on_classified_token(uuid, self.ms(at_ns), token_kind(data));
-                }
-            }
+            let carried_content = reduce_parsed_response(
+                &parsed,
+                &emitter,
+                EndpointReduceAccumulators {
+                    response_text: &mut response_text,
+                    model_response: &mut model_response,
+                    endpoint_metrics: &mut endpoint_metrics,
+                    observed_usage: &mut usage,
+                },
+            );
+            parsed_content |= carried_content;
         }
         if endpoint.captures_assistant_turn() {
             match endpoint.build_assistant_turn(&EndpointRequestRecord {
@@ -745,6 +741,7 @@ fn nonzero_usize(value: usize) -> Option<usize> {
 mod tests {
     use super::*;
     use crate::endpoints::{EndpointId, EndpointRegistry, RawEndpointConfig};
+    use crate::transport::reduce::absorb_response_data;
 
     #[test]
     fn riva_tts_audio_is_meaningful_without_becoming_model_text() {

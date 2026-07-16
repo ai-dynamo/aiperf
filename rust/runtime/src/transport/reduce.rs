@@ -13,11 +13,84 @@
 //! wire-decode that produces the [`ServerResponse`] iterator and the mapping
 //! from its own error enum to a [`ReplayTerminalStatus`].
 
+use std::cell::Cell;
+
 use serde_json::Value;
+use uuid::Uuid;
 
 use crate::endpoints::{ParsedResponse, ResponseData, Turn, UsageView};
 use crate::scheduled::ModelResponseMetadata;
-use loadgen_core::sink::{ObservedEndpointMetrics, ObservedTokenKind, ObservedUsage};
+use loadgen_core::sink::{
+    ObservedEndpointMetrics, ObservedTokenKind, ObservedUsage, RequestObserver,
+};
+
+/// The aggregated state a reduction folds each parsed response into.
+pub(crate) struct EndpointReduceAccumulators<'a> {
+    /// Concatenated user-visible text across responses.
+    pub response_text: &'a mut String,
+    /// The rebuilt model response (content/reasoning/token-ids/errors).
+    pub model_response: &'a mut ModelResponseMetadata,
+    /// Endpoint-specific auxiliary metrics (video timing/memory).
+    pub endpoint_metrics: &'a mut ObservedEndpointMetrics,
+    /// Reconciled terminal usage counts.
+    pub observed_usage: &'a mut ObservedUsage,
+}
+
+/// The transport-supplied token-emission context: how to correlate, whether the
+/// endpoint emits tokens, and how to map perf-ns to run-relative milliseconds.
+pub(crate) struct TokenEmitter<'a> {
+    /// Request correlation id.
+    pub uuid: Uuid,
+    /// Whether the endpoint produces streamable tokens.
+    pub produces_tokens: bool,
+    /// Run origin, for the first-token ns delta.
+    pub start_ns: i64,
+    /// Measurement observer.
+    pub obs: &'a dyn RequestObserver,
+    /// Map an absolute perf-ns instant to run-relative ms.
+    pub to_ms: &'a dyn Fn(i64) -> f64,
+    /// Shared once-only first-token latch.
+    pub first_token_released: &'a Cell<bool>,
+    /// First-token callback taking a run-relative ns delta.
+    pub on_first_token: &'a dyn Fn(i64),
+}
+
+/// Fold one successfully-parsed response into `acc` and emit its token
+/// callbacks through `emit`. Returns true when the response carried content
+/// data (the caller's `parsed_content` latch). Usage is absorbed even when the
+/// response has no content payload.
+pub(crate) fn reduce_parsed_response(
+    parsed: &ParsedResponse,
+    emit: &TokenEmitter<'_>,
+    acc: EndpointReduceAccumulators<'_>,
+) -> bool {
+    absorb_usage(parsed, acc.observed_usage);
+    let Some(data) = parsed.data.as_ref() else {
+        return false;
+    };
+    absorb_endpoint_metrics(data, acc.endpoint_metrics);
+    let text = absorb_response_data(data, acc.model_response);
+    acc.response_text.push_str(&text);
+    if emit.produces_tokens {
+        let at_ns = i64::try_from(parsed.perf_ns).unwrap_or(i64::MAX);
+        if let ResponseData::TokenIds { token_ids } = data
+            && !token_ids.is_empty()
+        {
+            if !emit.first_token_released.replace(true) {
+                (emit.on_first_token)(at_ns.saturating_sub(emit.start_ns));
+            }
+            let timestamps = vec![(emit.to_ms)(at_ns); token_ids.len()];
+            emit.obs.on_output_tokens(emit.uuid, &timestamps);
+        } else if !text.is_empty() {
+            if !emit.first_token_released.replace(true) {
+                (emit.on_first_token)(at_ns.saturating_sub(emit.start_ns));
+            }
+            emit.obs
+                .on_classified_token(emit.uuid, (emit.to_ms)(at_ns), token_kind(data));
+        }
+    }
+    true
+}
 
 /// Classify a response chunk as reasoning or output for token emission.
 pub(crate) fn token_kind(data: &ResponseData) -> ObservedTokenKind {
