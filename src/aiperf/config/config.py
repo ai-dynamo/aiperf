@@ -440,6 +440,30 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         ),
     ]
 
+    scenario: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Lock all benchmark invariants for a named scenario "
+            "(e.g. 'inferencex-agentx-mvp'). Plain data here; the lock is "
+            "applied by the ScenarioResolver step in the pre-bootstrap resolver "
+            "chain (auto-fills defaults, validates, raises ScenarioLockError on "
+            "conflict). Distinct from the sweep ``scenarios`` strategy "
+            "(SweepConfig), which expands hand-picked named runs -- this field "
+            "is a single invariant LOCK, not a sweep.",
+        ),
+    ]
+
+    unsafe_override: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Convert scenario lock errors to warnings; stamps "
+            "submission_valid=false in the resolved scenario outcome. No-op "
+            "without ``scenario``. Plain data; consumed by the ScenarioResolver.",
+        ),
+    ]
+
     trajectory_start_min_ratio: Annotated[
         float,
         Field(
@@ -583,6 +607,11 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
                 and phase.requests is None
                 and phase.duration is None
                 and phase.sessions is None
+                # The recorded-graph cache-pressure warmup is self-bounding: its
+                # sole deadline is agentic_cache_warmup_duration, and a generic
+                # stop cap would cancel the cache-pressure recycle. Treat that
+                # duration as the phase's stop condition.
+                and phase.agentic_cache_warmup_duration is None
             ):
                 raise ValueError(
                     f"Phase '{phase.name}': at least one of "
