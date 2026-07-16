@@ -2,11 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for the SystemController accuracy shutdown-gate.
 
-The controller sets ``_should_wait_for_accuracy`` from config at construction and
-clears it only when a ``ProcessAccuracyResultMessage`` arrives. While the flag is
-True and no accuracy summary has been received, ``_check_and_trigger_shutdown``
-must NOT trigger shutdown; once the message handler runs (with a real summary OR a
-terminal ``results=None``), the flag clears and the accuracy term stops blocking.
+Accuracy is a domain in the ``ResultJoinCoordinator`` shutdown barrier: RecordsManager
+advertises a ``result_producer:accuracy`` capability (iff accuracy is enabled), which
+registers the domain. While that domain is pending, ``_check_and_trigger_shutdown``
+must NOT trigger shutdown; once the ``ProcessAccuracyResultMessage`` handler runs
+(with a real summary OR a terminal ``results=None``), the domain completes and the
+barrier stops blocking.
 """
 
 from __future__ import annotations
@@ -73,17 +74,16 @@ def _summary() -> AccuracySummary:
     )
 
 
-class TestAccuracyShutdownGateEnabled:
-    """Accuracy ENABLED: the flag blocks shutdown until the message clears it."""
+def _register_records_manager(controller, *, accuracy: bool) -> None:
+    """Simulate RecordsManager registering its result-producer domains."""
+    controller._result_join_coordinator.register("profile", "rm")
+    if accuracy:
+        controller._result_join_coordinator.register("accuracy", "rm")
 
-    @pytest.mark.asyncio
-    async def test_startup_sets_wait_flag_true(
-        self, benchmark_run, mock_service_manager
-    ) -> None:
-        controller = _build_controller(
-            benchmark_run, mock_service_manager, accuracy=True
-        )
-        assert controller._should_wait_for_accuracy is True
+
+class TestAccuracyShutdownGateEnabled:
+    """Accuracy ENABLED: the accuracy domain blocks shutdown until its message
+    completes it."""
 
     @pytest.mark.asyncio
     async def test_gate_blocks_shutdown_while_waiting(
@@ -92,23 +92,25 @@ class TestAccuracyShutdownGateEnabled:
         controller = _build_controller(
             benchmark_run, mock_service_manager, accuracy=True
         )
-        # Profile results present so only the accuracy term can gate.
-        controller._profile_results_received = True
-        controller._accuracy_results = None
+        _register_records_manager(controller, accuracy=True)
+        # Profile complete so only the accuracy domain can gate.
+        controller._result_join_coordinator.complete_domain("profile")
 
         await controller._check_and_trigger_shutdown()
 
+        assert "accuracy" in controller._result_join_coordinator.pending_domains
         assert controller._shutdown_triggered is False
         controller.stop.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_summary_message_clears_flag_and_unblocks(
+    async def test_summary_message_completes_domain_and_unblocks(
         self, benchmark_run, mock_service_manager
     ) -> None:
         controller = _build_controller(
             benchmark_run, mock_service_manager, accuracy=True
         )
-        controller._profile_results_received = True
+        _register_records_manager(controller, accuracy=True)
+        controller._result_join_coordinator.complete_domain("profile")
 
         summary = _summary()
         await controller._on_process_accuracy_result_message(
@@ -118,21 +120,22 @@ class TestAccuracyShutdownGateEnabled:
             )
         )
 
-        assert controller._should_wait_for_accuracy is False
+        assert controller._result_join_coordinator.ready is True
         assert controller._accuracy_results == summary
         assert controller._shutdown_triggered is True
         controller.stop.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_terminal_none_message_clears_flag_and_unblocks(
+    async def test_terminal_none_message_completes_domain_and_unblocks(
         self, benchmark_run, mock_service_manager
     ) -> None:
-        """A ``results=None`` terminal message must still clear the wait flag so a
-        summary that could not be computed does not hang shutdown forever."""
+        """A ``results=None`` terminal message must still complete the accuracy
+        domain so a summary that could not be computed does not hang shutdown."""
         controller = _build_controller(
             benchmark_run, mock_service_manager, accuracy=True
         )
-        controller._profile_results_received = True
+        _register_records_manager(controller, accuracy=True)
+        controller._result_join_coordinator.complete_domain("profile")
 
         await controller._on_process_accuracy_result_message(
             ProcessAccuracyResultMessage(
@@ -141,7 +144,7 @@ class TestAccuracyShutdownGateEnabled:
             )
         )
 
-        assert controller._should_wait_for_accuracy is False
+        assert controller._result_join_coordinator.ready is True
         assert controller._accuracy_results is None
         assert controller._shutdown_triggered is True
         controller.stop.assert_awaited_once()
@@ -195,26 +198,29 @@ class TestAccuracyResultsInjection:
 
 
 class TestAccuracyShutdownGateDisabled:
-    """Accuracy DISABLED: the accuracy term never blocks shutdown."""
+    """Accuracy DISABLED: RecordsManager advertises no accuracy domain, so it
+    never blocks shutdown."""
 
     @pytest.mark.asyncio
-    async def test_startup_wait_flag_false(
+    async def test_accuracy_domain_never_registered(
         self, benchmark_run, mock_service_manager
     ) -> None:
         controller = _build_controller(
             benchmark_run, mock_service_manager, accuracy=False
         )
-        assert controller._should_wait_for_accuracy is False
+        _register_records_manager(controller, accuracy=False)
+
+        assert "accuracy" not in controller._result_join_coordinator.pending_domains
 
     @pytest.mark.asyncio
-    async def test_accuracy_term_never_blocks(
+    async def test_completing_profile_alone_unblocks(
         self, benchmark_run, mock_service_manager
     ) -> None:
         controller = _build_controller(
             benchmark_run, mock_service_manager, accuracy=False
         )
-        controller._profile_results_received = True
-        controller._accuracy_results = None
+        _register_records_manager(controller, accuracy=False)
+        controller._result_join_coordinator.complete_domain("profile")
 
         await controller._check_and_trigger_shutdown()
 

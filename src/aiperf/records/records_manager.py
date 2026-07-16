@@ -22,6 +22,7 @@ from aiperf.common.enums import (
     CommandType,
     CreditPhase,
     MessageType,
+    make_result_producer_capability,
 )
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_command, on_message, on_pull_message
@@ -378,6 +379,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             pull_client_additional_bind_address=additional_bind_address,
             **kwargs,
         )
+
+        # Advertise the result domains this manager produces so the controller's
+        # ResultJoinCoordinator waits for them on shutdown. Accuracy is a separate
+        # domain, joined only when accuracy mode is enabled for this run.
+        self.extra_capabilities = (make_result_producer_capability("profile"),)
+        if run.cfg.accuracy is not None and run.cfg.accuracy.enabled:
+            self.extra_capabilities += (make_result_producer_capability("accuracy"),)
 
         self._records_tracker = RecordsTracker()
         self._error_tracker = ErrorTracker()

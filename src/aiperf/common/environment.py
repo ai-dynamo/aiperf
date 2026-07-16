@@ -927,16 +927,6 @@ class _ServiceSettings(BaseSettings):
         default=90.0,
         description="Maximum time in seconds to wait for connection probe response while waiting for initial connection to the zmq message bus",
     )
-    SIDE_CHANNEL_RESULT_WAIT_SEC: float = Field(
-        ge=0.0,
-        le=100000.0,
-        default=30.0,
-        description="Maximum time in seconds the SystemController waits, after the "
-        "profile results arrive, for the side-channel results (telemetry, server "
-        "metrics, accuracy) before proceeding to export without the missing ones. "
-        "Bounds the normal-completion shutdown so a side-channel result message "
-        "that is never published (e.g. a failed publish) cannot hang the run.",
-    )
     CREDIT_PROGRESS_REPORT_INTERVAL: float = Field(
         ge=1,
         le=100000.0,
