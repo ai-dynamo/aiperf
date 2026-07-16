@@ -494,58 +494,37 @@ struct PreparedPressureRecycle {
     t_star: TStarWindow,
 }
 
-/// Remap a monotonic draw counter to a corpus index under the SEQUENTIAL
-/// strategy: `x % total`, byte-for-byte the historical cursor-with-wrap draw.
-///
-/// This is the legacy `SequentialSampler` draw (agentx
-/// `dataset/dataset_samplers.py`); [`PressureDraw::index`] dispatches to it for
-/// `Sequential` and to the shared persistent-epoch shuffle for `Shuffle`/`Random`.
-/// Kept as a standalone function so the sequential path stays trivially auditable
-/// and the parity test below can pin it directly.
-fn pressure_draw_index(x: u64, total: usize) -> usize {
-    if total == 0 {
-        return 0;
-    }
-    usize::try_from(x % total as u64).unwrap_or(0)
-}
-
 /// Strategy-aware corpus-index draw shared by every graph recycle draw site.
 ///
-/// Reproduces legacy agentx `ShuffleSampler`/`SequentialSampler`
+/// Reproduces legacy agentx
+/// `SequentialSampler`/`ShuffleSampler`/`RandomSampler`
 /// (`dataset/dataset_samplers.py`) BYTE-EXACT: the single choke point every
 /// cross-trace draw in the pressure/profiling lane fan-out + recycle routes
 /// through, so `--dataset-sampling-strategy` governs WHICH template a freed lane
 /// serves without changing the draw COUNTERS (only the counter -> index remap
-/// changes). Thin wrapper over the shared [`PermutationDraw`]: `Sequential`
-/// returns `x % total` unchanged; `Shuffle`/`Random` return
-/// `epoch[x / total][x % total]` under the persistent-epoch shuffle seeded once
-/// with the legacy `ShuffleSampler` child seed (`dataset_shuffle_seed`).
+/// changes). Thin wrapper over the shared [`PermutationDraw`] the window resolves
+/// ([`TStarWindow::recycle_draw`]): `Sequential` returns `x % total` unchanged;
+/// `Shuffle` returns the persistent-epoch shuffle draw; `Random` returns the
+/// with-replacement CPython MT19937 draw — each seeded once from the RUN root.
 struct PressureDraw {
-    /// Whether the resolved strategy permutes (shuffle/random) vs. sequential.
-    shuffled: bool,
-    /// The shared persistent-epoch draw (identical semantics to the profiling
-    /// recycle's `CyclingGraphTraceSource` draw), unifying both draw sites.
+    /// The shared resolved draw (identical semantics to the profiling recycle's
+    /// `CyclingGraphTraceSource` draw), unifying both draw sites.
     inner: PermutationDraw,
 }
 
 impl PressureDraw {
-    /// Build the draw from a resolved `t*` window: the strategy governs the
-    /// remap, the window's `dataset_shuffle_seed` (legacy `ShuffleSampler` child
-    /// seed) drives the persistent-epoch shuffle.
+    /// Build the draw from a resolved `t*` window: the strategy governs the remap
+    /// and the run root (`run_random_seed`) salts the per-strategy child seed.
     fn from_window(t_star: TStarWindow) -> Self {
-        let shuffled = t_star.sampling_strategy.is_shuffled();
         Self {
-            shuffled,
-            inner: PermutationDraw::new(shuffled, t_star.dataset_shuffle_seed),
+            inner: t_star.recycle_draw(),
         }
     }
 
-    /// Remap draw counter `x` to a corpus index in `[0, total)`. Sequential stays
-    /// byte-for-byte [`pressure_draw_index`]; shuffle delegates to the shared draw.
+    /// Remap draw counter `x` to a corpus index in `[0, total)`; delegates to the
+    /// resolved [`PermutationDraw`] (`Sequential` is its byte-unchanged
+    /// `x % total`).
     fn index(&self, x: u64, total: usize) -> usize {
-        if !self.shuffled {
-            return pressure_draw_index(x, total);
-        }
         self.inner.index(x, total)
     }
 }
@@ -2932,14 +2911,12 @@ fn build_graph_trace_source(
     t_star: TStarWindow,
 ) -> Result<Rc<dyn GraphTraceSource>> {
     // `--dataset-sampling-strategy` governs WHICH template a freed recycle lane
-    // serves via the SAME persistent-epoch shuffle the pressure stage draws (both
-    // route through the shared `PermutationDraw`). `Sequential` (the default)
-    // keeps the byte-unchanged modulo pick; the base seed is the legacy
-    // `ShuffleSampler` child seed (`dataset_shuffle_seed`, derived from the RUN
-    // root, not `t_star_random_seed`), so a freed profiling lane continues the
-    // SAME order the pressure stage replayed under.
-    let shuffled = t_star.sampling_strategy.is_shuffled();
-    let base_seed = t_star.dataset_shuffle_seed;
+    // serves via the SAME resolved draw the pressure stage uses (both route
+    // through the shared `PermutationDraw` the window resolves). `Sequential` (the
+    // default) keeps the byte-unchanged modulo pick; `Shuffle`/`Random` derive a
+    // child generator off the RUN root (`run_random_seed`, not
+    // `t_star_random_seed`), so a freed profiling lane continues the SAME order
+    // the pressure stage replayed under.
     Ok(match ModuloCellPartition::from_env() {
         Some(partition) if partition.cell_count() > 1 && request_limit.is_none() => {
             tracing::debug!(
@@ -2959,7 +2936,7 @@ fn build_graph_trace_source(
                     partition.cell_id(),
                     partition.cell_count(),
                 )?
-                .with_sampling(shuffled, base_seed),
+                .with_sampling(t_star.recycle_draw()),
             )
         }
         _ => Rc::new(
@@ -2970,7 +2947,7 @@ fn build_graph_trace_source(
                 trace_instances,
             )?
             .starting_at(start_ordinal)
-            .with_sampling(shuffled, base_seed),
+            .with_sampling(t_star.recycle_draw()),
         ),
     })
 }
@@ -3225,6 +3202,7 @@ mod tests {
     use crate::dataset::SegmentPool;
     use crate::graph::errors::TraceError;
     use crate::graph::model::{GraphRecord, GraphTracePlan, TraceRecord};
+    use crate::graph::tstar::{legacy_random_seed, legacy_shuffle_seed};
     use crate::graph::workload::{GraphWorkloadReport, TraceAdmissionInfo};
     use crate::runner_protocol::graph_input::GraphSamplingStrategy;
     use crate::timing::{PhaseReturn, PhaseSend};
@@ -4131,12 +4109,14 @@ mod tests {
 
     #[test]
     fn pressure_draw_index_is_sequential_wrap() {
-        assert_eq!(pressure_draw_index(0, 3), 0);
-        assert_eq!(pressure_draw_index(2, 3), 2);
-        assert_eq!(pressure_draw_index(3, 3), 0);
-        assert_eq!(pressure_draw_index(7, 3), 1);
+        // The default/sequential draw is the byte-unchanged `x % total` cursor.
+        let draw = PermutationDraw::sequential();
+        assert_eq!(draw.index(0, 3), 0);
+        assert_eq!(draw.index(2, 3), 2);
+        assert_eq!(draw.index(3, 3), 0);
+        assert_eq!(draw.index(7, 3), 1);
         // Degenerate empty corpus never panics.
-        assert_eq!(pressure_draw_index(5, 0), 0);
+        assert_eq!(draw.index(5, 0), 0);
     }
 
     fn pressure_one_node_plan(id: &str) -> GraphTracePlan {
@@ -4224,7 +4204,7 @@ mod tests {
         let draw = PressureDraw::from_window(TStarWindow::default());
         for x in 0u64..20 {
             for total in 1usize..7 {
-                assert_eq!(draw.index(x, total), pressure_draw_index(x, total));
+                assert_eq!(draw.index(x, total), (x % total as u64) as usize);
             }
         }
         // Degenerate empty corpus never panics.
@@ -4236,15 +4216,16 @@ mod tests {
         // Shuffle window: `PressureDraw` routes through the shared persistent-epoch
         // `PermutationDraw`, so its draws equal a reference draw on the same legacy
         // `ShuffleSampler` child seed, and every full pass covers each index once.
+        // run root 0 -> legacy_shuffle_seed(0) == 5203359018791016587.
         let window = TStarWindow {
             start_min_ratio: 0.0,
             start_max_ratio: 0.0,
             random_seed: 0,
-            dataset_shuffle_seed: 5203359018791016587,
+            run_random_seed: 0,
             sampling_strategy: GraphSamplingStrategy::Shuffle,
         };
         let draw = PressureDraw::from_window(window);
-        let reference = PermutationDraw::new(true, 5203359018791016587);
+        let reference = PermutationDraw::shuffle(legacy_shuffle_seed(0));
         let total = 8usize;
         for pass in 0u64..3 {
             let mut seen = Vec::new();
@@ -4260,24 +4241,37 @@ mod tests {
     }
 
     #[test]
-    fn pressure_draw_random_coerces_to_shuffle() {
-        // `Random` coerces to `Shuffle` (without-replacement): identical draws.
-        let base = TStarWindow {
-            start_min_ratio: 0.0,
-            start_max_ratio: 0.0,
-            random_seed: 0,
-            dataset_shuffle_seed: 7,
+    fn pressure_draw_random_is_with_replacement_and_distinct_from_shuffle() {
+        // `Random` now reproduces legacy `RandomSampler` (WITH replacement) via the
+        // CPython MT19937 `choice` stream — a DISTINCT draw from the shuffle-epoch
+        // path, and it salts the SAME run root with a different label.
+        let root = 42u64;
+        let shuffle_window = TStarWindow {
+            run_random_seed: root,
             sampling_strategy: GraphSamplingStrategy::Shuffle,
+            ..Default::default()
         };
-        let rand = TStarWindow {
+        let random_window = TStarWindow {
+            run_random_seed: root,
             sampling_strategy: GraphSamplingStrategy::Random,
-            ..base
+            ..Default::default()
         };
-        let shuffle_draw = PressureDraw::from_window(base);
-        let random_draw = PressureDraw::from_window(rand);
-        for x in 0u64..15 {
-            assert_eq!(shuffle_draw.index(x, 4), random_draw.index(x, 4));
+        let shuffle_draw = PressureDraw::from_window(shuffle_window);
+        let random_draw = PressureDraw::from_window(random_window);
+        // The random draw equals the reference stream on the legacy child seed.
+        let reference = PermutationDraw::random(legacy_random_seed(root));
+        let total = 8usize;
+        let mut diverged = false;
+        for x in 0u64..20 {
+            assert_eq!(random_draw.index(x, total), reference.index(x, total));
+            if random_draw.index(x, total) != shuffle_draw.index(x, total) {
+                diverged = true;
+            }
         }
+        assert!(
+            diverged,
+            "random must diverge from shuffle (with replacement)"
+        );
     }
 
     #[test]

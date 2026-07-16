@@ -82,12 +82,12 @@ pub struct CyclingGraphTraceSource {
     ///
     /// `Sequential` (the default, [`PermutationDraw::sequential`]) returns
     /// `draw % len` — byte-for-byte the historic cursor-with-wrap pick (legacy
-    /// `SequentialSampler`). A `Shuffle`/`Random` draw threads the legacy
-    /// `ShuffleSampler` child seed (`dataset_shuffle_seed`) so the template pick
-    /// continues the SAME persistent-epoch shuffle the pressure stage draws under
-    /// (both route through the shared [`PermutationDraw`]), so a freed profiling
-    /// lane never re-serves a template the pressure stage already replayed under a
-    /// different order (agentx `dataset/dataset_samplers.py:66`).
+    /// `SequentialSampler`). `Shuffle`/`Random` draws derive a child generator off
+    /// the run root so the template pick continues the SAME legacy sampler stream
+    /// the pressure stage draws under (both route through the shared
+    /// [`PermutationDraw`]), so a freed profiling lane never re-serves a template
+    /// the pressure stage already replayed under a different order (agentx
+    /// `dataset/dataset_samplers.py`).
     draw: PermutationDraw,
 }
 
@@ -180,19 +180,19 @@ impl CyclingGraphTraceSource {
         self
     }
 
-    /// Route the recycle template pick through a strategy-aware draw.
+    /// Route the recycle template pick through a resolved strategy-aware draw.
     ///
-    /// `Sequential` (`shuffled = false`) leaves `next_trace` byte-identical to
-    /// the historic `draw % len` pick (legacy `SequentialSampler`). A
-    /// `Shuffle`/`Random` draw (`shuffled = true`) picks
+    /// `Sequential` leaves `next_trace` byte-identical to the historic
+    /// `draw % len` pick (legacy `SequentialSampler`). `Shuffle` picks
     /// `epoch[draw / len][draw % len]` under the legacy `ShuffleSampler`
-    /// persistent-epoch shuffle seeded once from `base_seed` (the legacy
-    /// `ShuffleSampler` child seed, `dataset_shuffle_seed`), so the profiling
+    /// persistent-epoch shuffle; `Random` picks the x-th `randbelow(len)` of the
+    /// legacy `RandomSampler` CPython stream — both seeded once from the run root
+    /// (via [`crate::graph::tstar::TStarWindow::recycle_draw`]), so the profiling
     /// recycle continues the SAME order the pressure stage draws under (both route
     /// through the shared [`PermutationDraw`]). Default `sequential` (no builder
     /// call) is the byte-unchanged product path.
-    pub fn with_sampling(mut self, shuffled: bool, base_seed: u64) -> Self {
-        self.draw = PermutationDraw::new(shuffled, base_seed);
+    pub fn with_sampling(mut self, draw: PermutationDraw) -> Self {
+        self.draw = draw;
         self
     }
 }
@@ -314,15 +314,16 @@ impl PartitionedGraphTraceSource {
         })
     }
 
-    /// Route the interleave template pick through a strategy-aware draw.
+    /// Route the interleave template pick through a resolved strategy-aware draw.
     ///
-    /// See [`CyclingGraphTraceSource::with_sampling`]: `Sequential`
-    /// (`shuffled = false`) is the byte-unchanged `global_ordinal % len` pick;
-    /// `Shuffle`/`Random` picks the same legacy persistent-epoch shuffle the
-    /// pressure stage and the single-cell cycler draw, keyed on the global ordinal
-    /// so the per-topology cover-the-corpus-once union is preserved.
-    pub fn with_sampling(mut self, shuffled: bool, base_seed: u64) -> Self {
-        self.draw = PermutationDraw::new(shuffled, base_seed);
+    /// See [`CyclingGraphTraceSource::with_sampling`]: `Sequential` is the
+    /// byte-unchanged `global_ordinal % len` pick; `Shuffle`/`Random` picks the
+    /// same legacy draw the pressure stage and the single-cell cycler use, keyed
+    /// on the global ordinal so the per-topology cover-the-corpus-once union is
+    /// preserved (`Shuffle`; `Random` is with replacement, so the union matches a
+    /// single-cell run but need not cover every template each pass).
+    pub fn with_sampling(mut self, draw: PermutationDraw) -> Self {
+        self.draw = draw;
         self
     }
 }
@@ -1024,7 +1025,7 @@ mod tests {
         // Two full passes over the 5-template corpus.
         let source = CyclingGraphTraceSource::new(templates, Some(2 * total as u64))
             .unwrap()
-            .with_sampling(true, base_seed);
+            .with_sampling(PermutationDraw::shuffle(base_seed));
         let drawn: Vec<String> = std::iter::from_fn(|| {
             source
                 .next_trace()
@@ -1032,7 +1033,7 @@ mod tests {
                 .map(|plan| plan.trace.id.split_once("::").unwrap().0.to_owned())
         })
         .collect();
-        let reference = PermutationDraw::new(true, base_seed);
+        let reference = PermutationDraw::shuffle(base_seed);
         for pass in 0u64..2 {
             let mut seen = Vec::new();
             for offset in 0..total {
@@ -1065,9 +1066,9 @@ mod tests {
         let source = CyclingGraphTraceSource::new(templates, Some(total as u64))
             .unwrap()
             .starting_at(start)
-            .with_sampling(true, base_seed);
+            .with_sampling(PermutationDraw::shuffle(base_seed));
         // The reference sampler the pressure stage draws from on the same counter.
-        let pressure = PermutationDraw::new(true, base_seed);
+        let pressure = PermutationDraw::shuffle(base_seed);
         for i in 0..total as u64 {
             let id = source.next_trace().unwrap().unwrap().trace.id;
             let letter = id.split_once("::").unwrap().0;
@@ -1085,7 +1086,7 @@ mod tests {
         let default_source = CyclingGraphTraceSource::new(templates(), Some(3)).unwrap();
         let sequential_source = CyclingGraphTraceSource::new(templates(), Some(3))
             .unwrap()
-            .with_sampling(false, 999);
+            .with_sampling(PermutationDraw::sequential());
         for _ in 0..3 {
             assert_eq!(
                 default_source.next_trace().unwrap().unwrap().trace.id,
@@ -1188,7 +1189,7 @@ mod tests {
         // Single-cell shuffle cycler = the reference global order.
         let single = CyclingGraphTraceSource::new(templates(), Some(cap))
             .unwrap()
-            .with_sampling(true, base_seed);
+            .with_sampling(PermutationDraw::shuffle(base_seed));
         let mut reference: BTreeMap<u64, String> = BTreeMap::new();
         while let Some(plan) = single.next_trace().unwrap() {
             let (letter, ord) = plan.trace.id.split_once("::instance-").unwrap();
@@ -1200,7 +1201,7 @@ mod tests {
         for cell_id in 0..3u32 {
             let source = PartitionedGraphTraceSource::new(templates(), Some(cap), cell_id, 3)
                 .unwrap()
-                .with_sampling(true, base_seed);
+                .with_sampling(PermutationDraw::shuffle(base_seed));
             while let Some(plan) = source.next_trace().unwrap() {
                 let (letter, ord) = plan.trace.id.split_once("::instance-").unwrap();
                 union.insert(ord.parse().unwrap(), letter.to_owned());

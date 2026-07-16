@@ -26,7 +26,9 @@ use crate::graph::recorded::{
     PromptCorpus, RecordedTraceInputConfig, compile_aiperf_trace_input, compile_dynamo_trace_input,
     compile_weka_trace_input,
 };
-use crate::graph::tstar::legacy_shuffle_seed;
+use crate::graph::tstar::{
+    PermutationDraw, RecycleDrawMode, legacy_random_seed, legacy_shuffle_seed,
+};
 use crate::rng::RngRoot;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
@@ -56,38 +58,60 @@ pub struct TStarWindow {
     pub start_max_ratio: f64,
     /// Base RNG seed salted per `(trace_id, lane)` by the `t*` sampler
     /// (`_seed_for_trace_lane`). This is `t_star_random_seed`, and is DISTINCT
-    /// from the shuffle draw's seed below.
+    /// from the dataset-sampler run root below.
     pub random_seed: u64,
-    /// The legacy agentx `ShuffleSampler` child seed
-    /// ([`crate::graph::tstar::legacy_shuffle_seed`] of the RUN root seed), used
-    /// as the persistent-epoch base seed for the shuffle/random dataset-sampling
-    /// recycle draw. This is NOT `t_star_random_seed`: legacy `ShuffleSampler`
-    /// derives its generator from the run root (`rng.init(config.random_seed)`),
-    /// not the trajectory-window seed. Defaults to `0`.
-    pub dataset_shuffle_seed: u64,
+    /// The RESOLVED run root seed (`config.random_seed`) the dataset-sampling
+    /// recycle draw derives its child generator from. Legacy `ShuffleSampler` /
+    /// `RandomSampler` seed their generators from the run root
+    /// (`rng.init(config.random_seed)`), NOT `t_star_random_seed`; the
+    /// per-strategy child seed is salted off this root in
+    /// [`TStarWindow::recycle_draw`] ([`crate::graph::tstar::legacy_shuffle_seed`]
+    /// for shuffle, [`crate::graph::tstar::legacy_random_seed`] for random), so a
+    /// future sampler adds a salt rather than a new field. Resolved ONCE at
+    /// construction (an absent run seed substitutes a single entropy value there,
+    /// documented at the construction site) so every draw site sharing this
+    /// `Copy` window agrees. Defaults to `0`.
+    pub run_random_seed: u64,
     /// Resolved dataset-sampling strategy governing WHICH corpus template a
     /// freed recycle lane serves. `Sequential` (the default) keeps the historic
-    /// `x % total` cursor draw; `Shuffle`/`Random` route through the legacy
-    /// persistent-epoch shuffle. See [`GraphSamplingStrategy`].
+    /// `x % total` cursor draw; `Shuffle` routes through the legacy
+    /// persistent-epoch shuffle (without replacement); `Random` routes through
+    /// the legacy CPython MT19937 `choice` draw (with replacement). See
+    /// [`GraphSamplingStrategy`].
     pub sampling_strategy: GraphSamplingStrategy,
+}
+
+impl TStarWindow {
+    /// Build the resolved recycle-index draw for this window's strategy.
+    ///
+    /// The child generator seed is salted off [`TStarWindow::run_random_seed`] per
+    /// strategy, so `Sequential`/`Shuffle`/`RandomSampler` all derive from the SAME
+    /// run root with different salts. Building a fresh draw at each site is safe:
+    /// the draw is a pure function of `(mode, child_seed)`, so the pressure stage
+    /// and the profiling recycle (built independently) agree draw-for-draw.
+    pub fn recycle_draw(&self) -> PermutationDraw {
+        match self.sampling_strategy.draw_mode() {
+            RecycleDrawMode::Sequential => PermutationDraw::sequential(),
+            RecycleDrawMode::Shuffle => {
+                PermutationDraw::shuffle(legacy_shuffle_seed(self.run_random_seed))
+            }
+            RecycleDrawMode::Random => {
+                PermutationDraw::random(legacy_random_seed(self.run_random_seed))
+            }
+        }
+    }
 }
 
 /// Resolved dataset-sampling strategy for the recorded-graph recycle draw.
 ///
 /// Port of the `sequential`/`shuffle`/`random` values of the Python
 /// `DatasetSamplingStrategy` dynamic enum (`aiperf/plugin/enums.py:53`).
-/// `Sequential`/`Shuffle` reproduce legacy agentx `SequentialSampler`
-/// (`x % total`) and `ShuffleSampler` (persistent-epoch shuffle) BYTE-EXACT.
-/// `Random` currently coerces to `Shuffle` (without-replacement): each lane
-/// recycle is a single corpus pass, so shuffle keeps coverage exact within a
-/// pass. Extension seam: a new sampling policy adds a variant here plus its draw
-/// branch, never a hardcoded mode string elsewhere.
-///
-// FUTURE: legacy `RandomSampler` (agentx `dataset_samplers.py`) draws WITH
-// replacement via `rng.derive("dataset.sampler.random").choice(...)`, a SEPARATE
-// divergence from the coerce-to-shuffle behavior here. Aligning `Random`
-// byte-exact needs its own derive-label + `choice` draw and is out of scope of
-// the `ShuffleSampler` recycle-order parity change.
+/// `Sequential`/`Shuffle`/`Random` reproduce legacy agentx `SequentialSampler`
+/// (`x % total`), `ShuffleSampler` (persistent-epoch shuffle, without
+/// replacement), and `RandomSampler` (CPython MT19937 `choice`, WITH replacement)
+/// BYTE-EXACT. Extension seam: a new sampling policy adds a variant here, a
+/// [`RecycleDrawMode`] branch, and a derive salt, never a hardcoded mode string
+/// elsewhere.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum GraphSamplingStrategy {
     /// Historic cursor-with-wrap draw (`x % total`); byte-unchanged default
@@ -96,8 +120,10 @@ pub enum GraphSamplingStrategy {
     Sequential,
     /// Legacy `ShuffleSampler` persistent-epoch shuffle (without replacement).
     Shuffle,
-    /// Coerced to [`GraphSamplingStrategy::Shuffle`] (see type docs; legacy
-    /// `RandomSampler` is with-replacement — see the `FUTURE` note above).
+    /// Legacy `RandomSampler`: CPython MT19937 `choice` draw (WITH replacement),
+    /// seeded from `rng.derive("dataset.sampler.random")`. No longer coerced to
+    /// `Shuffle` — see [`crate::graph::tstar::legacy_random_seed`] and
+    /// [`crate::graph::tstar::PermutationDraw::random`].
     Random,
 }
 
@@ -114,11 +140,17 @@ impl GraphSamplingStrategy {
         }
     }
 
-    /// True iff the strategy permutes (shuffle / random). Port of
-    /// `graph_ir_replay.py:_draw_is_shuffled` (lines 821-834): `sequential`
-    /// (and any unknown value) take the byte-identical `x % total` draw.
-    pub fn is_shuffled(self) -> bool {
-        matches!(self, Self::Shuffle | Self::Random)
+    /// Map the resolved wire strategy to the byte-exact legacy sampler family the
+    /// recycle draw reproduces. Port of `graph_ir_replay.py:_draw_is_shuffled`
+    /// (lines 821-834) generalized to three modes: `sequential` (and any unknown
+    /// value) take the byte-identical `x % total` draw, `shuffle` the
+    /// persistent-epoch shuffle, `random` the with-replacement CPython draw.
+    pub fn draw_mode(self) -> RecycleDrawMode {
+        match self {
+            Self::Sequential => RecycleDrawMode::Sequential,
+            Self::Shuffle => RecycleDrawMode::Shuffle,
+            Self::Random => RecycleDrawMode::Random,
+        }
     }
 }
 
@@ -652,17 +684,18 @@ fn prepare_recorded_file(
             start_min_ratio: value.trajectory_start_min_ratio,
             start_max_ratio: value.trajectory_start_max_ratio,
             random_seed: value.t_star_random_seed,
-            // Legacy `ShuffleSampler` seeds its generator from the RUN root
-            // (`rng.init(config.random_seed)`), not `t_star_random_seed`. When the
-            // run root is absent legacy uses `default_rng(None)` (non-deterministic);
-            // the scenario always threads a seed, so an absent run seed falls back to
-            // a derived entropy seed (mirroring `content_root_seed` at the site below).
-            dataset_shuffle_seed: context
+            // Legacy `ShuffleSampler`/`RandomSampler` seed their generators from the
+            // RUN root (`rng.init(config.random_seed)`), not `t_star_random_seed`;
+            // the per-strategy child seed is salted off this root in
+            // `TStarWindow::recycle_draw`. When the run root is absent legacy uses
+            // `default_rng(None)`/`Random(None)` (non-deterministic); the scenario
+            // always threads a seed, so an absent run seed substitutes ONE entropy
+            // value HERE (resolved once, shared by every draw site through the `Copy`
+            // window — mirroring `content_root_seed` at the site below), keeping the
+            // pressure->profiling recycle order internally consistent.
+            run_random_seed: context
                 .run_random_seed
-                .map(legacy_shuffle_seed)
-                .unwrap_or_else(|| {
-                    RngRoot::new(None).derive_seed_or_entropy("dataset.sampler.shuffle")
-                }),
+                .unwrap_or_else(|| RngRoot::new(None).derive_seed_or_entropy("dataset.sampler")),
             sampling_strategy: GraphSamplingStrategy::parse(
                 value.dataset_sampling_strategy.as_deref(),
             ),

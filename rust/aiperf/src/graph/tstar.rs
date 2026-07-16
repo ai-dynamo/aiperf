@@ -19,6 +19,7 @@ use std::rc::Rc;
 
 use crate::graph::model::{ParsedGraph, TraceRecord};
 use crate::rng::numpy_pcg64::NumpyPcg64;
+use crate::rng::python_mt::PythonMt19937;
 use sha2::{Digest, Sha256};
 
 /// Draws a deterministic per-trace `t*` (microseconds) for warmup partition.
@@ -100,6 +101,25 @@ pub fn legacy_shuffle_seed(root_seed: u64) -> u64 {
     u64::from_be_bytes(low8)
 }
 
+/// Derive the legacy agentx `RandomSampler` child RNG seed from the RUN root.
+///
+/// Byte-exact port of `_RNGManager.derive` (agentx
+/// `common/random_generator.py:392-410`) specialized to the label `RandomSampler`
+/// requests at `dataset/dataset_samplers.py` (`rng.derive("dataset.sampler.random")`):
+/// SHA-256 the ASCII string `"{root_seed}:dataset.sampler.random"` and take the
+/// low 8 bytes big-endian. This is the SAME run-root derivation as
+/// [`legacy_shuffle_seed`], with a different salt, so a future sampler adds a salt
+/// rather than a new seed field. The result seeds a [`PythonMt19937`]
+/// (`random.Random(seed)`), NOT a numpy PCG64.
+pub fn legacy_random_seed(root_seed: u64) -> u64 {
+    let mut hasher = Sha256::new();
+    hasher.update(format!("{root_seed}:dataset.sampler.random").as_bytes());
+    let digest = hasher.finalize();
+    let mut low8 = [0u8; 8];
+    low8.copy_from_slice(&digest[..8]);
+    u64::from_be_bytes(low8)
+}
+
 /// Persistent-epoch shuffle state for one corpus size (the legacy sampler model).
 ///
 /// agentx `ShuffleSampler` (`dataset/dataset_samplers.py:66`) shuffles
@@ -139,77 +159,159 @@ impl ShuffleEpochs {
     }
 }
 
+/// Persistent with-replacement draw state for one corpus size (legacy
+/// `RandomSampler`).
+///
+/// agentx `RandomSampler` (`dataset/dataset_samplers.py`) seeds ONE
+/// `random.Random(rng.derive("dataset.sampler.random"))` at init and calls
+/// `choice(ids)` per draw — `ids[self._randbelow(len(ids))]`, i.e. a positional
+/// stream of `randbelow(total)` from a single persistent MT19937 (see
+/// [`PythonMt19937`]). We keep that generator alive and memoize its emitted
+/// prefix, so the x-th draw is `randbelow(total)` at stream position `x`,
+/// independent of the order in which positions are requested (mirroring the
+/// [`ShuffleEpochs`] incremental cache).
+struct RandomStream {
+    /// The single persistent generator (`random.Random(child_seed)`).
+    generator: PythonMt19937,
+    /// Memoized `randbelow(total)` values at stream positions `0..drawn.len()`.
+    drawn: Vec<usize>,
+}
+
+impl RandomStream {
+    fn new(child_seed: u64, _total: usize) -> Self {
+        Self {
+            generator: PythonMt19937::from_u64_seed(child_seed),
+            drawn: Vec::new(),
+        }
+    }
+
+    /// Return the x-th `choice(range(total))` = `randbelow(total)` value,
+    /// advancing the generator only as far as needed.
+    fn value(&mut self, x: usize, total: usize) -> usize {
+        while self.drawn.len() <= x {
+            let next = usize::try_from(self.generator.randbelow(total as u64)).unwrap_or(0);
+            self.drawn.push(next);
+        }
+        self.drawn[x]
+    }
+}
+
+/// Resolved recycle-draw mode: the legacy sampler family a draw reproduces.
+///
+/// Each variant reproduces one agentx `dataset/dataset_samplers.py` sampler
+/// BYTE-EXACT. This is the trait-shaped enum the draw dispatches on; a new
+/// sampling policy adds a variant plus its draw branch here (and a derive salt on
+/// [`crate::rng::RngRoot`]), never a hardcoded mode string at a draw site.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecycleDrawMode {
+    /// Legacy `SequentialSampler`: the cursor-with-wrap `x % total` draw.
+    Sequential,
+    /// Legacy `ShuffleSampler`: persistent-epoch shuffle (without replacement).
+    Shuffle,
+    /// Legacy `RandomSampler`: CPython MT19937 `choice` (WITH replacement).
+    Random,
+}
+
 /// Strategy-aware corpus-index remap shared by every graph recycle draw site.
 ///
-/// Reproduces legacy agentx `ShuffleSampler`/`SequentialSampler`
+/// Reproduces legacy agentx `SequentialSampler`/`ShuffleSampler`/`RandomSampler`
 /// (`dataset/dataset_samplers.py`) BYTE-EXACT: the SINGLE choke point every
 /// cross-trace draw in the pressure lane fan-out, the pass-0 lane resolve, AND
 /// the profiling recycle draw routes through, so `--dataset-sampling-strategy`
 /// governs WHICH corpus template a freed lane serves without changing the draw
-/// COUNTERS (only the counter -> index remap changes). `Sequential`
-/// (`SequentialSampler`, the default) returns `x % total` unchanged;
-/// `Shuffle`/`Random` return `epoch[x / total][x % total]` where each epoch is
-/// the running array after one more in-place shuffle of the SAME persistent
-/// generator (the continuous-state model — see [`ShuffleEpochs`]), seeded once
-/// with [`legacy_shuffle_seed`]`(run_root)`.
+/// COUNTERS (only the counter -> index remap changes):
+/// - `Sequential` (the default) returns `x % total` unchanged;
+/// - `Shuffle` (without replacement) returns `epoch[x / total][x % total]` where
+///   each epoch is the running array after one more in-place shuffle of the SAME
+///   persistent numpy generator (the continuous-state model — see
+///   [`ShuffleEpochs`]), seeded once with [`legacy_shuffle_seed`]`(run_root)`;
+/// - `Random` (WITH replacement) returns the x-th `randbelow(total)` of a single
+///   persistent CPython MT19937 (see [`RandomStream`]), seeded once with
+///   [`legacy_random_seed`]`(run_root)`.
 ///
-/// The epoch snapshots are cached per `total` in a `RefCell` (single event-loop
-/// mutation); the derivation is deterministic given `(base_seed, total)`, so two
-/// instances with the same base seed produce identical draws regardless of call
-/// order (the cache is a pure optimization).
-///
-/// Reused by both the runner's `PressureDraw` (pressure/pass-0 draws) and the
+/// The per-`total` state is cached in a `RefCell` (single event-loop mutation);
+/// the derivation is deterministic given `(base_seed, total)`, so two instances
+/// with the same mode and base seed produce identical draws regardless of call
+/// order (the cache is a pure optimization). Reused by both the runner's
+/// `PressureDraw` (pressure/pass-0 draws) and the
 /// [`crate::graph::workload::CyclingGraphTraceSource`] /
 /// `PartitionedGraphTraceSource` profiling recycle, so the profiling recycle
-/// continues the SAME persistent-epoch order the pressure stage replays under (a
-/// freed profiling lane never re-serves a template the pressure stage already
-/// drew under a different order).
+/// continues the SAME order the pressure stage replays under (a freed profiling
+/// lane never re-serves a template the pressure stage already drew under a
+/// different order).
 pub struct PermutationDraw {
-    /// Whether the resolved strategy permutes (shuffle/random) vs. sequential.
-    shuffled: bool,
-    /// The legacy `ShuffleSampler` child seed ([`legacy_shuffle_seed`] of the run
-    /// root), NOT `t_star_random_seed`.
+    /// The resolved legacy sampler family this draw reproduces.
+    mode: RecycleDrawMode,
+    /// The legacy sampler child seed for the resolved mode ([`legacy_shuffle_seed`]
+    /// for `Shuffle`, [`legacy_random_seed`] for `Random`), both of the run root;
+    /// unused for `Sequential`.
     base_seed: u64,
-    /// Per-`total` persistent-epoch shuffle state (mirrors the sampler's own
-    /// single-generator, running-array state across wraps).
-    cache: RefCell<HashMap<usize, ShuffleEpochs>>,
+    /// Per-`total` persistent shuffle-epoch state (`Shuffle` mode only).
+    shuffle_cache: RefCell<HashMap<usize, ShuffleEpochs>>,
+    /// Per-`total` persistent with-replacement stream state (`Random` mode only).
+    random_cache: RefCell<HashMap<usize, RandomStream>>,
 }
 
 impl PermutationDraw {
-    /// Build a draw for a resolved strategy: `shuffled` selects the persistent
-    /// shuffle-epoch remap; `base_seed` is the legacy `ShuffleSampler` child seed.
-    pub fn new(shuffled: bool, base_seed: u64) -> Self {
-        Self {
-            shuffled,
-            base_seed,
-            cache: RefCell::new(HashMap::new()),
-        }
-    }
-
     /// The byte-unchanged sequential draw (`x % total`); no permutation, no seed.
     pub fn sequential() -> Self {
-        Self::new(false, 0)
+        Self::with_mode(RecycleDrawMode::Sequential, 0)
+    }
+
+    /// Persistent-epoch shuffle draw (legacy `ShuffleSampler`, without
+    /// replacement). `base_seed` is the legacy `ShuffleSampler` child seed
+    /// ([`legacy_shuffle_seed`] of the run root), NOT `t_star_random_seed`.
+    pub fn shuffle(base_seed: u64) -> Self {
+        Self::with_mode(RecycleDrawMode::Shuffle, base_seed)
+    }
+
+    /// Persistent with-replacement draw (legacy `RandomSampler`). `base_seed` is
+    /// the legacy `RandomSampler` child seed ([`legacy_random_seed`] of the run
+    /// root).
+    pub fn random(base_seed: u64) -> Self {
+        Self::with_mode(RecycleDrawMode::Random, base_seed)
+    }
+
+    /// Build a draw for a resolved mode with an already-derived child seed.
+    fn with_mode(mode: RecycleDrawMode, base_seed: u64) -> Self {
+        Self {
+            mode,
+            base_seed,
+            shuffle_cache: RefCell::new(HashMap::new()),
+            random_cache: RefCell::new(HashMap::new()),
+        }
     }
 
     /// Remap draw counter `x` to a corpus index in `[0, total)`.
     ///
-    /// `total == 0` yields `0`; `SequentialSampler` returns `x % total`;
-    /// `ShuffleSampler` returns `epoch[x / total][x % total]`.
+    /// `total == 0` yields `0`; `Sequential` returns `x % total`; `Shuffle`
+    /// returns `epoch[x / total][x % total]`; `Random` returns the x-th
+    /// `randbelow(total)` of the persistent MT19937 stream.
     pub fn index(&self, x: u64, total: usize) -> usize {
         if total == 0 {
             return 0;
         }
         let total_u64 = total as u64;
-        if !self.shuffled {
-            return usize::try_from(x % total_u64).unwrap_or(0);
+        match self.mode {
+            RecycleDrawMode::Sequential => usize::try_from(x % total_u64).unwrap_or(0),
+            RecycleDrawMode::Shuffle => {
+                let pass_index = usize::try_from(x / total_u64).unwrap_or(0);
+                let offset = usize::try_from(x % total_u64).unwrap_or(0);
+                let mut cache = self.shuffle_cache.borrow_mut();
+                let epochs = cache
+                    .entry(total)
+                    .or_insert_with(|| ShuffleEpochs::new(self.base_seed, total));
+                epochs.pass(pass_index)[offset]
+            }
+            RecycleDrawMode::Random => {
+                let position = usize::try_from(x).unwrap_or(usize::MAX);
+                let mut cache = self.random_cache.borrow_mut();
+                let stream = cache
+                    .entry(total)
+                    .or_insert_with(|| RandomStream::new(self.base_seed, total));
+                stream.value(position, total)
+            }
         }
-        let pass_index = usize::try_from(x / total_u64).unwrap_or(0);
-        let offset = usize::try_from(x % total_u64).unwrap_or(0);
-        let mut cache = self.cache.borrow_mut();
-        let epochs = cache
-            .entry(total)
-            .or_insert_with(|| ShuffleEpochs::new(self.base_seed, total));
-        epochs.pass(pass_index)[offset]
     }
 }
 
@@ -325,7 +427,7 @@ mod tests {
                 "child seed for root {}",
                 vector.root_seed
             );
-            let draw = PermutationDraw::new(true, vector.seed);
+            let draw = PermutationDraw::shuffle(vector.seed);
             for (x, &expected) in vector.sequence.iter().enumerate() {
                 assert_eq!(
                     draw.index(x as u64, vector.n),
@@ -335,6 +437,80 @@ mod tests {
                     vector.n
                 );
             }
+        }
+    }
+
+    #[test]
+    fn legacy_random_seed_matches_python_sha256_low8_be() {
+        // python3 -c "import hashlib; print(int.from_bytes(
+        //   hashlib.sha256(b'42:dataset.sampler.random').digest()[:8],'big'))"
+        // These are exactly the `seed` fields of the committed random golden vectors.
+        assert_eq!(legacy_random_seed(0), 16856100311250370471);
+        assert_eq!(legacy_random_seed(42), 2008847916738778864);
+        assert_eq!(legacy_random_seed(12345), 3869323597464144403);
+    }
+
+    #[test]
+    fn legacy_random_sampler_golden_vectors() {
+        // Authoritative parity gate for the WITH-replacement recycle draw: for
+        // each committed vector, the persistent CPython MT19937 `PermutationDraw`
+        // seeded with the legacy `RandomSampler` child seed must reproduce the
+        // exact `choice`-index `sequence` agentx `RandomSampler` emits for the
+        // same run root. The child-seed derivation is part of the contract.
+        #[derive(serde::Deserialize)]
+        struct Vector {
+            root_seed: u64,
+            n: usize,
+            seed: u64,
+            sequence: Vec<usize>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Fixtures {
+            sampler: Vec<Vector>,
+        }
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/data/legacy_random_sampler_vectors.json"
+        );
+        let raw = std::fs::read_to_string(path).expect("read legacy random sampler vectors");
+        let fixtures: Fixtures =
+            serde_json::from_str(&raw).expect("parse legacy random sampler vectors");
+        assert!(
+            !fixtures.sampler.is_empty(),
+            "sampler vectors must not be empty"
+        );
+        for vector in &fixtures.sampler {
+            assert_eq!(
+                legacy_random_seed(vector.root_seed),
+                vector.seed,
+                "child seed for root {}",
+                vector.root_seed
+            );
+            let draw = PermutationDraw::random(vector.seed);
+            for (x, &expected) in vector.sequence.iter().enumerate() {
+                assert_eq!(
+                    draw.index(x as u64, vector.n),
+                    expected,
+                    "root {} n {} at draw {x}",
+                    vector.root_seed,
+                    vector.n
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn permutation_draw_random_is_call_order_independent() {
+        // The with-replacement draw is a pure function of (base_seed, x, total):
+        // two instances agree regardless of the order positions are requested (the
+        // incremental stream cache is only an optimization). Unlike shuffle, a full
+        // pass need NOT cover every index (replacement permits repeats).
+        let seed = legacy_random_seed(42);
+        let total = 8usize;
+        let forward = PermutationDraw::random(seed);
+        let reverse = PermutationDraw::random(seed);
+        for x in (0u64..20).rev() {
+            assert_eq!(reverse.index(x, total), forward.index(x, total), "draw {x}");
         }
     }
 
@@ -356,7 +532,7 @@ mod tests {
         // exactly once (music-shuffle contract), and the draw is a pure function of
         // (base_seed, x, total): two instances agree regardless of the order in
         // which passes are requested (the incremental cache is only optimization).
-        let draw = PermutationDraw::new(true, 5203359018791016587);
+        let draw = PermutationDraw::shuffle(5203359018791016587);
         let total = 8usize;
         for pass in 0u64..3 {
             let mut seen = Vec::new();
@@ -367,7 +543,7 @@ mod tests {
             assert_eq!(seen, (0..total).collect::<Vec<_>>(), "pass {pass} coverage");
         }
         // A second instance drawing passes in reverse order agrees index-for-index.
-        let reverse = PermutationDraw::new(true, 5203359018791016587);
+        let reverse = PermutationDraw::shuffle(5203359018791016587);
         for pass in (0u64..3).rev() {
             for offset in 0..total as u64 {
                 let x = pass * total as u64 + offset;
