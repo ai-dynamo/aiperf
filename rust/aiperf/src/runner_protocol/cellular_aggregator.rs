@@ -62,6 +62,19 @@ pub const CELL_AGG_BASE_PORT_ENV: &str = "AIPERF_CELL_AGG_BASE_PORT";
 /// The default base loopback port for local aggregators.
 pub const DEFAULT_AGG_BASE_PORT: u16 = 9700;
 
+/// Env var the **operator** sets on the k8s controller pod to signal that it created
+/// the aggregator tier as pods (and injected each cell's ship-DNS). Its presence is
+/// the gate that lets the controller take the k8s "expect, don't spawn" path (§3.2):
+/// the controller then does NOT spawn aggregator subprocesses and does NOT inject a
+/// loopback ship address — it only sizes `expected_partitions = M` and collects the M
+/// merged stores the operator-created aggregator pods ship up. Absent on a k8s run,
+/// a set [`CELL_AGG_FANOUT_ENV`] fails closed to the flat star (cells would otherwise
+/// ship into a void). The value is the operator's DNS template for the aggregator pods
+/// (`{jobset}-aggregators-{id}-0.{jobset}.{ns}.svc.cluster.local:{port}`) — carried for
+/// observability/validation; the controller consumes only its presence because the
+/// operator injects the concrete ship coordinate into each cell pod directly.
+pub const AGG_DNS_TEMPLATE_ENV: &str = "AIPERF_CELL_AGG_DNS_TEMPLATE";
+
 /// The number of aggregators for `cells` at `fanout`, or `None` for the flat star
 /// topology (fanout unset, `< 1`, or `>= cells` — one aggregator per cell or fewer is
 /// pointless). Read from [`CELL_AGG_FANOUT_ENV`].
@@ -71,6 +84,24 @@ pub fn aggregator_count(cell_count: u32) -> Option<u32> {
         return None;
     }
     Some(cell_count.div_ceil(fanout))
+}
+
+/// Resolve the effective aggregator count for the deployment. `requested` is what the
+/// fanout asks for ([`aggregator_count`]); the result is the tier the controller will
+/// actually build. Off k8s the request stands (the controller spawns local aggregator
+/// subprocesses). On k8s a request only stands when the operator signalled it wired the
+/// aggregator tier (`k8s_wired`, from [`AGG_DNS_TEMPLATE_ENV`]); otherwise it falls
+/// closed to the flat star (`None`) so cells never ship into a void. Pure so the k8s
+/// "expect, don't spawn" gate is unit-testable without a velo runtime.
+pub fn effective_aggregator_count(
+    is_k8s: bool,
+    k8s_wired: bool,
+    requested: Option<u32>,
+) -> Option<u32> {
+    match (is_k8s, requested) {
+        (true, Some(_)) if !k8s_wired => None,
+        (_, other) => other,
+    }
 }
 
 /// The base loopback port for aggregators, from [`CELL_AGG_BASE_PORT_ENV`].
@@ -251,5 +282,26 @@ mod tests {
             std::env::remove_var(CELL_AGG_FANOUT_ENV);
         }
         assert_eq!(aggregator_count(6), None, "unset fanout is flat");
+    }
+
+    #[test]
+    fn effective_aggregator_count_gates_k8s_on_operator_signal() {
+        // Off k8s the request always stands (the controller spawns local aggregators).
+        assert_eq!(effective_aggregator_count(false, false, Some(2)), Some(2));
+        assert_eq!(effective_aggregator_count(false, false, None), None);
+        // On k8s a request only stands when the operator wired the tier; otherwise it
+        // falls closed to the flat star so cells never ship into a void.
+        assert_eq!(
+            effective_aggregator_count(true, false, Some(2)),
+            None,
+            "k8s fanout without operator wiring must fall back to flat"
+        );
+        assert_eq!(
+            effective_aggregator_count(true, true, Some(2)),
+            Some(2),
+            "k8s fanout with operator wiring builds the tree"
+        );
+        // A flat request stays flat regardless of the k8s signal.
+        assert_eq!(effective_aggregator_count(true, true, None), None);
     }
 }
