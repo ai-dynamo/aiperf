@@ -43,7 +43,7 @@ const WORKER_RESPONSE_CAPACITY: usize = 256;
 
 /// Inputs available to an execution-placement factory for one benchmark run.
 pub struct ExecutionBackendConfig {
-    /// Number of HTTP execution workers requested by resolved Config v2.
+    /// Number of execution workers requested by resolved Config v2.
     pub workers: usize,
     /// Coordinator-local clock used by direct execution.
     pub coordinator_clock: Rc<dyn Clock>,
@@ -780,7 +780,7 @@ async fn run_worker<S: WorkerSink + 'static>(
             }
             completed = jobs.join_next(), if !jobs.is_empty() => {
                 if let Some(Err(error)) = completed {
-                    tracing::error!(error = %error, "HTTP execution task panicked");
+                    tracing::error!(error = %error, "execution task panicked");
                 }
             }
         }
@@ -817,7 +817,7 @@ impl TurnResponseObserver for WorkerResponseObserver {
             .poll_reserve(context)
             .map(|result| {
                 result.map_err(|_| {
-                    anyhow!("HTTP execution response stream receiver closed before terminal")
+                    anyhow!("execution response stream receiver closed before terminal")
                 })
             })
     }
@@ -826,7 +826,7 @@ impl TurnResponseObserver for WorkerResponseObserver {
         self.sender
             .borrow_mut()
             .send_item(response)
-            .map_err(|_| anyhow!("HTTP execution response stream receiver closed before terminal"))
+            .map_err(|_| anyhow!("execution response stream receiver closed before terminal"))
     }
 }
 
@@ -866,7 +866,7 @@ async fn execute_worker_command<S: WorkerSink + 'static>(
             let result = tokio::select! {
                 biased;
                 () = cancellation.cancelled() => {
-                    Err(anyhow!("HTTP execution command cancelled by its coordinator"))
+                    Err(anyhow!("execution command cancelled by its coordinator"))
                 }
                 result = &mut dispatch => result,
             };
@@ -908,14 +908,14 @@ fn join_worker_threads(threads: Vec<JoinHandle<Result<()>>>) -> Result<()> {
         match thread.join() {
             Ok(Ok(())) => {}
             Ok(Err(error)) => errors.push(format!("{error:#}")),
-            Err(_) => errors.push("HTTP execution worker panicked".to_string()),
+            Err(_) => errors.push("execution worker panicked".to_string()),
         }
     }
     if errors.is_empty() {
         Ok(())
     } else {
         Err(anyhow!(
-            "{} HTTP execution worker(s) failed: {}",
+            "{} execution worker(s) failed: {}",
             errors.len(),
             errors.join("; ")
         ))
