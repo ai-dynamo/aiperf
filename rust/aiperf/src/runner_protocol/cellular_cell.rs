@@ -111,9 +111,11 @@ pub fn http_artifact_shipping_enabled() -> bool {
 /// the cell's own local writes instead — no HTTP). Resolution order:
 /// 1. shipping disabled → `None`;
 /// 2. [`CELL_ARTIFACT_ADDR_ENV`] set (operator/launcher) → that authority;
-/// 3. a `tcp://HOST:PORT` velo controller coordinate (k8s) → `HOST` + the
-///    [`CELL_ARTIFACT_PORT_ENV`] port (default [`DEFAULT_ARTIFACT_PORT`]);
-/// 4. otherwise (a `file:` local coordinate) → `None`.
+/// 3. a `tcp://HOST:PORT` velo controller coordinate with a **routable** `HOST`
+///    (k8s) → `HOST` + the [`CELL_ARTIFACT_PORT_ENV`] port (default
+///    [`DEFAULT_ARTIFACT_PORT`]);
+/// 4. otherwise (a `tcp://` **loopback** or `uds://` local coordinate) → `None`
+///    (a co-located run concatenates the cell's own local writes; no HTTP).
 pub fn cell_artifact_authority() -> Option<String> {
     if !http_artifact_shipping_enabled() {
         return None;
@@ -130,6 +132,16 @@ pub fn cell_artifact_authority() -> Option<String> {
     let host = host_port
         .rsplit_once(':')
         .map_or(host_port, |(host, _)| host);
+    // A loopback coordinate is a co-located (local) run — the controller runs no
+    // HTTP upload server there (Stage D concatenates the cells' shared-FS writes),
+    // so unless an explicit `CELL_ARTIFACT_ADDR` forced it above, ship nothing.
+    if host
+        .parse::<std::net::IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(host.eq_ignore_ascii_case("localhost"))
+    {
+        return None;
+    }
     let port = std::env::var(CELL_ARTIFACT_PORT_ENV)
         .ok()
         .and_then(|value| value.parse::<u16>().ok())
@@ -345,14 +357,25 @@ pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<Vec<u8
 
 // -- velo cell transport (fetch spec + ship records) ------------------------------
 
-/// The velo bind for this cell, chosen from the controller coordinate scheme: a
-/// `tcp://` coordinate is k8s (bind an ephemeral routable TCP port); anything else
-/// is a co-located launcher (UDS on unix, loopback elsewhere). `role` disambiguates
-/// the cell's fetch vs ship velo instances so their UDS paths do not collide.
+/// The velo bind for this cell, chosen from the controller coordinate: a `tcp://`
+/// coordinate whose host is **loopback** is a co-located (local launcher) run — the
+/// cell binds loopback too so it advertises a loopback endpoint the loopback-bound
+/// controller can route back to; a `tcp://` coordinate with a **routable** host is
+/// k8s — the cell binds all interfaces so the controller reaches the pod IP. A
+/// `uds://` coordinate is a pure-local unix run. `role` disambiguates the cell's
+/// fetch vs ship velo instances so their UDS paths do not collide.
 #[cfg(feature = "velo")]
 fn cell_bind(coordinate: &str, role: &str) -> crate::cellular::transport::connect::BindSpec {
     use crate::cellular::transport::connect::BindSpec;
-    if coordinate.starts_with("tcp://") {
+    if let Some(addr) = coordinate.strip_prefix("tcp://") {
+        let loopback = addr
+            .parse::<std::net::SocketAddr>()
+            .map(|socket| socket.ip().is_loopback())
+            .unwrap_or(false);
+        if loopback {
+            let _ = role;
+            return BindSpec::TcpLoopback;
+        }
         return BindSpec::TcpBind("0.0.0.0:0".parse().expect("valid ephemeral bind addr"));
     }
     #[cfg(unix)]
@@ -375,9 +398,7 @@ fn cell_bind(coordinate: &str, role: &str) -> crate::cellular::transport::connec
 #[cfg(feature = "velo")]
 pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
     use crate::cellular::VeloCellClient;
-    use crate::cellular::transport::connect::{
-        BootstrapSource, build_velo, resolve_controller_peer,
-    };
+    use crate::cellular::transport::connect::{build_velo, connect_controller};
     use anyhow::Context;
 
     let coordinate = std::env::var(CELL_CONTROLLER_ADDR_ENV)
@@ -386,8 +407,11 @@ pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
         .context("cell has no partition env (AIPERF_CELL_ID/_COUNT)")?
         .cell_id();
     let velo = build_velo(cell_bind(&coordinate, "fetch")).await?;
-    let source = BootstrapSource::parse(&coordinate)?;
-    let controller = resolve_controller_peer(&source).await?;
+    // Discovery-free: dial the controller's known endpoint; velo's `_hello`
+    // handshake learns its identity and mutually registers us.
+    let controller = connect_controller(&velo, &coordinate)
+        .await
+        .map_err(|error| anyhow::anyhow!("cell {cell_id} connect controller: {error}"))?;
     let client = VeloCellClient::connect(velo, controller)
         .map_err(|error| anyhow::anyhow!("cell {cell_id} connect: {error}"))?;
     let reply = client
@@ -514,9 +538,7 @@ impl CellRecordsShipper {
         heartbeat: crate::cellular::MetricsHeartbeat,
         terminal: crate::cellular::CellMessage,
     ) -> Result<()> {
-        use crate::cellular::transport::connect::{
-            BootstrapSource, build_velo, resolve_controller_peer,
-        };
+        use crate::cellular::transport::connect::{build_velo, connect_controller};
         use crate::cellular::{CellClient, CellMessage, VeloCellClient};
 
         let coordinate = self.coordinate.clone();
@@ -531,8 +553,11 @@ impl CellRecordsShipper {
                 .build()?;
             runtime.block_on(async move {
                 let velo = build_velo(cell_bind(&coordinate, "ship")).await?;
-                let source = BootstrapSource::parse(&coordinate)?;
-                let controller = resolve_controller_peer(&source).await?;
+                let controller = connect_controller(&velo, &coordinate)
+                    .await
+                    .map_err(|error| {
+                        anyhow::anyhow!("cell {cell_id} ship connect controller: {error}")
+                    })?;
                 let mut client = VeloCellClient::connect(velo, controller)
                     .map_err(|error| anyhow::anyhow!("cell {cell_id} ship connect: {error}"))?;
                 client

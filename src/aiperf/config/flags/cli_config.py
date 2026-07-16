@@ -1651,6 +1651,28 @@ class CLIConfig(BaseConfig):
         CLIParameter(name=("--synthesis-idle-gap-cap",), group=Groups.SYNTHESIS),
     ] = None
 
+    scenario: Annotated[
+        str | None,
+        Field(
+            description="Lock all benchmark invariants for a named scenario "
+            "(e.g. 'inferencex-agentx-mvp'). Conflicts with the locked "
+            "invariants raise ScenarioLockError at startup unless "
+            "--unsafe-override is also passed. Distinct from the sweep "
+            "``scenarios`` strategy (hand-picked named runs).",
+        ),
+        CLIParameter(name=("--scenario",), group=Groups.SCENARIO),
+    ] = None
+
+    unsafe_override: Annotated[
+        bool,
+        Field(
+            description="Convert scenario lock errors to warnings; stamps "
+            "submission_valid=false in the resolved scenario outcome. No-op "
+            "without --scenario.",
+        ),
+        CLIParameter(name=("--unsafe-override",), group=Groups.SCENARIO),
+    ] = False
+
     trajectory_start_min_ratio: Annotated[
         float | None,
         Field(
@@ -2120,10 +2142,12 @@ class CLIConfig(BaseConfig):
             description="Extended cache-pressure warmup duration in seconds for "
             "recorded-graph (agentic/weka) replay. When set, the native runner "
             "drives cache-pressure warmup traffic for this many seconds to prime "
-            "the server's prefix/KV cache before profiling begins. Sets "
-            "agentic_cache_warmup_duration on the warmup phase; requires a warmup "
-            "trigger (--warmup-request-count / --num-warmup-sessions / "
-            "--warmup-duration) so a warmup phase exists to carry it.",
+            "the server's prefix/KV cache before profiling begins. This flag is "
+            "self-triggering: it auto-builds a self-bounding CONCURRENCY_BURST "
+            "warmup phase carrying only this duration. Do NOT combine it with a "
+            "manual warmup trigger (--warmup-request-count / --num-warmup-sessions "
+            "/ --warmup-duration); a session/request/duration cap cancels the "
+            "cache-pressure recycle and is rejected.",
         ),
         CLIParameter(
             name=("--agentic-cache-warmup-duration",),
