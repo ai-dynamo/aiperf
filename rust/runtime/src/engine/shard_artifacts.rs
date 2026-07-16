@@ -112,37 +112,9 @@ pub(crate) fn concatenate_shard_artifacts(
         workers,
     };
 
-    if let Some(relative) = &artifacts.records_path {
-        concat_jsonl(
-            &shard_paths_for(artifact_dir, relative, workers),
-            &artifact_dir.join(relative),
-        )?;
-    }
-    if let Some(relative) = &artifacts.raw_path {
-        concat_jsonl(
-            &shard_paths_for(artifact_dir, relative, workers),
-            &artifact_dir.join(relative),
-        )?;
-    }
-    if let Some(relative) = &artifacts.records_csv_path {
-        concat_csv(
-            &shard_paths_for(artifact_dir, relative, workers),
-            &artifact_dir.join(relative),
-        )?;
-    }
-    if let Some(relative) = &artifacts.outputs_path {
-        concat_outputs_json(
-            &shard_paths_for(artifact_dir, relative, workers),
-            &artifact_dir.join(relative),
-        )?;
-    }
-    #[cfg(feature = "parquet")]
-    if let Some(relative) = &artifacts.records_parquet_path {
-        crate::export::per_record_parquet::concat_per_record_parquet(
-            &shard_paths_for(artifact_dir, relative, workers),
-            &artifact_dir.join(relative),
-        )?;
-    }
+    concatenate_artifacts(artifacts, artifact_dir, |relative| {
+        shard_paths_for(artifact_dir, relative, workers)
+    })?;
     // Drop the per-shard temp directories now that every file has been fused.
     for id in 0..workers {
         let dir = shard_dir(artifact_dir, id);
@@ -177,25 +149,38 @@ pub(crate) fn concatenate_cell_artifacts(
     artifact_dir: &Path,
     artifacts: &ArtifactSpec,
 ) -> Result<()> {
-    let sources = |relative: &Path| -> Vec<PathBuf> {
+    concatenate_artifacts(artifacts, artifact_dir, |relative| {
         cell_dirs.iter().map(|dir| dir.join(relative)).collect()
-    };
+    })
+}
+
+/// Fuse each per-record artifact from N source dirs into the single final
+/// artifact, choosing the merge rule per format (byte-append records/raw JSONL,
+/// header-once + data-append CSV, row-group concat parquet, data-array merge
+/// outputs.json). `sources_for` maps one artifact's relative path to the N
+/// source files; the sharded and cellular paths differ only in that map (and in
+/// who owns temp-dir cleanup), so the dispatch table lives here once.
+fn concatenate_artifacts(
+    artifacts: &ArtifactSpec,
+    artifact_dir: &Path,
+    sources_for: impl Fn(&Path) -> Vec<PathBuf>,
+) -> Result<()> {
     if let Some(relative) = &artifacts.records_path {
-        concat_jsonl(&sources(relative), &artifact_dir.join(relative))?;
+        concat_jsonl(&sources_for(relative), &artifact_dir.join(relative))?;
     }
     if let Some(relative) = &artifacts.raw_path {
-        concat_jsonl(&sources(relative), &artifact_dir.join(relative))?;
+        concat_jsonl(&sources_for(relative), &artifact_dir.join(relative))?;
     }
     if let Some(relative) = &artifacts.records_csv_path {
-        concat_csv(&sources(relative), &artifact_dir.join(relative))?;
+        concat_csv(&sources_for(relative), &artifact_dir.join(relative))?;
     }
     if let Some(relative) = &artifacts.outputs_path {
-        concat_outputs_json(&sources(relative), &artifact_dir.join(relative))?;
+        concat_outputs_json(&sources_for(relative), &artifact_dir.join(relative))?;
     }
     #[cfg(feature = "parquet")]
     if let Some(relative) = &artifacts.records_parquet_path {
         crate::export::per_record_parquet::concat_per_record_parquet(
-            &sources(relative),
+            &sources_for(relative),
             &artifact_dir.join(relative),
         )?;
     }
