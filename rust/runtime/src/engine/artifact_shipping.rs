@@ -160,15 +160,31 @@ pub struct DecompressToFile {
     final_path: PathBuf,
 }
 
+/// Create the `.part` staging file for `final_path` (and any missing parent
+/// dirs), returning the open file and its `.part` path. Shared by every
+/// `.part`-file sink so the crash-safe staging convention lives in one place.
+fn create_part_file(final_path: &Path) -> io::Result<(std::fs::File, PathBuf)> {
+    if let Some(parent) = final_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let part_path = part_path_for(final_path);
+    let file = std::fs::File::create(&part_path)?;
+    Ok((file, part_path))
+}
+
+/// fsync the finished `.part` file and atomically rename it onto the final path,
+/// so a crashed transfer leaves a `.part`, never a truncated final artifact.
+fn commit_part_file(file: std::fs::File, part_path: &Path, final_path: &Path) -> io::Result<()> {
+    file.sync_all()?;
+    std::fs::rename(part_path, final_path)?;
+    Ok(())
+}
+
 impl DecompressToFile {
-    /// Create the `.part` staging file (and any missing parent dirs) and wrap it
-    /// in a streaming zstd write-decoder.
+    /// Create the `.part` staging file and wrap it in a streaming zstd
+    /// write-decoder.
     pub fn create(final_path: &Path) -> io::Result<Self> {
-        if let Some(parent) = final_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let part_path = part_path_for(final_path);
-        let file = std::fs::File::create(&part_path)?;
+        let (file, part_path) = create_part_file(final_path)?;
         let decoder = zstd::stream::write::Decoder::new(io::BufWriter::new(file))?;
         Ok(Self {
             decoder,
@@ -183,17 +199,14 @@ impl DecompressToFile {
         self.decoder.write_all(compressed)
     }
 
-    /// Flush the decoder, fsync the `.part` file, and atomically rename it onto
-    /// the final path.
+    /// Flush the decoder, then fsync and atomically commit the `.part` file.
     pub fn finish(mut self) -> io::Result<()> {
         self.decoder.flush()?;
         let writer = self.decoder.into_inner();
         let file = writer
             .into_inner()
             .map_err(std::io::IntoInnerError::into_error)?;
-        file.sync_all()?;
-        std::fs::rename(&self.part_path, &self.final_path)?;
-        Ok(())
+        commit_part_file(file, &self.part_path, &self.final_path)
     }
 }
 
@@ -208,11 +221,7 @@ struct PlainToFile {
 
 impl PlainToFile {
     fn create(final_path: &Path) -> io::Result<Self> {
-        if let Some(parent) = final_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let part_path = part_path_for(final_path);
-        let file = std::fs::File::create(&part_path)?;
+        let (file, part_path) = create_part_file(final_path)?;
         Ok(Self {
             writer: io::BufWriter::new(file),
             part_path,
@@ -230,9 +239,7 @@ impl PlainToFile {
             .writer
             .into_inner()
             .map_err(std::io::IntoInnerError::into_error)?;
-        file.sync_all()?;
-        std::fs::rename(&self.part_path, &self.final_path)?;
-        Ok(())
+        commit_part_file(file, &self.part_path, &self.final_path)
     }
 }
 
