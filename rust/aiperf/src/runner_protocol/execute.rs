@@ -473,6 +473,7 @@ pub(crate) struct NativeGraphDatasetPlan {
     pub(crate) default_output_tokens: usize,
     pub(crate) allow_dataset_wrap: bool,
     pub(crate) t_star_window: crate::runner_protocol::graph_input::TStarWindow,
+    pub(crate) cache_bust_target: crate::runner_protocol::graph_input::CacheBustTarget,
 }
 
 /// Execute a protocol-v2 plan through a transport-selected request executor.
@@ -1393,6 +1394,7 @@ struct OnlineGraphPhaseBackendFactory<'a> {
     metrics: MetricsConfig,
     raw_enabled: bool,
     on_failure: OnFailure,
+    cache_bust: Option<crate::runner_protocol::graph_execution::GraphCacheBust>,
 }
 
 impl RunnerGraphPhaseBackendFactory for OnlineGraphPhaseBackendFactory<'_> {
@@ -1415,6 +1417,7 @@ impl RunnerGraphPhaseBackendFactory for OnlineGraphPhaseBackendFactory<'_> {
                 raw_enabled: self.raw_enabled,
                 events: config.events,
                 on_failure: self.on_failure,
+                cache_bust: self.cache_bust.clone(),
             },
         ));
         let requires_node_records = self.placement.requires_node_records();
@@ -1475,6 +1478,14 @@ async fn execute_graph_native(
     let start_ns = clock.now_ns();
     let rng_root = RngRoot::new(graph_random_seed.or(request.random_seed));
     let on_failure = OnFailure::graph_or_default(request.failure_policy);
+    // Scenario-locked first-turn cache-bust: mint per-conversation markers when
+    // the run resolved a non-`None` target. `None` keeps replay byte-unchanged.
+    let cache_bust = graph.cache_bust_target.is_enabled().then(|| {
+        crate::runner_protocol::graph_execution::GraphCacheBust {
+            benchmark_id: request.benchmark_id.clone(),
+            target: graph.cache_bust_target,
+        }
+    });
     let backends = OnlineGraphPhaseBackendFactory {
         placement: graph_placement,
         worker_count: request.workers,
@@ -1487,6 +1498,7 @@ async fn execute_graph_native(
         metrics: metrics_config.clone(),
         raw_enabled: request.artifacts.raw_path.is_some(),
         on_failure,
+        cache_bust,
     };
     // Telemetry sidecars are side-channel producers synchronized to phase
     // barriers, not to the workload, so the graph path attaches the same

@@ -154,6 +154,43 @@ impl GraphSamplingStrategy {
     }
 }
 
+/// Recorded-graph cache-bust marker target.
+///
+/// Port of the subset of agentx's `CacheBustTarget`
+/// (`ajc/agentx:src/aiperf/common/enums`) that the native recorded-graph path
+/// honors. agentx supports SYSTEM_{PREFIX,SUFFIX} and FIRST_TURN_{PREFIX,SUFFIX};
+/// the `inferencex-agentx-mvp` scenario locks `first_turn_prefix`, which is the
+/// only target the native runner materializes today. `None` (the default) is a
+/// byte-unchanged no-op. Extension seam: a new target adds one variant here, one
+/// `parse` arm, and one marker-placement arm in
+/// [`crate::runner_protocol::graph_execution`] — nothing else changes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CacheBustTarget {
+    /// No marker; recorded content is sent verbatim.
+    #[default]
+    None,
+    /// Prepend a per-conversation `[rid:<digest>]\n\n` marker to the first user
+    /// message of every request (agentx `FIRST_TURN_PREFIX`).
+    FirstTurnPrefix,
+}
+
+impl CacheBustTarget {
+    /// Resolve the projected `cache_bust_target` string. Unknown/absent values
+    /// fall back to [`CacheBustTarget::None`] (fail-open to byte-unchanged
+    /// replay rather than inventing a target).
+    pub fn parse(value: Option<&str>) -> Self {
+        match value {
+            Some("first_turn_prefix") => Self::FirstTurnPrefix,
+            _ => Self::None,
+        }
+    }
+
+    /// Whether a marker must be materialized for this target.
+    pub fn is_enabled(self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
 /// Canonical result retained after one selected graph-input adapter load.
 pub struct PreparedRunnerGraphInput {
     /// Complete executable Graph-IR roots plus their frozen segment arena.
@@ -166,6 +203,8 @@ pub struct PreparedRunnerGraphInput {
     pub allow_dataset_wrap: bool,
     /// Trajectory-start (`t*`) window for the warmup/profiling snapshot split.
     pub t_star_window: TStarWindow,
+    /// Cache-bust marker target for the recorded first-turn user message.
+    pub cache_bust_target: CacheBustTarget,
 }
 
 // `GraphInputBundle` holds an `Arc<dyn SegmentStore>` that is not `Debug`, so
@@ -366,8 +405,11 @@ impl DagJsonlRunnerGraphInputAdapter {
             allow_dataset_wrap: true,
             // Authored `dag_jsonl` programs carry no recorded timing, so the
             // trajectory-start split never engages: the default window yields
-            // `t* = 0` (profiling full, warmup empty).
+            // `t* = 0` (profiling full, warmup empty). Authored programs supply
+            // their own message content verbatim, so no cache-bust marker is
+            // applied.
             t_star_window: TStarWindow::default(),
+            cache_bust_target: CacheBustTarget::None,
         })
     }
 }
@@ -419,6 +461,7 @@ impl AIPerfTraceRunnerGraphInputAdapter {
         let default_output_tokens = prepared.default_output_tokens;
         let allow_dataset_wrap = prepared.allow_dataset_wrap;
         let t_star_window = prepared.t_star_window;
+        let cache_bust_target = prepared.cache_bust_target;
         let bundle = compile_aiperf_trace_input(prepared.input, context.tokenizer)
             .await
             .map_err(|error| anyhow!(error.to_string()))
@@ -429,6 +472,7 @@ impl AIPerfTraceRunnerGraphInputAdapter {
             default_output_tokens,
             allow_dataset_wrap,
             t_star_window,
+            cache_bust_target,
             self.format(),
         )
     }
@@ -486,6 +530,7 @@ impl WekaTraceRunnerGraphInputAdapter {
         let default_output_tokens = prepared.default_output_tokens;
         let allow_dataset_wrap = prepared.allow_dataset_wrap;
         let t_star_window = prepared.t_star_window;
+        let cache_bust_target = prepared.cache_bust_target;
         let bundle = compile_weka_trace_input(prepared.input, context.tokenizer)
             .await
             .map_err(|error| anyhow!(error.to_string()))
@@ -496,6 +541,7 @@ impl WekaTraceRunnerGraphInputAdapter {
             default_output_tokens,
             allow_dataset_wrap,
             t_star_window,
+            cache_bust_target,
             self.format(),
         )
     }
@@ -521,6 +567,7 @@ impl DynamoTraceRunnerGraphInputAdapter {
         let default_output_tokens = prepared.default_output_tokens;
         let allow_dataset_wrap = prepared.allow_dataset_wrap;
         let t_star_window = prepared.t_star_window;
+        let cache_bust_target = prepared.cache_bust_target;
         let bundle = compile_dynamo_trace_input(prepared.input, context.tokenizer)
             .await
             .map_err(|error| anyhow!(error.to_string()))
@@ -531,6 +578,7 @@ impl DynamoTraceRunnerGraphInputAdapter {
             default_output_tokens,
             allow_dataset_wrap,
             t_star_window,
+            cache_bust_target,
             self.format(),
         )
     }
@@ -591,6 +639,7 @@ fn finish_recorded_input(
     default_output_tokens: usize,
     allow_dataset_wrap: bool,
     t_star_window: TStarWindow,
+    cache_bust_target: CacheBustTarget,
     expected_format: &str,
 ) -> Result<PreparedRunnerGraphInput> {
     ensure!(
@@ -608,6 +657,7 @@ fn finish_recorded_input(
         default_output_tokens,
         allow_dataset_wrap,
         t_star_window,
+        cache_bust_target,
     })
 }
 
@@ -617,6 +667,7 @@ struct PreparedRecordedInput {
     default_output_tokens: usize,
     allow_dataset_wrap: bool,
     t_star_window: TStarWindow,
+    cache_bust_target: CacheBustTarget,
 }
 
 fn prepare_recorded_file(
@@ -710,6 +761,11 @@ fn prepare_recorded_file(
     let content_root_seed = context.run_random_seed.unwrap_or_else(|| {
         RngRoot::new(None).derive_seed_or_entropy("dataset.recorded_graph.content")
     });
+    let cache_bust_target = CacheBustTarget::parse(
+        synthesis
+            .as_ref()
+            .and_then(|value| value.cache_bust_target.as_deref()),
+    );
     Ok(PreparedRecordedInput {
         input: RecordedTraceInputConfig {
             load,
@@ -724,6 +780,7 @@ fn prepare_recorded_file(
         default_output_tokens,
         allow_dataset_wrap,
         t_star_window,
+        cache_bust_target,
     })
 }
 
@@ -797,8 +854,9 @@ fn prepare_recorded_public(
         default_output_tokens: 1,
         allow_dataset_wrap: false,
         // Public recorded sources carry no synthesis block, so the trajectory
-        // window defaults to full replay.
+        // window defaults to full replay and no cache-bust marker is applied.
         t_star_window: TStarWindow::default(),
+        cache_bust_target: CacheBustTarget::None,
     })
 }
 

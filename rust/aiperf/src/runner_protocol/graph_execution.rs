@@ -559,6 +559,94 @@ pub(crate) struct RunnerGraphBackendFactoryConfig {
     /// the first node failure (default); `Continue` treats a failed node as
     /// empty and drains the DAG.
     pub(crate) on_failure: OnFailure,
+    /// Scenario-locked first-turn cache-bust marker configuration. `None` when
+    /// the run has no `cache_bust_target`; `Some` prepends a per-conversation
+    /// nonce marker to the first user message of every request.
+    pub(crate) cache_bust: Option<GraphCacheBust>,
+}
+
+/// Resolved first-turn cache-bust marker inputs shared by every graph worker.
+///
+/// Ports the marker minting agentx does in
+/// `ajc/agentx:src/aiperf/timing/strategies/cache_bust.py::build_cache_bust_marker`
+/// (FIRST_TURN_PREFIX arm) onto the native recorded-graph path. The marker text
+/// is `[rid:<sha256(f"{benchmark_id}:{recycle_pass}:{trajectory_index}:{trace_id}")[:12]>]\n\n`;
+/// on the native path the per-trace instance nonce (the suffix of
+/// [`RunnerGraphSink::trace_id`] after `"::"`) supplies the cross-instance and
+/// cross-recycle uniqueness agentx gets from its `(recycle_pass, trajectory_index)`
+/// tuple, so `recycle_pass`/`trajectory_index` are folded into the instance id
+/// and pinned at `0` in the digest tuple. Because the marker is a per-run nonce,
+/// its BYTES differ from agentx run to run; only its TOKEN COUNT matters for ISL
+/// parity, and that is invariant (a fixed-length hex digest wrapped in
+/// `[rid:...]\n\n` always tokenizes to the same count, with a clean whitespace
+/// break before the message body). Sharing the same marker across a continued
+/// warmup->profiling session (agentx's KV-cache lineage nicety) is a documented
+/// lane-0-baseline future refinement, consistent with the graph-fidelity caveats
+/// in the module map.
+#[derive(Clone)]
+pub(crate) struct GraphCacheBust {
+    /// Per-run benchmark identity digested into the marker.
+    pub(crate) benchmark_id: String,
+    /// Resolved marker placement target (only `FirstTurnPrefix` mints a marker).
+    pub(crate) target: crate::runner_protocol::graph_input::CacheBustTarget,
+}
+
+impl GraphCacheBust {
+    /// Mint the per-conversation `[rid:<digest>]\n\n` marker for one trace
+    /// instance, or `None` when the target is disabled. The digest is taken over
+    /// the whole instance `trace_id` (base template + `::` nonce) so every
+    /// instance and recycle draws a distinct marker while every node of one
+    /// instance shares it.
+    fn marker(&self, trace_id: &str) -> Option<String> {
+        use sha2::{Digest, Sha256};
+        if !self.target.is_enabled() {
+            return None;
+        }
+        // Pin recycle_pass/trajectory_index to 0: the instance nonce inside
+        // `trace_id` already carries the per-instance/per-recycle uniqueness
+        // agentx encodes in that tuple, and the resulting marker is a nonce that
+        // only needs a stable token length (invariant for any digest).
+        let unique = format!("{}:0:0:{trace_id}", self.benchmark_id);
+        let digest = Sha256::digest(unique.as_bytes());
+        let hex = digest
+            .iter()
+            .take(6)
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        Some(format!("[rid:{hex}]\n\n"))
+    }
+}
+
+/// Prepend `marker` to the content of the first `role == "user"` message.
+///
+/// Port of `ajc/agentx:src/aiperf/workers/worker.py::_inject_marker_into_first_user_turn`
+/// (string-content and multimodal-parts arms) for the FIRST_TURN_PREFIX target.
+/// Idempotent: re-prepending the same constant marker is a no-op, matching
+/// agentx's every-credit injection over a shared prefix. The marker's trailing
+/// `\n\n` guarantees a clean whitespace token break before the message body, so
+/// the recorded content's own tokenization is unchanged.
+fn prepend_first_turn_marker(messages: &mut [Value], marker: &str) {
+    for message in messages.iter_mut() {
+        let Some(object) = message.as_object_mut() else {
+            continue;
+        };
+        if object.get("role").and_then(Value::as_str) != Some("user") {
+            continue;
+        }
+        match object.get_mut("content") {
+            Some(Value::String(content)) if !content.starts_with(marker) => {
+                content.insert_str(0, marker);
+            }
+            Some(Value::Array(parts)) => {
+                let marker_part = serde_json::json!({"type": "text", "text": marker.trim_end()});
+                if parts.first() != Some(&marker_part) {
+                    parts.insert(0, marker_part);
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
 }
 
 /// Worker-local cancellation construction inputs.
@@ -647,6 +735,7 @@ impl TracePlacementFactory for RunnerGraphBackendFactory {
             events: self.config.events.clone(),
             node_policy,
             on_failure: self.config.on_failure,
+            cache_bust: self.config.cache_bust.clone(),
             prefill_slots,
             next_session: Cell::new(0),
             next_execution: Cell::new(0),
@@ -671,6 +760,7 @@ struct RunnerGraphWorkerBackend {
     events: Arc<dyn RunnerGraphExecutionEventSink>,
     node_policy: Option<Rc<dyn NodeDispatchPolicy>>,
     on_failure: OnFailure,
+    cache_bust: Option<GraphCacheBust>,
     prefill_slots: Option<Rc<SlotPool>>,
     next_session: Cell<u64>,
     next_execution: Cell<u64>,
@@ -694,6 +784,13 @@ impl TracePlacement for RunnerGraphWorkerBackend {
             .unwrap_or(0)
             .saturating_add(local_session);
         let terminal_nodes = terminal_graph_nodes(&plan);
+        // Mint the per-conversation cache-bust marker once for this trace
+        // instance; every node dispatched for it shares the marker, so the
+        // first-turn user prefix is byte-stable across the conversation's turns.
+        let cache_bust_marker = self
+            .cache_bust
+            .as_ref()
+            .and_then(|cache_bust| cache_bust.marker(&plan.trace.id));
         let observer = Rc::new(NativeMetricsObserver::new(
             self.clock.clone(),
             self.run_origin_ns,
@@ -715,6 +812,7 @@ impl TracePlacement for RunnerGraphWorkerBackend {
             raw_enabled: self.raw_enabled,
             terminal_nodes,
             events: self.events.clone(),
+            cache_bust_marker,
             emitted_records: Cell::new(0),
         });
         let mut local = LocalGraphTraceExecutionBackend::new(
@@ -789,6 +887,9 @@ struct RunnerGraphSink {
     raw_enabled: bool,
     terminal_nodes: HashSet<String>,
     events: Arc<dyn RunnerGraphExecutionEventSink>,
+    /// Per-conversation first-turn cache-bust marker, minted once per trace
+    /// instance. `None` when cache-bust is disabled.
+    cache_bust_marker: Option<String>,
     emitted_records: Cell<u64>,
 }
 
@@ -826,7 +927,7 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
         let model = metadata_string(node, "model")
             .map(str::to_string)
             .unwrap_or_else(|| self.model.clone());
-        let raw_messages = messages
+        let mut raw_messages = messages
             .iter()
             .enumerate()
             .map(|(index, wire)| {
@@ -835,6 +936,14 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
                 })
             })
             .collect::<Result<Vec<Value>>>()?;
+        // Scenario-locked FIRST_TURN_PREFIX cache-bust: prepend the trace
+        // instance's marker to the first user message. Applied on every request
+        // (idempotent over the shared prefix), so the marker rides at the head
+        // of the conversation's first user turn in every accumulated request the
+        // way agentx's worker-side injection does.
+        if let Some(marker) = self.cache_bust_marker.as_deref() {
+            prepend_first_turn_marker(&mut raw_messages, marker);
+        }
         let extra_headers = uniquify_dynamo_session_headers(
             self.raw_string_map(node, "extra_headers_handle")?,
             self.phase,
@@ -1305,6 +1414,72 @@ mod tests {
             "root::stale::profiling-instance-27"
         );
         assert_eq!(unique["x-dynamo-session-final"], "true");
+    }
+
+    #[test]
+    fn cache_bust_marker_is_disabled_for_none_target() {
+        let cache_bust = GraphCacheBust {
+            benchmark_id: "run-1".into(),
+            target: crate::runner_protocol::graph_input::CacheBustTarget::None,
+        };
+        assert!(cache_bust.marker("trace::abc").is_none());
+    }
+
+    #[test]
+    fn cache_bust_marker_structure_is_stable_and_instance_unique() {
+        let cache_bust = GraphCacheBust {
+            benchmark_id: "run-1".into(),
+            target: crate::runner_protocol::graph_input::CacheBustTarget::FirstTurnPrefix,
+        };
+        let first = cache_bust.marker("trace::inst-a").expect("marker minted");
+        let second = cache_bust.marker("trace::inst-b").expect("marker minted");
+        // `[rid:` + 12 hex + `]` + `\n\n` -> distinct nonce per instance, but a
+        // fixed 20-byte shape so the mock's char tokenizer counts it identically.
+        assert!(first.starts_with("[rid:") && first.ends_with("]\n\n"));
+        assert_eq!(first.len(), "[rid:0123456789ab]\n\n".len());
+        assert_eq!(first.len(), second.len());
+        assert_ne!(first, second, "instance nonce must vary the marker");
+        // Idempotent within one instance (all nodes of a trace share it).
+        assert_eq!(cache_bust.marker("trace::inst-a").unwrap(), first);
+    }
+
+    #[test]
+    fn prepend_marker_targets_first_user_message_idempotently() {
+        let marker = "[rid:0123456789ab]\n\n";
+        let mut messages = vec![
+            serde_json::json!({"role": "user", "content": "hello"}),
+            serde_json::json!({"role": "assistant", "content": "hi"}),
+            serde_json::json!({"role": "user", "content": "again"}),
+        ];
+        prepend_first_turn_marker(&mut messages, marker);
+        assert_eq!(messages[0]["content"], format!("{marker}hello"));
+        // Later user turns and assistant turns are untouched.
+        assert_eq!(messages[1]["content"], "hi");
+        assert_eq!(messages[2]["content"], "again");
+        // Re-applying the same marker is a no-op (shared prefix, every credit).
+        prepend_first_turn_marker(&mut messages, marker);
+        assert_eq!(messages[0]["content"], format!("{marker}hello"));
+    }
+
+    #[test]
+    fn prepend_marker_handles_multimodal_parts_content() {
+        let marker = "[rid:0123456789ab]\n\n";
+        let mut messages = vec![serde_json::json!({
+            "role": "user",
+            "content": [{"type": "text", "text": "hello"}],
+        })];
+        prepend_first_turn_marker(&mut messages, marker);
+        let parts = messages[0]["content"].as_array().unwrap();
+        assert_eq!(
+            parts[0],
+            serde_json::json!({"type": "text", "text": "[rid:0123456789ab]"})
+        );
+        assert_eq!(
+            parts[1],
+            serde_json::json!({"type": "text", "text": "hello"})
+        );
+        prepend_first_turn_marker(&mut messages, marker);
+        assert_eq!(messages[0]["content"].as_array().unwrap().len(), 2);
     }
 
     #[test]

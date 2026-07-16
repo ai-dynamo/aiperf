@@ -492,6 +492,22 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         ),
     ]
 
+    cache_bust_target: Annotated[
+        str,
+        Field(
+            default="none",
+            description="Recorded-graph cache-bust marker target. Auto-filled by "
+            "the submission scenario's ``require_cache_bust`` lock "
+            "(validator._apply_require_cache_bust). ``\"none\"`` (the default) "
+            "sends recorded content verbatim; ``\"first_turn_prefix\"`` prepends a "
+            "per-conversation ``[rid:<digest>]`` marker to the first user message "
+            "so shared-trace lanes send distinct prefixes and the scenario-required "
+            "ISL accounting matches. Projected onto the recorded dataset's "
+            "``synthesis`` block by ``rust_wire`` and consumed by the native runner "
+            "(``CacheBustTarget``); ignored on non-recorded-graph datasets.",
+        ),
+    ]
+
     # ==========================================================================
     # VALIDATORS
     # ==========================================================================

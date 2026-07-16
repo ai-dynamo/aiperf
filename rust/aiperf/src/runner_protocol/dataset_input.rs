@@ -166,6 +166,16 @@ pub struct TraceSynthesisSpec {
     /// runtime's draw sites via [`crate::runner_protocol::graph_input::GraphSamplingStrategy`].
     #[serde(default)]
     pub dataset_sampling_strategy: Option<String>,
+    /// Cache-bust marker target for the recorded-graph first-turn user message.
+    /// Projected by Python `rust_wire._project_trajectory_knobs` from the
+    /// scenario's `require_cache_bust` lock (Config `cache_bust_target`).
+    /// Absent/`"none"` (the default) disables the marker; `"first_turn_prefix"`
+    /// prepends a per-conversation nonce marker to the first user message so
+    /// shared-trace lanes send distinct prefixes AND the scenario-required ISL
+    /// accounting matches agentx. Consumed by
+    /// [`crate::runner_protocol::graph_input::CacheBustTarget`].
+    #[serde(default)]
+    pub cache_bust_target: Option<String>,
 }
 
 fn default_recorded_idle_gap_cap() -> Option<f64> {

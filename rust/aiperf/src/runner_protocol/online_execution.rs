@@ -1123,6 +1123,7 @@ fn lower_graph(
         default_output_tokens: prepared.default_output_tokens,
         allow_dataset_wrap: prepared.allow_dataset_wrap,
         t_star_window: prepared.t_star_window,
+        cache_bust_target: prepared.cache_bust_target,
     };
     build_common_plan(
         run,
