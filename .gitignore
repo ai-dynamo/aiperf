@@ -3,6 +3,8 @@
 
 .idea
 *.pyc
+# maturin-compiled native extension (built into the wheel, never checked in)
+src/aiperf/*.so
 .coverage
 __pycache__/
 .venv/
