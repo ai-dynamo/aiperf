@@ -123,7 +123,7 @@ pub struct ProfileFlags {
     pub session_turns_mean: Option<f64>,
 
     /// Stddev of turns per session (`--session-turns-stddev`).
-    #[arg(long = "session-turns-stddev")]
+    #[arg(long = "session-turns-stddev", visible_alias = "conversation-turn-stddev")]
     pub session_turns_stddev: Option<f64>,
 
     /// Number of sessions to generate (`--num-sessions`); comma ⇒ sweep.
@@ -536,7 +536,7 @@ pub struct ProfileFlags {
     #[arg(long = "adaptive-control-max")]
     pub adaptive_control_max: Option<i64>,
     /// Adaptive assessment period, seconds (`--adaptive-assessment-period`).
-    #[arg(long = "adaptive-assessment-period")]
+    #[arg(long = "adaptive-assessment-period", visible_alias = "adaptive-scale-assessment-period")]
     pub adaptive_assessment_period: Option<f64>,
     /// Adaptive sustain duration, seconds (`--adaptive-sustain-duration`).
     #[arg(long = "adaptive-sustain-duration")]
