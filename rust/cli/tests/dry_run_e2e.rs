@@ -72,11 +72,9 @@ fn dry_run_fabricates_exact_per_record_timing_with_zero_network() {
             &(OSL as u64).to_string(),
             "--output-tokens-stddev",
             "0",
+            // Bare --dry-run defaults to the sim clock, which flows through the
+            // normal RunCapture path and emits per-record profile_export.jsonl.
             "--dry-run",
-            // Per-record profile_export.jsonl is only produced by the real-clock
-            // path; the default (sim) is aggregate-only.
-            "--dry-run-clock",
-            "real",
             "--dry-run-ttft-ms",
             &TTFT_MS.to_string(),
             "--dry-run-itl-ms",

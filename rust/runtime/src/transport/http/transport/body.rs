@@ -13,7 +13,7 @@ use base64::engine::general_purpose::STANDARD;
 use bytes::Bytes;
 use serde_json::Value;
 
-use crate::transport_http::models::ErrorDetails;
+use crate::transport::http::models::ErrorDetails;
 
 /// An encoded request body and the exact wire content type it requires.
 #[derive(Debug, Clone, PartialEq, Eq)]

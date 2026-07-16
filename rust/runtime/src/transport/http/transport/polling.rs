@@ -12,11 +12,11 @@ use crate::clock::Clock;
 use bytes::Bytes;
 use serde_json::Value;
 
-use crate::transport_http::client::cancellation::{CancelOutcome, race_cancel};
-use crate::transport_http::models::{
+use crate::transport::http::client::cancellation::{CancelOutcome, race_cancel};
+use crate::transport::http::models::{
     ErrorDetails, ErrorKind, RequestConfig, RequestRecord, Response, TraceData,
 };
-use crate::transport_http::transport::http_transport::HttpTransport;
+use crate::transport::http::transport::http_transport::HttpTransport;
 
 /// Provider-neutral classification of one poll response.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -454,7 +454,7 @@ fn merge_trace(target: &mut TraceData, source: &TraceData) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport_http::models::TextResponse;
+    use crate::transport::http::models::TextResponse;
 
     fn record(value: Value) -> RequestRecord {
         let body = Bytes::from(serde_json::to_vec(&value).unwrap());

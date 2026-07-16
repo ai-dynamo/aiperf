@@ -26,15 +26,15 @@ use crate::clock::Clock;
 use crate::endpoints::PreparedEndpointTable;
 use crate::endpoints::chat_request_body;
 use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest, RequestTrace};
-use crate::transport_http::sse::ChatChunk;
+use crate::transport::http::sse::ChatChunk;
 
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
-use crate::transport_http::config::ClientConfig;
-use crate::transport_http::models::{
+use crate::transport::http::config::ClientConfig;
+use crate::transport::http::models::{
     ConnectionReuseStrategy, ErrorDetails, ErrorKind, HttpVersion, RequestConfig, RequestRecord,
     Response, SseMessage,
 };
-use crate::transport_http::transport::http_transport::HttpTransport;
+use crate::transport::http::transport::http_transport::HttpTransport;
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::{
     Dispatchable, ObservedTokenKind, ObservedUsage, RequestObserver, RequestSink,
@@ -520,7 +520,7 @@ impl Dispatchable for Request {
     }
 }
 
-/// Live OpenAI-chat sink over [`crate::transport_http`]. Shares the caller's clock and
+/// Live OpenAI-chat sink over [`crate::transport::http`]. Shares the caller's clock and
 /// origin (`start_ns`) so admit/token timestamps sit on the same timeline as the
 /// run loop's arrival events.
 pub struct TransportSink {
@@ -1689,7 +1689,7 @@ mod tests {
             request_headers: BTreeMap::from([("x-hidden".into(), SENTINEL.into())]),
             response_headers: BTreeMap::from([("x-hidden".into(), SENTINEL.into())]),
             responses: vec![Response::Text(
-                crate::transport_http::models::TextResponse {
+                crate::transport::http::models::TextResponse {
                     perf_ns: 1,
                     text: SENTINEL.into(),
                     body: Bytes::from_static(SENTINEL.as_bytes()),

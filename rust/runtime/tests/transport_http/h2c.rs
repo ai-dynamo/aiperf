@@ -4,10 +4,10 @@ use common::{MockServer, run_local};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use aiperf_runtime::transport_http::RealClock;
-use aiperf_runtime::transport_http::client::http_client::HttpClient;
-use aiperf_runtime::transport_http::config::ClientConfig;
-use aiperf_runtime::transport_http::models::HttpVersion;
+use aiperf_runtime::transport::http::RealClock;
+use aiperf_runtime::transport::http::client::http_client::HttpClient;
+use aiperf_runtime::transport::http::config::ClientConfig;
+use aiperf_runtime::transport::http::models::HttpVersion;
 use bytes::Bytes;
 
 fn body() -> Bytes {
@@ -26,7 +26,7 @@ fn h2c_prior_knowledge_completes_streaming() {
         let Some(mock) = MockServer::spawn(&[]).await else {
             return;
         };
-        let clock: Rc<dyn aiperf_runtime::transport_http::Clock> = RealClock::new();
+        let clock: Rc<dyn aiperf_runtime::transport::http::Clock> = RealClock::new();
         let cfg = ClientConfig {
             http_version: HttpVersion::Http2PriorKnowledge,
             ..ClientConfig::default()

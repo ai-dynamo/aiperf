@@ -25,10 +25,10 @@ use async_trait::async_trait;
 use tokio::sync::Notify;
 use url::Url;
 
-use crate::transport_http::client::connection::{Sender, SocketInfo, establish_with_resolver};
-use crate::transport_http::client::resolver::{CachingDnsResolver, DnsResolver};
-use crate::transport_http::config::ClientConfig;
-use crate::transport_http::models::{ConnectionReuseStrategy, ErrorDetails, TraceData};
+use crate::transport::http::client::connection::{Sender, SocketInfo, establish_with_resolver};
+use crate::transport::http::client::resolver::{CachingDnsResolver, DnsResolver};
+use crate::transport::http::config::ClientConfig;
+use crate::transport::http::models::{ConnectionReuseStrategy, ErrorDetails, TraceData};
 
 fn origin_key(url: &Url) -> String {
     format!(
@@ -130,7 +130,7 @@ impl PoolInner {
     }
 }
 
-/// Connection-acquisition policy seam used by [`HttpTransport`](crate::transport_http::transport::http_transport::HttpTransport).
+/// Connection-acquisition policy seam used by [`HttpTransport`](crate::transport::http::transport::http_transport::HttpTransport).
 #[async_trait(?Send)]
 pub trait ConnectionManager {
     /// Acquire one request lease under the selected reuse strategy.

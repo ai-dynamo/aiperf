@@ -15,7 +15,7 @@
 //!     "HttpError", message}` (`ErrorDetails::http`),
 //!   * a mid-stream `event: error` SSE frame -> `error: {code: 502, type:
 //!     "SSEResponseError", message}` (`ErrorDetails::sse`,
-//!     `rust/aiperf/src/transport_http/models/error.rs:44`).
+//!     `rust/aiperf/src/transport::http/models/error.rs:44`).
 //!
 //! The mock's configurable status-code menu, Retry-After header, and mid-stream
 //! SSE error live in `rust/mock-server/src/{config,state,handlers}.rs`.

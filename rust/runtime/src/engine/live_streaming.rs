@@ -617,7 +617,8 @@ mod tests {
                     streaming: false,
                     ..crate::endpoints::RawEndpointConfig::default()
                 },
-                connection_reuse: crate::transport_http::models::ConnectionReuseStrategy::default(),
+                connection_reuse: crate::transport::http::models::ConnectionReuseStrategy::default(
+                ),
                 client: Default::default(),
                 session_header: None,
             },

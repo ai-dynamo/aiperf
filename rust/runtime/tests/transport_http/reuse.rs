@@ -4,11 +4,11 @@ use common::{MockServer, run_local};
 
 use std::rc::Rc;
 
-use aiperf_runtime::transport_http::RealClock;
-use aiperf_runtime::transport_http::client::connection::{Sender, TimedBody};
-use aiperf_runtime::transport_http::client::pool::{ConnectionManager, ConnectionPool};
-use aiperf_runtime::transport_http::config::ClientConfig;
-use aiperf_runtime::transport_http::models::{ConnectionReuseStrategy, TraceData};
+use aiperf_runtime::transport::http::RealClock;
+use aiperf_runtime::transport::http::client::connection::{Sender, TimedBody};
+use aiperf_runtime::transport::http::client::pool::{ConnectionManager, ConnectionPool};
+use aiperf_runtime::transport::http::config::ClientConfig;
+use aiperf_runtime::transport::http::models::{ConnectionReuseStrategy, TraceData};
 use bytes::Bytes;
 use http_body_util::BodyExt;
 
@@ -22,7 +22,7 @@ async fn send_chat(sender: &mut Sender, base: &str) -> u16 {
         "messages": [{"role":"user","content":"hi"}]
     });
     let bytes = Bytes::from(serde_json::to_vec(&payload).unwrap());
-    let clock: Rc<dyn aiperf_runtime::transport_http::Clock> = RealClock::new();
+    let clock: Rc<dyn aiperf_runtime::transport::http::Clock> = RealClock::new();
     let sent = Rc::new(std::cell::Cell::new(None));
     let req = hyper::Request::builder()
         .method("POST")
@@ -44,7 +44,7 @@ fn never_uses_new_port_each_time() {
         let Some(mock) = MockServer::spawn(&[]).await else {
             return;
         };
-        let clock: Rc<dyn aiperf_runtime::transport_http::Clock> = RealClock::new();
+        let clock: Rc<dyn aiperf_runtime::transport::http::Clock> = RealClock::new();
         let url = url::Url::parse(&mock.base_url).unwrap();
         let cfg = ClientConfig::default();
         let pool = ConnectionPool::new();
@@ -88,7 +88,7 @@ fn pooled_reuses_connection_and_records_reuse() {
         let Some(mock) = MockServer::spawn(&[]).await else {
             return;
         };
-        let clock: Rc<dyn aiperf_runtime::transport_http::Clock> = RealClock::new();
+        let clock: Rc<dyn aiperf_runtime::transport::http::Clock> = RealClock::new();
         let url = url::Url::parse(&mock.base_url).unwrap();
         let cfg = ClientConfig::default();
         let pool = ConnectionPool::new();

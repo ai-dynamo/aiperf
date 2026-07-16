@@ -23,11 +23,11 @@ use crate::endpoints::{
     RequestRecord as EndpointRequestRecord, ResponseData, ServerResponse, Turn, UsageView,
 };
 use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest, RequestTrace};
-use crate::transport_grpc::{
+use crate::transport::grpc::{
     ConnectionReuseStrategy as GrpcConnectionReuseStrategy, GrpcBindingRegistry, GrpcClientConfig,
     GrpcErrorKind, GrpcRequestConfig, GrpcRequestRecord, GrpcTransport,
 };
-use crate::transport_http::models::{
+use crate::transport::http::models::{
     ErrorDetails, ErrorKind, RequestRecord, Response, TextResponse, TraceData,
 };
 use loadgen_core::collector::ReplayTerminalStatus;
@@ -113,7 +113,7 @@ pub struct GrpcTransportSink {
     connection_reuse: GrpcConnectionReuseStrategy,
     binding_registry: GrpcBindingRegistry,
     prepared_endpoints: Option<Rc<PreparedEndpointTable>>,
-    prepared_bindings: Vec<Box<dyn crate::transport_grpc::GrpcEndpointBinding>>,
+    prepared_bindings: Vec<Box<dyn crate::transport::grpc::GrpcEndpointBinding>>,
     /// Worker-local metric accumulator for the scheduled runner's measured
     /// execution path (`None` until `configure_measurement`).
     measurement: RefCell<Option<Rc<NativeMetricsObserver>>>,
@@ -320,7 +320,7 @@ impl GrpcTransportSink {
         request: Request,
         model: &str,
         endpoint: &dyn PreparedEndpoint,
-        binding: &dyn crate::transport_grpc::GrpcEndpointBinding,
+        binding: &dyn crate::transport::grpc::GrpcEndpointBinding,
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
     ) -> Result<DispatchResult> {

@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use crate::endpoints::EndpointId;
 
-use crate::transport_grpc::codec::{
+use crate::transport::grpc::codec::{
     CodecError, decode_model_infer_response, decode_model_ready_response,
     decode_model_stream_infer_response, encode_model_infer_request, encode_model_ready_request,
 };
@@ -161,7 +161,7 @@ impl GrpcBindingRegistryBuilder {
     pub fn with_builtins() -> Result<Self, GrpcEndpointBindingRegistryError> {
         let mut builder = Self::new();
         builder.register(KServeV2GrpcBindingFactory)?;
-        crate::transport_grpc::riva_binding::register_builtins(&mut builder)?;
+        crate::transport::grpc::riva_binding::register_builtins(&mut builder)?;
         Ok(builder)
     }
 

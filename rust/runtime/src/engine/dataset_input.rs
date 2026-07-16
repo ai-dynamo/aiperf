@@ -89,7 +89,11 @@ pub struct FileDatasetSpec {
     /// Inline records in the exact Config-v2 shape.
     #[serde(default)]
     pub records: Option<Value>,
-    /// Native loader registration name.
+    /// Native loader registration name. Absent (empty) when `--custom-dataset-type`
+    /// was not supplied, in which case the loader is auto-detected structurally
+    /// (mirrors Python's `CustomDatasetComposer._explicit_format` returning `None`
+    /// so `_infer_dataset_type` runs).
+    #[serde(default)]
     pub format: String,
     /// Conversation sampling strategy.
     #[serde(default = "default_sampling_strategy")]

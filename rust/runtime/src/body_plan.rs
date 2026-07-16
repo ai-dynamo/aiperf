@@ -21,7 +21,7 @@
 //! shape with segment slots; it never touches commas, brackets, or content
 //! serialization. Protobuf-wire endpoints (KServe V2 / Riva) read the same
 //! segments through their codec rather than splicing bytes — see
-//! `transport_grpc` — so this materializer is intentionally JSON-only.
+//! `transport::grpc` — so this materializer is intentionally JSON-only.
 
 use std::borrow::Cow;
 

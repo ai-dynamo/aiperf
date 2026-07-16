@@ -14,8 +14,8 @@ use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::rc::Rc;
 
 use crate::clock::Clock;
-use crate::transport_http::models::{RequestConfig, Response};
-use crate::transport_http::transport::http_transport::HttpTransport;
+use crate::transport::http::models::{RequestConfig, Response};
+use crate::transport::http::transport::http_transport::HttpTransport;
 use async_trait::async_trait;
 use url::Url;
 
@@ -370,7 +370,7 @@ fn redact_url(endpoint_url: &str) -> String {
 mod tests {
     use super::*;
     use crate::clock::RealClock;
-    use crate::transport_http::config::ClientConfig;
+    use crate::transport::http::config::ClientConfig;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio::task::{JoinHandle, LocalSet};

@@ -17,14 +17,14 @@ use std::rc::Rc;
 
 use crate::clock::Clock;
 use crate::gpu_telemetry::{
-    DcgmTelemetrySource, GpuBoundarySnapshot, GpuMetricKind, GpuPhaseBoundary,
-    GpuTelemetryAccumulator, GpuTelemetryCollector, GpuTelemetryRecord, GpuTelemetrySummary,
-    PythonGpuTelemetryConfig, PythonGpuTelemetrySource, RuntimeGpuMetricSpec,
+    DcgmPrometheusDecoder, DcgmTelemetrySource, GpuBoundarySnapshot, GpuMetricKind,
+    GpuPhaseBoundary, GpuTelemetryAccumulator, GpuTelemetryCollector, GpuTelemetryRecord,
+    GpuTelemetrySummary, PythonGpuTelemetryConfig, PythonGpuTelemetrySource, RuntimeGpuMetricSpec,
 };
 use crate::metrics_core::Unit;
 use crate::phase_runtime::ScheduledPhaseSidecar;
-use crate::transport_http::config::ClientConfig;
-use crate::transport_http::transport::http_transport::HttpTransport;
+use crate::transport::http::config::ClientConfig;
+use crate::transport::http::transport::http_transport::HttpTransport;
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 use tokio::sync::Notify;
@@ -86,18 +86,33 @@ impl GpuTelemetryRun {
             }
         }
 
+        // A `--gpu-telemetry <file>.csv` supplies additional DCGM exporter fields
+        // beyond the built-in catalog. Loading is fail-closed (a missing/unreadable
+        // path is a hard error via `?`), mirroring the Python custom collector.
+        let loaded_custom = match &spec.metrics_file {
+            Some(path) => Some(crate::gpu_telemetry::load_custom_dcgm_metrics(path)?),
+            None => None,
+        };
+
         // Validate the complete metric catalog before supervising any source
-        // process so a local configuration error cannot strand a child.
-        let accumulator = GpuTelemetryAccumulator::new().with_additional_metric_specs(
-            spec.custom_metrics
-                .iter()
-                .map(|metric| RuntimeGpuMetricSpec {
-                    name: metric.name.clone(),
-                    header: metric.header.clone(),
-                    unit: native_unit(metric.unit),
-                    kind: GpuMetricKind::Gauge,
-                }),
-        )?;
+        // process so a local configuration error cannot strand a child. Custom
+        // CSV specs are registered in place of the (unused) `custom_metrics`
+        // block when a metrics file is supplied.
+        let accumulator = if let Some(loaded) = &loaded_custom {
+            GpuTelemetryAccumulator::new()
+                .with_additional_metric_specs(loaded.specs.iter().cloned())?
+        } else {
+            GpuTelemetryAccumulator::new().with_additional_metric_specs(
+                spec.custom_metrics
+                    .iter()
+                    .map(|metric| RuntimeGpuMetricSpec {
+                        name: metric.name.clone(),
+                        header: metric.header.clone(),
+                        unit: native_unit(metric.unit),
+                        kind: GpuMetricKind::Gauge,
+                    }),
+            )?
+        };
 
         let transport = Rc::new(HttpTransport::new(
             clock.clone(),
@@ -111,11 +126,21 @@ impl GpuTelemetryRun {
         for source in &spec.sources {
             match source {
                 GpuTelemetrySourceSpec::Dcgm { url } => {
-                    let source = Rc::new(DcgmTelemetrySource::new(
-                        clock.clone(),
-                        transport.clone(),
-                        url.clone(),
-                    ));
+                    let source = match &loaded_custom {
+                        Some(loaded) => Rc::new(DcgmTelemetrySource::with_decoder(
+                            clock.clone(),
+                            transport.clone(),
+                            url.clone(),
+                            Rc::new(DcgmPrometheusDecoder::with_custom_fields(
+                                loaded.decoder_fields.clone(),
+                            )),
+                        )),
+                        None => Rc::new(DcgmTelemetrySource::new(
+                            clock.clone(),
+                            transport.clone(),
+                            url.clone(),
+                        )),
+                    };
                     collectors.push(Rc::new(GpuTelemetryCollector::new(source)));
                 }
                 GpuTelemetrySourceSpec::Python {

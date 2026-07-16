@@ -9,7 +9,7 @@
 //!
 //! The runner's HTTP transport connects a `tokio::net::UnixStream` (HTTP/1.1)
 //! whenever `ClientConfig.uds_path` is set
-//! (`rust/aiperf/src/transport_http/client/connection.rs`). That is now wired
+//! (`rust/aiperf/src/transport::http/client/connection.rs`). That is now wired
 //! end to end: the Python `endpoint.uds_path` field
 //! (`src/aiperf/config/endpoint.py`) is projected by `rust_wire._authored_endpoint`
 //! into the protocol-v2 `EndpointProfileConfigV2.uds_path`

@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 use crate::clock::Clock;
 
-use crate::transport_http::client::connection::SendCompletion;
+use crate::transport::http::client::connection::SendCompletion;
 
 /// Outcome of racing a request future against a cancel timer.
 pub enum CancelOutcome<T> {
@@ -93,14 +93,14 @@ mod tests {
 
     #[test]
     fn post_send_timer_is_anchored_to_captured_send_time() {
-        use crate::transport_http::client::connection::TimedBody;
+        use crate::transport::http::client::connection::TimedBody;
         use bytes::Bytes;
         use http_body::Body;
 
         let clock = Rc::new(SimClock::new());
         let clock_for_body = clock.clone();
         let clk: Rc<dyn Clock> = clock.clone();
-        let completion = Rc::new(crate::transport_http::client::connection::SendCompletion::new());
+        let completion = Rc::new(crate::transport::http::client::connection::SendCompletion::new());
         let completion_for_body = completion.clone();
         let body_clock: Rc<dyn Clock> = clock.clone();
 
@@ -129,7 +129,7 @@ mod tests {
     fn request_can_complete_before_send_signal() {
         let clock = Rc::new(SimClock::new());
         let clk: Rc<dyn Clock> = clock.clone();
-        let completion = Rc::new(crate::transport_http::client::connection::SendCompletion::new());
+        let completion = Rc::new(crate::transport::http::client::connection::SendCompletion::new());
         let outcome = drive_sim(clock, async move {
             race_cancel_after_send(clk, 0, completion, async { 7_u32 }).await
         });
@@ -138,13 +138,13 @@ mod tests {
 
     #[test]
     fn response_wins_an_exact_post_send_deadline_tie() {
-        use crate::transport_http::client::connection::TimedBody;
+        use crate::transport::http::client::connection::TimedBody;
         use bytes::Bytes;
         use http_body::Body;
 
         let clock = Rc::new(SimClock::new());
         let body_clock: Rc<dyn Clock> = clock.clone();
-        let completion = Rc::new(crate::transport_http::client::connection::SendCompletion::new());
+        let completion = Rc::new(crate::transport::http::client::connection::SendCompletion::new());
         let completion_for_body = completion.clone();
         let request_clock: Rc<dyn Clock> = clock.clone();
         let race_clock: Rc<dyn Clock> = clock.clone();

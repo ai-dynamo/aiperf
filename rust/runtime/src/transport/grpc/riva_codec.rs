@@ -9,10 +9,10 @@ use bytes::Bytes;
 use prost::Message;
 use serde_json::{Map, Number, Value};
 
-use crate::transport_grpc::binding::GrpcStreamChunk;
-use crate::transport_grpc::codec::CodecError;
-use crate::transport_grpc::riva_proto::streaming_recognize_request::StreamingRequest;
-use crate::transport_grpc::riva_proto::{
+use crate::transport::grpc::binding::GrpcStreamChunk;
+use crate::transport::grpc::codec::CodecError;
+use crate::transport::grpc::riva_proto::streaming_recognize_request::StreamingRequest;
+use crate::transport::grpc::riva_proto::{
     AnalyzeEntitiesRequest, AnalyzeIntentOptions, AnalyzeIntentRequest, AnalyzeIntentResponse,
     AudioEncoding, Classification, NaturalQueryRequest, NaturalQueryResponse, NlpModelParams,
     RecognitionConfig, RecognizeRequest, RecognizeResponse, RequestId,

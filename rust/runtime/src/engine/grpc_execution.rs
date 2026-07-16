@@ -13,8 +13,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::transport_grpc::GrpcBindingRegistry;
-use crate::transport_http::config::ClientConfig;
+use crate::transport::grpc::GrpcBindingRegistry;
+use crate::transport::http::config::ClientConfig;
 use anyhow::{Context, Result, ensure};
 use url::Url;
 

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! A [`GraphSink`] backed by the Rust-native [`crate::transport_http`] HTTP client
+//! A [`GraphSink`] backed by the Rust-native [`crate::transport::http`] HTTP client
 //! (hyper + the `aiperf-clock` `Clock`).
 //!
 //! This is the graph dataflow's live dispatch path: it streams real OpenAI
@@ -20,17 +20,17 @@ use uuid::Uuid;
 
 use crate::clock::Clock;
 use crate::dataset::{Overrides, build_message_body_from_wire_parts};
-use crate::transport_http::config::ClientConfig;
-use crate::transport_http::models::{HttpVersion, RequestConfig, Response};
-use crate::transport_http::sse::ChatChunk;
-use crate::transport_http::transport::http_transport::HttpTransport;
+use crate::transport::http::config::ClientConfig;
+use crate::transport::http::models::{HttpVersion, RequestConfig, Response};
+use crate::transport::http::sse::ChatChunk;
+use crate::transport::http::transport::http_transport::HttpTransport;
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::RequestObserver;
 
 use crate::graph::sink::{GraphDispatchOptions, GraphReply, GraphSink};
 use crate::graph::wire::OpenAiChatMessage;
 
-/// Live OpenAI-chat sink over [`crate::transport_http`]. Single-threaded per trace
+/// Live OpenAI-chat sink over [`crate::transport::http`]. Single-threaded per trace
 /// (`Rc`/`!Send`), matching the executor's `?Send` dispatch seam.
 pub struct TransportChatSink {
     transport: HttpTransport,

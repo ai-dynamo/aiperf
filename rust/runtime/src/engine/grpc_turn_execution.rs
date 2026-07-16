@@ -24,10 +24,10 @@ use crate::metrics::NativeMetricsObserver;
 use crate::metrics_core::InferenceDimensions;
 use crate::multiturn::TurnToSend;
 use crate::scheduled::TurnResponseObserver;
-use crate::transport_grpc::{
+use crate::transport::grpc::{
     ConnectionReuseStrategy as GrpcConnectionReuseStrategy, GrpcBindingRegistry, GrpcClientConfig,
 };
-use crate::transport_http::models::ConnectionReuseStrategy;
+use crate::transport::http::models::ConnectionReuseStrategy;
 use anyhow::{Result, anyhow, ensure};
 use async_trait::async_trait;
 

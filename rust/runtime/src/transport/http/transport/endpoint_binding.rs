@@ -22,21 +22,21 @@ use crate::endpoints::{
 use bytes::Bytes;
 use serde_json::Value;
 
-use crate::transport_http::client::http_client::SseMessageFilter;
-use crate::transport_http::models::{
+use crate::transport::http::client::http_client::SseMessageFilter;
+use crate::transport::http::models::{
     ConnectionReuseStrategy, ErrorDetails, RequestConfig, RequestRecord, Response, SseMessage,
 };
-use crate::transport_http::transport::body::{
+use crate::transport::http::transport::body::{
     JsonBodyEncoder, MultipartBodyEncoder, RequestBodyEncoder,
 };
-use crate::transport_http::transport::http_transport::HttpTransport;
-use crate::transport_http::transport::inline_media::{
+use crate::transport::http::transport::http_transport::HttpTransport;
+use crate::transport::http::transport::inline_media::{
     HttpMediaFetcher, ImageDataUrlEncoder, inline_image_urls,
 };
-use crate::transport_http::transport::polling::{
+use crate::transport::http::transport::polling::{
     JsonVideoPollingProtocol, PollingOptions, submit_and_poll,
 };
-use crate::transport_http::transport::url::build_url;
+use crate::transport::http::transport::url::build_url;
 
 /// Failure while binding a decoded endpoint request to HTTP.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -259,7 +259,7 @@ pub trait HttpEndpointBinding: fmt::Debug {
         &self,
         payload: &Value,
         content_type: RequestContentType,
-    ) -> Result<crate::transport_http::transport::body::EncodedRequestBody, HttpEndpointBindingError>
+    ) -> Result<crate::transport::http::transport::body::EncodedRequestBody, HttpEndpointBindingError>
     {
         match content_type {
             RequestContentType::ApplicationJson => JsonBodyEncoder.encode(payload),
@@ -575,7 +575,7 @@ fn seconds_to_ns(seconds: f64, field: &str) -> Result<i64, HttpEndpointBindingEr
 mod tests {
     use super::*;
     use crate::clock::SimClock;
-    use crate::transport_http::models::SseMessage;
+    use crate::transport::http::models::SseMessage;
 
     /// Prepare a builtin endpoint by its open ID for the prepared HTTP binding.
     fn prepared(endpoint_name: &str) -> Box<dyn PreparedEndpoint> {
@@ -606,7 +606,7 @@ mod tests {
 
     #[test]
     fn response_decoder_normalizes_text_and_sse() {
-        let text = Response::Text(crate::transport_http::models::TextResponse {
+        let text = Response::Text(crate::transport::http::models::TextResponse {
             perf_ns: 11,
             content_type: Some("application/json".into()),
             text: "{\"ok\":true}".into(),
@@ -681,7 +681,7 @@ mod tests {
         let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
         let transport = HttpTransport::new(
             clock,
-            crate::transport_http::config::ClientConfig::default(),
+            crate::transport::http::config::ClientConfig::default(),
         );
         let base_urls = vec!["http://host/v1".to_string()];
         let chat = prepared("chat");

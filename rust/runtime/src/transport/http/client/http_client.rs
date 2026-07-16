@@ -17,15 +17,15 @@ use url::Url;
 
 use crate::clock::Clock;
 
-use crate::transport_http::client::cancellation::{CancelOutcome, race_cancel_after_send};
-use crate::transport_http::client::connection::{
+use crate::transport::http::client::cancellation::{CancelOutcome, race_cancel_after_send};
+use crate::transport::http::client::connection::{
     SendCompletion, Sender, TimedBody, establish, with_timeout,
 };
-use crate::transport_http::config::ClientConfig;
-use crate::transport_http::models::{
+use crate::transport::http::config::ClientConfig;
+use crate::transport::http::models::{
     ErrorDetails, ErrorKind, RequestRecord, Response, SseMessage, TextResponse, TraceData,
 };
-use crate::transport_http::sse::{SseMessageHandler, read_sse, read_sse_with_handler};
+use crate::transport::http::sse::{SseMessageHandler, read_sse, read_sse_with_handler};
 
 #[derive(Default)]
 struct ChunkTiming {
@@ -579,7 +579,7 @@ impl HttpClient {
 
     /// Dispatch with a caller-supplied remaining request budget.
     ///
-    /// [`HttpTransport`](crate::transport_http::transport::http_transport::HttpTransport) uses
+    /// [`HttpTransport`](crate::transport::http::transport::http_transport::HttpTransport) uses
     /// this after connection acquisition so Config-v2's one absolute timeout
     /// cannot restart for the response phase. Other callers retain the
     /// client-wide `request_timeout_ns` through

@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use bytes::Bytes;
 
-use crate::transport_http::models::{ErrorDetails, Response, TraceData};
+use crate::transport::http::models::{ErrorDetails, Response, TraceData};
 
 /// A completed (or failed) request with its responses and timing.
 #[derive(Debug, Clone, Default)]
@@ -75,7 +75,7 @@ impl RequestRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport_http::models::{ErrorDetails, Response, TextResponse};
+    use crate::transport::http::models::{ErrorDetails, Response, TextResponse};
 
     #[test]
     fn valid_when_has_response_and_no_error() {

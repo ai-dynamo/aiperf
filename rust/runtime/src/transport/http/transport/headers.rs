@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::transport_http::models::RequestConfig;
+use crate::transport::http::models::RequestConfig;
 
 /// Compose the final header set: base (User-Agent) -> correlation/request-id ->
 /// endpoint headers -> transport headers (Accept, Content-Type). Later sources
@@ -52,7 +52,7 @@ pub fn build_headers(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport_http::models::RequestConfig;
+    use crate::transport::http::models::RequestConfig;
 
     #[test]
     fn sets_user_agent_accept_and_content_type_for_streaming() {

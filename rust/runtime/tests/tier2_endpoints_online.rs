@@ -24,10 +24,10 @@ use aiperf_runtime::multiturn::{
 };
 use aiperf_runtime::rng::RngRoot;
 use aiperf_runtime::scheduled::ScheduledRunReport;
-use aiperf_runtime::transport_http::config::ClientConfig;
-use aiperf_runtime::transport_http::models::{ErrorKind, RequestConfig};
-use aiperf_runtime::transport_http::transport::http_transport::HttpTransport;
-use aiperf_runtime::transport_http::transport::polling::{
+use aiperf_runtime::transport::http::config::ClientConfig;
+use aiperf_runtime::transport::http::models::{ErrorKind, RequestConfig};
+use aiperf_runtime::transport::http::transport::http_transport::HttpTransport;
+use aiperf_runtime::transport::http::transport::polling::{
     JsonVideoPollingProtocol, PollingOptions, submit_and_poll,
 };
 use axum::body::Bytes;

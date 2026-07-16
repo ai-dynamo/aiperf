@@ -25,8 +25,8 @@ use crate::metrics_core::{
     NativeReport, ReportEndpointProfileIdentity, ReportExtensionIdentity, ReportPairRunFacts,
     ReportRunProvenance,
 };
-use crate::transport_http::config::ClientConfig;
-use crate::transport_http::models::{ConnectionReuseStrategy, HttpVersion};
+use crate::transport::http::config::ClientConfig;
+use crate::transport::http::models::{ConnectionReuseStrategy, HttpVersion};
 use anyhow::{Result, anyhow, bail, ensure};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};

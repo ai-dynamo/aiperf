@@ -142,6 +142,8 @@ pub(crate) struct Inputs {
     pub gpu_telemetry_enabled: bool,
     /// Custom DCGM URLs.
     pub gpu_telemetry_urls: Vec<String>,
+    /// Custom DCGM metrics CSV path (`--gpu-telemetry <file>.csv`).
+    pub gpu_telemetry_metrics_file: Option<String>,
     pub server_metrics_enabled: bool,
     pub server_metrics_formats: Option<Vec<String>>,
     /// Goodput SLO thresholds (metric -> threshold ms).
@@ -463,7 +465,21 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         prefill_concurrency: flags.prefill_concurrency,
         prefill_ramp: flags.prefill_concurrency_ramp_duration,
         gpu_telemetry_enabled: !flags.no_gpu_telemetry,
-        gpu_telemetry_urls: flags.gpu_telemetry.clone(),
+        // `--gpu-telemetry` accepts a mix of DCGM scrape URLs and (optionally) a
+        // custom-metrics CSV. Python's `_converter_telemetry` classifies any item
+        // ending in `.csv` as the metrics file; everything else is a scrape URL.
+        gpu_telemetry_urls: flags
+            .gpu_telemetry
+            .iter()
+            .filter(|item| !item.to_ascii_lowercase().ends_with(".csv"))
+            .cloned()
+            .collect(),
+        gpu_telemetry_metrics_file: flags
+            .gpu_telemetry
+            .iter()
+            .rev()
+            .find(|item| item.to_ascii_lowercase().ends_with(".csv"))
+            .cloned(),
         server_metrics_enabled: !flags.no_server_metrics,
         server_metrics_formats: (!flags.server_metrics_formats.is_empty())
             .then(|| flags.server_metrics_formats.clone()),
@@ -718,10 +734,17 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         })
     } else if inputs.input_file.is_some() || inputs.inline_records.is_some() {
         Dataset::File(crate::model::dataset::FileDataset {
-            format: inputs
-                .custom_dataset_type
-                .clone()
-                .unwrap_or_else(|| "single_turn".to_string()),
+            // Emit `format` only when the user selected a `--custom-dataset-type`.
+            // Otherwise leave it unset so the runtime auto-detects the loader
+            // structurally (Python's `_explicit_format` → `_infer_dataset_type`).
+            // Inline records have no file to probe, so they keep Python's inline
+            // fallback of the default `single_turn`.
+            format: inputs.custom_dataset_type.clone().or_else(|| {
+                inputs
+                    .inline_records
+                    .is_some()
+                    .then(|| "single_turn".to_string())
+            }),
             sampling: Sampling(inputs.sampling.clone()),
             options: {
                 let mut o = serde_json::Map::new();
@@ -947,7 +970,10 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     };
     let sidecars = crate::model::telemetry::Sidecars {
         gpu_telemetry: gpu_enabled.then(|| {
-            crate::model::telemetry::GpuTelemetrySidecar::default_dcgm(&inputs.gpu_telemetry_urls)
+            crate::model::telemetry::GpuTelemetrySidecar::default_dcgm(
+                &inputs.gpu_telemetry_urls,
+                inputs.gpu_telemetry_metrics_file.as_deref(),
+            )
         }),
         server_metrics: server_enabled.then(|| {
             let mut all_urls = endpoint_urls.clone();
@@ -1785,9 +1811,9 @@ fn count_schedule_entries(path: &std::path::Path) -> anyhow::Result<u64> {
         let mut total = 0u64;
         let mut stack = vec![path.to_path_buf()];
         while let Some(dir) = stack.pop() {
-            for entry in std::fs::read_dir(&dir)
-                .map_err(|e| anyhow::anyhow!("failed to read schedule dir {}: {e}", dir.display()))?
-            {
+            for entry in std::fs::read_dir(&dir).map_err(|e| {
+                anyhow::anyhow!("failed to read schedule dir {}: {e}", dir.display())
+            })? {
                 let p = entry
                     .map_err(|e| anyhow::anyhow!("failed to read schedule dir entry: {e}"))?
                     .path();

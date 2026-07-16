@@ -3,7 +3,7 @@
 
 //! Rust-native AIPerf load-generation runtime.
 //!
-//! OpenAI SSE chunk types live in [`crate::transport_http`]`::sse`, the OpenAI
+//! OpenAI SSE chunk types live in [`crate::transport::http`]`::sse`, the OpenAI
 //! chat request-body builder in [`crate::endpoints`], and the `CollectorObserver`
 //! recorder in [`loadgen_core`]`::observer`; the
 //! Graph-IR engine lives in `crate::graph`; the clock-native scheduling policy
@@ -68,9 +68,7 @@ pub mod network_latency;
 pub mod rng;
 pub mod server_metrics;
 pub mod timing;
-#[cfg(feature = "grpc")]
-pub mod transport_grpc;
-pub mod transport_http;
+pub mod transport;
 
 #[cfg(test)]
 mod test_util;

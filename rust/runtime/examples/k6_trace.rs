@@ -9,15 +9,15 @@
 
 use std::rc::Rc;
 
-use aiperf_runtime::transport_http::RealClock;
-use aiperf_runtime::transport_http::config::ClientConfig;
-use aiperf_runtime::transport_http::models::{RequestConfig, Response, TraceData};
-use aiperf_runtime::transport_http::transport::http_transport::HttpTransport;
+use aiperf_runtime::transport::http::RealClock;
+use aiperf_runtime::transport::http::config::ClientConfig;
+use aiperf_runtime::transport::http::models::{RequestConfig, Response, TraceData};
+use aiperf_runtime::transport::http::transport::http_transport::HttpTransport;
 
 /// First real-token time (ns from request start): the first SSE chunk carrying a
 /// non-empty content (or reasoning_content) delta — not the first SSE message,
 /// which may be a role-only chunk with no token payload.
-fn first_token_ns(rec: &aiperf_runtime::transport_http::models::RequestRecord) -> Option<i64> {
+fn first_token_ns(rec: &aiperf_runtime::transport::http::models::RequestRecord) -> Option<i64> {
     for r in &rec.responses {
         let Response::Sse(m) = r else { continue };
         let Some(d) = m.data() else { continue };
@@ -133,7 +133,7 @@ fn main() {
         .unwrap();
     let local = tokio::task::LocalSet::new();
     local.block_on(&rt, async move {
-        let clock: Rc<dyn aiperf_runtime::transport_http::Clock> = RealClock::new();
+        let clock: Rc<dyn aiperf_runtime::transport::http::Clock> = RealClock::new();
         // Pooled reuse (default) so the 2nd+ requests show blocked/connecting≈0.
         let t = HttpTransport::new(clock, ClientConfig::default());
         let cfg = RequestConfig::new(format!("{base}/v1/chat/completions"));

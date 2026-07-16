@@ -5,7 +5,7 @@
 
 use bytes::Bytes;
 
-use crate::transport_http::models::SseMessage;
+use crate::transport::http::models::SseMessage;
 
 /// A raw text (non-SSE) response body.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,7 +51,7 @@ impl Response {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport_http::models::SseMessage;
+    use crate::transport::http::models::SseMessage;
 
     #[test]
     fn text_response_parses_json() {

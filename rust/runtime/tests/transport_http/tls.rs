@@ -10,12 +10,12 @@ use std::net::SocketAddr;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use aiperf_runtime::transport_http::client::pool::ConnectionPool;
-use aiperf_runtime::transport_http::client::resolver::{CachingDnsResolver, HostLookup};
-use aiperf_runtime::transport_http::config::{ClientConfig, PreparedTlsClientConfig};
-use aiperf_runtime::transport_http::models::{ErrorKind, HttpVersion, RequestConfig};
-use aiperf_runtime::transport_http::transport::http_transport::HttpTransport;
-use aiperf_runtime::transport_http::{Clock, RealClock};
+use aiperf_runtime::transport::http::client::pool::ConnectionPool;
+use aiperf_runtime::transport::http::client::resolver::{CachingDnsResolver, HostLookup};
+use aiperf_runtime::transport::http::config::{ClientConfig, PreparedTlsClientConfig};
+use aiperf_runtime::transport::http::models::{ErrorKind, HttpVersion, RequestConfig};
+use aiperf_runtime::transport::http::transport::http_transport::HttpTransport;
+use aiperf_runtime::transport::http::{Clock, RealClock};
 use bytes::Bytes;
 use common::run_local;
 use http_body_util::Full;
@@ -68,7 +68,7 @@ impl HostLookup for FixedLookup {
         &self,
         _host: &str,
         _port: u16,
-    ) -> Result<SocketAddr, aiperf_runtime::transport_http::models::ErrorDetails> {
+    ) -> Result<SocketAddr, aiperf_runtime::transport::http::models::ErrorDetails> {
         Ok(self.0)
     }
 }

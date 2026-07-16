@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use aiperf_runtime::endpoints::EndpointId;
-use aiperf_runtime::transport_grpc::riva_proto::streaming_recognize_request::StreamingRequest;
-use aiperf_runtime::transport_grpc::riva_proto::{
+use aiperf_runtime::transport::grpc::riva_proto::streaming_recognize_request::StreamingRequest;
+use aiperf_runtime::transport::grpc::riva_proto::{
     AnalyzeEntitiesRequest, AnalyzeIntentRequest, AnalyzeIntentResponse, AudioEncoding,
     Classification, ClassificationResult, NaturalQueryRequest, NaturalQueryResponse,
     NaturalQueryResult, RecognizeRequest, RecognizeResponse, SpeechRecognitionAlternative,
@@ -18,7 +18,7 @@ use aiperf_runtime::transport_grpc::riva_proto::{
     TextTransformResponse, TokenClassRequest, TokenClassResponse, TokenClassSequence,
     TokenClassValue,
 };
-use aiperf_runtime::transport_grpc::{GrpcBindingRegistry, GrpcEndpointBinding};
+use aiperf_runtime::transport::grpc::{GrpcBindingRegistry, GrpcEndpointBinding};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use prost::Message;

@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use crate::clock::{Clock, RealClock};
-use crate::transport_http::config::ClientConfig;
-use crate::transport_http::models::{RequestConfig, RequestRecord, Response};
-use crate::transport_http::transport::http_transport::HttpTransport;
+use crate::transport::http::config::ClientConfig;
+use crate::transport::http::models::{RequestConfig, RequestRecord, Response};
+use crate::transport::http::transport::http_transport::HttpTransport;
 use async_trait::async_trait;
 use bytes::Bytes;
 
@@ -200,7 +200,7 @@ fn persist_cache(path: &Path, bytes: &Bytes) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport_http::models::{ErrorDetails, TextResponse};
+    use crate::transport::http::models::{ErrorDetails, TextResponse};
     use std::cell::RefCell;
     use std::collections::BTreeMap;
 

@@ -864,7 +864,7 @@ mod rest {
 
     /// One request/response over a fresh connection. `http://` uses plain TCP;
     /// `https://` layers tokio-rustls with webpki roots (the same crypto
-    /// provider `transport_http` uses).
+    /// provider `transport::http` uses).
     async fn send_request(
         method: Method,
         url: &str,
@@ -948,7 +948,7 @@ mod rest {
     fn tls_config() -> Arc<rustls::ClientConfig> {
         let mut roots = rustls::RootCertStore::empty();
         roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        // Match `transport_http`'s aws-lc-rs provider so both TLS clients share
+        // Match `transport::http`'s aws-lc-rs provider so both TLS clients share
         // one crypto backend within the process.
         let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
         let config = rustls::ClientConfig::builder_with_provider(provider)

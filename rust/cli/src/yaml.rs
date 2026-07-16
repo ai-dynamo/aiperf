@@ -1414,6 +1414,7 @@ impl Benchmark {
             prefill_ramp: phase.prefill_ramp,
             gpu_telemetry_enabled: gpu_enabled,
             gpu_telemetry_urls: gpu_urls,
+            gpu_telemetry_metrics_file: None,
             server_metrics_enabled: sm_enabled,
             server_metrics_formats: sm_formats,
             slos,

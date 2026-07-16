@@ -40,7 +40,7 @@ fn no_direct_time_access_in_src() {
     // (RealClock fallback, dynosim). The Global Constraint it enforces applies
     // to the HTTP transport source, so scope the scan to that module only.
     let mut hits = Vec::new();
-    scan(Path::new("src/transport_http"), &mut hits);
+    scan(Path::new("src/transport::http"), &mut hits);
     assert!(
         hits.is_empty(),
         "direct time access found (use Clock):\n{}",

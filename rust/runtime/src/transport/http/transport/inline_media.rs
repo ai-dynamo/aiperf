@@ -16,8 +16,8 @@ use base64::engine::general_purpose::STANDARD;
 use bytes::Bytes;
 use serde_json::Value;
 
-use crate::transport_http::models::{ErrorDetails, RequestConfig, Response};
-use crate::transport_http::transport::http_transport::HttpTransport;
+use crate::transport::http::models::{ErrorDetails, RequestConfig, Response};
+use crate::transport::http::transport::http_transport::HttpTransport;
 
 /// Exact bytes and content type returned by a media fetch.
 #[derive(Debug, Clone, PartialEq, Eq)]

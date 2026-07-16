@@ -19,7 +19,7 @@
 //!     coverage the `grpcs` listener can get from a fresh self-signed cert: the
 //!     runner's tonic `grpcs` client verifies against the system trust roots
 //!     with no accept-invalid toggle
-//!     (`rust/aiperf/src/transport_grpc/transport.rs:783-793`), so a self-signed
+//!     (`rust/aiperf/src/transport::grpc/transport.rs:783-793`), so a self-signed
 //!     mock is unreachable through `aiperf profile` `grpcs://` by design — hence
 //!     this direct-handshake proof of the listener's TLS termination + h2 ALPN.
 
@@ -175,7 +175,7 @@ async fn tls_handshake_alpn(addr: SocketAddr) -> Option<Vec<u8>> {
 }
 
 /// A `ServerCertVerifier` that accepts any certificate, mirroring the runner's
-/// `ssl_verify=false` (`aiperf_runtime::transport_http::client::connection`) — used only
+/// `ssl_verify=false` (`aiperf_runtime::transport::http::client::connection`) — used only
 /// to reach the ALPN result of the handshake against a self-signed listener.
 #[derive(Debug)]
 struct NoVerify {

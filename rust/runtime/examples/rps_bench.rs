@@ -28,11 +28,11 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 
-use aiperf_runtime::transport_http::RealClock;
-use aiperf_runtime::transport_http::client::connection::{Sender, establish};
-use aiperf_runtime::transport_http::client::http_client::HttpClient;
-use aiperf_runtime::transport_http::config::ClientConfig;
-use aiperf_runtime::transport_http::models::{HttpVersion, RequestRecord, TraceData};
+use aiperf_runtime::transport::http::RealClock;
+use aiperf_runtime::transport::http::client::connection::{Sender, establish};
+use aiperf_runtime::transport::http::client::http_client::HttpClient;
+use aiperf_runtime::transport::http::config::ClientConfig;
+use aiperf_runtime::transport::http::models::{HttpVersion, RequestRecord, TraceData};
 
 fn env_usize(key: &str, default: usize) -> usize {
     std::env::var(key)
@@ -110,7 +110,7 @@ fn main() {
                 .unwrap();
             let local = tokio::task::LocalSet::new();
             local.block_on(&rt, async move {
-                let clock: Rc<dyn aiperf_runtime::transport_http::Clock> = RealClock::new();
+                let clock: Rc<dyn aiperf_runtime::transport::http::Clock> = RealClock::new();
                 let cfg = ClientConfig {
                     http_version,
                     ..ClientConfig::default()

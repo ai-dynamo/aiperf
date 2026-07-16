@@ -26,9 +26,9 @@ use url::Url;
 
 use crate::clock::Clock;
 
-use crate::transport_http::client::resolver::{CachingDnsResolver, DnsResolver};
-use crate::transport_http::config::{ClientConfig, apply_socket_opts};
-use crate::transport_http::models::{ErrorDetails, ErrorKind, HttpVersion, TraceData};
+use crate::transport::http::client::resolver::{CachingDnsResolver, DnsResolver};
+use crate::transport::http::config::{ClientConfig, apply_socket_opts};
+use crate::transport::http::models::{ErrorDetails, ErrorKind, HttpVersion, TraceData};
 
 /// A local (`!Send`) executor: drives the connection future on the current
 /// thread via `spawn_local`. Used for the HTTP/2 connection so that neither the
@@ -567,7 +567,7 @@ where
 mod tests {
     use super::with_timeout;
     use crate::clock::{Clock, SimClock, drive_sim};
-    use crate::transport_http::models::{ErrorDetails, ErrorKind};
+    use crate::transport::http::models::{ErrorDetails, ErrorKind};
     use std::rc::Rc;
 
     fn timeout_err() -> ErrorDetails {

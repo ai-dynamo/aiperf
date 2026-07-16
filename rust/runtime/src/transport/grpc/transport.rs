@@ -33,12 +33,12 @@ use url::{Host, Url};
 
 use crate::clock::Clock;
 
-use crate::transport_grpc::binding::GrpcEndpointBinding;
-use crate::transport_grpc::models::{
+use crate::transport::grpc::binding::GrpcEndpointBinding;
+use crate::transport::grpc::models::{
     ConnectionReuseStrategy, GrpcClientConfig, GrpcErrorDetails, GrpcErrorKind, GrpcRequestConfig,
     GrpcRequestRecord, GrpcResponse,
 };
-use crate::transport_grpc::raw_codec::RawBytesCodec;
+use crate::transport::grpc::raw_codec::RawBytesCodec;
 
 /// gRPC setup or dispatch failure before it is recorded.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -791,7 +791,7 @@ impl GrpcTransport {
             } else {
                 endpoint.tls_config_with_verifier(
                     ClientTlsConfig::new(),
-                    crate::transport_http::client::connection::insecure_server_cert_verifier(),
+                    crate::transport::http::client::connection::insecure_server_cert_verifier(),
                 )
             };
             endpoint = configured.map_err(|error| {

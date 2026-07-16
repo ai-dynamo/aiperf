@@ -44,7 +44,7 @@ use crate::multiturn::InputTokenCounter;
 use crate::rng::{RngRoot, namespace};
 use crate::timing::{BernoulliFixedDelay, SlotPool};
 #[cfg(feature = "grpc")]
-use crate::transport_grpc::GrpcBindingRegistry;
+use crate::transport::grpc::GrpcBindingRegistry;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -1228,7 +1228,7 @@ mod tests {
         RawEndpointConfig, StatelessEndpointFactory,
     };
     use crate::multiturn::AuthoredInputTokenCounter;
-    use crate::transport_http::models::ConnectionReuseStrategy;
+    use crate::transport::http::models::ConnectionReuseStrategy;
 
     #[derive(Debug)]
     struct PreparedOnlyChatFactory;

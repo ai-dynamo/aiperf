@@ -143,7 +143,7 @@ impl std::fmt::Display for PreparedTlsClientConfigError {
 
 impl std::error::Error for PreparedTlsClientConfigError {}
 
-use crate::transport_http::models::HttpVersion;
+use crate::transport::http::models::HttpVersion;
 
 /// Client-wide configuration. Timeouts are clock-nanoseconds.
 ///
@@ -238,7 +238,7 @@ pub fn apply_socket_opts(sock: &socket2::SockRef<'_>) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport_http::models::HttpVersion;
+    use crate::transport::http::models::HttpVersion;
 
     #[test]
     fn defaults_match_python_aiohttp_defaults() {

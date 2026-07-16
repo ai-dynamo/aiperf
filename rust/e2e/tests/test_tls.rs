@@ -11,8 +11,8 @@
 //! self-signed cert by disabling verification via `endpoint.ssl_verify: false`,
 //! which the runner's HTTP client honors by installing a
 //! `NoCertificateVerification` verifier
-//! (`aiperf_runtime::transport_http::client::connection::rustls_config`,
-//! `rust/aiperf/src/transport_http/client/connection.rs:326-347`) — the Rust
+//! (`aiperf_runtime::transport::http::client::connection::rustls_config`,
+//! `rust/aiperf/src/transport::http/client/connection.rs:326-347`) — the Rust
 //! equivalent of the Python connector's `ssl=False`. The listener advertises
 //! ALPN `h2`+`http/1.1`; the client negotiates one and streams SSE over TLS.
 //!
@@ -23,7 +23,7 @@
 //! client now honors `endpoint.ssl_verify=false` by installing the SAME
 //! `NoCertificateVerification` verifier the HTTP transport uses, via tonic's
 //! `Endpoint::tls_config_with_verifier`
-//! (`rust/aiperf/src/transport_grpc/transport.rs`), so a `grpcs://` run against
+//! (`rust/aiperf/src/transport::grpc/transport.rs`), so a `grpcs://` run against
 //! the self-signed mock completes instead of failing the handshake against
 //! system roots.
 //!

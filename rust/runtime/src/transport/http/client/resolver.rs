@@ -15,8 +15,8 @@ use std::rc::Rc;
 use crate::clock::Clock;
 use async_trait::async_trait;
 
-use crate::transport_http::config::ClientConfig;
-use crate::transport_http::models::{ErrorDetails, ErrorKind, TraceData};
+use crate::transport::http::config::ClientConfig;
+use crate::transport::http::models::{ErrorDetails, ErrorKind, TraceData};
 
 /// Raw hostname lookup seam beneath transport-owned cache policy.
 #[async_trait(?Send)]
