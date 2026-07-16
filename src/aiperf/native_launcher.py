@@ -1,14 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""`aiperf` console-script launcher: hand off to the native Rust front door.
+"""`aiperf` console-script launcher: hand off to the native Rust binary.
 
-The wheel interns the native `aiperf-cli` binary at ``aiperf/_bin/aiperf-native``
-(beside ``aiperf/_bin/aiperf-runner``). This shim resolves that binary via
+The wheel interns the one native `aiperf` binary (crate `aiperf-cli`, front door
++ execution engine) at ``aiperf/_bin/aiperf``. This shim resolves that binary via
 ``importlib.resources`` and replaces the current process with it (``os.execv`` on
 POSIX; a spawn-and-wait on Windows), so ``aiperf profile`` / ``aiperf config`` run
-entirely in Rust. The native front door itself delegates every other subcommand
-back to ``python -m aiperf`` — which stays pure Python (``aiperf.entrypoint`` ->
+entirely in Rust. The native binary itself delegates every other subcommand back
+to ``python -m aiperf`` — which stays pure Python (``aiperf.entrypoint`` ->
 ``aiperf.cli:app``) and does NOT re-enter this launcher, so there is no exec loop.
 
 If the interned binary is absent (e.g. a source checkout that never ran
@@ -28,7 +28,7 @@ def _native_binary() -> str | None:
     Resolved through ``importlib.resources`` so it works from an installed wheel
     (where ``aiperf/_bin`` is package data) and from an editable install alike.
     """
-    name = "aiperf-native.exe" if os.name == "nt" else "aiperf-native"
+    name = "aiperf.exe" if os.name == "nt" else "aiperf"
     try:
         from importlib.resources import as_file, files
 

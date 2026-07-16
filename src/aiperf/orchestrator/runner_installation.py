@@ -14,7 +14,7 @@ closed on an unsupported id. The catalog (`--capabilities`) subprocess mode was
 removed — capabilities is an in-process function inside the native binary.
 
 The binary is **interned** in the one maturin-built ``aiperf`` wheel as package
-data at ``aiperf/_bin/aiperf-native``. Discovery precedence is
+data at ``aiperf/_bin/aiperf``. Discovery precedence is
 ``explicit --exec-bin -> AIPERF_EXEC_BIN -> interned package data -> PATH``.
 """
 
@@ -50,7 +50,7 @@ if TYPE_CHECKING:
 # operations; the envelope's `operation` field selects behaviour.
 _EXECUTE_FLAG = "--execute"
 _EXEC_ENV = "AIPERF_EXEC_BIN"
-_EXEC_COMMAND = "aiperf-native"
+_EXEC_COMMAND = "aiperf"
 # Package data location of the interned binary inside the installed `aiperf`
 # wheel (maturin `include` glob in pyproject.toml + Makefile `bundle-cli`).
 _INTERNED_PACKAGE = "aiperf"
@@ -288,7 +288,7 @@ def _resolve_exec_binary(explicit: Path | None) -> Path:
 def _interned_binary() -> Path | None:
     """Locate the binary interned as package data in the installed wheel.
 
-    Resolves ``aiperf/_bin/aiperf-native`` through ``importlib.resources`` — the
+    Resolves ``aiperf/_bin/aiperf`` through ``importlib.resources`` — the
     absolute install path, independent of PATH. The ``aiperf`` distribution is
     always installed unpacked (it carries a compiled extension module and this
     executable), so ``files()`` yields a concrete filesystem path. Returns

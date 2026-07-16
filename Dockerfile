@@ -137,7 +137,7 @@ COPY rust /workspace/rust
 # Build the unified `aiperf` binary (front door + execution engine, lto=fat) per
 # AIPERF_RUNNER_PROFILE, intern it as package data, then build the ONE maturin
 # wheel. maturin compiles the rust/pyext `aiperf._native` cdylib, packages
-# `src/aiperf`, includes the interned `aiperf/_bin/aiperf-native`, and runs its
+# `src/aiperf`, includes the interned `aiperf/_bin/aiperf`, and runs its
 # built-in auditwheel repair to emit a manylinux-tagged wheel. `bindings = "bin"`
 # is not used (illegal with `[project.scripts] aiperf`); the binary rides along as
 # package data instead.
@@ -149,8 +149,8 @@ RUN cd /workspace \
        esac \
     && cargo build --release -p aiperf-cli ${CLI_FEATURES} \
     && mkdir -p src/aiperf/_bin \
-    && cp target/release/aiperf src/aiperf/_bin/aiperf-native \
-    && chmod +x src/aiperf/_bin/aiperf-native \
+    && cp target/release/aiperf src/aiperf/_bin/aiperf \
+    && chmod +x src/aiperf/_bin/aiperf \
     && maturin build --release --out /dist
 
 # Export-only stage: scratch-based so `docker buildx build --target

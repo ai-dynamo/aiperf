@@ -181,8 +181,8 @@ CLI_FEATURES ?= --features parquet
 bundle-cli: #? build the unified aiperf binary (CLI_FEATURES-selectable) and intern it at src/aiperf/_bin/ for packaging.
 	cargo build --release -p aiperf-cli $(CLI_FEATURES)
 	mkdir -p src/aiperf/_bin
-	cp target/release/aiperf src/aiperf/_bin/aiperf-native
-	chmod +x src/aiperf/_bin/aiperf-native
+	cp target/release/aiperf src/aiperf/_bin/aiperf
+	chmod +x src/aiperf/_bin/aiperf
 
 wheel: bundle-cli #? build the single interned aiperf wheel (maturin, manylinux) into dist/.
 	$(activate_venv) && uv pip install "maturin[patchelf]" \
