@@ -68,6 +68,7 @@ fn capabilities() -> Value {
 
 fn run_child(request: &Value) -> Output {
     let mut child = Command::new(binary())
+        .arg("--execute")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -664,7 +665,7 @@ benchmark:
             .arg("profile")
             .arg("--config")
             .arg(config_path)
-            .env("AIPERF_RUNNER_BIN", runner)
+            .env("AIPERF_EXEC_BIN", runner)
             .env("PYTHONPATH", python_path)
             .env("AIPERF_CACHE_DIR", cache)
             .env("NO_COLOR", "1")

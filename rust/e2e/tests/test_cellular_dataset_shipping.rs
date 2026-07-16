@@ -22,7 +22,7 @@
 //!
 //! 1. **The dataset went over HTTP+zstd** — the controller's serve handler logs one
 //!    `served dataset source over HTTP … content_encoding=zstd` line (target
-//!    `aiperf_cellular_artifact`, surfaced at `info` via `AIPERF_RUNNER_LOG`),
+//!    `aiperf_cellular_artifact`, surfaced at `info` via `AIPERF_LOG`),
 //!    forwarded into `logs/aiperf.log`. The single-cell baseline (no controller)
 //!    produces none.
 //! 2. **SET parity** — the merged `records.jsonl` over the shipped file has the same
@@ -74,7 +74,7 @@ fn run_file_dataset(
     force_http: bool,
 ) -> RunResult {
     let mut env: Vec<(&str, &str)> =
-        vec![("AIPERF_RUNNER_LOG", "warn,aiperf_cellular_artifact=info")];
+        vec![("AIPERF_LOG", "warn,aiperf_cellular_artifact=info")];
     if force_http {
         env.push(("AIPERF_CELL_ARTIFACT_HTTP_FORCE", "1"));
     }

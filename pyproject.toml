@@ -4,10 +4,10 @@
 # Build
 #
 # maturin compiles the pyo3 `aiperf._native` module (rust/pyext) and interns the
-# full-fat native `aiperf-runner` executable into this one wheel as package data
-# (`aiperf/_bin/aiperf-runner`) — see [tool.maturin] below. There is no separate
-# `aiperf-runner` distribution. Because the wheel carries a compiled binary it is
-# platform + CPython-ABI specific (no longer `py3-none-any`).
+# unified native `aiperf` executable (front door + execution engine) into this one
+# wheel as package data (`aiperf/_bin/aiperf-native`) — see [tool.maturin] below.
+# Because the wheel carries a compiled binary it is platform + CPython-ABI specific
+# (no longer `py3-none-any`).
 [build-system]
 requires = ["maturin>=1.9,<2"]
 build-backend = "maturin"
@@ -98,18 +98,18 @@ aiperf = "aiperf.plugin:plugins.yaml"
 
 # maturin build backend. It compiles the pyo3 cdylib at rust/pyext into
 # `aiperf/_native.<abi>.so` and packages the `src/aiperf` Python tree. The
-# full-fat `aiperf-runner` binary is NOT built here (maturin `bindings = "bin"`
-# is illegal alongside `[project.scripts]`); a pre-step
-# (`cargo build --release -p aiperf-runner`, crate default features
-# `dynosim` + `parquet`, `lto = "fat"`) copies it to `src/aiperf/_bin/aiperf-runner`
-# and the `include` glob interns it as package data. See the Makefile
-# `bundle-runner`/`wheel` targets and the Dockerfile wheel-builder stage.
+# unified `aiperf` binary (front door + execution engine) is NOT built here
+# (maturin `bindings = "bin"` is illegal alongside `[project.scripts]`); a
+# pre-step (`cargo build --release -p aiperf-cli $(CLI_FEATURES)`, `lto = "fat"`)
+# copies it to `src/aiperf/_bin/aiperf-native` and the `include` glob interns it
+# as package data. See the Makefile `bundle-cli`/`wheel` targets and the
+# Dockerfile wheel-builder stage.
 [tool.maturin]
 bindings = "pyo3"
 manifest-path = "rust/pyext/Cargo.toml"
 python-source = "src"
 module-name = "aiperf._native"
-include = ["aiperf/_bin/aiperf-runner", "aiperf/_bin/aiperf-native"]
+include = ["aiperf/_bin/aiperf-native"]
 profile = "release"
 strip = true
 

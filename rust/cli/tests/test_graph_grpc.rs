@@ -62,6 +62,7 @@ fn capabilities() -> Value {
 /// its terminal envelope line on stdout.
 fn run_child(request: &Value) -> Output {
     let mut child = Command::new(binary())
+        .arg("--execute")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

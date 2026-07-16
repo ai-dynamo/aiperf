@@ -15,7 +15,7 @@
 //! dataset-deterministic metrics byte-for-byte through the full presentation
 //! pipeline.
 //!
-//! Requires the launched `aiperf-runner` (`AIPERF_RUNNER_BIN`) to include the
+//! Requires the launched `aiperf-runner` (`AIPERF_EXEC_BIN`) to include the
 //! `velo` cell transport — it is in the default runner build, so a default
 //! `cargo test` run drives it; a lean `--no-default-features` runner fails closed.
 

@@ -156,7 +156,7 @@ async fn test_graph_cellular_single_file_dataset_shipping() {
             h_cell.mock.url
         ),
         &[
-            ("AIPERF_RUNNER_LOG", "warn,aiperf_cellular_artifact=info"),
+            ("AIPERF_LOG", "warn,aiperf_cellular_artifact=info"),
             ("AIPERF_CELL_ARTIFACT_HTTP_FORCE", "1"),
         ],
     );
@@ -1044,7 +1044,7 @@ async fn test_graph_cellular_directory_multi_file_dataset_shipping() {
             h_cell.mock.url
         ),
         &[
-            ("AIPERF_RUNNER_LOG", "warn,aiperf_cellular_artifact=info"),
+            ("AIPERF_LOG", "warn,aiperf_cellular_artifact=info"),
             ("AIPERF_CELL_ARTIFACT_HTTP_FORCE", "1"),
         ],
     );

@@ -92,6 +92,7 @@ fn run_child(request: &Value) -> Output {
     let mut request = request.clone();
     request["run"] = benchmark_run(request["run"].take());
     let mut child = Command::new(binary())
+        .arg("--execute")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

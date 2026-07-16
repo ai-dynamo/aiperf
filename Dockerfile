@@ -134,22 +134,23 @@ COPY Cargo.toml Cargo.lock /workspace/
 COPY .cargo /workspace/.cargo
 COPY rust /workspace/rust
 
-# Build the native runner (lto=fat) per AIPERF_RUNNER_PROFILE, intern it as
-# package data, then build the ONE maturin wheel. maturin compiles the
-# rust/pyext `aiperf._native` cdylib, packages `src/aiperf`, includes the
-# interned `aiperf/_bin/aiperf-runner`, and runs its built-in auditwheel repair
-# to emit a manylinux-tagged wheel. `bindings = "bin"` is not used (illegal with
-# `[project.scripts] aiperf`); the runner rides along as package data instead.
+# Build the unified `aiperf` binary (front door + execution engine, lto=fat) per
+# AIPERF_RUNNER_PROFILE, intern it as package data, then build the ONE maturin
+# wheel. maturin compiles the rust/pyext `aiperf._native` cdylib, packages
+# `src/aiperf`, includes the interned `aiperf/_bin/aiperf-native`, and runs its
+# built-in auditwheel repair to emit a manylinux-tagged wheel. `bindings = "bin"`
+# is not used (illegal with `[project.scripts] aiperf`); the binary rides along as
+# package data instead.
 RUN cd /workspace \
     && case "${AIPERF_RUNNER_PROFILE}" in \
-         offline) RUNNER_FEATURES="" ;; \
-         online)  RUNNER_FEATURES="--no-default-features --features parquet" ;; \
+         offline) CLI_FEATURES="--features full" ;; \
+         online)  CLI_FEATURES="--features parquet" ;; \
          *) echo "unknown AIPERF_RUNNER_PROFILE='${AIPERF_RUNNER_PROFILE}' (expected 'offline' or 'online')" >&2; exit 1 ;; \
        esac \
-    && cargo build --release -p aiperf-runner ${RUNNER_FEATURES} \
+    && cargo build --release -p aiperf-cli ${CLI_FEATURES} \
     && mkdir -p src/aiperf/_bin \
-    && cp target/release/aiperf-runner src/aiperf/_bin/aiperf-runner \
-    && chmod +x src/aiperf/_bin/aiperf-runner \
+    && cp target/release/aiperf src/aiperf/_bin/aiperf-native \
+    && chmod +x src/aiperf/_bin/aiperf-native \
     && maturin build --release --out /dist
 
 # Export-only stage: scratch-based so `docker buildx build --target

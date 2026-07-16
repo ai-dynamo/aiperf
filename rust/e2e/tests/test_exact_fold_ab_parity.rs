@@ -42,7 +42,7 @@
 //!
 //! ## Non-vacuous
 //!
-//! With `AIPERF_RUNNER_LOG=aiperf_runner=info` the runner logs one
+//! With `AIPERF_LOG=aiperf=info` the runner logs one
 //! `record retention path selected exact_fold=<bool>` line (see
 //! `execute.rs`). The test asserts the default run logged `exact_fold=true` and the
 //! forced run logged `exact_fold=false`, so a regression that silently disabled
@@ -110,9 +110,9 @@ fn run_full_coverage(h: &AIPerfHarness, exact_fold: bool) -> RunResult {
     let tmp = tempfile::TempDir::new().unwrap();
     let cfg = tmp.path().join("full_coverage.yaml");
     std::fs::write(&cfg, full_coverage_config(&h.mock.url)).unwrap();
-    // `aiperf_runner=info` surfaces the one-line retention-path marker so the test can
+    // `aiperf=info` surfaces the one-line retention-path marker so the test can
     // prove non-vacuously which path each run took.
-    let mut env: Vec<(&str, &str)> = vec![("AIPERF_RUNNER_LOG", "aiperf_runner=info")];
+    let mut env: Vec<(&str, &str)> = vec![("AIPERF_LOG", "aiperf=info")];
     if !exact_fold {
         env.push(("AIPERF_RUNTIME_EXACT_FOLD", "0"));
     }
@@ -656,7 +656,7 @@ fn measure_runner_vmhwm(url: &str, exact_fold: bool, entries: u32, requests: u32
         .env("TRANSFORMERS_OFFLINE", "1")
         .env("PYTHONUNBUFFERED", "1")
         .env("MALLOC_ARENA_MAX", "2")
-        .env("AIPERF_RUNNER_BIN", runner_binary())
+        .env("AIPERF_EXEC_BIN", exec_binary())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());

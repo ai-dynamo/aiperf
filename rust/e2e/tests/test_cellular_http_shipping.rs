@@ -32,7 +32,7 @@
 //! 2. **The bytes went over HTTP+zstd** (not a shared filesystem) — the controller's
 //!    upload handler emits one `received artifact upload over HTTP … content_encoding=zstd`
 //!    line per cell × file (target `aiperf_cellular_artifact`, surfaced at `info` via
-//!    `AIPERF_RUNNER_LOG`). The runner's stderr is forwarded into `logs/aiperf.log`,
+//!    `AIPERF_LOG`). The runner's stderr is forwarded into `logs/aiperf.log`,
 //!    which this test greps to prove the observable fired for every cell. Without
 //!    this the test could not distinguish HTTP shipping from the shared-FS concat —
 //!    which is the whole point.
@@ -106,7 +106,7 @@ fn run_full_coverage(h: &AIPerfHarness, cells: u32, force_http: bool) -> RunResu
     // Surface just the cellular artifact-upload observable at `info`; everything else
     // stays at the runner's default `warn`.
     let mut env: Vec<(&str, &str)> =
-        vec![("AIPERF_RUNNER_LOG", "warn,aiperf_cellular_artifact=info")];
+        vec![("AIPERF_LOG", "warn,aiperf_cellular_artifact=info")];
     if force_http {
         env.push(("AIPERF_CELL_ARTIFACT_HTTP_FORCE", "1"));
     }

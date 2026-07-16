@@ -30,6 +30,7 @@ fn one_line(output: &Output) -> Value {
 
 fn run(input: &Value) -> Output {
     let mut child = Command::new(binary())
+        .arg("--execute")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

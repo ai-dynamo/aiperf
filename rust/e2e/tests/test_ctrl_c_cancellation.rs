@@ -54,7 +54,7 @@ fn run_with_sigint(
         .env("TRANSFORMERS_OFFLINE", "1")
         .env("PYTHONUNBUFFERED", "1")
         .env("MALLOC_ARENA_MAX", "2")
-        .env("AIPERF_RUNNER_BIN", runner_binary())
+        .env("AIPERF_EXEC_BIN", exec_binary())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

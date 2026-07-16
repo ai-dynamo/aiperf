@@ -336,7 +336,7 @@ impl AIPerfHarness {
             .env("TRANSFORMERS_OFFLINE", "1")
             .env("PYTHONUNBUFFERED", "1")
             .env("MALLOC_ARENA_MAX", "2")
-            .env("AIPERF_RUNNER_BIN", runner_binary())
+            .env("AIPERF_EXEC_BIN", exec_binary())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -428,15 +428,16 @@ fn python_binary() -> String {
     "python3".to_string()
 }
 
-/// Resolve the `aiperf-runner` binary.
+/// Resolve the unified `aiperf` execution binary (front door + execution engine).
 ///
-/// Priority:
-/// 1. `AIPERF_RUNNER_BIN` env var (already set by the user or outer harness)
-/// 2. `target/debug/aiperf-runner` relative to the Cargo workspace root
-///    (derived from this file's `CARGO_MANIFEST_DIR` at compile time)
-/// 3. `aiperf-runner` on PATH as last resort
-pub fn runner_binary() -> String {
-    if let Ok(v) = std::env::var("AIPERF_RUNNER_BIN") {
+/// The Python orchestrator (`python -m aiperf`) reads `AIPERF_EXEC_BIN` and spawns
+/// this binary in its internal `--execute` mode. Priority:
+/// 1. `AIPERF_EXEC_BIN` env var (already set by the user or outer harness)
+/// 2. `target/release/aiperf` then `target/debug/aiperf` relative to the Cargo
+///    workspace root (derived from this file's `CARGO_MANIFEST_DIR` at compile time)
+/// 3. `aiperf` on PATH as last resort
+pub fn exec_binary() -> String {
+    if let Ok(v) = std::env::var("AIPERF_EXEC_BIN") {
         if !v.is_empty() {
             return v;
         }
@@ -448,14 +449,16 @@ pub fn runner_binary() -> String {
         .and_then(|p| p.parent()) // workspace root
         .unwrap_or(&manifest);
     let suffix = std::env::consts::EXE_SUFFIX;
-    let debug = workspace
-        .join("target")
-        .join("debug")
-        .join(format!("aiperf-runner{suffix}"));
-    if debug.exists() {
-        return debug.display().to_string();
+    for profile in ["release", "debug"] {
+        let candidate = workspace
+            .join("target")
+            .join(profile)
+            .join(format!("aiperf{suffix}"));
+        if candidate.exists() {
+            return candidate.display().to_string();
+        }
     }
-    format!("aiperf-runner{suffix}")
+    format!("aiperf{suffix}")
 }
 
 /// Result of one `aiperf` subprocess run.

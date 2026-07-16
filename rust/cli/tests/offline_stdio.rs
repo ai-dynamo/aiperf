@@ -102,6 +102,7 @@ fn request(operation: &str, artifact_dir: &Path) -> Value {
 
 fn run(request: &Value) -> Output {
     let mut child = Command::new(binary())
+        .arg("--execute")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

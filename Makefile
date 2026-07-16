@@ -16,7 +16,7 @@
 
 
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
-		test coverage clean install install-app bundle-runner wheel docker docker-run first-time-setup \
+		test coverage clean install install-app bundle-cli wheel docker docker-run first-time-setup \
 		ci-install check-mock-server-install \
 		test-verbose setup-venv install-mock-server test-ci test-all \
 		integration-tests integration-tests-ci integration-tests-verbose integration-tests-ci-macos \
@@ -158,36 +158,28 @@ coverage: #? run the tests and generate an html coverage report.
 
 install: install-app install-mock-server #? install the project and mock server in editable mode.
 
-install-app: bundle-cli #? install the project in editable mode (with the interned native front door + runner).
+install-app: bundle-cli #? install the project in editable mode (with the interned unified aiperf binary).
 	$(activate_venv) && uv pip install -e ".[dev]"
 
-native-cli: #? build the native Rust `aiperf` binary (aiperf-cli) + the runner.
-	cargo build --release -p aiperf-cli
-	cargo build --release -p aiperf-runner $(RUNNER_FEATURES)
+native-cli: #? build the unified native Rust `aiperf` binary (front door + execution engine).
+	cargo build --release -p aiperf-cli $(CLI_FEATURES)
 
-install-native: native-cli #? install the pure-Rust `aiperf` + runner side-by-side into dist/native-bin (no Python on the profile/config path).
+install-native: native-cli #? install the pure-Rust `aiperf` into dist/native-bin (no Python on the profile/config path).
 	mkdir -p dist/native-bin
 	cp target/release/aiperf dist/native-bin/aiperf
-	cp target/release/aiperf-runner dist/native-bin/aiperf-runner
 	@echo "Pure-Rust aiperf installed to dist/native-bin/. Add it to PATH:"
 	@echo "  export PATH=\"$$(pwd)/dist/native-bin:$$PATH\""
 	@echo "Then: aiperf profile --model M --url 127.0.0.1:8000 --endpoint-type chat --concurrency 1,2,4 --request-count 100"
 
-# RUNNER_FEATURES selects the runner profile, mirroring the Dockerfile's
-# AIPERF_RUNNER_PROFILE knob. Default = online-only (no dynosim, parquet only),
-# which builds the native Rust path WITHOUT the sibling dynamo-aiperf-native
-# checkout. For the full-fat crate defaults (dynosim + parquet, needs the
-# sibling checkout for offline/online Dynamo replay):
-#   make bundle-runner RUNNER_FEATURES=""
-RUNNER_FEATURES ?= --no-default-features --features parquet
-bundle-runner: #? build the aiperf-runner (RUNNER_FEATURES-selectable) and intern it at src/aiperf/_bin/ for packaging.
-	cargo build --release -p aiperf-runner $(RUNNER_FEATURES)
-	mkdir -p src/aiperf/_bin
-	cp target/release/aiperf-runner src/aiperf/_bin/aiperf-runner
-	chmod +x src/aiperf/_bin/aiperf-runner
-
-bundle-cli: bundle-runner #? build the native aiperf-cli front door and intern it beside the runner.
-	cargo build --release -p aiperf-cli
+# CLI_FEATURES selects the unified `aiperf` binary's execution profile, mirroring
+# the Dockerfile's build knob. Default = online-only (no dynosim, parquet only),
+# which builds WITHOUT the sibling dynamo-aiperf-native checkout. For the full
+# execution surface (dynosim + parquet + velo, needs the sibling checkout for
+# offline/online Dynamo replay and cellular):
+#   make bundle-cli CLI_FEATURES="--features full"
+CLI_FEATURES ?= --features parquet
+bundle-cli: #? build the unified aiperf binary (CLI_FEATURES-selectable) and intern it at src/aiperf/_bin/ for packaging.
+	cargo build --release -p aiperf-cli $(CLI_FEATURES)
 	mkdir -p src/aiperf/_bin
 	cp target/release/aiperf src/aiperf/_bin/aiperf-native
 	chmod +x src/aiperf/_bin/aiperf-native
