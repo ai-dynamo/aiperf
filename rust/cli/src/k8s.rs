@@ -287,7 +287,14 @@ async fn send_merge_patch_async(
             .add(cert)
             .map_err(|e| anyhow::anyhow!("failed to add cluster CA: {e}"))?;
     }
-    let tls_config = rustls::ClientConfig::builder()
+    // Pin the aws-lc-rs provider explicitly (matching `transport_http`/mlflow):
+    // the bare `ClientConfig::builder()` panics when the process default
+    // CryptoProvider is ambiguous (both `ring` and `aws-lc-rs` linked), which is
+    // the case in the shipped binary.
+    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let tls_config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|e| anyhow::anyhow!("rustls provider init failed: {e}"))?
         .with_root_certificates(roots)
         .with_no_client_auth();
     let connector = tokio_rustls::TlsConnector::from(Arc::new(tls_config));
