@@ -30,6 +30,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 /// Locks the inner state, recovering the guard even if a prior holder panicked. The
@@ -44,7 +45,7 @@ fn lock<T>(inner: &Mutex<Inner<T>>) -> std::sync::MutexGuard<'_, Inner<T>> {
 
 /// One event a consumer observes on its subscription stream: an item (in producer
 /// `add` order across the replay ⊎ live boundary), or the terminal `Finalized`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BroadcastEvent<T> {
     /// An item the producer added.
     Item(T),

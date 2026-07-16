@@ -38,6 +38,9 @@ use crate::cellular::shard::{ColumnStorePartition, RecordsShardPartition};
 /// operator-hardcoded coordinate. Gated on the `velo` feature.
 #[cfg(feature = "velo")]
 pub mod connect;
+/// Velo distribution for the monotonic phaser control plane (ultimate spec §4).
+#[cfg(feature = "velo")]
+pub mod phaser_velo;
 /// The velo-backed cell↔controller transport (cell client + controller
 /// endpoint), gated on the `velo` feature.
 #[cfg(feature = "velo")]

@@ -104,12 +104,15 @@ impl Phaser {
     /// Subscribe a consumer. It receives replay-on-attach: every generation so far
     /// (so it learns the current generation atomically) then the live tail.
     pub fn subscribe(&self) -> PhaserSubscription {
-        PhaserSubscription {
-            sub: self.broadcast.attach(),
-            cursor: 0,
-            seen_generation: 0,
-            finalized: false,
-        }
+        PhaserSubscription::from_subscription(self.broadcast.attach())
+    }
+
+    /// The raw broadcast subscription (replay snapshot + live receiver, split at the
+    /// atomic attach seam) — for the velo distribution layer, which ships the replay in
+    /// the subscribe response and pushes the live tail to the cell. In-process callers
+    /// use [`Self::subscribe`].
+    pub fn attach_raw(&self) -> Subscription<PhaseEvent> {
+        self.broadcast.attach()
     }
 }
 
@@ -126,6 +129,18 @@ pub struct PhaserSubscription {
 }
 
 impl PhaserSubscription {
+    /// Wrap a raw broadcast [`Subscription`] (replay + live) as a phaser subscription.
+    /// The velo cell client uses this to reconstruct a subscription from the replay it
+    /// received in the subscribe response plus the live channel the push handler feeds.
+    pub fn from_subscription(sub: Subscription<PhaseEvent>) -> Self {
+        Self {
+            sub,
+            cursor: 0,
+            seen_generation: 0,
+            finalized: false,
+        }
+    }
+
     /// The highest generation this subscriber has observed (from replay + drained live).
     pub fn seen_generation(&self) -> u64 {
         self.seen_generation
