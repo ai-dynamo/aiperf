@@ -524,9 +524,12 @@ struct PhaseSection {
     start_offset: Option<i64>,
     #[serde(default, alias = "endOffset")]
     end_offset: Option<i64>,
-    /// Adaptive-scale enable toggle.
+    /// Adaptive-scale config: a bare `true`/`false` toggle, or a nested block
+    /// (`{enabled, control_variable, strategy, sla, …}`) lowered onto the flat
+    /// fields below — mirrors Python `AdaptiveScalePhaseMixin`
+    /// (`src/aiperf/config/adaptive_scale_phase.py`).
     #[serde(default, alias = "adaptiveScale")]
-    adaptive_scale: bool,
+    adaptive_scale: AdaptiveScaleField,
     #[serde(default, alias = "adaptiveSustainDuration")]
     adaptive_sustain_duration: Option<f64>,
     #[serde(default, alias = "adaptiveAssessmentPeriod")]
@@ -549,9 +552,24 @@ struct PhaseSection {
     adaptive_scale_max_step_multiplier: Option<i64>,
     #[serde(default, alias = "adaptiveScaleStepPercent")]
     adaptive_scale_step_percent: Option<f64>,
-    /// Adaptive-scale SLA filters.
+    /// Adaptive-scale SLA filters: an explicit list of `{metric_tag,stat,op,
+    /// threshold}`, or a nested `{metric: {stat: {op: threshold}}}` map
+    /// (Python `normalize_adaptive_sla`).
     #[serde(default)]
-    sla: Vec<SlaFilterSection>,
+    sla: SlaField,
+}
+
+impl PhaseSection {
+    /// Effective SLA filters: a block-nested `sla:` overrides the phase-level
+    /// `sla:` (Python `_lower_adaptive_scale_block` lowering order).
+    fn sla_filters(&self) -> anyhow::Result<Vec<SlaFilterSection>> {
+        if let Some(block) = self.adaptive_scale.block()
+            && let Some(sla) = &block.sla
+        {
+            return sla.filters();
+        }
+        self.sla.filters()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -560,7 +578,7 @@ struct CancellationSection {
     delay: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct SlaFilterSection {
     #[serde(alias = "metricTag")]
     metric_tag: String,
@@ -573,6 +591,227 @@ struct SlaFilterSection {
 /// Default SLA statistic (`SLAFilter.stat` default).
 fn default_sla_stat() -> String {
     "p95".to_string()
+}
+
+/// `adaptive_scale:` accepts a bare bool toggle or a nested block; the block is
+/// lowered onto the flat `PhaseSection.adaptive_*`/`sla` fields, mirroring Python
+/// `lower_adaptive_scale_details` (`src/aiperf/config/adaptive_scale_phase.py`).
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum AdaptiveScaleField {
+    Enabled(bool),
+    Block(Box<AdaptiveScaleBlock>),
+}
+
+impl Default for AdaptiveScaleField {
+    fn default() -> Self {
+        AdaptiveScaleField::Enabled(false)
+    }
+}
+
+impl AdaptiveScaleField {
+    /// Whether adaptive scale is enabled (`_parse_enabled` for the block form).
+    fn enabled(&self) -> bool {
+        match self {
+            AdaptiveScaleField::Enabled(b) => *b,
+            AdaptiveScaleField::Block(b) => b.enabled(),
+        }
+    }
+
+    /// The nested block, when the map form was authored.
+    fn block(&self) -> Option<&AdaptiveScaleBlock> {
+        match self {
+            AdaptiveScaleField::Block(b) => Some(b),
+            AdaptiveScaleField::Enabled(_) => None,
+        }
+    }
+}
+
+/// Nested `adaptive_scale:` block. Field aliases mirror Python's snake/camel
+/// `_ADAPTIVE_SCALE_FIELD_MAP`; `control`/`strategy` are sub-maps.
+#[derive(Debug, Default, Deserialize)]
+struct AdaptiveScaleBlock {
+    #[serde(default)]
+    enabled: Option<BoolOrStr>,
+    #[serde(default, alias = "controlVariable")]
+    control_variable: Option<String>,
+    #[serde(default, alias = "controlMin")]
+    control_min: Option<f64>,
+    #[serde(default, alias = "controlMax")]
+    control_max: Option<f64>,
+    #[serde(default, alias = "minConcurrency")]
+    min_concurrency: Option<f64>,
+    #[serde(default, alias = "maxConcurrency")]
+    max_concurrency: Option<f64>,
+    #[serde(default, alias = "assessmentPeriod")]
+    assessment_period: Option<f64>,
+    #[serde(default)]
+    window: Option<f64>,
+    #[serde(default, alias = "minCompletedRequests")]
+    min_completed_requests: Option<u64>,
+    #[serde(default, alias = "sustainDuration")]
+    sustain_duration: Option<f64>,
+    #[serde(default)]
+    control: Option<ControlSub>,
+    #[serde(default)]
+    strategy: Option<StrategySub>,
+    #[serde(default)]
+    sla: Option<SlaField>,
+}
+
+impl AdaptiveScaleBlock {
+    /// `_parse_enabled`: absent ⇒ true; bool as-is; truthy/falsy string.
+    fn enabled(&self) -> bool {
+        match &self.enabled {
+            None => true,
+            Some(BoolOrStr::Bool(b)) => *b,
+            Some(BoolOrStr::Str(s)) => matches!(
+                s.trim().to_ascii_lowercase().as_str(),
+                "true" | "yes" | "on" | "1"
+            ),
+        }
+    }
+
+    /// Control variable (a `control.variable` sub-map wins over the scalar).
+    fn control_variable(&self) -> Option<String> {
+        self.control
+            .as_ref()
+            .and_then(|c| c.variable.clone())
+            .or_else(|| self.control_variable.clone())
+    }
+
+    /// Control minimum: `control.min` > `min_concurrency` > `control_min`.
+    fn control_min(&self) -> Option<f64> {
+        self.control
+            .as_ref()
+            .and_then(|c| c.min)
+            .or(self.min_concurrency)
+            .or(self.control_min)
+    }
+
+    /// Control maximum: `control.max` > `max_concurrency` > `control_max`.
+    fn control_max(&self) -> Option<f64> {
+        self.control
+            .as_ref()
+            .and_then(|c| c.max)
+            .or(self.max_concurrency)
+            .or(self.control_max)
+    }
+
+    /// Assessment period (`assessment_period` wins over the `window` alias).
+    fn assessment_period(&self) -> Option<f64> {
+        self.assessment_period.or(self.window)
+    }
+
+    fn strategy_type(&self) -> Option<String> {
+        self.strategy.as_ref().and_then(|s| s.strategy_type.clone())
+    }
+
+    fn step_policy(&self) -> Option<String> {
+        self.strategy.as_ref().and_then(|s| s.step_policy.clone())
+    }
+
+    fn base_step(&self) -> Option<i64> {
+        self.strategy.as_ref().and_then(|s| s.base_step)
+    }
+
+    fn max_step_multiplier(&self) -> Option<i64> {
+        self.strategy.as_ref().and_then(|s| s.max_step_multiplier)
+    }
+
+    fn step_percent(&self) -> Option<f64> {
+        self.strategy.as_ref().and_then(|s| s.step_percent)
+    }
+}
+
+/// `adaptive_scale.control: {variable, min, max}` sub-map.
+#[derive(Debug, Default, Deserialize)]
+struct ControlSub {
+    #[serde(default)]
+    variable: Option<String>,
+    #[serde(default)]
+    min: Option<f64>,
+    #[serde(default)]
+    max: Option<f64>,
+}
+
+/// `adaptive_scale.strategy: {type, step_policy, …}` sub-map
+/// (`_ADAPTIVE_SCALE_STRATEGY_FIELD_MAP`).
+#[derive(Debug, Default, Deserialize)]
+struct StrategySub {
+    #[serde(default, rename = "type")]
+    strategy_type: Option<String>,
+    #[serde(default, alias = "stepPolicy")]
+    step_policy: Option<String>,
+    #[serde(default, alias = "baseStep")]
+    base_step: Option<i64>,
+    #[serde(default, alias = "maxStepMultiplier")]
+    max_step_multiplier: Option<i64>,
+    #[serde(default, alias = "stepPercent")]
+    step_percent: Option<f64>,
+}
+
+/// A bool or a truthy/falsy string (`adaptive_scale.enabled`).
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum BoolOrStr {
+    Bool(bool),
+    Str(String),
+}
+
+/// `sla:` accepts an explicit list of filters, or a nested
+/// `{metric: {stat: {op: threshold}}}` map (`normalize_adaptive_sla`).
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum SlaField {
+    List(Vec<SlaFilterSection>),
+    Map(serde_json::Map<String, serde_json::Value>),
+}
+
+impl Default for SlaField {
+    fn default() -> Self {
+        SlaField::List(Vec::new())
+    }
+}
+
+impl SlaField {
+    /// Lower to concrete filters, preserving insertion order for the map form.
+    fn filters(&self) -> anyhow::Result<Vec<SlaFilterSection>> {
+        match self {
+            SlaField::List(v) => Ok(v.clone()),
+            SlaField::Map(m) => normalize_adaptive_sla(m),
+        }
+    }
+}
+
+/// Port of Python `normalize_adaptive_sla`: `{metric: {stat: {op: threshold}}}`
+/// → one `SlaFilterSection` per operator leaf, preserving map (YAML) order.
+fn normalize_adaptive_sla(
+    sla: &serde_json::Map<String, serde_json::Value>,
+) -> anyhow::Result<Vec<SlaFilterSection>> {
+    let mut filters = Vec::new();
+    for (metric_tag, stats) in sla {
+        let stats = stats.as_object().ok_or_else(|| {
+            anyhow::anyhow!("adaptive_scale.sla entries must map metric tags to stats")
+        })?;
+        for (stat, ops) in stats {
+            let ops = ops.as_object().ok_or_else(|| {
+                anyhow::anyhow!("adaptive_scale.sla stats must map operators to thresholds")
+            })?;
+            for (op, threshold) in ops {
+                let threshold = threshold.as_f64().ok_or_else(|| {
+                    anyhow::anyhow!("adaptive_scale.sla threshold must be a number")
+                })?;
+                filters.push(SlaFilterSection {
+                    metric_tag: metric_tag.clone(),
+                    stat: stat.clone(),
+                    op: op.clone(),
+                    threshold,
+                });
+            }
+        }
+    }
+    Ok(filters)
 }
 
 impl Benchmark {
@@ -850,8 +1089,9 @@ impl Benchmark {
                 .unwrap_or(phase.start_offset.is_none() && phase.end_offset.is_none())
         });
 
-        // Adaptive scale (opt-in via the phase's `adaptive_scale: true`).
-        let adaptive_scale = if phase.adaptive_scale {
+        // Adaptive scale (opt-in via the phase's `adaptive_scale: true` toggle
+        // or an enabled nested block).
+        let adaptive_scale = if phase.adaptive_scale.enabled() {
             Some(build_adaptive_yaml(&phase)?)
         } else {
             None
@@ -1164,21 +1404,57 @@ fn extract_prompts(
 /// explicit config bound is a float, a defaulted/axis-derived bound is an int.
 fn build_adaptive_yaml(phase: &PhaseSection) -> anyhow::Result<crate::model::phase::AdaptiveScale> {
     use crate::model::phase::{AdaptiveScale, SlaFilter};
-    let sustain = phase
-        .adaptive_sustain_duration
+    // Effective values: a nested `adaptive_scale:` block overrides the flat
+    // `adaptive_*` fields (mirrors Python `lower_adaptive_scale_details`, which
+    // writes the block values over the flat `lowered` copy).
+    let block = phase.adaptive_scale.block();
+    let eff_control_variable = block
+        .and_then(|b| b.control_variable())
+        .or_else(|| phase.adaptive_control_variable.clone());
+    let eff_control_min = block
+        .and_then(|b| b.control_min())
+        .or(phase.adaptive_control_min);
+    let eff_control_max = block
+        .and_then(|b| b.control_max())
+        .or(phase.adaptive_control_max);
+    let eff_assessment = block
+        .and_then(|b| b.assessment_period())
+        .or(phase.adaptive_assessment_period);
+    let eff_min_completed = block
+        .and_then(|b| b.min_completed_requests)
+        .or(phase.adaptive_min_completed_requests);
+    let eff_sustain = block
+        .and_then(|b| b.sustain_duration)
+        .or(phase.adaptive_sustain_duration);
+    let eff_strategy_type = block
+        .and_then(|b| b.strategy_type())
+        .or_else(|| phase.adaptive_scale_strategy_type.clone());
+    let eff_step_policy = block
+        .and_then(|b| b.step_policy())
+        .or_else(|| phase.adaptive_scale_step_policy.clone());
+    let eff_base_step = block
+        .and_then(|b| b.base_step())
+        .or(phase.adaptive_scale_base_step);
+    let eff_max_step_multiplier = block
+        .and_then(|b| b.max_step_multiplier())
+        .or(phase.adaptive_scale_max_step_multiplier);
+    let eff_step_percent = block
+        .and_then(|b| b.step_percent())
+        .or(phase.adaptive_scale_step_percent);
+
+    let sla_filters = phase.sla_filters()?;
+
+    let sustain = eff_sustain
         .ok_or_else(|| anyhow::anyhow!("adaptive_scale requires adaptive_sustain_duration"))?;
     anyhow::ensure!(
-        !phase.sla.is_empty(),
+        !sla_filters.is_empty(),
         "adaptive_scale requires at least one sla filter"
     );
-    let control_variable = phase
-        .adaptive_control_variable
-        .clone()
-        .unwrap_or_else(|| "concurrency".to_string());
+    let control_variable = eff_control_variable.unwrap_or_else(|| "concurrency".to_string());
     // Explicit config bound -> float; else the control axis value -> int.
     let float_num =
         |v: f64| serde_json::Number::from_f64(v).unwrap_or_else(|| serde_json::Number::from(0));
-    let minimum = match phase.adaptive_control_min {
+    let minimum = match eff_control_min {
         Some(v) => float_num(v),
         None => serde_json::Number::from(1i64),
     };
@@ -1192,7 +1468,7 @@ fn build_adaptive_yaml(phase: &PhaseSection) -> anyhow::Result<crate::model::pha
             .concurrency
             .map(|c| serde_json::Number::from(i64::from(c))),
     };
-    let maximum = match phase.adaptive_control_max {
+    let maximum = match eff_control_max {
         Some(v) => float_num(v),
         None => axis_default
             .ok_or_else(|| anyhow::anyhow!("adaptive_scale could not resolve a maximum"))?,
@@ -1201,22 +1477,15 @@ fn build_adaptive_yaml(phase: &PhaseSection) -> anyhow::Result<crate::model::pha
         control_variable,
         minimum,
         maximum,
-        assessment_period_seconds: phase.adaptive_assessment_period.unwrap_or(30.0),
+        assessment_period_seconds: eff_assessment.unwrap_or(30.0),
         sustain_duration_seconds: sustain,
-        min_completed_requests: phase.adaptive_min_completed_requests.unwrap_or(1),
-        strategy_type: phase
-            .adaptive_scale_strategy_type
-            .clone()
-            .unwrap_or_else(|| "ramp_until_fail".to_string()),
-        step_policy: phase
-            .adaptive_scale_step_policy
-            .clone()
-            .unwrap_or_else(|| "sla_margin".to_string()),
-        base_step: phase.adaptive_scale_base_step.unwrap_or(10),
-        max_step_multiplier: phase.adaptive_scale_max_step_multiplier.unwrap_or(4),
-        step_percent: phase.adaptive_scale_step_percent.unwrap_or(25.0),
-        sla_filters: phase
-            .sla
+        min_completed_requests: eff_min_completed.unwrap_or(1),
+        strategy_type: eff_strategy_type.unwrap_or_else(|| "ramp_until_fail".to_string()),
+        step_policy: eff_step_policy.unwrap_or_else(|| "sla_margin".to_string()),
+        base_step: eff_base_step.unwrap_or(10),
+        max_step_multiplier: eff_max_step_multiplier.unwrap_or(4),
+        step_percent: eff_step_percent.unwrap_or(25.0),
+        sla_filters: sla_filters
             .iter()
             .map(|s| SlaFilter {
                 metric_tag: s.metric_tag.clone(),
