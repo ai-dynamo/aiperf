@@ -532,7 +532,7 @@ fn parse_endpoint_response<A: RuntimeEndpointAdapter + ?Sized>(
     })
 }
 
-fn http_trace(record: &RequestRecord) -> RequestTrace {
+pub(super) fn http_trace(record: &RequestRecord) -> RequestTrace {
     let mut http = record
         .trace
         .as_ref()
@@ -562,8 +562,8 @@ mod tests {
     use super::*;
     use crate::endpoints::PreparedEndpoint;
     use crate::transport::core::SseMessage;
-    use crate::transport::reduce::absorb_usage;
     use crate::transport::http::transport::endpoint_binding::decode_sse_response;
+    use crate::transport::reduce::absorb_usage;
 
     /// Prepare a builtin streaming endpoint by its open ID.
     fn prepared_streaming(endpoint_name: &str) -> Box<dyn PreparedEndpoint> {

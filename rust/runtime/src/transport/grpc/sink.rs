@@ -9,7 +9,7 @@
 //! temporarily shared with the established online execution-placement seam;
 //! all actual wire IO and timing are owned by `aiperf-transport-grpc`.
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::rc::Rc;
 
 use anyhow::{Context, Result, ensure};
@@ -39,13 +39,14 @@ use loadgen_core::sink::{
 };
 use uuid::Uuid;
 
-use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata};
+use crate::metrics::NativeMetricsObserver;
 use crate::multiturn::TurnToSend;
 use crate::scheduled::{ModelResponseMetadata, TurnDispatchOutcome};
 use crate::transport::core::{
     DispatchResult, Dispatcher, MeasuredContext, MeasuredOutcome, PreparedTurn, Request,
     RequestExecutor,
 };
+use crate::transport::measure::{self, WorkerMeasurement};
 
 /// Worker-local gRPC scheduled sink policy.
 #[derive(Clone, Debug)]
@@ -117,8 +118,8 @@ pub struct GrpcTransportSink {
     prepared_endpoints: Option<Rc<PreparedEndpointTable>>,
     prepared_bindings: Vec<Box<dyn crate::transport::grpc::GrpcEndpointBinding>>,
     /// Worker-local metric accumulator for the scheduled runner's measured
-    /// execution path (`None` until `configure_measurement`).
-    measurement: RefCell<Option<Rc<NativeMetricsObserver>>>,
+    /// execution path (unset until `configure_measurement`).
+    measurement: WorkerMeasurement,
 }
 
 impl std::fmt::Debug for GrpcTransportSink {
@@ -169,7 +170,7 @@ impl GrpcTransportSink {
             binding_registry,
             prepared_endpoints: None,
             prepared_bindings: Vec::new(),
-            measurement: RefCell::new(None),
+            measurement: WorkerMeasurement::default(),
         })
     }
 
@@ -210,20 +211,14 @@ impl GrpcTransportSink {
         self.base_urls.get(index.unwrap_or(0) as usize).cloned()
     }
 
-    /// Execute one scheduler-free v2 command and retain compatibility raw facts.
     /// Access the worker-local measurement observer, erroring if the measured
     /// execution path is used before `configure_measurement`.
     fn measurement_observer(&self) -> Result<Rc<NativeMetricsObserver>> {
-        self.measurement.borrow().clone().ok_or_else(|| {
-            anyhow::anyhow!("worker-local measurement was not configured before dispatch")
-        })
+        self.measurement.observer()
     }
 
     /// Register coordinator-known arrival facts on `observer`, dispatch the
-    /// prepared gRPC turn into it, and record the terminal transport facts — the
-    /// gRPC twin of [`TransportSink::dispatch_measured`].
-    ///
-    /// [`TransportSink::dispatch_measured`]: crate::transport::http::TransportSink::dispatch_measured
+    /// prepared gRPC turn into it, and record the terminal transport facts.
     pub async fn dispatch_measured(
         &self,
         observer: &NativeMetricsObserver,
@@ -232,42 +227,14 @@ impl GrpcTransportSink {
         on_first_token: &dyn Fn(i64),
     ) -> Result<DispatchResult> {
         let uuid = turn.request.uuid;
-        observer.register_metadata(uuid, context.metadata.clone());
-        observer.on_arrival(
+        measure::measure_dispatch(
+            observer,
+            self.clock.as_ref(),
             uuid,
-            context.arrival_ms,
-            context.input_length,
-            context.requested_output_length,
-        );
-        let result = self.dispatch_collect(turn, observer, on_first_token).await;
-        match &result {
-            Ok(collected) => {
-                let outcome = &collected.outcome;
-                observer.record_response(
-                    uuid,
-                    NativeResponseMetadata {
-                        start_ns: Some(outcome.start_ns),
-                        end_ns: Some(outcome.end_ns),
-                        prompt_tokens: outcome.prompt_tokens,
-                        completion_tokens: outcome.completion_tokens,
-                        http: outcome.http,
-                    },
-                );
-            }
-            Err(_) => {
-                let now = self.clock.now_ns();
-                observer.on_terminal(uuid, ReplayTerminalStatus::Failed);
-                observer.record_response(
-                    uuid,
-                    NativeResponseMetadata {
-                        start_ns: Some(now),
-                        end_ns: Some(now),
-                        ..NativeResponseMetadata::default()
-                    },
-                );
-            }
-        }
-        result
+            context,
+            self.dispatch_collect(turn, observer, on_first_token),
+        )
+        .await
     }
 
     pub async fn dispatch_collect(
@@ -551,8 +518,8 @@ impl RequestExecutor for GrpcTransportSink {
     }
 
     fn configure_measurement(&self, config: MetricsConfig, origin_ns: i64) -> Result<()> {
-        let observer = NativeMetricsObserver::new(self.clock.clone(), origin_ns, config);
-        *self.measurement.borrow_mut() = Some(Rc::new(observer));
+        self.measurement
+            .configure(self.clock.clone(), config, origin_ns);
         Ok(())
     }
 
@@ -567,19 +534,7 @@ impl RequestExecutor for GrpcTransportSink {
         let result = self
             .dispatch_measured(&observer, turn, &context, on_first_token)
             .await?;
-        let live_record = context
-            .wants_live_record
-            .then(|| {
-                // Metrics-only (sketch) mode moves the record out of the observer
-                // so its token storage is freed as the run streams; every other
-                // mode clones it and leaves the authoritative copy for the drain.
-                if context.consume_record {
-                    observer.drain_terminal_record(uuid, 0)
-                } else {
-                    observer.snapshot_record(uuid, 0)
-                }
-            })
-            .flatten();
+        let live_record = measure::live_record(&observer, uuid, &context);
         Ok(MeasuredOutcome {
             result,
             live_record,
@@ -587,13 +542,7 @@ impl RequestExecutor for GrpcTransportSink {
     }
 
     fn drain_records(&self, end_ns: i64) -> Result<Vec<(Uuid, RecordIngest)>> {
-        match self.measurement.borrow_mut().take() {
-            Some(observer) => Ok(observer
-                .take_finalizer_at(end_ns)
-                .finish_with_records()
-                .records),
-            None => Ok(Vec::new()),
-        }
+        Ok(self.measurement.drain(end_ns))
     }
 }
 

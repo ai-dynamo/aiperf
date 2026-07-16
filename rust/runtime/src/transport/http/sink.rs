@@ -12,12 +12,12 @@
 //! Per-request cancellation and endpoint resolution consume the timing scalars
 //! and preserve the full-send timer invariant.
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 #[cfg(test)]
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use async_trait::async_trait;
 use bytes::Bytes;
 use uuid::Uuid;
@@ -28,15 +28,16 @@ use crate::endpoints::chat_request_body;
 use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest, RequestTrace};
 use crate::transport::http::sse::ChatChunk;
 
-use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata};
+use crate::metrics::NativeMetricsObserver;
 use crate::transport::core::{
     ConnectionReuseStrategy, DispatchResult, Dispatcher, ErrorDetails, ErrorKind, MeasuredContext,
-    MeasuredOutcome, PreparedEndpointBinding, PreparedTurn, Request, RequestExecutor, RequestRecord,
-    Response, SseMessage,
+    MeasuredOutcome, PreparedEndpointBinding, PreparedTurn, Request, RequestExecutor,
+    RequestRecord, Response, SseMessage,
 };
 use crate::transport::http::config::ClientConfig;
 use crate::transport::http::models::{HttpVersion, RequestConfig};
 use crate::transport::http::transport::http_transport::HttpTransport;
+use crate::transport::measure::{self, WorkerMeasurement};
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::{ObservedTokenKind, ObservedUsage, RequestObserver, RequestSink};
 use serde_json::Value;
@@ -175,11 +176,11 @@ pub struct TransportSink {
     /// preserve capture for every consumer that does not explicitly opt out.
     capture_wire_responses: bool,
     /// Worker-local metric accumulator for the scheduled runner's measured
-    /// execution path. `None` until [`configure_measurement`] is called; the
+    /// execution path. Unset until [`configure_measurement`] is called; the
     /// legacy `execute_turn(observer)` and `TurnDispatcher` paths never touch it.
     ///
     /// [`configure_measurement`]: RequestExecutor::configure_measurement
-    measurement: RefCell<Option<Rc<NativeMetricsObserver>>>,
+    measurement: WorkerMeasurement,
 }
 
 impl TransportSink {
@@ -271,7 +272,7 @@ impl TransportSink {
             connection_reuse: config.connection_reuse,
             prepared_endpoints: None,
             capture_wire_responses: true,
-            measurement: RefCell::new(None),
+            measurement: WorkerMeasurement::default(),
         })
     }
 
@@ -528,30 +529,7 @@ impl TransportSink {
             },
         );
         obs.on_terminal(uuid, terminal);
-        let http = {
-            let mut http = rec
-                .trace
-                .as_ref()
-                .map_or_else(RequestTrace::default, |trace| RequestTrace {
-                    blocked_ns: trace.blocked(),
-                    dns_lookup_ns: trace.dns_lookup(),
-                    connecting_ns: trace.connecting(),
-                    sending_ns: trace.sending(),
-                    waiting_ns: trace.waiting(),
-                    receiving_ns: trace.receiving(),
-                    duration_ns: trace.duration(),
-                    connection_reused: Some(trace.connection_reused_ns.is_some()),
-                    data_sent_bytes: Some(trace.request_bytes_total),
-                    data_received_bytes: Some(trace.response_bytes_total),
-                    chunks_sent: Some(u64::from(trace.request_chunks_count)),
-                    chunks_received: Some(u64::from(trace.response_chunks_count)),
-                    ..RequestTrace::default()
-                });
-            http.stream_setup_ns = rec
-                .recv_start_ns
-                .map(|receive_start| receive_start.saturating_sub(rec.start_ns));
-            http
-        };
+        let http = endpoint_dispatch::http_trace(&rec);
         let result = HttpDispatchResult {
             start_ns: rec.start_ns,
             end_ns: rec.end_ns.unwrap_or_else(|| self.clock.now_ns()),
@@ -859,8 +837,8 @@ impl RequestExecutor for TransportSink {
         // The workers==1 sink runs on the coordinator reactor, so its single
         // observer accumulates on the coordinator thread exactly as the
         // superseded single-observer path did — only its owner moved.
-        let observer = NativeMetricsObserver::new(self.clock.clone(), origin_ns, config);
-        *self.measurement.borrow_mut() = Some(Rc::new(observer));
+        self.measurement
+            .configure(self.clock.clone(), config, origin_ns);
         Ok(())
     }
 
@@ -875,19 +853,7 @@ impl RequestExecutor for TransportSink {
         let result = self
             .dispatch_measured(&observer, turn, &context, on_first_token, None)
             .await?;
-        let live_record = context
-            .wants_live_record
-            .then(|| {
-                // Metrics-only (sketch) mode moves the record out of the observer
-                // so its token storage is freed as the run streams; every other
-                // mode clones it and leaves the authoritative copy for the drain.
-                if context.consume_record {
-                    observer.drain_terminal_record(uuid, 0)
-                } else {
-                    observer.snapshot_record(uuid, 0)
-                }
-            })
-            .flatten();
+        let live_record = measure::live_record(&observer, uuid, &context);
         Ok(MeasuredOutcome {
             result,
             live_record,
@@ -906,19 +872,7 @@ impl RequestExecutor for TransportSink {
         let result = self
             .dispatch_measured(&observer, turn, &context, on_first_token, Some(responses))
             .await?;
-        let live_record = context
-            .wants_live_record
-            .then(|| {
-                // Metrics-only (sketch) mode moves the record out of the observer
-                // so its token storage is freed as the run streams; every other
-                // mode clones it and leaves the authoritative copy for the drain.
-                if context.consume_record {
-                    observer.drain_terminal_record(uuid, 0)
-                } else {
-                    observer.snapshot_record(uuid, 0)
-                }
-            })
-            .flatten();
+        let live_record = measure::live_record(&observer, uuid, &context);
         Ok(MeasuredOutcome {
             result,
             live_record,
@@ -938,13 +892,7 @@ impl RequestExecutor for TransportSink {
     }
 
     fn drain_records(&self, end_ns: i64) -> Result<Vec<(Uuid, RecordIngest)>> {
-        match self.measurement.borrow_mut().take() {
-            Some(observer) => Ok(observer
-                .take_finalizer_at(end_ns)
-                .finish_with_records()
-                .records),
-            None => Ok(Vec::new()),
-        }
+        Ok(self.measurement.drain(end_ns))
     }
 }
 
@@ -1008,10 +956,7 @@ impl TransportSink {
     ///
     /// [`configure_measurement`]: RequestExecutor::configure_measurement
     fn measurement_observer(&self) -> Result<Rc<NativeMetricsObserver>> {
-        self.measurement
-            .borrow()
-            .clone()
-            .ok_or_else(|| anyhow!("worker-local measurement was not configured before dispatch"))
+        self.measurement.observer()
     }
 
     /// Register coordinator-known arrival facts on `observer`, dispatch the
@@ -1033,47 +978,14 @@ impl TransportSink {
         responses: Option<&dyn TurnResponseObserver>,
     ) -> Result<DispatchResult> {
         let uuid = turn.request.uuid;
-        observer.register_metadata(uuid, context.metadata.clone());
-        observer.on_arrival(
+        measure::measure_dispatch(
+            observer,
+            self.clock.as_ref(),
             uuid,
-            context.arrival_ms,
-            context.input_length,
-            context.requested_output_length,
-        );
-        let result = self
-            .dispatch_collect_streaming(turn, observer, on_first_token, responses)
-            .await;
-        match &result {
-            Ok(collected) => {
-                let outcome = &collected.outcome;
-                observer.record_response(
-                    uuid,
-                    NativeResponseMetadata {
-                        start_ns: Some(outcome.start_ns),
-                        end_ns: Some(outcome.end_ns),
-                        prompt_tokens: outcome.prompt_tokens,
-                        completion_tokens: outcome.completion_tokens,
-                        http: outcome.http,
-                    },
-                );
-            }
-            Err(_) => {
-                // The worker records a complete failed terminal so the drain has
-                // one record for this identity; the coordinator's fallback only
-                // covers identities no worker ever touched (pre-dispatch failure).
-                let now = self.clock.now_ns();
-                observer.on_terminal(uuid, ReplayTerminalStatus::Failed);
-                observer.record_response(
-                    uuid,
-                    NativeResponseMetadata {
-                        start_ns: Some(now),
-                        end_ns: Some(now),
-                        ..NativeResponseMetadata::default()
-                    },
-                );
-            }
-        }
-        result
+            context,
+            self.dispatch_collect_streaming(turn, observer, on_first_token, responses),
+        )
+        .await
     }
 
     /// Dispatch one prepared turn and retain the exact wire exchange. This is
