@@ -10,7 +10,7 @@
 
 use crate::cellular::sketch::TDigest;
 use crate::metrics_core::catalog::MetricTag;
-use crate::metrics_core::ingest::{RequestTrace, InferenceDimensions, RecordIngest, UsageMetrics};
+use crate::metrics_core::ingest::{InferenceDimensions, RecordIngest, RequestTrace, UsageMetrics};
 use crate::metrics_core::value::MetricValue;
 use crate::metrics_core::window::{ExportContext, Phase};
 use rustc_hash::{FxHashMap, FxHasher};

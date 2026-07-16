@@ -44,8 +44,8 @@ use crate::graph::transport_bench::GraphRpsReport;
 use crate::graph::wire::OpenAiChatMessage as GraphMessage;
 use crate::graph::workload::{GraphWorkload, GraphWorkloadReport};
 use crate::metrics_core::{
-    AccumulatorSummary, ExportContext, RequestTrace, InferenceDimensions, MetricTag,
-    MetricsAccumulator, MetricsConfig, Phase as MetricsPhase, RecordIngest,
+    AccumulatorSummary, ExportContext, InferenceDimensions, MetricTag, MetricsAccumulator,
+    MetricsConfig, Phase as MetricsPhase, RecordIngest, RequestTrace,
 };
 use crate::timing::{ArrivalPattern, Phase, PhaseStats, SlotPool, StopConfig};
 use anyhow::{Context, Result};
@@ -77,7 +77,7 @@ use crate::ancillary::AncillaryTimingConfig;
 use crate::fixed_schedule::{
     DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload,
 };
-use crate::http::{HttpDispatchResult, HttpRequest, HttpRequestDispatcher};
+use crate::http::{HttpDispatchResult, HttpRequestDispatcher, Request};
 use crate::metrics::{
     NativeMetricsObserver, NativeResponseMetadata, ObserverTee, RequestMetricMetadata,
 };
@@ -1991,8 +1991,8 @@ impl OpenAiRequestEncoder {
     }
 }
 
-impl OfflineRequestEncoder<HttpRequest> for OpenAiRequestEncoder {
-    fn encode(&self, request: &HttpRequest) -> Result<Vec<u32>> {
+impl OfflineRequestEncoder<Request> for OpenAiRequestEncoder {
+    fn encode(&self, request: &Request) -> Result<Vec<u32>> {
         if let Some(bytes) = &request.request_body_bytes {
             let tokens = match serde_json::from_slice(bytes) {
                 Ok(value) => self.encode_json(&value),
@@ -2040,13 +2040,13 @@ impl OfflineGraphRequestEncoder for OpenAiRequestEncoder {
 
 type CachedTracePrompt = (Handle, usize, Box<[u32]>);
 
-/// `RequestSink<HttpRequest>` and scheduled-turn adapter over one [`EngineHost`].
+/// `RequestSink<Request>` and scheduled-turn adapter over one [`EngineHost`].
 struct DynosimSink {
     host: Rc<EngineHost>,
     clock: Rc<dyn Clock>,
     start_ns: i64,
     model: String,
-    request_encoder: Rc<dyn OfflineRequestEncoder<HttpRequest>>,
+    request_encoder: Rc<dyn OfflineRequestEncoder<Request>>,
     graph_encoder: Rc<dyn OfflineGraphRequestEncoder>,
     trace_hash_encoder: Rc<dyn OfflineTraceHashEncoder>,
     last_trace_prompt: RefCell<Option<CachedTracePrompt>>,
@@ -2062,7 +2062,7 @@ impl DynosimSink {
         host: Rc<EngineHost>,
         clock: Rc<dyn Clock>,
         model: String,
-        request_encoder: Rc<dyn OfflineRequestEncoder<HttpRequest>>,
+        request_encoder: Rc<dyn OfflineRequestEncoder<Request>>,
         graph_encoder: Rc<dyn OfflineGraphRequestEncoder>,
     ) -> Rc<Self> {
         Self::new_with_all_encoders(
@@ -2079,7 +2079,7 @@ impl DynosimSink {
         host: Rc<EngineHost>,
         clock: Rc<dyn Clock>,
         model: String,
-        request_encoder: Rc<dyn OfflineRequestEncoder<HttpRequest>>,
+        request_encoder: Rc<dyn OfflineRequestEncoder<Request>>,
         graph_encoder: Rc<dyn OfflineGraphRequestEncoder>,
         trace_hash_encoder: Rc<dyn OfflineTraceHashEncoder>,
     ) -> Rc<Self> {
@@ -2260,8 +2260,8 @@ fn synthetic_reply(uuid: Uuid, output_tokens: usize) -> String {
 }
 
 #[async_trait(?Send)]
-impl RequestSink<HttpRequest> for DynosimSink {
-    async fn dispatch(&self, request: HttpRequest, observer: &dyn RequestObserver) -> Result<()> {
+impl RequestSink<Request> for DynosimSink {
+    async fn dispatch(&self, request: Request, observer: &dyn RequestObserver) -> Result<()> {
         self.dispatch_collect(&request, observer, &|_| {}).await?;
         Ok(())
     }
@@ -2270,7 +2270,7 @@ impl RequestSink<HttpRequest> for DynosimSink {
 impl DynosimSink {
     async fn dispatch_collect(
         &self,
-        request: &HttpRequest,
+        request: &Request,
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
     ) -> Result<HttpDispatchResult> {
@@ -2289,7 +2289,7 @@ impl DynosimSink {
 
 #[async_trait(?Send)]
 impl HttpRequestDispatcher for DynosimSink {
-    fn inference_dimensions(&self, _request: &HttpRequest) -> InferenceDimensions {
+    fn inference_dimensions(&self, _request: &Request) -> InferenceDimensions {
         InferenceDimensions {
             endpoint_url: Some("dynosim://offline".to_string()),
             model: Some(self.model.clone()),
@@ -2298,7 +2298,7 @@ impl HttpRequestDispatcher for DynosimSink {
 
     async fn dispatch_collect(
         &self,
-        request: HttpRequest,
+        request: Request,
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
     ) -> Result<HttpDispatchResult> {
@@ -2363,7 +2363,7 @@ impl TurnDispatcher for DynosimSink {
                 None
             };
             self.dispatch_collect(
-                &HttpRequest {
+                &Request {
                     uuid: turn.uuid,
                     input_length: turn.input_length,
                     max_output_tokens: turn.max_output_tokens,
@@ -4749,8 +4749,8 @@ mod tests {
 
     struct FixedRequestEncoder;
 
-    impl OfflineRequestEncoder<HttpRequest> for FixedRequestEncoder {
-        fn encode(&self, _request: &HttpRequest) -> Result<Vec<u32>> {
+    impl OfflineRequestEncoder<Request> for FixedRequestEncoder {
+        fn encode(&self, _request: &Request) -> Result<Vec<u32>> {
             Ok(vec![11, 22, 33])
         }
     }
@@ -4763,8 +4763,8 @@ mod tests {
 
     struct RejectingRequestEncoder;
 
-    impl OfflineRequestEncoder<HttpRequest> for RejectingRequestEncoder {
-        fn encode(&self, _request: &HttpRequest) -> Result<Vec<u32>> {
+    impl OfflineRequestEncoder<Request> for RejectingRequestEncoder {
+        fn encode(&self, _request: &Request) -> Result<Vec<u32>> {
             panic!("raw token IDs must bypass the offline request encoder")
         }
     }
@@ -5009,8 +5009,8 @@ mod tests {
         tokens: Vec<u32>,
     }
 
-    impl OfflineRequestEncoder<HttpRequest> for FixedTokensEncoder {
-        fn encode(&self, _request: &HttpRequest) -> Result<Vec<u32>> {
+    impl OfflineRequestEncoder<Request> for FixedTokensEncoder {
+        fn encode(&self, _request: &Request) -> Result<Vec<u32>> {
             Ok(self.tokens.clone())
         }
     }

@@ -14,8 +14,8 @@ use std::rc::Rc;
 
 use crate::clock::Clock;
 use crate::metrics_core::{
-    AccumulatorSummary, RequestTrace, InferenceDimensions, MetricsAccumulator, MetricsConfig, Phase,
-    RecordIngest, TokenCounts, UsageMetrics,
+    AccumulatorSummary, InferenceDimensions, MetricsAccumulator, MetricsConfig, Phase,
+    RecordIngest, RequestTrace, TokenCounts, UsageMetrics,
 };
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::{

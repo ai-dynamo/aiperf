@@ -929,7 +929,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use crate::endpoints::{EndpointId, EndpointKey, EndpointRegistry, RawEndpointConfig};
-    use crate::http::{HttpRequest, PreparedHttpEndpoint};
+    use crate::http::{PreparedHttpEndpoint, Request};
     use crate::metrics::RequestMetricMetadata;
     use crate::multiturn::PreparedEndpointReference;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -1022,7 +1022,7 @@ mod tests {
 
     fn streaming_turn() -> PreparedTurn {
         PreparedTurn {
-            request: HttpRequest {
+            request: Request {
                 uuid: Uuid::new_v4(),
                 input_length: 1,
                 max_output_tokens: 4,

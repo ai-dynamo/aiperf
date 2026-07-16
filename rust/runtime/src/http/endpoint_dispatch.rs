@@ -35,7 +35,7 @@ use crate::multiturn::TurnDataPolicy;
 use crate::scheduled::{ModelResponseMetadata, TurnResponseObserver};
 
 use super::{
-    HttpCollectedDispatch, HttpDispatchResult, HttpRequest, TransportSink, absorb_transport_error,
+    HttpCollectedDispatch, HttpDispatchResult, Request, TransportSink, absorb_transport_error,
     absorb_wire_response_metadata,
 };
 
@@ -166,7 +166,7 @@ impl TransportSink {
     /// Dispatch through a worker-local prepared endpoint binding.
     pub(super) async fn dispatch_prepared_endpoint_collect_record_with_hooks(
         &self,
-        req: HttpRequest,
+        req: Request,
         endpoint: &dyn PreparedEndpoint,
         model: &str,
         hooks: EndpointDispatchHooks<'_>,
@@ -179,7 +179,7 @@ impl TransportSink {
 
     async fn dispatch_runtime_endpoint_collect_record_with_hooks<A, B>(
         &self,
-        req: HttpRequest,
+        req: Request,
         endpoint: &A,
         binding: &B,
         hooks: EndpointDispatchHooks<'_>,
@@ -194,7 +194,7 @@ impl TransportSink {
             responses,
             data_policy,
         } = hooks;
-        let HttpRequest {
+        let Request {
             uuid,
             input_length,
             max_output_tokens,

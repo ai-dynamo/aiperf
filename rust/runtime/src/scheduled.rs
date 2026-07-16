@@ -21,7 +21,7 @@ use std::task::{Context, Poll};
 
 use crate::clock::Clock;
 use crate::endpoints::ParsedResponse;
-use crate::metrics_core::{AccumulatorSummary, RequestTrace, InferenceDimensions, MetricsConfig};
+use crate::metrics_core::{AccumulatorSummary, InferenceDimensions, MetricsConfig, RequestTrace};
 use crate::timing::{CancellationPolicy, Phase, SlotPool, StopChecker, StopConfig, UrlSelector};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -148,7 +148,7 @@ pub struct TurnDispatchOutcome {
 /// Transport/backend seam consumed by scheduled multi-turn workloads.
 ///
 /// The current online implementation adapts `TransportSink`, which remains a
-/// normal `RequestSink<HttpRequest>`. An offline engine or another endpoint
+/// normal `RequestSink<Request>`. An offline engine or another endpoint
 /// dialect implements this trait once; request-rate, user-centric, and
 /// fixed-schedule policy stays unchanged.
 #[async_trait(?Send)]

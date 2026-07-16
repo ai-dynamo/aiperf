@@ -73,6 +73,10 @@ fn dry_run_fabricates_exact_per_record_timing_with_zero_network() {
             "--output-tokens-stddev",
             "0",
             "--dry-run",
+            // Per-record profile_export.jsonl is only produced by the real-clock
+            // path; the default (sim) is aggregate-only.
+            "--dry-run-clock",
+            "real",
             "--dry-run-ttft-ms",
             &TTFT_MS.to_string(),
             "--dry-run-itl-ms",

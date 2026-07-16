@@ -127,3 +127,44 @@ argument.
 Two placement traits remain two traits, as §3 intends. `LocalGraphTraceExecutionBackend`
 was intentionally **not** renamed: it owns the `TraceExecutor` and executes a trace locally;
 it is not a placement.
+
+## Addendum — 2026-07-16 (per-request executor collapsed to one generic backend; more `Http` lies removed)
+
+A later sink-driven-executor pass took a step toward the greenfield §"Deleted, not
+renamed" ideal (one `WorkerPool`, transport as a `Dispatcher` variant, no per-transport
+executor). It did **not** merge the two *placement* traits (`RequestExecutor` per-request vs
+`TracePlacement` per-trace — still deferred), but it did merge the two **per-request execution
+backends** into one:
+
+- **New seam `WorkerSink`** (the Rust analogue of Python `BaseTransport.send_request`): the
+  worker-facing contract a transport sink implements (`set_run_origin` / `dispatch_measured` /
+  `prewarm` / `inference_dimensions` / `supports_response_streaming`). `TransportSink` (http)
+  and `GrpcTransportSink` (grpc) implement it.
+- **`ThreadPerCoreExecutor<B: ExecutionSinkBuilder>`** replaces the former
+  `ThreadPerCoreRequestExecutor` **and** the duplicate `ThreadPerCoreGrpcExecutionBackend`
+  (~370 lines deleted): one worker loop, measurement, drain, cancellation, and streaming
+  relay, generic over the sink. `build_native` is the single entry the http/grpc factories
+  share. A transport contributes only an `ExecutionSinkBuilder` (`HttpSinkBuilder` /
+  `GrpcSinkBuilder`) — never its own execution model. gRPC has no parallel execution path.
+- **More `Http` lies removed:** `HttpExecutionBackendConfig`→`ExecutionBackendConfig`,
+  `HttpPreparedEndpointTableFactory`→`PreparedEndpointTableFactory`, and — because the
+  per-request backend is now genuinely per-transport rather than "http that also serves grpc"
+  — `NativeRequestExecutorFactory`→`HttpExecutionFactory` and
+  `NativeGrpcExecutionBackendFactory`→`GrpcExecutionFactory` (each honestly names the one
+  transport it builds a sink for). The now-generic worker-loop error strings dropped their
+  `HTTP` prefix.
+- **`metrics_core::HttpTrace`→`RequestTrace`:** the per-request derived metrics trace is
+  filled by every transport (http/grpc/dynosim/dry_run), matching Python's generic
+  `BaseTraceData`/`TraceDataExport` (vs the http-specific `AioHttpTraceData`). The raw
+  http-client trace stays `transport_http::models::TraceData`. The greenfield ideal still
+  folds this timing into `Outcome`; the rename is the incremental de-`Http` step.
+
+**`HttpRequest`→`Request` is now done too**, resolving the §2 "Not renamed in P1" deferral:
+the leaf dispatch DTO shared by http/grpc/dynosim/dry_run takes the greenfield name
+`Request` (`dispatch(&Request) -> Outcome`). ~64 references across `http.rs`, `grpc.rs`,
+`dynosim.rs`, `dry_run.rs`, `workload.rs`, `graph_execution.rs`, and tests; word-boundary
+rename left compounds like `HttpRequestDispatcher` (genuinely http) untouched. It still
+lives in the `http` module (like `RequestRecord`/`Response`/`TraceData` — a generic type in
+the http module; the greenfield relocation to a shared module is separate, structural work).
+
+Pure rename + backend de-duplication; no metric/dispatch-event change (full suite green).

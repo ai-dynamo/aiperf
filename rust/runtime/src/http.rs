@@ -25,7 +25,7 @@ use uuid::Uuid;
 use crate::clock::Clock;
 use crate::endpoints::PreparedEndpointTable;
 use crate::endpoints::chat_request_body;
-use crate::metrics_core::{RequestTrace, InferenceDimensions, MetricsConfig, RecordIngest};
+use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest, RequestTrace};
 use crate::transport_http::sse::ChatChunk;
 
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
@@ -62,11 +62,13 @@ fn is_meaningful_chat_token(message: &SseMessage) -> bool {
     serde_json::from_str::<ChatChunk>(data).is_ok_and(|chunk| !chunk.delta_text().is_empty())
 }
 
-/// A slim online HTTP request carrying prompt text. This is the load
-/// generator's own request type; implementing [`Dispatchable`] is all the
-/// dispatch seam requires.
+/// A slim online request carrying prompt text — the load generator's own
+/// transport-neutral request type, dispatched by every transport (http, grpc,
+/// dynosim, dry_run). Implementing [`Dispatchable`] is all the dispatch seam
+/// requires. (Still homed in this module alongside `RequestRecord`/`Response`;
+/// the greenfield relocation to a shared module is separate structural work.)
 #[derive(Clone)]
-pub struct HttpRequest {
+pub struct Request {
     /// Stable per-request identifier used to correlate observer events.
     pub uuid: Uuid,
     /// Prompt length in tokens, for measurement accounting.
@@ -102,10 +104,10 @@ pub struct HttpRequest {
     pub url_index: Option<u32>,
 }
 
-impl fmt::Debug for HttpRequest {
+impl fmt::Debug for Request {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("HttpRequest")
+            .debug_struct("Request")
             .field("uuid", &self.uuid)
             .field("input_length", &self.input_length)
             .field("max_output_tokens", &self.max_output_tokens)
@@ -208,7 +210,7 @@ pub struct DispatchResult {
 #[derive(Clone)]
 pub struct PreparedTurn {
     /// Transport-ready request fields.
-    pub request: HttpRequest,
+    pub request: Request,
     /// Effective model selected for this turn.
     pub model: String,
     /// Worker-resolved endpoint binding selected during preparation.
@@ -267,7 +269,7 @@ impl PreparedTurn {
             TurnEndpoint::Prepared(reference) => PreparedHttpEndpoint::Prepared(reference),
         };
         Self {
-            request: HttpRequest {
+            request: Request {
                 uuid: turn.uuid,
                 input_length: turn.input_length,
                 max_output_tokens: turn.max_output_tokens,
@@ -456,9 +458,9 @@ pub struct TransportSinkConfig {
 /// simulator implements the same contract, so pacing, admission, adaptive
 /// control, observers, and report construction do not branch on a backend.
 #[async_trait(?Send)]
-pub trait HttpRequestDispatcher: RequestSink<HttpRequest> {
+pub trait HttpRequestDispatcher: RequestSink<Request> {
     /// Resolve report dimensions using the same endpoint selection as dispatch.
-    fn inference_dimensions(&self, _request: &HttpRequest) -> InferenceDimensions {
+    fn inference_dimensions(&self, _request: &Request) -> InferenceDimensions {
         InferenceDimensions::default()
     }
 
@@ -466,7 +468,7 @@ pub trait HttpRequestDispatcher: RequestSink<HttpRequest> {
     /// `on_first_token` exactly once with TTFT in nanoseconds.
     async fn dispatch_collect(
         &self,
-        req: HttpRequest,
+        req: Request,
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
     ) -> Result<HttpDispatchResult>;
@@ -475,7 +477,7 @@ pub trait HttpRequestDispatcher: RequestSink<HttpRequest> {
 /// Transport-neutral `PreparedTurn` dispatch seam shared by the graph path.
 ///
 /// This is deliberately distinct from [`HttpRequestDispatcher`] (the scheduled
-/// path, keyed on [`HttpRequest`]). Both [`TransportSink`] and the native gRPC
+/// path, keyed on [`Request`]). Both [`TransportSink`] and the native gRPC
 /// sink already expose an identical inherent `dispatch_collect(turn:
 /// PreparedTurn, …)`; this object-safe trait unifies them so a graph sink can
 /// hold its transport as `Rc<dyn Dispatcher>` and later dispatch a graph dataset
@@ -497,7 +499,7 @@ pub trait Dispatcher {
     ) -> Result<DispatchResult>;
 
     /// Resolve report dimensions using the same endpoint selection as dispatch.
-    fn inference_dimensions(&self, request: &HttpRequest) -> InferenceDimensions;
+    fn inference_dimensions(&self, request: &Request) -> InferenceDimensions;
 
     /// Whether the transport can publish live response frames before terminal
     /// completion.
@@ -506,7 +508,7 @@ pub trait Dispatcher {
     }
 }
 
-impl Dispatchable for HttpRequest {
+impl Dispatchable for Request {
     fn uuid(&self) -> Uuid {
         self.uuid
     }
@@ -713,7 +715,7 @@ impl TransportSink {
     /// the full stream reaches terminal.
     pub async fn dispatch_with_hooks(
         &self,
-        req: HttpRequest,
+        req: Request,
         obs: &dyn RequestObserver,
         on_first_token: impl FnMut(i64),
     ) -> Result<()> {
@@ -727,7 +729,7 @@ impl TransportSink {
     /// [`dispatch_with_hooks`](Self::dispatch_with_hooks).
     pub async fn dispatch_collect_with_hooks(
         &self,
-        req: HttpRequest,
+        req: Request,
         obs: &dyn RequestObserver,
         on_first_token: impl FnMut(i64),
     ) -> Result<HttpDispatchResult> {
@@ -738,11 +740,11 @@ impl TransportSink {
 
     async fn dispatch_collect_record_with_hooks(
         &self,
-        req: HttpRequest,
+        req: Request,
         obs: &dyn RequestObserver,
         mut on_first_token: impl FnMut(i64),
     ) -> Result<HttpCollectedDispatch> {
-        let HttpRequest {
+        let Request {
             uuid,
             max_output_tokens,
             prompt_text,
@@ -1114,15 +1116,15 @@ fn error_kind_name(kind: ErrorKind) -> &'static str {
 }
 
 #[async_trait(?Send)]
-impl RequestSink<HttpRequest> for TransportSink {
-    async fn dispatch(&self, req: HttpRequest, obs: &dyn RequestObserver) -> Result<()> {
+impl RequestSink<Request> for TransportSink {
+    async fn dispatch(&self, req: Request, obs: &dyn RequestObserver) -> Result<()> {
         self.dispatch_with_hooks(req, obs, |_ttft_ns| {}).await
     }
 }
 
 #[async_trait(?Send)]
 impl HttpRequestDispatcher for TransportSink {
-    fn inference_dimensions(&self, request: &HttpRequest) -> InferenceDimensions {
+    fn inference_dimensions(&self, request: &Request) -> InferenceDimensions {
         InferenceDimensions {
             endpoint_url: self
                 .selected_url(request.url_index, request.endpoint_path.as_deref())
@@ -1133,7 +1135,7 @@ impl HttpRequestDispatcher for TransportSink {
 
     async fn dispatch_collect(
         &self,
-        req: HttpRequest,
+        req: Request,
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
     ) -> Result<HttpDispatchResult> {
@@ -1153,7 +1155,7 @@ impl Dispatcher for TransportSink {
         TransportSink::dispatch_collect(self, turn, observer, on_first_token).await
     }
 
-    fn inference_dimensions(&self, request: &HttpRequest) -> InferenceDimensions {
+    fn inference_dimensions(&self, request: &Request) -> InferenceDimensions {
         <Self as HttpRequestDispatcher>::inference_dimensions(self, request)
     }
 
@@ -1763,7 +1765,7 @@ mod tests {
                 let sink = TransportSink::new(clock.clone(), clock.now_ns(), &base, "m", false);
                 let hook_calls = Rc::new(Cell::new(0));
                 let hook_calls_for_hook = hook_calls.clone();
-                let req = HttpRequest {
+                let req = Request {
                     uuid: Uuid::new_v4(),
                     input_length: 4,
                     max_output_tokens: 2,
@@ -1820,7 +1822,7 @@ mod tests {
             .run_until(async {
                 let base = crate::test_util::spawn_mock().await;
                 let clock = RealClock::new();
-                let make_req = || HttpRequest {
+                let make_req = || Request {
                     uuid: Uuid::new_v4(),
                     input_length: 4,
                     max_output_tokens: 2,

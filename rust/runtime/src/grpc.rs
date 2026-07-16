@@ -22,7 +22,7 @@ use crate::endpoints::{
     EndpointKey, ParsedResponse, PreparedEndpoint, PreparedEndpointTable,
     RequestRecord as EndpointRequestRecord, ResponseData, ServerResponse, Turn, UsageView,
 };
-use crate::metrics_core::{RequestTrace, InferenceDimensions, MetricsConfig, RecordIngest};
+use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest, RequestTrace};
 use crate::transport_grpc::{
     ConnectionReuseStrategy as GrpcConnectionReuseStrategy, GrpcBindingRegistry, GrpcClientConfig,
     GrpcErrorKind, GrpcRequestConfig, GrpcRequestRecord, GrpcTransport,
@@ -38,8 +38,8 @@ use loadgen_core::sink::{
 use uuid::Uuid;
 
 use crate::http::{
-    DispatchResult, Dispatcher, HttpRequest, MeasuredContext, MeasuredOutcome,
-    PreparedHttpEndpoint, PreparedTurn, RequestExecutor,
+    DispatchResult, Dispatcher, MeasuredContext, MeasuredOutcome, PreparedHttpEndpoint,
+    PreparedTurn, Request, RequestExecutor,
 };
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata};
 use crate::multiturn::TurnToSend;
@@ -317,14 +317,14 @@ impl GrpcTransportSink {
 
     async fn dispatch_endpoint(
         &self,
-        request: HttpRequest,
+        request: Request,
         model: &str,
         endpoint: &dyn PreparedEndpoint,
         binding: &dyn crate::transport_grpc::GrpcEndpointBinding,
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
     ) -> Result<DispatchResult> {
-        let HttpRequest {
+        let Request {
             uuid,
             request_body,
             request_body_bytes,
@@ -525,9 +525,9 @@ impl Dispatcher for GrpcTransportSink {
 
     // The inherent gRPC `inference_dimensions` resolves from a `&TurnToSend`
     // (scheduled path); the `Dispatcher` seam is keyed on the transport-neutral
-    // `HttpRequest`. Build the same dimensions gRPC produces — selected URL by
+    // `Request`. Build the same dimensions gRPC produces — selected URL by
     // the request's url index, model falling back to the sink's model.
-    fn inference_dimensions(&self, request: &HttpRequest) -> InferenceDimensions {
+    fn inference_dimensions(&self, request: &Request) -> InferenceDimensions {
         InferenceDimensions {
             endpoint_url: self.selected_url(request.url_index),
             model: Some(self.model.clone()),

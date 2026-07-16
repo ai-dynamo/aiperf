@@ -35,7 +35,7 @@ use crate::graph::policy::{
 use crate::graph::sink::{GraphDispatchOptions, GraphReply, GraphSink};
 use crate::graph::wire::OpenAiChatMessage;
 use crate::http::{
-    Dispatcher, HttpRequest, PreparedEndpointReference, PreparedHttpEndpoint, PreparedTurn,
+    Dispatcher, PreparedEndpointReference, PreparedHttpEndpoint, PreparedTurn, Request,
     TransportSink, TransportSinkConfig,
 };
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
@@ -285,7 +285,7 @@ pub(crate) struct GraphEndpointRequest {
 
 pub(crate) struct GraphEndpointDispatch {
     transport: Rc<dyn Dispatcher>,
-    request: HttpRequest,
+    request: Request,
     endpoint: PreparedHttpEndpoint,
     input_tokens: u64,
 }
@@ -509,7 +509,7 @@ impl RunnerGraphEndpointRuntime for PreparedRunnerGraphEndpointRuntime {
             .or(endpoint.descriptor().endpoint_path)
             .map(str::to_owned)
         });
-        let request = HttpRequest {
+        let request = Request {
             uuid: Uuid::new_v4(),
             input_length: usize::try_from(input_tokens).unwrap_or(usize::MAX),
             max_output_tokens: input.max_output_tokens,

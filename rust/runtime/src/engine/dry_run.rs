@@ -35,16 +35,18 @@
 //!
 //! # Clock modes (both built)
 //!
-//! - **`clock: real`** (default) — [`FakeRequestExecutor`] fabricates instant
-//!   analytic timestamps and reuses the native worker-thread executor; the
-//!   loadgen self-benchmark path.
-//! - **`clock: sim`** — [`FakeTurnDispatcher`] *sleeps on the injected clock* and
-//!   the run is driven by a `SimClock` under `drive_sim`
+//! - **`clock: sim`** (default) — [`FakeTurnDispatcher`] *sleeps on the injected
+//!   clock* and the run is driven by a `SimClock` under `drive_sim`
 //!   ([`crate::engine::execute::prepare_dry_run_sim_scheduled`]), so arrival
-//!   pacing, duration bounds, and the analytic concurrency terms run in virtual
-//!   time — a 10-minute run finishes instantly and is byte-deterministic. This is
-//!   the dry-run analogue of dynosim's `PreparedDynosimScheduledOperation`, minus
-//!   the Dynamo backend.
+//!   pacing, duration bounds, fixed-schedule timestamps, and the analytic
+//!   concurrency terms run in virtual time — a 10-minute run finishes at
+//!   ~startup wall-speed and is byte-deterministic. This is the dry-run analogue
+//!   of dynosim's `PreparedDynosimScheduledOperation`, minus the Dynamo backend.
+//!   Aggregate-only: no per-record artifacts.
+//! - **`clock: real`** — [`FakeRequestExecutor`] fabricates instant analytic
+//!   timestamps and reuses the native worker-thread executor; the loadgen
+//!   self-benchmark path, and the only path that emits per-record artifacts.
+//!   Arrival pacing / fixed-schedule / duration bounds wait in real wall-time.
 //!
 //! # Extension points left open
 //!
@@ -82,7 +84,7 @@ use crate::http::{
     DispatchResult, MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor,
 };
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata};
-use crate::metrics_core::{RequestTrace, InferenceDimensions, MetricsConfig, RecordIngest};
+use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest, RequestTrace};
 use crate::multiturn::TurnToSend;
 use crate::scheduled::{ModelResponseMetadata, TurnDispatchOutcome};
 use crate::transport_http::models::{RequestRecord, Response, TextResponse};
@@ -106,13 +108,17 @@ const fn default_kv_utilization() -> f64 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DryRunClock {
-    /// Real wall clock: fabricates instant timestamps, reuses the native
-    /// worker-thread executor. Loadgen self-benchmark; the default.
-    #[default]
+    /// Real wall clock: fabricates instant timestamps and reuses the native
+    /// worker-thread executor, so arrival pacing / fixed-schedule timestamps /
+    /// duration bounds wait in real wall-time. The loadgen self-benchmark path,
+    /// and the only path that emits per-record artifacts (`profile_export.jsonl`).
     Real,
-    /// Virtual `SimClock` driven by `drive_sim`: the fake dispatcher sleeps on
-    /// virtual time, so rate/duration runs finish instantly and are
-    /// byte-deterministic (concurrency-contention terms become exact).
+    /// Virtual `SimClock` driven by `drive_sim` (the default): the fake
+    /// dispatcher sleeps on virtual time, so rate/duration/fixed-schedule runs
+    /// finish at ~startup wall-speed and are byte-deterministic (the
+    /// concurrency-contention terms become exact). Aggregate-only — no per-record
+    /// artifacts.
+    #[default]
     Sim,
 }
 
@@ -134,11 +140,12 @@ pub enum DryRunLatencyModel {
     AiconfiguratorPolynomial,
 }
 
-/// Built-in `dry_run` transport descriptor (real clock, no network).
+/// Built-in `dry_run` transport descriptor. The catalog clock is `Sim` (the
+/// default mode); `clock: real` selects the wall-clock self-benchmark path.
 pub static DRY_RUN_TRANSPORT_DESCRIPTOR: RunnerTransportDescriptor = RunnerTransportDescriptor {
     id: "dry_run",
     description: "Fake execution leaf: analytic-latency synthetic responses, zero network",
-    clock: RunnerClockKind::Real,
+    clock: RunnerClockKind::Sim,
     features: &["dry_run"],
 };
 
@@ -836,7 +843,7 @@ mod tests {
     use super::*;
     use crate::clock::{RealClock, RealClockAnchor};
     use crate::endpoints::{EndpointId, EndpointKey};
-    use crate::http::{HttpRequest, PreparedHttpEndpoint, TransportSinkConfig};
+    use crate::http::{PreparedHttpEndpoint, Request, TransportSinkConfig};
     use crate::multiturn::{PreparedEndpointReference, TurnDataPolicy};
 
     /// All-zero analytic params (no base latency, no scaling, no jitter) to build
@@ -881,7 +888,7 @@ mod tests {
 
     fn fixture_turn(uuid: Uuid, isl: usize, osl: usize) -> PreparedTurn {
         PreparedTurn {
-            request: HttpRequest {
+            request: Request {
                 uuid,
                 input_length: isl,
                 max_output_tokens: osl,
