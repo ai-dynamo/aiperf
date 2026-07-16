@@ -154,13 +154,18 @@ AIPERF_CONTENT_SERVER_ENABLED=true \
 # Cellular (multi-process) mode: `--cells N` (or `runtime.cells: N`) makes the launched
 # runner a controller that spawns N `aiperf-runner --cell` children over a
 # (cell_id, cell_count) budget partition and merges their records into one report.
-# `--cells 1` (default) is the unchanged single-process path. Supported for synthetic,
-# single-turn HTTP runs with request-bounded phases; a run seed and single URL are NOT
+# `--cells 1` (default) is the unchanged single-process path. Supported for synthetic
+# and file/public HTTP runs with request-bounded phases; a run seed and single URL are NOT
 # required (seedless auto-derives a shared seed, multi-URL round-robins cell-locally,
-# ramps/rate/cancellation are aggregate-equivalent, warned). Graph programs
-# (dag_jsonl/weka_trace/dynamo_trace) also partition across cells (trace-level,
-# concatenation-merged). Fails closed on non-HTTP/gRPC/offline + scheduled
-# multi-turn/duration/adaptive. E2e: test_cellular.rs (scheduled) + test_graph_cellular.rs.
+# ramps/rate/cancellation are aggregate-equivalent, warned). MULTI-TURN runs (a `sessions`
+# / --num-conversations budget) partition per CONVERSATION and are supported on the
+# exact-fold merge path (metrics-only concat merge, order-independent): the controller
+# slices the sessions budget per cell (owned_positions, tiles exactly) and rejects
+# multi-turn on the retain path (a live-reply inputs.json forces retain) with a clear
+# message. Graph programs (dag_jsonl/weka_trace/dynamo_trace) also partition across cells
+# (trace-level, concatenation-merged). Fails closed on non-HTTP/gRPC/offline + scheduled
+# duration/adaptive, and on multi-turn with a random sampler (sequential/shuffle only).
+# E2e: test_cellular.rs + test_cellular_multiturn.rs (scheduled) + test_graph_cellular.rs.
 aiperf profile --config benchmark.yaml --cells 4
 
 # Developer-only protocol inventory; normal children are launched by Python.
@@ -186,6 +191,29 @@ Export-plane off switch: `AIPERF_RUNTIME_NATIVE_EXPORT=0` (default `1`) restores
 Metrics sketch off/on switch: `AIPERF_METRICS_SKETCH=1` / `aiperf profile --sketch-metrics` (default `0`) opts one run into bounded-memory metric retention: the accumulator processes each record into a transient single-row scratch, harvests its finite values into a per-`(phase, tag)` t-digest (`aiperf::metrics_core::MetricsStorageMode::Sketch`, reusing `cellular::sketch::TDigest` at `AIPERF_METRICS_TDIGEST_COMPRESSION`) and clears the row, so accumulator memory is O(1) in the record count; the online path folds each finalized record into the sketch and drops it (`RunCapture::finish_fold_into`). Counts/sums/averages/min/max stay exact and rate derivations stay exact from the min/max timestamp aggregates; percentiles become approximate (with a streaming Welford `std`), and per-record artifacts (records/raw/outputs JSONL, per-record OTLP) plus per-row-only outputs (timeslices, per-model/endpoint inference series, sweep curves) are unavailable — dropped from the run request in `rust_wire` and fail-closed in `execute.rs::validate_plan`. Bool field `Environment.METRICS.SKETCH` in `src/aiperf/common/environment.py`. Caveat: this bounds the metrics accumulator and coordinator finalize, but the online-path PEAK RSS is still set upstream by per-worker observers retaining every record until end-of-run drain; bounding that needs per-record worker finalization keyed by phase (streaming-finalize follow-up).
 
 Unit tests use in-process axum endpoints. `tests/scheduled_real_mock.rs` retains real wall-clock library coverage; runner product coverage lives in `aiperf-runner/tests/`.
+
+## Feature-complete definition — e2e raw-records verification (MANDATORY)
+
+A feature (new endpoint, metric, transport, dataset shape, cellular/graph capability, streaming/fold path,
+…) is NOT "complete" — never call it done, shipped, or verified — until it has an **end-to-end test that
+verifies the raw per-record JSONL against a properly-tuned mock server**. Unit tests, a smoke run, or a
+summary/count-only assertion do NOT satisfy this bar.
+
+- **Properly-tuned mock (determinism):** drive the canonical Python frontend (`aiperf profile`) against
+  `aiperf-mock-server` configured so every value is exactly predictable — fixed `--ttft` and `--itl`,
+  `--ttft-jitter-cv 0 --itl-jitter-cv 0`, analytic mode (scheduler off), and fixed synthetic ISL/OSL
+  (`--synthetic-input-tokens-stddev 0`, `--output-tokens-stddev 0`, a pinned `--tokenizer`).
+- **Verify TIMING** in `profile_export_raw.jsonl` per record: TTFT (first-token perf_ns − request start),
+  ITL (mean gap between *generated-token* chunks only — EXCLUDE the terminal usage/`[DONE]` chunk, which
+  arrives ~0 ms after the last token and otherwise dilutes ITL), and request_latency
+  (≈ `ttft + (osl−1)·itl`), asserted against the mock's fixed values within a small transport-overhead
+  tolerance (~1–2 ms) — NOT a wide band.
+- **Verify DATA** per record: OSL = count of generated-token chunks equals the requested cap; ISL, model,
+  streaming flag, response content, and status/error fields are present and correct.
+- **Both timing and data**, at the raw-record level. The e2e harness (`rust/e2e/tests/common/`) exposes
+  `raw_records()` (reads `profile_export_raw.jsonl`) for exactly this; use `--export-level raw`.
+
+Use this as the definition of done in briefs, reviews, and before claiming any feature verified.
 
 ## Design specs (`specs/`)
 

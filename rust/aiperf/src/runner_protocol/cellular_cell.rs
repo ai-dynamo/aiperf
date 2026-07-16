@@ -247,10 +247,16 @@ pub fn ship_http_artifacts_if_enabled(
 
 /// The controller-local absolute path of a `file`-type dataset with a `path`
 /// source (the only non-synthetic dataset a cross-host cell cannot reach), or
-/// `None` for synthetic, inline-`records` `file`, `public` (URL/HF each cell
-/// fetches independently), or graph datasets. Reads the canonical single-dataset
-/// list at `/run/cfg/datasets/0`, matching the controller's own detection so the
-/// serve allowlist and the cell request name can never disagree.
+/// `None` for synthetic, inline-`records` `file`, or `public` (URL/HF each cell
+/// fetches independently). This is FORMAT-BLIND: it keys only on `type == "file"`
+/// plus a non-empty `path`, so a single-file GRAPH trace (`dag_jsonl`, or a
+/// single-file `weka_trace`/`dynamo_trace`) ALSO returns its path and rides the same
+/// Stage G serve/download/rewrite plane. (A graph trace whose `path` is a
+/// directory/segmented-prefix cannot ride the single-file plane; the controller fails
+/// that run closed in [`crate::runner_protocol::cellular_controller`] — multi-file
+/// trace shipping is a follow-up.) Reads the canonical single-dataset list at
+/// `/run/cfg/datasets/0`, matching the controller's own detection so the serve
+/// allowlist and the cell request name can never disagree.
 pub fn cellular_file_dataset_path(envelope: &serde_json::Value) -> Option<std::path::PathBuf> {
     let dataset = envelope.pointer("/run/cfg/datasets/0")?;
     if dataset.get("type").and_then(serde_json::Value::as_str) != Some("file") {
@@ -297,7 +303,11 @@ pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<Vec<u8
     let mut envelope: serde_json::Value = serde_json::from_slice(&envelope_bytes)
         .context("parsing cell envelope for dataset download")?;
     let Some(source_path) = cellular_file_dataset_path(&envelope) else {
-        return Ok(envelope_bytes); // synthetic / records / public / graph — nothing to ship
+        // synthetic / inline-records / public — nothing to ship. A single-file graph
+        // trace (dag_jsonl / weka_trace / dynamo_trace) IS shipped (the predicate is
+        // format-blind); only a directory/segmented-prefix graph path is unshippable, and
+        // the controller rejects that run before launching cells.
+        return Ok(envelope_bytes);
     };
     let Some(authority) = cell_artifact_authority() else {
         // Same-host cell, or shared-FS with shipping disabled: the controller-local
@@ -584,6 +594,22 @@ mod tests {
             cellular_file_dataset_path(&file_path),
             Some(std::path::PathBuf::from("/data/prompts.jsonl"))
         );
+
+        // A single-file GRAPH trace (`dag_jsonl`/`weka_trace`/`dynamo_trace`) is likewise
+        // shipped: the predicate is format-blind (it keys only on `type == "file"` + a
+        // non-empty `path`), so a graph `{type:file, format:dag_jsonl, path}` also returns
+        // the path and rides the SAME Stage G serve/download/rewrite plane. The controller
+        // separately fails closed if that graph path is a directory/segmented-prefix.
+        for graph_format in ["dag_jsonl", "weka_trace", "dynamo_trace"] {
+            let graph = serde_json::json!({"run": {"cfg": {"datasets": [
+                {"type": "file", "format": graph_format, "path": "/traces/graph.jsonl"}
+            ]}}});
+            assert_eq!(
+                cellular_file_dataset_path(&graph),
+                Some(std::path::PathBuf::from("/traces/graph.jsonl")),
+                "single-file graph trace {graph_format} must ship over Stage G"
+            );
+        }
 
         // Everything else yields None (no ship): synthetic regenerates from the seed;
         // an inline-`records` file already rides in the envelope; `public` URL/HF each
