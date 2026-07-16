@@ -12,6 +12,8 @@
 //! The library target exists so both the `aiperf` binary and the integration
 //! tests share the same wire DTOs and projection code (see [`wire`]).
 
+#[cfg(feature = "search-pyo3")]
+pub mod bayes;
 pub mod config;
 pub mod delegate;
 pub mod dispatch;
@@ -25,6 +27,8 @@ pub mod model;
 pub mod profile;
 #[cfg(feature = "search-pyo3")]
 pub mod pyfit;
+#[cfg(feature = "search-pyo3")]
+pub mod pyopt;
 pub mod render;
 pub mod runner_install;
 pub mod search;

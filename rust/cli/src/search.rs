@@ -158,17 +158,20 @@ pub fn expand_recipe(flags: &ProfileFlags) -> anyhow::Result<Option<RecipeSweep>
             },
         ],
         "max-concurrency-under-sla" => {
-            // Only the static `--search-style grid` variant expands to a sweep.
-            // `monotonic` runs the native dynamic ask-tell loop (intercepted in
-            // `profile::run` before this expander); `smooth_isotonic`/`bo`/`optuna`
-            // additionally need isotonic/GP fits and remain future work.
+            // Only the static `--search-style grid` variant expands to a sweep
+            // here. The dynamic styles run their own ask-tell loop, intercepted
+            // in `profile::run` before this expander: `monotonic` is pure Rust;
+            // `smooth_isotonic` (default) / `bo` / `optuna` need the scipy/optuna
+            // numerical core, available only in the `search-pyo3` build. Reaching
+            // this branch means the feature is OFF and the style is non-grid.
             let style = flags.search_style.as_deref().unwrap_or("smooth_isotonic");
             anyhow::ensure!(
                 style == "grid",
-                "max-concurrency-under-sla --search-style {style:?} is not yet native \
-                 (smooth_isotonic/bo/optuna need isotonic/GP fits); use --search-style \
-                 grid for a static sweep or --search-style monotonic for the dynamic \
-                 probe+bisection boundary search"
+                "max-concurrency-under-sla --search-style {style:?} needs the \
+                 scipy/optuna numerical core, which requires a `search-pyo3` build \
+                 of aiperf (embeds Python). This binary was built without it — use \
+                 --search-style grid (static sweep) or --search-style monotonic \
+                 (pure-Rust probe+bisection), or rebuild with --features search-pyo3"
             );
             vec![RecipeAxis {
                 path: "phases.profiling.concurrency",

@@ -1,0 +1,77 @@
+{
+  "cases": [
+    {
+      "seed": 7,
+      "lo": 1,
+      "hi": 1000,
+      "max_iterations": 12,
+      "n_initial_points": 5,
+      "ttft_slope": 0.5,
+      "threshold": 200.0,
+      "asks": [
+        1,
+        188,
+        14,
+        122,
+        846,
+        3,
+        12,
+        13,
+        29,
+        87,
+        790,
+        63
+      ],
+      "convergence_reason": "max_iterations"
+    },
+    {
+      "seed": 123,
+      "lo": 1,
+      "hi": 1000,
+      "max_iterations": 15,
+      "n_initial_points": 5,
+      "ttft_slope": 1.0,
+      "threshold": 200.0,
+      "asks": [
+        100,
+        4,
+        3,
+        33,
+        119,
+        888,
+        1,
+        29,
+        15,
+        914,
+        168,
+        23,
+        27,
+        7,
+        51
+      ],
+      "convergence_reason": "max_iterations"
+    },
+    {
+      "seed": 42,
+      "lo": 1,
+      "hi": 512,
+      "max_iterations": 10,
+      "n_initial_points": 4,
+      "ttft_slope": 2.0,
+      "threshold": 200.0,
+      "asks": [
+        7,
+        364,
+        80,
+        32,
+        1,
+        1,
+        8,
+        7,
+        393,
+        6
+      ],
+      "convergence_reason": "max_iterations"
+    }
+  ]
+}

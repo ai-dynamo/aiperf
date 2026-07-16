@@ -73,6 +73,15 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         return run_isotonic_loop(&flags);
     }
 
+    // The `bo` / `optuna` styles run an optuna-backed BO ask-tell loop (real
+    // optuna via the search-pyo3 seam). Same gating as smooth_isotonic.
+    #[cfg(feature = "search-pyo3")]
+    if flags.search_recipe.as_deref() == Some("max-concurrency-under-sla")
+        && matches!(flags.search_style.as_deref(), Some("bo") | Some("optuna"))
+    {
+        return run_bayes_loop(&flags);
+    }
+
     // A grid `--search-recipe` expands its search space into a static grid sweep
     // over config paths (mutating the built cfg per variation). (bayes/isotonic
     // recipes run a dynamic ask-tell loop, handled elsewhere.)
@@ -443,6 +452,131 @@ fn run_isotonic_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
         "infeasible_min": planner.infeasible_min,
         "boundary_type": planner.boundary_type,
         "non_monotonic_warning": planner.non_monotonic_warning,
+        "convergence_reason": reason,
+    });
+    std::fs::write(
+        base_artifact_dir.join("search_boundary.json"),
+        serde_json::to_vec_pretty(&summary)?,
+    )?;
+
+    Ok(if any_failure { 1 } else { 0 })
+}
+
+/// Drive the dynamic optuna-BO SLA search (`--search-style bo|optuna`): the
+/// native [`crate::bayes::OptunaPlanner`] (verified byte-exact vs the production
+/// planner on the seeded TPE sampler in `tests/bayes_parity.rs`, real optuna via
+/// pyo3) proposes one concurrency per probe; each probe is one runner invocation
+/// whose objective (output_token_throughput) + per-filter SLA observations feed
+/// the study's constraints. Requires the `search-pyo3` build.
+#[cfg(feature = "search-pyo3")]
+fn run_bayes_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
+    // The recipe's objective is output_token_throughput / avg (maximize).
+    const OBJ_METRIC: &str = "output_token_throughput";
+    const OBJ_STAT: &str = "avg";
+
+    let spec = crate::bayes::BayesSpec::from_flags(flags)?;
+    let filters = spec.sla_filters.clone();
+    let mut planner = crate::bayes::OptunaPlanner::new(spec)?;
+
+    let mut base_flags = flags.clone();
+    base_flags.concurrency = Some("1".to_string());
+    let base = load::resolve(&base_flags)?;
+    let base_artifact_dir = base.artifact_dir.clone();
+
+    let sweep_id = uuid::Uuid::new_v4().simple().to_string();
+    let seed = seed_policy(flags);
+    let runner = runner_install::resolve()?;
+    let child_pid = crate::signals::install();
+
+    eprintln!("aiperf: optuna BO SLA search");
+    let mut any_failure = false;
+    let mut best_feasible: Option<i64> = None;
+    while let Some(value) = planner.ask()? {
+        let iter = planner.iteration();
+        let label = format!("search_iter_{iter:04}");
+
+        let mut run = base.clone();
+        let mut cfg = serde_json::to_value(&run.cfg)?;
+        crate::search::apply_override(&mut cfg, crate::search::AxisKind::PhaseConcurrency, value);
+        run.cfg = serde_json::from_value(cfg)?;
+        let dir = crate::sweep::artifact_dir::resolve(
+            &base_artifact_dir,
+            true,
+            1,
+            &label,
+            0,
+            IterationOrder::Repeated,
+        );
+        run.sweep_id = Some(sweep_id.clone());
+        run.variation = Some(serde_json::json!({
+            "index": iter,
+            "label": label,
+            "values": { "phases.profiling.concurrency": value },
+        }));
+        run.random_seed = seed.seed(iter as usize);
+        run.trial = 0;
+        run.artifact_dir = dir.clone();
+
+        eprintln!(
+            "aiperf: [iter {iter}] concurrency={value} -> {}",
+            dir.display()
+        );
+        clear_prior_report(&dir);
+        let request = RunnerRequest::new(Operation::Execute, run);
+        let payload = serde_json::to_vec(&request)?;
+        let terminal = execute::run_once(&runner, &payload, &child_pid)?;
+
+        let mut objective: Option<f64> = None;
+        let mut sla_observed: Vec<Option<f64>> = vec![None; filters.len()];
+        let mut feasible = false;
+        if terminal.success
+            && let Some(path) = terminal.report_path.as_deref()
+            && let Ok(bytes) = std::fs::read(path)
+            && let Ok(report) = serde_json::from_slice::<serde_json::Value>(&bytes)
+        {
+            objective = report_metric(&report, OBJ_METRIC, OBJ_STAT).filter(|v| v.is_finite());
+            for (i, f) in filters.iter().enumerate() {
+                sla_observed[i] = report_metric(&report, &f.metric_tag, &f.stat);
+            }
+            feasible = filters
+                .iter()
+                .all(|f| f.satisfied_by(report_metric(&report, &f.metric_tag, &f.stat)));
+        }
+        if !terminal.success {
+            any_failure = true;
+            eprintln!(
+                "aiperf: [iter {iter}] run failed (treated as infeasible): {}",
+                terminal.error.as_deref().unwrap_or("(no detail)")
+            );
+        } else {
+            if feasible && best_feasible.is_none_or(|b| value > b) {
+                best_feasible = Some(value);
+            }
+            eprintln!(
+                "aiperf: [iter {iter}] concurrency={value} throughput={} -> {}",
+                objective
+                    .map(|v| format!("{v:.1}"))
+                    .unwrap_or_else(|| "-".into()),
+                if feasible { "FEASIBLE" } else { "infeasible" }
+            );
+        }
+        planner.tell(objective, &sla_observed, feasible)?;
+    }
+
+    let reason = planner
+        .convergence_reason()
+        .unwrap_or("converged")
+        .to_string();
+    println!(
+        "\naiperf: optuna BO SLA boundary\n  best feasible concurrency: {}\n  convergence: {reason}",
+        best_feasible
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "-".into()),
+    );
+    let _ = std::fs::create_dir_all(&base_artifact_dir);
+    let summary = serde_json::json!({
+        "swept_dim_path": "phases.profiling.concurrency",
+        "best_feasible": best_feasible,
         "convergence_reason": reason,
     });
     std::fs::write(
