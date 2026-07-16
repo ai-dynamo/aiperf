@@ -27,7 +27,8 @@ mod typescript;
 mod vocab;
 
 use crate::dataset::TextTokenizer;
-use crate::rng::{RngRoot, namespace};
+use crate::rng::PythonRandomGenerator;
+use crate::rng::namespace;
 
 use self::templates::{TemplateKind, TemplateRenderer};
 use super::RecordedTraceError;
@@ -36,9 +37,11 @@ use super::RecordedTraceError;
 /// (the native analogue of the Python generator's `_pool_scale`). Fractional
 /// values scale down — `0.25` gives roughly a quarter-size pool — via truncation,
 /// like Python's `int(count * scale)`. At `1.0` the pool is ~270k tokens; the
-/// default `4.0` yields a >1M-token corpus so block sampling draws from a large,
-/// structurally varied space.
-const POOL_SCALE: f64 = 4.0;
+/// default `1.0` matches agentx's weka/trace path, which constructs
+/// `CodingContentGenerator` with no `pool_tokens_target`, so `_pool_scale` clamps
+/// to `1.0` (`max(1.0, 10_000_000 / 10_000_000)`). Byte-exact corpus parity
+/// requires the SAME scale as agentx, so this is `1.0`, not a larger pool.
+const POOL_SCALE: f64 = 1.0;
 
 const TOOL_POOL_BLOCK_COUNTS: &[(TemplateKind, usize)] = &[
     (TemplateKind::Python, 45),
@@ -82,9 +85,12 @@ fn build_scaled_corpus(
 ) -> Result<Vec<u32>, RecordedTraceError> {
     // Truncating multiply, matching the Python generator's `int(count * scale)`.
     let scaled = |count: usize| (count as f64 * scale) as usize;
-    let template_seed = RngRoot::new(Some(root_seed))
-        .derive_seed(namespace::DATASET_CODING_CONTENT_TEMPLATE)
-        .expect("a seeded RNG root always derives a concrete stream seed");
+    // agentx derives `_template_rng` via `rng.derive("dataset.coding_content.template")`,
+    // i.e. sha256(f"{root_seed}:{identifier}")[:8] — NOT the BLAKE3 RngRoot algebra.
+    let template_seed = PythonRandomGenerator::derive_child_seed(
+        root_seed,
+        namespace::DATASET_CODING_CONTENT_TEMPLATE,
+    );
     let mut renderer = TemplateRenderer::new(template_seed);
     let capacity: usize = TOOL_POOL_BLOCK_COUNTS
         .iter()
@@ -107,6 +113,63 @@ mod tests {
     use crate::dataset::TiktokenTokenizer;
 
     use super::*;
+
+    #[test]
+    #[ignore]
+    fn dump_corpus_for_parity() {
+        // Temporary parity harness: build the scale-1.0 blocks (pre- and
+        // post-shuffle) for root seed 42 and write them beside the Python
+        // reference dumps for byte diffing. Run with `--ignored`.
+        let template_seed = PythonRandomGenerator::derive_child_seed(
+            42,
+            namespace::DATASET_CODING_CONTENT_TEMPLATE,
+        );
+        let mut renderer = TemplateRenderer::new(template_seed);
+        let names: &[(TemplateKind, &str)] = &[
+            (TemplateKind::Python, "_gen_python_code"),
+            (TemplateKind::Go, "_gen_go_code"),
+            (TemplateKind::Rust, "_gen_rust_code"),
+            (TemplateKind::TypeScript, "_gen_typescript_code"),
+            (TemplateKind::MlTraining, "_gen_ml_training_code"),
+            (TemplateKind::MlInference, "_gen_ml_inference_code"),
+            (TemplateKind::MlConfig, "_gen_ml_config"),
+            (TemplateKind::BashOutput, "_gen_bash_output"),
+            (TemplateKind::MlTrainingLog, "_gen_ml_training_log"),
+            (TemplateKind::JsonResponse, "_gen_json_response"),
+            (TemplateKind::ErrorTraceback, "_gen_error_traceback"),
+            (TemplateKind::CudaError, "_gen_cuda_error"),
+            (TemplateKind::Sql, "_gen_sql_query"),
+            (TemplateKind::UserPrompt, "_gen_user_prompt"),
+            (TemplateKind::ToolUse, "_gen_tool_use_block"),
+            (TemplateKind::Conversation, "_gen_coding_conversation"),
+            (TemplateKind::GitDiff, "_gen_git_diff"),
+            (TemplateKind::Cicd, "_gen_cicd_output"),
+            (TemplateKind::Config, "_gen_config_file"),
+            (TemplateKind::Markdown, "_gen_markdown_doc"),
+            (TemplateKind::TestOutput, "_gen_test_output"),
+        ];
+        let mut blocks: Vec<String> = Vec::new();
+        let mut first_per: Vec<(String, String)> = Vec::new();
+        for &(kind, name) in names {
+            let count = TOOL_POOL_BLOCK_COUNTS
+                .iter()
+                .find(|&&(k, _)| std::mem::discriminant(&k) == std::mem::discriminant(&kind))
+                .map(|&(_, c)| c)
+                .unwrap();
+            let start = blocks.len();
+            for ordinal in 0..count {
+                blocks.push(renderer.render(kind, ordinal).expect("render"));
+            }
+            first_per.push((name.to_string(), blocks[start].clone()));
+        }
+        let _ = first_per;
+        std::fs::write(
+            "/tmp/rust_blocks.json",
+            serde_json::to_string(&blocks).unwrap(),
+        )
+        .unwrap();
+        eprintln!("dumped {} blocks", blocks.len());
+    }
 
     #[test]
     fn coding_corpus_is_seeded_and_reproducible() {

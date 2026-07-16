@@ -52,11 +52,7 @@ pub(super) fn tool_read(r: &mut TemplateRenderer) -> Result<String, RecordedTrac
     let mut lines: Vec<String> = Vec::new();
     for offset in 0..span {
         let i = start_line + offset;
-        let indent = if r.number(1, 100)? > 30 {
-            "    "
-        } else {
-            "        "
-        };
+        let indent = if r.random() > 0.3 { "    " } else { "        " };
         let idx = r.index(code_lines.len())?;
         let line_content = &code_lines[idx];
         lines.push(format!("{i:>6}\t{indent}{line_content}"));
@@ -100,20 +96,46 @@ The file {f} has been updated successfully.
 }
 
 pub(super) fn tool_search(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
+    // Python builds the ENTIRE `lang_patterns` dict literal (python/go/rust/ts)
+    // before selecting the language=None ("python") list, so all 16 embedded
+    // `choice(...)` draws must fire even though only the python patterns are used.
     let p_cls = r.pick(CLASSES)?;
     let p_def = r.pick(METHODS)?;
     let p_imp = r.pick(MODULES)?;
     let p_adef = r.pick(METHODS)?;
-    let err_pat = r.pick(ERRORS)?;
+    // go list (discarded output, live draws)
+    let _ = r.pick(METHODS)?;
+    let _ = r.pick(CLASSES)?;
+    let _ = r.pick(GO_PACKAGES)?;
+    let _ = r.pick(CLASSES)?;
+    // rust list
+    let _ = r.pick(METHODS)?;
+    let _ = r.pick(CLASSES)?;
+    let _ = r.pick(RUST_CRATES)?;
+    let _ = r.pick(CLASSES)?;
+    // typescript list
+    let _ = r.pick(CLASSES)?;
+    let _ = r.pick(METHODS)?;
+    let _ = r.pick(CLASSES)?;
+    let _ = r.pick(CLASSES)?;
 
-    let candidates = [
+    let patterns = [
         format!("class {p_cls}"),
         format!("def {p_def}"),
         format!("import {p_imp}"),
         format!("async def {p_adef}"),
-        err_pat.to_string(),
     ];
-    let pattern = candidates[r.index(candidates.len())?].clone();
+    // pattern = choice([*patterns, choice(_ERROR_MESSAGES)]): the error choice is
+    // evaluated (drawn) while building the 5-element list, then choice indexes it.
+    let err_pat = r.pick(ERRORS)?;
+    let candidates = [
+        patterns[0].as_str(),
+        patterns[1].as_str(),
+        patterns[2].as_str(),
+        patterns[3].as_str(),
+        err_pat,
+    ];
+    let pattern = candidates[r.index(candidates.len())?].to_string();
 
     let n = r.number(3, 6)?.min(FILES.len() as i64) as usize;
     let files = r.sample(FILES, n)?;
@@ -141,12 +163,12 @@ pub(super) fn tool_bash(r: &mut TemplateRenderer) -> Result<String, RecordedTrac
     let methods = r.sample(METHODS, 4)?;
     let n_pass = r.number(10, 80)?;
     let n_fail = r.number(0, 3)?;
-    let dur = r.number(50, 3000)? as f64 / 100.0;
+    let dur = r.uniform(0.5, 30.0);
     let cmd = r.pick(COMMANDS)?;
 
     let mut test_lines: Vec<String> = Vec::new();
     for m in &methods {
-        let passed = r.number(1, 100)? > 20;
+        let passed = r.random() > 0.2;
         let status = if passed { "PASSED" } else { "FAILED" };
         test_lines.push(format!(
             "tests/test_{mod_}.py::Test{cls}::test_{m} {status}"
@@ -197,9 +219,15 @@ $ du -sh .
 }
 
 fn bash_build_test(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
+    // Python `_gen_bash_build_test` draws mod/n_pkgs/build_time even though the
+    // language=None ("python") output uses none of them; the draws must fire to
+    // keep the shared stream in sync.
+    let _mod = r.pick(MODULES)?;
+    let _n_pkgs = r.number(10, 200)?;
+    let _build_time = r.uniform(0.5, 30.0);
     let n_pass = r.number(20, 150)?;
     let n_fail = r.number(0, 5)?;
-    let test_time = r.number(10, 600)? as f64 / 10.0;
+    let test_time = r.uniform(1.0, 60.0);
 
     let build_cmd = "pip install -e '.[dev]'";
     let test_cmd =

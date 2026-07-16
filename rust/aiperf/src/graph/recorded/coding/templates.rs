@@ -9,7 +9,7 @@
 //! `_coding_*` generators — every top-level category fans out across its full
 //! family of structural variants (mirroring the Python `choice([...])()`).
 
-use crate::rng::RandomGenerator;
+use crate::rng::PythonRandomGenerator;
 
 use super::{
     cicd_docs, errors_diff, go, json_blocks, ml, prompts_conv, python, rust_lang, sql, tool,
@@ -43,13 +43,16 @@ pub(super) enum TemplateKind {
 }
 
 pub(super) struct TemplateRenderer {
-    random: RandomGenerator,
+    random: PythonRandomGenerator,
 }
 
 impl TemplateRenderer {
+    /// Build a renderer over the CPython-MT + numpy child stream `seed` (the
+    /// `dataset.coding_content.template` derivation), matching agentx's
+    /// `_template_rng`.
     pub(super) fn new(seed: u64) -> Self {
         Self {
-            random: RandomGenerator::from_seed(Some(seed)),
+            random: PythonRandomGenerator::from_child_seed(seed),
         }
     }
 
@@ -116,6 +119,20 @@ impl TemplateRenderer {
         self.random.random()
     }
 
+    /// Uniform float draw in `[low, high)` (Python `random.uniform`):
+    /// `low + (high - low) * random()`.
+    pub(super) fn uniform(&mut self, low: f64, high: f64) -> f64 {
+        self.random.uniform(low, high)
+    }
+
+    /// Uniform pick from a runtime (non-`'static`) slice by value (Python
+    /// `random.choice(seq)` = `seq[randbelow(len)]`).
+    pub(super) fn choose<'a, T>(&mut self, seq: &'a [T]) -> Result<&'a T, RecordedTraceError> {
+        self.random
+            .choice(seq)
+            .map_err(|error| RecordedTraceError(error.to_string()))
+    }
+
     /// Inclusive integer draw in `[low, high]` (Python `random.randint`).
     pub(super) fn number(&mut self, low: i64, high: i64) -> Result<i64, RecordedTraceError> {
         self.random
@@ -132,6 +149,19 @@ impl TemplateRenderer {
             .randint(0, high)
             .map_err(|error| RecordedTraceError(error.to_string()))?;
         usize::try_from(value).map_err(|_| RecordedTraceError("negative variant index".into()))
+    }
+
+    /// Python `f"{x:.{prec}e}"` scientific notation: Rust's `{:e}` omits the
+    /// exponent sign and zero-padding, so post-process to CPython's form
+    /// (`5.00e-04`, `1.23e+05`) — signed exponent, minimum two digits.
+    pub(super) fn py_sci(x: f64, prec: usize) -> String {
+        let raw = format!("{x:.prec$e}");
+        let (mantissa, exp) = raw.split_once('e').expect("Rust {:e} always emits 'e'");
+        let (sign, digits) = match exp.strip_prefix('-') {
+            Some(rest) => ('-', rest),
+            None => ('+', exp.strip_prefix('+').unwrap_or(exp)),
+        };
+        format!("{mantissa}e{sign}{digits:0>2}")
     }
 
     /// Python `str.title()`: uppercase the first letter of each alphabetic run,

@@ -25,7 +25,7 @@ fn object(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let cls_lower = cls.to_lowercase();
     let id_suffix = r.number(1000, 9999)?;
     let num_val = r.number(0, 1000)?;
-    let float_val = r.number(0, 9999)? as f64 / 10000.0;
+    let float_val = r.uniform(0.0, 1.0);
     let ts = r.number(1_700_000_000, 1_800_000_000)?;
     let mut items: Vec<String> = Vec::new();
     for _ in 0..3 {

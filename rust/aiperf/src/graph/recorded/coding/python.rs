@@ -164,7 +164,7 @@ class Test{cls}:
     @pytest.mark.asyncio
     async def test_{m1}_with_mock_dependency(self, instance):
         with patch("{mod_}.{m2}") as mock:
-            mock.return_value = {{"key": "{v2}"}}
+            mock.return_value = {{{{"key": "{v2}"}}}}
             result = await instance.{m1}()
             assert "{v2}" in str(result)
 "#
@@ -218,7 +218,7 @@ async def {m1}(
     return {cls}Response(items=items, total=len(items), page=1)
 
 
-@router.get("/{{{v1}}}")
+@router.get("/{{{{{v1}}}}}")
 async def {m2}({v1}: str, svc: {cls} = Depends()) -> dict:
     result = await svc.{m2}({v1})
     if result is None:

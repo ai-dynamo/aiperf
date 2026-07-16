@@ -191,22 +191,23 @@ pub(super) fn training_log(r: &mut TemplateRenderer) -> Result<String, RecordedT
     let iters = r.number(8, 15)?;
     for _ in 0..iters {
         let step = r.number(1, total_steps)?;
-        let loss = r.number(30, 400)? as f64 / 100.0; // uniform(0.3, 4.0)
-        let lr_val = r.number(1, 500)? as f64 / 1_000_000.0; // uniform(1e-6, 5e-4)
-        let grad = r.number(10, 1000)? as f64 / 100.0; // uniform(0.1, 10.0)
+        let loss = r.uniform(0.3, 4.0);
+        let lr_val = r.uniform(1e-6, 5e-4);
+        let grad = r.uniform(0.1, 10.0);
         let tokens_per_sec = r.number(1000, 50000)?;
         let epoch_frac = epoch as f64 + step as f64 / total_steps as f64;
+        let lr_str = TemplateRenderer::py_sci(lr_val, 2);
         lines.push(format!(
-            "{{{{'step': {step}, 'epoch': {epoch_frac:.2}, 'loss': {loss:.4}, 'lr': {lr_val:.2e}, 'grad_norm': {grad:.3}, 'tokens_per_sec': {tokens_per_sec}}}}}"
+            "{{{{'step': {step}, 'epoch': {epoch_frac:.2}, 'loss': {loss:.4}, 'lr': {lr_str}, 'grad_norm': {grad:.3}, 'tokens_per_sec': {tokens_per_sec}}}}}"
         ));
     }
 
-    let gpu_mem = r.number(1000, 8000)? as f64 / 100.0; // uniform(10, 80)
+    let gpu_mem = r.uniform(10.0, 80.0);
     let gpu_util = r.number(80, 100)?;
-    let eval_loss = r.number(50, 300)? as f64 / 100.0; // uniform(0.5, 3.0)
-    let eval_ppl = r.number(200, 2000)? as f64 / 100.0; // uniform(2.0, 20.0)
-    let peak_extra = r.number(100, 1000)? as f64 / 100.0; // uniform(1, 10)
-    let reserved_extra = r.number(500, 2000)? as f64 / 100.0; // uniform(5, 20)
+    let eval_loss = r.uniform(0.5, 3.0);
+    let eval_ppl = r.uniform(2.0, 20.0);
+    let peak_extra = r.uniform(1.0, 10.0);
+    let reserved_extra = r.uniform(5.0, 20.0);
     let peak_mem = gpu_mem + peak_extra;
     let reserved_mem = gpu_mem + reserved_extra;
 
@@ -234,9 +235,9 @@ pub(super) fn cuda_error(r: &mut TemplateRenderer) -> Result<String, RecordedTra
     let model = model_full.rsplit('/').next().unwrap_or(model_full);
     let rank = r.number(0, 7)?;
     let gpu_id = r.number(0, 7)?;
-    let alloc_gb = r.number(50, 1600)? as f64 / 100.0; // uniform(0.5, 16.0)
+    let alloc_gb = r.uniform(0.5, 16.0);
     let total_gb = [24.0f64, 40.0, 48.0, 80.0][r.index(4)?];
-    let free_gb = r.number(1, 200)? as f64 / 100.0; // uniform(0.01, 2.0)
+    let free_gb = r.uniform(0.01, 2.0);
     let _cls = r.sample(ML_CLASSES, 2)?;
     let m = r.sample(ML_METHODS, 2)?;
     let (m1, m2) = (m[0], m[1]);
