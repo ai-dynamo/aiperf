@@ -193,6 +193,8 @@ pub(crate) struct Inputs {
     pub unsafe_override: bool,
     /// Agentic cache-warmup duration, seconds (auto-creates a warmup phase).
     pub agentic_cache_warmup_duration: Option<f64>,
+    /// Rankings/rerank query-passage generation (present when a rankings flag is set).
+    pub rankings: Option<crate::model::dataset::Rankings>,
     /// File dataset format id (`--custom-dataset-type`).
     pub custom_dataset_type: Option<String>,
     /// Named public dataset (mutually exclusive with synthetic/file).
@@ -516,6 +518,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         trajectory_start_max_ratio: flags.trajectory_start_max_ratio.unwrap_or(0.0),
         unsafe_override: flags.unsafe_override,
         agentic_cache_warmup_duration: flags.agentic_cache_warmup_duration,
+        rankings: build_rankings(flags),
         artifact_dir: flags
             .artifact_dir
             .clone()
@@ -668,6 +671,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             images: inputs.image_spec.clone(),
             audio: inputs.audio_spec.clone(),
             video: inputs.video_spec.clone(),
+            rankings: inputs.rankings.clone(),
             sampling: Sampling(inputs.sampling.clone()),
             turns: inputs.turns.clone(),
             turn_delay_ratio: inputs.turn_delay_ratio,
@@ -1180,6 +1184,52 @@ fn build_image_spec(flags: &ProfileFlags) -> Option<ImageSpec> {
 }
 
 /// Build the prefix-prompts block from the shared/user or pool flags.
+/// Build the rankings block (`RankingsConfig`) from the `--rankings-*` flags.
+/// Present only when at least one flag is set; each sub-field is a set-only
+/// `{mean, stddev}` distribution (Python `_build_rankings` + `_mean_stddev_pair`)
+/// or the config default `{value}` when unset.
+fn build_rankings(flags: &ProfileFlags) -> Option<crate::model::dataset::Rankings> {
+    let any = flags.rankings_passages_mean.is_some()
+        || flags.rankings_passages_stddev.is_some()
+        || flags.rankings_passages_prompt_token_mean.is_some()
+        || flags.rankings_passages_prompt_token_stddev.is_some()
+        || flags.rankings_query_prompt_token_mean.is_some()
+        || flags.rankings_query_prompt_token_stddev.is_some();
+    if !any {
+        return None;
+    }
+    Some(crate::model::dataset::Rankings {
+        passages: rankings_dist(flags.rankings_passages_mean, flags.rankings_passages_stddev, 10.0),
+        passage_tokens: rankings_dist(
+            flags.rankings_passages_prompt_token_mean,
+            flags.rankings_passages_prompt_token_stddev,
+            128.0,
+        ),
+        query_tokens: rankings_dist(
+            flags.rankings_query_prompt_token_mean,
+            flags.rankings_query_prompt_token_stddev,
+            32.0,
+        ),
+    })
+}
+
+/// One rankings sub-distribution: a `{mean, stddev}` normal when the mean flag is
+/// set (stddev defaults to 0.0, matching `NormalDistribution`), else the config's
+/// `FixedDistribution{value}` default.
+fn rankings_dist(mean: Option<f64>, stddev: Option<f64>, default_value: f64) -> Distribution {
+    if mean.is_none() && stddev.is_none() {
+        return Distribution {
+            value: Some(default_value),
+            ..Default::default()
+        };
+    }
+    Distribution {
+        mean,
+        stddev: Some(stddev.unwrap_or(0.0)),
+        ..Default::default()
+    }
+}
+
 fn build_prefix_prompts(flags: &ProfileFlags) -> Option<PrefixPrompts> {
     let any = flags.shared_system_prompt_length.is_some()
         || flags.user_context_prompt_length.is_some()

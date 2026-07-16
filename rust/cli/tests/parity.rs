@@ -105,6 +105,7 @@ const FIXTURES: &[&str] = &[
     "alias_genai",
     "toplevel",
     "agentic",
+    "rankings",
 ];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).

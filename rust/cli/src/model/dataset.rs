@@ -176,6 +176,19 @@ pub struct PrefixPrompts {
     pub pool_size: Option<u32>,
 }
 
+/// Rankings/rerank query-passage generation policy (`RankingsConfig`). Every
+/// sub-field is always serialized; unset ones carry their config default
+/// (`passages`→`{value:10}`, `passage_tokens`→`{value:128}`, `query_tokens`→`{value:32}`).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Rankings {
+    /// Number of passages per ranking request.
+    pub passages: Distribution,
+    /// Token length per passage.
+    pub passage_tokens: Distribution,
+    /// Token length of the query.
+    pub query_tokens: Distribution,
+}
+
 /// The typed synthetic dataset body.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Synthetic {
@@ -193,6 +206,9 @@ pub struct Synthetic {
     /// Synthetic video generation (present when authored).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video: Option<VideoSpec>,
+    /// Rankings/rerank query-passage generation (present when a rankings flag is set).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rankings: Option<Rankings>,
     /// Sampling order.
     pub sampling: Sampling,
     /// Turns-per-session distribution (multi-turn; present when authored).

@@ -114,6 +114,25 @@ pub struct ProfileFlags {
     #[arg(long = "agentic-cache-warmup-duration")]
     pub agentic_cache_warmup_duration: Option<f64>,
 
+    /// Rankings: passages per request mean (`--rankings-passages-mean`).
+    #[arg(long = "rankings-passages-mean")]
+    pub rankings_passages_mean: Option<f64>,
+    /// Rankings: passages per request stddev (`--rankings-passages-stddev`).
+    #[arg(long = "rankings-passages-stddev")]
+    pub rankings_passages_stddev: Option<f64>,
+    /// Rankings: per-passage token mean (`--rankings-passages-prompt-token-mean`).
+    #[arg(long = "rankings-passages-prompt-token-mean")]
+    pub rankings_passages_prompt_token_mean: Option<f64>,
+    /// Rankings: per-passage token stddev (`--rankings-passages-prompt-token-stddev`).
+    #[arg(long = "rankings-passages-prompt-token-stddev")]
+    pub rankings_passages_prompt_token_stddev: Option<f64>,
+    /// Rankings: query token mean (`--rankings-query-prompt-token-mean`).
+    #[arg(long = "rankings-query-prompt-token-mean")]
+    pub rankings_query_prompt_token_mean: Option<f64>,
+    /// Rankings: query token stddev (`--rankings-query-prompt-token-stddev`).
+    #[arg(long = "rankings-query-prompt-token-stddev")]
+    pub rankings_query_prompt_token_stddev: Option<f64>,
+
     /// Trials per variation (`--num-profile-runs`); `>1` repeats each run.
     #[arg(long = "num-profile-runs")]
     pub num_profile_runs: Option<u32>,
