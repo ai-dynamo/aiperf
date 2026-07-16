@@ -134,12 +134,16 @@ pub fn plan_recipe_cells(
     recipe: &crate::search::RecipeSweep,
     sweep_id: &str,
 ) -> anyhow::Result<Vec<sweep_run::Cell>> {
-    let variations = recipe.expand();
     let seed = seed_policy(flags);
-    let base = load::resolve(flags)?;
+    // The recipe owns the swept axes and overrides them per variation, so resolve
+    // the base run with a single (non-sweep) value for any axis flag it consumes
+    // (e.g. pareto-sweep's `--concurrency 1,4` list).
+    let mut base_flags = flags.clone();
+    base_flags.concurrency = Some("1".to_string());
+    let base = load::resolve(&base_flags)?;
 
-    let mut cells = Vec::with_capacity(variations.len());
-    for v in &variations {
+    let mut cells = Vec::with_capacity(recipe.variations.len());
+    for v in &recipe.variations {
         let mut run = base.clone();
         // Mutate the built cfg at each recipe axis (concurrency / isl / osl scalar).
         let mut cfg = serde_json::to_value(&run.cfg)?;

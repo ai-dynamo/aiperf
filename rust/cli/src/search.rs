@@ -38,9 +38,9 @@ pub struct RecipeAxis {
     pub kind: AxisKind,
 }
 
-/// An expanded grid recipe: axes sorted by dotted path (label/order stability).
+/// An expanded grid recipe: its ordered per-variation cells.
 pub struct RecipeSweep {
-    pub axes: Vec<RecipeAxis>,
+    pub variations: Vec<RecipeVariation>,
 }
 
 /// One expanded recipe variation.
@@ -94,6 +94,11 @@ pub fn expand_recipe(flags: &ProfileFlags) -> anyhow::Result<Option<RecipeSweep>
     let Some(recipe) = flags.search_recipe.as_deref() else {
         return Ok(None);
     };
+    if recipe == "pareto-sweep" {
+        return Ok(Some(RecipeSweep {
+            variations: expand_pareto(flags)?,
+        }));
+    }
     let axes = match recipe {
         "concurrency-ramp" => vec![RecipeAxis {
             path: "phases.profiling.concurrency",
@@ -150,56 +155,111 @@ pub fn expand_recipe(flags: &ProfileFlags) -> anyhow::Result<Option<RecipeSweep>
              concurrency-ramp, prefill-ttft-curve, decode-itl-curve)"
         ),
     };
-    Ok(Some(RecipeSweep { axes }))
+    Ok(Some(RecipeSweep {
+        variations: expand_axes(&axes),
+    }))
 }
 
-impl RecipeSweep {
-    /// Cartesian-product expansion of the axes (sorted by dotted path, last axis
-    /// fastest — Python `itertools.product` over sorted `sweep_parameters`).
-    pub fn expand(&self) -> Vec<RecipeVariation> {
-        // Sort axes by dotted path (stable label + combination order).
-        let mut order: Vec<usize> = (0..self.axes.len()).collect();
-        order.sort_by_key(|&i| self.axes[i].path);
+/// Cartesian-product expansion of recipe axes (sorted by dotted path, last axis
+/// fastest — Python `itertools.product` over sorted `sweep_parameters`). Labels
+/// are `"path=value, ..."`, dir names `"seg_value__..."`, values keyed by path.
+fn expand_axes(axes: &[RecipeAxis]) -> Vec<RecipeVariation> {
+    let mut order: Vec<usize> = (0..axes.len()).collect();
+    order.sort_by_key(|&i| axes[i].path);
 
-        let mut combos: Vec<Vec<usize>> = vec![vec![]];
-        for &ai in &order {
-            let mut next = Vec::new();
-            for prefix in &combos {
-                for vi in 0..self.axes[ai].values.len() {
-                    let mut p = prefix.clone();
-                    p.push(vi);
-                    next.push(p);
-                }
+    let mut combos: Vec<Vec<usize>> = vec![vec![]];
+    for &ai in &order {
+        let mut next = Vec::new();
+        for prefix in &combos {
+            for vi in 0..axes[ai].values.len() {
+                let mut p = prefix.clone();
+                p.push(vi);
+                next.push(p);
             }
-            combos = next;
         }
-
-        combos
-            .into_iter()
-            .enumerate()
-            .map(|(index, combo)| {
-                let mut label = Vec::new();
-                let mut dir = Vec::new();
-                let mut overrides = Vec::new();
-                let mut values = Vec::new();
-                for (&ai, &vi) in order.iter().zip(combo.iter()) {
-                    let axis = &self.axes[ai];
-                    let v = axis.values[vi];
-                    label.push(format!("{}={v}", axis.path));
-                    dir.push(format!("{}_{v}", axis.seg));
-                    overrides.push((axis.kind, v));
-                    values.push((axis.path.to_string(), v));
-                }
-                RecipeVariation {
-                    index,
-                    label: label.join(", "),
-                    dir_name: dir.join("__"),
-                    overrides,
-                    values,
-                }
-            })
-            .collect()
+        combos = next;
     }
+
+    combos
+        .into_iter()
+        .enumerate()
+        .map(|(index, combo)| {
+            let mut label = Vec::new();
+            let mut dir = Vec::new();
+            let mut overrides = Vec::new();
+            let mut values = Vec::new();
+            for (&ai, &vi) in order.iter().zip(combo.iter()) {
+                let axis = &axes[ai];
+                let v = axis.values[vi];
+                label.push(format!("{}={v}", axis.path));
+                dir.push(format!("{}_{v}", axis.seg));
+                overrides.push((axis.kind, v));
+                values.push((axis.path.to_string(), v));
+            }
+            RecipeVariation {
+                index,
+                label: label.join(", "),
+                dir_name: dir.join("__"),
+                overrides,
+                values,
+            }
+        })
+        .collect()
+}
+
+/// Expand `pareto-sweep`: each `--isl-osl-pairs isl/osl` shape (outer) crossed
+/// with each `--concurrency` value (inner). Custom `shape_{isl}_{osl}_c{conc}`
+/// labels, `isl_{isl}__osl_{osl}__concurrency_{conc}` dirs, and `{concurrency,
+/// isl, osl}` values (Python `_pareto_sweep`).
+fn expand_pareto(flags: &ProfileFlags) -> anyhow::Result<Vec<RecipeVariation>> {
+    let pairs_raw = flags
+        .isl_osl_pairs
+        .as_ref()
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("pareto-sweep requires --isl-osl-pairs"))?;
+    // clap may split on whitespace; join then split on comma for `isl/osl` pairs.
+    let mut pairs: Vec<(i64, i64)> = Vec::new();
+    for token in pairs_raw.join(",").split(',').filter(|s| !s.is_empty()) {
+        let (isl, osl) = token
+            .split_once('/')
+            .ok_or_else(|| anyhow::anyhow!("--isl-osl-pairs {token:?} expected 'isl/osl'"))?;
+        pairs.push((
+            isl.trim().parse().map_err(|_| anyhow::anyhow!("bad isl in {token:?}"))?,
+            osl.trim().parse().map_err(|_| anyhow::anyhow!("bad osl in {token:?}"))?,
+        ));
+    }
+    // Concurrency list (default [1]); comma-list from --concurrency.
+    let conc: Vec<i64> = match flags.concurrency.as_deref() {
+        Some(c) => c
+            .split(',')
+            .map(|s| s.trim().parse().map_err(|_| anyhow::anyhow!("bad concurrency {s:?}")))
+            .collect::<anyhow::Result<_>>()?,
+        None => vec![1],
+    };
+
+    let mut out = Vec::new();
+    let mut index = 0;
+    for &(isl, osl) in &pairs {
+        for &c in &conc {
+            out.push(RecipeVariation {
+                index,
+                label: format!("shape_{isl}_{osl}_c{c}"),
+                dir_name: format!("isl_{isl}__osl_{osl}__concurrency_{c}"),
+                overrides: vec![
+                    (AxisKind::IslScalar, isl),
+                    (AxisKind::OslScalar, osl),
+                    (AxisKind::PhaseConcurrency, c),
+                ],
+                values: vec![
+                    ("concurrency".to_string(), c),
+                    ("isl".to_string(), isl),
+                    ("osl".to_string(), osl),
+                ],
+            });
+            index += 1;
+        }
+    }
+    Ok(out)
 }
 
 /// Apply one recipe override onto a built `cfg` value (mirrors Python's raw

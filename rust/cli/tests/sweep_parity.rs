@@ -146,7 +146,7 @@ fn yaml_sweep_cells_match_oracle() {
 fn search_recipe_cells_match_oracle() {
     // A grid `--search-recipe` expands its log-spaced search space into a static
     // sweep; native must reproduce the oracle's per-cell list byte-exact.
-    for name in ["recipe_ramp", "recipe_prefill", "recipe_decode"] {
+    for name in ["recipe_ramp", "recipe_prefill", "recipe_decode", "recipe_pareto"] {
         let golden = load_golden(name);
         let cells_g = golden["cells"].as_array().expect("cells array");
         let flags = ProfileFlags::parse_from_args(&fixture_args(name))
