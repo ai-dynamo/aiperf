@@ -5,11 +5,18 @@
 import shutil
 
 import pytest
-from pytest import approx
+from pytest import approx, param
 
+from aiperf.common import random_generator as rng
+from aiperf.common.enums import VideoFormat, VideoSynthType
+from aiperf.config.dataset.video import VideoConfig
+from aiperf.dataset.generator.video import VideoGenerator
 from tests.harness.utils import AIPerfCLI, AIPerfMockServer
 from tests.integration.conftest import IntegrationTestDefaults as defaults
-from tests.integration.utils import iter_video_details
+from tests.integration.utils import (
+    iter_video_details,
+    probe_container_duration_without_decode,
+)
 
 FFMPEG_AVAILABLE = shutil.which("ffmpeg") is not None
 
@@ -160,3 +167,60 @@ class TestVideo:
         assert videos, "No video content found in payloads"
         for details in videos:
             assert not details.has_audio, "Video should not have audio when disabled"
+
+
+@pytest.mark.skipif(not FFMPEG_AVAILABLE, reason="ffmpeg not installed")
+@pytest.mark.ffmpeg
+@pytest.mark.integration
+class TestVideoContainerMetadata:
+    """Guards that synthetic clips carry container-level timing metadata.
+
+    Regression for a nightly failure where the synthetic VP9/WebM clip was
+    muxed to a non-seekable pipe, leaving the container duration empty. A
+    metadata-only frame sampler (vLLM's video loader) then derived a zero/garbage
+    frame count and crashed in ``torch.arange`` on every request.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _seeded_rng(self):
+        """Seed the shared RNG deterministically, restoring it afterwards.
+
+        The generator needs the module-level RNG initialized, and integration
+        tests have no autouse RNG reset (unlike unit tests), so this also keeps
+        the seed from leaking into later tests.
+        """
+        rng.reset()
+        rng.init(42)
+        yield
+        rng.reset()
+
+    @pytest.mark.parametrize(
+        "video_format,video_codec",
+        [
+            param(VideoFormat.WEBM, "libvpx-vp9", id="webm-vp9"),
+            param(VideoFormat.MP4, "libx264", id="mp4-h264"),
+        ],
+    )  # fmt: skip
+    def test_synthetic_video_records_container_duration(
+        self, video_format: VideoFormat, video_codec: str
+    ):
+        """Generated clip reports a valid duration without a full-decode fallback."""
+        width, height, fps, duration = 640, 480, 4, 5.0
+        config = VideoConfig(
+            width=width,
+            height=height,
+            duration=duration,
+            fps=fps,
+            format=video_format,
+            codec=video_codec,
+            synth_type=VideoSynthType.MOVING_SHAPES,
+        )
+        data_uri = VideoGenerator(config).generate()
+        base64_data = data_uri.split(",", 1)[1]
+
+        probed = probe_container_duration_without_decode(base64_data)
+        assert probed is not None, (
+            f"{video_format} container carries no duration metadata; a "
+            "metadata-only decoder cannot derive a frame count"
+        )
+        assert probed == approx(duration, abs=0.2)

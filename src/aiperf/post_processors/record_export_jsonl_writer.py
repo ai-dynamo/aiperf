@@ -19,10 +19,15 @@ if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
 
-class RecordExportResultsProcessor(
+class RecordExportJSONLWriter(
     BaseMetricsProcessor, BufferedJSONLWriterMixin[MetricRecordInfo]
 ):
-    """Exports per-record metrics to JSONL with display unit conversion and filtering."""
+    """Exports per-record metrics to JSONL with display unit conversion and filtering.
+
+    Registered as a ``stream_exporter``: writes each record to the on-disk
+    JSONL sink as it arrives, with no end-of-run aggregation. Self-disables
+    when ``artifacts.export_level`` is not ``RECORDS`` or ``RAW``.
+    """
 
     def __init__(
         self,
@@ -33,14 +38,13 @@ class RecordExportResultsProcessor(
         export_level = run.cfg.artifacts.export_level
         if export_level not in (ExportLevel.RECORDS, ExportLevel.RAW):
             raise PostProcessorDisabled(
-                f"Record export results processor is disabled for export level {export_level}"
+                f"Record export JSONL writer is disabled for export level {export_level}"
             )
 
         output_file = run.cfg.artifacts.profile_export_jsonl_file
         output_file.parent.mkdir(parents=True, exist_ok=True)
         output_file.unlink(missing_ok=True)
 
-        # Initialize parent classes with the output file
         super().__init__(
             output_file=output_file,
             batch_size=Environment.RECORD.EXPORT_BATCH_SIZE,
@@ -59,7 +63,7 @@ class RecordExportResultsProcessor(
         if self.export_http_trace:
             self.info("HTTP trace export enabled (--export-http-trace)")
 
-    async def process_result(self, record_data: MetricRecordsData) -> None:
+    async def process_record(self, record_data: MetricRecordsData) -> None:
         try:
             metric_dict = MetricRecordDict(record_data.metrics)
             display_metrics = metric_dict.to_display_dict(
@@ -85,9 +89,20 @@ class RecordExportResultsProcessor(
             # Write using the buffered writer mixin (handles batching and flushing)
             await self.buffered_write(record_info)
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - per-record; skip bad record and continue
             self.error(f"Failed to write record metrics: {e}")
 
     async def summarize(self) -> list[MetricResult]:
-        """Summarize the results. For this processor, we don't need to summarize anything."""
+        """No aggregation needed for JSONL export."""
         return []
+
+    async def finalize(self) -> None:
+        """Flush the JSONL writer at end-of-run.
+
+        Called by RecordsManager after the final summarize() and before
+        publishing the records-result message. Without this, downstream
+        consumers can see results_exported=True before this writer's
+        @on_stop _close_file fires — opening a window where /api/results
+        serves a partial profile_export.jsonl.
+        """
+        await self._close_file()

@@ -9,7 +9,14 @@ from aiperf.common import random_generator as rng
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.composer.synthetic import SyntheticDatasetComposer
+from tests.harness.optional_deps import HAS_SOUNDFILE
 from tests.unit.dataset.composer.conftest import make_run
+
+# Audio synthesis needs soundfile/libsndfile, which has no Windows-on-ARM build.
+_needs_soundfile = pytest.mark.skipif(
+    not HAS_SOUNDFILE,
+    reason="soundfile/libsndfile unavailable (e.g. Windows-on-ARM)",
+)
 
 
 class TestSyntheticDatasetComposer:
@@ -131,6 +138,7 @@ class TestSyntheticDatasetComposer:
                 assert isinstance(image, Image)
                 assert image.name == "image_url"
 
+    @_needs_soundfile
     def test_create_dataset_with_audio(self, audio_config, mock_tokenizer):
         """Test dataset creation with audio generation enabled."""
         composer = SyntheticDatasetComposer(
@@ -153,6 +161,7 @@ class TestSyntheticDatasetComposer:
                 audio = turn.audios[0]
                 assert isinstance(audio, Audio)
 
+    @_needs_soundfile
     def test_create_dataset_multimodal(self, multimodal_config, mock_tokenizer):
         """Test dataset creation with both image and audio enabled."""
         composer = SyntheticDatasetComposer(
@@ -243,6 +252,7 @@ class TestSyntheticDatasetComposer:
         # Test subsequent turns have delays
         assert turn.delay == 1500
 
+    @_needs_soundfile
     def test_create_turn_with_all_modalities(self, multimodal_config, mock_tokenizer):
         """Test _create_turn method with text, image, and audio."""
         multimodal_config.conversation_turn_delay_mean = 1500
@@ -617,6 +627,7 @@ class TestSyntheticDatasetComposer:
         ):
             composer.create_dataset()
 
+    @_needs_soundfile
     def test_reproducibility_with_fixed_seed(self, multimodal_config, mock_tokenizer):
         """Test that dataset generation is reproducible with fixed random seed."""
         multimodal_config.prompt_input_tokens_stddev = 2

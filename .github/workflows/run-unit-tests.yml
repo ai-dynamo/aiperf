@@ -11,11 +11,17 @@ on:
 jobs:
   build:
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    # Windows x64 runners can finish the component tier just past 30 minutes.
+    timeout-minutes: 45
+    # Force CPython UTF-8 mode so file reads default to UTF-8 instead of the
+    # Windows cp1252 code page (no-op on POSIX). Without it, reading a UTF-8
+    # file on Windows raises UnicodeDecodeError on bytes like 0x8f.
+    env:
+      PYTHONUTF8: "1"
     strategy:
       fail-fast: false
       matrix:
-        os: [linux, macos, windows]
+        os: [linux, macos, windows, windows-arm]
         python-version: ["3.11", "3.12", "3.13"]
         include:
           - os: linux
@@ -24,6 +30,8 @@ jobs:
             runner: macos-latest
           - os: windows
             runner: windows-latest
+          - os: windows-arm
+            runner: windows-11-arm
 
     steps:
     - uses: actions/checkout@v6
@@ -44,7 +52,7 @@ jobs:
       run: |
         make ci-install PYTHON_VERSION=${{ matrix.python-version }}
     - name: Install dependencies (Windows)
-      if: runner.os == 'Windows'
+      if: matrix.os == 'windows'
       # Mirror the POSIX ``make ci-install`` artifact-generation steps
       # (mock-server import check, generate-plugin-enums, generate-plugin-
       # overloads) so Windows runs the same generated code as POSIX. The
@@ -62,6 +70,26 @@ jobs:
       run: |
         uv venv .venv --python ${{ matrix.python-version }}
         uv pip install -e ".[dev]"
+        uv pip install -e "tests/aiperf_mock_server[dev]"
+        uv run python -c "import aiperf_mock_server"
+        uv run python tools/generate_plugin_artifacts.py --enums
+        uv run python tools/generate_plugin_artifacts.py --overloads
+    # Windows-on-ARM has no win_arm64 wheel for pyarrow (and ``dev`` pulls it
+    # transitively via mlflow), so install the pure-Python ``test`` extra here
+    # instead of ``dev``. The base package itself is arm-safe (pyarrow/datasets
+    # are environment-marker-excluded; soundfile is lazy-imported). Tests that
+    # hard-depend on the absent native libs are skipped via collect_ignore in
+    # tests/unit/conftest.py.
+    - name: Install dependencies (Windows ARM)
+      if: matrix.os == 'windows-arm'
+      # bash (git-bash) runs with -eo pipefail, so a failed install fails the
+      # step. The default Windows shell is PowerShell, which does NOT fail-fast
+      # on a non-final failing command -- a broken install would otherwise be
+      # masked by the trailing artifact-generation commands and report green.
+      shell: bash
+      run: |
+        uv venv .venv --python ${{ matrix.python-version }}
+        uv pip install -e ".[test]"
         uv pip install -e "tests/aiperf_mock_server[dev]"
         uv run python -c "import aiperf_mock_server"
         uv run python tools/generate_plugin_artifacts.py --enums
