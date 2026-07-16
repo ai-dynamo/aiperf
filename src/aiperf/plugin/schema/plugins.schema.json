@@ -109,9 +109,17 @@
     "record_processor": {
       "title": "Record Processor Plugins",
       "type": "object",
-      "description": "Record processors stream records and compute metrics in a distributed manner.\nFirst stage of metrics pipeline, handling per-record computations.\nOne-to-many mapping: multiple processors can be loaded simultaneously.",
+      "description": "Record PRODUCERS parse a record and emit one typed result on a declared\nrecord-type channel. First stage of the metrics pipeline, handling per-record\ncomputations. One-to-many mapping: multiple producers can be loaded simultaneously.",
       "additionalProperties": {
         "$ref": "#/$defs/RecordProcessorPlugin"
+      }
+    },
+    "record_observer": {
+      "title": "Record Observer Plugins",
+      "type": "object",
+      "description": "Record OBSERVERS view the produced results + the record and act (e.g. write\nJSONL); they return nothing and emit no channel record. Second stage of the\nrecord-processor service. One-to-many mapping: multiple observers loaded simultaneously.",
+      "additionalProperties": {
+        "$ref": "#/$defs/RecordObserverPlugin"
       }
     },
     "accumulator": {
@@ -1071,6 +1079,48 @@
           "type": "integer"
         },
         "metadata": {
+          "description": "Metadata schema for record producer plugins.\n\nProducers parse a record and emit one typed result on a declared record-type\nchannel. RecordProcessorService groups producer outputs by this declared\n``record_type`` (rather than runtime type-sniffing) and routes each group to\nits dedicated downstream message.\n\nReferenced by: categories.yaml record_processor.metadata_class\nUsed in: plugins.yaml record_processor entries",
+          "properties": {
+            "record_type": {
+              "description": "The record_type channel this producer emits onto (e.g. 'metric_records', 'accuracy').",
+              "title": "Record Type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "record_type"
+          ],
+          "title": "RecordProducerMetadata",
+          "type": "object"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Record Processor Plugin",
+      "description": "Record PRODUCERS parse a record and emit one typed result on a declared\nrecord-type channel. First stage of the metrics pipeline, handling per-record\ncomputations. One-to-many mapping: multiple producers can be loaded simultaneously."
+    },
+    "RecordObserverPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
           "anyOf": [
             {
               "additionalProperties": true,
@@ -1088,8 +1138,8 @@
       "required": [
         "class"
       ],
-      "title": "Record Processor Plugin",
-      "description": "Record processors stream records and compute metrics in a distributed manner.\nFirst stage of metrics pipeline, handling per-record computations.\nOne-to-many mapping: multiple processors can be loaded simultaneously."
+      "title": "Record Observer Plugin",
+      "description": "Record OBSERVERS view the produced results + the record and act (e.g. write\nJSONL); they return nothing and emit no channel record. Second stage of the\nrecord-processor service. One-to-many mapping: multiple observers loaded simultaneously."
     },
     "AccumulatorPlugin": {
       "type": "object",

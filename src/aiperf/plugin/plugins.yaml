@@ -955,10 +955,10 @@ ramp:
       Provides stochastic burstiness while guaranteeing completion within duration.
 
 # =============================================================================
-# Record Processors
+# Record Processors (Producers)
 # =============================================================================
-# Record processors stream records and compute metrics in a distributed manner.
-# One-to-many mapping: multiple processors can be loaded simultaneously.
+# Record PRODUCERS parse a record and emit one typed result on a declared
+# record-type channel. One-to-many mapping: multiple producers loaded simultaneously.
 # =============================================================================
 record_processor:
   metric_record:
@@ -967,23 +967,35 @@ record_processor:
       Streaming record processor that computes metrics from MetricType.RECORD and
       MetricType.AGGREGATE. First stage of distributed processing pipeline.
       Always loaded.
-
-  raw_record_writer:
-    class: aiperf.post_processors.raw_record_writer_processor:RawRecordWriterProcessor
-    description: |
-      Raw record writer that streams raw request/response data to JSONL files
-      for detailed analysis and debugging. Enabled when export_level is RAW.
+    metadata:
+      record_type: metric_records
 
   accuracy_record:
     class: aiperf.accuracy.accuracy_record_processor:AccuracyRecordProcessor
     description: |
       Accuracy record processor that grades LLM responses against ground truth
       for accuracy benchmarking. Self-disables when accuracy mode is off.
+    metadata:
+      record_type: accuracy
+
+# =============================================================================
+# Record Observers
+# =============================================================================
+# Record OBSERVERS view the produced results + the record and act (e.g. write
+# JSONL); they return nothing and emit no channel record.
+# One-to-many mapping: multiple observers loaded simultaneously.
+# =============================================================================
+record_observer:
+  raw_record_writer:
+    class: aiperf.post_processors.raw_record_writer_processor:RawRecordWriterProcessor
+    description: |
+      Raw record writer that streams raw request/response data to JSONL files
+      for detailed analysis and debugging. Enabled when export_level is RAW.
 
   outputs_json:
     class: aiperf.post_processors.outputs_json_record_processor:OutputsJsonRecordProcessor
     description: |
-      Outputs JSON record processor that captures model response text per request.
+      Outputs JSON record observer that captures model response text per request.
       Enabled when --export-outputs-json is set. Writes per-processor fragment files.
 
 # =============================================================================

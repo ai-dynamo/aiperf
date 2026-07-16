@@ -26,11 +26,8 @@ from aiperf.common.enums import (
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_command, on_message, on_pull_message
 from aiperf.common.messages import (
-    AccuracyRecordsMessage,
     AllRecordsReceivedMessage,
     DatasetConfiguredNotification,
-    MetricRecordsData,
-    MetricRecordsMessage,
     NetworkLatencyRecordMessage,
     ProcessAccuracyResultMessage,
     ProcessAllResultsMessage,
@@ -42,6 +39,7 @@ from aiperf.common.messages import (
     ProfileCompleteCommand,
     RealtimeMetricsCommand,
     RealtimeMetricsMessage,
+    RecordsMessage,
     RecordsProcessingStatsMessage,
     ServerMetricsRecordMessage,
     StartRealtimeTelemetryCommand,
@@ -72,10 +70,6 @@ from aiperf.credit.messages import (
 )
 from aiperf.gpu_telemetry.protocols import GPUTelemetryAccumulatorProtocol
 from aiperf.metrics.accumulator_models import AccumulatorMetricsSummary
-from aiperf.metrics.cache_reporting_hint import (
-    CACHE_REPORTING_HINT,
-    usage_without_cache_in_record,
-)
 from aiperf.network_latency.accumulator import NetworkLatencyAccumulator
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
@@ -359,9 +353,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     many records before finalizing results.
     """
 
-    # The "enable cache reporting" server-knob hint fires at most once per run.
-    _warned_missing_cache_reporting: bool = False
-
     def __init__(
         self,
         run: BenchmarkRun,
@@ -529,25 +520,29 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             handler_names = [handler.__class__.__name__ for handler in handlers]
             self.debug(lambda rt=record_type, hn=handler_names: f"  {rt} -> {hn}")
 
-    @on_pull_message(MessageType.METRIC_RECORDS)
-    async def _on_metric_records(self, message: MetricRecordsMessage) -> None:
-        """Handle a metric records message."""
+    @on_pull_message(MessageType.RECORDS)
+    async def _on_records(self, message: RecordsMessage) -> None:
+        """Handle a per-request records envelope generically.
+
+        One ``RecordsMessage`` == one inference request. Each contained record
+        self-identifies via its ``record_type`` ClassVar and is dispatched to its
+        registered handlers; the per-request lockstep keys off the message
+        envelope (``message.metadata`` / ``message.error``), never off sniffing a
+        record type.
+        """
         if not await await_dataset_configured(self, self._dataset_configured_event):
             return
         if self.is_trace_enabled:
-            self.trace(f"Received metric records: {message}")
+            self.trace(f"Received records: {message}")
 
-        record_data = message.to_data()
+        dispatch_errors: list[BaseException] = []
+        for record in message.records:
+            dispatch_errors.extend(await self._dispatch_record(record))
 
-        self._maybe_hint_missing_cache_reporting(record_data)
-
-        phase = record_data.metadata.benchmark_phase
-        dispatch_errors = await self._dispatch_record(record_data)
-        self._records_tracker.update_from_record_data(record_data)
-        if record_data.error:
-            self._error_tracker.increment_error_count_for_phase(
-                phase, record_data.error
-            )
+        phase = message.metadata.benchmark_phase
+        self._records_tracker.update_from_request(message.metadata, message.error)
+        if message.error:
+            self._error_tracker.increment_error_count_for_phase(phase, message.error)
         # A metric accumulator/exporter that failed to ingest this record yields
         # incomplete metrics; surface it in the phase error summary rather than
         # marking the record cleanly processed and silently dropping the failure.
@@ -588,18 +583,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 ] += 1
         elif message.error:
             self._server_metrics_state.error_counts[message.error] += 1
-
-    @on_pull_message(MessageType.ACCURACY_RECORD)
-    async def _on_accuracy_records(self, message: AccuracyRecordsMessage) -> None:
-        """Handle graded accuracy records from a record processor.
-
-        The routing table auto-includes ``"accuracy"`` from plugin metadata, so
-        ``_dispatch_record`` fans each record out to the AccuracyAccumulator and
-        AccuracyJSONLWriter without any accuracy-specific routing code here.
-        """
-        for record in message.records:
-            for error in await self._dispatch_record(record):
-                self.debug(lambda e=error: f"Accuracy record dispatch error: {e!r}")
 
     @on_pull_message(MessageType.NETWORK_LATENCY_RECORD)
     async def _on_network_latency_records(
@@ -1039,21 +1022,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         plain list[MetricResult] shapes via the shared helper.
         """
         return await generate_realtime_metrics(self._metric_record_accumulators)
-
-    def _maybe_hint_missing_cache_reporting(
-        self, record_data: MetricRecordsData
-    ) -> None:
-        """Warn once, mid-run, when the server reports token usage but no prompt-cache
-        reads — the signature of a cache-capable server that hasn't been told to
-        report ``cached_tokens``. Fires on the first qualifying record so a long run
-        can be aborted and re-launched with the flag set; the end-of-run console
-        exporter emits the same hint for anyone who only reads the final summary.
-        """
-        if self._warned_missing_cache_reporting:
-            return
-        if usage_without_cache_in_record(record_data.metrics):
-            self._warned_missing_cache_reporting = True
-            self.warning(CACHE_REPORTING_HINT)
 
     async def _run_analyzers(self, ctx: SummaryContext) -> list[MetricResult]:
         """Run summarize-time analyzer plugins that join across accumulators.

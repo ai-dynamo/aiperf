@@ -1296,7 +1296,7 @@ class MetricRecordInfo(AIPerfBaseModel):
 
     metadata: MetricRecordMetadata = Field(
         ...,
-        description="The metadata of the record. Should match the metadata in the MetricRecordsMessage.",
+        description="The metadata of the record. Should match the metadata in the RecordsMessage.",
     )
     metrics: dict[str, MetricValue] = Field(
         ...,
@@ -1319,7 +1319,7 @@ class RawRecordInfo(AIPerfBaseModel):
 
     metadata: MetricRecordMetadata = Field(
         ...,
-        description="The metadata of the record. Should match the metadata in the MetricRecordsMessage.",
+        description="The metadata of the record. Should match the metadata in the RecordsMessage.",
     )
     start_perf_ns: int = Field(
         default_factory=time.perf_counter_ns,

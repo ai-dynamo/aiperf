@@ -512,6 +512,23 @@ class RecordRoutingMetadata(BaseModel):
     )
 
 
+class RecordProducerMetadata(BaseModel):
+    """Metadata schema for record producer plugins.
+
+    Producers parse a record and emit one typed result on a declared record-type
+    channel. RecordProcessorService groups producer outputs by this declared
+    ``record_type`` (rather than runtime type-sniffing) and routes each group to
+    its dedicated downstream message.
+
+    Referenced by: categories.yaml record_processor.metadata_class
+    Used in: plugins.yaml record_processor entries
+    """
+
+    record_type: str = Field(
+        description="The record_type channel this producer emits onto (e.g. 'metric_records', 'accuracy').",
+    )
+
+
 class AnalyzerMetadata(BaseModel):
     """Metadata schema for analyzer plugins.
 

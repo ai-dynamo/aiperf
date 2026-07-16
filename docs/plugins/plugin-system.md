@@ -100,7 +100,7 @@ for entry, cls in plugins.iter_all(PluginType.ENDPOINT):
 
 ## Plugin Categories
 
-AIPerf supports 33 plugin categories organized by function, including `api_router` and `public_dataset_loader`:
+AIPerf supports 34 plugin categories organized by function, including `api_router` and `public_dataset_loader`:
 
 ### Timing Categories
 
@@ -133,7 +133,8 @@ AIPerf supports 33 plugin categories organized by function, including `api_route
 
 | Category | Enum | Description |
 |----------|------|-------------|
-| `record_processor` | `RecordProcessorType` | Per-record metric computation |
+| `record_processor` | `RecordProcessorType` | Record PRODUCERS: parse a record and emit one finished typed record on a declared record-type channel (stage 1) |
+| `record_observer` | `RecordObserverType` | Record OBSERVERS: view the produced records + the record and act (e.g. write JSONL); emit no channel record (stage 2) |
 | `accumulator` | `AccumulatorType` | Record-type-routed aggregation and summary computation |
 | `analyzer` | `AnalyzerType` | Summarize-time cross-accumulator joins (e.g. energy efficiency), reading peers via `SummaryContext` |
 | `stream_exporter` | `StreamExporterType` | Record-type-routed streaming sinks such as JSONL and OpenTelemetry |

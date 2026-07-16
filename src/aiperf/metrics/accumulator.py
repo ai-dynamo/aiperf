@@ -26,6 +26,10 @@ from aiperf.common.types import MetricTagT
 from aiperf.metrics.accumulator_models import AccumulatorMetricsSummary
 from aiperf.metrics.accumulator_sweeps import compute_sweep_curves
 from aiperf.metrics.base_metric import BaseMetric
+from aiperf.metrics.cache_reporting_hint import (
+    CACHE_REPORTING_HINT,
+    usage_without_cache_in_record,
+)
 from aiperf.metrics.column_store import ColumnStore
 from aiperf.metrics.derived_latency import (
     inject_adjusted_latency_metrics,
@@ -104,6 +108,9 @@ class MetricsAccumulator(BaseMetricsProcessor):
         # emitted by inject_replay_sched_lag_metrics (fires at most once per run).
         self._replay_degraded_warned: bool = False
 
+        # One-shot latch for the mid-run "enable cache reporting" server-knob hint.
+        self._warned_missing_cache_reporting: bool = False
+
         # Derive functions for DERIVED metrics
         # _setup_metrics includes transitive dependencies (RECORD/AGGREGATE),
         # so filter to only metrics that actually have derive_value.
@@ -161,6 +168,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
     async def process_record(self, record: MetricRecordsData) -> None:
         """Ingest a single ``MetricRecordsData`` into columnar storage."""
+        self._maybe_hint_missing_cache_reporting(record)
         idx = self._next_record_idx
         self._next_record_idx += 1
         meta = record.metadata
@@ -205,6 +213,19 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 "conversation_id": meta.conversation_id,
             },
         )
+
+    def _maybe_hint_missing_cache_reporting(self, record: MetricRecordsData) -> None:
+        """Warn once, mid-run, when the server reports token usage but no prompt-cache
+        reads — the signature of a cache-capable server that hasn't been told to
+        report ``cached_tokens``. Fires on the first qualifying record so a long run
+        can be aborted and re-launched with the flag set; the end-of-run console
+        exporter emits the same hint for anyone who only reads the final summary.
+        """
+        if self._warned_missing_cache_reporting:
+            return
+        if usage_without_cache_in_record(record.metrics):
+            self._warned_missing_cache_reporting = True
+            self.warning(CACHE_REPORTING_HINT)
 
     def query_time_range(self, start_ns: int, end_ns: int) -> BoolArray:
         """Return a boolean mask where True marks records in [start_ns, end_ns)."""

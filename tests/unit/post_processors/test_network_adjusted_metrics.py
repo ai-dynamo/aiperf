@@ -20,7 +20,7 @@ from aiperf.metrics.types.time_to_first_output_token_metric import (
     TimeToFirstOutputTokenMetric,
 )
 from aiperf.metrics.types.ttft_metric import TTFTMetric
-from tests.unit.post_processors.conftest import create_metric_records_message
+from tests.unit.post_processors.conftest import create_metric_records_data
 
 _PERCENTILE_ATTRS = ("p1", "p5", "p10", "p25", "p50", "p75", "p90", "p95", "p99")
 _SHIFT_ATTRS = ("min", "max", "avg", *_PERCENTILE_ATTRS)
@@ -49,12 +49,12 @@ async def _seed_records(
     for idx in range(length):
         metrics = {tag: values[idx] for tag, values in series_by_tag.items()}
         await accumulator.process_record(
-            create_metric_records_message(
+            create_metric_records_data(
                 x_request_id=f"r-{idx}",
                 request_start_ns=1_000_000_000 + idx,
                 request_end_ns=1_100_000_000 + idx,
                 results=[metrics],
-            ).to_data()
+            )
         )
 
 
@@ -335,12 +335,12 @@ class TestNetworkAdjustedTimeslices:
         latencies = [4_000_000.0, 6_000_000.0, 4_000_000.0, 6_000_000.0]
         for idx, (start, lat) in enumerate(zip(starts, latencies, strict=True)):
             await accumulator.process_record(
-                create_metric_records_message(
+                create_metric_records_data(
                     x_request_id=f"r-{idx}",
                     request_start_ns=start,
                     request_end_ns=start + int(lat),
                     results=[{RequestLatencyMetric.tag: lat, TTFTMetric.tag: lat / 2}],
-                ).to_data()
+                )
             )
 
     async def test_network_adjusted_present_in_every_timeslice(self, mock_run) -> None:

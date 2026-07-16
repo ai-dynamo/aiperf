@@ -146,11 +146,20 @@ transport:
 
 record_processor:
   protocol: aiperf.post_processors.protocols:RecordProcessorProtocol
+  metadata_class: aiperf.plugin.schema.schemas:RecordProducerMetadata
   enum: RecordProcessorType
   description: |
-    Record processors stream records and compute metrics in a distributed manner.
-    First stage of metrics pipeline, handling per-record computations.
-    One-to-many mapping: multiple processors can be loaded simultaneously.
+    Record PRODUCERS parse a record and emit one typed result on a declared
+    record-type channel. First stage of the metrics pipeline, handling per-record
+    computations. One-to-many mapping: multiple producers can be loaded simultaneously.
+
+record_observer:
+  protocol: aiperf.post_processors.protocols:RecordObserverProtocol
+  enum: RecordObserverType
+  description: |
+    Record OBSERVERS view the produced results + the record and act (e.g. write
+    JSONL); they return nothing and emit no channel record. Second stage of the
+    record-processor service. One-to-many mapping: multiple observers loaded simultaneously.
 
 accumulator:
   protocol: aiperf.common.accumulator_protocols:AccumulatorProtocol

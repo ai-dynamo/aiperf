@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.messages.accuracy_messages import (
-    AccuracyRecordsMessage,
     ProcessAccuracyResultMessage,
 )
 from aiperf.common.messages.base_messages import (
@@ -43,8 +42,8 @@ from aiperf.common.messages.dataset_messages import (
 from aiperf.common.messages.inference_messages import (
     InferenceResultsMessage,
     MetricRecordsData,
-    MetricRecordsMessage,
     RealtimeMetricsMessage,
+    RecordsMessage,
 )
 from aiperf.common.messages.network_latency_messages import (
     NetworkLatencyRecordMessage,
@@ -81,7 +80,6 @@ from aiperf.common.messages.worker_messages import (
 )
 
 __all__ = [
-    "AccuracyRecordsMessage",
     "AllRecordsReceivedMessage",
     "BaseServiceErrorMessage",
     "BaseServiceMessage",
@@ -104,7 +102,6 @@ __all__ = [
     "InferenceResultsMessage",
     "Message",
     "MetricRecordsData",
-    "MetricRecordsMessage",
     "NetworkLatencyRecordMessage",
     "ProcessRecordsCommand",
     "ProcessRecordsResponse",
@@ -121,6 +118,7 @@ __all__ = [
     "RealtimeMetricsCommand",
     "RealtimeMetricsMessage",
     "RealtimeTelemetryMetricsMessage",
+    "RecordsMessage",
     "RecordsProcessingStatsMessage",
     "RegisterServiceCommand",
     "RegistrationMessage",

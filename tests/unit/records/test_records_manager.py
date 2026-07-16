@@ -13,7 +13,7 @@ from aiperf.common.enums import CreditPhase
 from aiperf.common.messages import BaseServiceErrorMessage
 from aiperf.common.messages.inference_messages import (
     MetricRecordsData,
-    MetricRecordsMessage,
+    RecordsMessage,
 )
 from aiperf.common.messages.telemetry_messages import TelemetryRecordsMessage
 from aiperf.common.models import (
@@ -36,6 +36,7 @@ from aiperf.credit.messages import (
     CreditPhaseStartMessage,
     CreditsCompleteMessage,
 )
+from aiperf.metrics.accumulator import MetricsAccumulator
 from aiperf.metrics.accumulator_models import AccumulatorMetricsSummary
 from aiperf.metrics.cache_reporting_hint import CACHE_REPORTING_HINT
 from aiperf.plugin.enums import AccumulatorType, TimingMode
@@ -158,12 +159,17 @@ class TestRecordsManagerMetricRecordDispatchErrors:
         manager.is_enabled_for = MagicMock(return_value=False)
         manager._dataset_configured_event = asyncio.Event()
         manager._dataset_configured_event.set()
-        manager._maybe_hint_missing_cache_reporting = MagicMock()
         manager._records_tracker = MagicMock()
         manager._records_tracker.check_and_set_all_records_received_for_phase.return_value = False
         manager._error_tracker = ErrorTracker()
         manager._complete_credit_phases = set()
         return manager
+
+    def _records_message(self) -> RecordsMessage:
+        record = create_metric_record_data(1_000, 2_000)
+        return RecordsMessage(
+            service_id="rp", metadata=record.metadata, records=[record]
+        )
 
     @pytest.mark.asyncio
     async def test_metric_dispatch_error_recorded_in_phase_error_summary(self) -> None:
@@ -171,13 +177,10 @@ class TestRecordsManagerMetricRecordDispatchErrors:
         dispatch_error = RuntimeError("metric accumulator failed")
         manager._dispatch_record = AsyncMock(return_value=[dispatch_error])
 
-        message = MagicMock()
-        message.to_data.return_value = create_metric_record_data(1_000, 2_000)
-
-        await manager._on_metric_records(message)
+        await manager._on_records(self._records_message())
 
         # Record is still counted, but the handler failure is not swallowed.
-        manager._records_tracker.update_from_record_data.assert_called_once()
+        manager._records_tracker.update_from_request.assert_called_once()
         summary = manager._error_tracker.get_error_summary_for_phase(
             CreditPhase.PROFILING
         )
@@ -189,10 +192,7 @@ class TestRecordsManagerMetricRecordDispatchErrors:
         manager = self._make_manager()
         manager._dispatch_record = AsyncMock(return_value=[])
 
-        message = MagicMock()
-        message.to_data.return_value = create_metric_record_data(1_000, 2_000)
-
-        await manager._on_metric_records(message)
+        await manager._on_records(self._records_message())
 
         assert (
             manager._error_tracker.get_error_summary_for_phase(CreditPhase.PROFILING)
@@ -295,7 +295,6 @@ def _create_manager_for_timing_dispatch() -> RecordsManager:
     manager._phase_branch_stats = {}
     manager._latest_branch_stats = None
     manager._dispatch_record = AsyncMock(return_value=[])
-    manager._maybe_hint_missing_cache_reporting = MagicMock()
     manager.info = MagicMock()
     manager.notice = MagicMock()
     manager.debug = MagicMock()
@@ -307,20 +306,25 @@ def _create_manager_for_timing_dispatch() -> RecordsManager:
 
 def _metric_records_message(
     phase: CreditPhase = CreditPhase.PROFILING,
-) -> MetricRecordsMessage:
-    return MetricRecordsMessage(
+) -> RecordsMessage:
+    metadata = MetricRecordMetadata(
+        session_num=17,
+        conversation_id="conv-2026-05-14-race",
+        turn_index=0,
+        request_start_ns=1_000_000_000,
+        request_end_ns=1_250_000_000,
+        worker_id="worker-a100-03",
+        record_processor_id="record-processor-rp-7f2a",
+        benchmark_phase=phase,
+    )
+    return RecordsMessage(
         service_id="record-processor-rp-7f2a",
-        metadata=MetricRecordMetadata(
-            session_num=17,
-            conversation_id="conv-2026-05-14-race",
-            turn_index=0,
-            request_start_ns=1_000_000_000,
-            request_end_ns=1_250_000_000,
-            worker_id="worker-a100-03",
-            record_processor_id="record-processor-rp-7f2a",
-            benchmark_phase=phase,
-        ),
-        results=[{"request_latency": 250_000_000}],
+        metadata=metadata,
+        records=[
+            MetricRecordsData(
+                metadata=metadata, metrics={"request_latency": 250_000_000}
+            )
+        ],
     )
 
 
@@ -404,9 +408,9 @@ class TestRecordsManagerTimingDispatch:
             final_requests_completed=64,
         )
 
-        await manager._on_metric_records(_metric_records_message())
+        await manager._on_records(_metric_records_message())
 
-        manager._records_tracker.update_from_record_data.assert_called_once()
+        manager._records_tracker.update_from_request.assert_called_once()
         manager._records_tracker.check_and_set_all_records_received_for_phase.assert_not_called()
         manager._handle_all_records_received.assert_not_awaited()
 
@@ -497,7 +501,7 @@ class TestRecordsManagerTimingDispatch:
         manager._records_tracker.check_and_set_all_records_received_for_phase.reset_mock()
         manager._records_tracker.check_and_set_all_records_received_for_phase.return_value = True
 
-        await manager._on_metric_records(_metric_records_message())
+        await manager._on_records(_metric_records_message())
 
         manager._records_tracker.check_and_set_all_records_received_for_phase.assert_called_once_with(
             CreditPhase.PROFILING
@@ -539,7 +543,7 @@ class TestRecordsManagerTimingDispatch:
             elif event == "credits_complete":
                 await manager._on_credits_complete(credits_complete)
             else:
-                await manager._on_metric_records(metric_record)
+                await manager._on_records(metric_record)
 
         manager._handle_all_records_received.assert_awaited_once_with(
             CreditPhase.PROFILING
@@ -573,7 +577,7 @@ class TestRecordsManagerTimingDispatch:
         )
         await timing_dispatch_started.wait()
 
-        await manager._on_metric_records(_metric_records_message())
+        await manager._on_records(_metric_records_message())
         manager._handle_all_records_received.assert_not_awaited()
 
         release_timing_dispatch.set()
@@ -594,9 +598,9 @@ class TestRecordsManagerTimingDispatch:
         manager._complete_credit_phases = {CreditPhase.PROFILING}
         manager._records_tracker.check_and_set_all_records_received_for_phase.return_value = True
 
-        await manager._on_metric_records(_metric_records_message())
+        await manager._on_records(_metric_records_message())
 
-        manager._records_tracker.update_from_record_data.assert_called_once()
+        manager._records_tracker.update_from_request.assert_called_once()
         manager._records_tracker.check_and_set_all_records_received_for_phase.assert_called_once_with(
             CreditPhase.PROFILING
         )
@@ -689,34 +693,34 @@ class TestRecordsManagerAnalyzerMetrics:
 
 
 class TestMidRunCacheReportingHint:
-    """RecordsManager warns once when usage lacks prompt-cache read tokens."""
+    """MetricsAccumulator warns once when usage lacks prompt-cache read tokens."""
 
-    def _manager(self) -> RecordsManager:
-        manager = RecordsManager.__new__(RecordsManager)
-        manager.warning = MagicMock()
-        manager._warned_missing_cache_reporting = False
-        return manager
+    def _accumulator(self) -> MetricsAccumulator:
+        accumulator = MetricsAccumulator.__new__(MetricsAccumulator)
+        accumulator.warning = MagicMock()
+        accumulator._warned_missing_cache_reporting = False
+        return accumulator
 
     def test_warns_once_on_first_qualifying_record(self) -> None:
-        manager = self._manager()
+        accumulator = self._accumulator()
         record_data = SimpleNamespace(metrics={"usage_prompt_tokens": 1024})
-        manager._maybe_hint_missing_cache_reporting(record_data)
-        manager._maybe_hint_missing_cache_reporting(record_data)
-        manager.warning.assert_called_once_with(CACHE_REPORTING_HINT)
+        accumulator._maybe_hint_missing_cache_reporting(record_data)
+        accumulator._maybe_hint_missing_cache_reporting(record_data)
+        accumulator.warning.assert_called_once_with(CACHE_REPORTING_HINT)
 
     def test_no_warning_when_cache_reported(self) -> None:
-        manager = self._manager()
+        accumulator = self._accumulator()
         record_data = SimpleNamespace(
             metrics={"usage_prompt_tokens": 1024, "usage_prompt_cache_read_tokens": 0}
         )
-        manager._maybe_hint_missing_cache_reporting(record_data)
-        manager.warning.assert_not_called()
+        accumulator._maybe_hint_missing_cache_reporting(record_data)
+        accumulator.warning.assert_not_called()
 
     def test_no_warning_when_usage_absent(self) -> None:
-        manager = self._manager()
+        accumulator = self._accumulator()
         record_data = SimpleNamespace(metrics={"output_sequence_length": 32})
-        manager._maybe_hint_missing_cache_reporting(record_data)
-        manager.warning.assert_not_called()
+        accumulator._maybe_hint_missing_cache_reporting(record_data)
+        accumulator.warning.assert_not_called()
 
 
 class TestRealtimeUpdateGate:
@@ -785,13 +789,12 @@ class TestRecordsManagerDatasetConfiguredBarrier:
         manager._records_tracker = MagicMock()
         manager._error_tracker = MagicMock()
         manager._complete_credit_phases = set()
-        manager._maybe_hint_missing_cache_reporting = MagicMock()
         manager._dispatch_record = AsyncMock(
             side_effect=RuntimeError("REACHED_PROCESSING")
         )
         message = _metric_records_message()
 
-        task = asyncio.create_task(manager._on_metric_records(message))
+        task = asyncio.create_task(manager._on_records(message))
         for _ in range(3):
             await asyncio.sleep(0)
 
@@ -823,7 +826,7 @@ class TestRecordsManagerDatasetConfiguredBarrier:
             "aiperf.records.dataset_gate.asyncio.wait_for", _raise_timeout
         )
 
-        await manager._on_metric_records(message)
+        await manager._on_records(message)
 
         manager._kill.assert_awaited_once()
         published = manager.publish.await_args.args[0]

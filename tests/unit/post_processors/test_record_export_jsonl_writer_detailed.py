@@ -11,7 +11,7 @@ import pytest
 from aiperf.common.enums import CreditPhase, ExportLevel
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
-from aiperf.common.messages import MetricRecordsMessage
+from aiperf.common.messages import MetricRecordsData
 from aiperf.common.models.record_models import (
     MetricRecordInfo,
     MetricRecordMetadata,
@@ -26,7 +26,7 @@ from aiperf.post_processors.record_export_jsonl_writer import (
 )
 from tests.unit.post_processors.conftest import (
     aiperf_lifecycle,
-    create_metric_records_message,
+    create_metric_records_data,
 )
 
 
@@ -78,8 +78,8 @@ def cli_config() -> CLIConfig:
 
 @pytest.fixture
 def sample_metric_records_message():
-    """Create a sample MetricRecordsMessage for testing."""
-    return create_metric_records_message(
+    """Create a sample MetricRecordsData for testing."""
+    return create_metric_records_data(
         service_id="processor-1",
         x_request_id="test-record-123",
         conversation_id="conv-456",
@@ -201,7 +201,7 @@ class TestRecordExportJSONLWriterProcessResult:
     async def test_process_record_writes_valid_data(
         self,
         run_records_export,
-        sample_metric_records_message: MetricRecordsMessage,
+        sample_metric_records_message: MetricRecordsData,
         mock_metric_registry: Mock,
     ):
         """Test that process_record writes valid data to file."""
@@ -221,7 +221,7 @@ class TestRecordExportJSONLWriterProcessResult:
                 "to_display_dict",
                 return_value=mock_display_dict,
             ):
-                await processor.process_record(sample_metric_records_message.to_data())
+                await processor.process_record(sample_metric_records_message)
 
         lines = processor.output_file.read_text().splitlines()
 
@@ -243,7 +243,7 @@ class TestRecordExportJSONLWriterProcessResult:
     async def test_process_record_with_empty_display_metrics(
         self,
         run_records_export,
-        sample_metric_records_message: MetricRecordsMessage,
+        sample_metric_records_message: MetricRecordsData,
         mock_metric_registry: Mock,
     ):
         """Test that process_record skips records with empty display metrics."""
@@ -254,7 +254,7 @@ class TestRecordExportJSONLWriterProcessResult:
 
         # Mock to_display_dict to return empty dict
         with patch.object(MetricRecordDict, "to_display_dict", return_value={}):
-            await processor.process_record(sample_metric_records_message.to_data())
+            await processor.process_record(sample_metric_records_message)
 
         # Should not write anything since display_metrics is empty
         assert processor.lines_written == 0
@@ -266,7 +266,7 @@ class TestRecordExportJSONLWriterProcessResult:
     async def test_process_record_handles_errors_gracefully(
         self,
         run_records_export,
-        sample_metric_records_message: MetricRecordsMessage,
+        sample_metric_records_message: MetricRecordsData,
         mock_metric_registry: Mock,
     ):
         """Test that errors during processing don't raise exceptions."""
@@ -283,7 +283,7 @@ class TestRecordExportJSONLWriterProcessResult:
             patch.object(processor, "error") as mock_error,
         ):
             # Should not raise
-            await processor.process_record(sample_metric_records_message.to_data())
+            await processor.process_record(sample_metric_records_message)
 
             # Should log the error
             assert mock_error.call_count >= 1
@@ -295,7 +295,7 @@ class TestRecordExportJSONLWriterProcessResult:
     async def test_process_record_multiple_messages(
         self,
         run_records_export,
-        sample_metric_records_message: MetricRecordsMessage,
+        sample_metric_records_message: MetricRecordsData,
         mock_metric_registry: Mock,
     ):
         """Test processing multiple messages accumulates records."""
@@ -313,14 +313,14 @@ class TestRecordExportJSONLWriterProcessResult:
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
                 for i in range(5):
-                    message = create_metric_records_message(
+                    message = create_metric_records_data(
                         x_request_id=f"record-{i}",
                         conversation_id=f"conv-{i}",
                         turn_index=i,
                         request_start_ns=1_000_000_000 + i,
                         results=[{"metric1": 100}, {"metric2": 200}],
                     )
-                    await processor.process_record(message.to_data())
+                    await processor.process_record(message)
 
         assert processor.lines_written == 5
         assert processor.output_file.exists()
@@ -344,7 +344,7 @@ class TestRecordExportJSONLWriterFileFormat:
     async def test_output_is_valid_jsonl(
         self,
         run_records_export,
-        sample_metric_records_message: MetricRecordsMessage,
+        sample_metric_records_message: MetricRecordsData,
         mock_metric_registry: Mock,
     ):
         """Test that output file is valid JSONL format."""
@@ -359,7 +359,7 @@ class TestRecordExportJSONLWriterFileFormat:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
-                await processor.process_record(sample_metric_records_message.to_data())
+                await processor.process_record(sample_metric_records_message)
 
         lines = processor.output_file.read_text().splitlines()
 
@@ -374,7 +374,7 @@ class TestRecordExportJSONLWriterFileFormat:
     async def test_record_structure_is_complete(
         self,
         run_records_export,
-        sample_metric_records_message: MetricRecordsMessage,
+        sample_metric_records_message: MetricRecordsData,
         mock_metric_registry: Mock,
     ):
         """Test that each record has the expected structure."""
@@ -389,7 +389,7 @@ class TestRecordExportJSONLWriterFileFormat:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
-                await processor.process_record(sample_metric_records_message.to_data())
+                await processor.process_record(sample_metric_records_message)
 
         lines = processor.output_file.read_text().splitlines()
 
@@ -437,14 +437,14 @@ class TestRecordExportJSONLWriterLogging:
             ):
                 with caplog.at_level(logging.DEBUG):
                     for i in range(processor._batch_size):
-                        message = create_metric_records_message(
+                        message = create_metric_records_data(
                             x_request_id=f"record-{i}",
                             conversation_id=f"conv-{i}",
                             turn_index=i,
                             request_start_ns=1_000_000_000 + i,
                             results=[{"metric1": 100}, {"metric2": 200}],
                         )
-                        await processor.process_record(message.to_data())
+                        await processor.process_record(message)
 
                     # Wait for async flush task to complete
                     await processor.wait_for_tasks()
@@ -456,7 +456,7 @@ class TestRecordExportJSONLWriterLogging:
     async def test_error_logging_on_write_failure(
         self,
         run_records_export,
-        sample_metric_records_message: MetricRecordsMessage,
+        sample_metric_records_message: MetricRecordsData,
         mock_metric_registry: Mock,
     ):
         """Test that errors are logged when write fails."""
@@ -471,7 +471,7 @@ class TestRecordExportJSONLWriterLogging:
             ),
             patch.object(processor, "error") as mock_error,
         ):
-            await processor.process_record(sample_metric_records_message.to_data())
+            await processor.process_record(sample_metric_records_message)
 
             assert mock_error.call_count >= 1
             call_args = str(mock_error.call_args_list[0])
@@ -485,7 +485,7 @@ class TestRecordExportJSONLWriterShutdown:
     async def test_shutdown_logs_statistics(
         self,
         run_records_export,
-        sample_metric_records_message: MetricRecordsMessage,
+        sample_metric_records_message: MetricRecordsData,
         mock_metric_registry: Mock,
     ):
         """Test that shutdown logs final statistics."""
@@ -504,14 +504,14 @@ class TestRecordExportJSONLWriterShutdown:
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
                 for i in range(3):
-                    message = create_metric_records_message(
+                    message = create_metric_records_data(
                         x_request_id=f"record-{i}",
                         conversation_id=f"conv-{i}",
                         turn_index=i,
                         request_start_ns=1_000_000_000 + i,
                         results=[{"metric1": 100}],
                     )
-                    await processor.process_record(message.to_data())
+                    await processor.process_record(message)
 
                 # Wait for any pending flush tasks
                 await processor.wait_for_tasks()
@@ -666,7 +666,7 @@ class TestRecordExportJSONLWriterHttpTrace:
         )
 
         # Create message with trace_data
-        message = create_metric_records_message(
+        message = create_metric_records_data(
             x_request_id="test-record-with-trace",
             conversation_id="conv-trace-1",
             results=[{"test_metric": 42}],
@@ -677,7 +677,7 @@ class TestRecordExportJSONLWriterHttpTrace:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
-                await processor.process_record(message.to_data())
+                await processor.process_record(message)
 
         lines = processor.output_file.read_text().splitlines()
         assert len(lines) == 1
@@ -706,7 +706,7 @@ class TestRecordExportJSONLWriterHttpTrace:
         )
 
         # Create message with trace_data
-        message = create_metric_records_message(
+        message = create_metric_records_data(
             x_request_id="test-record-with-trace",
             conversation_id="conv-trace-2",
             results=[{"test_metric": 42}],
@@ -717,7 +717,7 @@ class TestRecordExportJSONLWriterHttpTrace:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
-                await processor.process_record(message.to_data())
+                await processor.process_record(message)
 
         lines = processor.output_file.read_text().splitlines()
         assert len(lines) == 1
@@ -760,7 +760,7 @@ class TestRecordExportJSONLWriterHttpTrace:
         )
 
         for processor in [processor_disabled, processor_enabled]:
-            message = create_metric_records_message(
+            message = create_metric_records_data(
                 x_request_id="test-record-metrics",
                 conversation_id="conv-metrics",
                 results=[{"request_latency_ns": 100_500_000, "output_token_count": 50}],
@@ -771,7 +771,7 @@ class TestRecordExportJSONLWriterHttpTrace:
                 with patch.object(
                     MetricRecordDict, "to_display_dict", return_value=mock_display_dict
                 ):
-                    await processor.process_record(message.to_data())
+                    await processor.process_record(message)
 
             lines = processor.output_file.read_text().splitlines()
             assert len(lines) == 1
@@ -800,7 +800,7 @@ class TestRecordExportJSONLWriterHttpTrace:
         )
 
         # Create message WITHOUT trace_data
-        message = create_metric_records_message(
+        message = create_metric_records_data(
             x_request_id="test-record-no-trace",
             conversation_id="conv-no-trace",
             results=[{"test_metric": 42}],
@@ -811,7 +811,7 @@ class TestRecordExportJSONLWriterHttpTrace:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
-                await processor.process_record(message.to_data())
+                await processor.process_record(message)
 
         lines = processor.output_file.read_text().splitlines()
         assert len(lines) == 1
@@ -852,13 +852,13 @@ class TestRecordExportJSONLWriterLifecycle:
             ):
                 for i in range(Environment.RECORD.EXPORT_BATCH_SIZE * 2):
                     await processor.process_record(
-                        create_metric_records_message(
+                        create_metric_records_data(
                             x_request_id=f"record-{i}",
                             conversation_id=f"conv-{i}",
                             turn_index=0,
                             request_start_ns=1_000_000_000 + i,
                             results=[{"inter_token_latency": 100}],
-                        ).to_data()
+                        )
                     )
 
                 # Wait for all async flush tasks to complete

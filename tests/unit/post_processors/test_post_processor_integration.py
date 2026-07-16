@@ -18,7 +18,7 @@ from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
 from aiperf.post_processors.metric_record_processor import MetricRecordProcessor
 from tests.unit.post_processors.conftest import (
-    create_metric_records_message,
+    create_metric_records_data,
     setup_mock_registry_sequences,
 )
 
@@ -35,14 +35,14 @@ class TestPostProcessorIntegration:
     async def test_record_to_accumulator_data_flow(self, mock_run) -> None:
         """MetricRecordsData flows into the accumulator summary."""
         accumulator = MetricsAccumulator(mock_run)
-        message = create_metric_records_message(
+        message = create_metric_records_data(
             x_request_id="test-1",
             results=[
                 {RequestLatencyMetric.tag: 100_000_000.0, RequestCountMetric.tag: 1}
             ],
         )
 
-        await accumulator.process_record(message.to_data())
+        await accumulator.process_record(message)
         summary = await accumulator.summarize()
 
         assert summary.results[RequestLatencyMetric.tag].avg == pytest.approx(100.0)
@@ -54,13 +54,13 @@ class TestPostProcessorIntegration:
         accumulator = MetricsAccumulator(mock_run)
 
         for idx, value in enumerate(TEST_LATENCY_VALUES_NS):
-            message = create_metric_records_message(
+            message = create_metric_records_data(
                 x_request_id=f"test-{idx}",
                 request_start_ns=1_000_000_000 + idx,
                 x_correlation_id=f"test-correlation-{idx}",
                 results=[{RequestLatencyMetric.tag: value}],
             )
-            await accumulator.process_record(message.to_data())
+            await accumulator.process_record(message)
 
         summary = await accumulator.summarize()
         latency = summary.results[RequestLatencyMetric.tag]
@@ -90,14 +90,14 @@ class TestPostProcessorIntegration:
 
         metadata = create_metric_metadata()
         result = await record_processor.process_record(error_parsed_record, metadata)
-        assert ErrorRequestCountMetric.tag in result
-        assert result[ErrorRequestCountMetric.tag] == 1
+        assert ErrorRequestCountMetric.tag in result.metrics
+        assert result.metrics[ErrorRequestCountMetric.tag] == 1
 
     async def test_derived_metrics_computation(self, mock_run) -> None:
         """Derived metrics are computed from accumulated aggregate metrics."""
         accumulator = MetricsAccumulator(mock_run)
         await accumulator.process_record(
-            create_metric_records_message(
+            create_metric_records_data(
                 x_request_id="test-1",
                 results=[
                     {
@@ -108,7 +108,7 @@ class TestPostProcessorIntegration:
                         ),
                     }
                 ],
-            ).to_data()
+            )
         )
 
         summary = await accumulator.summarize()
@@ -124,11 +124,11 @@ class TestPostProcessorIntegration:
 
         for idx, value in enumerate(TEST_LATENCY_VALUES_NS):
             await accumulator.process_record(
-                create_metric_records_message(
+                create_metric_records_data(
                     x_request_id=f"test-{idx}",
                     request_start_ns=1_000_000_000 + idx,
                     results=[{RequestLatencyMetric.tag: value}],
-                ).to_data()
+                )
             )
 
         summary = await accumulator.summarize()

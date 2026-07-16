@@ -21,7 +21,7 @@ from aiperf.metrics.types.replay_sched_lag_metrics import (
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
-from tests.unit.post_processors.conftest import create_metric_records_message
+from tests.unit.post_processors.conftest import create_metric_records_data
 
 
 @pytest.fixture
@@ -76,20 +76,20 @@ class TestMetricsAccumulatorTimeslices:
         accumulator = MetricsAccumulator(mock_run)
 
         await accumulator.process_record(
-            create_metric_records_message(
+            create_metric_records_data(
                 x_request_id="test-1",
                 request_start_ns=int(0.5 * NANOS_PER_SECOND),
                 request_end_ns=int(0.6 * NANOS_PER_SECOND),
                 results=[{RequestLatencyMetric.tag: 42_000_000.0}],
-            ).to_data()
+            )
         )
         await accumulator.process_record(
-            create_metric_records_message(
+            create_metric_records_data(
                 x_request_id="test-2",
                 request_start_ns=int(1.5 * NANOS_PER_SECOND),
                 request_end_ns=int(1.6 * NANOS_PER_SECOND),
                 results=[{RequestLatencyMetric.tag: 84_000_000.0}],
-            ).to_data()
+            )
         )
 
         timeslices = (await accumulator.summarize()).timeslices
@@ -106,12 +106,12 @@ class TestMetricsAccumulatorTimeslices:
 
         for idx, value in enumerate([10_000_000.0, 20_000_000.0]):
             await accumulator.process_record(
-                create_metric_records_message(
+                create_metric_records_data(
                     x_request_id=f"test-{idx}",
                     request_start_ns=int((0.3 + idx * 0.4) * NANOS_PER_SECOND),
                     request_end_ns=int((0.35 + idx * 0.4) * NANOS_PER_SECOND),
                     results=[{RequestLatencyMetric.tag: value}],
-                ).to_data()
+                )
             )
 
         timeslices = (await accumulator.summarize()).timeslices
@@ -134,12 +134,12 @@ class TestMetricsAccumulatorTimeslices:
         ]
         for idx, (start_s, count) in enumerate(records):
             await accumulator.process_record(
-                create_metric_records_message(
+                create_metric_records_data(
                     x_request_id=f"test-{idx}",
                     request_start_ns=int(start_s * NANOS_PER_SECOND),
                     request_end_ns=int((start_s + 0.1) * NANOS_PER_SECOND),
                     results=[{RequestCountMetric.tag: count}],
-                ).to_data()
+                )
             )
 
         timeslices = (await accumulator.summarize()).timeslices
@@ -160,12 +160,12 @@ class TestMetricsAccumulatorTimeslices:
         ]
         for idx, (start_s, value) in enumerate(records):
             await accumulator.process_record(
-                create_metric_records_message(
+                create_metric_records_data(
                     x_request_id=f"test-{idx}",
                     request_start_ns=int(start_s * NANOS_PER_SECOND),
                     request_end_ns=int((start_s + 0.01) * NANOS_PER_SECOND),
                     results=[{RequestLatencyMetric.tag: value}],
-                ).to_data()
+                )
             )
 
         timeslices = (await accumulator.summarize()).timeslices
@@ -187,7 +187,7 @@ class TestMetricsAccumulatorTimeslices:
         ]
         for idx, (start_s, end_s, count) in enumerate(records):
             await accumulator.process_record(
-                create_metric_records_message(
+                create_metric_records_data(
                     x_request_id=f"test-{idx}",
                     request_start_ns=int(start_s * NANOS_PER_SECOND),
                     request_end_ns=int(end_s * NANOS_PER_SECOND),
@@ -198,7 +198,7 @@ class TestMetricsAccumulatorTimeslices:
                             MaxResponseTimestampMetric.tag: end_s * NANOS_PER_SECOND,
                         }
                     ],
-                ).to_data()
+                )
             )
 
         timeslices = (await accumulator.summarize()).timeslices
@@ -228,12 +228,12 @@ class TestMetricsAccumulatorTimeslices:
         for i in range(4):
             start_s = i * 0.5 + 0.25
             await accumulator.process_record(
-                create_metric_records_message(
+                create_metric_records_data(
                     x_request_id=f"test-{i}",
                     request_start_ns=int(start_s * NANOS_PER_SECOND),
                     request_end_ns=int((start_s + 0.05) * NANOS_PER_SECOND),
                     results=[{RequestLatencyMetric.tag: float(i * 1_000_000)}],
-                ).to_data()
+                )
             )
 
         timeslices = (await accumulator.summarize()).timeslices
@@ -250,12 +250,12 @@ class TestMetricsAccumulatorTimeslices:
         accumulator = MetricsAccumulator(mock_run)
 
         await accumulator.process_record(
-            create_metric_records_message(
+            create_metric_records_data(
                 x_request_id="test-1",
                 request_start_ns=int(0.5 * NANOS_PER_SECOND),
                 request_end_ns=int(0.6 * NANOS_PER_SECOND),
                 results=[{RequestLatencyMetric.tag: 42_000_000.0}],
-            ).to_data()
+            )
         )
 
         timeslices = (await accumulator.summarize()).timeslices
@@ -296,14 +296,14 @@ class TestMetricsAccumulatorRunScopedDerivedMetrics:
         # Two records straddling the 1s slice boundary so timeslices are built.
         for i, start_s in enumerate((0.2, 1.2)):
             await accumulator.process_record(
-                create_metric_records_message(
+                create_metric_records_data(
                     x_request_id=f"req-{i}",
                     request_start_ns=int(start_s * NANOS_PER_SECOND),
                     request_end_ns=int((start_s + 0.05) * NANOS_PER_SECOND),
                     results=[
                         {ReplaySendScheduleOffsetMetric.tag: i * NANOS_PER_MILLIS}
                     ],
-                ).to_data()
+                )
             )
 
         summary = await accumulator.summarize()

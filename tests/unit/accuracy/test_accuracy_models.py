@@ -3,9 +3,6 @@
 
 from __future__ import annotations
 
-import pytest
-from pytest import param
-
 from aiperf.accuracy.models import (
     AccuracyRecordsData,
     AccuracySummary,
@@ -14,9 +11,10 @@ from aiperf.accuracy.models import (
 )
 from aiperf.common.enums import CreditPhase, MessageType
 from aiperf.common.messages import (
-    AccuracyRecordsMessage,
     ProcessAccuracyResultMessage,
+    RecordsMessage,
 )
+from aiperf.common.models.record_models import MetricRecordMetadata
 
 
 def _make_record(**overrides) -> AccuracyRecordsData:
@@ -99,27 +97,30 @@ def test_process_accuracy_result_defaults_none() -> None:
     assert wrapped.results.total_evaluated == 5
 
 
-@pytest.mark.parametrize(
-    "message_cls, expected_type",
-    [
-        param(AccuracyRecordsMessage, MessageType.ACCURACY_RECORD, id="records"),
-        param(
-            ProcessAccuracyResultMessage,
-            MessageType.PROCESS_ACCURACY_RESULT,
-            id="result",
-        ),
-    ],
-)  # fmt: skip
-def test_accuracy_message_types(message_cls, expected_type) -> None:
-    assert message_cls.model_fields["message_type"].default == expected_type
+def test_process_accuracy_result_message_type() -> None:
+    assert (
+        ProcessAccuracyResultMessage.model_fields["message_type"].default
+        == MessageType.PROCESS_ACCURACY_RESULT
+    )
 
 
-def test_accuracy_records_message_serializes_records() -> None:
-    message = AccuracyRecordsMessage(
+def test_records_message_serializes_accuracy_records() -> None:
+    """Accuracy records ride the generic RecordsMessage envelope and serialize
+    with their own record_type-carrying fields intact."""
+    metadata = MetricRecordMetadata(
+        session_num=0,
+        request_start_ns=1_000,
+        request_end_ns=2_000,
+        worker_id="worker-1",
+        record_processor_id="rp",
+        benchmark_phase=CreditPhase.PROFILING,
+    )
+    message = RecordsMessage(
         service_id="records-manager",
+        metadata=metadata,
         records=[_make_record(session_num=1), _make_record(session_num=2)],
     )
-    assert message.message_type == MessageType.ACCURACY_RECORD
+    assert message.message_type == MessageType.RECORDS
     dumped = message.model_dump()
     assert len(dumped["records"]) == 2
     assert dumped["records"][0]["session_num"] == 1

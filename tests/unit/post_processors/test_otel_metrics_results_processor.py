@@ -21,7 +21,7 @@ from aiperf.post_processors.otel_metrics_results_processor import (
     OTelMetricsResultsProcessor,
 )
 from tests.unit.conftest import make_run_from_cli
-from tests.unit.post_processors.conftest import create_metric_records_message
+from tests.unit.post_processors.conftest import create_metric_records_data
 
 
 @pytest.fixture
@@ -188,7 +188,7 @@ class TestOTelMetricsResultsProcessor:
         )
         fake_queue = _setup_fanout_processor(processor)
 
-        metric_record = create_metric_records_message(
+        metric_record = create_metric_records_data(
             results=[
                 {
                     "request_latency_ns": 123_000_000,
@@ -196,7 +196,7 @@ class TestOTelMetricsResultsProcessor:
                     "tokens_per_response": [1, 2, 3],
                 }
             ]
-        ).to_data()
+        )
         await processor.process_record(metric_record)
 
         histogram_events = [
@@ -233,9 +233,9 @@ class TestOTelMetricsResultsProcessor:
         )
         fake_queue = _setup_fanout_processor(processor)
 
-        metric_record = create_metric_records_message(
+        metric_record = create_metric_records_data(
             results=[{"request_latency_ns": 123_000_000}]
-        ).to_data()
+        )
         await processor.process_record(metric_record)
 
         histogram_events = [
@@ -557,9 +557,9 @@ class TestOTelMetricsResultsProcessor:
         )
         fake_queue = _setup_fanout_processor(processor)
 
-        metric_record = create_metric_records_message(
+        metric_record = create_metric_records_data(
             results=[{"request_latency_ns": 123_000_000, "request_count": 1}]
-        ).to_data()
+        )
         await processor.process_record(metric_record)
 
         timing_stats = CreditPhaseStats(
@@ -697,9 +697,9 @@ class TestOTelMetricsResultsProcessor:
             service_id="records-manager",
             run=cfg_otel,
         )
-        metric_record = create_metric_records_message(
+        metric_record = create_metric_records_data(
             results=[{"request_latency_ns": 123_000_000}]
-        ).to_data()
+        )
 
         attributes = processor.build_record_attributes(metric_record)
         assert attributes["aiperf.worker.id"] == metric_record.metadata.worker_id
