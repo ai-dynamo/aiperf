@@ -41,7 +41,7 @@ flowchart TD
     G --> H1["RECORD Collection<br/>append(125ms)<br/>append(87ms)<br/>append(203ms)<br/><em>(Collect&nbsp;all&nbsp;individual&nbsp;values)</em>"]
 
     %% AGGREGATE Processing in Central
-    G --> H2["AGGREGATE Accumulation<br/>aggregate_value(+1) → total=1<br/>aggregate_value(+1) → total=2<br/>aggregate_value(+1) → total=3<br/><em>(Accumulate&nbsp;across&nbsp;processors)</em>"]
+    G --> H2["AGGREGATE Column<br/>append(1) append(1) append(1)<br/>fold via aggregation_kind (SUM) → 3<br/><em>(Numpy&nbsp;column&nbsp;folded&nbsp;in&nbsp;MetricsAccumulator)</em>"]
 
     H1 --> L["MetricResultsDict<br/><em>(Full&nbsp;profile&nbsp;run&nbsp;results)</em>"]
     H2 --> L

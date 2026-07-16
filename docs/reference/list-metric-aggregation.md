@@ -51,7 +51,7 @@ For ICL specifically:
 - `count`, `sum`, `min`, `max`, `avg`, `std` are computed exactly and match what an exact array would produce.
 - Per-request ICL lists in `profile_export.jsonl` are unchanged — anything that needs sample-level precision can read those.
 
-For all other metrics: **no change**. Scalar record metrics still use the exact-storage `MetricArray` path. Aggregate metrics (`inter_token_latency`, `request_latency`, etc.) compute through their own existing aggregator; t-digest is not in their path.
+For all other metrics: **no change**. Scalar record metrics still use the exact numpy column store (`ColumnStore`). Aggregate metrics (`inter_token_latency`, `request_latency`, etc.) compute through their own existing aggregator; t-digest is not in their path.
 
 ## Where it lives
 
