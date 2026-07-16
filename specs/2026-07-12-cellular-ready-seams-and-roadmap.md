@@ -500,3 +500,24 @@ Four steps, each reviewed:
 1-cell run's total record count and input-token distribution (partition covers the full
 trace set). Still out of scope: cross-host transport; weighted/mix RNG sampling; the
 graph static-node `request_limit` partition (falls back to the single-cell cycler).
+
+---
+
+## Addendum — 2026-07-15 — Phase 2 cross-host + multi-turn + k8s built; Phase 3+ north-star split out
+
+Since these addenda, the cross-host transport shipped (velo connect-by-endpoint, §Phase-2 CellTransport
+now realized over velo — see `2026-07-15-velo-cell-transport-design.md` and its 2026-07-15 addendum),
+multi-turn cellular landed on the **exact-fold** path (conversation-level partition; retain-path
+multi-turn stays fail-closed), graph cellular is built, and the Kubernetes launch (operator + JobSet +
+headless-DNS zero-discovery + emptyDir/no-RWX) is built on `rust-operator`. Bounded-memory metrics
+(t-digest sketch) are built standalone but **cellular+sketch is still blocked** (`ensure!(!sketch_mode)`
+on the cell ship path).
+
+The Phase-3+ north-star — turning the static-partition-then-collect model into a live coordinated
+fabric — is specified separately in **`2026-07-15-ultimate-cellular-velo-runtime-design.md`**: the
+dataset **data plane** (producer-owned SPMC add-only broadcast with replay-on-attach, modeled on the
+kvbm p2p `Session`; velo must add the anchor), the **monotonic phaser** control plane (synchronized
+START generalized to every phase transition, cyclic-by-monotonic-counter), the per-request dispatch
+state machine with a counted `DistributionMiss`, the end-of-warmup barrier (drain-barrier pattern) that
+unblocks cross-cell adaptive consensus, and bounded-memory record collection (ship the merged sketch as
+a `StorePartition`). That spec is authoritative for the S1–S5 seams' next era.

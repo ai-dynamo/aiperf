@@ -363,3 +363,293 @@ async fn test_cellular_exact_fold_matches_retain() {
         );
     }
 }
+
+/// Tier T1 (bounded-memory horizontal scale): a `--cells N` run with SKETCH metric
+/// storage (`AIPERF_METRICS_SKETCH=1`) reproduces the single-cell sketch run's EXACT
+/// aggregates. Each cell folds its records into a per-`(phase, tag)` t-digest store
+/// that retains no rows and ships that folded store (`CellMessage::StorePartition`,
+/// the same wire form exact-fold uses); the controller merges the sketches
+/// associatively (`merge_store_partitions` → `append_store` → t-digest merge). Counts,
+/// sums, and extrema stay exact across the merge (exact Welford aggregates + anchored
+/// min/max), so `request_count` and the INTEGER ISL/OSL `avg`/`min`/`max` match the
+/// single-cell run exactly. Percentiles are t-digest-approximate (a merged digest
+/// differs slightly from a single-ingestion digest) and are intentionally NOT compared
+/// for equality — the exact-aggregate contract is what tier T1 guarantees.
+///
+/// This proves the whole path from `aiperf profile --cells N --sketch`: Python projects
+/// `metrics.sketch` + `runtime.cells`, each cell folds-and-drops into a bounded sketch
+/// (never retaining its record stream), ships the bounded store, and the controller
+/// merges O(cells) sketches into one report — the change that unblocked sketch cellular.
+#[tokio::test]
+async fn test_cellular_sketch_matches_single_cell() {
+    let args = |cells: u32, url: &str| {
+        format!(
+            "--model {DEFAULT_MODEL} --url {url} --endpoint-type chat \
+             --request-count 60 --concurrency 6 --cells {cells} --random-seed 42 \
+             --synthetic-input-tokens-mean 256 --synthetic-input-tokens-stddev 64 \
+             --output-tokens-mean 8 --output-tokens-stddev 0 --ui simple"
+        )
+    };
+    let sketch_env = [("AIPERF_METRICS_SKETCH", "1")];
+
+    let h1 = AIPerfHarness::new().await;
+    let baseline = h1.run_env(&args(1, &h1.mock.url), &sketch_env);
+    assert!(
+        baseline.success(),
+        "1-cell sketch run failed: {}",
+        baseline.stderr
+    );
+
+    let h3 = AIPerfHarness::new().await;
+    let cellular = h3.run_env(&args(3, &h3.mock.url), &sketch_env);
+    assert!(
+        cellular.success(),
+        "3-cell sketch run failed: {}",
+        cellular.stderr
+    );
+
+    // Topology guard: the 3-cell run went through the controller; the baseline did not
+    // — otherwise the merge is never exercised and the parity check is vacuous.
+    assert!(
+        cellular
+            .artifacts
+            .find_file("**/cellular-heartbeat.json")
+            .is_some(),
+        "3-cell sketch run must go through the controller (cellular-heartbeat.json sidecar)"
+    );
+    assert!(
+        baseline
+            .artifacts
+            .find_file("**/cellular-heartbeat.json")
+            .is_none(),
+        "1-cell baseline must be single-process (no cellular sidecar)"
+    );
+
+    // The record total survives fold-and-clear + ship + merge (the store carries it;
+    // a sketch store's row count is 0).
+    assert_eq!(
+        baseline.artifacts.request_count() as u32,
+        cellular.artifacts.request_count() as u32,
+        "request_count must be exact across the cellular sketch merge"
+    );
+
+    // Exact aggregates: the INTEGER ISL/OSL avg/min/max are order-independent, so a
+    // merged sketch reproduces the single-cell sketch exactly (percentiles are not).
+    let base = baseline.artifacts.json();
+    let cell = cellular.artifacts.json();
+    for metric in DETERMINISTIC_METRICS {
+        for field in ["avg", "min", "max"] {
+            let b = &base[metric][field];
+            let c = &cell[metric][field];
+            assert!(
+                !b.is_null(),
+                "1-cell sketch report missing {metric}.{field}"
+            );
+            assert_eq!(
+                b, c,
+                "cellular sketch {metric}.{field} diverged from the single-cell sketch: \
+                 base={b}  cell={c}"
+            );
+        }
+    }
+}
+
+/// Tier T2 (hierarchical tree-merge): with `AIPERF_CELL_AGG_FANOUT` set, the controller
+/// routes the cells through an aggregator tier — `M = ceil(cells / fanout)` extra
+/// `aiperf-runner --aggregator` processes, each collecting its round-robin subtree of
+/// cells' folded stores, merging them, and shipping ONE merged store up — instead of the
+/// flat star where all cells ship to the controller. Because the fold-mode store merge
+/// (`merge_store_partitions` → t-digest merge) is associative and deterministic-at-topology,
+/// the tree-merged report is BYTE-IDENTICAL to the flat-star report on the dataset-
+/// deterministic metrics. Sketch storage (a fold path) so the cells ship a `StorePartition`
+/// the aggregator can merge; a base port well clear of the default avoids any collision.
+///
+/// This exercises the full multi-process tree end-to-end (6 cells + 2 aggregators +
+/// controller) from `aiperf profile`, proving the single-controller fan-in ceiling is
+/// liftable by inserting aggregator tiers without changing the report.
+#[tokio::test]
+async fn test_cellular_tree_merge_matches_flat_star() {
+    let args = |url: &str| {
+        format!(
+            "--model {DEFAULT_MODEL} --url {url} --endpoint-type chat \
+             --request-count 60 --concurrency 6 --cells 6 --random-seed 42 \
+             --synthetic-input-tokens-mean 256 --synthetic-input-tokens-stddev 64 \
+             --output-tokens-mean 8 --output-tokens-stddev 0 --ui simple"
+        )
+    };
+    let sketch = ("AIPERF_METRICS_SKETCH", "1");
+
+    // Flat star: 6 cells ship folded sketches straight to the controller.
+    let h_flat = AIPerfHarness::new().await;
+    let flat = h_flat.run_env(&args(&h_flat.mock.url), &[sketch]);
+    assert!(flat.success(), "flat cellular run failed: {}", flat.stderr);
+
+    // Tree: 6 cells → 2 aggregators (fanout 3) → controller. A base port clear of the
+    // 9700 default so a concurrent test never collides on the fixed aggregator port.
+    let h_tree = AIPerfHarness::new().await;
+    let tree = h_tree.run_env(
+        &args(&h_tree.mock.url),
+        &[
+            sketch,
+            ("AIPERF_CELL_AGG_FANOUT", "3"),
+            ("AIPERF_CELL_AGG_BASE_PORT", "9764"),
+        ],
+    );
+    assert!(tree.success(), "tree cellular run failed: {}", tree.stderr);
+
+    // Both went through the controller (multi-cell), else the merge is never exercised.
+    for (label, run) in [("flat", &flat), ("tree", &tree)] {
+        assert!(
+            run.artifacts
+                .find_file("**/cellular-heartbeat.json")
+                .is_some(),
+            "{label} run must go through the controller (cellular-heartbeat.json sidecar)"
+        );
+    }
+    assert_eq!(
+        flat.artifacts.request_count() as u32,
+        tree.artifacts.request_count() as u32,
+        "flat and tree must dispatch the same request count through the aggregator tier"
+    );
+
+    // The tree-merged report equals the flat-star report on the dataset-deterministic
+    // metrics (integer ISL/OSL: avg/percentiles/min/max/std are order-independent, so the
+    // associative aggregator-tier merge reproduces the flat star exactly at this size).
+    let flat_json = flat.artifacts.json();
+    let tree_json = tree.artifacts.json();
+    for metric in DETERMINISTIC_METRICS {
+        let a = &flat_json[metric];
+        let b = &tree_json[metric];
+        assert!(
+            !a.is_null(),
+            "flat report missing deterministic metric {metric}"
+        );
+        assert_eq!(
+            a, b,
+            "tier-T2 tree merge {metric} diverged from the flat star: flat={a}  tree={b}"
+        );
+    }
+}
+
+/// Tier T3 (master-less barrier-free start): `AIPERF_CELL_BARRIER_FREE=1` makes the
+/// controller trigger START immediately instead of gathering all N cell registrations
+/// first (the O(N) fan-in rendezvous). Start timing does not affect the dataset-
+/// deterministic metrics, so a barrier-free run reproduces the synchronized-start run's
+/// deterministic metrics exactly — proving the rendezvous is removable for unbounded scale.
+#[tokio::test]
+async fn test_cellular_barrier_free_matches_synchronized() {
+    let args = |url: &str| {
+        format!(
+            "--model {DEFAULT_MODEL} --url {url} --endpoint-type chat \
+             --request-count 48 --concurrency 6 --cells 4 --random-seed 42 \
+             --synthetic-input-tokens-mean 256 --synthetic-input-tokens-stddev 64 \
+             --output-tokens-mean 8 --output-tokens-stddev 0 --ui simple"
+        )
+    };
+    let sketch = ("AIPERF_METRICS_SKETCH", "1");
+
+    // Synchronized (default): the controller waits for all 4 cells to register.
+    let h_sync = AIPerfHarness::new().await;
+    let sync = h_sync.run_env(&args(&h_sync.mock.url), &[sketch]);
+    assert!(
+        sync.success(),
+        "synchronized-start run failed: {}",
+        sync.stderr
+    );
+
+    // Barrier-free: START triggers immediately; cells start on their own registration.
+    let h_bf = AIPerfHarness::new().await;
+    let bf = h_bf.run_env(
+        &args(&h_bf.mock.url),
+        &[sketch, ("AIPERF_CELL_BARRIER_FREE", "1")],
+    );
+    assert!(bf.success(), "barrier-free run failed: {}", bf.stderr);
+
+    for (label, run) in [("synchronized", &sync), ("barrier-free", &bf)] {
+        assert!(
+            run.artifacts
+                .find_file("**/cellular-heartbeat.json")
+                .is_some(),
+            "{label} run must go through the controller (cellular-heartbeat.json sidecar)"
+        );
+    }
+    assert_eq!(
+        sync.artifacts.request_count() as u32,
+        bf.artifacts.request_count() as u32,
+        "barrier-free must dispatch the same request count as synchronized start"
+    );
+    let sync_json = sync.artifacts.json();
+    let bf_json = bf.artifacts.json();
+    for metric in DETERMINISTIC_METRICS {
+        let a = &sync_json[metric];
+        let b = &bf_json[metric];
+        assert!(!a.is_null(), "synchronized report missing metric {metric}");
+        assert_eq!(
+            a, b,
+            "tier-T3 barrier-free {metric} diverged from synchronized start: \
+             sync={a}  barrier-free={b}"
+        );
+    }
+}
+
+/// Ultimate spec §4 (monotonic phaser control plane): `AIPERF_CELL_PHASER_START=1`
+/// routes the run-wide START through the distributed phaser (the controller binds a
+/// `PhaserServer` and advances generation 1 = `Started`; cells subscribe with
+/// `PhaserClient` and await generation 1) instead of the single-shot velo event. START
+/// timing does not affect the dataset-deterministic metrics, so a phaser-START run
+/// reproduces the event-START run's deterministic metrics exactly — proving the
+/// broadcast → phaser → phaser_velo control plane drives a real benchmark end-to-end.
+#[tokio::test]
+async fn test_cellular_phaser_start_matches_event_start() {
+    let args = |url: &str| {
+        format!(
+            "--model {DEFAULT_MODEL} --url {url} --endpoint-type chat \
+             --request-count 40 --concurrency 6 --cells 4 --random-seed 42 \
+             --synthetic-input-tokens-mean 220 --synthetic-input-tokens-stddev 40 \
+             --output-tokens-mean 8 --output-tokens-stddev 0 --ui simple"
+        )
+    };
+    let sketch = ("AIPERF_METRICS_SKETCH", "1");
+
+    // Default: the single-shot velo event drives START.
+    let h_event = AIPerfHarness::new().await;
+    let event = h_event.run_env(&args(&h_event.mock.url), &[sketch]);
+    assert!(event.success(), "event-START run failed: {}", event.stderr);
+
+    // §4: the monotonic phaser drives START.
+    let h_phaser = AIPerfHarness::new().await;
+    let phaser = h_phaser.run_env(
+        &args(&h_phaser.mock.url),
+        &[sketch, ("AIPERF_CELL_PHASER_START", "1")],
+    );
+    assert!(
+        phaser.success(),
+        "phaser-START run failed: {}",
+        phaser.stderr
+    );
+
+    for (label, run) in [("event", &event), ("phaser", &phaser)] {
+        assert!(
+            run.artifacts
+                .find_file("**/cellular-heartbeat.json")
+                .is_some(),
+            "{label} run must go through the controller (cellular-heartbeat.json sidecar)"
+        );
+    }
+    assert_eq!(
+        event.artifacts.request_count() as u32,
+        phaser.artifacts.request_count() as u32,
+        "phaser-START must dispatch the same request count as event-START"
+    );
+    let event_json = event.artifacts.json();
+    let phaser_json = phaser.artifacts.json();
+    for metric in DETERMINISTIC_METRICS {
+        let a = &event_json[metric];
+        let b = &phaser_json[metric];
+        assert!(!a.is_null(), "event report missing metric {metric}");
+        assert_eq!(
+            a, b,
+            "§4 phaser-START {metric} diverged from event-START: event={a}  phaser={b}"
+        );
+    }
+}

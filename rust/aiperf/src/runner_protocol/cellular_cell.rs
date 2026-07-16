@@ -38,6 +38,16 @@ use anyhow::Result;
 /// The cell id and count live in [`crate::cellular::partition`]'s env vars.
 pub const CELL_CONTROLLER_ADDR_ENV: &str = "AIPERF_CELL_CONTROLLER_ADDR";
 
+/// Env var (tier-T2 hierarchical merge) carrying the velo coordinate a cell ships its
+/// terminal partition + heartbeat to, when it is NOT the controller. In the flat
+/// (star) topology this is unset and a cell ships to the controller
+/// ([`CELL_CONTROLLER_ADDR_ENV`]); in the tree topology the controller sets it to the
+/// cell's assigned aggregator (`tcp://HOST:PORT`), so the aggregator merges its
+/// subtree's stores and ships one merged partition up. Only the ship target changes —
+/// the cell still fetches its envelope and awaits START from the controller — so a
+/// cell's partition/issuer/sampler behaviour is byte-identical to the flat topology.
+pub const CELL_SHIP_ADDR_ENV: &str = "AIPERF_CELL_SHIP_ADDR";
+
 /// Env var carrying the per-phase global ordinal bases as JSON (`{name: base}`), so a
 /// cell's issuer recovers each turn's single-cell absolute slot from its phase-local
 /// slot (the cell's sampler restarts each phase; see [`phase_ordinal_bases_from_env`]).
@@ -413,20 +423,54 @@ pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
     let controller = connect_controller(&velo, &coordinate)
         .await
         .map_err(|error| anyhow::anyhow!("cell {cell_id} connect controller: {error}"))?;
+    // Ultimate spec §4: opt-in phaser-driven START. Capture the velo + controller peer
+    // before the client consumes them, so the cell can subscribe to the phaser control
+    // plane over the same fetch instance and await generation 1 instead of the event.
+    let phaser_start = matches!(
+        std::env::var("AIPERF_CELL_PHASER_START")
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "on" | "yes"
+    );
+    let phaser_handles = phaser_start.then(|| (velo.clone(), controller.clone()));
     let client = VeloCellClient::connect(velo, controller)
         .map_err(|error| anyhow::anyhow!("cell {cell_id} connect: {error}"))?;
     let reply = client
         .register(cell_id)
         .await
         .map_err(|error| anyhow::anyhow!("cell {cell_id} register: {error}"))?;
-    // Block until the controller triggers the synchronized START — every cell
-    // resumes together once all cells have registered. A poisoned event (the
-    // controller aborted before starting) surfaces here as an error.
-    client
-        .await_start(reply.start_event)
+    // Block until START. Either the phaser reaches generation 1 (§4 control plane) or the
+    // single-shot event triggers — every cell resumes together once the controller has
+    // seen the registrations (or immediately, barrier-free). A poisoned event / finalized
+    // phaser (the controller aborted before starting) surfaces here as an error.
+    if let Some((phaser_velo, phaser_controller)) = phaser_handles {
+        let mut sub = crate::cellular::transport::phaser_velo::PhaserClient::subscribe(
+            phaser_velo,
+            &phaser_controller,
+        )
         .await
-        .map_err(|error| anyhow::anyhow!("cell {cell_id} await start: {error}"))?;
+        .map_err(|error| anyhow::anyhow!("cell {cell_id} phaser subscribe: {error}"))?;
+        sub.await_started()
+            .await
+            .map_err(|error| anyhow::anyhow!("cell {cell_id} phaser await start: {error}"))?;
+    } else {
+        client
+            .await_start(reply.start_event)
+            .await
+            .map_err(|error| anyhow::anyhow!("cell {cell_id} await start: {error}"))?;
+    }
     Ok(reply.envelope)
+}
+
+/// Substitute a cell's round-robin aggregator id into the operator's ship-DNS
+/// template. The template is a concrete `tcp://…svc.cluster.local:PORT` coordinate
+/// with a single `{agg_id}` placeholder (jobset/namespace already resolved by the
+/// operator); the cell fills in `cell_id % agg_count`. Pure so the pod-side ship-target
+/// derivation is unit-testable without a velo runtime.
+pub(crate) fn k8s_agg_ship_coordinate(template: &str, cell_id: u32, agg_count: u32) -> String {
+    let agg_id = cell_id % agg_count.max(1);
+    template.replace("{agg_id}", &agg_id.to_string())
 }
 
 /// Ships a cell's final records-shard partition + heartbeat to the controller over
@@ -442,12 +486,52 @@ impl CellRecordsShipper {
     /// Builds a shipper when the controller coordinate and cell partition env vars
     /// are set, else `None` (the ordinary single-process path).
     pub fn from_env() -> Option<Self> {
-        let coordinate = std::env::var(CELL_CONTROLLER_ADDR_ENV).ok()?;
-        let cell_id = ModuloCellPartition::from_env()?.cell_id();
+        // Requires a controller address to exist (i.e. this is a real cell); the ship
+        // address alone never activates cellular shipping on a single-process run.
+        std::env::var(CELL_CONTROLLER_ADDR_ENV).ok()?;
+        let partition = ModuloCellPartition::from_env()?;
+        let cell_id = partition.cell_id();
+        let coordinate = Self::ship_target(cell_id, partition.cell_count())?;
         Some(Self {
             cell_id,
             coordinate,
         })
+    }
+
+    /// This cell's terminal ship coordinate, in precedence order:
+    /// 1. `AIPERF_CELL_SHIP_ADDR` (same-host tree — the controller injected each
+    ///    local cell's assigned loopback aggregator coordinate directly);
+    /// 2. the k8s aggregator derived from the operator's DNS template
+    ///    ([`AGG_DNS_TEMPLATE_ENV`]) + this cell's round-robin aggregator
+    ///    (`cell_id % M`) — a JobSet indexed replicatedJob shares one env template, so
+    ///    the per-cell ship target must be computed pod-side from the shared template;
+    /// 3. the controller directly ([`CELL_CONTROLLER_ADDR_ENV`], flat star).
+    fn ship_target(cell_id: u32, cell_count: u32) -> Option<String> {
+        if let Ok(addr) = std::env::var(CELL_SHIP_ADDR_ENV)
+            && !addr.is_empty()
+        {
+            return Some(addr);
+        }
+        if let Ok(template) =
+            std::env::var(crate::runner_protocol::cellular_aggregator::AGG_DNS_TEMPLATE_ENV)
+            && !template.is_empty()
+            && let Some(agg_count) =
+                crate::runner_protocol::cellular_aggregator::aggregator_count(cell_count)
+        {
+            return Some(k8s_agg_ship_coordinate(&template, cell_id, agg_count));
+        }
+        std::env::var(CELL_CONTROLLER_ADDR_ENV).ok()
+    }
+
+    /// Builds a shipper that sends to an explicit velo `coordinate` under `cell_id`.
+    /// Used by a tier-T2 aggregator to ship its one merged store up to the controller
+    /// (the `cell_id` is the aggregator's id, which orders the controller's
+    /// `merge_store_partitions` deterministically).
+    pub fn to_coordinate(cell_id: u32, coordinate: String) -> Self {
+        Self {
+            cell_id,
+            coordinate,
+        }
     }
 
     /// The cell's identifier.
@@ -583,6 +667,29 @@ impl CellRecordsShipper {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn k8s_ship_coordinate_round_robins_cells_to_aggregators() {
+        let template = "tcp://js-aggregators-{agg_id}-0.js.ns.svc.cluster.local:9700";
+        // cells 0..6 over M=2 aggregators: even→agg0, odd→agg1 (cell_id % M).
+        assert_eq!(
+            k8s_agg_ship_coordinate(template, 0, 2),
+            "tcp://js-aggregators-0-0.js.ns.svc.cluster.local:9700"
+        );
+        assert_eq!(
+            k8s_agg_ship_coordinate(template, 1, 2),
+            "tcp://js-aggregators-1-0.js.ns.svc.cluster.local:9700"
+        );
+        assert_eq!(
+            k8s_agg_ship_coordinate(template, 4, 2),
+            "tcp://js-aggregators-0-0.js.ns.svc.cluster.local:9700"
+        );
+        // M=3: cell 5 → agg 2.
+        assert_eq!(
+            k8s_agg_ship_coordinate(template, 5, 3),
+            "tcp://js-aggregators-2-0.js.ns.svc.cluster.local:9700"
+        );
+    }
 
     #[test]
     fn detects_only_file_path_datasets_for_ship() {

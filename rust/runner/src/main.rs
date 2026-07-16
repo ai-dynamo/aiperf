@@ -68,8 +68,9 @@ fn main() {
         write_json_line(&application.catalog(), 0);
     }
     let cell_mode = arguments.len() == 1 && arguments[0] == "--cell";
-    if !arguments.is_empty() && !cell_mode {
-        tracing::error!("usage: aiperf-runner [--capabilities|--cell]");
+    let aggregator_mode = arguments.len() == 1 && arguments[0] == "--aggregator";
+    if !arguments.is_empty() && !cell_mode && !aggregator_mode {
+        tracing::error!("usage: aiperf-runner [--capabilities|--cell|--aggregator]");
         std::process::exit(2);
     }
 
@@ -84,6 +85,13 @@ fn main() {
     // its sliced envelope over velo (not stdin).
     if cell_mode {
         run_cell();
+    }
+
+    // A tier-T2 aggregator collects a subtree of cells' folded stores, merges them,
+    // and ships one merged store up to the controller. It reads the run envelope from
+    // stdin (piped by the controller) for the merge config.
+    if aggregator_mode {
+        run_aggregator(&input);
     }
 
     // A non-cell execute request asking for more than one cell becomes the
@@ -156,6 +164,50 @@ fn run_cell() -> ! {
     configure_dynosim_process_defaults(&envelope_bytes);
     let application = compose_stock_application();
     run_v2(&envelope_bytes, &application);
+}
+
+/// Runs this process as a tier-T2 aggregator: bind at the controller-assigned fixed
+/// loopback port, collect its subtree of cells' folded stores, merge them, and ship
+/// the one merged store up to the controller. Reads the run envelope (piped by the
+/// controller on stdin) only for the merge `MetricsConfig`.
+#[cfg(feature = "velo")]
+fn run_aggregator(input: &[u8]) -> ! {
+    let envelope = match serde_json::from_slice::<Value>(input) {
+        Ok(envelope) => envelope,
+        Err(error) => {
+            tracing::error!(error = %error, "aggregator failed to parse its envelope");
+            std::process::exit(2);
+        }
+    };
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            tracing::error!(error = %error, "failed to build aggregator runtime");
+            std::process::exit(2);
+        }
+    };
+    match runtime.block_on(aiperf::runner_protocol::cellular_aggregator::run_aggregator(
+        &envelope,
+    )) {
+        Ok(()) => std::process::exit(0),
+        Err(error) => {
+            tracing::error!(error = format!("{error:#}"), "aggregator failed");
+            std::process::exit(2);
+        }
+    }
+}
+
+/// Without the `velo` feature there is no cell transport, so `--aggregator` cannot run.
+#[cfg(not(feature = "velo"))]
+fn run_aggregator(_input: &[u8]) -> ! {
+    tracing::error!(
+        "aiperf-runner was built without the `velo` feature; `--aggregator` (tier-T2 tree merge) requires it"
+    );
+    std::process::exit(2);
 }
 
 /// Without the `velo` feature there is no cell transport, so `--cell` cannot run.

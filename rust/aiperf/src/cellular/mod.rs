@@ -45,9 +45,13 @@
 //! Everything here is object-safe where it crosses a `dyn` boundary and generic
 //! where it is hot-path monomorphized, per the crate's extensibility discipline.
 
+pub mod broadcast;
+pub mod dataset_session;
+pub mod dispatch_state;
 pub mod heartbeat;
 pub mod issuance;
 pub mod partition;
+pub mod phaser;
 pub mod shard;
 pub mod sketch;
 pub mod transport;

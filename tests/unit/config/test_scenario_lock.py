@@ -85,6 +85,43 @@ def test_scenario_autofills_and_validates(tmp_path):
     assert not outcome.violations
 
 
+def test_explicit_trajectory_ratios_are_honored(tmp_path):
+    """A user-explicit t* window is honored, not locked (agentx parity).
+
+    The official agentx validator only auto-fills the trajectory-start ratios
+    when unset and honors any explicit user value. The port must not raise a
+    ScenarioLockError for an explicit window that differs from the spec default.
+    """
+    config = _weka_config()
+    # Explicitly set both ratios to a mid-trajectory window differing from the
+    # spec defaults (min=0.0, max=1.0).
+    config.trajectory_start_min_ratio = 0.2
+    config.trajectory_start_max_ratio = 0.8
+    run = _resolve(config, tmp_path)
+
+    outcome = apply_scenario(run)
+
+    # Honored, not overridden or rejected.
+    assert run.cfg.trajectory_start_min_ratio == 0.2
+    assert run.cfg.trajectory_start_max_ratio == 0.8
+    assert outcome.submission_valid is True
+    assert not outcome.violations
+
+
+def test_partial_explicit_trajectory_ratio_autofills_sibling(tmp_path):
+    """Explicit min is honored while an unset max auto-fills from the spec."""
+    config = _weka_config()
+    config.trajectory_start_min_ratio = 0.3  # explicit
+    run = _resolve(config, tmp_path)
+
+    outcome = apply_scenario(run)
+
+    assert run.cfg.trajectory_start_min_ratio == 0.3  # honored
+    assert run.cfg.trajectory_start_max_ratio == 1.0  # auto-filled default
+    assert outcome.submission_valid is True
+    assert not outcome.violations
+
+
 def test_explicit_streaming_false_raises(tmp_path):
     run = _resolve(_weka_config(streaming=False), tmp_path)
     with pytest.raises(ScenarioLockError):

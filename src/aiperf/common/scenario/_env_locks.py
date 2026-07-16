@@ -4,11 +4,13 @@
 
 Ported from ``ajc/aiperf-graph-ir:src/aiperf/common/scenario/_env_locks.py``.
 
-The trajectory-start (t*) window (``cfg.trajectory_start_min/max_ratio``) and
-the per-trace idle-gap cap (``synthesis.idle_gap_cap_seconds``) are per-run
-config: their locks AUTO-APPLY the scenario value when the user left the field
-unset and raise a violation only when a user-explicit value differs. Scenario
-application performs NO process-global writes.
+The per-trace idle-gap cap (``synthesis.idle_gap_cap_seconds``) auto-applies the
+scenario value when the user left the field unset and raises a violation only
+when a user-explicit value differs. The trajectory-start (t*) window
+(``cfg.trajectory_start_min/max_ratio``) is a default, not a lock: it
+auto-applies the scenario value when unset and HONORS an explicit user value
+(parity with the official agentx validator). Scenario application performs NO
+process-global writes.
 
 This module also holds the concurrency-sweep rejection (reads the run's
 ``SweepVariation``) and the weka HF-repo pin.
@@ -39,15 +41,17 @@ def apply_trajectory_ratios(
     violations: list[ScenarioViolation],
     applied: list[str],
 ) -> None:
-    """Apply-or-lock for the trajectory-start (t*) window on the run config.
+    """Auto-fill-or-honor for the trajectory-start (t*) window on the run config.
 
     The window lives at ``cfg.trajectory_start_min_ratio`` /
     ``cfg.trajectory_start_max_ratio`` (``--trajectory-start-min-ratio`` /
     ``--trajectory-start-max-ratio``), per-run config threaded natively to the
-    runner. A user-explicit value is LOCKED (violation on mismatch); an unset
-    field is auto-applied from the spec. A violated bound never blocks its unset
-    sibling from being auto-applied (under ``--unsafe-override`` the run
-    proceeds with the mixed window).
+    runner. Parity with the official agentx validator
+    (``ajc/agentx:validator.py`` ~403-420): an unset field is auto-applied from
+    the spec default; a user-explicit value is HONORED (no violation), so the
+    scenario supplies a default t* window rather than locking it. ``violations``
+    is retained in the signature for a uniform lock-callback shape but is never
+    appended to here.
     """
     checks = (
         (
@@ -63,30 +67,21 @@ def apply_trajectory_ratios(
     )
     cfg = run.cfg
     any_checked = False
-    added = False
     for field, flag, required in checks:
         if required is None:
             continue
         any_checked = True
         if field in cfg.model_fields_set:
-            actual = getattr(cfg, field)
-            if actual != required:
-                added = True
-                violations.append(
-                    ScenarioViolation(
-                        flag=flag,
-                        current_value=actual,
-                        required_value=required,
-                        message=(
-                            f"scenario {spec.name!r} locks the trajectory-start "
-                            f"window; {flag} must equal {required}"
-                        ),
-                    )
-                )
+            # User-explicit value is honored (parity with the agentx validator,
+            # which only auto-fills when the field was left unset).
             continue
-        setattr(cfg, field, required)
-        _logger.info(f"Scenario {spec.name!r}: auto-set {flag}={required} (was unset).")
-    if any_checked and not added:
+        current = getattr(cfg, field, None)
+        if current != required:
+            setattr(cfg, field, required)
+            _logger.info(
+                f"Scenario {spec.name!r}: auto-set {flag}={required} (was unset)."
+            )
+    if any_checked:
         applied.append("trajectory_start_ratios")
 
 
