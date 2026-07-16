@@ -99,6 +99,8 @@ class AccuracyRecordsData(AIPerfBaseModel):
     expected: str             # ground truth (from GradingResult.ground_truth)
     actual: str               # extracted answer (from GradingResult.extracted_answer)
     reasoning: str            # grader's explanation
+    model_output: str = ""    # full answer content the model returned
+    model_thinking: str | None = None  # model reasoning_content channel, if any
 ```
 
 ### AccuracySummary

@@ -159,6 +159,9 @@ class TestAccuracyRecordProcessorSessionBounds:
         assert result.expected == "B"
         assert result.actual == "A"
         assert result.reasoning == "Wrong answer"
+        # Full model output captured; no separate reasoning channel here.
+        assert result.model_output == "Hello world"
+        assert result.model_thinking is None
         processor.grader.grade.assert_awaited_once_with("Hello world", "B")
 
     async def test_process_record_task_none_when_no_tasks(
@@ -250,3 +253,51 @@ class TestLogGradingDetail:
         processor._log_grading_detail(0, "some response", self._result())
         assert len(logged) == 1
         assert "sandboxed exec failed" in logged[0]
+
+
+class TestExtractOutputAndThinking:
+    """`_extract_output_and_thinking` splits answer content from reasoning."""
+
+    @staticmethod
+    def _record(datas: list) -> "object":
+        from aiperf.common.models.record_models import (
+            ParsedResponse,
+            ParsedResponseRecord,
+        )
+
+        record = MagicMock(spec=ParsedResponseRecord)
+        record.content_responses = [
+            ParsedResponse(perf_ns=i, data=d) for i, d in enumerate(datas)
+        ]
+        return record
+
+    def test_text_only_output_no_thinking(self) -> None:
+        from aiperf.common.models.record_models import TextResponseData
+
+        record = self._record(
+            [TextResponseData(text="Hello"), TextResponseData(text=" world")]
+        )
+        output, thinking = AccuracyRecordProcessor._extract_output_and_thinking(record)
+        assert output == "Hello world"
+        assert thinking is None
+
+    def test_reasoning_split_into_output_and_thinking(self) -> None:
+        from aiperf.common.models.record_models import ReasoningResponseData
+
+        record = self._record(
+            [
+                ReasoningResponseData(
+                    content="The answer is (B)", reasoning="Let me think... "
+                ),
+                ReasoningResponseData(content=" final.", reasoning="step two."),
+            ]
+        )
+        output, thinking = AccuracyRecordProcessor._extract_output_and_thinking(record)
+        assert output == "The answer is (B) final."
+        assert thinking == "Let me think... step two."
+
+    def test_empty_record_yields_empty_output_and_none_thinking(self) -> None:
+        record = self._record([])
+        output, thinking = AccuracyRecordProcessor._extract_output_and_thinking(record)
+        assert output == ""
+        assert thinking is None

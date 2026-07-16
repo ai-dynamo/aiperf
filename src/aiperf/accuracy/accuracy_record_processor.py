@@ -112,6 +112,8 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
 
         self._log_grading_detail(metadata.session_num, response_text, result)
 
+        model_output, model_thinking = self._extract_output_and_thinking(record)
+
         return AccuracyRecordsData(
             session_num=metadata.session_num,
             worker_id=metadata.worker_id,
@@ -125,6 +127,8 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
             expected=result.ground_truth,
             actual=result.extracted_answer,
             reasoning=result.reasoning,
+            model_output=model_output,
+            model_thinking=model_thinking,
         )
 
     def _log_grading_detail(
@@ -169,3 +173,32 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
                 if text:
                     parts.append(text)
         return "".join(parts)
+
+    @staticmethod
+    def _extract_output_and_thinking(
+        record: ParsedResponseRecord,
+    ) -> tuple[str, str | None]:
+        """Split the response into visible answer content and reasoning/thinking.
+
+        ``model_output`` is the answer channel (``TextResponseData.text`` or
+        ``ReasoningResponseData.content``); ``model_thinking`` is the concatenated
+        ``reasoning_content`` from any ``ReasoningResponseData`` chunks, or None
+        when the model emitted no separate reasoning channel.
+        """
+        output_parts: list[str] = []
+        thinking_parts: list[str] = []
+        for resp in record.content_responses:
+            data = resp.data
+            if data is None:
+                continue
+            reasoning = getattr(data, "reasoning", None)
+            if reasoning:
+                thinking_parts.append(reasoning)
+            content = getattr(data, "content", None)
+            if content is not None:
+                output_parts.append(content)
+            elif reasoning is None:
+                # Plain text (or tool-call) data with no reasoning channel.
+                output_parts.append(data.get_text())
+        thinking = "".join(thinking_parts) if thinking_parts else None
+        return "".join(output_parts), thinking

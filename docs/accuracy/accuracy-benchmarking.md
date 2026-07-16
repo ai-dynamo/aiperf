@@ -363,9 +363,12 @@ unparsed_rate`.
 per graded response with the full grading detail that the summary rolls up.
 Each line carries: `session_num`, `worker_id`, `benchmark_phase`,
 `timestamp_ns`, `task`, `grader_name`, `passed`, `unparsed`, `confidence`,
-`expected` (ground truth), `actual` (extracted answer), and `reasoning`. Use it
-for per-response post-hoc analysis — e.g. finding which prompts were graded
-`unparsed` and why.
+`expected` (ground truth), `actual` (extracted answer), `reasoning` (the
+grader's decision trace), `model_output` (the full answer content the model
+returned), and `model_thinking` (the model's reasoning/`reasoning_content`
+channel when it emitted one, else `null`). Use it for per-response post-hoc
+analysis — e.g. inspecting exactly what a reasoning model thought before an
+`unparsed` answer.
 
 ## Architecture
 

@@ -128,6 +128,17 @@ class AccuracyRecordsData(AIPerfBaseModel):
         "(maps from GradingResult.extracted_answer)"
     )
     reasoning: str = Field(description="Grader's explanation of the grading decision")
+    model_output: str = Field(
+        default="",
+        description="Full model response content (the answer text the model "
+        "returned, excluding any separate reasoning channel). Always populated by "
+        "AccuracyRecordProcessor in production",
+    )
+    model_thinking: str | None = Field(
+        default=None,
+        description="Model's reasoning/thinking content (reasoning_content) when "
+        "the model emitted a separate reasoning channel; None otherwise",
+    )
 
 
 class TaskAccuracyStats(AIPerfBaseModel):
