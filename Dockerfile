@@ -135,12 +135,12 @@ COPY .cargo /workspace/.cargo
 COPY rust /workspace/rust
 
 # Build the unified `aiperf` binary (front door + execution engine, lto=fat) per
-# AIPERF_RUNNER_PROFILE, intern it as package data, then build the ONE maturin
-# wheel. maturin compiles the rust/pyext `aiperf._native` cdylib, packages
-# `src/aiperf`, includes the interned `aiperf/_bin/aiperf`, and runs its
-# built-in auditwheel repair to emit a manylinux-tagged wheel. `bindings = "bin"`
-# is not used (illegal with `[project.scripts] aiperf`); the binary rides along as
-# package data instead.
+# AIPERF_RUNNER_PROFILE, then build the ONE maturin wheel and repack it. maturin
+# compiles the rust/pyext `aiperf._native` cdylib, packages `src/aiperf`, and runs
+# its built-in auditwheel repair to emit a manylinux-tagged wheel; the repack step
+# then injects the binary into `aiperf-<ver>.data/scripts/aiperf` so pip installs
+# it directly as the `aiperf` command (no Python launcher shim). `bindings = "bin"`
+# is not used (illegal with a pyo3 module + `[project.scripts]`).
 RUN cd /workspace \
     && case "${AIPERF_RUNNER_PROFILE}" in \
          offline) CLI_FEATURES="--features full" ;; \
@@ -148,10 +148,8 @@ RUN cd /workspace \
          *) echo "unknown AIPERF_RUNNER_PROFILE='${AIPERF_RUNNER_PROFILE}' (expected 'offline' or 'online')" >&2; exit 1 ;; \
        esac \
     && cargo build --release -p aiperf-cli ${CLI_FEATURES} \
-    && mkdir -p src/aiperf/_bin \
-    && cp target/release/aiperf src/aiperf/_bin/aiperf \
-    && chmod +x src/aiperf/_bin/aiperf \
-    && maturin build --release --out /dist
+    && maturin build --release --out /dist \
+    && python tools/wheel_repack.py --wheel-dir /dist --binary target/release/aiperf
 
 # Export-only stage: scratch-based so `docker buildx build --target
 # wheel-artifact --output type=local,dest=<dir>` writes only the wheel file

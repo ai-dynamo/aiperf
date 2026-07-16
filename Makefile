@@ -158,8 +158,13 @@ coverage: #? run the tests and generate an html coverage report.
 
 install: install-app install-mock-server #? install the project and mock server in editable mode.
 
-install-app: bundle-cli #? install the project in editable mode (with the interned unified aiperf binary).
+install-app: bundle-cli #? install the project in editable mode and place the native `aiperf` binary on PATH.
 	$(activate_venv) && uv pip install -e ".[dev]"
+	# Editable installs don't process the wheel's `.data/scripts/` entry, so the
+	# `aiperf` command must be placed on the venv PATH explicitly. This mirrors what
+	# the wheel-repack does for a real install (see `wheel`).
+	cp target/release/aiperf $(VENV_PATH)/bin/aiperf
+	chmod +x $(VENV_PATH)/bin/aiperf
 
 native-cli: #? build the unified native Rust `aiperf` binary (front door + execution engine).
 	cargo build --release -p aiperf-cli $(CLI_FEATURES)
@@ -178,15 +183,15 @@ install-native: native-cli #? install the pure-Rust `aiperf` into dist/native-bi
 # offline/online Dynamo replay and cellular):
 #   make bundle-cli CLI_FEATURES="--features full"
 CLI_FEATURES ?= --features parquet
-bundle-cli: #? build the unified aiperf binary (CLI_FEATURES-selectable) and intern it at src/aiperf/_bin/ for packaging.
+bundle-cli: #? build the unified aiperf binary (CLI_FEATURES-selectable) for packaging.
 	cargo build --release -p aiperf-cli $(CLI_FEATURES)
-	mkdir -p src/aiperf/_bin
-	cp target/release/aiperf src/aiperf/_bin/aiperf
-	chmod +x src/aiperf/_bin/aiperf
 
-wheel: bundle-cli #? build the single interned aiperf wheel (maturin, manylinux) into dist/.
+wheel: bundle-cli #? build the single aiperf wheel (maturin, manylinux) and repack the native binary into it.
 	$(activate_venv) && uv pip install "maturin[patchelf]" \
 		&& maturin build --release --out dist
+	# maturin can't install a native executable as the `aiperf` console script, so
+	# repack the built wheel to inject target/release/aiperf into its scripts dir.
+	$(activate_venv) && python tools/wheel_repack.py --wheel-dir dist --binary target/release/aiperf
 
 docker: #? build the docker image.
 	docker build -t $(DOCKER_IMAGE_NAME):$(DOCKER_IMAGE_TAG) $(args) .
