@@ -11,7 +11,7 @@ Profile Anthropic Messages API servers using AIPerf with the `messages` endpoint
 
 The `messages` endpoint type targets the Anthropic Messages API (`/v1/messages`). Use it when benchmarking:
 
-- Anthropic API directly (api.anthropic.com)
+- Anthropic API directly (https://api.anthropic.com)
 - Self-hosted servers that implement the Anthropic Messages protocol
 - Proxy servers that translate to the `/v1/messages` format
 
@@ -39,7 +39,7 @@ It supports streaming and non-streaming responses, text content, extended thinki
 aiperf profile \
     --model claude-sonnet-4-20250514 \
     --endpoint-type messages \
-    --url api.anthropic.com \
+    --url https://api.anthropic.com \
     --api-key $ANTHROPIC_API_KEY \
     --request-count 20 \
     --concurrency 4
@@ -54,7 +54,7 @@ aiperf profile \
     --model claude-sonnet-4-20250514 \
     --endpoint-type messages \
     --streaming \
-    --url api.anthropic.com \
+    --url https://api.anthropic.com \
     --api-key $ANTHROPIC_API_KEY \
     --request-count 20 \
     --concurrency 4
@@ -73,7 +73,7 @@ aiperf profile \
     --synthetic-input-tokens-stddev 50 \
     --output-tokens-mean 200 \
     --output-tokens-stddev 20 \
-    --url api.anthropic.com \
+    --url https://api.anthropic.com \
     --api-key $ANTHROPIC_API_KEY \
     --request-count 50 \
     --concurrency 8
@@ -88,7 +88,7 @@ aiperf profile \
     --model claude-sonnet-4-20250514 \
     --endpoint-type messages \
     --shared-system-prompt-length 100 \
-    --url api.anthropic.com \
+    --url https://api.anthropic.com \
     --api-key $ANTHROPIC_API_KEY \
     --request-count 20
 ```
@@ -226,7 +226,7 @@ aiperf profile \
     --model claude-sonnet-4-20250514 \
     --endpoint-type messages \
     --api-key sk-ant-api03-your-key-here \
-    --url api.anthropic.com
+    --url https://api.anthropic.com
 ```
 
 The endpoint also sets the `anthropic-version: 2023-06-01` header by default. To override it or add beta headers (e.g., for extended thinking), use `--header`:
@@ -237,7 +237,7 @@ aiperf profile \
     --endpoint-type messages \
     --api-key $ANTHROPIC_API_KEY \
     --header anthropic-beta:extended-thinking-2025-04-11 \
-    --url api.anthropic.com
+    --url https://api.anthropic.com
 ```
 
 Custom headers are merged with the defaults. If you provide `anthropic-version` via `--header`, it takes precedence.
@@ -254,7 +254,7 @@ aiperf profile \
     --endpoint-type messages \
     --extra-inputs temperature:0.7 \
     --extra-inputs top_p:0.9 \
-    --url api.anthropic.com \
+    --url https://api.anthropic.com \
     --api-key $ANTHROPIC_API_KEY
 ```
 
@@ -290,7 +290,7 @@ aiperf profile \
     --input-file prompts.jsonl \
     --custom-dataset-type single_turn \
     --streaming \
-    --url api.anthropic.com \
+    --url https://api.anthropic.com \
     --api-key $ANTHROPIC_API_KEY \
     --concurrency 4
 ```
@@ -309,7 +309,7 @@ aiperf profile \
     --input-file conversations.jsonl \
     --custom-dataset-type multi_turn \
     --streaming \
-    --url api.anthropic.com \
+    --url https://api.anthropic.com \
     --api-key $ANTHROPIC_API_KEY \
     --concurrency 2
 ```
@@ -327,7 +327,7 @@ aiperf profile \
     --use-server-token-count \
     --tokenizer builtin \
     --streaming \
-    --url api.anthropic.com \
+    --url https://api.anthropic.com \
     --api-key $ANTHROPIC_API_KEY
 ```
 
