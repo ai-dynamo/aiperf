@@ -58,9 +58,11 @@ pub(crate) fn validate_grpc_run(run: &AuthoredRunSpecV2, context: &RunnerRunCont
             schemes.len() == 1,
             "endpoint profile {profile_id:?} mixes grpc:// and grpcs:// URLs"
         );
+        // `ssl_verify` is intentionally NOT part of this guard: it is honored by
+        // the gRPC TLS builder (grpcs cert verification toggle), so an authored
+        // `ssl_verify=false` is supported rather than rejected as HTTP-specific.
         ensure!(
             profile.client.http_version == default_http_client.http_version
-                && profile.client.ssl_verify == default_http_client.ssl_verify
                 && profile.client.keepalive_ns == default_http_client.keepalive_ns
                 && profile.client.max_connections_per_origin
                     == default_http_client.max_connections_per_origin,

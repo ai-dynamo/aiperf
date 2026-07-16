@@ -456,6 +456,10 @@ pub(crate) fn grpc_sink_with_endpoints(
             client: GrpcClientConfig {
                 total_timeout_ns: transport.client.total_timeout_ns,
                 trace_chunks: transport.client.collect_trace_chunks,
+                // Carry the endpoint's ssl_verify to the gRPC TLS builder so a
+                // `grpcs://` run can disable cert verification (self-signed test
+                // servers), mirroring the HTTP transport.
+                ssl_verify: transport.client.ssl_verify,
                 ..GrpcClientConfig::default()
             },
             connection_reuse: grpc_reuse(transport.connection_reuse),

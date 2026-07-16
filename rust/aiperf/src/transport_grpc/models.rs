@@ -35,6 +35,11 @@ pub struct GrpcClientConfig {
     pub total_timeout_ns: Option<i64>,
     /// Record per-message size/timestamp pairs in addition to totals.
     pub trace_chunks: bool,
+    /// Verify the server's TLS certificate chain + hostname on `grpcs`. When
+    /// `false`, any certificate is accepted (self-signed / untrusted test
+    /// servers) — the gRPC equivalent of the HTTP transport's `ssl_verify=false`.
+    /// Handshake signatures remain cryptographically verified.
+    pub ssl_verify: bool,
 }
 
 impl Default for GrpcClientConfig {
@@ -45,6 +50,7 @@ impl Default for GrpcClientConfig {
             channel_ready_timeout_ns: 30_000_000_000,
             total_timeout_ns: None,
             trace_chunks: true,
+            ssl_verify: true,
         }
     }
 }

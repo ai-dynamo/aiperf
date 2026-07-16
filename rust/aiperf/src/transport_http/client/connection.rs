@@ -347,6 +347,18 @@ fn rustls_config(client: &ClientConfig) -> Arc<rustls::ClientConfig> {
     Arc::new(cfg)
 }
 
+/// A rustls verifier that accepts ANY server certificate — the shared
+/// `ssl_verify=false` policy. Exposed so the gRPC (tonic) transport can install
+/// the same danger verifier for `grpcs` against a self-signed / untrusted
+/// server, matching the HTTP transport's behavior. Signatures stay
+/// cryptographically verified; only chain/hostname validation is skipped.
+pub(crate) fn insecure_server_cert_verifier() -> Arc<dyn rustls::client::danger::ServerCertVerifier>
+{
+    Arc::new(NoCertificateVerification {
+        provider: Arc::new(rustls::crypto::aws_lc_rs::default_provider()),
+    })
+}
+
 /// Race `fut` against a [`Clock`] timer of `timeout_ns`. If the future resolves
 /// first its output is returned; if the timer fires first, `on_timeout()` builds
 /// the error. A `None` / non-positive `timeout_ns` disables the timer entirely

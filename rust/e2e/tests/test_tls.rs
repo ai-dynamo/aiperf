@@ -16,19 +16,16 @@
 //! equivalent of the Python connector's `ssl=False`. The listener advertises
 //! ALPN `h2`+`http/1.1`; the client negotiates one and streams SSE over TLS.
 //!
-//! # Why HTTPS and not `grpcs` through `aiperf profile`
+//! # `grpcs` through `aiperf profile`
 //!
-//! The mock's `grpcs` listener is proven at the crate level
-//! (`rust/mock-server/tests/tls_integration.rs`), NOT here, because the runner's
-//! tonic `grpcs` client configures TLS with
-//! `ClientTlsConfig::new().with_enabled_roots()` and NOTHING else
-//! (`rust/aiperf/src/transport_grpc/transport.rs:783-793`): it verifies the
-//! server cert against the system trust roots with no accept-invalid /
-//! `ssl_verify` toggle and no custom-CA injection. A fresh self-signed cert is
-//! not in the system roots, so an `aiperf profile` `grpcs://` run against a
-//! self-signed mock fails the handshake by design. The HTTPS client, by
-//! contrast, DOES expose `ssl_verify=false`, so the full product path is
-//! reachable over HTTPS and that is what this test drives.
+//! `grpcs` is also driven end to end here
+//! ([`grpcs_kserve_infer_via_aiperf_profile_raw_records`]). The runner's tonic
+//! client now honors `endpoint.ssl_verify=false` by installing the SAME
+//! `NoCertificateVerification` verifier the HTTP transport uses, via tonic's
+//! `Endpoint::tls_config_with_verifier`
+//! (`rust/aiperf/src/transport_grpc/transport.rs`), so a `grpcs://` run against
+//! the self-signed mock completes instead of failing the handshake against
+//! system roots.
 //!
 //! # The tuned-mock raw-record bar
 //!
@@ -241,4 +238,122 @@ async fn tuned_https_single_turn_raw_timing() {
             .model("gpt-4")
             .tol_ms(40.0, 2.0),
     );
+}
+
+// ============================================================================
+// grpcs — the runner's tonic client with ssl_verify=false against a self-signed
+// KServe gRPC listener, driven through the full product path.
+// ============================================================================
+
+/// Requests for the single-phase grpcs run.
+const GRPCS_REQUESTS: u32 = 6;
+
+/// Start an in-process `grpcs` KServe gRPC listener (TLS self-signed) on its OWN
+/// runtime thread — the caller's `#[tokio::test]` runtime is blocked on the
+/// synchronous `aiperf` subprocess during the run, so the accept loop must live
+/// elsewhere. Returns the `grpcs://127.0.0.1:PORT` URL.
+fn start_grpcs_mock() -> String {
+    let reserved = StdTcpListener::bind("127.0.0.1:0").expect("reserve grpcs port");
+    let addr = reserved.local_addr().unwrap();
+    drop(reserved);
+
+    let cfg = MockServerConfig {
+        fast: true,
+        no_tokenizer: true,
+        ..MockServerConfig::default()
+    }
+    .apply_flags();
+    aiperf_mock_server::tokens::load_corpus();
+
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("grpcs mock runtime");
+        rt.block_on(async move {
+            let acceptor = tls::self_signed_acceptor().expect("self-signed acceptor");
+            let state = AppState::build(cfg);
+            let _ = aiperf_mock_server::grpc::serve_grpc_with_tls(addr, state, Some(acceptor)).await;
+        });
+    });
+    std::thread::sleep(Duration::from_millis(400));
+    format!("grpcs://127.0.0.1:{}", addr.port())
+}
+
+/// Config-v2 YAML: a KServe v2 infer endpoint over `grpcs://` with cert
+/// verification disabled and readiness probing off.
+fn grpcs_config(url: &str) -> String {
+    format!(
+        "schemaVersion: \"2.0\"\n\
+         benchmark:\n\
+        \x20 models: [{DEFAULT_MODEL}]\n\
+        \x20 endpoint:\n\
+        \x20   urls: [\"{url}\"]\n\
+        \x20   type: kserve_v2_infer\n\
+        \x20   streaming: false\n\
+        \x20   sslVerify: false\n\
+        \x20   waitForModelTimeout: 0.0\n\
+        \x20 dataset:\n\
+        \x20   type: synthetic\n\
+        \x20   entries: {GRPCS_REQUESTS}\n\
+        \x20   prompts:\n\
+        \x20     isl: 16\n\
+        \x20     osl: 8\n\
+        \x20 phases:\n\
+        \x20   - name: profiling\n\
+        \x20     type: concurrency\n\
+        \x20     requests: {GRPCS_REQUESTS}\n\
+        \x20     concurrency: 2\n\
+        \x20 gpuTelemetry: {{enabled: false}}\n\
+        \x20 serverMetrics: {{enabled: false}}\n\
+        \x20 transport:\n\
+        \x20   type: grpc\n\
+        \x20 runtime:\n\
+        \x20   ui: none\n"
+    )
+}
+
+/// `aiperf profile` runs KServe v2 infer over `grpcs://` against the self-signed
+/// mock with `sslVerify: false`. A successful raw-record export proves the tonic
+/// client completed the TLS handshake with the insecure verifier installed.
+#[tokio::test]
+async fn grpcs_kserve_infer_via_aiperf_profile_raw_records() {
+    if cfg!(target_os = "macos") {
+        return;
+    }
+    let url = start_grpcs_mock();
+
+    let h = AIPerfHarness::new().await; // subprocess machinery; its cleartext mock is unused
+    let cfg_file = h.artifact_path().join("grpcs.yaml");
+    std::fs::write(&cfg_file, grpcs_config(&url)).expect("write grpcs config");
+
+    let r = h.run(&format!("--config {} --export-level raw", cfg_file.display()));
+    assert!(
+        r.success(),
+        "grpcs run failed (exit {}):\nstdout:\n{}\nstderr:\n{}",
+        r.exit_code,
+        r.stdout,
+        r.stderr
+    );
+
+    let records = r.artifacts.raw_records();
+    assert_eq!(
+        records.len(),
+        GRPCS_REQUESTS as usize,
+        "one raw record per grpcs request"
+    );
+    for (i, rec) in records.iter().enumerate() {
+        let errored = rec
+            .get("error")
+            .map(|e| !e.is_null())
+            .unwrap_or(false);
+        assert!(!errored, "record {i} errored over grpcs: {:?}", rec.get("error"));
+        let has_response = rec
+            .get("responses")
+            .and_then(|v| v.as_array())
+            .map(|a| !a.is_empty())
+            .unwrap_or(false);
+        assert!(has_response, "record {i} has no gRPC response: {rec}");
+    }
 }

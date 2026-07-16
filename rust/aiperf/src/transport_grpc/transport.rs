@@ -781,15 +781,26 @@ impl GrpcTransport {
             .keep_alive_timeout(Duration::from_secs(10))
             .keep_alive_while_idle(true);
         if target.secure {
-            endpoint = endpoint
-                .tls_config(ClientTlsConfig::new().with_enabled_roots())
-                .map_err(|error| {
-                    GrpcTransportError::new(
-                        GrpcErrorKind::InvalidRequest,
-                        format!("configure gRPC TLS: {error}"),
-                        400,
-                    )
-                })?;
+            // `ssl_verify=false` installs a danger verifier that accepts any
+            // certificate (self-signed / untrusted `grpcs` test servers),
+            // sharing the exact rustls verifier the HTTP transport uses. tonic
+            // rejects mixing roots with a custom verifier, so the verified path
+            // sets roots and the insecure path sets neither.
+            let configured = if self.config.ssl_verify {
+                endpoint.tls_config(ClientTlsConfig::new().with_enabled_roots())
+            } else {
+                endpoint.tls_config_with_verifier(
+                    ClientTlsConfig::new(),
+                    crate::transport_http::client::connection::insecure_server_cert_verifier(),
+                )
+            };
+            endpoint = configured.map_err(|error| {
+                GrpcTransportError::new(
+                    GrpcErrorKind::InvalidRequest,
+                    format!("configure gRPC TLS: {error}"),
+                    400,
+                )
+            })?;
         }
         let start_ns = self.clock.now_ns();
         record.trace.connect_start_ns = Some(start_ns);
