@@ -6,10 +6,107 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.enums import CreditPhase
-from aiperf.common.messages import BaseServiceErrorMessage
+from aiperf.accuracy.models import AccuracyRecordsData
+from aiperf.common.enums import CreditPhase, ExportLevel
+from aiperf.common.messages import (
+    AccuracyRecordsMessage,
+    BaseServiceErrorMessage,
+    MetricRecordsMessage,
+)
 from aiperf.common.utils import compute_time_ns
+from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.records.record_processor_service import RecordProcessor
+from tests.unit.post_processors.conftest import create_metric_metadata
+
+
+def _make_accuracy_record(session_num: int = 0) -> AccuracyRecordsData:
+    return AccuracyRecordsData(
+        session_num=session_num,
+        worker_id="w1",
+        benchmark_phase=CreditPhase.PROFILING,
+        timestamp_ns=1_000,
+        task=None,
+        grader_name="multiple_choice",
+        passed=True,
+        unparsed=False,
+        confidence=1.0,
+        expected="A",
+        actual="A",
+        reasoning="ok",
+    )
+
+
+class TestRecordProcessorTypedRecordPartition:
+    """Processor outputs are partitioned by transport: MetricRecordDict (a dict
+    subclass) stays in MetricRecordsMessage.results; typed Pydantic records
+    (AccuracyRecordsData) travel on their own dedicated channel message."""
+
+    @pytest.mark.asyncio
+    async def test_process_and_forward_splits_dicts_from_typed_records(self):
+        """A mixed result list pushes the dict in MetricRecordsMessage.results and
+        the accuracy record in a separate AccuracyRecordsMessage."""
+        metric_dict = MetricRecordDict({"some_metric": 1.0})
+        accuracy_record = _make_accuracy_record()
+
+        mock_self = MagicMock(spec=RecordProcessor)
+        mock_self.service_id = "rp"
+        mock_self.run = MagicMock()
+        mock_self.run.cfg.artifacts.export_level = ExportLevel.RECORDS
+        mock_self.records_push_client = AsyncMock()
+        mock_self.inference_result_parser = MagicMock()
+        mock_self.inference_result_parser.parse_request_record = AsyncMock(
+            return_value=MagicMock()
+        )
+        mock_self._create_metric_record_metadata = MagicMock(
+            return_value=create_metric_metadata(session_num=0)
+        )
+        mock_self._process_record = AsyncMock(
+            return_value=[metric_dict, accuracy_record]
+        )
+        mock_self._free_record_data = MagicMock(return_value=(None, None))
+        # Run the real partition/push seam against this mock instance.
+        mock_self._push_typed_records = (
+            lambda recs: RecordProcessor._push_typed_records(mock_self, recs)
+        )
+
+        await RecordProcessor._process_and_forward_record(
+            mock_self, MagicMock(service_id="w1"), MagicMock(), None
+        )
+
+        pushed = [c.args[0] for c in mock_self.records_push_client.push.await_args_list]
+        metric_msgs = [m for m in pushed if isinstance(m, MetricRecordsMessage)]
+        accuracy_msgs = [m for m in pushed if isinstance(m, AccuracyRecordsMessage)]
+
+        assert len(metric_msgs) == 1
+        assert metric_msgs[0].results == [metric_dict]
+        assert all(isinstance(r, dict) for r in metric_msgs[0].results)
+
+        assert len(accuracy_msgs) == 1
+        assert accuracy_msgs[0].records == [accuracy_record]
+
+    @pytest.mark.asyncio
+    async def test_push_typed_records_groups_by_record_type(self):
+        """All accuracy records land in a single AccuracyRecordsMessage."""
+        mock_self = MagicMock(spec=RecordProcessor)
+        mock_self.service_id = "rp"
+        mock_self.records_push_client = AsyncMock()
+
+        records = [_make_accuracy_record(0), _make_accuracy_record(1)]
+        await RecordProcessor._push_typed_records(mock_self, records)
+
+        mock_self.records_push_client.push.assert_awaited_once()
+        msg = mock_self.records_push_client.push.await_args.args[0]
+        assert isinstance(msg, AccuracyRecordsMessage)
+        assert msg.records == records
+
+    @pytest.mark.asyncio
+    async def test_push_typed_records_empty_is_noop(self):
+        mock_self = MagicMock(spec=RecordProcessor)
+        mock_self.records_push_client = AsyncMock()
+
+        await RecordProcessor._push_typed_records(mock_self, [])
+
+        mock_self.records_push_client.push.assert_not_awaited()
 
 
 class TestRecordProcessorCreateMetricRecordMetadata:

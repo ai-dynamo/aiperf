@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import traceback
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from aiperf.accuracy.models import AccuracyRecordsData
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.enums import (
     CommAddress,
@@ -16,6 +17,7 @@ from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.hooks import on_command, on_message, on_pull_message
 from aiperf.common.messages import (
+    AccuracyRecordsMessage,
     DatasetConfiguredNotification,
     InferenceResultsMessage,
     MetricRecordsMessage,
@@ -286,15 +288,54 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             else:
                 results.append(result)
 
+        # Partition processor outputs by transport: MetricRecordDict is a dict
+        # subclass and merges into MetricRecordsMessage.results; typed Pydantic
+        # record models (e.g. AccuracyRecordsData) travel on dedicated channels.
+        # A typed record leaking into results would break to_data()'s dict-merge.
+        metric_dicts = [r for r in results if isinstance(r, dict)]
+        typed_records = [r for r in results if not isinstance(r, dict)]
+
         await self.records_push_client.push(
             MetricRecordsMessage(
                 service_id=self.service_id,
                 metadata=metadata,
-                results=results,
+                results=metric_dicts,
                 trace_data=trace_data,
                 error=error,
             )
         )
+
+        await self._push_typed_records(typed_records)
+
+    async def _push_typed_records(
+        self, typed_records: list[AccuracyRecordsData]
+    ) -> None:
+        """Push typed record models on their dedicated channels.
+
+        Groups records by their ``record_type`` classvar and builds one dedicated
+        message per type via a generic ``record_type -> message builder`` mapping,
+        so future typed records reuse this seam instead of adding an if-branch.
+        """
+        if not typed_records:
+            return
+
+        builders = {
+            AccuracyRecordsData.record_type: lambda records: AccuracyRecordsMessage(
+                service_id=self.service_id,
+                records=records,
+            ),
+        }
+
+        grouped: dict[str, list[Any]] = {}
+        for record in typed_records:
+            grouped.setdefault(record.record_type, []).append(record)
+
+        for record_type, records in grouped.items():
+            builder = builders.get(record_type)
+            if builder is None:
+                self.error(f"No message builder for typed record type: {record_type}")
+                continue
+            await self.records_push_client.push(builder(records))
 
     async def _forward_failed_record(
         self,
@@ -369,15 +410,15 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
 
     async def _process_record(
         self, record: ParsedResponseRecord, metadata: MetricRecordMetadata
-    ) -> list[MetricRecordDict | BaseException]:
+    ) -> list[MetricRecordDict | AccuracyRecordsData | BaseException]:
         """Stream a record to the records processors."""
         tasks = [
             processor.process_record(record, metadata)
             for processor in self.records_processors
         ]
-        results: list[MetricRecordDict | BaseException | None] = await asyncio.gather(
-            *tasks, return_exceptions=True
-        )
+        results: list[
+            MetricRecordDict | AccuracyRecordsData | BaseException | None
+        ] = await asyncio.gather(*tasks, return_exceptions=True)
         return [result for result in results if result is not None]
 
 

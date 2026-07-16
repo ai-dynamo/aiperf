@@ -8,6 +8,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from aiperf.accuracy.models import ProcessAccuracyResult
 from aiperf.common.accumulator_protocols import (
     AccumulatorProtocol,
     ExportContext,
@@ -25,11 +26,13 @@ from aiperf.common.enums import (
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_command, on_message, on_pull_message
 from aiperf.common.messages import (
+    AccuracyRecordsMessage,
     AllRecordsReceivedMessage,
     DatasetConfiguredNotification,
     MetricRecordsData,
     MetricRecordsMessage,
     NetworkLatencyRecordMessage,
+    ProcessAccuracyResultMessage,
     ProcessAllResultsMessage,
     ProcessRecordsCommand,
     ProcessRecordsResultMessage,
@@ -458,6 +461,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._server_metrics_accumulator = self._accumulators.get(
             AccumulatorType.SERVER_METRICS
         )
+        self._accuracy_accumulator = self._accumulators.get(AccumulatorType.ACCURACY)
 
     def _build_routing_table(self) -> dict[str, list[Any]]:
         """Build record_type string -> handler mapping from plugin metadata."""
@@ -584,6 +588,18 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 ] += 1
         elif message.error:
             self._server_metrics_state.error_counts[message.error] += 1
+
+    @on_pull_message(MessageType.ACCURACY_RECORD)
+    async def _on_accuracy_records(self, message: AccuracyRecordsMessage) -> None:
+        """Handle graded accuracy records from a record processor.
+
+        The routing table auto-includes ``"accuracy"`` from plugin metadata, so
+        ``_dispatch_record`` fans each record out to the AccuracyAccumulator and
+        AccuracyJSONLWriter without any accuracy-specific routing code here.
+        """
+        for record in message.records:
+            for error in await self._dispatch_record(record):
+                self.debug(lambda e=error: f"Accuracy record dispatch error: {e!r}")
 
     @on_pull_message(MessageType.NETWORK_LATENCY_RECORD)
     async def _on_network_latency_records(
@@ -1409,6 +1425,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             except Exception as e:
                 self.exception(f"Failed to publish server metrics results: {e!r}")
 
+        if self.run.cfg.accuracy is None or not self.run.cfg.accuracy.enabled:
+            self.debug("Accuracy evaluation is disabled, skipping publish")
+        else:
+            try:
+                await self._publish_accuracy_results(phase)
+            except Exception as e:
+                self.exception(f"Failed to publish accuracy results: {e!r}")
+
         # Publish the unified ProcessAllResultsMessage over the populated
         # accumulators. The per-stream result messages above remain the
         # shutdown trigger; this is supplementary.
@@ -1465,6 +1489,25 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             ProcessTelemetryResultMessage(
                 service_id=self.service_id,
                 telemetry_result=telemetry_result,
+            )
+        )
+
+    async def _publish_accuracy_results(self, phase: CreditPhase) -> None:
+        """Publish phase-scoped accuracy results on the dedicated accuracy channel.
+
+        Mirrors ``_publish_telemetry_results``: exports the phase-scoped accuracy
+        summary from the AccuracyAccumulator and publishes it independently from
+        inference results.
+        """
+        if self._accuracy_accumulator is None:
+            return
+        summary = await self._accuracy_accumulator.export_results(
+            ExportContext(phase=phase)
+        )
+        await self.publish(
+            ProcessAccuracyResultMessage(
+                service_id=self.service_id,
+                accuracy_result=ProcessAccuracyResult(results=summary),
             )
         )
 

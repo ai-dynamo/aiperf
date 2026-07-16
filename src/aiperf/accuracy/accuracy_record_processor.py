@@ -6,14 +6,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from aiperf.accuracy.models import (
-    ACCURACY_RECORD_CORRECT_KEY,
-    ACCURACY_RECORD_UNPARSED_KEY,
+    AccuracyRecordsData,
     GradingResult,
 )
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import MetricRecordMetadata, ParsedResponseRecord
-from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 
@@ -58,8 +56,10 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
         grader_cls = plugins.get_class(PluginType.ACCURACY_GRADER, grader_name)
         self.grader: BaseGrader = grader_cls(run=run)
 
+        self._grader_name = grader_name
         self._verbose = acc_cfg.verbose
         self._ground_truths: list[str] | None = None
+        self._tasks: list[str] | None = None
 
     def on_dataset_configured(self, metadata: DatasetMetadata) -> None:
         """Receive ground-truth answers from the DatasetConfiguredNotification.
@@ -73,17 +73,20 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
             for c in metadata.conversations
             if c.accuracy_ground_truth is not None
         ]
+        self._tasks = [
+            c.accuracy_task
+            for c in metadata.conversations
+            if c.accuracy_task is not None
+        ]
 
     async def process_record(
         self, record: ParsedResponseRecord, metadata: MetricRecordMetadata
-    ) -> MetricRecordDict:
+    ) -> AccuracyRecordsData:
         """Grade a single response against its corresponding benchmark problem.
 
         Maps ``metadata.session_num % len(_ground_truths)`` to the ground-truth
-        answer, runs the configured grader, and returns a MetricRecordDict
-        containing the per-record transport keys ``accuracy_correct`` and
-        ``accuracy_unparsed`` (underscore-namespaced so they never collide with
-        the ``accuracy.`` summary tags).
+        answer, runs the configured grader, and returns a typed
+        ``AccuracyRecordsData`` that flows on the dedicated ``accuracy`` channel.
 
         Raises:
             RuntimeError: if on_dataset_configured was not called before processing.
@@ -93,7 +96,6 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
                 "AccuracyRecordProcessor: dataset not configured; "
                 "on_dataset_configured must be called before process_record"
             )
-        record_metrics = MetricRecordDict()
 
         ground_truth = self._ground_truths[
             metadata.session_num % len(self._ground_truths)
@@ -102,12 +104,28 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
 
         result: GradingResult = await self.grader.grade(response_text, ground_truth)
 
-        record_metrics[ACCURACY_RECORD_CORRECT_KEY] = 1.0 if result.correct else 0.0
-        record_metrics[ACCURACY_RECORD_UNPARSED_KEY] = 1.0 if result.unparsed else 0.0
+        task = (
+            self._tasks[metadata.session_num % len(self._tasks)]
+            if self._tasks
+            else None
+        )
 
         self._log_grading_detail(metadata.session_num, response_text, result)
 
-        return record_metrics
+        return AccuracyRecordsData(
+            session_num=metadata.session_num,
+            worker_id=metadata.worker_id,
+            benchmark_phase=metadata.benchmark_phase,
+            timestamp_ns=metadata.request_end_ns,
+            task=task,
+            grader_name=self._grader_name,
+            passed=result.correct,
+            unparsed=result.unparsed,
+            confidence=result.confidence,
+            expected=result.ground_truth,
+            actual=result.extracted_answer,
+            reasoning=result.reasoning,
+        )
 
     def _log_grading_detail(
         self, session_num: int, response_text: str, result: GradingResult
