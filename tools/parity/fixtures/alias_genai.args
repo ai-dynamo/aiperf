@@ -1,0 +1,1 @@
+--model Qwen/Qwen3-0.6B --url 127.0.0.1:8000 --endpoint-type chat --prompt-input-tokens-mean 512 --prompt-input-tokens-stddev 10 --prompt-output-tokens-mean 128 --prompt-output-tokens-stddev 5 --prompt-input-tokens-block-size 64 --batch-size-image 2 --prefix-prompt-pool-size 4 --request-count 20 --artifact-dir /tmp/aiperf-parity/alias_genai

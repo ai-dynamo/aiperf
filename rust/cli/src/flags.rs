@@ -198,19 +198,19 @@ pub struct ProfileFlags {
 
     /// Synthetic input length mean (`--isl` / `--synthetic-input-tokens-mean`);
     /// comma ⇒ sweep.
-    #[arg(long = "isl", visible_alias = "synthetic-input-tokens-mean")]
+    #[arg(long = "isl", visible_aliases = ["synthetic-input-tokens-mean", "prompt-input-tokens-mean"])]
     pub isl: Option<String>,
 
     /// Synthetic input length stddev (`--isl-stddev`).
-    #[arg(long = "isl-stddev", visible_alias = "synthetic-input-tokens-stddev")]
+    #[arg(long = "isl-stddev", visible_aliases = ["synthetic-input-tokens-stddev", "prompt-input-tokens-stddev"])]
     pub isl_stddev: Option<f64>,
 
     /// Synthetic output length mean (`--osl` / `--output-tokens-mean`); comma ⇒ sweep.
-    #[arg(long = "osl", visible_alias = "output-tokens-mean")]
+    #[arg(long = "osl", visible_aliases = ["output-tokens-mean", "prompt-output-tokens-mean"])]
     pub osl: Option<String>,
 
     /// Synthetic output length stddev (`--osl-stddev`).
-    #[arg(long = "osl-stddev", visible_alias = "output-tokens-stddev")]
+    #[arg(long = "osl-stddev", visible_aliases = ["output-tokens-stddev", "prompt-output-tokens-stddev"])]
     pub osl_stddev: Option<f64>,
 
     /// Enable streaming responses (`--streaming`).
@@ -393,7 +393,7 @@ pub struct ProfileFlags {
     pub user_context_prompt_length: Option<u32>,
 
     /// Number of prefix prompts / pool size (`--num-prefix-prompts`).
-    #[arg(long = "num-prefix-prompts", visible_alias = "prompt-prefix-pool-size")]
+    #[arg(long = "num-prefix-prompts", visible_aliases = ["prompt-prefix-pool-size", "prefix-prompt-pool-size"])]
     pub num_prefix_prompts: Option<u32>,
 
     /// Prefix prompt length (`--prefix-prompt-length`).
@@ -443,7 +443,7 @@ pub struct ProfileFlags {
     /// / `--isl-block-size`).
     #[arg(
         long = "synthetic-input-tokens-block-size",
-        visible_alias = "isl-block-size"
+        visible_aliases = ["isl-block-size", "prompt-input-tokens-block-size"]
     )]
     pub isl_block_size: Option<u32>,
 
@@ -464,7 +464,7 @@ pub struct ProfileFlags {
     #[arg(long = "image-height-stddev")]
     pub image_height_stddev: Option<f64>,
     /// Synthetic images per request (`--image-batch-size`).
-    #[arg(long = "image-batch-size")]
+    #[arg(long = "image-batch-size", visible_alias = "batch-size-image")]
     pub image_batch_size: Option<u32>,
     /// Synthetic image format (`--image-format`).
     #[arg(long = "image-format")]
@@ -483,7 +483,7 @@ pub struct ProfileFlags {
     #[arg(long = "audio-length-stddev")]
     pub audio_length_stddev: Option<f64>,
     /// Synthetic audio clips per request (`--audio-batch-size`).
-    #[arg(long = "audio-batch-size")]
+    #[arg(long = "audio-batch-size", visible_alias = "batch-size-audio")]
     pub audio_batch_size: Option<u32>,
     /// Synthetic audio channels (`--audio-num-channels`).
     #[arg(long = "audio-num-channels")]
@@ -520,7 +520,7 @@ pub struct ProfileFlags {
     #[arg(long = "video-synth-type")]
     pub video_synth_type: Option<String>,
     /// Synthetic video clips per request (`--video-batch-size`).
-    #[arg(long = "video-batch-size")]
+    #[arg(long = "video-batch-size", visible_alias = "batch-size-video")]
     pub video_batch_size: Option<u32>,
 
     /// Enable adaptive scaling (`--adaptive-scale`).

@@ -95,6 +95,7 @@ const FIXTURES: &[&str] = &[
     "seq_dist",
     "warmup_arrival",
     "export_extras",
+    "alias_genai",
 ];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).
