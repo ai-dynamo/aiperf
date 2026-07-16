@@ -111,7 +111,12 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
 /// the runner's console summary to stdout on success.
 fn run_single(run: crate::model::BenchmarkRun) -> anyhow::Result<i32> {
     let artifact_dir = run.artifact_dir.clone();
+    // Bind `logs/aiperf.log` to this run's artifact dir before anything logs, so
+    // the whole run (including the forwarded execution-engine narrative) is
+    // captured — mirroring Python's `setup_rich_logging(run)`.
+    crate::logging::set_log_file(&artifact_dir);
     clear_prior_report(&artifact_dir);
+    tracing::info!("Starting native AIPerf run");
     let request = RunnerRequest::new(Operation::Execute, run);
     let payload = serde_json::to_vec(&request)
         .map_err(|e| anyhow::anyhow!("failed to serialize the runner request: {e}"))?;
@@ -119,9 +124,10 @@ fn run_single(run: crate::model::BenchmarkRun) -> anyhow::Result<i32> {
     let child_pid = crate::signals::install();
     let terminal = execute::run_once(&runner, &payload, &child_pid)?;
     if terminal.success {
+        tracing::info!("Native AIPerf run completed");
         if let Some(path) = &terminal.report_path {
             crate::render::print_console_summary(path);
-            tracing::info!(report = %path, "run complete");
+            tracing::debug!(report = %path, "report written");
         }
         Ok(0)
     } else {
@@ -129,7 +135,7 @@ fn run_single(run: crate::model::BenchmarkRun) -> anyhow::Result<i32> {
             .error
             .as_deref()
             .unwrap_or("native benchmark failed");
-        eprintln!("aiperf: {detail}");
+        tracing::error!("Native AIPerf run failed: {detail}");
         Ok(if terminal.returncode == 0 {
             1
         } else {
@@ -180,6 +186,7 @@ fn run_search_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
     base_flags.concurrency = Some("1".to_string());
     let base = load::resolve(&base_flags)?;
     let base_artifact_dir = base.artifact_dir.clone();
+    crate::logging::set_log_file(&base_artifact_dir);
 
     let sweep_id = uuid::Uuid::new_v4().simple().to_string();
     let seed = seed_policy(flags);
@@ -348,6 +355,7 @@ fn run_isotonic_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
     base_flags.concurrency = Some("1".to_string());
     let base = load::resolve(&base_flags)?;
     let base_artifact_dir = base.artifact_dir.clone();
+    crate::logging::set_log_file(&base_artifact_dir);
 
     let sweep_id = uuid::Uuid::new_v4().simple().to_string();
     let seed = seed_policy(flags);
@@ -482,6 +490,7 @@ fn run_bayes_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
     base_flags.concurrency = Some("1".to_string());
     let base = load::resolve(&base_flags)?;
     let base_artifact_dir = base.artifact_dir.clone();
+    crate::logging::set_log_file(&base_artifact_dir);
 
     let sweep_id = uuid::Uuid::new_v4().simple().to_string();
     let seed = seed_policy(flags);
@@ -749,20 +758,43 @@ fn run_cells(flags: &ProfileFlags, cells: &[sweep_run::Cell]) -> anyhow::Result<
         .or(flags.parameter_sweep_cooldown_seconds)
         .filter(|s| *s > 0.0)
         .map(std::time::Duration::from_secs_f64);
-    eprintln!("aiperf: {} runs", cells.len());
+
+    // Bind the run log to the sweep's base artifact dir (the parent common to all
+    // per-cell dirs), so a multi-run/sweep produces one top-level `logs/aiperf.log`
+    // carrying every cell's forwarded narrative.
+    if let Some(base) = flags.artifact_dir.clone().or_else(|| {
+        cells
+            .first()
+            .and_then(|c| c.run.artifact_dir.parent().map(Path::to_path_buf))
+    }) {
+        crate::logging::set_log_file(&base);
+    }
+
+    // Multi-run banner, mirroring Python's `log_multi_run_banner`
+    // (`src/aiperf/cli_runner/_banner.py`).
+    let total = cells.len();
+    tracing::info!("{}", "=".repeat(80));
+    tracing::info!("Starting Multi-Run Benchmark");
+    tracing::info!("  Total runs: {total}");
+    if let Some(d) = cooldown {
+        tracing::info!("  Cooldown between runs: {}s", d.as_secs_f64());
+    }
+    tracing::info!("{}", "=".repeat(80));
+
     let mut outcomes = Vec::new();
     for (n, cell) in cells.iter().enumerate() {
         if let Some(d) = cooldown
             && n > 0
         {
+            tracing::info!("Cooldown: {}s", d.as_secs_f64());
             std::thread::sleep(d);
         }
-        eprintln!(
-            "aiperf: [{}/{}] {} -> {}",
+        tracing::info!(
+            artifact_dir = %cell.run.artifact_dir.display(),
+            "[{}/{}] Executing {}...",
             n + 1,
-            cells.len(),
+            total,
             cell.label,
-            cell.run.artifact_dir.display()
         );
         clear_prior_report(&cell.run.artifact_dir);
         let request = RunnerRequest::new(Operation::Execute, cell.run.clone());
@@ -778,17 +810,24 @@ fn run_cells(flags: &ProfileFlags, cells: &[sweep_run::Cell]) -> anyhow::Result<
             error: terminal.error.clone(),
         });
         if !terminal.success {
-            eprintln!(
-                "aiperf: cell failed: {}",
+            tracing::error!(
+                "Run failed ({}): {}",
+                cell.label,
                 terminal.error.as_deref().unwrap_or("(no detail)")
             );
         }
     }
 
+    let successful = outcomes.iter().filter(|o| o.success).count();
+    tracing::info!("{}", "=".repeat(80));
+    tracing::info!("All runs complete: {successful}/{total} successful");
+    tracing::info!("{}", "=".repeat(80));
+
+    tracing::info!("Computing aggregate statistics...");
     sweep::aggregate::finish(flags, &outcomes)?;
-    let failed = outcomes.iter().filter(|o| !o.success).count();
+    let failed = total - successful;
     if failed > 0 {
-        eprintln!("aiperf: {failed}/{} sweep cells failed", outcomes.len());
+        tracing::warn!("{failed}/{total} sweep cells failed");
         Ok(1)
     } else {
         Ok(0)

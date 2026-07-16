@@ -87,8 +87,8 @@ pub fn finish(flags: &ProfileFlags, outcomes: &[CellOutcome]) -> anyhow::Result<
     // not emit a divergent summary — warn and skip the aggregate file.
     let multi_trial = outcomes.iter().any(|o| o.trial > 0);
     if multi_trial {
-        eprintln!(
-            "aiperf: sweep aggregate skipped — multi-trial confidence aggregation \
+        tracing::warn!(
+            "sweep aggregate skipped — multi-trial confidence aggregation \
              (--num-profile-runs >= 2) is not yet native (scipy t-distribution); \
              per-cell reports are on disk."
         );
@@ -183,7 +183,11 @@ fn print_table(rows: &[CellRow]) {
         if i == 0 {
             println!(
                 "{}",
-                widths.iter().map(|w| "-".repeat(*w)).collect::<Vec<_>>().join("  ")
+                widths
+                    .iter()
+                    .map(|w| "-".repeat(*w))
+                    .collect::<Vec<_>>()
+                    .join("  ")
             );
         }
     }
@@ -203,7 +207,11 @@ struct Combo {
 }
 
 /// Build and write the `sweep_aggregate` JSON + CSV pair (single-trial path).
-fn write_sweep_aggregate(base: &Path, outcomes: &[CellOutcome], confidence: f64) -> anyhow::Result<()> {
+fn write_sweep_aggregate(
+    base: &Path,
+    outcomes: &[CellOutcome],
+    confidence: f64,
+) -> anyhow::Result<()> {
     // Group by (label, sorted values), preserving first-seen order. Single-trial
     // means each group is one cell; a duplicate label would pool, but the sweep
     // expander never emits duplicate variation labels.
@@ -229,7 +237,10 @@ fn write_sweep_aggregate(base: &Path, outcomes: &[CellOutcome], confidence: f64)
         num_successful += 1;
         let parameters = display_parameters(o);
         let metrics = project_summary(&report);
-        combos.push(Combo { parameters, metrics });
+        combos.push(Combo {
+            parameters,
+            metrics,
+        });
     }
 
     // sweep_parameters: first-seen display-name -> ordered distinct values.
@@ -259,11 +270,13 @@ fn write_sweep_aggregate(base: &Path, outcomes: &[CellOutcome], confidence: f64)
     std::fs::create_dir_all(&dir)?;
     // orjson OPT_INDENT_2 output; serde_json pretty matches it byte-for-byte for
     // ASCII payloads (2-space indent, `": "`, `\n` newlines, no trailing space).
-    std::fs::write(
-        dir.join("profile_export_aiperf_sweep.json"),
-        serde_json::to_string_pretty(&json)?,
-    )?;
-    std::fs::write(dir.join("profile_export_aiperf_sweep.csv"), csv)?;
+    let json_path = dir.join("profile_export_aiperf_sweep.json");
+    let csv_path = dir.join("profile_export_aiperf_sweep.csv");
+    std::fs::write(&json_path, serde_json::to_string_pretty(&json)?)?;
+    std::fs::write(&csv_path, csv)?;
+    // Mirror Python's `_post_process`/`export_helpers` write lines.
+    tracing::info!("Sweep aggregate JSON written to: {}", json_path.display());
+    tracing::info!("Sweep aggregate CSV written to: {}", csv_path.display());
     Ok(())
 }
 
@@ -294,7 +307,8 @@ fn display_parameters(o: &CellOutcome) -> Vec<(String, Value)> {
 /// when two paths share a leaf (`_parameter_display_names`).
 fn display_names(paths: &[String]) -> std::collections::HashMap<String, String> {
     let leaf = |p: &str| p.rsplit('.').next().unwrap_or(p).to_string();
-    let mut leaf_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut leaf_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
     for p in paths {
         *leaf_counts.entry(leaf(p)).or_default() += 1;
     }
@@ -302,7 +316,11 @@ fn display_names(paths: &[String]) -> std::collections::HashMap<String, String> 
         .iter()
         .map(|p| {
             let l = leaf(p);
-            let name = if leaf_counts.get(&l) == Some(&1) { l } else { p.clone() };
+            let name = if leaf_counts.get(&l) == Some(&1) {
+                l
+            } else {
+                p.clone()
+            };
             (p.clone(), name)
         })
         .collect()
@@ -316,9 +334,15 @@ fn project_summary(report: &Value) -> Vec<(String, Map<String, Value>)> {
     };
     let mut out = Vec::new();
     for (tag, entry) in metrics {
-        let Some(entry) = entry.as_object() else { continue };
-        let Some(series) = summary_series(entry) else { continue };
-        let Some(stats) = series.get("stats").and_then(Value::as_object) else { continue };
+        let Some(entry) = entry.as_object() else {
+            continue;
+        };
+        let Some(series) = summary_series(entry) else {
+            continue;
+        };
+        let Some(stats) = series.get("stats").and_then(Value::as_object) else {
+            continue;
+        };
         let mtype = entry.get("type").and_then(Value::as_str).unwrap_or("");
         let unit = entry.get("unit").and_then(Value::as_str).unwrap_or("");
         if let Some(m) = json_metric_stats(mtype, stats, unit) {
@@ -334,7 +358,9 @@ fn summary_series(entry: &Map<String, Value>) -> Option<&Value> {
     if series.len() == 1 {
         return series.first();
     }
-    let mut aggregate = series.iter().filter(|s| s.get("labels").map(Value::is_null).unwrap_or(true));
+    let mut aggregate = series
+        .iter()
+        .filter(|s| s.get("labels").map(Value::is_null).unwrap_or(true));
     let first = aggregate.next();
     if aggregate.next().is_some() {
         return None; // multiple unlabeled aggregates: unrepresentable
@@ -362,7 +388,11 @@ fn read_percentiles(stats: &Map<String, Value>) -> Vec<(String, f64)> {
         .map(|p| {
             PERCENTILE_FIELDS
                 .iter()
-                .filter_map(|k| p.get(*k).and_then(Value::as_f64).map(|v| (k.to_string(), v)))
+                .filter_map(|k| {
+                    p.get(*k)
+                        .and_then(Value::as_f64)
+                        .map(|v| (k.to_string(), v))
+                })
                 .collect()
         })
         .unwrap_or_default()
@@ -372,7 +402,11 @@ fn read_percentiles(stats: &Map<String, Value>) -> Vec<(String, f64)> {
 /// `_legacy_stats` (native type projection) fed through `_json_metric_to_stats`
 /// (single-trial: std/cv/ci collapse; percentiles/count/sum carried through).
 /// The report `std` is intentionally dropped — single-trial std is a hard 0.0.
-fn json_metric_stats(mtype: &str, stats: &Map<String, Value>, unit: &str) -> Option<Map<String, Value>> {
+fn json_metric_stats(
+    mtype: &str,
+    stats: &Map<String, Value>,
+    unit: &str,
+) -> Option<Map<String, Value>> {
     let num = |k: &str| stats.get(k).and_then(Value::as_f64);
     let int = |k: &str| stats.get(k).and_then(Value::as_u64);
 
@@ -387,11 +421,22 @@ fn json_metric_stats(mtype: &str, stats: &Map<String, Value>, unit: &str) -> Opt
         },
         "scalar" => {
             let v = num("value")?;
-            LegacyStats { avg: Some(v), min: Some(v), max: Some(v), ..Default::default() }
+            LegacyStats {
+                avg: Some(v),
+                min: Some(v),
+                max: Some(v),
+                ..Default::default()
+            }
         }
         "counter" => {
             let v = num("total")?;
-            LegacyStats { avg: Some(v), min: Some(v), max: Some(v), sum: Some(v), ..Default::default() }
+            LegacyStats {
+                avg: Some(v),
+                min: Some(v),
+                max: Some(v),
+                sum: Some(v),
+                ..Default::default()
+            }
         }
         "histogram" => LegacyStats {
             avg: num("avg"),
@@ -469,11 +514,17 @@ fn build_sweep_json(
         .collect();
 
     let mut metadata = Map::new();
-    metadata.insert("sweep_parameters".into(), Value::Array(sweep_params_json.clone()));
+    metadata.insert(
+        "sweep_parameters".into(),
+        Value::Array(sweep_params_json.clone()),
+    );
     metadata.insert("num_combinations".into(), Value::from(num_combinations));
     metadata.insert("sweep_mode".into(), Value::String("repeated".into()));
     metadata.insert("confidence_level".into(), f(confidence));
-    metadata.insert("num_trials_per_value".into(), Value::from(if combos.is_empty() { 0 } else { 1 }));
+    metadata.insert(
+        "num_trials_per_value".into(),
+        Value::from(if combos.is_empty() { 0 } else { 1 }),
+    );
     metadata.insert("aggregation_type".into(), Value::String("sweep".into()));
 
     let per_combination: Vec<Value> = combos
@@ -494,10 +545,16 @@ fn build_sweep_json(
     let mut root = Map::new();
     root.insert("aggregation_type".into(), Value::String("sweep".into()));
     root.insert("num_profile_runs".into(), Value::from(num_runs as u64));
-    root.insert("num_successful_runs".into(), Value::from(num_successful as u64));
+    root.insert(
+        "num_successful_runs".into(),
+        Value::from(num_successful as u64),
+    );
     root.insert("failed_runs".into(), Value::Array(failed_runs.to_vec()));
     root.insert("metadata".into(), Value::Object(metadata));
-    root.insert("per_combination_metrics".into(), Value::Array(per_combination));
+    root.insert(
+        "per_combination_metrics".into(),
+        Value::Array(per_combination),
+    );
     root.insert("best_configurations".into(), Value::Object(Map::new()));
     root.insert("pareto_optimal".into(), Value::Array(Vec::new()));
     Value::Object(root)
@@ -534,10 +591,7 @@ fn build_sweep_csv(
         w.row(&header);
 
         for combo in combos {
-            let mut row: Vec<String> = param_names
-                .iter()
-                .map(|p| combo_param(combo, p))
-                .collect();
+            let mut row: Vec<String> = param_names.iter().map(|p| combo_param(combo, p)).collect();
             for m in &metric_names {
                 let stats = combo.metrics.iter().find(|(t, _)| t == m).map(|(_, s)| s);
                 match stats {
@@ -570,9 +624,15 @@ fn build_sweep_csv(
     w.row(&["Field".to_string(), "Value".to_string()]);
     w.row(&["Aggregation Type".to_string(), "sweep".to_string()]);
     w.row(&["Sweep Parameters".to_string(), param_names.join(", ")]);
-    w.row(&["Number of Combinations".to_string(), num_combinations.to_string()]);
+    w.row(&[
+        "Number of Combinations".to_string(),
+        num_combinations.to_string(),
+    ]);
     w.row(&["Number of Profile Runs".to_string(), num_runs.to_string()]);
-    w.row(&["Number of Successful Runs".to_string(), num_successful.to_string()]);
+    w.row(&[
+        "Number of Successful Runs".to_string(),
+        num_successful.to_string(),
+    ]);
 
     w.finish()
 }
