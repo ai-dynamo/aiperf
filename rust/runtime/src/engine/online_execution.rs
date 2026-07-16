@@ -16,6 +16,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::content_server::ContentServerMediaPublisher;
@@ -41,7 +42,6 @@ use crate::engine::execute::{
     execute_prepared_native_plan_uncommitted_selected, load_tokenizer,
 };
 use crate::engine::execution_factories::RunnerExecutionFactories;
-use crate::engine::graph_execution::GraphTransportKind;
 use crate::engine::graph_input::RunnerGraphInputContext;
 use crate::engine::protocol::{ArtifactSpec, PhaseSpec, TokenizerSpec};
 use crate::engine::protocol_v2::AuthoredRunSpecV2;
@@ -86,8 +86,29 @@ impl NativeTransportExecution for HttpNativeExecution {
         true
     }
 
-    fn graph_transport_kind(&self) -> Result<GraphTransportKind> {
-        Ok(GraphTransportKind::Http)
+    fn build_graph_dispatcher(
+        &self,
+        clock: Rc<dyn crate::clock::Clock>,
+        run_origin_ns: i64,
+        urls: &[String],
+        model: &str,
+        transport_config: crate::transport::http::TransportSinkConfig,
+        endpoints: Rc<crate::endpoints::PreparedEndpointTable>,
+    ) -> Result<Rc<dyn crate::transport::http::Dispatcher>> {
+        Ok(Rc::new(
+            crate::transport::http::TransportSink::new_multi_configured(
+                clock,
+                run_origin_ns,
+                urls,
+                model,
+                transport_config,
+            )?
+            .with_prepared_endpoints(endpoints),
+        ))
+    }
+
+    fn graph_transport_label(&self) -> &'static str {
+        "http"
     }
 
     fn validate_run(&self, _run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> Result<()> {
@@ -278,7 +299,7 @@ impl RunnerWorkloadFactory for ScheduledWorkloadFactoryV2 {
 
 /// Built-in direct Graph-IR workload: runs over any native (http/grpc) or
 /// dynosim transport. The resolved transport selects the graph placement's
-/// dispatcher arm (`GraphTransportKind::{Http, Grpc}`) plus readiness policy.
+/// graph dispatcher (`build_graph_dispatcher`) plus readiness policy.
 struct GraphWorkloadFactoryV2 {
     tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
 }
@@ -320,10 +341,9 @@ impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
         let workload = workload_config::<GraphWorkloadConfigV2>(workload, "graph")?;
         match resolve_native_execution(context, transport, transport_id)? {
             Some(binding) => {
-                // The transport itself decides whether it can drive the graph
-                // workload (dry_run cannot yet); its graph-dispatcher kind is the
-                // gate. Run-level validation is dispatched to the same binding.
-                binding.graph_transport_kind()?;
+                // Every native transport binding builds a graph dispatcher
+                // (`build_graph_dispatcher`), so graph support is not a separate
+                // gate. Run-level validation is dispatched to the binding.
                 binding.validate_run(run, context)?;
                 ensure!(
                     run.sidecars.live_streaming.is_none(),
@@ -365,14 +385,24 @@ impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
             Some(binding) => {
                 let workload =
                     workload_config::<GraphWorkloadConfigV2>(workload.as_ref(), "graph")?;
-                let transport_kind = binding.graph_transport_kind()?;
                 let plan = lower_graph(
                     run,
                     context,
                     workload,
                     self.tokenizers.as_ref(),
-                    transport_kind,
+                    binding.clone(),
                 )?;
+                // A `dry_run` transport with `clock: sim` runs the graph replay in
+                // virtual time (SimClock + drive_sim), so a 30-minute agentic
+                // trace finishes at ~startup wall-speed — the same normal
+                // execution, only the clock differs.
+                if crate::engine::dry_run::sim_params_for(transport.as_ref()).is_some() {
+                    return crate::engine::execute::prepare_dry_run_sim_scheduled(
+                        plan,
+                        binding.executor_factory(),
+                        context,
+                    );
+                }
                 prepare_native_operation(run, context, plan, binding)
             }
             None => {
@@ -1097,8 +1127,8 @@ pub(crate) fn lower_scheduled(
         NativeSidecarPlan::Prepared(context.sidecar_inputs_handle()),
         workload.failure_policy,
         // Scheduled resolves its transport through the injected
-        // RequestExecutorFactory; this field is inert on the linear path.
-        GraphTransportKind::Http,
+        // RequestExecutorFactory; the graph binding is unused on the linear path.
+        None,
     )
 }
 
@@ -1128,7 +1158,7 @@ fn lower_graph(
     context: &RunnerRunContext,
     workload: &GraphWorkloadConfigV2,
     tokenizers: &dyn OnlineTokenizerSourceResolver,
-    transport_kind: GraphTransportKind,
+    transport: Arc<dyn crate::engine::registry::NativeTransportExecution>,
 ) -> Result<NativeRunSpec> {
     let tokenizer = lower_authored_tokenizer(&workload.tokenizer, tokenizers)?;
     let tokenizer_impl = load_tokenizer(Some(&tokenizer.name))?;
@@ -1167,9 +1197,8 @@ fn lower_graph(
         NativeEndpointPlan::Prepared(context.endpoint_profiles_handle()),
         NativeSidecarPlan::Prepared(context.sidecar_inputs_handle()),
         workload.failure_policy,
-        // The resolved transport selects the graph placement's dispatcher arm:
-        // `Grpc` routes graph nodes over Tonic, `Http` over hyper/SSE.
-        transport_kind,
+        // The resolved transport builds the graph dispatcher (`build_graph_dispatcher`).
+        Some(transport),
     )
 }
 
@@ -1195,7 +1224,7 @@ fn lower_static_accuracy(
         // default (resilient) via `None`.
         None,
         // Static accuracy runs over HTTP and does not use the graph runtime.
-        GraphTransportKind::Http,
+        None,
     )
 }
 
@@ -1225,7 +1254,7 @@ fn build_common_plan(
     endpoint: NativeEndpointPlan,
     sidecars: NativeSidecarPlan,
     failure_policy: Option<OnFailure>,
-    transport_kind: GraphTransportKind,
+    transport: Option<Arc<dyn crate::engine::registry::NativeTransportExecution>>,
 ) -> Result<NativeRunSpec> {
     Ok(NativeRunSpec {
         benchmark_id: run.identity.benchmark_id.clone(),
@@ -1251,7 +1280,7 @@ fn build_common_plan(
         user_files: run.artifacts.user_files.clone(),
         failure_policy,
         native_otel_enabled: run.export.otel.enabled && run.export.otel.endpoint.is_some(),
-        transport_kind,
+        transport,
     })
 }
 

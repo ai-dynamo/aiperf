@@ -11,6 +11,7 @@
 //! the shared `PreparedTurn`/graph placement over the gRPC dispatcher.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::transport::grpc::GrpcBindingRegistry;
@@ -18,7 +19,6 @@ use crate::transport::http::config::ClientConfig;
 use anyhow::{Context, Result, ensure};
 use url::Url;
 
-use crate::engine::graph_execution::GraphTransportKind;
 use crate::engine::grpc_turn_execution::GrpcExecutionFactory;
 use crate::engine::protocol_v2::AuthoredRunSpecV2;
 use crate::engine::registry::{NativeTransportExecution, RunnerRunContext};
@@ -50,8 +50,30 @@ impl NativeTransportExecution for GrpcNativeExecution {
         false
     }
 
-    fn graph_transport_kind(&self) -> Result<GraphTransportKind> {
-        Ok(GraphTransportKind::Grpc)
+    fn build_graph_dispatcher(
+        &self,
+        clock: Rc<dyn crate::clock::Clock>,
+        run_origin_ns: i64,
+        urls: &[String],
+        model: &str,
+        transport_config: crate::transport::http::TransportSinkConfig,
+        endpoints: Rc<crate::endpoints::PreparedEndpointTable>,
+    ) -> Result<Rc<dyn crate::transport::http::Dispatcher>> {
+        Ok(Rc::new(
+            crate::engine::grpc_turn_execution::grpc_sink_with_endpoints(
+                clock,
+                run_origin_ns,
+                urls,
+                model.to_string(),
+                transport_config,
+                GrpcBindingRegistry::builtin()?,
+                endpoints,
+            )?,
+        ))
+    }
+
+    fn graph_transport_label(&self) -> &'static str {
+        "grpc"
     }
 
     fn validate_run(&self, run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> Result<()> {
