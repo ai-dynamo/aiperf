@@ -20,12 +20,21 @@
 //! former via in-process pyo3 optuna) and remain future work.
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
 use crate::flags::ProfileFlags;
 
+pub mod curve;
+pub mod degradation;
+pub mod extract;
 pub mod sla_breach;
+pub mod surface;
+
+pub use curve::CurveSpec;
+pub use degradation::DegradationKneeSpec;
+pub use surface::SurfaceSpec;
 
 /// How a recipe axis value maps onto the built `cfg`.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -51,8 +60,83 @@ pub struct RecipeAxis {
 pub struct RecipeSweep {
     pub variations: Vec<RecipeVariation>,
     /// Optional post-process step to run after the sweep aggregate is written
-    /// (e.g. the SLA-breach knee for `max-concurrency-under-sla --search-style grid`).
-    pub post_process: Option<SlaBreachSpec>,
+    /// (the derived-artifact handler for this recipe).
+    pub post_process: Option<PostProcess>,
+}
+
+/// A grid recipe's post-process handler + its output filename. Dispatched by
+/// [`run_post_process`] once the sweep aggregate lands on disk. Mirrors Python's
+/// `PostProcessSpec` (`aiperf.search_recipes._base::PostProcessSpec`): a named
+/// handler with resolved params and a target filename under `sweep_aggregate/`.
+pub enum PostProcess {
+    /// `sla_breach_knee` → `sla_breach.json` (max-concurrency-under-sla grid).
+    SlaBreach(SlaBreachSpec),
+    /// `degradation_knee_detect` → `degradation_knee.json` (concurrency-ramp).
+    DegradationKnee(DegradationKneeSpec),
+    /// `ttft_curve_fit` → `prefill_curve.json` (prefill-ttft-curve).
+    TtftCurve(CurveSpec),
+    /// `itl_surface_fit` → `decode_itl_surface.json` (decode-itl-curve).
+    ItlSurface(SurfaceSpec),
+}
+
+impl PostProcess {
+    /// The artifact filename written under `sweep_aggregate/` (Python's
+    /// `PostProcessSpec.output_filename`).
+    pub fn output_filename(&self) -> &'static str {
+        match self {
+            PostProcess::SlaBreach(_) => "sla_breach.json",
+            PostProcess::DegradationKnee(_) => "degradation_knee.json",
+            PostProcess::TtftCurve(_) => "prefill_curve.json",
+            PostProcess::ItlSurface(_) => "decode_itl_surface.json",
+        }
+    }
+
+    /// Compute this handler's artifact payload from the parsed sweep aggregate.
+    fn compute(&self, sweep_json: &Value) -> anyhow::Result<Value> {
+        match self {
+            PostProcess::SlaBreach(spec) => {
+                Ok(sla_breach::process(sweep_json, &spec.swept_param, &spec.filters))
+            }
+            PostProcess::DegradationKnee(spec) => degradation::process(sweep_json, spec),
+            PostProcess::TtftCurve(spec) => curve::process(sweep_json, spec),
+            PostProcess::ItlSurface(spec) => surface::process(sweep_json, spec),
+        }
+    }
+}
+
+/// Locate the sweep-aggregate directory under `base` (single-trial
+/// `<base>/sweep_aggregate`, or REPEATED multi-trial
+/// `<base>/aggregate/sweep_aggregate`).
+fn find_sweep_aggregate_dir(base: &Path) -> Option<PathBuf> {
+    for cand in [
+        base.join("sweep_aggregate"),
+        base.join("aggregate").join("sweep_aggregate"),
+    ] {
+        if cand.join("profile_export_aiperf_sweep.json").exists() {
+            return Some(cand);
+        }
+    }
+    None
+}
+
+/// Run a recipe's post-process handler over the sweep aggregate under `base` and
+/// write its derived artifact beside it. Ports the `aggregate_sweep_and_export`
+/// post-process hook: read `profile_export_aiperf_sweep.json`, run the handler,
+/// write `<sweep_aggregate>/<output_filename>` (pretty JSON).
+pub fn run_post_process(base: &Path, pp: &PostProcess) -> anyhow::Result<()> {
+    let dir = find_sweep_aggregate_dir(base).ok_or_else(|| {
+        anyhow::anyhow!(
+            "no sweep_aggregate/profile_export_aiperf_sweep.json under {}",
+            base.display()
+        )
+    })?;
+    let bytes = std::fs::read(dir.join("profile_export_aiperf_sweep.json"))?;
+    let sweep_json: Value = serde_json::from_slice(&bytes)?;
+    let payload = pp.compute(&sweep_json)?;
+    let out_path = dir.join(pp.output_filename());
+    std::fs::write(&out_path, serde_json::to_string_pretty(&payload)?)?;
+    tracing::info!("post-process artifact written to: {}", out_path.display());
+    Ok(())
 }
 
 /// Post-process spec for the `sla_breach_knee` handler: the swept dotted path and
@@ -121,58 +205,57 @@ pub fn expand_recipe(flags: &ProfileFlags) -> anyhow::Result<Option<RecipeSweep>
             post_process: None,
         }));
     }
-    let mut post_process: Option<SlaBreachSpec> = None;
+    let mut post_process: Option<PostProcess> = None;
     let axes = match recipe {
-        "concurrency-ramp" => vec![RecipeAxis {
-            path: "phases.profiling.concurrency",
-            seg: "concurrency",
-            values: logspace_int_steps(
-                flags.concurrency_min.unwrap_or(1) as f64,
-                flags.concurrency_max.unwrap_or(1000) as f64,
-                flags.concurrency_steps.unwrap_or(8),
-            )?,
-            kind: AxisKind::PhaseConcurrency,
-        }],
-        "prefill-ttft-curve" => vec![
-            RecipeAxis {
-                path: "datasets.main.prompts.isl",
-                seg: "isl",
-                values: logspace_int_steps(
-                    flags.isl_min.unwrap_or(256) as f64,
-                    flags.isl_max.unwrap_or(32768) as f64,
-                    flags.isl_steps.unwrap_or(8),
-                )?,
-                kind: AxisKind::IslScalar,
-            },
-            RecipeAxis {
-                path: "phases.profiling.concurrency",
-                seg: "concurrency",
-                values: vec![1],
-                kind: AxisKind::PhaseConcurrency,
-            },
-        ],
-        "decode-itl-curve" => vec![
-            RecipeAxis {
+        "concurrency-ramp" => {
+            // The degradation-knee handler reports the first swept concurrency
+            // whose latency exceeds baseline * (1 + threshold) (byte-exact with
+            // Python's `DegradationKneeDetect`; defaults threshold 0.20,
+            // metric request_latency, stat p99).
+            post_process = Some(PostProcess::DegradationKnee(DegradationKneeSpec {
+                threshold_pct: flags.degradation_threshold.unwrap_or(0.20),
+                metric_tag: flags
+                    .degradation_metric_tag
+                    .clone()
+                    .unwrap_or_else(|| "request_latency".to_string()),
+                stat: flags
+                    .degradation_stat
+                    .clone()
+                    .unwrap_or_else(|| "p99".to_string()),
+                swept_param: "phases.profiling.concurrency".to_string(),
+            }));
+            vec![RecipeAxis {
                 path: "phases.profiling.concurrency",
                 seg: "concurrency",
                 values: logspace_int_steps(
                     flags.concurrency_min.unwrap_or(1) as f64,
-                    flags.concurrency_max.unwrap_or(200) as f64,
-                    flags.concurrency_steps.unwrap_or(6),
+                    flags.concurrency_max.unwrap_or(1000) as f64,
+                    flags.concurrency_steps.unwrap_or(8),
                 )?,
                 kind: AxisKind::PhaseConcurrency,
-            },
-            RecipeAxis {
-                path: "datasets.main.prompts.osl",
-                seg: "osl",
-                values: logspace_int_steps(
-                    flags.osl_min.unwrap_or(64) as f64,
-                    flags.osl_max.unwrap_or(1024) as f64,
-                    flags.osl_steps.unwrap_or(4),
-                )?,
-                kind: AxisKind::OslScalar,
-            },
-        ],
+            }]
+        }
+        "prefill-ttft-curve" => {
+            // The TTFT-curve handler fits TTFT vs ISL (linear, quadratic fallback
+            // when r^2 < 0.85) → `prefill_curve.json`.
+            post_process = Some(PostProcess::TtftCurve(CurveSpec {
+                metric_tag: "time_to_first_token".to_string(),
+                stat: "avg".to_string(),
+                swept_param: "datasets.main.prompts.isl".to_string(),
+            }));
+            prefill_ttft_axes(flags)?
+        }
+        "decode-itl-curve" => {
+            // The ITL-surface handler builds a 2D ITL(concurrency, OSL) grid →
+            // `decode_itl_surface.json`.
+            post_process = Some(PostProcess::ItlSurface(SurfaceSpec {
+                metric_tag: "inter_token_latency".to_string(),
+                stat: "avg".to_string(),
+                concurrency_param: "phases.profiling.concurrency".to_string(),
+                osl_param: "datasets.main.prompts.osl".to_string(),
+            }));
+            decode_itl_axes(flags)?
+        }
         "max-concurrency-under-sla" => {
             // Only the static `--search-style grid` variant expands to a sweep
             // here. The dynamic styles run their own ask-tell loop, intercepted
@@ -191,10 +274,10 @@ pub fn expand_recipe(flags: &ProfileFlags) -> anyhow::Result<Option<RecipeSweep>
             );
             // After the sweep aggregate is written, locate the SLA-feasibility
             // boundary along the swept concurrency (`sla_breach.json`).
-            post_process = Some(SlaBreachSpec {
+            post_process = Some(PostProcess::SlaBreach(SlaBreachSpec {
                 swept_param: "phases.profiling.concurrency".to_string(),
                 filters: build_sla_filters(flags),
-            });
+            }));
             vec![RecipeAxis {
                 path: "phases.profiling.concurrency",
                 seg: "concurrency",
@@ -217,6 +300,59 @@ pub fn expand_recipe(flags: &ProfileFlags) -> anyhow::Result<Option<RecipeSweep>
         variations: expand_axes(&axes),
         post_process,
     }))
+}
+
+/// The `prefill-ttft-curve` axes: ISL log-spaced over `[--isl-min, --isl-max]`
+/// (defaults 256..32768, 8 steps) crossed with a fixed concurrency=1 axis
+/// (isolate prefill cost from queueing). Mirrors `PrefillTTFTCurve.expand`.
+fn prefill_ttft_axes(flags: &ProfileFlags) -> anyhow::Result<Vec<RecipeAxis>> {
+    Ok(vec![
+        RecipeAxis {
+            path: "datasets.main.prompts.isl",
+            seg: "isl",
+            values: logspace_int_steps(
+                flags.isl_min.unwrap_or(256) as f64,
+                flags.isl_max.unwrap_or(32768) as f64,
+                flags.isl_steps.unwrap_or(8),
+            )?,
+            kind: AxisKind::IslScalar,
+        },
+        RecipeAxis {
+            path: "phases.profiling.concurrency",
+            seg: "concurrency",
+            values: vec![1],
+            kind: AxisKind::PhaseConcurrency,
+        },
+    ])
+}
+
+/// The `decode-itl-curve` axes: concurrency log-spaced over
+/// `[--concurrency-min, --concurrency-max]` (defaults 1..200, 6 steps) crossed
+/// with OSL log-spaced over `[--osl-min, --osl-max]` (defaults 64..1024, 4
+/// steps). Mirrors `DecodeITLCurve.expand`.
+fn decode_itl_axes(flags: &ProfileFlags) -> anyhow::Result<Vec<RecipeAxis>> {
+    Ok(vec![
+        RecipeAxis {
+            path: "phases.profiling.concurrency",
+            seg: "concurrency",
+            values: logspace_int_steps(
+                flags.concurrency_min.unwrap_or(1) as f64,
+                flags.concurrency_max.unwrap_or(200) as f64,
+                flags.concurrency_steps.unwrap_or(6),
+            )?,
+            kind: AxisKind::PhaseConcurrency,
+        },
+        RecipeAxis {
+            path: "datasets.main.prompts.osl",
+            seg: "osl",
+            values: logspace_int_steps(
+                flags.osl_min.unwrap_or(64) as f64,
+                flags.osl_max.unwrap_or(1024) as f64,
+                flags.osl_steps.unwrap_or(4),
+            )?,
+            kind: AxisKind::OslScalar,
+        },
+    ])
 }
 
 /// Cartesian-product expansion of recipe axes (sorted by dotted path, last axis
