@@ -405,6 +405,7 @@ fn persist_prepared_report(
         provenance,
         report_commit,
     } = outcome;
+    tracing::info!("Processing records results...");
     let finalized = finalize_and_write_native_report_json(
         native_report,
         report_provenance,
@@ -415,6 +416,7 @@ fn persist_prepared_report(
         code: "reporting_failed",
         message: format!("{error:#}"),
     })?;
+    tracing::info!(report = %report_path.display(), "Report written to: {}", report_path.display());
     // Native post-report export plane. Best-effort: the native-v2 report above is
     // the committed authority; genai-perf compat / OTLP / MLflow side outputs log
     // and never fail the run (see `crate::export`).
@@ -431,6 +433,7 @@ fn persist_prepared_report(
         }
         _ => artifact_dir.to_path_buf(),
     };
+    tracing::info!("Exporting all records");
     exporters.run(&finalized, &export_dir, export);
     if let Some(report_commit) = report_commit {
         report_commit

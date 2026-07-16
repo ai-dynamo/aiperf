@@ -892,6 +892,20 @@ impl PhaseObserver for ProfilingBannerObserver {
         if config.kind == PhaseKind::Profiling && !self.announced.replace(true) {
             eprintln!("{PROFILING_BANNER}");
         }
+        // Phase-lifecycle narrative mirroring Python's NOTICE lines
+        // (`timing/phase/runner.py::_format_phase_started`). Emitted at INFO
+        // (tracing has no NOTICE level).
+        let requests = optional_count(stats.total_expected_requests);
+        let duration_s = stats
+            .expected_duration_ns
+            .map(|ns| ns as f64 / 1e9)
+            .map(|s| format!("{s:.0}s"))
+            .unwrap_or_else(|| "-".to_owned());
+        let sessions = optional_count(stats.expected_num_sessions);
+        tracing::info!(
+            "Phase {} started | target: {requests} requests, {duration_s} duration, {sessions} sessions",
+            stats.phase_id,
+        );
         self.inner.on_phase_start(config, stats);
     }
 
@@ -900,16 +914,48 @@ impl PhaseObserver for ProfilingBannerObserver {
     }
 
     fn on_sending_complete(&self, stats: PhaseStats) {
+        // Mirrors `_format_phase_sending_complete`.
+        tracing::info!(
+            "Phase {} sending complete | sent={}, completed={}, in_flight={}",
+            stats.phase_id,
+            stats.requests_sent,
+            stats.requests_completed,
+            stats.in_flight_requests,
+        );
         self.inner.on_sending_complete(stats);
     }
 
     fn on_phase_complete(&self, stats: PhaseStats, branch_stats: Option<PhaseBranchStats>) {
+        // Mirrors `_format_phase_complete`.
+        let elapsed_s = match (stats.start_ns, stats.requests_end_ns) {
+            (Some(start), Some(end)) => (end - start) as f64 / 1e9,
+            _ => 0.0,
+        };
+        tracing::info!(
+            "Phase {} complete | completed={}, cancelled={}, errors={} | elapsed={elapsed_s:.2}s",
+            stats.phase_id,
+            stats
+                .final_requests_completed
+                .unwrap_or(stats.requests_completed),
+            stats
+                .final_requests_cancelled
+                .unwrap_or(stats.requests_cancelled),
+            stats.final_request_errors.unwrap_or(stats.request_errors),
+        );
         self.inner.on_phase_complete(stats, branch_stats);
     }
 
     fn on_phases_complete(&self, stats: Vec<PhaseStats>) {
+        // Mirrors `phase_orchestrator.py`'s "All credits completed" NOTICE.
+        tracing::info!("All credits completed");
         self.inner.on_phases_complete(stats);
     }
+}
+
+/// Render an optional expected count as a number or `unbounded` (Python renders
+/// the same "no target" case rather than `None`).
+fn optional_count(value: Option<u64>) -> String {
+    value.map_or_else(|| "unbounded".to_owned(), |v| v.to_string())
 }
 
 struct ScheduledPhaseExecutionFactory {

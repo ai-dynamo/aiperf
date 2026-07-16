@@ -312,9 +312,11 @@ impl PreparedReadinessTarget {
     /// mirrors `src/aiperf/common/readiness_probe.py` so existing log-scraping
     /// and integration expectations continue to match on the native path.
     fn log_ready(&self, attempts: usize, response: &ReadinessAttemptResponse) {
+        // Success events are INFO (Python `readiness_probe.py`); only the retry
+        // path below stays at WARN.
         match &self.success {
             ReadinessSuccess::ModelListed(_) => {
-                tracing::warn!(
+                tracing::info!(
                     model = %self.model,
                     base_url = %self.base_url,
                     attempts,
@@ -325,7 +327,7 @@ impl PreparedReadinessTarget {
                 let status = response
                     .status
                     .map_or_else(|| "unknown".to_owned(), |value| value.to_string());
-                tracing::warn!(
+                tracing::info!(
                     url = %self.request.url,
                     status = %status,
                     attempts,
@@ -333,7 +335,7 @@ impl PreparedReadinessTarget {
                 );
             }
             ReadinessSuccess::SuccessfulStatus => {
-                tracing::warn!(
+                tracing::info!(
                     url = %self.request.url,
                     attempts,
                     "readiness: endpoint ready"
@@ -599,6 +601,13 @@ impl PreparedOnlineReadiness for NativePreparedOnlineReadiness {
         clock: Rc<dyn Clock>,
         transport: Rc<dyn ReadinessTransport>,
     ) -> Result<ReadinessReport> {
+        // Probe-start line mirroring `readiness_probe.py`'s "Waiting for endpoint
+        // readiness across N target(s)" INFO.
+        tracing::info!(
+            targets = self.targets.len(),
+            "Waiting for endpoint readiness across {} target(s)",
+            self.targets.len(),
+        );
         let mut report = ReadinessReport::default();
         for target in &self.targets {
             let attempts = wait_for_target(target, clock.clone(), transport.as_ref()).await?;

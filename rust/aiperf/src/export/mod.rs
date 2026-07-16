@@ -281,7 +281,14 @@ impl ExporterRegistry {
             match exporter.export(report, artifact_dir, cfg) {
                 Ok(()) => {
                     succeeded += 1;
-                    tracing::debug!(exporter = exporter.name(), "exporter completed");
+                    // INFO so the export step is visible on a normal run, mirroring
+                    // Python's per-exporter "Exported … to: …" lines (the native
+                    // exporters own their own paths, so we name the exporter).
+                    tracing::info!(
+                        exporter = exporter.name(),
+                        "Exported {} data",
+                        exporter.name()
+                    );
                 }
                 Err(error) => {
                     tracing::warn!(

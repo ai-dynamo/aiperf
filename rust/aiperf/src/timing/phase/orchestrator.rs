@@ -163,6 +163,14 @@ impl ClockPhaseOrchestrator {
             return Err(PhaseOrchestratorError::AlreadyRun);
         }
 
+        // Mirrors Python's `phase_orchestrator.py` "Initialized N phase(s)" line.
+        let phase_names: Vec<&str> = self.inner.configs.iter().map(|c| c.id.as_str()).collect();
+        tracing::info!(
+            "Initialized {} phase(s): {:?}",
+            self.inner.configs.len(),
+            phase_names,
+        );
+
         let mut ordered_runners = Vec::with_capacity(self.inner.configs.len());
         for (index, config) in self.inner.configs.iter().cloned().enumerate() {
             self.fail_if_seamless_predecessor_failed().await?;
