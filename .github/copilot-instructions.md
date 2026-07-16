@@ -5,9 +5,9 @@ SPDX-License-Identifier: Apache-2.0
 
 # AIPerf
 
-> ✅ **CANONICAL PRODUCT ARCHITECTURE.** The Python `aiperf` command owns the only human-facing CLI, Config v2, outer orchestration, and presentation. A fresh `aiperf-runner` child is the **only Rust executable on the product execution path** and owns exactly one run's high-performance path; `aiperf-mock-server` is a standalone developer/test inference target, not an orchestrated backend process. The `rust/aiperf` package is a runtime library with no binary target. There is no ZMQ, service mesh, multiprocess credit protocol, mmap dataset cache, or `plugins.yaml` on the native path. The `aiperf-rs` and `~/projects/aiperf-rust` trees remain **DEPRECATED**. Design record: [`specs/`](specs/); start-here index: [`llms.txt`](llms.txt).
+> ✅ **CANONICAL PRODUCT ARCHITECTURE.** The human-facing `aiperf` command is the native Rust front door (crate `aiperf-cli`): it owns `profile`/`config` natively (byte-exact Config v2), projects one protocol-v2 request, and launches `aiperf-runner`, delegating only peripheral subcommands (`plot`/`service`/`plugins`) back to Python — in-process embedded CPython in the `pyo3-embed` build, or a `python -m aiperf` subprocess in the lean default build (`AIPERF_NATIVE=0` falls the whole command back to the pure-Python frontend). Config v2's schema, outer orchestration, and presentation semantics stay Python-defined. A fresh `aiperf-runner` child owns exactly one run's high-performance execution path and is the **only Rust executable that dispatches load**; `aiperf-mock-server` is a standalone developer/test inference target, not an orchestrated backend process. The `rust/aiperf` package is a runtime library with no binary target. There is no ZMQ, service mesh, multiprocess credit protocol, mmap dataset cache, or `plugins.yaml` on the native path. The `aiperf-rs` and `~/projects/aiperf-rust` trees remain **DEPRECATED**. Design record: [`specs/`](specs/); start-here index: [`llms.txt`](llms.txt).
 >
-> Rust execution truth is in `rust/`; canonical Python frontend truth includes `src/aiperf/config/`, `src/aiperf/orchestrator/`, and `src/aiperf/cli_runner/`. Other inherited Python controller/service code is legacy, not an alternate hot path.
+> Rust execution truth is in `rust/` (the native CLI front door is `rust/cli/`); canonical Python frontend truth includes `src/aiperf/config/`, `src/aiperf/orchestrator/`, and `src/aiperf/cli_runner/`. Other inherited Python controller/service code is legacy, not an alternate hot path.
 
 ## What this is
 
@@ -17,14 +17,14 @@ A Python-orchestrated, Rust-executed load generator + measurement front-end for 
 2. **ONLINE-mock** — real HTTP to a mock server (`aiperf-mock-server`), wall clock. *(built — same code as (1), different target)*
 3. **OFFLINE-mock** — in-process virtual-clock co-simulation of the Dynamo mocker engine, no sockets, deterministic. *(built behind the non-default `dynosim` Cargo feature; requires the sibling `dynamo-aiperf-native` checkout.)*
 
-Online-real and online-mock are product-reachable through Python + the base runner. The workspace-owned `aiperf-mock-server` server is launched independently and supplies an ordinary online target URL; Python does not supervise it as part of a run. Offline-mock is product-reachable through the same Python Config-v2 path when the selected `aiperf-runner` is built with `dynosim`; exact-image capabilities omit those transports from the base build.
+Online-real and online-mock are product-reachable through the native `aiperf-cli` front door + the base runner (or, with `AIPERF_NATIVE=0`, the pure-Python frontend). The workspace-owned `aiperf-mock-server` server is launched independently and supplies an ordinary online target URL; the frontend does not supervise it as part of a run. Offline-mock is product-reachable through the same Config-v2 path when the selected `aiperf-runner` is built with `dynosim`; exact-image capabilities omit those transports from the base build.
 
 ## Canonical vs aspirational — the code is a walking skeleton
 
 Ground every claim in `crate/src/file.rs`, not the specs: specs are design intent, **code is truth**. The current gaps between the north-star design and today's code:
 
 - The north-star's `Backend` / `Engine` / `Harness` vocabulary is **aspirational**. Today's seam is `Clock` + `RequestSink<R>` / `RequestObserver` / `Dispatchable`.
-- **One product entry path.** Python projects one BenchmarkRun protocol-v2 request and launches `aiperf-runner`; runner is v2-only, rejects non-v2. Selects scheduled vs graph from dataset format; binds `cfg.transport.type`. `--capabilities` emits a plugins.yaml-shaped catalog. Unregistered transport/endpoint ids fail closed.
+- **One product entry path.** The native `aiperf-cli` front door (or the Python frontend when `AIPERF_NATIVE=0`) projects one BenchmarkRun protocol-v2 request and launches `aiperf-runner`; runner is v2-only, rejects non-v2. Selects scheduled vs graph from dataset format; binds `cfg.transport.type`. `--capabilities` emits a plugins.yaml-shaped catalog. Unregistered transport/endpoint ids fail closed.
 - **Native online transports are built.** HTTP: Clock-injected hyper (`transport_http`), h1/h2c/UDS/TLS/SSE, post-send cancellation. gRPC: Clock-injected Tonic (`transport_grpc`), KServe OIP + Riva ASR/TTS/NLP. Both on `current_thread` + `LocalSet`; no Python gRPC plugin.
 - **Open endpoint registry, v2 validation, and frozen linked application are built.** `aiperf::endpoints`: open registry with 9 KServe + 9 Riva + `vllm_generate` factories, raw/effective config, worker-local prepared bindings. `aiperf::extensions` transactionally composes new dialects. `RunnerApplication` freezes the linked registry, input resolvers, independent transport and workload registries (the pair layer is deleted), and v2 coordinator at bootstrap.
 - **Anthropic Messages parity is built.** `aiperf::endpoints::MessagesEndpoint`: exact PR 731 `/v1/messages` body, auth headers, all content shapes, streaming/non-streaming parsing, cache-usage reconciliation, thinking/signature replay. Graph transport remains Chat-shaped.
@@ -88,7 +88,7 @@ Sixteen former `aiperf-*` library crates are now `aiperf::<module>::` namespaces
 - **SSE**: buffer raw bytes, split lines on the byte buffer, UTF-8-decode only complete lines (a multibyte char may straddle a TCP chunk boundary).
 - **Authoritative token counts**: request `stream_options.include_usage` so `usage.completion_tokens` is returned; the HTTP sink emits it through `RequestObserver::on_usage`. Adaptive windows and the collector-wide native accumulator reconcile OSL and the `(last−first)/(osl−1)` ITL denominator to authoritative completion usage while preserving observed chunk timings.
 - **Errors**: `anyhow` in the runner/app layer; library crates use plain error enums with hand-written `Display` (no `thiserror`).
-- **Python owns the CLI schema.** Rust runner requests use strict `serde` / `serde_json` DTOs with unknown-field rejection. Prefer a direct-serialized request body on the hot path.
+- **Python defines the Config v2 schema** (mirrored byte-exact by `aiperf-cli`'s native serde Config v2). Rust runner requests use strict `serde` / `serde_json` DTOs with unknown-field rejection. Prefer a direct-serialized request body on the hot path.
 - **NaN/Inf discipline**: numeric metric values crossing a serialization boundary must be finite or explicitly absent.
 - **Comments explain *why*, never *what*.** No emojis in code. Read the actual code, never trust the docstrings or comments.
 
@@ -152,7 +152,7 @@ make wheel
 Run the product:
 
 ```bash
-# Generate, validate, and run through the only human-facing frontend.
+# Generate, validate, and run through the human-facing `aiperf` front door.
 aiperf config init --template minimal --output benchmark.yaml
 aiperf config validate benchmark.yaml
 aiperf profile --config benchmark.yaml
@@ -200,7 +200,7 @@ cargo run --release -p aiperf-runner -- --capabilities
 aiperf profile --config dynosim_offline_replay.yaml
 ```
 
-`cargo run -p aiperf` is invalid: the `aiperf` package has no binary. Python projects one side-effect-free authored-v2 request; an unregistered transport or workload fails closed without conversion to v1. `dag_jsonl`/`weka_trace`/`dynamo_trace` enter the runner-owned graph-input resolver once, call exactly one compiler, and never pass through a second registry. gRPC endpoints require `transport.type: grpc` with `grpc://`/`grpcs://` URLs. Offline/online replay requires `dynosim_offline`/`dynosim_online` and a feature-bearing runner.
+`cargo run -p aiperf` is invalid: the `aiperf` package has no binary (the native binary is the `aiperf-cli` crate). The front door projects one side-effect-free authored-v2 request; an unregistered transport or workload fails closed without conversion to v1. `dag_jsonl`/`weka_trace`/`dynamo_trace` enter the runner-owned graph-input resolver once, call exactly one compiler, and never pass through a second registry. gRPC endpoints require `transport.type: grpc` with `grpc://`/`grpcs://` URLs. Offline/online replay requires `dynosim_offline`/`dynosim_online` and a feature-bearing runner.
 
 Content server: `AIPERF_CONTENT_SERVER_ENABLED=true` + non-empty `AIPERF_CONTENT_SERVER_CONTENT_DIR`. See `docs/tutorials/content-server.md`.
 

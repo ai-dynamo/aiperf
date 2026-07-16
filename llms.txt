@@ -10,12 +10,18 @@ purpose for each, so an agent knows which file to open for a given question.
 
 ## ✅ Canonical / ⛔️ deprecated
 
-- **CANONICAL PRODUCT PATH:** the Python `aiperf` CLI owns Config v2, planning,
-  outer loops, and presentation; a fresh `aiperf-runner` child is the sole Rust
-  executable on the product execution path and owns exactly one benchmark hot
-  path. The standalone `aiperf-mock-server` developer/test target is an ordinary
-  online inference server, not an orchestrated backend process. `rust/aiperf`
-  is a runtime library and intentionally has no binary target.
+- **CANONICAL PRODUCT PATH:** the human-facing `aiperf` command is the native
+  Rust front door (crate `aiperf-cli`) — it owns `profile`/`config` natively
+  (byte-exact Config v2), projects one protocol-v2 request, and launches
+  `aiperf-runner`, delegating only peripheral subcommands (`plot`/`service`/
+  `plugins`) to Python (embedded CPython, or `python -m aiperf` in the lean
+  build; `AIPERF_NATIVE=0` falls back to the pure-Python frontend). Config v2's
+  schema, planning, outer loops, and presentation stay Python-defined. A fresh
+  `aiperf-runner` child is the sole Rust executable that dispatches load and owns
+  exactly one benchmark hot path. The standalone `aiperf-mock-server`
+  developer/test target is an ordinary online inference server, not an
+  orchestrated backend process. `rust/aiperf` is a runtime library and
+  intentionally has no binary target (the native binary is the `aiperf-cli` crate).
 - **DEPRECATED:** the `aiperf-rs` and `~/projects/aiperf-rust` trees (mechanical
   1:1 ports that reproduce the Python multiprocess/ZMQ complexity this design
   deletes). Do not build on them.
