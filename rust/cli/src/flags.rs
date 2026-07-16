@@ -209,6 +209,16 @@ pub struct ProfileFlags {
     #[arg(long = "synthesis-idle-gap-cap")]
     pub synthesis_idle_gap_cap: Option<f64>,
 
+    /// URL-selection strategy for multi-URL runs (`--url-strategy`, default
+    /// `round_robin`). A runtime knob Python does not project into the request;
+    /// accepted for CLI parity.
+    #[arg(long = "url-strategy")]
+    pub url_strategy: Option<String>,
+    /// Disable auto fixed-schedule detection (`--no-fixed-schedule`). A trace-only
+    /// toggle with no request effect on the common path; accepted for parity.
+    #[arg(long = "no-fixed-schedule", default_value_t = false)]
+    pub no_fixed_schedule: bool,
+
     /// Trials per variation (`--num-profile-runs`); `>1` repeats each run.
     #[arg(long = "num-profile-runs")]
     pub num_profile_runs: Option<u32>,
