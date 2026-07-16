@@ -17,6 +17,7 @@ pub mod hash_id;
 pub mod namespace;
 pub mod numpy_pcg64;
 pub mod python_mt;
+pub mod python_random;
 
 pub use derive::{RngRoot, derive_seed_parts, derive_seed_u64};
 pub use dist::{
@@ -29,3 +30,4 @@ pub use error::{Result, RngError};
 pub use generator::RandomGenerator;
 pub use hash_id::HashIdRandomGenerator;
 pub use python_mt::PythonMt19937;
+pub use python_random::PythonRandomGenerator;
