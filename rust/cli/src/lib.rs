@@ -34,6 +34,7 @@ pub mod render;
 pub mod runner_install;
 pub mod search;
 pub mod signals;
+pub mod speed_bench;
 pub mod sweep;
 pub mod validate;
 pub mod yaml;
