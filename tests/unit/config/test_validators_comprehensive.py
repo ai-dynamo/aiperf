@@ -206,25 +206,6 @@ class TestStopConditionRequired:
                 )
             )
 
-    def test_explicit_open_workload_owns_phase_stop_semantics(self) -> None:
-        cfg = BenchmarkConfig(
-            **_base_config(
-                workload={"type": "agentic", "config": {}},
-                phases=[
-                    {
-                        "name": "profiling",
-                        "type": "concurrency",
-                        "concurrency": 8,
-                    }
-                ],
-            )
-        )
-
-        phase = next(p for p in cfg.phases if p.name == "profiling")
-        assert phase.requests is None
-        assert phase.duration is None
-        assert phase.sessions is None
-
     def test_fixed_schedule_phase_no_duration_passes(self) -> None:
         """FixedSchedulePhase opts out of stop condition requirement."""
         cfg = BenchmarkConfig(

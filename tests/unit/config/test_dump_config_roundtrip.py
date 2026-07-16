@@ -33,6 +33,19 @@ TEMPLATES_DIR = (
     / "templates"
 )
 
+# Native-only templates (they select a `transport` block the Python schema no
+# longer models — dynosim/gRPC are native-binary-only) are excluded from the
+# Python-schema roundtrip.
+_NATIVE_ONLY_TEMPLATES = {"dynosim_offline_replay.yaml"}
+
+
+def _python_schema_templates() -> list[pathlib.Path]:
+    return [
+        p
+        for p in sorted(TEMPLATES_DIR.glob("*.yaml"))
+        if p.name not in _NATIVE_ONLY_TEMPLATES
+    ]
+
 
 _TEMPLATE_ENV_DEFAULTS = {
     "MODEL_NAME": "meta-llama/Llama-3.1-8B-Instruct",
@@ -57,7 +70,7 @@ def _set_template_env_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.parametrize(
     "template_path",
-    sorted(TEMPLATES_DIR.glob("*.yaml")),
+    _python_schema_templates(),
     ids=lambda p: p.name,
 )
 def test_dump_reload_roundtrip_for_every_template(

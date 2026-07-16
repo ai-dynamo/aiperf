@@ -25,6 +25,20 @@ TEMPLATES_DIR = (
     / "templates"
 )
 
+# The Config-v2 Python schema no longer models the native-only `transport` /
+# `workload` block (dynosim / gRPC are native-binary-only). Templates that
+# select one validate on the native `aiperf config` path only, not through the
+# Python schema, so they are excluded from these Python-schema template tests.
+_NATIVE_ONLY_TEMPLATES = {"dynosim_offline_replay.yaml"}
+
+
+def _python_schema_templates() -> list[pathlib.Path]:
+    return [
+        p
+        for p in sorted(TEMPLATES_DIR.glob("*.yaml"))
+        if p.name not in _NATIVE_ONLY_TEMPLATES
+    ]
+
 # Defaults for env vars referenced by `${VAR:default}` substitutions in some
 # templates (env_var_production, jinja2_variables, scenario_workload_profiles,
 # sweep_distributions). Templates use sensible defaults already, but we set
@@ -53,7 +67,7 @@ def _set_template_env_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.parametrize(
     "template_path",
-    sorted(TEMPLATES_DIR.glob("*.yaml")),
+    _python_schema_templates(),
     ids=lambda p: p.name,
 )
 def test_bundled_template_validates_as_aiperf_config(

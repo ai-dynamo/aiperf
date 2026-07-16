@@ -90,17 +90,6 @@ from aiperf.config.endpoint import (
     EndpointDefaults,
     TemplateConfig,
 )
-from aiperf.config.execution import (
-    AgenticProviderConfig,
-    DynosimOfflineTransport,
-    DynosimOnlineTransport,
-    GrpcTransport,
-    HttpTransport,
-    OpenTransport,
-    RunnerComponentId,
-    RunnerTransportConfig,
-    RunnerWorkloadConfig,
-)
 from aiperf.config.gpu_telemetry import (
     GpuTelemetryConfig,
 )
@@ -217,7 +206,6 @@ from aiperf.config.wandb import (
 __all__ = [
     "AIPerfConfig",
     "AdaptiveSearchSweep",
-    "AgenticProviderConfig",
     "ArtifactsConfig",
     "AudioConfig",
     "BasePhaseConfig",
@@ -280,14 +268,6 @@ __all__ = [
     "RatePhaseConfig",
     "ResolvedConfig",
     "RuntimeConfig",
-    "DynosimOfflineTransport",
-    "DynosimOnlineTransport",
-    "GrpcTransport",
-    "HttpTransport",
-    "OpenTransport",
-    "RunnerTransportConfig",
-    "RunnerComponentId",
-    "RunnerWorkloadConfig",
     "SLOsConfig",
     "SamplingDimension",
     "SamplingDistribution",

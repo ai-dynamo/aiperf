@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import difflib
 from typing import Annotated, Any, Literal, Self
-from urllib.parse import urlparse
 
 from pydantic import ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
@@ -51,11 +50,6 @@ from aiperf.config.dataset import (
 )
 from aiperf.config.endpoint import (
     EndpointConfig,
-)
-from aiperf.config.execution import (
-    HttpTransport,
-    RunnerTransportConfig,
-    RunnerWorkloadConfig,
 )
 from aiperf.config.gpu_telemetry import (
     GpuTelemetryConfig,
@@ -419,27 +413,6 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         ),
     ]
 
-    transport: Annotated[
-        RunnerTransportConfig,
-        Field(
-            default_factory=HttpTransport,
-            description="Orthogonal native transport selection. The open type ID and "
-            "factory-owned config are validated by the selected aiperf runner. The "
-            "clock rides on the transport ID (dynosim_offline=virtual, "
-            "dynosim_online/http/grpc=wall clock).",
-        ),
-    ]
-
-    workload: Annotated[
-        RunnerWorkloadConfig | None,
-        Field(
-            default=None,
-            description="Optional explicit native workload selection. When omitted, "
-            "the protocol-v2 projection selects graph for dag_jsonl, "
-            "static_accuracy for enabled accuracy, and scheduled otherwise.",
-        ),
-    ]
-
     scenario: Annotated[
         str | None,
         Field(
@@ -522,34 +495,6 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         """
         return normalize_benchmark_input(data)
 
-    @model_validator(mode="before")
-    @classmethod
-    def inject_dynosim_placeholder_url(cls, data: Any) -> Any:
-        """Supply the non-dialed ``dynosim://offline`` URL for dynosim endpoints.
-
-        The in-process Dynamo transports open no sockets, so an author writing
-        ``endpoint: {type: dynosim}`` should not have to invent a URL. But
-        :class:`EndpointConfig` still requires at least one syntactically valid
-        URL. Inject the never-dialed ``dynosim://`` sentinel (an accepted scheme
-        that mirrors the runner's ``dynosim://offline`` reporting) when the
-        transport is ``dynosim_*`` and no URL was authored, so the clean
-        ``endpoint: {type: dynosim}`` form validates.
-        """
-        if not isinstance(data, dict):
-            return data
-        transport = data.get("transport")
-        transport_type = transport.get("type") if isinstance(transport, dict) else None
-        if transport_type not in {"dynosim_offline", "dynosim_online"}:
-            return data
-        endpoint = data.get("endpoint")
-        if (
-            isinstance(endpoint, dict)
-            and not endpoint.get("urls")
-            and not endpoint.get("url")
-        ):
-            endpoint["urls"] = ["dynosim://offline"]
-        return data
-
     @field_validator("phases", mode="before")
     @classmethod
     def parse_phases(cls, v: Any) -> list[Any]:
@@ -607,16 +552,13 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         return self
 
     @model_validator(mode="after")
-    def validate_implicit_workload_phase_stops(self) -> Self:
-        """Require generic stops only when Python selected the workload.
+    def validate_phase_stops(self) -> Self:
+        """Require each phase to declare a generic stop condition.
 
-        An explicit workload is an open runner-factory selection. Its factory
-        owns whether phases stop by requests, time, sessions, a dataset, or a
-        harness lifecycle; requiring one of the generic fields here would force
-        extension workloads to author a second, inert scheduling contract.
+        Every profiling phase needs at least one of ``requests`` / ``duration`` /
+        ``sessions`` (or a self-bounding agentic-cache warmup), unless a named
+        ``--scenario`` supplies the bound at resolution time.
         """
-        if self.workload is not None:
-            return self
         # A named ``--scenario`` owns the benchmark invariants and auto-fills the
         # phase stop condition (e.g. profiling ``duration``) at resolution time
         # (``ScenarioResolver`` / ``apply_scenario``), which runs AFTER this
@@ -681,58 +623,6 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
                 raise ValueError(
                     f"Phase '{phase.name}': prefill_concurrency requires "
                     "endpoint.streaming=true"
-                )
-        return self
-
-    @model_validator(mode="after")
-    def default_dynosim_endpoint_dialect(self) -> Self:
-        """Default the endpoint dialect to ``dynosim`` for dynosim transports.
-
-        The in-process Dynamo transports materialize an empty request body and
-        never dial a server, so the first-class ``dynosim`` endpoint dialect is
-        the natural default (reported as ``dynosim://offline``) instead of a
-        chat-over-fake-HTTP URL.  Only fill it when the author left the endpoint
-        type unset; an explicit dialect is always honored.  This validator lives
-        on ``BenchmarkConfig`` because ``EndpointConfig`` cannot see the transport.
-        """
-        if (
-            str(self.transport.type) in {"dynosim_offline", "dynosim_online"}
-            and "type" not in self.endpoint.model_fields_set
-        ):
-            self.endpoint.type = "dynosim"
-        return self
-
-    @model_validator(mode="after")
-    def validate_native_online_transport_url_family(self) -> Self:
-        """Keep native HTTP and gRPC selections explicit and non-fallback.
-
-        Custom runner transports retain open URL policy. The two built-in online
-        transports, however, must never reinterpret one another's URLs; in
-        particular a ``grpc://`` run cannot fall through protocol v1's HTTP
-        path when the selected runner lacks the v2 pair.
-        """
-        transport = str(self.transport.type)
-        schemes = {urlparse(url).scheme.lower() for url in self.endpoint.urls}
-        if transport in {"dynosim_offline", "dynosim_online"}:
-            # dynosim is an in-process native protocol-v2 transport (Dynamo mocker
-            # co-simulation). It opens no sockets in either clock mode, so the
-            # endpoint block supplies only materialization policy (modality,
-            # tokenization) and its URL is never dialed — hence no scheme
-            # constraint.
-            return self
-        if transport == "http" and not schemes <= {"http", "https"}:
-            raise ValueError(
-                "transport.type='http' requires http:// or https:// endpoint URLs; "
-                "select transport.type='grpc' for grpc:// or grpcs://"
-            )
-        if transport == "grpc":
-            if not schemes <= {"grpc", "grpcs"}:
-                raise ValueError(
-                    "transport.type='grpc' requires grpc:// or grpcs:// endpoint URLs"
-                )
-            if len(schemes) != 1:
-                raise ValueError(
-                    "all grpc endpoint URLs must use the same grpc or grpcs scheme"
                 )
         return self
 

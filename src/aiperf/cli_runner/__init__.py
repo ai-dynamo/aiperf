@@ -44,36 +44,30 @@ def _reject_native_only_configs(plan: BenchmarkPlan) -> None:
     """Fail fast if the plan needs a capability the Python service mesh lacks.
 
     The Python frontend runs only the pure-Python service mesh (HTTP transport,
-    single process). Capabilities that exist solely on the native ``aiperf``
-    binary -- non-HTTP transports (gRPC / dynosim), multi-cell partitioning,
-    explicit native workload selection, and bounded-memory metric sketches --
-    are rejected here with a message pointing at the native binary, rather than
-    silently degrading (e.g. running a ``grpc`` config as HTTP).
+    single process). Native-only capabilities are rejected here pointing at the
+    native ``aiperf`` binary rather than silently degrading:
+
+    - non-HTTP transports (gRPC / dynosim) and explicit native workload
+      selection are rejected structurally at config load -- the Config-v2 schema
+      no longer models a ``transport``/``workload`` block, so those keys fail
+      ``extra="forbid"`` validation before this guard runs;
+    - multi-cell partitioning (``runtime.cells > 1``) and bounded-memory metric
+      sketches (``--sketch-metrics``) are still valid config, so they are
+      rejected here.
 
     This guard lives on the local ``run_benchmark`` entry, NOT in shared
-    ``BenchmarkConfig`` validation, so the Kubernetes cellular role (which
-    resolves the same config and drives the native binary) is unaffected.
+    ``BenchmarkConfig`` validation, so the native cellular role (which resolves
+    the same config and drives the native binary) is unaffected.
     """
     from aiperf.common.environment import Environment
     from aiperf.config.loader.errors import ConfigurationError
 
     for config in plan.configs:
-        transport_type = str(config.transport.type)
-        if transport_type != "http":
-            raise ConfigurationError(
-                f"transport.type={transport_type!r} is not supported by the Python "
-                f"engine (HTTP only). {_USE_NATIVE_HINT}"
-            )
         cells = getattr(config.runtime, "cells", 1) or 1
         if cells > 1:
             raise ConfigurationError(
                 f"runtime.cells={cells} (cellular execution) is not supported by the "
                 f"Python engine. {_USE_NATIVE_HINT}"
-            )
-        if config.workload is not None:
-            raise ConfigurationError(
-                "an explicit `workload` selection is not supported by the Python "
-                f"engine. {_USE_NATIVE_HINT}"
             )
 
     if Environment.METRICS.SKETCH:

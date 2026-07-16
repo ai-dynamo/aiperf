@@ -392,51 +392,22 @@ class TestNativeOnlyGuard:
     fail fast pointing at the native ``aiperf`` binary, never silently degrade.
     """
 
-    @patch("aiperf.cli_runner._preflight_fd_limit")
-    @patch("aiperf.cli_runner._preflight_artifact_dir")
-    @patch("aiperf.cli_runner._run_single_benchmark")
-    def test_grpc_transport_rejected(
-        self, mock_single: Mock, _mock_artifact: Mock, _mock_fd: Mock
-    ):
-        from aiperf.cli_runner import run_benchmark
-        from aiperf.config.loader.errors import ConfigurationError
+    def test_transport_key_rejected_by_schema(self):
+        """`transport` is no longer a Config-v2 field (the native runner owns the
+        transport axis); ``extra='forbid'`` rejects grpc/dynosim configs at load."""
+        import pydantic
 
-        # A valid gRPC config (grpc:// URLs pass config validation); the guard
-        # rejects it because the Python mesh has no gRPC transport at all.
-        plan = _make_plan(
-            config=_make_config(
-                transport={"type": "grpc"},
-                endpoint={
-                    "urls": ["grpc://localhost:8001"],
-                    "wait_for_model_timeout": 0,
-                },
-            )
-        )
+        with pytest.raises(pydantic.ValidationError):
+            _make_config(transport={"type": "grpc"})
+        with pytest.raises(pydantic.ValidationError):
+            _make_config(transport={"type": "dynosim_offline"})
 
-        with pytest.raises(ConfigurationError, match="transport.type='grpc'"):
-            run_benchmark(plan)
-        # Rejected before any dispatch or preflight side effects.
-        mock_single.assert_not_called()
+    def test_workload_key_rejected_by_schema(self):
+        """`workload` is no longer a Config-v2 field; ``extra='forbid'`` rejects it."""
+        import pydantic
 
-    @pytest.mark.parametrize("transport_type", ["dynosim_offline", "dynosim_online"])
-    @patch("aiperf.cli_runner._preflight_fd_limit")
-    @patch("aiperf.cli_runner._preflight_artifact_dir")
-    @patch("aiperf.cli_runner._run_single_benchmark")
-    def test_dynosim_transport_rejected(
-        self,
-        mock_single: Mock,
-        _mock_artifact: Mock,
-        _mock_fd: Mock,
-        transport_type: str,
-    ):
-        from aiperf.cli_runner import run_benchmark
-        from aiperf.config.loader.errors import ConfigurationError
-
-        plan = _make_plan(config=_make_config(transport={"type": transport_type}))
-
-        with pytest.raises(ConfigurationError, match="not supported by the Python"):
-            run_benchmark(plan)
-        mock_single.assert_not_called()
+        with pytest.raises(pydantic.ValidationError):
+            _make_config(workload={"type": "scheduled"})
 
     @patch("aiperf.cli_runner._preflight_fd_limit")
     @patch("aiperf.cli_runner._preflight_artifact_dir")
@@ -452,21 +423,6 @@ class TestNativeOnlyGuard:
         )
 
         with pytest.raises(ConfigurationError, match="runtime.cells=4"):
-            run_benchmark(plan)
-        mock_single.assert_not_called()
-
-    @patch("aiperf.cli_runner._preflight_fd_limit")
-    @patch("aiperf.cli_runner._preflight_artifact_dir")
-    @patch("aiperf.cli_runner._run_single_benchmark")
-    def test_explicit_workload_rejected(
-        self, mock_single: Mock, _mock_artifact: Mock, _mock_fd: Mock
-    ):
-        from aiperf.cli_runner import run_benchmark
-        from aiperf.config.loader.errors import ConfigurationError
-
-        plan = _make_plan(config=_make_config(workload={"type": "scheduled"}))
-
-        with pytest.raises(ConfigurationError, match="explicit `workload`"):
             run_benchmark(plan)
         mock_single.assert_not_called()
 
