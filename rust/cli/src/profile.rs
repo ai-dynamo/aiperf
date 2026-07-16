@@ -122,11 +122,15 @@ pub fn plan_yaml_cells(
 ) -> anyhow::Result<Vec<sweep_run::Cell>> {
     let variations = sweep.expand(base)?;
     // Base seed: the config's `randomSeed` (or the shared default), then `+index`.
-    let base_seed = base
-        .get("randomSeed")
-        .or_else(|| base.get("random_seed"))
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or(sweep_run::DEFAULT_SWEEP_SEED);
+    let seed = sweep_run::SeedPolicy {
+        base: Some(
+            base.get("randomSeed")
+                .or_else(|| base.get("random_seed"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(sweep_run::DEFAULT_SWEEP_SEED),
+        ),
+        same_seed: false,
+    };
 
     let mut cells = Vec::with_capacity(variations.len());
     for v in &variations {
@@ -148,7 +152,7 @@ pub fn plan_yaml_cells(
             "label": v.label,
             "values": values,
         }));
-        run.random_seed = Some(base_seed + v.index as u64);
+        run.random_seed = seed.seed(v.index);
         run.trial = 0;
         run.artifact_dir = dir;
         cells.push(sweep_run::Cell {
@@ -170,7 +174,6 @@ fn run_sweep(
     order: IterationOrder,
 ) -> anyhow::Result<i32> {
     let sweep_id = uuid::Uuid::new_v4().simple().to_string();
-    let base_seed = flags.random_seed.unwrap_or(sweep_run::DEFAULT_SWEEP_SEED);
     let disable_warmup = !flags.no_profile_run_disable_warmup_after_first
         && flags.profile_run_disable_warmup_after_first;
     let cells = sweep_run::plan_cells(
@@ -179,11 +182,23 @@ fn run_sweep(
         trials,
         order,
         &sweep_id,
-        base_seed,
+        seed_policy(flags),
         disable_warmup,
         load::resolve,
     )?;
     run_cells(flags, &cells)
+}
+
+/// Resolve the per-variation seed policy from the multi-run/sweep seed flags
+/// (Python `set_consistent_seed` / `same_seed`): an explicit `--random-seed`
+/// wins; else `42` when consistent seeding is on (the default), else no seed.
+pub fn seed_policy(flags: &ProfileFlags) -> sweep_run::SeedPolicy {
+    let consistent = flags.set_consistent_seed && !flags.no_set_consistent_seed;
+    let base = flags
+        .random_seed
+        .or_else(|| consistent.then_some(sweep_run::DEFAULT_SWEEP_SEED));
+    let same_seed = flags.parameter_sweep_same_seed && !flags.no_parameter_sweep_same_seed;
+    sweep_run::SeedPolicy { base, same_seed }
 }
 
 /// Run every planned cell in turn (with an optional inter-cell cooldown), render
@@ -194,6 +209,7 @@ fn run_cells(flags: &ProfileFlags, cells: &[sweep_run::Cell]) -> anyhow::Result<
     let child_pid = crate::signals::install();
     let cooldown = flags
         .profile_run_cooldown_seconds
+        .or(flags.parameter_sweep_cooldown_seconds)
         .filter(|s| *s > 0.0)
         .map(std::time::Duration::from_secs_f64);
     eprintln!("aiperf: {} runs", cells.len());

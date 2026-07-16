@@ -95,7 +95,7 @@ pub fn finish(flags: &ProfileFlags, outcomes: &[CellOutcome]) -> anyhow::Result<
         return Ok(());
     }
 
-    write_sweep_aggregate(&base, outcomes)?;
+    write_sweep_aggregate(&base, outcomes, flags.confidence_level.unwrap_or(0.95))?;
     Ok(())
 }
 
@@ -203,7 +203,7 @@ struct Combo {
 }
 
 /// Build and write the `sweep_aggregate` JSON + CSV pair (single-trial path).
-fn write_sweep_aggregate(base: &Path, outcomes: &[CellOutcome]) -> anyhow::Result<()> {
+fn write_sweep_aggregate(base: &Path, outcomes: &[CellOutcome], confidence: f64) -> anyhow::Result<()> {
     // Group by (label, sorted values), preserving first-seen order. Single-trial
     // means each group is one cell; a duplicate label would pool, but the sweep
     // expander never emits duplicate variation labels.
@@ -245,6 +245,7 @@ fn write_sweep_aggregate(base: &Path, outcomes: &[CellOutcome]) -> anyhow::Resul
         &sweep_parameters,
         num_combinations,
         &combos,
+        confidence,
     );
     let csv = build_sweep_csv(
         outcomes.len(),
@@ -460,6 +461,7 @@ fn build_sweep_json(
     sweep_parameters: &[(String, Vec<Value>)],
     num_combinations: i64,
     combos: &[Combo],
+    confidence: f64,
 ) -> Value {
     let sweep_params_json: Vec<Value> = sweep_parameters
         .iter()
@@ -470,7 +472,7 @@ fn build_sweep_json(
     metadata.insert("sweep_parameters".into(), Value::Array(sweep_params_json.clone()));
     metadata.insert("num_combinations".into(), Value::from(num_combinations));
     metadata.insert("sweep_mode".into(), Value::String("repeated".into()));
-    metadata.insert("confidence_level".into(), f(0.95));
+    metadata.insert("confidence_level".into(), f(confidence));
     metadata.insert("num_trials_per_value".into(), Value::from(if combos.is_empty() { 0 } else { 1 }));
     metadata.insert("aggregation_type".into(), Value::String("sweep".into()));
 

@@ -58,7 +58,7 @@ fn sweep_cells_match_oracle() {
             1,
             IterationOrder::Repeated,
             "parity-sweep",
-            run::DEFAULT_SWEEP_SEED,
+            run::SeedPolicy { base: Some(run::DEFAULT_SWEEP_SEED), same_seed: false },
             true,
             load::resolve,
         )
@@ -143,6 +143,38 @@ fn yaml_sweep_cells_match_oracle() {
 }
 
 #[test]
+fn seed_knob_cells_match_oracle() {
+    // The seed-policy flags (`--parameter-sweep-same-seed`, `--no-set-consistent-seed`)
+    // change the per-cell random_seed: same-seed → all `base`; no-consistent → None.
+    for name in ["sweep_sameseed", "sweep_noseed"] {
+        let golden = load_golden(name);
+        let cells_g = golden["cells"].as_array().expect("cells array");
+        let flags = ProfileFlags::parse_from_args(&fixture_args(name))
+            .unwrap_or_else(|e| panic!("[{name}] flags: {e}"));
+        let expansion = sweep::expand(&flags, sweep::SweepType::Grid)
+            .unwrap_or_else(|e| panic!("[{name}] expand: {e}"));
+        let cells = run::plan_cells(
+            &flags,
+            &expansion,
+            1,
+            IterationOrder::Repeated,
+            "parity-sweep",
+            aiperf_cli::profile::seed_policy(&flags),
+            true,
+            load::resolve,
+        )
+        .unwrap_or_else(|e| panic!("[{name}] plan_cells: {e}"));
+        for (i, (cell, want)) in cells.iter().zip(cells_g).enumerate() {
+            assert_eq!(
+                cell.run.random_seed,
+                want["random_seed"].as_u64(),
+                "[{name}] cell {i} random_seed"
+            );
+        }
+    }
+}
+
+#[test]
 fn multi_run_cells_match_oracle() {
     for (name, sweep_type, trials) in MULTI_FIXTURES {
         let golden = load_golden(name);
@@ -163,7 +195,7 @@ fn multi_run_cells_match_oracle() {
             *trials,
             IterationOrder::Repeated,
             "parity-sweep",
-            run::DEFAULT_SWEEP_SEED,
+            run::SeedPolicy { base: Some(run::DEFAULT_SWEEP_SEED), same_seed: false },
             true,
             load::resolve,
         )

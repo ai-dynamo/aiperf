@@ -14,6 +14,25 @@ use crate::sweep::{Expansion, Variation};
 /// Default base run seed when none is authored (matches Python's config default).
 pub const DEFAULT_SWEEP_SEED: u64 = 42;
 
+/// Per-variation seed policy (Python `set_consistent_seed` / `same_seed`).
+#[derive(Clone, Copy)]
+pub struct SeedPolicy {
+    /// Base seed: `None` disables seeding (`--no-set-consistent-seed`, no
+    /// `--random-seed`); otherwise the run seed (authored or the `42` default).
+    pub base: Option<u64>,
+    /// When true, every variation shares `base` (`--parameter-sweep-same-seed`);
+    /// otherwise variation N gets `base + N`.
+    pub same_seed: bool,
+}
+
+impl SeedPolicy {
+    /// The seed for variation `index` (`None` when seeding is disabled).
+    pub fn seed(&self, index: usize) -> Option<u64> {
+        self.base
+            .map(|b| if self.same_seed { b } else { b + index as u64 })
+    }
+}
+
 /// One planned cell: the fully-built run request plus its coordinates.
 pub struct Cell {
     /// Zero-based variation index.
@@ -38,7 +57,7 @@ pub fn plan_cells(
     trials: u32,
     order: IterationOrder,
     sweep_id: &str,
-    base_seed: u64,
+    seed: SeedPolicy,
     disable_warmup_after_first: bool,
     resolve: impl Fn(&ProfileFlags) -> anyhow::Result<BenchmarkRun>,
 ) -> anyhow::Result<Vec<Cell>> {
@@ -63,7 +82,7 @@ pub fn plan_cells(
                 trial,
                 order,
             );
-            stamp(&mut run, variation, trial, sweep_id, base_seed, &dir);
+            stamp(&mut run, variation, trial, sweep_id, seed, &dir);
             // `disable_warmup_after_first` drops the warmup phase on every trial
             // past the first (Python `BenchmarkPlan.disable_warmup_after_first`).
             if trial > 0 && disable_warmup_after_first {
@@ -117,7 +136,7 @@ fn stamp(
     variation: &Variation,
     trial: u32,
     sweep_id: &str,
-    base_seed: u64,
+    seed: SeedPolicy,
     dir: &std::path::Path,
 ) {
     run.sweep_id = Some(sweep_id.to_string());
@@ -131,7 +150,7 @@ fn stamp(
         "label": variation.label,
         "values": values,
     }));
-    run.random_seed = Some(base_seed + variation.index as u64);
+    run.random_seed = seed.seed(variation.index);
     run.trial = trial;
     run.artifact_dir = dir.to_path_buf();
     if let Some(cfg_artifacts) = run.cfg.artifacts.as_mut() {

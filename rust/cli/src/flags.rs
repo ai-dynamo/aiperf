@@ -159,6 +159,31 @@ pub struct ProfileFlags {
     #[arg(long = "accuracy-verbose", default_value_t = false)]
     pub accuracy_verbose: bool,
 
+    /// Auto-set a consistent run seed (default; `--no-set-consistent-seed` disables).
+    #[arg(long = "set-consistent-seed", default_value_t = true, overrides_with = "no_set_consistent_seed")]
+    pub set_consistent_seed: bool,
+    /// Disable the auto consistent seed (`--no-set-consistent-seed`).
+    #[arg(long = "no-set-consistent-seed")]
+    pub no_set_consistent_seed: bool,
+    /// Use the same seed for every sweep variation (`--parameter-sweep-same-seed`).
+    #[arg(long = "parameter-sweep-same-seed", default_value_t = false, overrides_with = "no_parameter_sweep_same_seed")]
+    pub parameter_sweep_same_seed: bool,
+    /// Inverse of the above (`--no-parameter-sweep-same-seed`).
+    #[arg(long = "no-parameter-sweep-same-seed")]
+    pub no_parameter_sweep_same_seed: bool,
+    /// Derive a distinct seed per trial (`--vary-seed-per-trial`).
+    #[arg(long = "vary-seed-per-trial", default_value_t = false, overrides_with = "no_vary_seed_per_trial")]
+    pub vary_seed_per_trial: bool,
+    /// Inverse of the above (`--no-vary-seed-per-trial`).
+    #[arg(long = "no-vary-seed-per-trial")]
+    pub no_vary_seed_per_trial: bool,
+    /// Confidence level for the sweep aggregate (`--confidence-level`, default 0.95).
+    #[arg(long = "confidence-level")]
+    pub confidence_level: Option<f64>,
+    /// Cooldown between sweep variations, seconds (`--parameter-sweep-cooldown-seconds`).
+    #[arg(long = "parameter-sweep-cooldown-seconds")]
+    pub parameter_sweep_cooldown_seconds: Option<f64>,
+
     /// Trials per variation (`--num-profile-runs`); `>1` repeats each run.
     #[arg(long = "num-profile-runs")]
     pub num_profile_runs: Option<u32>,
