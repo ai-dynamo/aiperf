@@ -74,8 +74,8 @@ use uuid::Uuid;
 use crate::clock::Clock;
 use crate::engine::protocol_v2::AuthoredRunSpecV2;
 use crate::engine::registry::{
-    NativeTransportExecution, ClockKind, RunContext, TransportDescriptor,
-    TransportFactory, ValidatedTransportConfig, WorkloadRequirements, strict_decode,
+    ClockKind, NativeTransportExecution, RunContext, TransportDescriptor, TransportFactory,
+    ValidatedTransportConfig, WorkloadRequirements, strict_decode,
 };
 use crate::engine::turn_execution::{ExecutionBackendConfig, RequestExecutorFactory};
 use crate::extensions::AIPerfRegistry;
@@ -144,6 +144,7 @@ pub static DRY_RUN_TRANSPORT_DESCRIPTOR: TransportDescriptor = TransportDescript
     description: "Fake execution leaf: analytic-latency synthetic responses, zero network",
     clock: ClockKind::Sim,
     features: &["dry_run"],
+    url_schemes: &[],
 };
 
 /// Strict validated config owned by the `dry_run` transport.
@@ -221,6 +222,7 @@ impl DryRunTransportConfigV2 {
             seed: self.seed,
             latency_model: self.latency_model,
             kv_utilization: self.kv_utilization,
+            clock: self.clock,
         }
     }
 }
@@ -253,6 +255,10 @@ pub struct DryRunParams {
     pub latency_model: DryRunLatencyModel,
     /// KV-cache utilization for the polynomial decode curve.
     pub kv_utilization: f64,
+    /// Which clock drives the run (`sim` virtual-time vs `real` wall clock).
+    /// Consulted only by [`DryRunNativeExecution::uses_virtual_clock`] to select
+    /// the driver at the native driver layer.
+    pub clock: DryRunClock,
 }
 
 impl DryRunParams {
@@ -427,6 +433,10 @@ impl NativeTransportExecution for DryRunNativeExecution {
         false
     }
 
+    fn uses_virtual_clock(&self) -> bool {
+        self.params.clock == DryRunClock::Sim
+    }
+
     fn build_graph_dispatcher(
         &self,
         clock: Rc<dyn Clock>,
@@ -462,20 +472,6 @@ impl NativeTransportExecution for DryRunNativeExecution {
 /// Register the always-built `dry_run` transport into a mutable runner registry.
 pub fn register_dry_run_transport(registry: &mut AIPerfRegistry) -> Result<()> {
     registry.register_transport(Arc::new(DryRunTransportFactoryV2))
-}
-
-/// Return the analytic params iff `transport` is a `dry_run` transport requesting
-/// the virtual `SimClock` execution path (`clock: sim`).
-///
-/// The scheduled workload calls this to route a sim dry run to
-/// [`crate::engine::execute::prepare_dry_run_sim_scheduled`] instead of the
-/// real-clock `PreparedNativeOperation`; every other transport (and a
-/// `clock: real` dry run) returns `None` and takes the ordinary native path.
-pub fn sim_params_for(transport: &dyn ValidatedTransportConfig) -> Option<DryRunParams> {
-    ValidatedTransportConfig::as_any(transport)
-        .downcast_ref::<DryRunTransportConfigV2>()
-        .filter(|config| config.clock == DryRunClock::Sim)
-        .map(DryRunTransportConfigV2::params)
 }
 
 /// Execution-placement factory for the fake leaf.
@@ -852,8 +848,8 @@ mod tests {
     use crate::clock::{RealClock, RealClockAnchor};
     use crate::endpoints::{EndpointId, EndpointKey};
     use crate::multiturn::{PreparedEndpointReference, TurnDataPolicy};
-    use crate::transport::core::Request;
     use crate::transport::core::PreparedEndpointBinding;
+    use crate::transport::core::Request;
     use crate::transport::http::TransportSinkConfig;
 
     /// All-zero analytic params (no base latency, no scaling, no jitter) to build
@@ -871,6 +867,7 @@ mod tests {
             seed: 0,
             latency_model: DryRunLatencyModel::Linear,
             kv_utilization: 0.5,
+            clock: DryRunClock::Real,
         }
     }
 

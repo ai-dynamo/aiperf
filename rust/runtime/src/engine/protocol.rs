@@ -68,7 +68,7 @@ impl Catalog {
                             "transport_type": descriptor.id,
                             "clock": descriptor.clock,
                             "features": descriptor.features,
-                            "url_schemes": transport_url_schemes(descriptor.id),
+                            "url_schemes": descriptor.url_schemes,
                         }),
                     },
                 )
@@ -82,15 +82,6 @@ impl Catalog {
             public_dataset_loader: BTreeMap::new(),
             dataset_sampler: BTreeMap::new(),
         }
-    }
-}
-
-fn transport_url_schemes(id: &str) -> &'static [&'static str] {
-    match id {
-        "http" => &["http", "https"],
-        "grpc" => &["grpc", "grpcs"],
-        "dynosim_offline" | "dynosim_online" => &["dynosim"],
-        _ => &[],
     }
 }
 

@@ -38,8 +38,8 @@ use crate::engine::execution_factories::ExecutionFactories;
 use crate::engine::graph_input::GraphInputAdapterResolver;
 use crate::engine::protocol::PhaseSpec;
 use crate::engine::protocol_v2::{
-    AuthoredRunSpecV2, NamedRunnerComponentSpecV2, RunDiagnosticArtifactV2, RunResourceV2,
-    ComponentId, FailureStageV2,
+    AuthoredRunSpecV2, ComponentId, FailureStageV2, NamedRunnerComponentSpecV2,
+    RunDiagnosticArtifactV2, RunResourceV2,
 };
 use crate::engine::sidecar_input::PreparedSidecarInputs;
 
@@ -69,6 +69,10 @@ pub struct TransportDescriptor {
     pub clock: ClockKind,
     /// Statically compiled transport feature IDs (catalog fact).
     pub features: &'static [&'static str],
+    /// URL schemes this transport accepts (catalog fact). Projected verbatim
+    /// into the capabilities catalog, so a new transport declares its schemes
+    /// here at its single registration site rather than in a separate match.
+    pub url_schemes: &'static [&'static str],
 }
 
 /// Deterministic capability facts for one linked workload factory.
@@ -244,6 +248,16 @@ pub trait NativeTransportExecution: Send + Sync {
     /// Whether a model-readiness probe runs before profiling. Only the HTTP
     /// transport polls a live server; `grpc`/`dry_run` skip it.
     fn readiness_enabled(&self) -> bool;
+
+    /// Whether this transport drives the run on a virtual `SimClock` (idle-pumped
+    /// deterministic virtual time) rather than the real wall clock. The single
+    /// native driver layer reads this to construct the clock — and thereby select
+    /// the reactor discipline ([`Clock::drive`](crate::clock::Clock::drive)),
+    /// graph placement, and worker count. Default real; only the `dry_run`
+    /// transport with `clock: sim` overrides it.
+    fn uses_virtual_clock(&self) -> bool {
+        false
+    }
 
     /// Build one graph endpoint profile's dispatcher for this transport, or
     /// return an error when it does not (yet) drive the whole-trace graph
@@ -1336,23 +1350,23 @@ fn seconds_to_optional_ns(value: f64, field: &str) -> Result<Option<i64>> {
 }
 
 /// Built-in online HTTP transport descriptor.
-pub static ONLINE_HTTP_TRANSPORT_DESCRIPTOR: TransportDescriptor =
-    TransportDescriptor {
-        id: "http",
-        description: "Clock-injected native HTTP transport over a real clock",
-        clock: ClockKind::Real,
-        features: &["control_plane_http", "h1", "h2c", "http", "tls", "uds"],
-    };
+pub static ONLINE_HTTP_TRANSPORT_DESCRIPTOR: TransportDescriptor = TransportDescriptor {
+    id: "http",
+    description: "Clock-injected native HTTP transport over a real clock",
+    clock: ClockKind::Real,
+    features: &["control_plane_http", "h1", "h2c", "http", "tls", "uds"],
+    url_schemes: &["http", "https"],
+};
 
 /// Built-in online gRPC transport descriptor.
 #[cfg(feature = "grpc")]
-pub static ONLINE_GRPC_TRANSPORT_DESCRIPTOR: TransportDescriptor =
-    TransportDescriptor {
-        id: "grpc",
-        description: "Clock-injected native gRPC transport over Tonic HTTP/2 channels",
-        clock: ClockKind::Real,
-        features: &["grpc", "h2", "tls"],
-    };
+pub static ONLINE_GRPC_TRANSPORT_DESCRIPTOR: TransportDescriptor = TransportDescriptor {
+    id: "grpc",
+    description: "Clock-injected native gRPC transport over Tonic HTTP/2 channels",
+    clock: ClockKind::Real,
+    features: &["grpc", "h2", "tls"],
+    url_schemes: &["grpc", "grpcs"],
+};
 
 /// Built-in scheduled workload descriptor.
 pub static SCHEDULED_WORKLOAD_DESCRIPTOR: WorkloadDescriptor = WorkloadDescriptor {
@@ -1367,11 +1381,10 @@ pub static GRAPH_WORKLOAD_DESCRIPTOR: WorkloadDescriptor = WorkloadDescriptor {
 };
 
 /// Built-in static-accuracy workload descriptor (HTTP only).
-pub static STATIC_ACCURACY_WORKLOAD_DESCRIPTOR: WorkloadDescriptor =
-    WorkloadDescriptor {
-        id: "static_accuracy",
-        description: "Canonical-evaluator static accuracy over the scheduled HTTP path",
-    };
+pub static STATIC_ACCURACY_WORKLOAD_DESCRIPTOR: WorkloadDescriptor = WorkloadDescriptor {
+    id: "static_accuracy",
+    description: "Canonical-evaluator static accuracy over the scheduled HTTP path",
+};
 
 #[derive(Debug)]
 struct OnlineHttpTransportFactoryV2;
@@ -1533,6 +1546,7 @@ mod tests {
         description: "fixture remote placement",
         clock: ClockKind::Real,
         features: &["http"],
+        url_schemes: &[],
     };
     static WORKLOAD: WorkloadDescriptor = WorkloadDescriptor {
         id: "acme_workload",

@@ -68,7 +68,7 @@ use loadgen_core::sink::RequestObserver;
 use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
 
-use crate::engine::dataset_input::{PreparedDatasetInput, DatasetInputContext};
+use crate::engine::dataset_input::{DatasetInputContext, PreparedDatasetInput};
 use crate::engine::execute::{
     NativeConversationSourceFactory, build_native_scheduled_phase_plan_with_source_factory,
     load_tokenizer, metrics_config, native_scheduled_resources, phase_seamless_to_next,
@@ -76,8 +76,8 @@ use crate::engine::execute::{
 use crate::engine::graph_execution::{GraphExecutionEvent, GraphExecutionEventSink};
 use crate::engine::graph_input::GraphInputContext;
 use crate::engine::graph_phase_runtime::{
-    GraphPhaseBackendConfig, PreparedGraphPhaseBackend, GraphPhaseBackendFactory,
-    run_graph_phases, validate_graph_phases,
+    GraphPhaseBackendConfig, GraphPhaseBackendFactory, PreparedGraphPhaseBackend, run_graph_phases,
+    validate_graph_phases,
 };
 use crate::engine::online_execution::{
     OnlineTokenizerSourceResolver, lower_authored_tokenizer, validate_authored_tokenizer,
@@ -86,9 +86,9 @@ use crate::engine::protocol::{MetricsSpec, ModelSelectionStrategy, PhaseSpec};
 use crate::engine::protocol_v2::AuthoredRunSpecV2;
 use crate::engine::records::{CapturedModelOutput, CapturedRecord};
 use crate::engine::registry::{
-    GraphWorkloadConfigV2, PreparedRunOutcome, PreparedRunnerOperation, ClockKind,
-    RunContext, TransportDescriptor, TransportFactory, ScheduledWorkloadConfigV2,
-    ValidatedTransportConfig, ValidatedWorkloadConfig, WorkloadRequirements,
+    ClockKind, GraphWorkloadConfigV2, PreparedRunOutcome, PreparedRunnerOperation, RunContext,
+    ScheduledWorkloadConfigV2, TransportDescriptor, TransportFactory, ValidatedTransportConfig,
+    ValidatedWorkloadConfig, WorkloadRequirements,
 };
 
 /// Stable runner-registry transport IDs for the in-process Dynamo engine.
@@ -131,6 +131,7 @@ static DYNOSIM_OFFLINE_DESCRIPTOR: TransportDescriptor = TransportDescriptor {
     description: "Dynamo passive-engine co-simulation on one deterministic SimClock",
     clock: ClockKind::Sim,
     features: DYNOSIM_TRANSPORT_FEATURES,
+    url_schemes: &["dynosim"],
 };
 
 static DYNOSIM_ONLINE_DESCRIPTOR: TransportDescriptor = TransportDescriptor {
@@ -138,6 +139,7 @@ static DYNOSIM_ONLINE_DESCRIPTOR: TransportDescriptor = TransportDescriptor {
     description: "Dynamo passive-engine in-process replay under the real wall clock",
     clock: ClockKind::Real,
     features: DYNOSIM_TRANSPORT_FEATURES,
+    url_schemes: &["dynosim"],
 };
 
 /// Optional Dynamo build capability that an authored run may require.
