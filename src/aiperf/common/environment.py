@@ -64,12 +64,24 @@ __all__ = ["Environment"]
 class _AccuracySettings(BaseSettings):
     """Accuracy benchmark settings.
 
-    Tunables for the accuracy benchmark loaders. Currently only pins the
-    LiveCodeBench dataset release so accuracy numbers are reproducible
-    across runs without requiring source edits.
+    Tunables for accuracy benchmarking: the cancel-path result-wait timeout and
+    the LiveCodeBench dataset release pin, so accuracy behavior and numbers are
+    reproducible across runs without requiring source edits.
     """
 
     model_config = SettingsConfigDict(env_prefix="AIPERF_ACCURACY_")
+
+    CANCEL_RESULT_WAIT_SEC: float = Field(
+        default=5.0,
+        ge=0.0,
+        description="Bounded time (seconds) the SystemController waits on the "
+        "cancel (Ctrl+C) path for the RecordsManager's "
+        "ProcessAccuracyResultMessage before stopping. The normal completion "
+        "path blocks on the accuracy shutdown gate indefinitely, but the cancel "
+        "path must not hang forever, so it waits at most this long for the "
+        "graded accuracy summary to arrive over pub/sub before proceeding to "
+        "export. Set to 0 to skip the wait entirely.",
+    )
 
     LCB_RELEASE_TAG: str = Field(
         default="v4_v5",

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, TypeAlias
 from aiperf.plugin import plugins
 from aiperf.plugin.extensible_enums import create_enum
 
-__all__ = ["APIRouterType", "APIRouterTypeStr", "AccumulatorType", "AccumulatorTypeStr", "AccuracyBenchmarkType", "AccuracyBenchmarkTypeStr", "AccuracyGraderType", "AccuracyGraderTypeStr", "ArrivalPattern", "ArrivalPatternStr", "CommClientType", "CommClientTypeStr", "CommunicationBackend", "CommunicationBackendStr", "ComposerType", "ComposerTypeStr", "ConsoleExporterType", "ConsoleExporterTypeStr", "ConvergenceCriterionType", "ConvergenceCriterionTypeStr", "CustomDatasetType", "CustomDatasetTypeStr", "DataExporterType", "DataExporterTypeStr", "DatasetBackingStoreType", "DatasetBackingStoreTypeStr", "DatasetClientStoreType", "DatasetClientStoreTypeStr", "DatasetFormat", "DatasetFormatStr", "DatasetSamplingStrategy", "DatasetSamplingStrategyStr", "EndpointType", "EndpointTypeStr", "GPUTelemetryCollectorType", "GPUTelemetryCollectorTypeStr", "GPUTelemetryProcessorType", "GPUTelemetryProcessorTypeStr", "PhaseType", "PhaseTypeStr", "PlotType", "PlotTypeStr", "PluginType", "PluginTypeStr", "PublicDatasetType", "PublicDatasetTypeStr", "RampType", "RampTypeStr", "RecordProcessorType", "RecordProcessorTypeStr", "ResultsProcessorType", "ResultsProcessorTypeStr", "SearchPlannerType", "SearchPlannerTypeStr", "SearchRecipePostProcessType", "SearchRecipePostProcessTypeStr", "SearchRecipeType", "SearchRecipeTypeStr", "ServerMetricsProcessorType", "ServerMetricsProcessorTypeStr", "ServiceRunType", "ServiceRunTypeStr", "ServiceType", "ServiceTypeStr", "StreamExporterType", "StreamExporterTypeStr", "TimingMode", "TimingModeStr", "TransportType", "TransportTypeStr", "UIType", "UITypeStr", "URLSelectionStrategy", "URLSelectionStrategyStr", "ZMQProxyType", "ZMQProxyTypeStr"]
+__all__ = ["APIRouterType", "APIRouterTypeStr", "AccumulatorType", "AccumulatorTypeStr", "AccuracyBenchmarkType", "AccuracyBenchmarkTypeStr", "AccuracyGraderType", "AccuracyGraderTypeStr", "AnalyzerType", "AnalyzerTypeStr", "ArrivalPattern", "ArrivalPatternStr", "CommClientType", "CommClientTypeStr", "CommunicationBackend", "CommunicationBackendStr", "ComposerType", "ComposerTypeStr", "ConsoleExporterType", "ConsoleExporterTypeStr", "ConvergenceCriterionType", "ConvergenceCriterionTypeStr", "CustomDatasetType", "CustomDatasetTypeStr", "DataExporterType", "DataExporterTypeStr", "DatasetBackingStoreType", "DatasetBackingStoreTypeStr", "DatasetClientStoreType", "DatasetClientStoreTypeStr", "DatasetFormat", "DatasetFormatStr", "DatasetSamplingStrategy", "DatasetSamplingStrategyStr", "EndpointType", "EndpointTypeStr", "GPUTelemetryCollectorType", "GPUTelemetryCollectorTypeStr", "PhaseType", "PhaseTypeStr", "PlotType", "PlotTypeStr", "PluginType", "PluginTypeStr", "PublicDatasetType", "PublicDatasetTypeStr", "RampType", "RampTypeStr", "RecordObserverType", "RecordObserverTypeStr", "RecordProcessorType", "RecordProcessorTypeStr", "SearchPlannerType", "SearchPlannerTypeStr", "SearchRecipePostProcessType", "SearchRecipePostProcessTypeStr", "SearchRecipeType", "SearchRecipeTypeStr", "ServiceRunType", "ServiceRunTypeStr", "ServiceType", "ServiceTypeStr", "StreamExporterType", "StreamExporterTypeStr", "TimingMode", "TimingModeStr", "TransportType", "TransportTypeStr", "UIType", "UITypeStr", "URLSelectionStrategy", "URLSelectionStrategyStr", "ZMQProxyType", "ZMQProxyTypeStr"]
 
 # Plugin Protocol Categories
 if TYPE_CHECKING:
@@ -75,27 +75,23 @@ TransportType = plugins.create_enum(PluginType.TRANSPORT, "TransportType", modul
 
 RecordProcessorTypeStr: TypeAlias = str
 RecordProcessorType = plugins.create_enum(PluginType.RECORD_PROCESSOR, "RecordProcessorType", module=__name__)
-"""Dynamic enum for record processor. Example: RecordProcessorType.ACCURACY_RECORD, RecordProcessorType.OUTPUTS_JSON, RecordProcessorType.RAW_RECORD_WRITER"""
+"""Dynamic enum for record processor. Example: RecordProcessorType.ACCURACY_RECORD, RecordProcessorType.METRIC_RECORD"""
 
-ResultsProcessorTypeStr: TypeAlias = str
-ResultsProcessorType = plugins.create_enum(PluginType.RESULTS_PROCESSOR, "ResultsProcessorType", module=__name__)
-"""Dynamic enum for results processor. Example: ResultsProcessorType.ACCURACY_RESULTS, ResultsProcessorType.NETWORK_LATENCY_JSONL_WRITER, ResultsProcessorType.TIMESLICE"""
-
-GPUTelemetryProcessorTypeStr: TypeAlias = str
-GPUTelemetryProcessorType = plugins.create_enum(PluginType.GPU_TELEMETRY_PROCESSOR, "GPUTelemetryProcessorType", module=__name__)
-"""Dynamic enum for gpu telemetry processor. Example: GPUTelemetryProcessorType.GPU_TELEMETRY_ACCUMULATOR"""
-
-ServerMetricsProcessorTypeStr: TypeAlias = str
-ServerMetricsProcessorType = plugins.create_enum(PluginType.SERVER_METRICS_PROCESSOR, "ServerMetricsProcessorType", module=__name__)
-"""Dynamic enum for server metrics processor. Example: ServerMetricsProcessorType.SERVER_METRICS_ACCUMULATOR"""
+RecordObserverTypeStr: TypeAlias = str
+RecordObserverType = plugins.create_enum(PluginType.RECORD_OBSERVER, "RecordObserverType", module=__name__)
+"""Dynamic enum for record observer. Example: RecordObserverType.OUTPUTS_JSON, RecordObserverType.RAW_RECORD_WRITER"""
 
 AccumulatorTypeStr: TypeAlias = str
 AccumulatorType = plugins.create_enum(PluginType.ACCUMULATOR, "AccumulatorType", module=__name__)
-"""Dynamic enum for accumulator. Example: AccumulatorType.GPU_TELEMETRY, AccumulatorType.METRIC_RESULTS, AccumulatorType.SERVER_METRICS"""
+"""Dynamic enum for accumulator. Example: AccumulatorType.ACCURACY, AccumulatorType.METRIC_RESULTS, AccumulatorType.SERVER_METRICS"""
 
 StreamExporterTypeStr: TypeAlias = str
 StreamExporterType = plugins.create_enum(PluginType.STREAM_EXPORTER, "StreamExporterType", module=__name__)
-"""Dynamic enum for stream exporter. Example: StreamExporterType.GPU_TELEMETRY_JSONL_WRITER, StreamExporterType.RECORD_EXPORT, StreamExporterType.SERVER_METRICS_JSONL_WRITER"""
+"""Dynamic enum for stream exporter. Example: StreamExporterType.ACCURACY_JSONL_WRITER, StreamExporterType.OTEL_METRICS_STREAMER, StreamExporterType.SERVER_METRICS_JSONL_WRITER"""
+
+AnalyzerTypeStr: TypeAlias = str
+AnalyzerType = plugins.create_enum(PluginType.ANALYZER, "AnalyzerType", module=__name__)
+"""Dynamic enum for analyzer. Example: AnalyzerType.ENERGY_EFFICIENCY"""
 
 AccuracyGraderTypeStr: TypeAlias = str
 AccuracyGraderType = plugins.create_enum(PluginType.ACCURACY_GRADER, "AccuracyGraderType", module=__name__)

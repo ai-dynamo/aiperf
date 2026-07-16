@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiperf.accuracy.accuracy_record_processor import AccuracyRecordProcessor
-from aiperf.accuracy.accuracy_results_processor import AccuracyResultsProcessor
-from aiperf.accuracy.models import GradingResult
-from aiperf.common.messages.inference_messages import MetricRecordsData
+from aiperf.accuracy.models import AccuracyRecordsData, GradingResult
+from aiperf.common.enums import CreditPhase
 from aiperf.common.models.dataset_models import ConversationMetadata, DatasetMetadata
+from aiperf.common.models.record_models import ParsedResponse, ParsedResponseRecord
 from aiperf.config import BenchmarkRun
 from aiperf.plugin.enums import (
     AccuracyBenchmarkType,
@@ -45,10 +45,6 @@ def _make_processor(monkeypatch) -> AccuracyRecordProcessor:
     return AccuracyRecordProcessor(run=_make_run(), service_id="test")
 
 
-def _make_results_processor() -> AccuracyResultsProcessor:
-    return AccuracyResultsProcessor(run=_make_run())
-
-
 def _make_dataset_metadata(
     ground_truths: list[str], tasks: list[str]
 ) -> DatasetMetadata:
@@ -67,15 +63,6 @@ def _make_dataset_metadata(
     )
 
 
-def _make_record_data(
-    session_num: int, correct: float = 1.0, unparsed: float = 0.0
-) -> MetricRecordsData:
-    return MetricRecordsData(
-        metadata=create_metric_metadata(session_num=session_num),
-        metrics={"accuracy_correct": correct, "accuracy_unparsed": unparsed},
-    )
-
-
 class TestAccuracyRecordProcessorOnDatasetConfigured:
     def test_populates_ground_truths_from_metadata(self, monkeypatch) -> None:
         processor = _make_processor(monkeypatch)
@@ -84,6 +71,7 @@ class TestAccuracyRecordProcessorOnDatasetConfigured:
         processor.on_dataset_configured(metadata)
 
         assert processor._ground_truths == ["A", "B", "C"]
+        assert processor._tasks == ["t1", "t2", "t3"]
 
     def test_skips_conversations_without_accuracy_fields(self, monkeypatch) -> None:
         processor = _make_processor(monkeypatch)
@@ -103,6 +91,35 @@ class TestAccuracyRecordProcessorOnDatasetConfigured:
         processor.on_dataset_configured(metadata)
 
         assert processor._ground_truths == ["B"]
+
+    def test_tasks_stay_aligned_with_ground_truths_when_labels_are_sparse(
+        self, monkeypatch
+    ) -> None:
+        """Graded conversations missing a task label keep a None slot so the
+        session_num modulo maps to the correct task instead of being shifted."""
+        processor = _make_processor(monkeypatch)
+        conversations = [
+            ConversationMetadata(
+                conversation_id="c0", accuracy_ground_truth="A", accuracy_task="t0"
+            ),
+            ConversationMetadata(
+                conversation_id="c1", accuracy_ground_truth="B"
+            ),  # graded, no task label
+            ConversationMetadata(
+                conversation_id="c2", accuracy_ground_truth="C", accuracy_task="t2"
+            ),
+        ]
+        metadata = DatasetMetadata(
+            conversations=conversations,
+            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+        )
+
+        processor.on_dataset_configured(metadata)
+
+        assert processor._ground_truths == ["A", "B", "C"]
+        # Index-aligned with ground truths; the label-less conversation is None,
+        # not dropped (which would have mismapped c1 -> "t2").
+        assert processor._tasks == ["t0", None, "t2"]
 
 
 @pytest.mark.asyncio
@@ -127,40 +144,67 @@ class TestAccuracyRecordProcessorSessionBounds:
         metadata = create_metric_metadata(session_num=1)
         result = await processor.process_record(sample_parsed_record, metadata)
 
-        assert result["accuracy_correct"] == 1.0
-        assert result["accuracy_unparsed"] == 0.0
+        assert isinstance(result, AccuracyRecordsData)
+        assert result.passed is True
+        assert result.unparsed is False
         processor.grader.grade.assert_awaited_once_with("Hello world", "A")
 
-    async def test_process_record_wraps_to_correct_problem(
+    async def test_process_record_maps_all_grading_and_metadata_fields(
         self, monkeypatch, sample_parsed_record
     ) -> None:
-        """With N problems, session_num=N+1 grades problem at index 1."""
+        """Every AccuracyRecordsData field maps from the grader result / metadata."""
         processor = _make_processor(monkeypatch)
         processor._ground_truths = ["A", "B", "C"]
+        processor._tasks = ["t0", "t1", "t2"]
 
         grading_result = GradingResult(
             correct=False,
             unparsed=True,
-            confidence=1.0,
-            reasoning="Wrong",
+            confidence=0.42,
+            reasoning="Wrong answer",
             extracted_answer="A",
             ground_truth="B",
         )
         processor.grader.grade = AsyncMock(return_value=grading_result)
 
-        # session_num=4 % 3 = index 1 (ground_truth="B")
-        metadata = create_metric_metadata(session_num=4)
+        # session_num=4 % 3 = index 1 -> ground_truth="B", task="t1"
+        metadata = create_metric_metadata(
+            session_num=4,
+            worker_id="worker-9",
+            request_end_ns=1_234_567_890,
+            benchmark_phase=CreditPhase.PROFILING,
+            conversation_id="session_000004",
+            x_request_id="req-abc",
+        )
         result = await processor.process_record(sample_parsed_record, metadata)
 
-        assert result["accuracy_correct"] == 0.0
-        assert result["accuracy_unparsed"] == 1.0
+        assert isinstance(result, AccuracyRecordsData)
+        assert result.session_num == 4
+        assert result.conversation_id == "session_000004"
+        assert result.x_request_id == "req-abc"
+        assert result.worker_id == "worker-9"
+        assert result.benchmark_phase == CreditPhase.PROFILING
+        assert result.timestamp_ns == 1_234_567_890
+        assert result.task == "t1"
+        assert result.grader_name == "multiple_choice"
+        assert result.passed is False
+        assert result.unparsed is True
+        assert result.confidence == 0.42
+        assert result.expected == "B"
+        assert result.actual == "A"
+        assert result.explanation == "Wrong answer"
+        # Full model output captured; no separate reasoning channel here.
+        assert result.model_output == "Hello world"
+        assert result.model_thinking is None
         processor.grader.grade.assert_awaited_once_with("Hello world", "B")
 
-    async def test_process_record_last_valid_session_num_succeeds(
+    async def test_process_record_task_none_when_no_tasks(
         self, monkeypatch, sample_parsed_record
     ) -> None:
+        """task is None when the dataset carried no task labels."""
         processor = _make_processor(monkeypatch)
         processor._ground_truths = ["A", "B"]
+        processor._tasks = []
 
         grading_result = GradingResult(
             correct=True,
@@ -174,8 +218,9 @@ class TestAccuracyRecordProcessorSessionBounds:
         metadata = create_metric_metadata(session_num=1)
         result = await processor.process_record(sample_parsed_record, metadata)
 
-        assert result["accuracy_correct"] == 1.0
-        assert result["accuracy_unparsed"] == 0.0
+        assert isinstance(result, AccuracyRecordsData)
+        assert result.task is None
+        assert result.passed is True
 
     async def test_process_record_raises_if_not_configured(
         self, monkeypatch, sample_parsed_record
@@ -244,121 +289,44 @@ class TestLogGradingDetail:
         assert "sandboxed exec failed" in logged[0]
 
 
-class TestAccuracyResultsProcessorOnDatasetConfigured:
-    def test_populates_tasks_from_metadata(self) -> None:
-        processor = _make_results_processor()
-        metadata = _make_dataset_metadata(["A", "B"], ["algebra", "history"])
+class TestExtractOutputAndThinking:
+    """`_extract_output_and_thinking` splits answer content from reasoning."""
 
-        processor.on_dataset_configured(metadata)
-
-        assert processor._tasks == ["algebra", "history"]
-
-    def test_skips_conversations_without_accuracy_task(self) -> None:
-        processor = _make_results_processor()
-        conversations = [
-            ConversationMetadata(conversation_id="plain"),
-            ConversationMetadata(
-                conversation_id="accurate",
-                accuracy_ground_truth="B",
-                accuracy_task="math",
-            ),
+    @staticmethod
+    def _record(data_list: list[str]) -> ParsedResponseRecord:
+        record = MagicMock(spec=ParsedResponseRecord)
+        record.content_responses = [
+            ParsedResponse(perf_ns=i, data=d) for i, d in enumerate(data_list)
         ]
-        metadata = DatasetMetadata(
-            conversations=conversations,
-            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+        return record
+
+    def test_text_only_output_no_thinking(self) -> None:
+        from aiperf.common.models.record_models import TextResponseData
+
+        record = self._record(
+            [TextResponseData(text="Hello"), TextResponseData(text=" world")]
         )
+        output, thinking = AccuracyRecordProcessor._extract_output_and_thinking(record)
+        assert output == "Hello world"
+        assert thinking is None
 
-        processor.on_dataset_configured(metadata)
+    def test_reasoning_split_into_output_and_thinking(self) -> None:
+        from aiperf.common.models.record_models import ReasoningResponseData
 
-        assert processor._tasks == ["math"]
-
-
-@pytest.mark.asyncio
-class TestAccuracyResultsProcessorSessionBounds:
-    async def test_process_result_wraps_when_session_num_exceeds_dataset(self) -> None:
-        """session_num >= dataset size wraps via modulo so the correct task is recorded."""
-        processor = _make_results_processor()
-        processor._tasks = ["algebra"]
-
-        # session_num=1 wraps to index 0 (the only task, "algebra")
-        await processor.process_result(_make_record_data(session_num=1))
-
-        assert processor._task_total["algebra"] == 1
-        assert processor._overall_total == 1
-
-    async def test_process_result_wraps_to_correct_task(self) -> None:
-        """With N problems, session_num=N+1 accumulates under the task at index 1."""
-        processor = _make_results_processor()
-        processor._tasks = ["algebra", "history", "biology"]
-
-        # session_num=4 % 3 = index 1 → task="history"
-        await processor.process_result(_make_record_data(session_num=4))
-
-        assert processor._task_total["history"] == 1
-        assert processor._task_total.get("algebra", 0) == 0
-
-    async def test_process_result_last_valid_session_num_succeeds(self) -> None:
-        processor = _make_results_processor()
-        processor._tasks = ["test_task", "test_task"]
-
-        await processor.process_result(_make_record_data(session_num=1, correct=1.0))
-
-        assert processor._overall_total == 1
-        assert processor._overall_correct == 1
-        assert processor._task_correct["test_task"] == 1
-
-    async def test_process_result_raises_if_not_configured(self) -> None:
-        """process_result must raise if on_dataset_configured was never called."""
-        processor = _make_results_processor()
-
-        with pytest.raises(RuntimeError, match="dataset not configured"):
-            await processor.process_result(_make_record_data(session_num=0))
-
-    async def test_process_result_increments_overall_unparsed(self) -> None:
-        processor = _make_results_processor()
-        processor._tasks = ["algebra"]
-
-        await processor.process_result(
-            _make_record_data(session_num=0, correct=1.0, unparsed=1.0)
+        record = self._record(
+            [
+                ReasoningResponseData(
+                    content="The answer is (B)", reasoning="Let me think... "
+                ),
+                ReasoningResponseData(content=" final.", reasoning="step two."),
+            ]
         )
+        output, thinking = AccuracyRecordProcessor._extract_output_and_thinking(record)
+        assert output == "The answer is (B) final."
+        assert thinking == "Let me think... step two."
 
-        assert processor._overall_unparsed == 1
-        assert processor._overall_total == 1
-
-    async def test_process_result_increments_task_unparsed(self) -> None:
-        processor = _make_results_processor()
-        processor._tasks = ["algebra"]
-
-        await processor.process_result(
-            _make_record_data(session_num=0, correct=0.0, unparsed=1.0)
-        )
-
-        assert processor._task_unparsed["algebra"] == 1
-
-    async def test_process_result_does_not_increment_unparsed_when_conforming(
-        self,
-    ) -> None:
-        processor = _make_results_processor()
-        processor._tasks = ["algebra"]
-
-        await processor.process_result(
-            _make_record_data(session_num=0, correct=1.0, unparsed=0.0)
-        )
-
-        assert processor._overall_unparsed == 0
-        assert processor._task_unparsed.get("algebra", 0) == 0
-
-    async def test_process_result_missing_unparsed_key_treated_as_conforming(
-        self,
-    ) -> None:
-        """Records without accuracy_unparsed (e.g. from older graders) count as conforming."""
-        processor = _make_results_processor()
-        processor._tasks = ["algebra"]
-        data = MetricRecordsData(
-            metadata=create_metric_metadata(session_num=0),
-            metrics={"accuracy_correct": 1.0},  # no accuracy_unparsed key
-        )
-
-        await processor.process_result(data)
-
-        assert processor._overall_unparsed == 0
+    def test_empty_record_yields_empty_output_and_none_thinking(self) -> None:
+        record = self._record([])
+        output, thinking = AccuracyRecordProcessor._extract_output_and_thinking(record)
+        assert output == ""
+        assert thinking is None

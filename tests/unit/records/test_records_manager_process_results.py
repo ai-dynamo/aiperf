@@ -10,16 +10,16 @@ server metrics accumulators return list-shaped results.
 
 The pipeline:
 
-1. ``_summarize_all_accumulators`` runs ``summarize()`` on every loaded
-   accumulator, buckets the output by shape, and accumulates errors.
-2. ``_finalize_stream_exporters`` flushes JSONL writers concurrently.
-3. ``build_process_records_result`` assembles a :class:`ProcessRecordsResult`.
+1. ``_deliver_network_rtt_to_accumulators`` wires optional RTT calibration.
+2. ``_summarize_metric_record_accumulators`` exports metric-record accumulators.
+3. ``_finalize_stream_exporters`` flushes JSONL writers concurrently.
 4. ``ProcessRecordsResultMessage`` is published.
 5. ``ProcessAllResultsMessage`` is published for the SystemController fan-in.
 """
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -83,7 +83,7 @@ def _make_list_accumulator(
     results: list[MetricResult] | None = None,
     summarize_exc: BaseException | None = None,
 ) -> MagicMock:
-    """Stub for a legacy-shaped accumulator returning ``list[MetricResult]``."""
+    """Stub for an accumulator returning ``list[MetricResult]``."""
     acc = MagicMock()
     acc.__class__.__name__ = "StubListAccumulator"
     if summarize_exc is not None:
@@ -128,14 +128,6 @@ def _make_manager_mock(
     # Branch-stats snapshot (read by _process_results).
     mgr._latest_branch_stats = None
 
-    # Legacy best-effort processors are flushed (force=True) but do not feed
-    # the summary numbers — stub it out.
-    mgr._flush_metric_results_processors = AsyncMock()
-
-    # Accuracy summary merge (orphaned-summarize re-run) — no accuracy processors
-    # in these unit fixtures, so it contributes nothing.
-    mgr._summarize_accuracy_results_processors = AsyncMock(return_value=[])
-
     # Records tracker — drives the time window via PROFILING phase stats.
     phase_stats = PhaseRecordsStats(
         phase=CreditPhase.PROFILING,
@@ -163,8 +155,13 @@ def _make_manager_mock(
     mgr.service_id = "test_records_manager"
     mgr.publish = AsyncMock()
 
+    # Single-flight guard state read by the real _process_results wrapper.
+    mgr._process_results_lock = asyncio.Lock()
+    mgr._processed_results = {}
+
     # Bind real methods
     mgr._process_results = RecordsManager._process_results.__get__(mgr)
+    mgr._process_results_impl = RecordsManager._process_results_impl.__get__(mgr)
     mgr._summarize_metric_record_accumulators = (
         RecordsManager._summarize_metric_record_accumulators.__get__(mgr)
     )
@@ -178,9 +175,8 @@ def _make_manager_mock(
     mgr._bucket_accumulator_summary = (
         RecordsManager._bucket_accumulator_summary.__get__(mgr)
     )
-    mgr._apply_gpu_efficiency_metrics = (
-        RecordsManager._apply_gpu_efficiency_metrics.__get__(mgr)
-    )
+    mgr._analyzers = []
+    mgr._run_analyzers = RecordsManager._run_analyzers.__get__(mgr)
     mgr._finalize_stream_exporters = RecordsManager._finalize_stream_exporters.__get__(
         mgr
     )
@@ -406,6 +402,34 @@ class TestProcessResultsAllResultsPublish:
 
         msg = _get_published_all_results(mgr)
         assert msg is not None
+
+
+class TestProcessResultsSingleFlight:
+    """``_process_results`` is single-flight per phase: the natural finalize task
+    and the PROCESS_RECORDS / PROFILE_CANCEL commands can all reach it, but only
+    the first does the work; later calls return the cached result without
+    re-publishing or re-finalizing the stream exporters."""
+
+    @pytest.mark.asyncio
+    async def test_second_call_returns_cached_and_does_not_republish(self) -> None:
+        acc = _make_summary_accumulator([_STUB_METRIC_RESULT])
+        exp = _make_stub_stream_exporter()
+        mgr = _make_manager_mock(
+            accumulators={AccumulatorType.METRIC_RESULTS: acc},
+            stream_exporters={StreamExporterType.RECORD_EXPORT: exp},
+        )
+
+        first = await mgr._process_results(phase=CreditPhase.PROFILING, cancelled=False)
+        publish_count = mgr.publish.await_count
+
+        second = await mgr._process_results(
+            phase=CreditPhase.PROFILING, cancelled=False
+        )
+
+        assert second is first
+        # No additional publishes and the exporter is finalized exactly once.
+        assert mgr.publish.await_count == publish_count
+        exp.finalize.assert_awaited_once()
 
 
 class TestProcessResultsServerMetricsFailure:
