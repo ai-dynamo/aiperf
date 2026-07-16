@@ -14,6 +14,15 @@
 
 #![allow(dead_code)]
 
+mod raw_jsonl;
+// Re-exported for every test binary; not all of them use each helper, and
+// `mod common` is compiled per-binary, so silence the per-binary unused warning.
+#[allow(unused_imports)]
+pub use raw_jsonl::{
+    RawRecordTiming, TunedExpectations, assert_raw_records_timing_and_data,
+    assert_raw_records_timing_self_consistent, extract_timing, tuned_mock_config,
+};
+
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener as StdTcpListener, TcpStream};
