@@ -1020,14 +1020,6 @@ accumulator:
     metadata:
       record_types: [server_metrics]
 
-  accuracy_results:
-    class: aiperf.accuracy.accuracy_results_processor:AccuracyResultsProcessor
-    description: |
-      Accuracy accumulator that ingests graded metric records and computes summary
-      accuracy metrics. Self-disables when accuracy mode is off.
-    metadata:
-      record_types: [metric_records]
-
   accuracy:
     class: aiperf.accuracy.accumulator:AccuracyAccumulator
     description: |

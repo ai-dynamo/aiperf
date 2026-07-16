@@ -11,34 +11,6 @@ from typing_extensions import TypedDict
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models.base_models import AIPerfBaseModel
 
-# Summary/metric tags (the ``accuracy.`` dot namespace) emitted by
-# AccuracyResultsProcessor.summarize() and read by the accuracy exporters.
-ACCURACY_OVERALL_TAG = "accuracy.overall"
-ACCURACY_TASK_TAG_PREFIX = "accuracy.task."
-ACCURACY_UNPARSED_TAG = "accuracy.unparsed"
-ACCURACY_UNPARSED_TASK_TAG_PREFIX = "accuracy.unparsed.task."
-ACCURACY_METRIC_PREFIX = "accuracy."
-
-# Per-record TRANSPORT keys (NOT metric tags): AccuracyRecordProcessor writes
-# these into each record's MetricRecordDict to hand the grade to
-# AccuracyResultsProcessor.process_record. They use an ``accuracy_`` (underscore)
-# prefix so they live outside the ``accuracy.`` (dot) summary namespace and can
-# never be mistaken for -- or collide with -- a summary/metric tag. Keeping them
-# in the dot namespace is what let the registered ``accuracy.unparsed`` transport
-# metric shadow the ``accuracy.unparsed`` summary tag; the underscore separates them.
-ACCURACY_RECORD_CORRECT_KEY = "accuracy_correct"
-ACCURACY_RECORD_UNPARSED_KEY = "accuracy_unparsed"
-
-
-def accuracy_task_tag(task: str) -> str:
-    """Build the MetricResult.tag for a per-task accuracy result."""
-    return f"{ACCURACY_TASK_TAG_PREFIX}{task}"
-
-
-def accuracy_unparsed_task_tag(task: str) -> str:
-    """Build the MetricResult.tag for a per-task unparsed-count result."""
-    return f"{ACCURACY_UNPARSED_TASK_TAG_PREFIX}{task}"
-
 
 class AccuracyChatMessage(TypedDict):
     """A single OpenAI-compatible chat message used in accuracy benchmark prompts."""

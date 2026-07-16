@@ -6,10 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiperf.accuracy.accuracy_record_processor import AccuracyRecordProcessor
-from aiperf.accuracy.accuracy_results_processor import AccuracyResultsProcessor
 from aiperf.accuracy.models import AccuracyRecordsData, GradingResult
 from aiperf.common.enums import CreditPhase
-from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.models.dataset_models import ConversationMetadata, DatasetMetadata
 from aiperf.config import BenchmarkRun
 from aiperf.plugin.enums import (
@@ -46,10 +44,6 @@ def _make_processor(monkeypatch) -> AccuracyRecordProcessor:
     return AccuracyRecordProcessor(run=_make_run(), service_id="test")
 
 
-def _make_accuracy_accumulator() -> AccuracyResultsProcessor:
-    return AccuracyResultsProcessor(run=_make_run())
-
-
 def _make_dataset_metadata(
     ground_truths: list[str], tasks: list[str]
 ) -> DatasetMetadata:
@@ -65,15 +59,6 @@ def _make_dataset_metadata(
     return DatasetMetadata(
         conversations=conversations,
         sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
-    )
-
-
-def _make_record_data(
-    session_num: int, correct: float = 1.0, unparsed: float = 0.0
-) -> MetricRecordsData:
-    return MetricRecordsData(
-        metadata=create_metric_metadata(session_num=session_num),
-        metrics={"accuracy_correct": correct, "accuracy_unparsed": unparsed},
     )
 
 
@@ -265,123 +250,3 @@ class TestLogGradingDetail:
         processor._log_grading_detail(0, "some response", self._result())
         assert len(logged) == 1
         assert "sandboxed exec failed" in logged[0]
-
-
-class TestAccuracyResultsProcessorOnDatasetConfigured:
-    def test_populates_tasks_from_metadata(self) -> None:
-        processor = _make_accuracy_accumulator()
-        metadata = _make_dataset_metadata(["A", "B"], ["algebra", "history"])
-
-        processor.on_dataset_configured(metadata)
-
-        assert processor._tasks == ["algebra", "history"]
-
-    def test_skips_conversations_without_accuracy_task(self) -> None:
-        processor = _make_accuracy_accumulator()
-        conversations = [
-            ConversationMetadata(conversation_id="plain"),
-            ConversationMetadata(
-                conversation_id="accurate",
-                accuracy_ground_truth="B",
-                accuracy_task="math",
-            ),
-        ]
-        metadata = DatasetMetadata(
-            conversations=conversations,
-            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
-        )
-
-        processor.on_dataset_configured(metadata)
-
-        assert processor._tasks == ["math"]
-
-
-@pytest.mark.asyncio
-class TestAccuracyResultsProcessorSessionBounds:
-    async def test_process_record_wraps_when_session_num_exceeds_dataset(self) -> None:
-        """session_num >= dataset size wraps via modulo so the correct task is recorded."""
-        processor = _make_accuracy_accumulator()
-        processor._tasks = ["algebra"]
-
-        # session_num=1 wraps to index 0 (the only task, "algebra")
-        await processor.process_record(_make_record_data(session_num=1))
-
-        assert processor._task_total[CreditPhase.PROFILING]["algebra"] == 1
-        assert processor._overall_total[CreditPhase.PROFILING] == 1
-
-    async def test_process_record_wraps_to_correct_task(self) -> None:
-        """With N problems, session_num=N+1 accumulates under the task at index 1."""
-        processor = _make_accuracy_accumulator()
-        processor._tasks = ["algebra", "history", "biology"]
-
-        # session_num=4 % 3 = index 1 → task="history"
-        await processor.process_record(_make_record_data(session_num=4))
-
-        assert processor._task_total[CreditPhase.PROFILING]["history"] == 1
-        assert processor._task_total[CreditPhase.PROFILING].get("algebra", 0) == 0
-
-    async def test_process_record_last_valid_session_num_succeeds(self) -> None:
-        processor = _make_accuracy_accumulator()
-        processor._tasks = ["test_task", "test_task"]
-
-        await processor.process_record(_make_record_data(session_num=1, correct=1.0))
-
-        assert processor._overall_total[CreditPhase.PROFILING] == 1
-        assert processor._overall_correct[CreditPhase.PROFILING] == 1
-        assert processor._task_correct[CreditPhase.PROFILING]["test_task"] == 1
-
-    async def test_process_record_raises_if_not_configured(self) -> None:
-        """process_record must raise if on_dataset_configured was never called."""
-        processor = _make_accuracy_accumulator()
-
-        with pytest.raises(RuntimeError, match="dataset not configured"):
-            await processor.process_record(_make_record_data(session_num=0))
-
-    async def test_process_record_increments_overall_unparsed(self) -> None:
-        processor = _make_accuracy_accumulator()
-        processor._tasks = ["algebra"]
-
-        await processor.process_record(
-            _make_record_data(session_num=0, correct=1.0, unparsed=1.0)
-        )
-
-        assert processor._overall_unparsed[CreditPhase.PROFILING] == 1
-        assert processor._overall_total[CreditPhase.PROFILING] == 1
-
-    async def test_process_record_increments_task_unparsed(self) -> None:
-        processor = _make_accuracy_accumulator()
-        processor._tasks = ["algebra"]
-
-        await processor.process_record(
-            _make_record_data(session_num=0, correct=0.0, unparsed=1.0)
-        )
-
-        assert processor._task_unparsed[CreditPhase.PROFILING]["algebra"] == 1
-
-    async def test_process_record_does_not_increment_unparsed_when_conforming(
-        self,
-    ) -> None:
-        processor = _make_accuracy_accumulator()
-        processor._tasks = ["algebra"]
-
-        await processor.process_record(
-            _make_record_data(session_num=0, correct=1.0, unparsed=0.0)
-        )
-
-        assert processor._overall_unparsed[CreditPhase.PROFILING] == 0
-        assert processor._task_unparsed[CreditPhase.PROFILING].get("algebra", 0) == 0
-
-    async def test_process_record_missing_unparsed_key_treated_as_conforming(
-        self,
-    ) -> None:
-        """Records without accuracy_unparsed (e.g. from older graders) count as conforming."""
-        processor = _make_accuracy_accumulator()
-        processor._tasks = ["algebra"]
-        data = MetricRecordsData(
-            metadata=create_metric_metadata(session_num=0),
-            metrics={"accuracy_correct": 1.0},  # no accuracy_unparsed key
-        )
-
-        await processor.process_record(data)
-
-        assert processor._overall_unparsed[CreditPhase.PROFILING] == 0
