@@ -57,11 +57,44 @@ pub(crate) fn resolve_expanded_value(
     expanded: serde_json::Value,
     artifact_dir: Option<PathBuf>,
 ) -> anyhow::Result<crate::model::BenchmarkRun> {
-    let file: ConfigFile = serde_json::from_value(expanded)
+    let mut file: ConfigFile = serde_json::from_value(expanded)
         .map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))?;
     let random_seed = file.random_seed;
-    let inputs = file.benchmark.into_inputs(artifact_dir, random_seed)?;
+    // The canonical `runtime:` section is authored at the top level; fold it onto
+    // the (usually absent) nested `benchmark.runtime` so `runtime.cells` reaches
+    // the run envelope. A nested `benchmark.runtime` (legacy shorthand) wins.
+    if file.benchmark.runtime.is_none() {
+        file.benchmark.runtime = file.runtime.take();
+    }
+    let mut inputs = file.benchmark.into_inputs(artifact_dir, random_seed)?;
+    // CLI over config: an explicit `--tokenizer` on the `aiperf profile` command
+    // line wins over the config's `tokenizer.name` (matching Python's flag-merge
+    // order, where CLI args override the loaded config). The parsed `ProfileFlags`
+    // live in the front-door command (`profile.rs`), which does not thread them
+    // into this resolver, so the override is read from the process argv here — the
+    // config resolver is only ever reached via `aiperf profile --config`, so a
+    // `--tokenizer` present in argv is unambiguously the user's intent.
+    if let Some(name) = cli_tokenizer_override() {
+        inputs.tokenizer_name = Some(name);
+    }
     load::build(inputs)
+}
+
+/// Read an explicit `--tokenizer <name>` / `--tokenizer=<name>` from the process
+/// argv, if present. Used to let the CLI flag win over a config file's
+/// `tokenizer.name` on the `--config` path (whose call site does not thread the
+/// parsed flags into the resolver).
+fn cli_tokenizer_override() -> Option<String> {
+    let mut args = std::env::args();
+    while let Some(arg) = args.next() {
+        if arg == "--tokenizer" {
+            return args.next().filter(|v| !v.is_empty());
+        }
+        if let Some(v) = arg.strip_prefix("--tokenizer=") {
+            return (!v.is_empty()).then(|| v.to_string());
+        }
+    }
+    None
 }
 
 /// Parse a config file to its raw value and apply only `${ENV}` substitution
@@ -138,6 +171,13 @@ struct ConfigFile {
     /// Top-level deterministic run seed (`randomSeed`).
     #[serde(default, alias = "randomSeed")]
     random_seed: Option<u64>,
+    /// Canonical top-level worker/cell runtime policy (`runtime.cells`). Config
+    /// authors `runtime:` at the top level, so the resolver must fold it onto
+    /// `benchmark.runtime` (which is `None` for a top-level-authored `runtime:`)
+    /// before `into_inputs`; otherwise `runtime.cells` never reaches the run
+    /// envelope and cellular mode never engages.
+    #[serde(default)]
+    runtime: Option<RuntimeSection>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -299,6 +339,10 @@ struct TransportSection {
     /// ignored (all-`None`) for `http`/`grpc`.
     #[serde(flatten)]
     dynosim: DynosimConfig,
+    /// `dry_run` analytic-latency knobs sit flat on the transport object;
+    /// captured for the `dry_run` type and ignored (all-`None`) otherwise.
+    #[serde(flatten)]
+    dry_run: crate::model::transport::DryRunConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1380,6 +1424,7 @@ fn parse_transport(section: Option<&TransportSection>) -> anyhow::Result<Transpo
         "grpc" => Transport::Grpc,
         "dynosim_offline" => Transport::DynosimOffline(dynosim()),
         "dynosim_online" => Transport::DynosimOnline(dynosim()),
+        "dry_run" => Transport::DryRun(section.dry_run.clone()),
         other => anyhow::bail!("unknown transport.type {other:?}"),
     })
 }

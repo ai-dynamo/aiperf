@@ -403,7 +403,15 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         model_names: flags.model_names.clone(),
         urls: flags.urls.clone(),
         endpoint_type,
-        transport: Transport::Http,
+        transport: if flags.dry_run {
+            Transport::DryRun(crate::model::transport::DryRunConfig {
+                ttft_ms: flags.dry_run_ttft_ms,
+                itl_ms: flags.dry_run_itl_ms,
+                ..Default::default()
+            })
+        } else {
+            Transport::Http
+        },
         streaming: flags.streaming,
         timeout_seconds: flags.request_timeout_seconds,
         use_legacy_max_tokens: flags.use_legacy_max_tokens,
@@ -764,12 +772,17 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         })
     };
 
-    // An unbounded run (no count, duration, schedule, or user-centric mode)
-    // defaults to a fixed request count.
+    // An unbounded run (no count, duration, schedule, user-centric mode, or
+    // sessions bound) defaults to a fixed request count. A session-bounded run
+    // (`--num-conversations` / a `sessions:` phase) is session-bounded only:
+    // stamping a defaulted `requests` alongside `sessions` would over-constrain
+    // the phase (and trips the cellular graph gate, which rejects a static
+    // `requests` budget on a sessions-partitioned run).
     let effective_requests = inputs.request_count.or_else(|| {
         (inputs.benchmark_duration.is_none()
             && inputs.fixed_schedule.is_none()
-            && inputs.user_centric.is_none())
+            && inputs.user_centric.is_none()
+            && inputs.sessions.is_none())
         .then_some(DEFAULT_REQUEST_COUNT)
     });
     let profiling = if let Some((rate, users)) = inputs.user_centric {
@@ -884,18 +897,23 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     // off (mirrors `_authored_sidecars`); other transports keep the default
     // GPU-telemetry + server-metrics scraping.
     let is_dynosim = inputs.transport.is_dynosim();
+    // Both DynoSim and the dry-run fake leaf open no sockets, so every online
+    // sidecar (GPU telemetry, server-metrics scraping, network-latency probing)
+    // is forced off for either. Per-record artifacts, however, stay available for
+    // dry-run (it fabricates a real RequestRecord), so those key off `is_dynosim`.
+    let no_server_sidecars = is_dynosim || inputs.transport.is_dry_run();
     // Sketch mode is enabled by the `--sketch-metrics` flag OR the
     // `AIPERF_METRICS_SKETCH` env var (Python reads it via
     // `Environment.METRICS.SKETCH`, so both surfaces must honor it).
     let sketch_metrics = inputs.sketch_metrics || env_sketch_enabled();
     // DynoSim forces all sidecars off; otherwise GPU-telemetry and
     // server-metrics scraping are enabled by default and independently toggled.
-    let gpu_enabled = inputs.gpu_telemetry_enabled && !is_dynosim;
-    let server_enabled = inputs.server_metrics_enabled && !is_dynosim;
+    let gpu_enabled = inputs.gpu_telemetry_enabled && !no_server_sidecars;
+    let server_enabled = inputs.server_metrics_enabled && !no_server_sidecars;
     // Network-latency calibration: fixed mean or automatic probe (disabled by
     // default). Lowered into a sidecar mirroring `_network_latency`.
     let mut network_latency_cfg = crate::model::telemetry::NetworkLatencyConfig::default();
-    let network_latency_sidecar = if is_dynosim {
+    let network_latency_sidecar = if no_server_sidecars {
         None
     } else if let Some(mean_ms) = inputs.network_latency_mean {
         network_latency_cfg.enabled = true;
