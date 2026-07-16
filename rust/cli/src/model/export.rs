@@ -265,6 +265,111 @@ pub struct Export {
     /// W&B sink (present when `--wandb-project` is set).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wandb: Option<WandbExport>,
+    /// Server-metrics summary sink (`server_metrics_export.{json,csv}`), present
+    /// when server-metrics collection is enabled and the JSON and/or CSV format is
+    /// selected. Projects `aiperf::export::ServerMetricsExportConfig`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_metrics: Option<ServerMetricsExport>,
+    /// Server-metrics Parquet sink (`server_metrics_export.parquet`), present when
+    /// server-metrics collection is enabled and the `parquet` format is selected.
+    /// Projects `aiperf::export::ParquetExportConfig`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parquet: Option<ParquetExport>,
+}
+
+/// The server-metrics summary sink policy (`cfg.export.server_metrics`).
+///
+/// Projects the runner's `aiperf::export::ServerMetricsExportConfig`: the
+/// JSON/CSV toggles plus the three frontend-owned envelope values the native
+/// report cannot reconstruct (`aiperf_version`, `benchmark_id`, `input_config`).
+/// Ported from
+/// `src/aiperf/orchestrator/rust_wire.py::_server_metrics_frontend_projection`
+/// (`rust_wire.py:1158`): enabled iff collection is on and JSON and/or CSV is a
+/// selected format; `input_config` is echoed only when JSON is enabled. The field
+/// set matches the runner struct exactly (which decodes with
+/// `deny_unknown_fields`), so unset optional values are skipped on the wire.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ServerMetricsExport {
+    /// Emit `server_metrics_export.json`.
+    pub json: bool,
+    /// Emit `server_metrics_export.csv`.
+    pub csv: bool,
+    /// AIPerf package version rendered into the JSON `aiperf_version` field and
+    /// the CSV `# aiperf_version:` header.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aiperf_version: Option<String>,
+    /// Run identity rendered into the JSON `benchmark_id` field and the CSV
+    /// `# benchmark_id:` header.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub benchmark_id: Option<String>,
+    /// User configuration echoed verbatim into the JSON `input_config` object
+    /// (JSON only; omitted, and thus left `Null`, when JSON is disabled).
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub input_config: serde_json::Value,
+}
+
+impl ServerMetricsExport {
+    /// Build the server-metrics summary policy for a run.
+    ///
+    /// Returns `None` (the block is omitted from `cfg.export`, decoding to the
+    /// runner's all-disabled default) when collection is disabled or neither JSON
+    /// nor CSV is selected, mirroring
+    /// `_server_metrics_frontend_projection`. `input_config` is carried only when
+    /// JSON is enabled (the CSV export never reads it).
+    pub fn build(
+        formats: &[String],
+        server_metrics_enabled: bool,
+        aiperf_version: &str,
+        benchmark_id: &str,
+        input_config: serde_json::Value,
+    ) -> Option<Self> {
+        if !server_metrics_enabled {
+            return None;
+        }
+        let json = formats.iter().any(|format| format == "json");
+        let csv = formats.iter().any(|format| format == "csv");
+        if !(json || csv) {
+            return None;
+        }
+        Some(Self {
+            json,
+            csv,
+            aiperf_version: Some(aiperf_version.to_string()),
+            benchmark_id: Some(benchmark_id.to_string()),
+            input_config: if json {
+                input_config
+            } else {
+                serde_json::Value::Null
+            },
+        })
+    }
+}
+
+/// The server-metrics Parquet sink toggle (`cfg.export.parquet`).
+///
+/// Projects the runner's `aiperf::export::ParquetExportConfig`; `enabled` is the
+/// sole field (the native Parquet sink reads the runner-emitted wire JSONL and
+/// the profiling boundary from the report). Ported from
+/// `src/aiperf/orchestrator/rust_wire.py::_parquet_frontend_projection`
+/// (`rust_wire.py:1244`).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ParquetExport {
+    /// Emit `server_metrics_export.parquet`.
+    pub enabled: bool,
+}
+
+impl ParquetExport {
+    /// Build the Parquet sink toggle: enabled iff server-metrics collection is on
+    /// and the `parquet` format is selected (the same gate under which the sidecar
+    /// lowers the `parquet_wire_path` the sink consumes). Returns `None` otherwise
+    /// so the block is omitted and the runner sink stays disabled.
+    pub fn build(formats: &[String], server_metrics_enabled: bool) -> Option<Self> {
+        if server_metrics_enabled && formats.iter().any(|format| format == "parquet") {
+            Some(Self { enabled: true })
+        } else {
+            None
+        }
+    }
 }
 
 /// Parameters for building the optional MLflow sink.
@@ -375,6 +480,8 @@ impl Export {
             otel: None,
             mlflow: None,
             wandb: None,
+            server_metrics: None,
+            parquet: None,
         }
     }
 }
@@ -422,5 +529,73 @@ mod tests {
     fn chat_title() {
         assert_eq!(console_title("chat"), "NVIDIA AIPerf | LLM Metrics");
         assert_eq!(console_title("dynosim_offline"), "NVIDIA AIPerf");
+    }
+
+    #[test]
+    fn server_metrics_export_default_formats_enable_json_and_csv() {
+        let sm = ServerMetricsExport::build(
+            &["json".to_string(), "csv".to_string()],
+            true,
+            "0.11.0",
+            "abc123",
+            serde_json::json!({"model": "m"}),
+        )
+        .expect("json/csv selected");
+        assert!(sm.json && sm.csv);
+        // Only the five runner-known keys are serialized (deny_unknown_fields).
+        let value = serde_json::to_value(&sm).unwrap();
+        let keys: std::collections::BTreeSet<&str> =
+            value.as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(
+            keys,
+            ["aiperf_version", "benchmark_id", "csv", "input_config", "json"]
+                .into_iter()
+                .collect()
+        );
+    }
+
+    #[test]
+    fn server_metrics_export_csv_only_drops_input_config() {
+        let sm = ServerMetricsExport::build(
+            &["csv".to_string()],
+            true,
+            "0.11.0",
+            "abc123",
+            serde_json::json!({"model": "m"}),
+        )
+        .expect("csv selected");
+        assert!(!sm.json && sm.csv);
+        assert!(sm.input_config.is_null());
+        let value = serde_json::to_value(&sm).unwrap();
+        assert!(value.get("input_config").is_none(), "csv export omits input_config");
+    }
+
+    #[test]
+    fn server_metrics_export_omitted_when_disabled_or_no_summary_format() {
+        assert!(
+            ServerMetricsExport::build(&["json".into()], false, "v", "id", serde_json::Value::Null)
+                .is_none()
+        );
+        // jsonl/parquet-only selects no summary sink (those are runner-owned).
+        assert!(
+            ServerMetricsExport::build(
+                &["jsonl".into(), "parquet".into()],
+                true,
+                "v",
+                "id",
+                serde_json::Value::Null
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn parquet_export_gated_on_format_and_enabled() {
+        assert_eq!(
+            ParquetExport::build(&["json".into(), "parquet".into()], true).map(|p| p.enabled),
+            Some(true)
+        );
+        assert!(ParquetExport::build(&["json".into(), "csv".into()], true).is_none());
+        assert!(ParquetExport::build(&["parquet".into()], false).is_none());
     }
 }
