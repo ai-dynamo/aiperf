@@ -525,6 +525,107 @@ pub struct MockServerConfig {
     /// Models seen via actual traffic are always appended.
     #[arg(long, env = "MOCK_SERVER_MODELS", value_delimiter = ',')]
     pub models: Vec<String>,
+
+    // ---- Extended usage-accounting knobs -----------------------------------
+    // Deterministic fixed values injected into the emitted `usage` object so
+    // AIPerf's `usage_*` catalog metrics can be exercised end-to-end. All
+    // default to `0` (`0.0` for the seconds knob), meaning the corresponding
+    // sub-field is OMITTED entirely — a normal run's usage payload is unchanged.
+    //
+    /// Prompt tokens reported as written into the KV cache, emitted as top-level
+    /// `cache_creation_input_tokens` (OpenAI) and in the Anthropic `messages`
+    /// usage. Feeds AIPerf `usage_prompt_cache_write_tokens`.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_USAGE_CACHE_WRITE_TOKENS",
+        default_value_t = 0
+    )]
+    pub usage_cache_write_tokens: usize,
+
+    /// Prompt cache-miss count, emitted as top-level `prompt_cache_miss_tokens`.
+    /// Feeds AIPerf `usage_prompt_cache_miss_tokens`.
+    #[arg(long, env = "MOCK_SERVER_USAGE_CACHE_MISS_TOKENS", default_value_t = 0)]
+    pub usage_cache_miss_tokens: usize,
+
+    /// Anthropic disjoint cache-read count, emitted as `cache_read_input_tokens`
+    /// in the `messages` usage object only.
+    #[arg(long, env = "MOCK_SERVER_USAGE_CACHE_READ_TOKENS", default_value_t = 0)]
+    pub usage_cache_read_tokens: usize,
+
+    /// Audio tokens attributed to the prompt, emitted under
+    /// `prompt_tokens_details.audio_tokens`. Feeds `usage_prompt_audio_tokens`.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_USAGE_PROMPT_AUDIO_TOKENS",
+        default_value_t = 0
+    )]
+    pub usage_prompt_audio_tokens: usize,
+
+    /// Audio tokens attributed to model output, emitted under
+    /// `completion_tokens_details.audio_tokens`. Feeds
+    /// `usage_completion_audio_tokens`.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_USAGE_COMPLETION_AUDIO_TOKENS",
+        default_value_t = 0
+    )]
+    pub usage_completion_audio_tokens: usize,
+
+    /// Prompt-audio duration in seconds, emitted as top-level
+    /// `prompt_audio_seconds`. Feeds `usage_prompt_audio_seconds`.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_USAGE_PROMPT_AUDIO_SECONDS",
+        default_value_t = 0.0
+    )]
+    pub usage_prompt_audio_seconds: f64,
+
+    /// Accepted predicted-output tokens, emitted under
+    /// `completion_tokens_details.accepted_prediction_tokens`. Feeds
+    /// `usage_accepted_prediction_tokens`.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_USAGE_ACCEPTED_PREDICTION_TOKENS",
+        default_value_t = 0
+    )]
+    pub usage_accepted_prediction_tokens: usize,
+
+    /// Rejected predicted-output tokens, emitted under
+    /// `completion_tokens_details.rejected_prediction_tokens`. Feeds
+    /// `usage_rejected_prediction_tokens`.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_USAGE_REJECTED_PREDICTION_TOKENS",
+        default_value_t = 0
+    )]
+    pub usage_rejected_prediction_tokens: usize,
+
+    /// Tool-definition prompt tokens, emitted as top-level
+    /// `toolUsePromptTokenCount` (the exact key AIPerf's `UsageView` reads).
+    /// Feeds `usage_tool_use_prompt_tokens`.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_USAGE_TOOL_USE_PROMPT_TOKENS",
+        default_value_t = 0
+    )]
+    pub usage_tool_use_prompt_tokens: usize,
+}
+
+impl MockServerConfig {
+    /// True when any `--usage-*` extended-accounting knob is set, so the usage
+    /// augmentation in [`crate::handlers`] can be skipped entirely on the common
+    /// path (keeping a normal run's payload byte-identical).
+    pub fn usage_fields_enabled(&self) -> bool {
+        self.usage_cache_write_tokens != 0
+            || self.usage_cache_miss_tokens != 0
+            || self.usage_cache_read_tokens != 0
+            || self.usage_prompt_audio_tokens != 0
+            || self.usage_completion_audio_tokens != 0
+            || self.usage_prompt_audio_seconds != 0.0
+            || self.usage_accepted_prediction_tokens != 0
+            || self.usage_rejected_prediction_tokens != 0
+            || self.usage_tool_use_prompt_tokens != 0
+    }
 }
 
 impl Default for MockServerConfig {

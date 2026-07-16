@@ -344,18 +344,65 @@ pub struct Usage {
     pub completion_tokens_details: Option<CompletionTokensDetails>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_tokens_details: Option<PromptTokensDetails>,
+    /// Prompt tokens written into the provider KV cache. Emitted top-level for
+    /// OpenAI-compatible dialects, matching the key AIPerf's `UsageView` reads
+    /// (`aiperf::endpoints::usage` line 110 -> `usage_prompt_cache_write_tokens`).
+    /// Populated only when `--usage-cache-write-tokens` is set (else absent, so a
+    /// normal run is byte-unchanged).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_creation_input_tokens: Option<usize>,
+    /// Explicit prompt cache-miss count (AIPerf `UsageView` line 114 ->
+    /// `usage_prompt_cache_miss_tokens`). Set by `--usage-cache-miss-tokens`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_miss_tokens: Option<usize>,
+    /// Gemini-style tool-definition prompt tokens. AIPerf reads exactly
+    /// `toolUsePromptTokenCount` (`UsageView` line 161 ->
+    /// `usage_tool_use_prompt_tokens`). Set by `--usage-tool-use-prompt-tokens`.
+    #[serde(
+        rename = "toolUsePromptTokenCount",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tool_use_prompt_token_count: Option<usize>,
+    /// Prompt-audio duration in seconds, distinct from audio tokens (AIPerf
+    /// `UsageView` line 165 -> `usage_prompt_audio_seconds`). Set by
+    /// `--usage-prompt-audio-seconds`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_audio_seconds: Option<f64>,
+    /// Anthropic disjoint cache-read count. Serialized only into the Anthropic
+    /// `messages` usage object (see [`crate::handlers`]), never the OpenAI usage
+    /// (OpenAI reports cache reads via `prompt_tokens_details.cached_tokens`).
+    #[serde(skip)]
+    pub cache_read_input_tokens: Option<usize>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct CompletionTokensDetails {
     pub reasoning_tokens: usize,
+    /// Audio tokens attributed to model output (AIPerf `UsageView` line 136 ->
+    /// `usage_completion_audio_tokens`). Set by `--usage-completion-audio-tokens`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_tokens: Option<usize>,
+    /// Accepted predicted-output tokens (AIPerf `UsageView` line 144 ->
+    /// `usage_accepted_prediction_tokens`). Set by
+    /// `--usage-accepted-prediction-tokens`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accepted_prediction_tokens: Option<usize>,
+    /// Rejected predicted-output tokens (AIPerf `UsageView` line 152 ->
+    /// `usage_rejected_prediction_tokens`). Set by
+    /// `--usage-rejected-prediction-tokens`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rejected_prediction_tokens: Option<usize>,
 }
 
 /// OpenAI/vLLM-style prompt token breakdown. `cached_tokens` is the prefix
 /// served from the KV cache (read by AIPerf as `usage_prompt_cache_read_tokens`).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct PromptTokensDetails {
     pub cached_tokens: usize,
+    /// Audio tokens attributed to the prompt (AIPerf `UsageView` line 128 ->
+    /// `usage_prompt_audio_tokens`). Set by `--usage-prompt-audio-tokens`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_tokens: Option<usize>,
 }
 
 #[cfg(test)]

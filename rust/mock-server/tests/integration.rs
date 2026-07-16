@@ -895,3 +895,152 @@ async fn get_model_404_for_unknown() {
             .contains("not found")
     );
 }
+
+// ============================================================================
+// Extended usage-accounting fields (--usage-* knobs)
+// ============================================================================
+
+/// A `--fast` config with every extended usage knob pinned to a distinct
+/// nonzero value, so each emitted `usage` sub-field is individually assertable.
+fn usage_fields_cfg() -> MockServerConfig {
+    MockServerConfig {
+        fast: true,
+        no_tokenizer: true,
+        usage_cache_write_tokens: 11,
+        usage_cache_miss_tokens: 22,
+        usage_cache_read_tokens: 33,
+        usage_prompt_audio_tokens: 44,
+        usage_completion_audio_tokens: 55,
+        usage_prompt_audio_seconds: 6.5,
+        usage_accepted_prediction_tokens: 77,
+        usage_rejected_prediction_tokens: 88,
+        usage_tool_use_prompt_tokens: 99,
+        ..MockServerConfig::default()
+    }
+}
+
+#[tokio::test]
+async fn chat_non_streaming_emits_extended_usage_fields() {
+    let (addr, _h) = spawn_server(usage_fields_cfg()).await;
+    let resp = client()
+        .post(format!("http://{addr}/v1/chat/completions"))
+        .json(&json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hello"}],
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    let u = &body["usage"];
+    // Top-level OpenAI keys read by aiperf::endpoints::usage.
+    assert_eq!(u["cache_creation_input_tokens"], 11);
+    assert_eq!(u["prompt_cache_miss_tokens"], 22);
+    assert_eq!(u["toolUsePromptTokenCount"], 99);
+    assert_eq!(u["prompt_audio_seconds"], 6.5);
+    // Nested detail keys.
+    assert_eq!(u["prompt_tokens_details"]["audio_tokens"], 44);
+    assert_eq!(u["completion_tokens_details"]["audio_tokens"], 55);
+    assert_eq!(
+        u["completion_tokens_details"]["accepted_prediction_tokens"],
+        77
+    );
+    assert_eq!(
+        u["completion_tokens_details"]["rejected_prediction_tokens"],
+        88
+    );
+    // Anthropic-only cache-read is NOT serialized on the OpenAI usage.
+    assert!(u.get("cache_read_input_tokens").is_none());
+}
+
+#[tokio::test]
+async fn chat_streaming_usage_chunk_carries_extended_fields() {
+    let (addr, _h) = spawn_server(usage_fields_cfg()).await;
+    let resp = client()
+        .post(format!("http://{addr}/v1/chat/completions"))
+        .json(&json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Stream please"}],
+            "stream": true,
+            "stream_options": {"include_usage": true},
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let text = resp.text().await.unwrap();
+    // Locate the terminal usage frame (the only SSE data line with a "usage" key).
+    let usage_frame = text
+        .lines()
+        .filter_map(|l| l.strip_prefix("data: "))
+        .filter(|l| l.trim() != "[DONE]")
+        .filter_map(|l| serde_json::from_str::<Value>(l.trim()).ok())
+        .find(|v| v.get("usage").map(|u| !u.is_null()).unwrap_or(false))
+        .expect("a streamed usage chunk");
+    let u = &usage_frame["usage"];
+    assert_eq!(u["cache_creation_input_tokens"], 11);
+    assert_eq!(u["prompt_cache_miss_tokens"], 22);
+    assert_eq!(u["toolUsePromptTokenCount"], 99);
+    assert_eq!(u["prompt_audio_seconds"], 6.5);
+    assert_eq!(u["prompt_tokens_details"]["audio_tokens"], 44);
+    assert_eq!(u["completion_tokens_details"]["audio_tokens"], 55);
+    assert_eq!(
+        u["completion_tokens_details"]["accepted_prediction_tokens"],
+        77
+    );
+    assert_eq!(
+        u["completion_tokens_details"]["rejected_prediction_tokens"],
+        88
+    );
+}
+
+#[tokio::test]
+async fn messages_usage_carries_anthropic_cache_fields() {
+    let (addr, _h) = spawn_server(usage_fields_cfg()).await;
+    let resp = client()
+        .post(format!("http://{addr}/v1/messages"))
+        .header("x-api-key", "test")
+        .header("anthropic-version", "2023-06-01")
+        .json(&json!({
+            "model": "mock-model",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_tokens": 8,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    let u = &body["usage"];
+    assert!(u["input_tokens"].as_u64().unwrap() > 0);
+    assert!(u["output_tokens"].as_u64().unwrap() > 0);
+    // Disjoint cache accounting the runner re-totals into prompt_tokens.
+    assert_eq!(u["cache_read_input_tokens"], 33);
+    assert_eq!(u["cache_creation_input_tokens"], 11);
+}
+
+/// Without the knobs, none of the extended sub-fields appear — a normal run's
+/// usage payload is unchanged.
+#[tokio::test]
+async fn default_usage_omits_extended_fields() {
+    let (addr, _h) = spawn_server(fast_cfg()).await;
+    let resp = client()
+        .post(format!("http://{addr}/v1/chat/completions"))
+        .json(&json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hello"}],
+        }))
+        .send()
+        .await
+        .unwrap();
+    let body: Value = resp.json().await.unwrap();
+    let u = &body["usage"];
+    assert!(u.get("cache_creation_input_tokens").is_none());
+    assert!(u.get("prompt_cache_miss_tokens").is_none());
+    assert!(u.get("toolUsePromptTokenCount").is_none());
+    assert!(u.get("prompt_audio_seconds").is_none());
+    assert!(u["prompt_tokens_details"].get("audio_tokens").is_none());
+    // completion_tokens_details is absent entirely for a non-reasoning model.
+    assert!(u.get("completion_tokens_details").is_none());
+}

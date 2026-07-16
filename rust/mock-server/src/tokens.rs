@@ -235,12 +235,20 @@ impl TokenizedText {
             completion_tokens_details: if self.reasoning_tokens > 0 {
                 Some(crate::models::CompletionTokensDetails {
                     reasoning_tokens: self.reasoning_tokens,
+                    ..Default::default()
                 })
             } else {
                 None
             },
             // Populated by RequestCtx::build when the prefix cache is active.
             prompt_tokens_details: None,
+            // Optional extended usage accounting, populated by RequestCtx::build
+            // from the `--usage-*` config knobs (absent by default).
+            cache_creation_input_tokens: None,
+            prompt_cache_miss_tokens: None,
+            tool_use_prompt_token_count: None,
+            prompt_audio_seconds: None,
+            cache_read_input_tokens: None,
         }
     }
 

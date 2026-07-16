@@ -153,7 +153,17 @@ impl RequestCtx {
         // Always emit prompt_tokens_details so callers can observe cache-read
         // counts even when the prefix cache is disabled (cached_tokens == 0).
         // The Python mock server always includes this field.
-        usage.prompt_tokens_details = Some(crate::models::PromptTokensDetails { cached_tokens });
+        usage.prompt_tokens_details = Some(crate::models::PromptTokensDetails {
+            cached_tokens,
+            audio_tokens: None,
+        });
+        // Extended usage-accounting fields (deterministic, driven by the
+        // `--usage-*` knobs). Skipped wholesale unless at least one is set, so a
+        // normal run's usage payload is byte-identical. Every field maps to a
+        // specific key AIPerf's `UsageView` reads (see models.rs doc comments).
+        if state.config.usage_fields_enabled() {
+            apply_usage_fields(&mut usage, &state.config);
+        }
         let latency_cached = if state.config.prefix_cache_latency_aware {
             cached_tokens
         } else {
@@ -445,11 +455,66 @@ pub async fn messages(
     }
 }
 
+/// Inject the deterministic `--usage-*` extended-accounting fields into a usage
+/// object. Each `0` (or `0.0`) knob leaves its field absent, so only explicitly
+/// requested sub-fields appear. Nested details (`prompt_tokens_details`,
+/// `completion_tokens_details`) are created on demand when only an extended
+/// field needs them (e.g. a non-reasoning model with prediction tokens).
+fn apply_usage_fields(usage: &mut Usage, cfg: &crate::config::MockServerConfig) {
+    if cfg.usage_cache_write_tokens != 0 {
+        usage.cache_creation_input_tokens = Some(cfg.usage_cache_write_tokens);
+    }
+    if cfg.usage_cache_miss_tokens != 0 {
+        usage.prompt_cache_miss_tokens = Some(cfg.usage_cache_miss_tokens);
+    }
+    if cfg.usage_cache_read_tokens != 0 {
+        usage.cache_read_input_tokens = Some(cfg.usage_cache_read_tokens);
+    }
+    if cfg.usage_tool_use_prompt_tokens != 0 {
+        usage.tool_use_prompt_token_count = Some(cfg.usage_tool_use_prompt_tokens);
+    }
+    if cfg.usage_prompt_audio_seconds != 0.0 {
+        usage.prompt_audio_seconds = Some(cfg.usage_prompt_audio_seconds);
+    }
+    if cfg.usage_prompt_audio_tokens != 0 {
+        usage
+            .prompt_tokens_details
+            .get_or_insert_with(Default::default)
+            .audio_tokens = Some(cfg.usage_prompt_audio_tokens);
+    }
+    if cfg.usage_completion_audio_tokens != 0
+        || cfg.usage_accepted_prediction_tokens != 0
+        || cfg.usage_rejected_prediction_tokens != 0
+    {
+        let details = usage
+            .completion_tokens_details
+            .get_or_insert_with(Default::default);
+        if cfg.usage_completion_audio_tokens != 0 {
+            details.audio_tokens = Some(cfg.usage_completion_audio_tokens);
+        }
+        if cfg.usage_accepted_prediction_tokens != 0 {
+            details.accepted_prediction_tokens = Some(cfg.usage_accepted_prediction_tokens);
+        }
+        if cfg.usage_rejected_prediction_tokens != 0 {
+            details.rejected_prediction_tokens = Some(cfg.usage_rejected_prediction_tokens);
+        }
+    }
+}
+
+/// Anthropic `messages` usage object. Adds the disjoint cache-read/write fields
+/// AIPerf's `UsageView` re-totals (`aiperf::endpoints::usage` lines 37-45,
+/// 206-211) when the corresponding `--usage-*` knobs are set.
 fn anthropic_usage(usage: &Usage) -> Value {
-    json!({
-        "input_tokens": usage.prompt_tokens,
-        "output_tokens": usage.completion_tokens,
-    })
+    let mut obj = serde_json::Map::new();
+    obj.insert("input_tokens".into(), json!(usage.prompt_tokens));
+    obj.insert("output_tokens".into(), json!(usage.completion_tokens));
+    if let Some(read) = usage.cache_read_input_tokens {
+        obj.insert("cache_read_input_tokens".into(), json!(read));
+    }
+    if let Some(write) = usage.cache_creation_input_tokens {
+        obj.insert("cache_creation_input_tokens".into(), json!(write));
+    }
+    Value::Object(obj)
 }
 
 fn build_messages_response(ctx: &RequestCtx) -> Value {
