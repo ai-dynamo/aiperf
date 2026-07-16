@@ -340,6 +340,44 @@ impl NativeMetricsObserver {
         (state.arrival_count, state.request_slots.len())
     }
 
+    /// Non-consuming live aggregate over the requests finalized so far.
+    ///
+    /// Replays a clone of the buffered request facts into a throwaway
+    /// accumulator (with this observer's config) and summarizes, WITHOUT
+    /// draining observer state. The authoritative report still comes from
+    /// [`Self::finish`]/[`Self::finish_with_records`] at drain; this is a
+    /// best-effort side channel for the periodic realtime reporter
+    /// (`crate::realtime`) and must never perturb the final aggregate. Cost is
+    /// O(records finalized so far), matching agentx's per-tick recompute.
+    pub fn snapshot_summary(&self, finish_ns: i64) -> AccumulatorSummary {
+        let finish_ns = finish_ns.saturating_sub(self.origin_ns);
+        let state = self.state.borrow();
+        let mut accumulator =
+            MetricsAccumulator::with_config(self.accumulator.borrow().config().clone());
+        for (slot, entry) in state.requests.iter().enumerate() {
+            let Some(entry) = entry else {
+                continue;
+            };
+            // The authoritative terminal status (`on_terminal`) is delivered to
+            // this observer only at drain, so mid-run a completed request still
+            // has `terminal == None` — which `into_record` would mark as a
+            // failure. For the LIVE block, treat a request whose transport has
+            // finished (`response.end_ns` set) as a completed success and skip
+            // in-flight requests entirely. The authoritative end-of-run report
+            // uses the real terminal status; this side channel never feeds it.
+            let mut request = entry.request.clone();
+            if request.terminal.is_none() {
+                if request.response.end_ns.is_none() {
+                    continue; // Still in flight; not yet part of the live totals.
+                }
+                request.terminal = Some(ReplayTerminalStatus::Completed);
+            }
+            let record = request.into_record(entry.uuid, slot as u64, finish_ns);
+            accumulator.process_record(&record);
+        }
+        accumulator.summarize()
+    }
+
     /// Finalizes every retained request and returns the full native summary.
     ///
     /// Requests are visited in ascending absolute request-slot order, and every
@@ -914,6 +952,30 @@ mod tests {
                 .avg,
             MetricValue::Finite(1.0)
         );
+    }
+
+    #[test]
+    fn snapshot_summary_counts_completed_records_without_consuming() {
+        let clock = Rc::new(SimClock::new());
+        let observer = NativeMetricsObserver::new(clock.clone(), 0, MetricsConfig::default());
+        let a = Uuid::from_u128(31);
+        let b = Uuid::from_u128(32);
+        observer.on_arrival(a, 0.0, 4, 0);
+        observer.on_arrival(b, 0.0, 4, 1);
+        observer.on_token(a, 10.0);
+        observer.on_token(b, 11.0);
+        observer.on_token(a, 20.0);
+        observer.on_token(b, 21.0);
+        clock.advance_to(40_000_000);
+        observer.on_terminal(a, ReplayTerminalStatus::Completed);
+        observer.on_terminal(b, ReplayTerminalStatus::Completed);
+
+        // Live snapshot sees both completed records as successes...
+        let snapshot = observer.snapshot_summary(clock.now_ns());
+        assert_eq!(snapshot.finite_value(MetricTag::RequestCount), Some(2.0));
+        // ...and does not consume: the authoritative finish still sees them.
+        let summary = observer.finish();
+        assert_eq!(summary.finite_value(MetricTag::RequestCount), Some(2.0));
     }
 
     #[test]

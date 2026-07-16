@@ -35,6 +35,7 @@ pub mod http;
 pub mod metrics;
 pub mod multiturn;
 pub mod phase_runtime;
+pub mod realtime;
 pub mod report;
 pub mod request_rate;
 pub mod run;

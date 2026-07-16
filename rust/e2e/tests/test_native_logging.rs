@@ -23,8 +23,14 @@ use std::time::{Duration, Instant};
 use common::{DEFAULT_MODEL, MockServer, exec_binary};
 
 /// Drive the native `aiperf` binary directly (bypassing `python -m aiperf`) and
-/// return `(exit_code, artifact_dir)`. Bounded run, with a hard timeout guard.
-fn run_native_profile(mock_url: &str, artifact_dir: &std::path::Path) -> i32 {
+/// return the exit code. Bounded run, with a hard timeout guard. `extra_args` and
+/// `extra_env` let callers vary the workload / logging config.
+fn run_native_profile(
+    mock_url: &str,
+    artifact_dir: &std::path::Path,
+    extra_args: &[&str],
+    extra_env: &[(&str, &str)],
+) -> i32 {
     let mut cmd = Command::new(exec_binary());
     cmd.arg("profile")
         .args(["--model", DEFAULT_MODEL])
@@ -32,9 +38,7 @@ fn run_native_profile(mock_url: &str, artifact_dir: &std::path::Path) -> i32 {
         .args(["--url", mock_url])
         .args(["--endpoint-type", "chat"])
         .arg("--streaming")
-        .args(["--request-count", "8"])
-        .args(["--warmup-request-count", "2"])
-        .args(["--concurrency", "2"])
+        .args(extra_args)
         .arg("--artifact-dir")
         .arg(artifact_dir)
         .env("HF_HUB_OFFLINE", "1")
@@ -44,6 +48,9 @@ fn run_native_profile(mock_url: &str, artifact_dir: &std::path::Path) -> i32 {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    for (key, value) in extra_env {
+        cmd.env(key, value);
+    }
 
     let mut child = cmd.spawn().expect("failed to spawn native aiperf");
     // Drain both pipes so a full OS pipe buffer can never deadlock the child.
@@ -81,7 +88,19 @@ async fn native_front_door_writes_full_log_narrative() {
     let mock = MockServer::start();
     let dir = tempfile::tempdir().expect("tempdir");
 
-    let exit = run_native_profile(&mock.url, dir.path());
+    let exit = run_native_profile(
+        &mock.url,
+        dir.path(),
+        &[
+            "--request-count",
+            "8",
+            "--warmup-request-count",
+            "2",
+            "--concurrency",
+            "2",
+        ],
+        &[],
+    );
     assert_eq!(exit, 0, "native aiperf profile run should exit 0");
 
     // Python's `setup_rich_logging` writes to `<artifact_dir>/logs/aiperf.log`;
@@ -121,9 +140,84 @@ async fn native_front_door_writes_full_log_narrative() {
 
     // Default level is INFO: the file must carry INFO lines and no DEBUG/TRACE
     // (no verbosity flag was passed).
-    assert!(log.contains(" INFO "), "log should contain INFO-level lines");
+    assert!(
+        log.contains(" INFO "),
+        "log should contain INFO-level lines"
+    );
     assert!(
         !log.contains(" DEBUG ") && !log.contains(" TRACE "),
         "default run must not emit DEBUG/TRACE lines"
+    );
+}
+
+/// With `AIPERF_STATS_INTERVAL` set, the profiling phase must emit the periodic
+/// `[realtime MM:SS profiling]` progress heartbeat (completed / in-flight / rps)
+/// into `logs/aiperf.log`. Request-rate pacing guarantees the profiling phase
+/// spans several intervals regardless of mock speed, so at least one heartbeat
+/// fires.
+#[tokio::test]
+async fn realtime_progress_heartbeat_is_logged() {
+    let mock = MockServer::start();
+    let dir = tempfile::tempdir().expect("tempdir");
+
+    // request-rate 5 over 20 requests => ~4s of arrivals; a 1s interval yields
+    // multiple ticks.
+    let exit = run_native_profile(
+        &mock.url,
+        dir.path(),
+        &[
+            "--request-rate",
+            "5",
+            "--request-count",
+            "20",
+            "--warmup-request-count",
+            "1",
+        ],
+        &[("AIPERF_STATS_INTERVAL", "1")],
+    );
+    assert_eq!(exit, 0, "native aiperf profile run should exit 0");
+
+    let log_path = dir.path().join("logs").join("aiperf.log");
+    let log = std::fs::read_to_string(&log_path)
+        .unwrap_or_else(|e| panic!("logs/aiperf.log missing at {}: {e}", log_path.display()));
+
+    let heartbeats = log
+        .lines()
+        .filter(|line| line.contains("[realtime ") && line.contains(" profiling] completed="))
+        .count();
+    assert!(
+        heartbeats >= 1,
+        "expected at least one [realtime …] progress heartbeat in the log; got none.\n\
+         --- log ---\n{log}"
+    );
+}
+
+/// `AIPERF_STATS_INTERVAL=0` disables the realtime heartbeat entirely.
+#[tokio::test]
+async fn realtime_heartbeat_disabled_by_zero_interval() {
+    let mock = MockServer::start();
+    let dir = tempfile::tempdir().expect("tempdir");
+
+    let exit = run_native_profile(
+        &mock.url,
+        dir.path(),
+        &[
+            "--request-rate",
+            "5",
+            "--request-count",
+            "20",
+            "--warmup-request-count",
+            "1",
+        ],
+        &[("AIPERF_STATS_INTERVAL", "0")],
+    );
+    assert_eq!(exit, 0, "native aiperf profile run should exit 0");
+
+    let log_path = dir.path().join("logs").join("aiperf.log");
+    let log = std::fs::read_to_string(&log_path).unwrap_or_default();
+    assert!(
+        !log.contains("[realtime "),
+        "AIPERF_STATS_INTERVAL=0 must suppress the realtime heartbeat, but the log has one.\n\
+         --- log ---\n{log}"
     );
 }

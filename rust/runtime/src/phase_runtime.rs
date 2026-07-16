@@ -1009,6 +1009,11 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
             delegates.push(collector.clone());
         }
         delegates.push(native_metrics.clone());
+        // Retain the aggregate observer for the profiling phase's periodic
+        // realtime block (`crate::realtime`). Cloned before `native_metrics` is
+        // moved into the runtime below; `None` for warmup.
+        let realtime_observer =
+            (config.kind == PhaseKind::Profiling).then(|| native_metrics.clone());
         delegates.append(&mut plan.additional_observers);
         // The common offline phase has only native metrics. Avoid routing every
         // callback through a fan-out allocation and loop when there is no fan-out.
@@ -1083,6 +1088,11 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
             reports: self.reports.clone(),
             defer_report: self.defer_reports,
             finalized: Cell::new(false),
+            realtime_observer,
+            // Elapsed for the realtime line is measured from the actual phase
+            // boundary, not the (possibly earlier) shared transport timeline
+            // origin `start_ns` warmup and profiling share.
+            realtime_origin_ns: phase_start_ns,
         })
     }
 
@@ -1146,6 +1156,11 @@ struct ScheduledPhaseExecution {
     reports: Rc<RefCell<Vec<(String, PendingScheduledPhaseReport)>>>,
     defer_report: bool,
     finalized: Cell<bool>,
+    /// Live-metrics observer + phase-start origin for the periodic realtime block
+    /// (`crate::realtime`). `Some` only for the profiling phase; a warmup phase
+    /// never emits the block.
+    realtime_observer: Option<Rc<NativeMetricsObserver>>,
+    realtime_origin_ns: i64,
 }
 
 impl PhaseExecution for ScheduledPhaseExecution {
@@ -1183,24 +1198,50 @@ impl PhaseExecution for ScheduledPhaseExecution {
         let runtime = self.runtime.clone();
         let wait_for_natural_drain = self.wait_for_natural_drain;
         let controller = self.controller.clone();
+        // Periodic realtime-metrics block for the profiling phase: a
+        // Clock-driven task snapshots the live aggregate every interval and logs
+        // one `[realtime …]` block, aborted when this phase completes.
+        let realtime = self.realtime_observer.clone();
+        let realtime_clock = self.clock.clone();
+        let realtime_origin_ns = self.realtime_origin_ns;
         Box::pin(async move {
+            let realtime_task = realtime.zip(crate::realtime::stats_interval_ns()).map(
+                |(observer, interval_ns)| {
+                    tokio::task::spawn_local(crate::realtime::realtime_reporter_loop(
+                        realtime_clock,
+                        observer,
+                        realtime_origin_ns,
+                        interval_ns,
+                    ))
+                },
+            );
+
             let execution = workload.execute(runtime.clone());
             let stop = controller.wait_until_stop();
             tokio::pin!(execution);
             tokio::pin!(stop);
-            tokio::select! {
+            let result = tokio::select! {
                 result = &mut execution => result.map_err(|error| {
                     PhaseExecutionError::new(format!("scheduled workload: {error:#}"))
-                })?,
-                () = &mut stop => runtime.scheduler().cancel_pending(),
-            }
-            if wait_for_natural_drain {
+                }),
+                () = &mut stop => {
+                    runtime.scheduler().cancel_pending();
+                    Ok(())
+                }
+            };
+            // Keep the realtime reporter running through the natural drain so its
+            // last block reflects the final completions, then abort it (all exit
+            // paths) so no block fires after the phase ends.
+            if result.is_ok() && wait_for_natural_drain {
                 // Authored/naturally exhausted workloads do not have a stop
                 // counter that can publish the last-send edge. Their scheduler
                 // is therefore the authoritative completion signal.
                 runtime.scheduler().wait_idle().await;
             }
-            Ok(())
+            if let Some(task) = &realtime_task {
+                task.abort();
+            }
+            result
         })
     }
 
