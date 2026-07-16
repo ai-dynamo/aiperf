@@ -5,7 +5,12 @@ Shared fixtures for testing AIPerf metrics.
 
 """
 
-from aiperf.common.enums import CreditPhase, MetricType, ModelSelectionStrategy
+from aiperf.common.enums import (
+    AggregationKind,
+    CreditPhase,
+    MetricType,
+    ModelSelectionStrategy,
+)
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import (
     ErrorDetails,
@@ -119,6 +124,9 @@ def run_simple_metrics_pipeline(
     ]
 
     metric_results = MetricResultsDict()
+    # Per-record AGGREGATE values, folded once at the end via aggregation_kind
+    # exactly as MetricsAccumulator combines the numpy column.
+    aggregate_values: dict[MetricTagT, list] = {}
     for record in records:
         # STAGE 1: Parse the metrics for each record, and store the values in a dict
         metric_dict = MetricRecordDict()
@@ -131,16 +139,29 @@ def run_simple_metrics_pipeline(
                     # If a metric can't be calculated, skip it for this record
                     pass
 
-        # STAGE 2: Aggregate the values of the aggregate metrics, and append new values for record metrics
+        # STAGE 2: Collect per-record aggregate values; append record-metric values.
         for metric in metrics:
             if metric.type == MetricType.AGGREGATE:
                 if metric.tag in metric_dict:
-                    metric.aggregate_value(metric_dict[metric.tag])
-                    metric_results[metric.tag] = metric.current_value
+                    aggregate_values.setdefault(metric.tag, []).append(
+                        metric_dict[metric.tag]
+                    )
             elif metric.type == MetricType.RECORD and metric.tag in metric_dict:
                 metric_results.setdefault(metric.tag, []).append(
                     metric_dict[metric.tag]
                 )
+
+    # STAGE 2b: Fold the aggregate columns via aggregation_kind (SUM/MIN/MAX).
+    _fold = {
+        AggregationKind.SUM: sum,
+        AggregationKind.MIN: min,
+        AggregationKind.MAX: max,
+    }
+    for metric in metrics:
+        if metric.type == MetricType.AGGREGATE and metric.tag in aggregate_values:
+            metric_results[metric.tag] = _fold[metric.aggregation_kind](
+                aggregate_values[metric.tag]
+            )
 
     # STAGE 3: Compute all of the derived metrics
     for metric in metrics:

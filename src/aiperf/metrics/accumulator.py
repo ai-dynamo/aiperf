@@ -735,7 +735,3 @@ class MetricsAccumulator(BaseMetricsProcessor):
             )
 
         return timeslices
-
-    async def full_metrics(self) -> dict[MetricTagT, MetricResult]:
-        """Returns the full metrics results, including derived metrics."""
-        return self._compute_results()

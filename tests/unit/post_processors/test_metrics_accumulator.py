@@ -924,28 +924,6 @@ class TestProtocolConformance:
         assert isinstance(summary, AccumulatorResult)
 
 
-class TestFullMetrics:
-    @pytest.mark.asyncio
-    async def test_full_metrics_with_derived(
-        self, mock_metric_registry: Mock, mock_run
-    ) -> None:
-        """Test full_metrics returns the complete results dict including derived metrics."""
-
-        def mock_derive_func(results_dict: MetricResultsDict) -> float:
-            return 200.0
-
-        processor = MetricsAccumulator(mock_run)
-        processor._derive_funcs = {RequestThroughputMetric.tag: mock_derive_func}
-        processor._metric_classes = {
-            RequestThroughputMetric.tag: RequestThroughputMetric
-        }
-
-        full_results = await processor.full_metrics()
-        assert RequestThroughputMetric.tag in full_results
-        assert isinstance(full_results[RequestThroughputMetric.tag], MetricResult)
-        assert full_results[RequestThroughputMetric.tag].avg == 200.0
-
-
 class TestMetricResultFromArray:
     """Test metric_result_from_array computes correct statistics."""
 

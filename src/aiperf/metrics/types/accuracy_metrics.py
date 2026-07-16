@@ -43,9 +43,6 @@ class AccuracyCorrectSumMetric(BaseAggregateMetric[float]):
             raise NoMetricValue(f"{ACCURACY_RECORD_CORRECT_KEY} not in record_metrics")
         return float(value)
 
-    def _aggregate_value(self, value: float) -> None:
-        self._value += value
-
 
 class AccuracyUnparsedSumMetric(BaseAggregateMetric[float]):
     """Registration for the per-record ``accuracy_unparsed`` transport key.
@@ -73,6 +70,3 @@ class AccuracyUnparsedSumMetric(BaseAggregateMetric[float]):
         if value is None:
             raise NoMetricValue(f"{ACCURACY_RECORD_UNPARSED_KEY} not in record_metrics")
         return float(value)
-
-    def _aggregate_value(self, value: float) -> None:
-        self._value += value

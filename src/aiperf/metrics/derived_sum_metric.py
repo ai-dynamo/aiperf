@@ -6,7 +6,7 @@ from typing import ClassVar, Generic, TypeVar, get_args, get_origin
 from aiperf.common.enums import MetricFlags, MetricValueTypeVarT
 from aiperf.metrics.base_derived_metric import BaseDerivedMetric
 from aiperf.metrics.base_record_metric import BaseRecordMetric
-from aiperf.metrics.metric_dicts import MetricAggregator, MetricResultsDict
+from aiperf.metrics.metric_dicts import MetricResultsDict
 
 RecordMetricT = TypeVar("RecordMetricT", bound=BaseRecordMetric)
 
@@ -58,8 +58,5 @@ class DerivedSumMetric(
             raise ValueError(f"{cls.record_metric_type.tag} is missing in the metrics.")
         # MetricsAccumulator stores the running-sum scalar in ``scalar_dict[tag]``
         # (see ``MetricsAccumulator._collect_scalars_and_arrays``), so the value
-        # already IS the sum. The ``MetricAggregator`` branch supports direct unit
-        # tests and older callers that still pass a live aggregate container.
-        if isinstance(value, MetricAggregator):
-            return value.sum
+        # already IS the sum.
         return value

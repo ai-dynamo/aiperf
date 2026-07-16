@@ -169,17 +169,3 @@ class TestMetricsAccumulator:
         assert summary.results[RequestLatencyMetric.tag].unit == "ms"
         assert summary.results[RequestLatencyMetric.tag].avg == pytest.approx(42.0)
 
-    @pytest.mark.asyncio
-    async def test_full_metrics_returns_raw_metric_results(self, mock_run) -> None:
-        accumulator = MetricsAccumulator(mock_run)
-        await accumulator.process_record(
-            create_metric_records_message(
-                x_request_id="test-1",
-                results=[{RequestLatencyMetric.tag: 42_000_000.0}],
-            ).to_data()
-        )
-
-        full_results = await accumulator.full_metrics()
-
-        assert RequestLatencyMetric.tag in full_results
-        assert full_results[RequestLatencyMetric.tag].avg == pytest.approx(42_000_000.0)
