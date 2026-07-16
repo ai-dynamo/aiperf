@@ -38,6 +38,16 @@ use anyhow::Result;
 /// The cell id and count live in [`crate::cellular::partition`]'s env vars.
 pub const CELL_CONTROLLER_ADDR_ENV: &str = "AIPERF_CELL_CONTROLLER_ADDR";
 
+/// Env var (tier-T2 hierarchical merge) carrying the velo coordinate a cell ships its
+/// terminal partition + heartbeat to, when it is NOT the controller. In the flat
+/// (star) topology this is unset and a cell ships to the controller
+/// ([`CELL_CONTROLLER_ADDR_ENV`]); in the tree topology the controller sets it to the
+/// cell's assigned aggregator (`tcp://HOST:PORT`), so the aggregator merges its
+/// subtree's stores and ships one merged partition up. Only the ship target changes —
+/// the cell still fetches its envelope and awaits START from the controller — so a
+/// cell's partition/issuer/sampler behaviour is byte-identical to the flat topology.
+pub const CELL_SHIP_ADDR_ENV: &str = "AIPERF_CELL_SHIP_ADDR";
+
 /// Env var carrying the per-phase global ordinal bases as JSON (`{name: base}`), so a
 /// cell's issuer recovers each turn's single-cell absolute slot from its phase-local
 /// slot (the cell's sampler restarts each phase; see [`phase_ordinal_bases_from_env`]).
@@ -431,12 +441,31 @@ impl CellRecordsShipper {
     /// Builds a shipper when the controller coordinate and cell partition env vars
     /// are set, else `None` (the ordinary single-process path).
     pub fn from_env() -> Option<Self> {
-        let coordinate = std::env::var(CELL_CONTROLLER_ADDR_ENV).ok()?;
+        // Ship target: the assigned aggregator (tier-T2 tree topology) when
+        // `AIPERF_CELL_SHIP_ADDR` is set, else the controller directly (flat star).
+        // Requires a controller address to exist (i.e. this is a real cell); the ship
+        // address alone never activates cellular shipping on a single-process run.
+        std::env::var(CELL_CONTROLLER_ADDR_ENV).ok()?;
+        let coordinate = std::env::var(CELL_SHIP_ADDR_ENV)
+            .ok()
+            .filter(|value| !value.is_empty())
+            .or_else(|| std::env::var(CELL_CONTROLLER_ADDR_ENV).ok())?;
         let cell_id = ModuloCellPartition::from_env()?.cell_id();
         Some(Self {
             cell_id,
             coordinate,
         })
+    }
+
+    /// Builds a shipper that sends to an explicit velo `coordinate` under `cell_id`.
+    /// Used by a tier-T2 aggregator to ship its one merged store up to the controller
+    /// (the `cell_id` is the aggregator's id, which orders the controller's
+    /// `merge_store_partitions` deterministically).
+    pub fn to_coordinate(cell_id: u32, coordinate: String) -> Self {
+        Self {
+            cell_id,
+            coordinate,
+        }
     }
 
     /// The cell's identifier.
