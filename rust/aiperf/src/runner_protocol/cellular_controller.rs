@@ -36,6 +36,13 @@ use crate::cellular::{CellMessage, ControllerTransport, SpecFor, VeloControllerT
 #[cfg(feature = "velo")]
 use crate::runner_protocol::cell_launcher::{CellLaunchContext, select_launcher};
 
+/// Env toggle (tier T3) for the master-less, barrier-free start: the controller
+/// triggers START immediately instead of gathering all N cell registrations first
+/// (the O(N) fan-in rendezvous). Default off (the tight synchronized start). Cells
+/// registering after the trigger see the completed event instantly (velo's
+/// completed-event cache), so each starts on its own registration.
+pub const CELL_BARRIER_FREE_ENV: &str = "AIPERF_CELL_BARRIER_FREE";
+
 /// The outcome of a cellular run: the merged report path plus a live view of the
 /// last heartbeat each cell reported (for diagnostics/logging).
 pub struct CellularRunOutcome {
@@ -159,6 +166,15 @@ pub fn run_cellular(
     let is_k8s = matches!(
         std::env::var(crate::runner_protocol::cell_launcher::CELL_LAUNCHER_ENV).as_deref(),
         Ok("k8s")
+    );
+    // Tier-T3 master-less start: skip the O(N) register rendezvous (see the start
+    // policy below). Default off (the tight synchronized start).
+    let barrier_free = matches!(
+        std::env::var(CELL_BARRIER_FREE_ENV)
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "on" | "yes"
     );
     // The run's artifact spec, parsed once (the same `AuthoredRunSpecV2` shape the
     // cell's execute path reads), for the Stage E shipping decision and the Stage D
@@ -436,17 +452,32 @@ pub fn run_cellular(
         }
         drop(failure_tx);
 
-        // Synchronized start: wait for every cell to register (bounded — cells only
-        // fetch their envelope, no work yet), then trigger the START event so all
-        // cells begin dispatching together. A cell that dies before registering, or a
-        // registration timeout, aborts the run (dropping `start_event` poisons it, so
-        // any already-waiting cell unblocks with an error rather than hanging).
-        tokio::select! {
-            biased;
-            () = transport.await_all_registered() => {}
-            Some(failure) = failure_rx.recv() => bail!("{failure}"),
-            () = tokio::time::sleep(register_timeout()) => {
-                bail!("cells did not all register within the registration timeout")
+        // Start policy. The default is a SYNCHRONIZED start: wait for every cell to
+        // register (bounded — cells only fetch their envelope, no work yet), then
+        // trigger the START event so all cells begin dispatching together. This is a
+        // tight O(N) fan-in rendezvous that fights unbounded horizontal scale.
+        //
+        // Tier T3 (`AIPERF_CELL_BARRIER_FREE=1`) is the master-less alternative k6 uses:
+        // the controller triggers START IMMEDIATELY, without gathering all N
+        // registrations. A cell that registers *after* the trigger sees the completed
+        // event instantly (velo's completed-event cache), so each cell starts as soon
+        // as it has its envelope — no O(N) rendezvous. The tradeoff is looser start
+        // correlation across cells (arrival-epoch jitter), which is aggregate-equivalent
+        // (the same bar as rate/ramp) and does not affect data-deterministic metrics.
+        // A failed cell is still caught by the collect loop's failure watch below.
+        if barrier_free {
+            tracing::info!(
+                "tier-T3 barrier-free start: triggering immediately without the O(N) register \
+                 rendezvous (cells start on their own registration; looser cross-cell start sync)"
+            );
+        } else {
+            tokio::select! {
+                biased;
+                () = transport.await_all_registered() => {}
+                Some(failure) = failure_rx.recv() => bail!("{failure}"),
+                () = tokio::time::sleep(register_timeout()) => {
+                    bail!("cells did not all register within the registration timeout")
+                }
             }
         }
         start_event

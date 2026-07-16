@@ -14,8 +14,31 @@ to close it. It reuses the ultimate spec's forward items (sketch-cellular, strea
 fan-out) and sequences them into a fidelity ladder.
 
 > **Grounding.** k6 claims are verified against `grafana/k6` source (`lib/execution_segment.go`,
-> `output/`). AIPerf claims cite `rust/aiperf/src/**`. This is designed-but-not-built; verify against
-> `rust/` before relying on any step.
+> `output/`). AIPerf claims cite `rust/aiperf/src/**`. Verify against `rust/` before relying on any step.
+
+---
+
+## Implementation status — 2026-07-15 (BUILT + EXECUTED end-to-end)
+
+Tiers **T1, T2, and T3 (Step 6)** are built, executed as real multi-process runs against the mock
+server through the Python frontend, and their raw `profile_export_aiperf.json` was analyzed against
+exact expectations. Data-deterministic metrics (`request_count`, ISL, OSL — incl. percentiles/std,
+since a seeded integer multiset + deterministic t-digest is exact) reproduce **byte-for-byte** across
+every topology; wall-clock latency differs only by real multi-process timing variance (not a merge
+defect).
+
+| Tier | Built | Executed (raw analysis) |
+|---|---|---|
+| **T1 — bounded sketch** (Steps 1–2) | ✅ sketch `StorePartition` ship (`execute.rs`); per-worker fold-and-drop already in place (`ShardRecords::Folded`) | ✅ `--cells 3 --sketch` vs `--cells 1 --sketch`: deterministic metrics EXACT; latency differs by timing only |
+| **T2 — hierarchical tree-merge** (Step 3) | ✅ `cellular_aggregator.rs` (`--aggregator`), `AIPERF_CELL_AGG_FANOUT`, cell ship-redirect, controller `spawn_aggregators` + `expected_partitions` | ✅ 9 procs (6 cells → **2 aggregators** → controller, fanout 3) vs flat 6-cell: report BYTE-IDENTICAL on all deterministic metrics — associativity holds across the tier |
+| **T3 — master-less start** (Step 6) | ✅ `AIPERF_CELL_BARRIER_FREE` (`cellular_controller.rs`): trigger START immediately, no O(N) register rendezvous (velo completed-event cache lets late cells start instantly) | ✅ barrier-free AND barrier-free+tree (T3+T2 composed) reproduce synchronized-start deterministic metrics EXACTLY — the rendezvous is removable; tiers compose |
+
+**T3 Steps 4–5 status:** Step 4 (external streaming sink) — the per-cell OTLP emitter already exists
+(each cell can stream per-record metrics to an external collector); a full *no-central-merge* mode is a
+config follow-on. Step 5 (dataset SPMC fan-out) is gated on the unmerged velo SPMC broadcast DEP;
+synthetic datasets already scale (each cell composes only its shard locally, k6-style), so this is only
+needed for large *file* datasets. Both are documented follow-ons, not on the T1–T3 execution path
+above.
 
 ---
 
