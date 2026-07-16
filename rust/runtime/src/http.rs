@@ -25,7 +25,7 @@ use uuid::Uuid;
 use crate::clock::Clock;
 use crate::endpoints::PreparedEndpointTable;
 use crate::endpoints::chat_request_body;
-use crate::metrics_core::{HttpTrace, InferenceDimensions, MetricsConfig, RecordIngest};
+use crate::metrics_core::{RequestTrace, InferenceDimensions, MetricsConfig, RecordIngest};
 use crate::transport_http::sse::ChatChunk;
 
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
@@ -147,7 +147,7 @@ pub struct HttpDispatchResult {
     /// Authoritative completion-token count, when the server emitted usage.
     pub completion_tokens: Option<u32>,
     /// Fine-grained request trace converted into native metric facts.
-    pub http: HttpTrace,
+    pub http: RequestTrace,
 }
 
 struct HttpCollectedDispatch {
@@ -898,7 +898,7 @@ impl TransportSink {
             let mut http = rec
                 .trace
                 .as_ref()
-                .map_or_else(HttpTrace::default, |trace| HttpTrace {
+                .map_or_else(RequestTrace::default, |trace| RequestTrace {
                     blocked_ns: trace.blocked(),
                     dns_lookup_ns: trace.dns_lookup(),
                     connecting_ns: trace.connecting(),
@@ -911,7 +911,7 @@ impl TransportSink {
                     data_received_bytes: Some(trace.response_bytes_total),
                     chunks_sent: Some(u64::from(trace.request_chunks_count)),
                     chunks_received: Some(u64::from(trace.response_chunks_count)),
-                    ..HttpTrace::default()
+                    ..RequestTrace::default()
                 });
             http.stream_setup_ns = rec
                 .recv_start_ns

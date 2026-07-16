@@ -22,7 +22,7 @@ use crate::endpoints::{
     EndpointKey, ParsedResponse, PreparedEndpoint, PreparedEndpointTable,
     RequestRecord as EndpointRequestRecord, ResponseData, ServerResponse, Turn, UsageView,
 };
-use crate::metrics_core::{HttpTrace, InferenceDimensions, MetricsConfig, RecordIngest};
+use crate::metrics_core::{RequestTrace, InferenceDimensions, MetricsConfig, RecordIngest};
 use crate::transport_grpc::{
     ConnectionReuseStrategy as GrpcConnectionReuseStrategy, GrpcBindingRegistry, GrpcClientConfig,
     GrpcErrorKind, GrpcRequestConfig, GrpcRequestRecord, GrpcTransport,
@@ -783,8 +783,8 @@ fn absorb_grpc_error(
     }
 }
 
-fn grpc_metrics_trace(record: &GrpcRequestRecord) -> HttpTrace {
-    HttpTrace {
+fn grpc_metrics_trace(record: &GrpcRequestRecord) -> RequestTrace {
+    RequestTrace {
         stream_setup_ns: record
             .trace
             .response_receive_start_ns
@@ -802,7 +802,7 @@ fn grpc_metrics_trace(record: &GrpcRequestRecord) -> HttpTrace {
         data_received_bytes: Some(record.trace.response_bytes_total),
         chunks_sent: Some(u64::from(record.trace.request_chunks_count)),
         chunks_received: Some(u64::from(record.trace.response_chunks_count)),
-        ..HttpTrace::default()
+        ..RequestTrace::default()
     }
 }
 

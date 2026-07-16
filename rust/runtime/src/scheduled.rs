@@ -21,7 +21,7 @@ use std::task::{Context, Poll};
 
 use crate::clock::Clock;
 use crate::endpoints::ParsedResponse;
-use crate::metrics_core::{AccumulatorSummary, HttpTrace, InferenceDimensions, MetricsConfig};
+use crate::metrics_core::{AccumulatorSummary, RequestTrace, InferenceDimensions, MetricsConfig};
 use crate::timing::{CancellationPolicy, Phase, SlotPool, StopChecker, StopConfig, UrlSelector};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -142,7 +142,7 @@ pub struct TurnDispatchOutcome {
     /// Authoritative server completion-token usage, when available.
     pub completion_tokens: Option<u64>,
     /// Fine-grained transport metrics, when the backend supplies them.
-    pub http: HttpTrace,
+    pub http: RequestTrace,
 }
 
 /// Transport/backend seam consumed by scheduled multi-turn workloads.
@@ -987,7 +987,7 @@ impl ScheduledRuntime {
                         },
                         prompt_tokens: None,
                         completion_tokens: None,
-                        http: HttpTrace::default(),
+                        http: RequestTrace::default(),
                     }
                 }
                 Some(Ok(outcome)) => outcome,
@@ -1013,7 +1013,7 @@ impl ScheduledRuntime {
                         },
                         prompt_tokens: None,
                         completion_tokens: None,
-                        http: HttpTrace::default(),
+                        http: RequestTrace::default(),
                     }
                 }
             };

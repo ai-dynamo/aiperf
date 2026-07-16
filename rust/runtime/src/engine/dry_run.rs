@@ -82,7 +82,7 @@ use crate::http::{
     DispatchResult, MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor,
 };
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata};
-use crate::metrics_core::{HttpTrace, InferenceDimensions, MetricsConfig, RecordIngest};
+use crate::metrics_core::{RequestTrace, InferenceDimensions, MetricsConfig, RecordIngest};
 use crate::multiturn::TurnToSend;
 use crate::scheduled::{ModelResponseMetadata, TurnDispatchOutcome};
 use crate::transport_http::models::{RequestRecord, Response, TextResponse};
@@ -619,7 +619,7 @@ impl RequestExecutor for FakeRequestExecutor {
                 end_ns: Some(end_abs),
                 prompt_tokens: Some(isl),
                 completion_tokens: Some(osl as u64),
-                http: HttpTrace::default(),
+                http: RequestTrace::default(),
             },
         );
 
@@ -677,7 +677,7 @@ impl RequestExecutor for FakeRequestExecutor {
                     },
                     prompt_tokens: Some(isl),
                     completion_tokens: Some(osl as u64),
-                    http: HttpTrace::default(),
+                    http: RequestTrace::default(),
                 },
                 request_payload,
                 record,
@@ -824,7 +824,7 @@ impl crate::scheduled::TurnDispatcher for FakeTurnDispatcher {
             },
             prompt_tokens: Some(isl as u64),
             completion_tokens: Some(osl as u64),
-            http: HttpTrace::default(),
+            http: RequestTrace::default(),
         })
     }
 }

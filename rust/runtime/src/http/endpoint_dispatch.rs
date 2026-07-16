@@ -20,7 +20,7 @@ use crate::endpoints::{
     EndpointDescriptor, EndpointResult, ExtractedPayload, ParsedResponse, PreparedEndpoint,
     RequestRecord as EndpointRequestRecord, ResponseData, ServerResponse, Turn, UsageView,
 };
-use crate::metrics_core::HttpTrace;
+use crate::metrics_core::RequestTrace;
 use crate::transport_http::models::{ErrorDetails, ErrorKind, RequestRecord};
 use crate::transport_http::transport::endpoint_binding::{
     HttpEndpointBinding, HttpEndpointBindingError, HttpEndpointRequest, HttpEndpointResponseFilter,
@@ -681,11 +681,11 @@ fn absorb_usage(parsed: &ParsedResponse, observed: &mut ObservedUsage) {
         .or(observed.prompt_audio_seconds);
 }
 
-fn http_trace(record: &RequestRecord) -> HttpTrace {
+fn http_trace(record: &RequestRecord) -> RequestTrace {
     let mut http = record
         .trace
         .as_ref()
-        .map_or_else(HttpTrace::default, |trace| HttpTrace {
+        .map_or_else(RequestTrace::default, |trace| RequestTrace {
             blocked_ns: trace.blocked(),
             dns_lookup_ns: trace.dns_lookup(),
             connecting_ns: trace.connecting(),
@@ -698,7 +698,7 @@ fn http_trace(record: &RequestRecord) -> HttpTrace {
             data_received_bytes: Some(trace.response_bytes_total),
             chunks_sent: Some(u64::from(trace.request_chunks_count)),
             chunks_received: Some(u64::from(trace.response_chunks_count)),
-            ..HttpTrace::default()
+            ..RequestTrace::default()
         });
     http.stream_setup_ns = record
         .recv_start_ns

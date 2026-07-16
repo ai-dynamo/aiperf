@@ -14,7 +14,7 @@ use std::rc::Rc;
 
 use crate::clock::Clock;
 use crate::metrics_core::{
-    AccumulatorSummary, HttpTrace, InferenceDimensions, MetricsAccumulator, MetricsConfig, Phase,
+    AccumulatorSummary, RequestTrace, InferenceDimensions, MetricsAccumulator, MetricsConfig, Phase,
     RecordIngest, TokenCounts, UsageMetrics,
 };
 use loadgen_core::collector::ReplayTerminalStatus;
@@ -79,7 +79,7 @@ pub struct NativeResponseMetadata {
     /// Authoritative server-reported completion tokens.
     pub completion_tokens: Option<u64>,
     /// Fine-grained transport timings and byte/chunk counters.
-    pub http: HttpTrace,
+    pub http: RequestTrace,
 }
 
 #[derive(Clone, Debug)]
@@ -109,7 +109,7 @@ struct PendingResponseMetadata {
     end_ns: Option<i64>,
     prompt_tokens: Option<u64>,
     completion_tokens: Option<u64>,
-    http: Option<Box<HttpTrace>>,
+    http: Option<Box<RequestTrace>>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -295,7 +295,7 @@ impl NativeMetricsObserver {
                 end_ns: response.end_ns,
                 prompt_tokens: response.prompt_tokens,
                 completion_tokens: response.completion_tokens,
-                http: (response.http != HttpTrace::default()).then(|| Box::new(response.http)),
+                http: (response.http != RequestTrace::default()).then(|| Box::new(response.http)),
             };
             !self.retain_record_dimensions && request.terminal.is_some()
         } else {
@@ -814,7 +814,7 @@ mod tests {
                 end_ns: Some(25_000_000),
                 prompt_tokens: None,
                 completion_tokens: None,
-                http: HttpTrace::default(),
+                http: RequestTrace::default(),
             },
         );
 

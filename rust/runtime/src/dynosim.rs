@@ -44,7 +44,7 @@ use crate::graph::transport_bench::GraphRpsReport;
 use crate::graph::wire::OpenAiChatMessage as GraphMessage;
 use crate::graph::workload::{GraphWorkload, GraphWorkloadReport};
 use crate::metrics_core::{
-    AccumulatorSummary, ExportContext, HttpTrace, InferenceDimensions, MetricTag,
+    AccumulatorSummary, ExportContext, RequestTrace, InferenceDimensions, MetricTag,
     MetricsAccumulator, MetricsConfig, Phase as MetricsPhase, RecordIngest,
 };
 use crate::timing::{ArrivalPattern, Phase, PhaseStats, SlotPool, StopConfig};
@@ -2232,7 +2232,7 @@ impl DynosimSink {
                     model_response: ModelResponseMetadata::default(),
                     prompt_tokens: u32::try_from(prompt_tokens).ok(),
                     completion_tokens: u32::try_from(completion_tokens).ok(),
-                    http: HttpTrace::default(),
+                    http: RequestTrace::default(),
                 });
             }
             waiter.signal.notified().await;
@@ -3094,7 +3094,7 @@ pub fn run_trace_offline(
                         end_ns: Some(ms_to_ns(now_ms).map_err(anyhow::Error::msg)?),
                         prompt_tokens: u64::try_from(client.prompt_tokens).ok(),
                         completion_tokens: u64::try_from(completion_tokens).ok(),
-                        http: HttpTrace::default(),
+                        http: RequestTrace::default(),
                     },
                 );
                 match status {

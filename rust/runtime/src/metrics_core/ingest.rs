@@ -80,7 +80,7 @@ pub struct UsageMetrics {
 
 /// HTTP timing trace attached to a request.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HttpTrace {
+pub struct RequestTrace {
     /// Time from dispatch start until the streaming response is established.
     pub stream_setup_ns: Option<i64>,
     /// Queue or connector blocked duration in nanoseconds.
@@ -157,7 +157,7 @@ pub struct RecordIngest {
     /// Optional endpoint usage.
     pub usage: UsageMetrics,
     /// Optional HTTP trace.
-    pub http: HttpTrace,
+    pub http: RequestTrace,
     /// Audio input duration in seconds.
     pub audio_duration_s: Option<f64>,
     /// Number of images in the request.
@@ -193,7 +193,7 @@ impl RecordIngest {
             canceled: false,
             tokens: TokenCounts::default(),
             usage: UsageMetrics::default(),
-            http: HttpTrace::default(),
+            http: RequestTrace::default(),
             audio_duration_s: None,
             num_images: None,
             video_inference_seconds: None,
