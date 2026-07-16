@@ -128,7 +128,7 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
             confidence=result.confidence,
             expected=result.ground_truth,
             actual=result.extracted_answer,
-            reasoning=result.reasoning,
+            explanation=result.reasoning,
             model_output=model_output,
             model_thinking=model_thinking,
         )

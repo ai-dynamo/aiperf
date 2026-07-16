@@ -32,7 +32,7 @@ def _make_record(**overrides) -> AccuracyRecordsData:
         confidence=0.9,
         expected="B",
         actual="B",
-        reasoning="matched",
+        explanation="matched",
     )
     defaults.update(overrides)
     return AccuracyRecordsData(**defaults)

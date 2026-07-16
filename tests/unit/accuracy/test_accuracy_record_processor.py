@@ -162,7 +162,7 @@ class TestAccuracyRecordProcessorSessionBounds:
         assert result.confidence == 0.42
         assert result.expected == "B"
         assert result.actual == "A"
-        assert result.reasoning == "Wrong answer"
+        assert result.explanation == "Wrong answer"
         # Full model output captured; no separate reasoning channel here.
         assert result.model_output == "Hello world"
         assert result.model_thinking is None

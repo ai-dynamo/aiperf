@@ -137,7 +137,11 @@ class AccuracyRecordsData(AIPerfBaseModel):
         description="Answer extracted from the model response "
         "(maps from GradingResult.extracted_answer)"
     )
-    reasoning: str = Field(description="Grader's explanation of the grading decision")
+    explanation: str = Field(
+        description="The grader's explanation of WHY it scored this response "
+        "correct/incorrect (distinct from model_thinking, which is the model's own "
+        "reasoning). Maps from GradingResult.reasoning",
+    )
     model_output: str = Field(
         default="",
         description="Full model response content (the answer text the model "

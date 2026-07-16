@@ -28,7 +28,7 @@ def _make_accuracy_record(session_num: int = 0) -> AccuracyRecordsData:
         confidence=1.0,
         expected="A",
         actual="A",
-        reasoning="ok",
+        explanation="ok",
     )
 
 

@@ -47,7 +47,7 @@ def _record(
         confidence=1.0,
         expected="A",
         actual="A",
-        reasoning="matched",
+        explanation="matched",
     )
 
 

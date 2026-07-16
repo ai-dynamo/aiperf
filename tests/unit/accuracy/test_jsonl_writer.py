@@ -27,7 +27,7 @@ def _record(*, timestamp_ns: int, task: str | None = "math") -> AccuracyRecordsD
         confidence=0.42,
         expected="A",
         actual="A",
-        reasoning="the answer is A",
+        explanation="the answer is A",
     )
 
 
@@ -65,6 +65,6 @@ class TestAccuracyJSONLWriter:
 
         parsed = [orjson.loads(line) for line in lines]
         assert parsed[0]["timestamp_ns"] == 10
-        assert parsed[0]["reasoning"] == "the answer is A"
+        assert parsed[0]["explanation"] == "the answer is A"
         assert parsed[0]["confidence"] == pytest.approx(0.42)
         assert parsed[1]["task"] == "algebra"

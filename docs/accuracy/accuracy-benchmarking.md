@@ -365,10 +365,11 @@ Each line carries: `session_num`, `conversation_id` (the problem id — the key 
 look up the full prompt in `inputs.json`), `x_request_id`, `worker_id`,
 `benchmark_phase`, `timestamp_ns`, `task`, `grader_name`, `passed`, `unparsed`,
 `confidence`,
-`expected` (ground truth), `actual` (extracted answer), `reasoning` (the
-grader's decision trace), `model_output` (the full answer content the model
-returned), and `model_thinking` (the model's reasoning/`reasoning_content`
-channel when it emitted one, else `null`). Use it for per-response post-hoc
+`expected` (ground truth), `actual` (extracted answer), `explanation` (the
+**grader's** decision trace — why it scored the response the way it did),
+`model_output` (the full answer content the model returned), and `model_thinking`
+(the **model's** reasoning/`reasoning_content` channel when it emitted one, else
+`null`). Use it for per-response post-hoc
 analysis — e.g. inspecting exactly what a reasoning model thought before an
 `unparsed` answer.
 
