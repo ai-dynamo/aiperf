@@ -19,7 +19,7 @@ use crate::metrics_core::{
     ReportError,
 };
 use crate::transport::core::{ErrorKind, RequestRecord, Response, TextResponse};
-use crate::transport::http::models::{SseFieldName, SseMessage};
+use crate::transport::core::{SseFieldName, SseMessage};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use serde_json::value::RawValue;

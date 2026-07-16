@@ -168,3 +168,32 @@ lives in the `http` module (like `RequestRecord`/`Response`/`TraceData` — a ge
 the http module; the greenfield relocation to a shared module is separate, structural work).
 
 Pure rename + backend de-duplication; no metric/dispatch-event change (full suite green).
+
+## Addendum — 2026-07-16 (transport module reorg: `transport::{core,http,grpc}` — the relocation follow-through)
+
+The 2026-07-16 addendum above closed the `Http`-naming lies but explicitly left the
+**location** open: `Request`/`RequestRecord`/`Response`/`TraceData` were generic types that
+still *lived in* the `http` module, and it noted "the greenfield relocation to a shared
+module is separate, structural work." That structural work is now **built**. The four flat
+transport modules were consolidated under one `crate::transport` parent:
+
+- `crate::transport_http` (hyper client) → `crate::transport::http`
+- `crate::transport_grpc` (tonic client) → `crate::transport::grpc` (`#[cfg(feature = "grpc")]`)
+- `crate::http` (the `http.rs` sink) → `crate::transport::http::sink`
+- `crate::grpc` (the `grpc.rs` sink) → `crate::transport::grpc::sink`
+- **NEW** `crate::transport::core` — the transport-neutral dispatch vocabulary, moved out of
+  the http module so no generic type lives in a wire module any more: `Request`,
+  `DispatchResult`, `MeasuredContext`/`MeasuredOutcome`, `PreparedTurn`, the `RequestExecutor`
+  and `Dispatcher` traits, `PreparedEndpoint` (the location follow-through to this spec's
+  earlier `PreparedHttpEndpoint`→`PreparedEndpoint` de-`Http` rename), `RequestRecord`,
+  `Response`/`TextResponse`, `TraceData`/`TraceExport`/`TraceReference`, `ErrorDetails`/
+  `ErrorKind`, `ConnectionReuseStrategy`, and the SSE data types `SseMessage`/`SseField`/
+  `SseFieldName`.
+
+Dependency direction is now honest: `transport::http` and `transport::grpc` depend on
+`transport::core`, and `transport::core` has **no** dependency on `transport::http` (or on
+`transport::grpc`) — a future transport takes the shared vocabulary without pulling in an
+existing wire client. This supersedes the "still lives in the `http` module" caveat of the
+2026-07-16 addendum for `Request`/`RequestRecord`/`Response`/`TraceData`; the de-`Http`
+*naming* records above are otherwise unchanged. Pure relocation — no metric/dispatch-event
+change (full suite green).

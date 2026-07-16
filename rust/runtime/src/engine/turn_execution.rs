@@ -27,8 +27,10 @@ use crate::metrics::NativeMetricsObserver;
 use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest};
 use crate::multiturn::TurnToSend;
 use crate::scheduled::TurnResponseObserver;
-use crate::transport::core::{DispatchResult, MeasuredContext, MeasuredOutcome};
-use crate::transport::http::{PreparedTurn, RequestExecutor, TransportSink, TransportSinkConfig};
+use crate::transport::core::{
+    DispatchResult, MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor,
+};
+use crate::transport::http::{TransportSink, TransportSinkConfig};
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use tokio::sync::{Notify, mpsc, oneshot};
@@ -929,8 +931,7 @@ mod tests {
     use crate::endpoints::{EndpointId, EndpointKey, EndpointRegistry, RawEndpointConfig};
     use crate::metrics::RequestMetricMetadata;
     use crate::multiturn::PreparedEndpointReference;
-    use crate::transport::core::Request;
-    use crate::transport::http::PreparedHttpEndpoint;
+    use crate::transport::core::{PreparedEndpoint, Request};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
@@ -1044,7 +1045,7 @@ mod tests {
                 url_index: None,
             },
             model: "fixture-model".to_string(),
-            endpoint: PreparedHttpEndpoint::Prepared(PreparedEndpointReference {
+            endpoint: PreparedEndpoint::Prepared(PreparedEndpointReference {
                 key: EndpointKey::from_index(0),
                 endpoint_id: EndpointId::new("chat").unwrap(),
             }),

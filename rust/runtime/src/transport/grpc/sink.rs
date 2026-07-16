@@ -40,8 +40,10 @@ use uuid::Uuid;
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata};
 use crate::multiturn::TurnToSend;
 use crate::scheduled::{ModelResponseMetadata, TurnDispatchOutcome};
-use crate::transport::core::{DispatchResult, MeasuredContext, MeasuredOutcome, Request};
-use crate::transport::http::{Dispatcher, PreparedHttpEndpoint, PreparedTurn, RequestExecutor};
+use crate::transport::core::{
+    DispatchResult, Dispatcher, MeasuredContext, MeasuredOutcome, PreparedTurn, Request,
+    RequestExecutor,
+};
 
 /// Worker-local gRPC scheduled sink policy.
 #[derive(Clone, Debug)]
@@ -277,7 +279,7 @@ impl GrpcTransportSink {
             "native gRPC execution requires endpoint-aware protocol-v2 materialization"
         );
         let model = turn.model;
-        let PreparedHttpEndpoint::Prepared(reference) = turn.endpoint;
+        let crate::transport::core::PreparedEndpoint::Prepared(reference) = turn.endpoint;
         let table = self.prepared_endpoints.as_ref().ok_or_else(|| {
             anyhow::anyhow!("gRPC worker received a prepared endpoint without a prepared table")
         })?;

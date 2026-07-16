@@ -724,21 +724,28 @@ async fn load_hugging_face_revision_rows(
                 "Hugging Face revision metadata for {dataset}@{revision} has no siblings"
             ))
         })?;
-    let mut files = siblings
-        .iter()
-        .filter_map(|sibling| sibling.get("rfilename").and_then(Value::as_str))
-        .filter(|path| supported_tabular_extension(path).is_some())
-        .filter(|path| path_matches_split(path, split))
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-    if subset != "default" {
-        let subset_files = files
+    // Prefer the dataset's declared `cardData.data_files` mapping: it maps
+    // (config, split) -> file path directly, so files not named after the split
+    // (e.g. a single root `traces.jsonl` mapped to split `train`) resolve. Fall
+    // back to matching the split by file name for datasets that omit the mapping.
+    let mut files = card_data_files(&info, subset, split);
+    if files.is_empty() {
+        files = siblings
             .iter()
-            .filter(|path| path_matches_subset(path, subset))
-            .cloned()
+            .filter_map(|sibling| sibling.get("rfilename").and_then(Value::as_str))
+            .filter(|path| supported_tabular_extension(path).is_some())
+            .filter(|path| path_matches_split(path, split))
+            .map(str::to_string)
             .collect::<Vec<_>>();
-        if !subset_files.is_empty() {
-            files = subset_files;
+        if subset != "default" {
+            let subset_files = files
+                .iter()
+                .filter(|path| path_matches_subset(path, subset))
+                .cloned()
+                .collect::<Vec<_>>();
+            if !subset_files.is_empty() {
+                files = subset_files;
+            }
         }
     }
     files.sort();
@@ -993,6 +1000,54 @@ fn supported_tabular_extension(path_or_url: &str) -> Option<&'static str> {
         "csv" => Some("csv"),
         _ => None,
     }
+}
+
+/// Resolve concrete file paths for one config/split from the dataset's
+/// `cardData.configs[].data_files` mapping, when the dataset declares one.
+///
+/// Datasets frequently store data under names unrelated to the split (a single
+/// root `traces.jsonl` mapped to `train`, say); the mapping is authoritative for
+/// those. Only concrete tabular paths are returned — globs (e.g.
+/// `data/*.parquet`) are left to the name-based fallback.
+fn card_data_files(info: &Value, config: &str, split: &str) -> Vec<String> {
+    let Some(configs) = info
+        .get("cardData")
+        .and_then(|card| card.get("configs"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    let mut paths = Vec::new();
+    for entry in configs {
+        let name = entry
+            .get("config_name")
+            .and_then(Value::as_str)
+            .unwrap_or("default");
+        if name != config {
+            continue;
+        }
+        let Some(data_files) = entry.get("data_files").and_then(Value::as_array) else {
+            continue;
+        };
+        for data_file in data_files {
+            let file_split = data_file
+                .get("split")
+                .and_then(Value::as_str)
+                .unwrap_or("train");
+            if file_split != split {
+                continue;
+            }
+            match data_file.get("path") {
+                Some(Value::String(path)) => paths.push(path.clone()),
+                Some(Value::Array(globs)) => {
+                    paths.extend(globs.iter().filter_map(Value::as_str).map(str::to_string));
+                }
+                _ => {}
+            }
+        }
+    }
+    paths.retain(|path| !path.contains('*') && supported_tabular_extension(path).is_some());
+    paths
 }
 
 fn path_matches_split(path: &str, split: &str) -> bool {

@@ -24,7 +24,8 @@ use serde_json::Value;
 
 use crate::transport::core::{ConnectionReuseStrategy, ErrorDetails, RequestRecord, Response};
 use crate::transport::http::client::http_client::SseMessageFilter;
-use crate::transport::http::models::{RequestConfig, SseMessage};
+use crate::transport::core::SseMessage;
+use crate::transport::http::models::RequestConfig;
 use crate::transport::http::transport::body::{
     JsonBodyEncoder, MultipartBodyEncoder, RequestBodyEncoder,
 };
@@ -574,7 +575,7 @@ fn seconds_to_ns(seconds: f64, field: &str) -> Result<i64, HttpEndpointBindingEr
 mod tests {
     use super::*;
     use crate::clock::SimClock;
-    use crate::transport::http::models::SseMessage;
+    use crate::transport::core::SseMessage;
 
     /// Prepare a builtin endpoint by its open ID for the prepared HTTP binding.
     fn prepared(endpoint_name: &str) -> Box<dyn PreparedEndpoint> {

@@ -80,7 +80,8 @@ use crate::timing::{
     make_interval_generator,
 };
 use crate::transport::core::{MeasuredContext, MeasuredOutcome};
-use crate::transport::http::{PreparedTurn, RequestExecutor, TransportSinkConfig};
+use crate::transport::core::{PreparedTurn, RequestExecutor};
+use crate::transport::http::TransportSinkConfig;
 use crate::user_centric::{UserCentricConfig, UserCentricWorkload};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use async_trait::async_trait;

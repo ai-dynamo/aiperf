@@ -26,7 +26,8 @@ use crate::transport::grpc::{
     ConnectionReuseStrategy as GrpcConnectionReuseStrategy, GrpcBindingRegistry, GrpcClientConfig,
 };
 use crate::transport::grpc::{GrpcTransportSink, GrpcTransportSinkConfig};
-use crate::transport::http::{PreparedTurn, RequestExecutor, TransportSinkConfig};
+use crate::transport::core::{PreparedTurn, RequestExecutor};
+use crate::transport::http::TransportSinkConfig;
 use anyhow::{Result, anyhow, ensure};
 use async_trait::async_trait;
 

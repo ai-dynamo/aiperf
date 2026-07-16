@@ -1,7 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! SSE message model and parser. Behavioral port of Python `SSEMessage.parse`.
+//! Transport-neutral SSE message model and parser. Behavioral port of Python
+//! `SSEMessage.parse`.
+//!
+//! These are the SSE *data* types (the parsed message and its fields), not the
+//! streaming reader. They live in `transport::core` so [`super::response::Response`]
+//! can hold an [`SseMessage`] without creating a `core → http` dependency; the SSE
+//! *reader* that produces them stays in `transport::http::sse`.
 
 /// A named SSE field.
 #[derive(Debug, Clone, PartialEq, Eq)]

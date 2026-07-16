@@ -50,7 +50,8 @@ use crate::transport::core::TraceData;
 use crate::transport::http::client::connection::{Sender, establish};
 use crate::transport::http::client::http_client::HttpClient;
 use crate::transport::http::config::ClientConfig;
-use crate::transport::http::models::{HttpVersion, SseMessage};
+use crate::transport::core::SseMessage;
+use crate::transport::http::models::HttpVersion;
 use crate::transport::http::sse::ChatChunk;
 use url::Url;
 

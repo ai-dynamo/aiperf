@@ -322,7 +322,18 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         !flags.model_names.is_empty(),
         "at least one --model is required"
     );
-    anyhow::ensure!(!flags.urls.is_empty(), "at least one --url is required");
+    // A dry run opens no sockets, so a real endpoint URL is not required — default
+    // a sentinel so the endpoint/profile lowering (which still wants some URL) is
+    // satisfied. The fake transport never dials it.
+    let urls = if flags.urls.is_empty() && flags.dry_run {
+        vec!["http://dry-run.invalid".to_string()]
+    } else {
+        flags.urls.clone()
+    };
+    anyhow::ensure!(
+        !urls.is_empty(),
+        "at least one --url is required (omit it only with --dry-run)"
+    );
     let endpoint_type = flags
         .endpoint_type
         .clone()
@@ -411,7 +422,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
 
     let inputs = Inputs {
         model_names: flags.model_names.clone(),
-        urls: flags.urls.clone(),
+        urls,
         endpoint_type,
         transport: if flags.dry_run {
             Transport::DryRun(crate::model::transport::DryRunConfig {

@@ -17,7 +17,7 @@ use futures::future::poll_fn;
 use crate::clock::Clock;
 
 use crate::transport::core::ErrorDetails;
-use crate::transport::http::models::SseMessage;
+use crate::transport::core::SseMessage;
 
 /// Backpressured consumer for one decoded SSE message.
 ///
@@ -162,7 +162,7 @@ mod tests {
     use futures::stream;
     use std::rc::Rc;
 
-    fn collect(chunks: Vec<&'static str>) -> Vec<crate::transport::http::models::SseMessage> {
+    fn collect(chunks: Vec<&'static str>) -> Vec<crate::transport::core::SseMessage> {
         let clock: Rc<dyn crate::clock::Clock> = Rc::new(SimClock::new());
         let s = stream::iter(chunks.into_iter().map(|c| Ok(Bytes::from(c))));
         let mut msgs = Vec::new();
