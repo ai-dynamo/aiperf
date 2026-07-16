@@ -371,7 +371,7 @@ async fn graph_dag_dispatches_over_native_grpc() {
     // The catalog exposes transport and workload as INDEPENDENT registries: gRPC
     // transport and the graph workload each appear on their own axis, with no
     // pair/compatibility inventory gating their composition (Task 4 deleted
-    // `RunnerPairFactory`/`supported_pairs`/`validate_descriptor_compatibility`).
+    // `PairFactory`/`supported_pairs`/`validate_descriptor_compatibility`).
     let catalog = capabilities();
     assert!(
         catalog["transport"].get("grpc").is_some(),

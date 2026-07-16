@@ -3,7 +3,7 @@
 
 //! Protocol-v2 proof that placement factories sit below the single dispatcher.
 //!
-//! Both tests enter through [`RunnerV2Coordinator`]. Neither changes workload,
+//! Both tests enter through [`Coordinator`]. Neither changes workload,
 //! phase, metrics, artifact, or report logic: one replaces turn placement with
 //! a remote-shaped backend, and one replaces whole-trace graph placement.
 
@@ -12,11 +12,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use aiperf_runtime::engine::coordinator::{RunnerResponseV2, RunnerV2Coordinator};
+use aiperf_runtime::engine::coordinator::{ResponseV2, Coordinator};
 use aiperf_runtime::engine::dataset_input::BuiltinRunnerDatasetInputAdapterResolver;
-use aiperf_runtime::engine::execution_factories::RunnerExecutionFactories;
+use aiperf_runtime::engine::execution_factories::ExecutionFactories;
 use aiperf_runtime::engine::graph_execution::{
-    NativeRunnerGraphPlacementFactory, RunnerGraphPlacementFactory,
+    NativeRunnerGraphPlacementFactory, GraphPlacementFactory,
 };
 use aiperf_runtime::engine::graph_input::BuiltinRunnerGraphInputAdapterResolver;
 use aiperf_runtime::engine::readiness::{
@@ -47,7 +47,7 @@ struct RecordingGraphPlacement {
     artifact_target: PathBuf,
 }
 
-impl RunnerGraphPlacementFactory for RecordingGraphPlacement {
+impl GraphPlacementFactory for RecordingGraphPlacement {
     fn build(
         &self,
         worker_count: usize,
@@ -125,20 +125,20 @@ impl TracePlacement for RecordingGraphBackend {
 
 fn coordinator(
     http: Arc<dyn RequestExecutorFactory>,
-    graph: Arc<dyn RunnerGraphPlacementFactory>,
-) -> RunnerV2Coordinator {
+    graph: Arc<dyn GraphPlacementFactory>,
+) -> Coordinator {
     coordinator_with_readiness(http, graph, Arc::new(NativeHttpReadinessTransportFactory))
 }
 
 fn coordinator_with_readiness(
     http: Arc<dyn RequestExecutorFactory>,
-    graph: Arc<dyn RunnerGraphPlacementFactory>,
+    graph: Arc<dyn GraphPlacementFactory>,
     readiness_transport: Arc<dyn ReadinessTransportFactory>,
-) -> RunnerV2Coordinator {
-    RunnerV2Coordinator::new(
+) -> Coordinator {
+    Coordinator::new(
         DISTRIBUTION_ID,
         &BuiltinAIPerfRegistryFactory,
-        RunnerExecutionFactories::new(
+        ExecutionFactories::new(
             http,
             graph,
             Arc::new(NativeHttpReadinessPlanFactory),
@@ -171,9 +171,9 @@ fn benchmark_run(legacy: Value) -> Value {
 }
 
 fn execute(
-    coordinator: &RunnerV2Coordinator,
+    coordinator: &Coordinator,
     run: Value,
-) -> aiperf_runtime::engine::coordinator::RunnerProcessResultV2 {
+) -> aiperf_runtime::engine::coordinator::ProcessResultV2 {
     let envelope = serde_json::from_value(json!({
         "protocol_version": 2,
         "operation": "execute",
@@ -183,13 +183,13 @@ fn execute(
     coordinator.handle(envelope)
 }
 
-fn assert_success(result: &aiperf_runtime::engine::coordinator::RunnerProcessResultV2) {
+fn assert_success(result: &aiperf_runtime::engine::coordinator::ProcessResultV2) {
     assert_eq!(result.exit_code, 0, "{:?}", result.response);
     match &result.response {
-        RunnerResponseV2::Terminal(terminal) => {
+        ResponseV2::Terminal(terminal) => {
             assert!(terminal.success, "terminal errors: {:?}", terminal.errors);
         }
-        RunnerResponseV2::Validation(_) => panic!("execute returned a validation response"),
+        ResponseV2::Validation(_) => panic!("execute returned a validation response"),
     }
 }
 
@@ -320,11 +320,11 @@ fn v2_backend_shutdown_runs_after_pre_artifact_origin_failure() {
 
     assert_eq!(result.exit_code, 1);
     match result.response {
-        RunnerResponseV2::Terminal(terminal) => {
+        ResponseV2::Terminal(terminal) => {
             assert!(!terminal.success);
             assert!(terminal.errors[0].message.contains("origin failure"));
         }
-        RunnerResponseV2::Validation(_) => panic!("execute returned a validation response"),
+        ResponseV2::Validation(_) => panic!("execute returned a validation response"),
     }
     assert_eq!(shutdowns.load(Ordering::SeqCst), 1);
     assert!(!root.path().join("origin-failure").exists());

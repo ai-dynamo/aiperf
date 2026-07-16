@@ -6,7 +6,7 @@ use common::*;
 // Config v2 -> v2 runner -> direct online Graph-IR product proof.
 //
 // The Python originals drive the orchestrator internals directly
-// (`RunnerInstallation` / `RustSubprocessExecutor`), stand up a custom
+// (`Installation` / `RustSubprocessExecutor`), stand up a custom
 // body-recording graph chat server, and assert against the raw protocol-v2
 // request wire and captured request bodies. The Rust `AIPerfHarness` shells
 // out to `python -m aiperf profile` against `aiperf-mock-server` and cannot
@@ -62,7 +62,7 @@ fn write_graph_dataset(dir: &std::path::Path) -> std::path::PathBuf {
 }
 
 // requires: protocol-v2 request-wire capture + custom body-recording graph
-// chat server (Python orchestrator internals: RunnerInstallation /
+// chat server (Python orchestrator internals: Installation /
 // RustSubprocessExecutor). The Rust harness cannot observe the v2 request wire
 // or per-dispatch request bodies.
 #[tokio::test]
