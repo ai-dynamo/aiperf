@@ -224,6 +224,50 @@ pub struct ProfileFlags {
     #[arg(long = "dataset-filter", num_args = 1..)]
     pub dataset_filter: Option<Vec<String>>,
 
+    // --- Adaptive search / sweep-space (Tier 3) ------------------------------
+    /// Search recipe id (`--search-recipe`, e.g. `concurrency-ramp`).
+    #[arg(long = "search-recipe")]
+    pub search_recipe: Option<String>,
+    /// Concurrency search lower bound (`--concurrency-min`).
+    #[arg(long = "concurrency-min")]
+    pub concurrency_min: Option<i64>,
+    /// Concurrency search upper bound (`--concurrency-max`).
+    #[arg(long = "concurrency-max")]
+    pub concurrency_max: Option<i64>,
+    /// Concurrency search step count (`--concurrency-steps`).
+    #[arg(long = "concurrency-steps")]
+    pub concurrency_steps: Option<i64>,
+    /// ISL search lower bound (`--isl-min`).
+    #[arg(long = "isl-min")]
+    pub isl_min: Option<i64>,
+    /// ISL search upper bound (`--isl-max`).
+    #[arg(long = "isl-max")]
+    pub isl_max: Option<i64>,
+    /// ISL search step count (`--isl-steps`).
+    #[arg(long = "isl-steps")]
+    pub isl_steps: Option<i64>,
+    /// OSL search lower bound (`--osl-min`).
+    #[arg(long = "osl-min")]
+    pub osl_min: Option<i64>,
+    /// OSL search upper bound (`--osl-max`).
+    #[arg(long = "osl-max")]
+    pub osl_max: Option<i64>,
+    /// OSL search step count (`--osl-steps`).
+    #[arg(long = "osl-steps")]
+    pub osl_steps: Option<i64>,
+    /// Paired ISL:OSL workload shapes (`--isl-osl-pairs`, repeatable `isl:osl`).
+    #[arg(long = "isl-osl-pairs", num_args = 1..)]
+    pub isl_osl_pairs: Option<Vec<String>>,
+    /// Degradation-knee metric tag (`--degradation-metric-tag`).
+    #[arg(long = "degradation-metric-tag")]
+    pub degradation_metric_tag: Option<String>,
+    /// Degradation-knee stat (`--degradation-stat`).
+    #[arg(long = "degradation-stat")]
+    pub degradation_stat: Option<String>,
+    /// Degradation-knee threshold fraction (`--degradation-threshold`).
+    #[arg(long = "degradation-threshold")]
+    pub degradation_threshold: Option<f64>,
+
     /// Trials per variation (`--num-profile-runs`); `>1` repeats each run.
     #[arg(long = "num-profile-runs")]
     pub num_profile_runs: Option<u32>,

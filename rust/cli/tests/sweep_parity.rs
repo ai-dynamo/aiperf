@@ -143,6 +143,50 @@ fn yaml_sweep_cells_match_oracle() {
 }
 
 #[test]
+fn search_recipe_cells_match_oracle() {
+    // A grid `--search-recipe` expands its log-spaced search space into a static
+    // sweep; native must reproduce the oracle's per-cell list byte-exact.
+    for name in ["recipe_ramp"] {
+        let golden = load_golden(name);
+        let cells_g = golden["cells"].as_array().expect("cells array");
+        let flags = ProfileFlags::parse_from_args(&fixture_args(name))
+            .unwrap_or_else(|e| panic!("[{name}] flags: {e}"));
+        // Apply the recipe expansion (as `profile::run` does) before sweeping.
+        let flags = match aiperf_cli::search::expand_grid_recipe(&flags).expect("recipe") {
+            Some(exp) => exp.apply(&flags),
+            None => flags,
+        };
+        let expansion = sweep::expand(&flags, sweep::SweepType::Grid)
+            .unwrap_or_else(|e| panic!("[{name}] expand: {e}"));
+        let cells = run::plan_cells(
+            &flags,
+            &expansion,
+            1,
+            IterationOrder::Repeated,
+            "parity-sweep",
+            aiperf_cli::profile::seed_policy(&flags),
+            true,
+            load::resolve,
+        )
+        .unwrap_or_else(|e| panic!("[{name}] plan_cells: {e}"));
+        assert_eq!(cells.len(), cells_g.len(), "[{name}] cell count");
+        let ported = ["phases", "datasets", "endpoint", "models"];
+        for (i, (cell, want)) in cells.iter().zip(cells_g).enumerate() {
+            assert_eq!(cell.label, want["label"], "[{name}] cell {i} label");
+            assert_eq!(cell.run.random_seed, want["random_seed"].as_u64(), "[{name}] cell {i} seed");
+            let built = serde_json::to_value(&cell.run).expect("serialize");
+            for section in ported {
+                assert_eq!(
+                    built["cfg"][section], want["request"]["run"]["cfg"][section],
+                    "[{name}] cell {i} cfg.{section} diverges\n got {:#}\nwant {:#}",
+                    built["cfg"][section], want["request"]["run"]["cfg"][section]
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn seed_knob_cells_match_oracle() {
     // The seed-policy flags (`--parameter-sweep-same-seed`, `--no-set-consistent-seed`)
     // change the per-cell random_seed: same-seed → all `base`; no-consistent → None.

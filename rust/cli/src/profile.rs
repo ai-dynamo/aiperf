@@ -49,6 +49,14 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         return run_single(run);
     }
 
+    // A grid `--search-recipe` expands its search space into swept flags, then
+    // the normal sweep path takes over. (bayes/isotonic recipes run a dynamic
+    // ask-tell loop, handled elsewhere.)
+    let flags = match crate::search::expand_grid_recipe(&flags)? {
+        Some(expansion) => expansion.apply(&flags),
+        None => flags,
+    };
+
     let sweep_type = match flags.sweep_type.as_str() {
         "grid" => sweep::SweepType::Grid,
         "zip" => sweep::SweepType::Zip,
