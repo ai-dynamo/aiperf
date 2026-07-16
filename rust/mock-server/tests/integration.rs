@@ -518,7 +518,81 @@ async fn error_injection() {
         .unwrap();
     assert_eq!(r.status(), 500);
     let body: Value = r.json().await.unwrap();
-    assert_eq!(body["detail"], "Simulated error");
+    // Default menu is the single historical `500` code, echoed in the detail.
+    assert_eq!(body["detail"], "Simulated error (status 500)");
+}
+
+/// The status-code menu is honored: with `--error-status-codes 429` every
+/// injected error is a 429 carrying a `Retry-After` backoff header, not the
+/// hardcoded 500.
+#[tokio::test]
+async fn error_injection_status_code_menu_and_retry_after() {
+    let cfg = MockServerConfig {
+        fast: true,
+        no_tokenizer: true,
+        error_rate: 100.0,
+        error_status_codes: vec![429],
+        error_retry_after: 7,
+        random_seed: Some(42),
+        ..MockServerConfig::default()
+    };
+    let (addr, _h) = spawn_server(cfg).await;
+    let r = client()
+        .post(format!("http://{addr}/v1/chat/completions"))
+        .json(&json!({ "model": "m", "messages": [{"role":"user","content":"x"}] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 429);
+    assert_eq!(
+        r.headers().get("retry-after").and_then(|v| v.to_str().ok()),
+        Some("7"),
+        "429 must carry the configured Retry-After header"
+    );
+    let body: Value = r.json().await.unwrap();
+    assert_eq!(body["detail"], "Simulated error (status 429)");
+}
+
+/// A mid-stream SSE error emits a few normal token frames and then a terminal
+/// `event: error` frame, with no `[DONE]` sentinel — the shape the runner
+/// classifies as a transport SSE error.
+#[tokio::test]
+async fn error_injection_midstream_sse() {
+    let cfg = MockServerConfig {
+        fast: true,
+        no_tokenizer: true,
+        error_midstream_rate: 1.0,
+        random_seed: Some(42),
+        ..MockServerConfig::default()
+    };
+    let (addr, _h) = spawn_server(cfg).await;
+    let body = client()
+        .post(format!("http://{addr}/v1/chat/completions"))
+        .json(&json!({
+            "model": "m",
+            "stream": true,
+            "messages": [{"role":"user","content":"a longer prompt to force several output tokens"}],
+        }))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    // The stream terminates with an `event: error` frame and never emits [DONE].
+    assert!(
+        body.contains("event: error"),
+        "mid-stream body must carry an SSE error frame, got: {body:?}"
+    );
+    assert!(
+        !body.contains("[DONE]"),
+        "mid-stream error must not send the [DONE] sentinel, got: {body:?}"
+    );
+    // Some normal content frames precede the error (partial content).
+    assert!(
+        body.contains("chat.completion.chunk"),
+        "mid-stream body should include partial token frames, got: {body:?}"
+    );
 }
 
 #[tokio::test]

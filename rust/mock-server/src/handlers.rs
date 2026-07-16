@@ -35,12 +35,21 @@ pub type AppResult<T> = Result<T, AppError>;
 pub struct AppError {
     pub status: StatusCode,
     pub message: String,
+    /// `Retry-After` header value (seconds) to emit, for `429`/`503` backoff.
+    /// `None` leaves the header off.
+    pub retry_after: Option<u64>,
 }
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let body = json!({ "detail": self.message });
-        (self.status, Json(body)).into_response()
+        let mut response = (self.status, Json(body)).into_response();
+        if let Some(secs) = self.retry_after
+            && let Ok(value) = header::HeaderValue::from_str(&secs.to_string())
+        {
+            response.headers_mut().insert(header::RETRY_AFTER, value);
+        }
+        response
     }
 }
 
@@ -48,6 +57,7 @@ fn internal_error<E: std::fmt::Display>(e: E) -> AppError {
     AppError {
         status: StatusCode::INTERNAL_SERVER_ERROR,
         message: format!("{e}"),
+        retry_after: None,
     }
 }
 
@@ -64,14 +74,16 @@ fn make_anthropic_message_id() -> String {
 }
 
 fn maybe_inject_error(state: &AppState) -> Option<AppError> {
-    if state.inject_error() {
-        Some(AppError {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: "Simulated error".to_string(),
-        })
-    } else {
-        None
-    }
+    let code = state.inject_error_status()?;
+    let status = StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    // A rate-limited (429) or overloaded (503) backend hands the client a
+    // Retry-After backoff hint; other injected codes carry none.
+    let retry_after = matches!(code, 429 | 503).then_some(state.config.error_retry_after);
+    Some(AppError {
+        status,
+        message: format!("Simulated error (status {code})"),
+        retry_after,
+    })
 }
 
 /// Shared context for a tokenized LLM request.
@@ -277,6 +289,7 @@ pub async fn get_model(
         return Err(AppError {
             status: StatusCode::NOT_FOUND,
             message: format!("Model '{id}' not found"),
+            retry_after: None,
         });
     }
     let created = server_start_epoch(&state);
@@ -303,7 +316,16 @@ pub async fn chat_completions(
     if req.stream {
         state.recorder.record_streaming_start(endpoint, &ctx.model);
         let include_usage = req.include_usage();
-        let body = chat_stream(state.clone(), ctx, endpoint.to_string(), include_usage);
+        // Decide the mid-stream failure on the request thread (not inside the
+        // async stream) so the seeded `mock.errors` draw order is deterministic.
+        let midstream_error = state.inject_midstream();
+        let body = chat_stream(
+            state.clone(),
+            ctx,
+            endpoint.to_string(),
+            include_usage,
+            midstream_error,
+        );
         Ok(sse_response(body))
     } else {
         state.recorder.record_request_start(endpoint, &ctx.model);
@@ -1297,6 +1319,21 @@ fn sse_done() -> Bytes {
     Bytes::from_static(b"data: [DONE]\n\n")
 }
 
+/// A terminal mid-stream SSE error frame: `event: error` with the message as an
+/// SSE comment. The runner's SSE reader
+/// (`aiperf::transport_http::sse::reader::read_sse`) classifies any frame whose
+/// `event` field equals `error` as a transport `ErrorKind::Sse` (pseudo-status
+/// 502, type `sse_error`) via `SseMessage::error_message`, aborting the stream
+/// before `[DONE]`. Emitted after a few normal token frames so the record shows
+/// partial content plus the error.
+fn sse_error_frame(message: &str) -> Bytes {
+    Bytes::from(format!("event: error\n: {message}\n\n"))
+}
+
+/// Number of normal token frames emitted before a mid-stream error fires, so the
+/// captured record carries partial (truncated) content, not zero content.
+const MIDSTREAM_TOKENS_BEFORE_ERROR: usize = 3;
+
 fn anthropic_sse_event(event: &str, value: &Value) -> Bytes {
     let data = serde_json::to_string(value).expect("Anthropic event must serialize");
     Bytes::from(format!("event: {event}\ndata: {data}\n\n"))
@@ -1461,11 +1498,56 @@ fn chat_stream(
     ctx: RequestCtx,
     endpoint: String,
     include_usage: bool,
+    midstream_error: bool,
 ) -> impl Stream<Item = Result<Bytes, Infallible>> {
     let labeled = state.recorder.labeled(&endpoint, &ctx.model);
     async_stream::stream! {
         state.recorder.record_request_start(&endpoint, &ctx.model);
         state.recorder.record_llm_inflight_start(&ctx.model);
+
+        // Mid-stream failure: emit a few real token frames, then a terminal
+        // `event: error` SSE frame and close — no usage chunk, no `[DONE]`.
+        // This is the only path that exercises the runner's mid-stream SSE
+        // error classification (pre-stream injection fails at handler entry
+        // before any bytes are sent). Runs even in fast mode, and never draws
+        // the adversarial null-object path.
+        if midstream_error {
+            let created = now_secs();
+            let has_reasoning = !ctx.tokenized.reasoning_content_tokens.is_empty();
+            let num = ctx.tokenized.tokens.len();
+            let emit = num.min(MIDSTREAM_TOKENS_BEFORE_ERROR);
+            for (i, token) in ctx.tokenized.tokens.iter().take(emit).enumerate() {
+                // Pace real (non-fast) streams so partial timing is realistic.
+                if !ctx.latency_sim.is_fast() {
+                    let _ = ctx.latency_sim.wait_for_index(i).await;
+                }
+                let role = if i == 0 && !has_reasoning { Some("assistant") } else { None };
+                let chunk = ChatStreamChunk {
+                    id: &ctx.request_id,
+                    object: "chat.completion.chunk",
+                    created,
+                    model: &ctx.model,
+                    choices: [ChatChoiceDelta {
+                        index: 0,
+                        finish_reason: None,
+                        delta: ChatDelta {
+                            role,
+                            content: Some(token.as_str()),
+                            reasoning_content: None,
+                        },
+                    }],
+                };
+                yield Ok::<Bytes, Infallible>(sse_chunk_ser(&chunk));
+            }
+            yield Ok::<Bytes, Infallible>(sse_error_frame(
+                "Simulated mid-stream error injected by aiperf-mock-server",
+            ));
+            // Count as a failed request so the mock's own metrics reflect it.
+            state.recorder.record_error(&endpoint, "midstream_sse_error");
+            state.recorder.record_llm_inflight_end(&ctx.model);
+            state.recorder.record_request_end(&endpoint);
+            return;
+        }
 
         // Fast-mode short-circuit: ttft==itl==0. Pre-render the entire SSE
         // body into one Bytes and yield it in a single HTTP frame. The
@@ -2058,6 +2140,7 @@ fn dcgm_response(state: &AppState, idx: usize) -> Result<Response, AppError> {
     let faker = state.dcgm.get(idx).ok_or(AppError {
         status: StatusCode::NOT_FOUND,
         message: "Invalid DCGM instance".to_string(),
+        retry_after: None,
     })?;
     let body = faker.generate();
     Ok(Response::builder()

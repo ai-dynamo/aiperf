@@ -169,4 +169,42 @@ impl AppState {
         let v = self.error_rng.lock().next();
         v * 100.0 < rate
     }
+
+    /// Decide whether to inject a pre-stream error for this request, and if so
+    /// which HTTP status code to return.
+    ///
+    /// The trigger draw and the code-selection draw both come from the seeded
+    /// `mock.errors` stream, so both which requests fail and which code they
+    /// fail with are reproducible under `--random-seed`. The code is chosen
+    /// uniformly from `--error-status-codes` (default `[500]`, preserving the
+    /// historical single-code behavior). Returns `None` when no error fires.
+    pub fn inject_error_status(&self) -> Option<u16> {
+        let rate = self.config.error_rate;
+        if rate <= 0.0 {
+            return None;
+        }
+        let mut rng = self.error_rng.lock();
+        if rng.next() * 100.0 >= rate {
+            return None;
+        }
+        let codes = &self.config.error_status_codes;
+        if codes.is_empty() {
+            return Some(500);
+        }
+        // Second draw selects the code so the menu is exercised deterministically.
+        let idx = ((rng.next() * codes.len() as f64) as usize).min(codes.len() - 1);
+        Some(codes[idx])
+    }
+
+    /// Seeded decision whether a *streaming* request should fail mid-stream
+    /// (emit a few token frames, then a terminal `event: error` SSE frame). The
+    /// draw comes from the same `mock.errors` stream, so it is reproducible
+    /// under `--random-seed`. `--error-midstream-rate` is a 0.0–1.0 probability.
+    pub fn inject_midstream(&self) -> bool {
+        let rate = self.config.error_midstream_rate;
+        if rate <= 0.0 {
+            return false;
+        }
+        self.error_rng.lock().next() < rate
+    }
 }

@@ -383,6 +383,32 @@ pub struct MockServerConfig {
     #[arg(long, env = "MOCK_SERVER_ERROR_RATE", default_value_t = 0.0)]
     pub error_rate: f64,
 
+    /// HTTP status codes injected when `--error-rate` fires. Comma-separated
+    /// (e.g. `429,503,400,500`); the mock picks one per injected error via the
+    /// seeded `mock.errors` RNG stream, so the sequence is reproducible under
+    /// `--random-seed`. Defaults to `500` — the historical single-code behavior.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_ERROR_STATUS_CODES",
+        value_delimiter = ',',
+        default_value = "500"
+    )]
+    pub error_status_codes: Vec<u16>,
+
+    /// `Retry-After` header value (whole seconds) emitted on injected `429` and
+    /// `503` responses — the backoff hint a real rate-limited / overloaded
+    /// backend returns and that AIPerf's retry policy reads.
+    #[arg(long, env = "MOCK_SERVER_ERROR_RETRY_AFTER", default_value_t = 1)]
+    pub error_retry_after: u64,
+
+    /// Seeded probability (0.0–1.0) that a *streaming* chat request emits a few
+    /// normal token frames and then a terminal mid-stream SSE error
+    /// (`event: error`) instead of completing. Exercises the runner's
+    /// mid-stream error path, which pre-stream injection never reaches. The
+    /// decision is drawn from the seeded `mock.errors` stream.
+    #[arg(long, env = "MOCK_SERVER_ERROR_MIDSTREAM_RATE", default_value_t = 0.0)]
+    pub error_midstream_rate: f64,
+
     #[arg(long, env = "MOCK_SERVER_RANDOM_SEED")]
     pub random_seed: Option<u64>,
 
@@ -602,5 +628,21 @@ mod tests {
         assert_eq!(cfg.dcgm_num_gpus, 2);
         assert!(cfg.dcgm_auto_load);
         assert!(!cfg.fast);
+        // Error-injection defaults: single 500 code (historical), 1s Retry-After,
+        // no mid-stream errors.
+        assert_eq!(cfg.error_rate, 0.0);
+        assert_eq!(cfg.error_status_codes, vec![500u16]);
+        assert_eq!(cfg.error_retry_after, 1);
+        assert_eq!(cfg.error_midstream_rate, 0.0);
+    }
+
+    #[test]
+    fn parses_error_status_code_menu() {
+        let cfg = MockServerConfig::parse_from([
+            "aiperf-mock-server",
+            "--error-status-codes",
+            "429,503,400,500",
+        ]);
+        assert_eq!(cfg.error_status_codes, vec![429u16, 503, 400, 500]);
     }
 }
