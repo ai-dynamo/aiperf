@@ -16,12 +16,16 @@ name = "aiperf"
 path = "src/main.rs"
 
 [features]
-# Opt-in in-process Python numerical seam for the scipy/optuna-backed dynamic
-# search styles (`--search-style smooth_isotonic|bo|optuna`). OFF by default so
-# the shipped native binary stays Python-free (the pure-Rust `monotonic` style
-# and all non-search runs need no libpython). When ON, the binary links
-# libpython (pyo3 `auto-initialize`) and calls the real scipy/optuna at runtime.
-search-pyo3 = ["dep:pyo3"]
+# Base: embed a CPython interpreter (pyo3 `auto-initialize`). Enables in-process
+# delegation of every non-profile/config subcommand (chat/plot/plugins/service/
+# synthesize/analyze-trace/…) through `aiperf.entrypoint.main` — ZERO subprocess
+# shell-out. OFF by default so the shipped lean binary stays Python-free (those
+# subcommands then fall back to a `python -m aiperf` subprocess).
+pyo3-embed = ["dep:pyo3"]
+# Opt-in scipy/optuna numerical seam for the dynamic search styles
+# (`--search-style smooth_isotonic|bo|optuna`). Implies `pyo3-embed`, so the
+# search build also gets in-process subcommand delegation (fully shell-out-free).
+search-pyo3 = ["pyo3-embed"]
 
 [dependencies]
 aiperf = { path = "../aiperf", default-features = false, features = ["runner-protocol"] }
