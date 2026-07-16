@@ -947,6 +947,185 @@ async fn test_graph_cellular_exact_fold_concats_csv_parquet_outputs() {
     );
 }
 
+/// Build a DIRECTORY multi-file `weka_trace` fixture: `count` sibling `.json`
+/// files under a fresh temp dir, each a whole single-root WEKA trace document (the
+/// shape the WEKA dir loader reads — every `.json` in the dir, non-recursive). The
+/// roots differ only in id / hash / requested output length, so the compiled trace
+/// set is deterministic per topology. Returns the `TempDir` (kept alive by the
+/// caller) and the directory path string.
+fn write_weka_dir_fixture(count: usize) -> (tempfile::TempDir, String) {
+    let dir = tempfile::tempdir().expect("weka fixture tempdir");
+    for i in 0..count {
+        // Vary the requested output length so OSL is a non-trivial distribution to
+        // compare across topologies; keep input at one 16-token block per root.
+        let out = 5 + (i % 5);
+        let doc = serde_json::json!({
+            "id": format!("root{i}"),
+            "models": ["Qwen3-0.6B"],
+            "block_size": 16,
+            "hash_id_scope": "global",
+            "requests": [{
+                "t": 0,
+                "type": "n",
+                "model": "Qwen3-0.6B",
+                "in": 16,
+                "out": out,
+                "hash_ids": [(i as i64) + 1]
+            }]
+        });
+        std::fs::write(
+            dir.path().join(format!("shard-{i:03}.json")),
+            serde_json::to_vec(&doc).unwrap(),
+        )
+        .expect("write weka shard");
+    }
+    let path = dir.path().display().to_string();
+    (dir, path)
+}
+
+/// Stage G (multi-file): a cross-host (force-HTTP) `--cells N` GRAPH run over a
+/// DIRECTORY multi-shard `weka_trace` must ship EVERY shard the loader reads over
+/// the HTTP+zstd plane (one `served dataset source over HTTP` per shard), each cell
+/// reconstructs the whole directory from the manifest, and the merged record SET
+/// matches a 1-cell run over the same directory.
+///
+/// This exercises the follow-up multi-file trace-shipping path end-to-end through
+/// the Python frontend: a directory graph trace was previously fail-closed for a
+/// cross-host cellular run; now the controller enumerates the shard set, serves it
+/// plus a manifest, and the cells rebuild the tree. Same force-HTTP loopback seam as
+/// the single-file test (true multi-host k8s cannot run in-sandbox).
+#[tokio::test]
+async fn test_graph_cellular_directory_multi_file_dataset_shipping() {
+    // Flaky on macOS CI like the other artifact e2es; skip there.
+    if cfg!(target_os = "macos") {
+        return;
+    }
+
+    const SHARDS: usize = 6;
+    let (_fixture_guard, trace_dir) = write_weka_dir_fixture(SHARDS);
+
+    // Baseline: single-cell over the SAME directory (no controller, no shipping).
+    let h_base = AIPerfHarness::new().await;
+    let baseline = h_base.run_timeout(
+        &format!(
+            "--model Qwen3-0.6B --url {} --endpoint-type chat --input-file {trace_dir} \
+             --custom-dataset-type weka_trace --num-conversations 6 --concurrency 3 --cells 1 --random-seed 7 \
+             --ui simple",
+            h_base.mock.url
+        ),
+        120,
+    );
+    assert!(
+        baseline.success(),
+        "1-cell weka directory baseline failed (exit {}):\nstdout:\n{}\nstderr:\n{}",
+        baseline.exit_code,
+        baseline.stdout,
+        baseline.stderr
+    );
+    assert!(
+        dataset_serve_observables(&baseline).is_empty(),
+        "single-cell baseline must not serve any dataset over HTTP: {:?}",
+        dataset_serve_observables(&baseline)
+    );
+    assert!(
+        baseline.artifacts.request_count() > 0.0,
+        "1-cell weka directory baseline must dispatch records"
+    );
+
+    // Forced multi-process HTTP shipping: 3 cells fetch the manifest and every shard
+    // of the directory trace from the controller's loopback server over zstd, then
+    // each recompiles the reconstructed directory.
+    let h_cell = AIPerfHarness::new().await;
+    let cellular = h_cell.run_env(
+        &format!(
+            "--model Qwen3-0.6B --url {} --endpoint-type chat --input-file {trace_dir} \
+             --custom-dataset-type weka_trace --num-conversations 6 --concurrency 3 --cells 3 --random-seed 7 \
+             --ui simple",
+            h_cell.mock.url
+        ),
+        &[
+            ("AIPERF_RUNNER_LOG", "warn,aiperf_cellular_artifact=info"),
+            ("AIPERF_CELL_ARTIFACT_HTTP_FORCE", "1"),
+        ],
+    );
+    assert!(
+        cellular.success(),
+        "forced-HTTP 3-cell weka directory ship run failed (exit {}):\nstdout:\n{}\nstderr:\n{}",
+        cellular.exit_code,
+        cellular.stdout,
+        cellular.stderr
+    );
+
+    // Topology guard: the multi-cell run went through the controller.
+    assert!(
+        cellular
+            .artifacts
+            .find_file("**/cellular-heartbeat.json")
+            .is_some(),
+        "weka directory --cells 3 must go through the controller (cellular-heartbeat.json sidecar)"
+    );
+
+    // --- THE MULTI-FILE HTTP+zstd SHIP PROOF --------------------------------------
+    // Every shard must be served over HTTP+zstd, and enough serves to cover the whole
+    // shard set across cells (3 cells x 6 shards, minus any empty-slice cells). Assert
+    // at least one serve per distinct shard name so no shard was under-shipped.
+    let observables = dataset_serve_observables(&cellular);
+    assert!(
+        !observables.is_empty(),
+        "no dataset-serve observable — the directory trace did not go over HTTP. Log tail:\n{}",
+        aiperf_log(&cellular)
+            .lines()
+            .rev()
+            .take(40)
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    for line in &observables {
+        assert!(
+            line.contains("content_encoding=\"zstd\"") || line.contains("content_encoding=zstd"),
+            "directory dataset-serve observable is not zstd-encoded: {line}"
+        );
+    }
+    for i in 0..SHARDS {
+        let shard = format!("shard-{i:03}.json");
+        assert!(
+            observables.iter().any(|l| l.contains(&shard)),
+            "shard {shard} was never served over HTTP (shipped set != loader read set). Serves:\n{}",
+            observables.join("\n")
+        );
+    }
+    eprintln!(
+        "multi-file HTTP+zstd weka directory shipping observed: {} serve(s):\n{}",
+        observables.len(),
+        observables.join("\n")
+    );
+
+    // --- RECORD-SET PARITY vs the 1-cell baseline over the shipped directory ------
+    assert_eq!(
+        cellular.artifacts.request_count() as u64,
+        baseline.artifacts.request_count() as u64,
+        "HTTP-shipped 3-cell weka directory run must dispatch the same total record count as 1-cell"
+    );
+    let cell_isl = &cellular.artifacts.json()["input_sequence_length"];
+    let base_isl = &baseline.artifacts.json()["input_sequence_length"];
+    assert!(
+        !base_isl.is_null(),
+        "baseline must report input_sequence_length"
+    );
+    assert_eq!(
+        cell_isl, base_isl,
+        "HTTP-shipped 3-cell weka directory run must reproduce the 1-cell input-token \
+         distribution: 1-cell={base_isl} 3-cell={cell_isl}"
+    );
+    let base_osl = &baseline.artifacts.json()["output_sequence_length"];
+    let cell_osl = &cellular.artifacts.json()["output_sequence_length"];
+    assert_eq!(
+        cell_osl, base_osl,
+        "HTTP-shipped 3-cell weka directory run must reproduce the 1-cell output-token \
+         distribution: 1-cell={base_osl} 3-cell={cell_osl}"
+    );
+}
+
 /// The full text of the run's `logs/aiperf.log` (empty if absent).
 fn aiperf_log(r: &RunResult) -> String {
     match r.artifacts.find_file("**/aiperf.log") {
