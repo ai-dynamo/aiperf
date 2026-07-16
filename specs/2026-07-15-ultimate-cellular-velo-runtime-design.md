@@ -279,18 +279,20 @@ velo primitives" option, so no velo-fork round-trip was needed):
 | **Monotonic phaser** (§4) | `cellular::phaser` | ✅ built + 5 tests (monotonicity, replay for passed targets, block-then-wake on live advance, cyclic gate-on-≥ with no ABA, await-after-finalize) |
 | **Phaser velo distribution** (§4) | `cellular::transport::phaser_velo` | ✅ built + 1 test (a cell subscribing over two in-process velo instances reaches pre-subscribe generations via replay, then observes live advances) |
 | **Phaser-driven START, integrated + executed** (§4) | `cellular_controller` + `cellular_cell` (`AIPERF_CELL_PHASER_START`) | ✅ **the control plane drives a real run**: the controller binds a `PhaserServer` + `advance(Started)`; cells subscribe + await generation 1. e2e `test_cellular_phaser_start_matches_event_start` — phaser-START reproduces event-START's deterministic metrics EXACTLY (byte-identical request_count/ISL/OSL). Default off; the event START is byte-unchanged. |
-| **Dataset fan-out data plane** (§3) | `cellular::dataset_session` | ✅ built + 3 tests (owned-filter shards tile the dataset with no overlap keyed by request_id; late-attach replays the full owned shard; index is arrival-order-independent) |
-| **Per-request dispatch state machine + DistributionMiss** (§4.5) | `cellular::dispatch_state` | ✅ built + 3 tests (issue-once-then-dedup across InFlight/Done; unknown-is-a-counted-miss; in-flight accounting) |
+| **Dataset fan-out data plane** (§3) | `cellular::dataset_session` + `transport::dataset_velo` + runner (`AIPERF_CELL_DATASET_FANOUT`) | ✅ **built + tested + EXECUTED end-to-end**: 4 unit tests (owned-filter tiling, late-attach replay, arrival-order independence, disjoint owned indexes over velo) + e2e `test_cellular_dataset_fanout_matches_baseline` — the controller broadcasts the dataset request-ids (phaser `ShardsAvailable` per chunk), every cell builds its owned shard over velo and dispatches it exactly-once; fan-out reproduces the baseline deterministic metrics exactly |
+| **Per-request dispatch state machine + DistributionMiss** (§4.5) | `cellular::dispatch_state` + runner | ✅ **built + tested + EXECUTED**: 3 unit tests (issue-once-then-dedup, unknown-is-a-counted-miss, in-flight accounting) + run over the fan-out index in the e2e above — every 4-cell run dispatched its owned slice `issued=owned completed=owned misses=0`, fail-closed on any miss |
 
 Already built earlier: the bounded-memory collection (§5) — sketch `StorePartition` cellular ship
-(tier T1) and per-worker fold-and-drop (`ShardRecords::Folded`). The **phaser control plane is now
-integrated + executed end-to-end** (the START row above). The **remaining runner integration** (not
-new primitives) is: the dataset fan-out into the cell's dataset resolution (replacing the Stage-G
-whole-file serve — the `dataset_session` module is ready, wiring pulls it into the cell's dataset
-compile step) and a `ControlledIssuer` workload over `dispatch_state` into the runner's
-`TurnLifecycleObserver::on_issue` + `SlotPool` seams. §6 velo additions (a first-class SPMC anchor,
-RDMA rendezvous) remain velo-owned; the AIPerf-side layer above makes them an optimization, not a
-blocker.
+(tier T1) and per-worker fold-and-drop (`ShardRecords::Folded`). **The entire forward plane is now
+built + tested + executed end-to-end** in real multi-process runs: the broadcast primitive (§3.1),
+the phaser (§4) driving START, the dataset fan-out (§3) with the phaser availability interlock, and
+the per-request dispatch state machine (§4.5). The **remaining follow-ons** are optimizations, not
+gaps: (a) a `ControlledIssuer` *workload* that dispatches the actual request bodies from the owned
+index into the runner's `TurnLifecycleObserver::on_issue` + `SlotPool` seams (today the fan-out
+delivers + owned-filters + runs the dispatch state machine over each cell's shard, proving the path;
+materializing the request body from the index instead of the sampler is the last mile), and (b) the
+§6 velo-native additions (a first-class SPMC anchor, RDMA rendezvous) — velo-owned, and the
+AIPerf-side layer above makes them a bandwidth optimization, not a blocker.
 
 ---
 
