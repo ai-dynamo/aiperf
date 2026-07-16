@@ -8,7 +8,7 @@
 //! outcome. A single run is a degenerate one-cell sweep. A YAML `--config` with a
 //! `sweep:` block expands to a native sweep; otherwise it is one run.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::model::{Operation, RunnerRequest};
 use crate::search_history::{HistoryConfig, IterationRecord};
@@ -239,46 +239,15 @@ fn run_recipe_sweep(
     });
     let code = run_cells(flags, &cells, true, IterationOrder::Repeated)?;
 
-    // Optional post-process (e.g. the SLA-breach knee): runs after the sweep
-    // aggregate lands so it can read the per-combination metrics back off disk.
-    if let (Some(spec), Some(base)) = (recipe.post_process.as_ref(), base.as_ref())
-        && let Err(e) = write_sla_breach(base, spec)
+    // Optional post-process (SLA-breach knee / degradation knee / TTFT curve /
+    // ITL surface): runs after the sweep aggregate lands so it can read the
+    // per-combination metrics back off disk.
+    if let (Some(pp), Some(base)) = (recipe.post_process.as_ref(), base.as_ref())
+        && let Err(e) = crate::search::run_post_process(base, pp)
     {
-        tracing::warn!("failed to write sla_breach.json: {e}");
+        tracing::warn!("failed to write recipe post-process artifact: {e}");
     }
     Ok(code)
-}
-
-/// Locate the sweep-aggregate directory under `base` (single-trial
-/// `<base>/sweep_aggregate`, or REPEATED multi-trial `<base>/aggregate/sweep_aggregate`).
-fn find_sweep_aggregate_dir(base: &Path) -> Option<PathBuf> {
-    for cand in [
-        base.join("sweep_aggregate"),
-        base.join("aggregate").join("sweep_aggregate"),
-    ] {
-        if cand.join("profile_export_aiperf_sweep.json").exists() {
-            return Some(cand);
-        }
-    }
-    None
-}
-
-/// Run the `sla_breach_knee` handler over the sweep aggregate and write
-/// `sla_breach.json` beside it (GAP 2A/2B).
-fn write_sla_breach(base: &Path, spec: &crate::search::SlaBreachSpec) -> anyhow::Result<()> {
-    let dir = find_sweep_aggregate_dir(base).ok_or_else(|| {
-        anyhow::anyhow!(
-            "no sweep_aggregate/profile_export_aiperf_sweep.json under {}",
-            base.display()
-        )
-    })?;
-    let bytes = std::fs::read(dir.join("profile_export_aiperf_sweep.json"))?;
-    let sweep_json: serde_json::Value = serde_json::from_slice(&bytes)?;
-    let breach = crate::search::sla_breach::process(&sweep_json, &spec.swept_param, &spec.filters);
-    let out_path = dir.join("sla_breach.json");
-    std::fs::write(&out_path, serde_json::to_string_pretty(&breach)?)?;
-    tracing::info!("SLA-breach knee written to: {}", out_path.display());
-    Ok(())
 }
 
 /// Drive the dynamic monotonic SLA-saturation search (`max-concurrency-under-sla
