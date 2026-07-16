@@ -30,7 +30,7 @@ use aiperf_runtime::extensions::BuiltinAIPerfRegistryFactory;
 use aiperf_runtime::graph::errors::TraceError;
 use aiperf_runtime::graph::execution::TracePlacement;
 use aiperf_runtime::graph::placement::{GraphPlacementError, TracePlacementFactory};
-use aiperf_runtime::http::{MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor};
+use aiperf_runtime::transport::http::{MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor};
 use aiperf_runtime::metrics_core::InferenceDimensions;
 use aiperf_runtime::multiturn::TurnToSend;
 use anyhow::{Result, anyhow};

@@ -7,7 +7,7 @@
 //! exactly as the runner classifies it.
 //!
 //! These exercise the runner's error-absorption path
-//! (`aiperf_runtime::http::absorb_transport_error`, `rust/aiperf/src/http.rs:1062`),
+//! (`aiperf_runtime::transport::http::absorb_transport_error`, `rust/aiperf/src/http.rs:1062`),
 //! which keys off the transport's status code + `ErrorKind`. The raw-record
 //! `status` / `error` fields come from `aiperf_runtime::engine::records`
 //! (`raw_record_row`, `rust/aiperf/src/engine/records.rs:928`):

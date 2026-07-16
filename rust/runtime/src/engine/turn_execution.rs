@@ -23,7 +23,7 @@ use std::thread::JoinHandle;
 
 use crate::clock::{Clock, RealClock, RealClockAnchor};
 use crate::endpoints::{ParsedResponse, PreparedEndpointTable};
-use crate::http::{
+use crate::transport::http::{
     DispatchResult, MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor, TransportSink,
     TransportSinkConfig,
 };
@@ -929,7 +929,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use crate::endpoints::{EndpointId, EndpointKey, EndpointRegistry, RawEndpointConfig};
-    use crate::http::{PreparedHttpEndpoint, Request};
+    use crate::transport::http::{PreparedHttpEndpoint, Request};
     use crate::metrics::RequestMetricMetadata;
     use crate::multiturn::PreparedEndpointReference;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};

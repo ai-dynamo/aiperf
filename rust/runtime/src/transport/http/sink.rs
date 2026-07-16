@@ -1561,7 +1561,7 @@ mod tests {
         fn assert_dispatcher<T: Dispatcher>() {}
         assert_dispatcher::<TransportSink>();
         #[cfg(feature = "grpc")]
-        assert_dispatcher::<crate::grpc::GrpcTransportSink>();
+        assert_dispatcher::<crate::transport::grpc::GrpcTransportSink>();
         fn _takes_dyn(_: &dyn Dispatcher) {}
     }
 

@@ -35,7 +35,7 @@ use crate::multiturn::ConversationSource;
 
 /// A prepared-endpoint table holding the builtin streaming `chat` endpoint at
 /// key 0, matching the endpoint the synthetic/native sources bind. Attach it to
-/// a dispatching [`crate::http::TransportSink`] via `with_prepared_endpoints` so
+/// a dispatching [`crate::transport::http::TransportSink`] via `with_prepared_endpoints` so
 /// prepared turns resolve their dense endpoint key.
 pub fn chat_dispatch_table() -> std::rc::Rc<crate::endpoints::PreparedEndpointTable> {
     use crate::endpoints::{

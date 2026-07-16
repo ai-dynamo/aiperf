@@ -12,7 +12,7 @@
 //! the entire native scheduled/graph runtime — pacing, [`crate::scheduled`]
 //! admission, phase orchestration, the metrics accumulator, and the whole export
 //! plane — unchanged. Only the leaf that would open a socket is swapped: instead
-//! of [`crate::http::TransportSink`], the run drives [`FakeRequestExecutor`],
+//! of [`crate::transport::http::TransportSink`], the run drives [`FakeRequestExecutor`],
 //! which synthesizes each request's timing analytically and drives the same
 //! [`NativeMetricsObserver`] the real HTTP path drives.
 //!
@@ -27,7 +27,7 @@
 //! given analytic `ttft_ms`/`itl_ms`, the fake dispatch begins at the request's
 //! scheduled arrival and emits `OSL` synthetic output tokens spaced by `itl_ms`
 //! after an initial `ttft_ms`. The exact observer event sequence mirrors
-//! [`crate::http::TransportSink::dispatch_measured`]: `register_metadata` →
+//! [`crate::transport::http::TransportSink::dispatch_measured`]: `register_metadata` →
 //! `on_arrival` → `OSL`× `on_token` → `on_usage` → `on_terminal` →
 //! `record_response`. Downstream, TTFT = `first_token − start = ttft_ms`, ITL =
 //! `itl_ms`, and `request_latency = ttft_ms + (OSL−1)·itl_ms`, all exact under a
@@ -80,7 +80,7 @@ use crate::engine::registry::{
 };
 use crate::engine::turn_execution::{ExecutionBackendConfig, RequestExecutorFactory};
 use crate::extensions::AIPerfRegistry;
-use crate::http::{
+use crate::transport::http::{
     DispatchResult, MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor,
 };
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata};
@@ -719,7 +719,7 @@ mod tests {
     use super::*;
     use crate::clock::{RealClock, RealClockAnchor};
     use crate::endpoints::{EndpointId, EndpointKey};
-    use crate::http::{PreparedHttpEndpoint, Request, TransportSinkConfig};
+    use crate::transport::http::{PreparedHttpEndpoint, Request, TransportSinkConfig};
     use crate::multiturn::{PreparedEndpointReference, TurnDataPolicy};
 
     /// All-zero analytic params (no base latency, no scaling, no jitter) to build

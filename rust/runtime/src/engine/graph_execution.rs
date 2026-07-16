@@ -34,7 +34,7 @@ use crate::graph::policy::{
 };
 use crate::graph::sink::{GraphDispatchOptions, GraphReply, GraphSink};
 use crate::graph::wire::OpenAiChatMessage;
-use crate::http::{
+use crate::transport::http::{
     Dispatcher, PreparedEndpointReference, PreparedHttpEndpoint, PreparedTurn, Request,
     TransportSink, TransportSinkConfig,
 };

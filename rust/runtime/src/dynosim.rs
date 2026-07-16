@@ -77,7 +77,7 @@ use crate::ancillary::AncillaryTimingConfig;
 use crate::fixed_schedule::{
     DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload,
 };
-use crate::http::{HttpDispatchResult, HttpRequestDispatcher, Request};
+use crate::transport::http::{HttpDispatchResult, HttpRequestDispatcher, Request};
 use crate::metrics::{
     NativeMetricsObserver, NativeResponseMetadata, ObserverTee, RequestMetricMetadata,
 };

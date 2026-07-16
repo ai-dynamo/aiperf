@@ -30,9 +30,6 @@ pub mod dynosim;
 pub mod export;
 pub mod failure;
 pub mod fixed_schedule;
-#[cfg(feature = "grpc")]
-pub mod grpc;
-pub mod http;
 pub mod metrics;
 pub mod multiturn;
 pub mod phase_runtime;

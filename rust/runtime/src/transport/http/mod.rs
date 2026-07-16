@@ -14,7 +14,9 @@
 pub mod client;
 pub mod config;
 pub mod models;
+pub mod sink;
 pub mod sse;
 pub mod transport;
 
 pub use crate::clock::{Clock, RealClock, SimClock};
+pub use sink::*;

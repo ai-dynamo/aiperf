@@ -13,6 +13,8 @@ pub mod binding;
 pub mod codec;
 pub mod models;
 pub mod proto;
+#[cfg(feature = "grpc")]
+pub mod sink;
 mod raw_codec;
 mod riva_binding;
 mod riva_codec;
@@ -40,3 +42,5 @@ pub use riva_binding::{
     RivaTtsGrpcBindingFactory,
 };
 pub use transport::{GrpcTransport, GrpcTransportError, grpc_status_to_http};
+#[cfg(feature = "grpc")]
+pub use sink::*;

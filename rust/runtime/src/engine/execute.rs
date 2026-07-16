@@ -48,7 +48,7 @@ use crate::fixed_schedule::{
     DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload,
 };
 use crate::graph::input::GraphInputBundle;
-use crate::http::{
+use crate::transport::http::{
     MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor, TransportSinkConfig,
 };
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};

@@ -16,8 +16,8 @@ use std::sync::Arc;
 
 use crate::clock::Clock;
 use crate::endpoints::PreparedEndpointTable;
-use crate::grpc::{GrpcTransportSink, GrpcTransportSinkConfig};
-use crate::http::{
+use crate::transport::grpc::{GrpcTransportSink, GrpcTransportSinkConfig};
+use crate::transport::http::{
     DispatchResult, MeasuredContext, PreparedTurn, RequestExecutor, TransportSinkConfig,
 };
 use crate::metrics::NativeMetricsObserver;
@@ -165,7 +165,7 @@ fn prepare_grpc_sink(
     start_ns: i64,
     base_urls: &[String],
     model: String,
-    transport: crate::http::TransportSinkConfig,
+    transport: crate::transport::http::TransportSinkConfig,
     prepared_endpoints: Option<&dyn PreparedEndpointTableFactory>,
     bindings: GrpcBindingRegistry,
 ) -> Result<GrpcTransportSink> {
@@ -193,13 +193,13 @@ fn prepare_grpc_sink(
 /// factory (which owns its `PreparedEndpointTable` directly). Keeping one core
 /// keeps the gRPC client/reuse/session mapping in a single place.
 ///
-/// [`TransportSinkConfig`]: crate::http::TransportSinkConfig
+/// [`TransportSinkConfig`]: crate::transport::http::TransportSinkConfig
 pub(crate) fn grpc_sink_with_endpoints(
     clock: Rc<dyn Clock>,
     start_ns: i64,
     base_urls: &[String],
     model: String,
-    transport: crate::http::TransportSinkConfig,
+    transport: crate::transport::http::TransportSinkConfig,
     bindings: GrpcBindingRegistry,
     endpoints: Rc<PreparedEndpointTable>,
 ) -> Result<GrpcTransportSink> {

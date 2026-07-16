@@ -37,7 +37,7 @@ use loadgen_core::sink::{
 };
 use uuid::Uuid;
 
-use crate::http::{
+use crate::transport::http::{
     DispatchResult, Dispatcher, MeasuredContext, MeasuredOutcome, PreparedHttpEndpoint,
     PreparedTurn, Request, RequestExecutor,
 };
@@ -221,7 +221,7 @@ impl GrpcTransportSink {
     /// prepared gRPC turn into it, and record the terminal transport facts — the
     /// gRPC twin of [`TransportSink::dispatch_measured`].
     ///
-    /// [`TransportSink::dispatch_measured`]: crate::http::TransportSink::dispatch_measured
+    /// [`TransportSink::dispatch_measured`]: crate::transport::http::TransportSink::dispatch_measured
     pub async fn dispatch_measured(
         &self,
         observer: &NativeMetricsObserver,
