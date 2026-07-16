@@ -799,9 +799,11 @@ class TestBuildDefaultResolverChain:
     def test_returns_chain_with_all_resolvers(self):
         chain = build_default_resolver_chain()
         assert isinstance(chain, ConfigResolverChain)
-        assert len(chain._resolvers) == 6
+        assert len(chain._resolvers) == 7
 
     def test_resolver_order(self):
+        from aiperf.config.resolution.resolvers import ScenarioResolver
+
         chain = build_default_resolver_chain()
         types = [type(r) for r in chain._resolvers]
         assert types == [
@@ -810,6 +812,7 @@ class TestBuildDefaultResolverChain:
             GpuMetricsResolver,
             CommConfigResolver,
             DatasetResolver,
+            ScenarioResolver,
             TimingResolver,
         ]
 

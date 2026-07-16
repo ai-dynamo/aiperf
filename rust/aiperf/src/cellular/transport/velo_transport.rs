@@ -29,8 +29,9 @@ use tokio::sync::mpsc;
 use velo::{Context, EventHandle, Handler, PeerInfo, Velo};
 
 use super::{
-    CellAck, CellClient, CellMessage, CellPartitionShip, CellRegister, CellTransportError,
-    ControllerTransport, HANDLER_HEARTBEAT, HANDLER_PARTITION, HANDLER_REGISTER,
+    CellAck, CellClient, CellMessage, CellPartitionShip, CellRegister, CellStorePartitionShip,
+    CellTransportError, ControllerTransport, HANDLER_HEARTBEAT, HANDLER_PARTITION,
+    HANDLER_REGISTER, HANDLER_STORE_PARTITION,
 };
 
 /// Supplies each cell's serialized (`rmp`) `CellLaunchSpec` by `cell_id`, or
@@ -153,7 +154,7 @@ impl VeloControllerTransport {
         .map_err(io)?;
 
         // partition (unary): push the decoded partition, reply with an ack.
-        let partition_sender = sender;
+        let partition_sender = sender.clone();
         velo.register_handler(
             Handler::unary_handler_async(HANDLER_PARTITION, move |ctx: Context| {
                 let sender = partition_sender.clone();
@@ -172,6 +173,34 @@ impl VeloControllerTransport {
                         .await;
                     let ack = rmp_serde::to_vec(&CellAck { ok: true })
                         .map_err(|error| anyhow::anyhow!("encode ack: {error}"))?;
+                    Ok(Some(Bytes::from(ack)))
+                }
+            })
+            .build(),
+        )
+        .map_err(io)?;
+
+        // store_partition (unary): the Stage-C exact-fold sibling of `partition` — push
+        // the decoded folded column-store partition, reply with an ack.
+        let store_partition_sender = sender;
+        velo.register_handler(
+            Handler::unary_handler_async(HANDLER_STORE_PARTITION, move |ctx: Context| {
+                let sender = store_partition_sender.clone();
+                async move {
+                    let ship: CellStorePartitionShip = rmp_serde::from_slice(&ctx.payload)
+                        .map_err(|error| anyhow::anyhow!("decode store partition ship: {error}"))?;
+                    // The cell ships from a fresh velo instance the controller has
+                    // not seen; register it so the ack routes back.
+                    let peer: PeerInfo = rmp_serde::from_slice(&ship.cell_peer)
+                        .map_err(|error| anyhow::anyhow!("decode store ship peer: {error}"))?;
+                    ctx.msg
+                        .register_peer(peer)
+                        .map_err(|error| anyhow::anyhow!("register_peer store shipper: {error}"))?;
+                    let _ = sender
+                        .send(Ok(CellMessage::StorePartition(Box::new(ship.partition))))
+                        .await;
+                    let ack = rmp_serde::to_vec(&CellAck { ok: true })
+                        .map_err(|error| anyhow::anyhow!("encode store ack: {error}"))?;
                     Ok(Some(Bytes::from(ack)))
                 }
             })
@@ -289,6 +318,29 @@ impl CellClient for VeloCellClient {
                     ));
                 }
             }
+            CellMessage::StorePartition(partition) => {
+                // Same unary+ack+peer path as `Partition`, over the store handler.
+                let ship = CellStorePartitionShip {
+                    cell_peer: rmp_serde::to_vec(&self.velo.peer_info()).map_err(encode)?,
+                    partition: (**partition).clone(),
+                };
+                let body = rmp_serde::to_vec(&ship).map_err(encode)?;
+                let reply: Bytes = self
+                    .velo
+                    .unary(HANDLER_STORE_PARTITION)
+                    .map_err(io)?
+                    .raw_payload(Bytes::from(body))
+                    .instance(self.controller.instance_id())
+                    .send()
+                    .await
+                    .map_err(io)?;
+                let ack: CellAck = rmp_serde::from_slice(&reply).map_err(decode)?;
+                if !ack.ok {
+                    return Err(CellTransportError::Io(
+                        "controller nacked store partition".to_owned(),
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -365,6 +417,9 @@ mod tests {
                     assert_eq!(partition.len(), 1);
                     partitions += 1;
                 }
+                CellMessage::StorePartition(partition) => {
+                    panic!("this test ships a records partition, not a store: {partition:?}");
+                }
             }
         }
         assert_eq!((heartbeats, partitions), (1, 1));
@@ -406,6 +461,56 @@ mod tests {
         match controller.recv().await.expect("recv").expect("some") {
             CellMessage::Partition(partition) => assert_eq!(partition.len(), 1),
             other => panic!("expected partition, got {other:?}"),
+        }
+    }
+
+    /// Stage C: a metrics-only cell ships a folded `StorePartition` over the new
+    /// store handler; the controller decodes it, acks, and surfaces it on the merged
+    /// stream. Proves the wire path (`CellMessage::StorePartition` → rmp raw payload →
+    /// `HANDLER_STORE_PARTITION` → ack) works over real velo, preserving the store's
+    /// record count for the append-merge.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cell_ships_folded_store_partition() {
+        use crate::cellular::shard::ColumnStorePartition;
+        use crate::metrics_core::accumulator::MetricsAccumulator;
+
+        let controller_velo = build_velo(BindSpec::TcpLoopback)
+            .await
+            .expect("controller velo");
+        let controller_peer = controller_velo.peer_info();
+        let start = controller_velo
+            .event_manager()
+            .new_event()
+            .expect("start event");
+        let start_handle = start.handle();
+        let spec_for: SpecFor = Arc::new(|_| Some(vec![7_u8]));
+        let mut controller =
+            VeloControllerTransport::bind_controller(controller_velo, spec_for, 1, start_handle)
+                .expect("bind");
+
+        // A folded store: a handful of completed records processed into an accumulator.
+        let mut accumulator = MetricsAccumulator::new();
+        for idx in 0..5u64 {
+            let mut record =
+                RecordIngest::minimal(1_000 + idx as i64 * 10, 5_000, Phase::Profiling);
+            record.request_index = None;
+            accumulator.process_record(&record);
+        }
+        let partition = ColumnStorePartition::from_accumulator(4, &accumulator);
+
+        let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
+        let mut cell = VeloCellClient::connect(cell_velo, controller_peer).expect("connect");
+        cell.register(0).await.expect("register");
+        cell.send(&CellMessage::StorePartition(Box::new(partition)))
+            .await
+            .expect("ship folded store");
+
+        match controller.recv().await.expect("recv").expect("some") {
+            CellMessage::StorePartition(partition) => {
+                assert_eq!(partition.cell_id(), 4);
+                assert_eq!(partition.record_count(), 5);
+            }
+            other => panic!("expected store partition, got {other:?}"),
         }
     }
 

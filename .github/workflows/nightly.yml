@@ -525,8 +525,7 @@ jobs:
       # source files that look up the dist version) are rewritten. Lets users
       # `pip install aiperf-nightly` without colliding with the stable
       # `aiperf` distribution name.
-      - name: Generate aiperf-nightly wheel variant (amd64 only)
-        if: matrix.arch == 'amd64'
+      - name: Generate aiperf-nightly wheel variant
         run: |
           set -euo pipefail
           ORIG=$(find dist/ -maxdepth 1 -name "aiperf-*.whl" -type f | head -1)
@@ -547,8 +546,7 @@ jobs:
       # `version("aiperf")` literal in `src/aiperf/__init__.py` must have
       # been rewritten to `version("aiperf-nightly")` for __version__ to
       # resolve under the renamed distribution.
-      - name: Validate wheels (amd64 only)
-        if: matrix.arch == 'amd64'
+      - name: Validate wheels
         env:
           EXPECTED_VERSION: ${{ needs.prepare-nightly.outputs.wheel_version }}
         run: |
@@ -595,8 +593,7 @@ jobs:
       # stage-nightly-{wheel,container}, trigger-gitlab-nightly-pipeline) via
       # their `needs:` chain. The existing `unit-tests` job stays
       # advisory; this gate sits inside the publish path.
-      - name: Run unit tests against installed nightly wheel (amd64 only)
-        if: matrix.arch == 'amd64'
+      - name: Run unit tests against installed nightly wheel
         run: |
           set -euo pipefail
           NIGHTLY=$(find dist/ -maxdepth 1 -name "aiperf_nightly-*.whl" -type f | head -1)
@@ -629,8 +626,11 @@ jobs:
             -m 'not performance and not stress' \
             --tb=short
 
-      - name: Upload wheels to S3 (amd64 only)
-        if: matrix.arch == 'amd64'
+      # Per-arch: each native leg uploads its own platform-specific aiperf wheel
+      # (and its aiperf-nightly variant) to the shared prefix; pip resolves by
+      # platform tag. The aiperf wheel is no longer a universal py3-none-any built
+      # only on amd64.
+      - name: Upload wheels to S3
         env:
           S3_BUCKET:     ${{ secrets.S3_CI_WHEELS_BUCKET }}
           WHEEL_VERSION: ${{ needs.prepare-nightly.outputs.wheel_version }}

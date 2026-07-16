@@ -22,7 +22,16 @@
 //! references.
 
 pub mod application;
+// Cross-host (k8s) cellular per-record artifact shipping over HTTP + streaming
+// zstd (Stage E). Only reachable on the velo cellular path (it reuses the velo
+// controller's bootstrap/DNS addressing), and its zstd streaming core is gated on
+// the `zstd` dep the `velo` feature pulls in.
+#[cfg(feature = "velo")]
+pub mod artifact_shipping;
 pub mod cellular_cell;
+// Tier-T2 hierarchical merge: the aggregator role between cells and the controller.
+#[cfg(feature = "velo")]
+pub mod cellular_aggregator;
 // The controller orchestration (cell launch + velo transport + merge) is only
 // reachable with the `velo` feature; `owned_positions` (needed by the non-velo
 // sharded runtime) lives in `cell_launcher` instead.
@@ -55,6 +64,7 @@ pub mod records;
 pub mod redaction;
 pub mod registry;
 pub mod server_metrics;
+pub mod shard_artifacts;
 pub mod sharded_scheduled;
 pub mod sidecar_input;
 pub mod turn_execution;

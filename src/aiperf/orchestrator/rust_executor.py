@@ -121,8 +121,18 @@ class RustSubprocessExecutor(RunExecutor):
         side-effect-free projection reads ``run.resolved.gpu_custom_metrics``.
         Without it the custom metrics are scraped but silently dropped from the
         native report (see ``rust/aiperf/src/gpu_telemetry/accumulator.rs``).
+
+        Scenario application (``--scenario``) is the second pre-projection step.
+        The direct-pair refactor removed the resolver chain, so
+        ``ScenarioResolver`` never runs; without applying the lock here the
+        scenario's ``run.cfg`` mutations (force streaming, inject ignore_eos,
+        auto-fill the trajectory-start t* window and per-trace idle-gap cap)
+        would never reach the projection, leaving a weka replay running
+        non-streaming with a disabled t* window — the shape that deadlocks the
+        cache-pressure warmup. No-op when ``run.cfg.scenario`` is None.
         """
         self._resolve_gpu_custom_metrics(run)
+        self._apply_scenario_lock(run)
         authored = self.installation.project_authored_request(
             run,
             operation="execute",
@@ -142,6 +152,22 @@ class RustSubprocessExecutor(RunExecutor):
         from aiperf.config.resolution.resolvers import GpuMetricsResolver
 
         GpuMetricsResolver().resolve(run)
+
+    @staticmethod
+    def _apply_scenario_lock(run: BenchmarkRun) -> None:
+        """Apply the ``--scenario`` invariant lock into ``run.cfg`` / ``resolved``.
+
+        No-op unless ``run.cfg.scenario`` is set. The resolver chain that used
+        to run ``ScenarioResolver`` was removed by the direct-pair refactor, so
+        this is the sole point where the scenario's config mutations (streaming,
+        ignore_eos, trajectory-start window, idle-gap cap) are applied before
+        the side-effect-free authored-v2 projection reads ``run.cfg``. Raises
+        ``ScenarioLockError`` on an unresolved conflict unless
+        ``--unsafe-override`` downgrades violations to warnings.
+        """
+        from aiperf.common.scenario import apply_scenario
+
+        apply_scenario(run)
 
 
 def _forward_runner_stderr_line(raw: bytes) -> None:

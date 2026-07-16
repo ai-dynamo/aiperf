@@ -26,7 +26,7 @@ use tokio::process::Child;
 use crate::cellular::partition::{CELL_COUNT_ENV, CELL_ID_ENV};
 
 use crate::runner_protocol::cellular_cell::{
-    CELL_CONTROLLER_ADDR_ENV, CELL_PHASE_ORDINAL_BASES_ENV,
+    CELL_ARTIFACT_ADDR_ENV, CELL_CONTROLLER_ADDR_ENV, CELL_PHASE_ORDINAL_BASES_ENV,
 };
 
 /// Env var selecting the launcher: `local` (default) or `k8s`.
@@ -46,6 +46,20 @@ pub struct CellLaunchContext {
     /// [`CELL_PHASE_ORDINAL_BASES_ENV`] so a cell's issuer stamps
     /// single-cell-equivalent absolute slots (unchanged from the process launcher).
     pub phase_ordinal_bases: BTreeMap<String, u64>,
+    /// The controller's artifact upload `host:port` (Stage E), injected as
+    /// [`CELL_ARTIFACT_ADDR_ENV`] so a local-launched cell POSTs its per-record
+    /// artifact files there. `None` when HTTP artifact shipping is off or on the
+    /// same-host path (Stage D concatenates local writes instead of shipping).
+    pub artifact_authority: Option<String>,
+    /// Tier-T2 hierarchical merge: the number of aggregators, or `None` for the flat
+    /// star topology. When `Some(M)`, each cell is injected an
+    /// [`AIPERF_CELL_SHIP_ADDR`](crate::runner_protocol::cellular_cell::CELL_SHIP_ADDR_ENV)
+    /// pointing at its round-robin aggregator (`cell_id % M`) instead of shipping to
+    /// the controller.
+    pub aggregator_count: Option<u32>,
+    /// Base loopback port aggregators bind (`base + agg_id`); only read when
+    /// `aggregator_count` is `Some`.
+    pub aggregator_base_port: u16,
 }
 
 /// A started cell the controller watches for hard failure. For a local subprocess
@@ -112,6 +126,23 @@ impl LocalLauncher {
             .kill_on_drop(true);
         if let Ok(bases) = serde_json::to_string(&ctx.phase_ordinal_bases) {
             command.env(CELL_PHASE_ORDINAL_BASES_ENV, bases);
+        }
+        if let Some(authority) = &ctx.artifact_authority {
+            command.env(CELL_ARTIFACT_ADDR_ENV, authority);
+        }
+        // Tier-T2: ship this cell's terminal store to its round-robin aggregator rather
+        // than the controller. Only the ship target changes — the cell still fetches its
+        // envelope and awaits START from the controller — so the partition is unchanged.
+        if let Some(agg_count) = ctx.aggregator_count {
+            // Round-robin: cell k ships to aggregator `k % M` at `base + (k % M)`.
+            // Inlined (not the velo-gated `cellular_aggregator::ship_coordinate`) so
+            // this file still compiles without the `velo` feature, where
+            // `aggregator_count` is always `None` and this branch never runs.
+            let port = ctx.aggregator_base_port + (cell_id % agg_count) as u16;
+            command.env(
+                crate::runner_protocol::cellular_cell::CELL_SHIP_ADDR_ENV,
+                format!("tcp://127.0.0.1:{port}"),
+            );
         }
         command
     }
@@ -202,6 +233,9 @@ mod tests {
             cell_count: 2,
             controller_coordinate: "file:/tmp/controller-peer.rmp".to_owned(),
             phase_ordinal_bases: bases,
+            artifact_authority: Some("controller.local:9600".to_owned()),
+            aggregator_count: None,
+            aggregator_base_port: 9700,
         }
     }
 
@@ -222,6 +256,12 @@ mod tests {
             Some("file:/tmp/controller-peer.rmp")
         );
         assert!(envs.contains_key(CELL_PHASE_ORDINAL_BASES_ENV));
+        // Stage E: the controller's artifact upload authority is injected so the cell
+        // knows where to POST its per-record artifact files.
+        assert_eq!(
+            envs.get(CELL_ARTIFACT_ADDR_ENV).map(String::as_str),
+            Some("controller.local:9600")
+        );
     }
 
     #[test]

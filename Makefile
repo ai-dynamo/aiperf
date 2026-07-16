@@ -164,8 +164,14 @@ install-native: native-cli #? install the pure-Rust `aiperf` + runner side-by-si
 	@echo "  export PATH=\"$$(pwd)/dist/native-bin:$$PATH\""
 	@echo "Then: aiperf profile --model M --url 127.0.0.1:8000 --endpoint-type chat --concurrency 1,2,4 --request-count 100"
 
-bundle-runner: #? build the full-fat aiperf-runner and intern it at src/aiperf/_bin/ for packaging.
-	cargo build --release -p aiperf-runner
+# RUNNER_FEATURES selects the runner profile, mirroring the Dockerfile's
+# AIPERF_RUNNER_PROFILE knob. Default (empty) = full-fat crate defaults
+# (dynosim + parquet), which needs the sibling dynamo-aiperf-native checkout.
+# Online-only (no dynosim, no sibling):
+#   make bundle-runner RUNNER_FEATURES="--no-default-features --features parquet"
+RUNNER_FEATURES ?=
+bundle-runner: #? build the aiperf-runner (RUNNER_FEATURES-selectable) and intern it at src/aiperf/_bin/ for packaging.
+	cargo build --release -p aiperf-runner $(RUNNER_FEATURES)
 	mkdir -p src/aiperf/_bin
 	cp target/release/aiperf-runner src/aiperf/_bin/aiperf-runner
 	chmod +x src/aiperf/_bin/aiperf-runner

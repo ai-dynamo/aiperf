@@ -386,6 +386,14 @@ class ResolvedConfig(BaseModel):
         description="Pre-built ZMQ communication config. "
         "Avoids rebuilding in every service's CommunicationMixin.",
     )
+    scenario_outcome: Any = Field(
+        default=None,
+        description="Result of applying a named ``--scenario`` config-lock "
+        "(``aiperf.common.scenario.ScenarioOutcome``). Populated by the "
+        "ScenarioResolver step; None when no scenario was set. Typed ``Any`` to "
+        "avoid importing the scenario package (and its config-chain deps) at "
+        "plan-model import time.",
+    )
 
 
 class BenchmarkRun(BaseModel):

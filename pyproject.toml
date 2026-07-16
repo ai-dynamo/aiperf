@@ -153,45 +153,6 @@ botorch = [
 optuna = [
   "aiperf[botorch]",
 ]
-accuracy = [
-    # latex2sympy2-extended is co-resolved with lighteval (which pins
-    # ==1.0.6 for its math-verify integration). 1.0.6 ships the same
-    # ``latex2sympy`` API our math grader uses, so we accept the older
-    # version as long as it satisfies our import.
-    "latex2sympy2-extended>=1.0.6",
-    "lighteval>=0.13.0",
-    "sympy>=1.14.0",
-    # Qwen2.5-Math's canonical strip_string pipeline converts written
-    # numbers before symbolic comparison. This package is small and inactive,
-    # so keep it exact-pinned instead of accepting an unreviewed future build.
-    "word2number==1.1",
-    # deepeval is the upstream reference for the HellaSwag and
-    # BigBench-Hard benchmark prompt templates. Aiperf calls
-    # ``HellaSwagTemplate.generate_output`` (and
-    # ``BigBenchHardTemplate.generate_output`` on the BigBench branch)
-    # directly so prompts are byte-equal to what the trt-llm benchmark
-    # recipe ships.
-    "deepeval>=2.9.0,<5.0.0",
-]
-agentic-accuracy = [
-    # Harbor is the canonical task/environment/verifier substrate for terminal,
-    # code, and tool evaluations. Its 0.x APIs move quickly, so the worker
-    # imports only this exact release and records the fully hashed lock.
-    "harbor==0.18.0; python_version >= '3.12'",
-]
-browser-agentic-accuracy = [
-    # AgentLab plus BrowserGym owns canonical browser prompts, actions,
-    # environments, traces, and rewards. This is a separate lock because
-    # AgentLab 0.4.2 requires OpenAI <2 while Harbor's LiteLLM requires 2.x.
-    "agentlab==0.4.2; python_version >= '3.12' and python_version < '3.13'",
-    "browsergym==0.14.3; python_version >= '3.12'",
-]
-mcpmark-agentic-accuracy = [
-    # MCPMark Verified owns its task registry, MCP servers, environment setup,
-    # agent loop, and task-local verifiers. Pin the source archive by commit;
-    # the generated requirements lock additionally pins its archive SHA-256.
-    "MCPMark @ https://github.com/eval-sys/mcpmark/archive/cd45b7f57923b9b3985467f5139927575f83141c.tar.gz ; python_version >= '3.12' and python_version < '3.13'",
-]
 
 [dependency-groups]
 dev = [

@@ -47,7 +47,7 @@ dynamo-parity = ["dynamo-full"]
 # impls + the cell connection seam). In the default build; a lean
 # `--no-default-features` build drops it, keeps `cells=1` byte-unchanged, and fails
 # closed on `cells>1`.
-velo = ["dep:velo"]
+velo = ["dep:velo", "dep:zstd"]
 
 [lib]
 name = "aiperf"
@@ -89,7 +89,7 @@ smallvec.workspace = true
 tiktoken-rs.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
-velo = { git = "https://github.com/ai-dynamo/velo.git", tag = "v0.5.0", default-features = false, optional = true }
+velo = { git = "https://github.com/ajcasagrande/velo.git", branch = "feat/connect-by-endpoint", default-features = false, optional = true }
 tonic.workspace = true
 tracing.workspace = true
 uuid.workspace = true
@@ -113,6 +113,12 @@ rmp-serde = "1"
 rustls = "0.23"
 socket2 = "0.5"
 tempfile = "3"
+# Streaming zstd for cross-host cellular per-record artifact shipping (velo path).
+# Already linked transitively by `parquet` (its `zstd` feature); declared directly
+# so the streaming compress/decompress artifact-shipping module can `use zstd`
+# WITHOUT the `parquet` feature (a lite runner ships artifacts too). Enabled by the
+# `velo` feature (the only path that ships bytes cross-host).
+zstd = { version = "0.13", optional = true }
 tokio-rustls = "0.26"
 tokio-stream = "0.1"
 tower-http = { version = "0.6", features = ["fs"] }

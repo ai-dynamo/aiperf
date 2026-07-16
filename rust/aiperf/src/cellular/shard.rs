@@ -720,6 +720,217 @@ mod tests {
         assert_eq!(first.record_count(), 20);
     }
 
+    #[test]
+    fn sketch_store_partitions_merge_matches_single_sketch_and_carry_the_count() {
+        use crate::metrics_core::MetricsStorageMode;
+        // Step 1 (tier T1): a sketch cell folds every record into a bounded t-digest
+        // STORE that retains no rows, then ships it (the same `ColumnStorePartition`
+        // wire form exact-fold uses). The controller merges N of them associatively.
+        // Counts/sums/min/max stay exact; percentiles are t-digest-approximate; and the
+        // true record total travels WITH the store — a sketch store's `record_count()`
+        // is 0, so `ingested_count()` is the only surviving total across ship+merge.
+        let sketch_cfg = || MetricsConfig {
+            storage_mode: MetricsStorageMode::Sketch { compression: 100.0 },
+            ..MetricsConfig::default()
+        };
+        let records: Vec<_> = (0..30).map(record).collect();
+
+        // Baseline: a single sketch over every record.
+        let mut single = MetricsAccumulator::with_config(sketch_cfg());
+        for r in &records {
+            single.process_record(r);
+        }
+
+        // Three cells, each folding a disjoint round-robin third into its own sketch,
+        // shipped through the msgpack wire form exactly as a cell ships to the controller.
+        let mut partitions = Vec::new();
+        for cell in 0..3u32 {
+            let mut acc = MetricsAccumulator::with_config(sketch_cfg());
+            for (idx, r) in records.iter().enumerate() {
+                if idx as u32 % 3 == cell {
+                    acc.process_record(r);
+                }
+            }
+            // The store folded-and-cleared every row; only the counter survives.
+            assert_eq!(acc.record_count(), 0, "a sketch store retains no rows");
+            assert_eq!(
+                acc.ingested_count(),
+                10,
+                "per-cell fold count survives the clear"
+            );
+            let bytes = ColumnStorePartition::from_accumulator(cell, &acc)
+                .to_bytes()
+                .expect("encode");
+            partitions.push(ColumnStorePartition::from_bytes(&bytes).expect("decode"));
+        }
+
+        let merged = merge_store_partitions(sketch_cfg(), partitions);
+
+        // The true total survives fold-and-clear + serialize + associative merge, even
+        // though the merged store retains no rows (this is what the controller's outcome
+        // `record_count` now reads via `ingested_count`).
+        assert_eq!(merged.record_count(), 0);
+        assert_eq!(merged.ingested_count(), 30);
+
+        let single_sum = single.summarize();
+        let merged_sum = merged.summarize();
+        assert_eq!(
+            merged_sum.finite_value(MetricTag::RequestCount),
+            single_sum.finite_value(MetricTag::RequestCount),
+            "request count is exact across the sketch merge",
+        );
+        let single_lat = single_sum
+            .result(MetricTag::RequestLatency)
+            .unwrap()
+            .distribution()
+            .unwrap();
+        let merged_lat = merged_sum
+            .result(MetricTag::RequestLatency)
+            .unwrap()
+            .distribution()
+            .unwrap();
+        // Exact: count, min, max (t-digest anchors the extrema exactly).
+        assert_eq!(merged_lat.count, single_lat.count);
+        assert_eq!(merged_lat.min, single_lat.min);
+        assert_eq!(merged_lat.max, single_lat.max);
+        // Within a few ULPs: the sum/avg (reordered Welford combine on the merge).
+        if let (Some(m), Some(s)) = (merged_lat.sum.as_f64(), single_lat.sum.as_f64()) {
+            rel_close_f64(m, s, "sketch merge latency sum");
+        }
+        if let (Some(m), Some(s)) = (merged_lat.avg.as_f64(), single_lat.avg.as_f64()) {
+            rel_close_f64(m, s, "sketch merge latency avg");
+        }
+    }
+
+    /// Relative-tolerance float comparison for the Stage-C store-merge parity bar:
+    /// sums/means may drift a few ULPs from the reordered f64 summation (`~1e-9`).
+    fn rel_close_f64(a: f64, b: f64, context: &str) {
+        if a == b {
+            return;
+        }
+        let denom = a.abs().max(b.abs()).max(1.0);
+        assert!(
+            (a - b).abs() / denom <= 1e-9,
+            "{context}: {a} vs {b} exceeds 1e-9 relative tolerance"
+        );
+    }
+
+    /// A finite [`MetricValue`] pair within tolerance; a non-finite pair must match
+    /// exactly (a `+inf`/`NaN` sentinel is a present-vs-absent distinction, not a sum).
+    fn rel_close_mv(a: MetricValue, b: MetricValue, context: &str) {
+        match (a.as_f64(), b.as_f64()) {
+            (Some(a), Some(b)) => rel_close_f64(a, b, context),
+            _ => assert_eq!(a, b, "{context}: non-finite values must match exactly"),
+        }
+    }
+
+    #[test]
+    fn cell_message_store_partition_round_trips_through_messagepack() {
+        // The Stage-C wire variant: a folded ColumnStorePartition carried inside a
+        // CellMessage must survive the exact rmp-serde path the velo transport uses,
+        // preserving the store's NaN-sparse columns (present-vs-absent semantics).
+        use crate::cellular::transport::CellMessage;
+        let records: Vec<_> = (0..10).map(record).collect();
+        let source = accumulator_over(&records);
+        let message = CellMessage::StorePartition(Box::new(
+            ColumnStorePartition::from_accumulator(2, &source),
+        ));
+
+        let bytes = rmp_serde::to_vec(&message).expect("encode CellMessage::StorePartition");
+        let restored: CellMessage = rmp_serde::from_slice(&bytes).expect("decode");
+        let CellMessage::StorePartition(partition) = restored else {
+            panic!("round-trip must preserve the StorePartition variant");
+        };
+        assert_eq!(partition.cell_id(), 2);
+        assert_eq!(partition.record_count(), 10);
+        let restored_acc =
+            MetricsAccumulator::from_column_store(MetricsConfig::default(), partition.into_store());
+        assert_eq!(
+            restored_acc.summarize(),
+            source.summarize(),
+            "a wire-shipped store partition summarizes identically to its source"
+        );
+    }
+
+    #[test]
+    fn n_store_partitions_merge_within_tolerance_of_the_union() {
+        // Stage-C parity bar: N cells each fold their round-robin share into a
+        // LOCAL-dense EXACT accumulator, ship the folded store over the wire, and the
+        // controller appends them. The merged summary must be WITHIN TOLERANCE of a
+        // single accumulator fed the union — counts/min/max/percentiles/std bit-exact
+        // (order-independent sorted reductions), sums/means within `1e-9` (the
+        // concatenated f64 summation order differs from the union's row order).
+        let records: Vec<_> = (0..24).map(record).collect();
+
+        // Union reference: every record folded into one accumulator, dense-appended.
+        let mut union = MetricsAccumulator::new();
+        for record in &records {
+            let mut record = record.clone();
+            record.request_index = None;
+            union.process_record(&record);
+        }
+
+        // N cells: round-robin ownership (cell k owns i % N == k), each dense-appended.
+        let cell_count = 4usize;
+        let mut cells: Vec<MetricsAccumulator> =
+            (0..cell_count).map(|_| MetricsAccumulator::new()).collect();
+        for (index, record) in records.iter().enumerate() {
+            let mut record = record.clone();
+            record.request_index = None;
+            cells[index % cell_count].process_record(&record);
+        }
+        // Ship each partition over the wire before merging (as the transport would).
+        let partitions: Vec<_> = cells
+            .iter()
+            .enumerate()
+            .map(|(cell_id, accumulator)| {
+                let partition = ColumnStorePartition::from_accumulator(cell_id as u32, accumulator);
+                let bytes = partition.to_bytes().expect("encode");
+                ColumnStorePartition::from_bytes(&bytes).expect("decode")
+            })
+            .collect();
+        let merged = merge_store_partitions(MetricsConfig::default(), partitions);
+        assert_eq!(merged.record_count(), 24, "every cell's records are merged");
+
+        let union_out = union.export_results(&ExportContext::phase(Phase::Profiling));
+        let merged_out = merged.export_results(&ExportContext::phase(Phase::Profiling));
+        assert!(
+            !union_out.result_map().is_empty(),
+            "the union export must be non-trivial"
+        );
+        for (tag, u) in union_out.result_map() {
+            let m = merged_out
+                .result_map()
+                .get(tag)
+                .unwrap_or_else(|| panic!("merged export missing metric {tag}"));
+            match (u.distribution(), m.distribution()) {
+                (Some(ud), Some(md)) => {
+                    // Count/min/max/percentiles are order-independent set operations over
+                    // the SORTED values, so they stay bit-exact across the reordered
+                    // concatenation. avg/sum/std ride the row-order f64 sum (std subtracts
+                    // avg, so it inherits avg's drift), so they land within `1e-9`.
+                    assert_eq!(ud.count, md.count, "{tag} count must be exact");
+                    assert_eq!(ud.min, md.min, "{tag} min must be bit-exact (sorted)");
+                    assert_eq!(ud.max, md.max, "{tag} max must be bit-exact (sorted)");
+                    assert_eq!(
+                        ud.percentiles, md.percentiles,
+                        "{tag} percentiles must be bit-exact (sorted)"
+                    );
+                    rel_close_mv(ud.avg, md.avg, &format!("{tag} avg"));
+                    rel_close_mv(ud.sum, md.sum, &format!("{tag} sum"));
+                    match (ud.std, md.std) {
+                        (Some(a), Some(b)) => rel_close_f64(a, b, &format!("{tag} std")),
+                        (a, b) => assert_eq!(a, b, "{tag} non-finite std must match"),
+                    }
+                }
+                _ => match (u.finite_value(), m.finite_value()) {
+                    (Some(a), Some(b)) => rel_close_f64(a, b, &format!("{tag} scalar")),
+                    (a, b) => assert_eq!(a, b, "{tag} non-finite scalar must match"),
+                },
+            }
+        }
+    }
+
     /// A completed record with an explicit phase and the **local** (per-cell)
     /// request_index a graph cell stamps — deliberately colliding across cells.
     fn local_record(seed: u64, phase: Phase, local: usize) -> RecordIngest {

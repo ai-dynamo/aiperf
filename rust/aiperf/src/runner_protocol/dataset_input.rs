@@ -158,6 +158,14 @@ pub struct TraceSynthesisSpec {
     /// from the run seed. Zero (the default) selects the run-root-derived seed.
     #[serde(default)]
     pub t_star_random_seed: u64,
+    /// Resolved dataset-sampling strategy (`sequential`/`shuffle`/`random`)
+    /// governing WHICH recorded-graph template a freed recycle lane serves.
+    /// Projected by Python `rust_wire._project_trajectory_knobs` from the
+    /// resolved `dataset.sampling`. Absent/unknown (the default) keeps the
+    /// byte-unchanged sequential cursor draw. Consumed by the graph phase
+    /// runtime's draw sites via [`crate::runner_protocol::graph_input::GraphSamplingStrategy`].
+    #[serde(default)]
+    pub dataset_sampling_strategy: Option<String>,
 }
 
 fn default_recorded_idle_gap_cap() -> Option<f64> {

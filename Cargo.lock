@@ -112,6 +112,7 @@ dependencies = [
  "uuid",
  "velo 0.5.0",
  "webpki-roots 0.26.11",
+ "zstd",
 ]
 
 [[package]]
@@ -7664,7 +7665,7 @@ dependencies = [
 [[package]]
 name = "velo"
 version = "0.5.0"
-source = "git+https://github.com/ai-dynamo/velo.git?tag=v0.5.0#c53fea2daf297b88ba71d3d0e61426ee4f0c5f8c"
+source = "git+https://github.com/ajcasagrande/velo.git?branch=feat%2Fconnect-by-endpoint#2a0891e05048201280c028c8697f7c5b41d3718e"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -7753,7 +7754,7 @@ dependencies = [
 [[package]]
 name = "velo-ext"
 version = "0.2.0"
-source = "git+https://github.com/ai-dynamo/velo.git?tag=v0.5.0#c53fea2daf297b88ba71d3d0e61426ee4f0c5f8c"
+source = "git+https://github.com/ajcasagrande/velo.git?branch=feat%2Fconnect-by-endpoint#2a0891e05048201280c028c8697f7c5b41d3718e"
 dependencies = [
  "anyhow",
  "bytes",

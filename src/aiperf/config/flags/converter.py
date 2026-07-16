@@ -550,6 +550,23 @@ def _assemble_envelope_dict(cli: CLIConfig) -> dict[str, Any]:
     if runtime_dict:
         nested["runtime"] = runtime_dict
 
+    # Recorded-graph trajectory-start (t*) window is a top-level BenchmarkConfig
+    # knob (rust_wire reads it off run.cfg and rides it on the dataset synthesis
+    # block). Only stamp it when the user explicitly set the flag so unset runs
+    # keep the runner's disabled 0.0/0.0 default.
+    _set_fields = cli.model_fields_set
+    # ``scenario`` / ``unsafe_override`` are plain data on ``BenchmarkConfig``,
+    # consumed by the ScenarioResolver. Only stamp when explicitly set so unset
+    # runs keep the None/False defaults.
+    if "scenario" in _set_fields:
+        nested["scenario"] = cli.scenario
+    if "unsafe_override" in _set_fields:
+        nested["unsafe_override"] = cli.unsafe_override
+    if "trajectory_start_min_ratio" in _set_fields:
+        nested["trajectory_start_min_ratio"] = cli.trajectory_start_min_ratio
+    if "trajectory_start_max_ratio" in _set_fields:
+        nested["trajectory_start_max_ratio"] = cli.trajectory_start_max_ratio
+
     recipe_output = _expand_recipe_and_strip_consumed_lists(nested, cli)
 
     # auto_plot resolves alongside the recipe: explicit CLI flag wins, else the

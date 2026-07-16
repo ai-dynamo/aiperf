@@ -58,3 +58,4 @@ class Groups:
     ZMQ_COMMUNICATION = Group.create_ordered("ZMQ Communication")
     ACCURACY = Group.create_ordered("Accuracy")
     MULTI_RUN = Group.create_ordered("Multi-Run")
+    SCENARIO = Group.create_ordered("Scenario")

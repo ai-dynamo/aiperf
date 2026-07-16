@@ -704,6 +704,34 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   regression harnesses, the four component specs, and the cellular-ready seams +
   roadmap (single-issuer today, cross-node autonomous cells deferred). Start with
   `specs/2026-07-12-track-a-implementation.md`.
+- `specs/2026-07-15-cellular-horizontal-scale-k6-parity-design.md`
+  — **path to k6-class horizontal scale without losing measurement fidelity.**
+  Verified against `grafana/k6` source that AIPerf already owns k6's hard part
+  (master-less static execution partition; k6 `execution_segment.go` == AIPerf
+  `owned_positions`/`CellularAutonomousIssuer`). The gap is the results plane:
+  AIPerf is a star topology with byte-exact retain merge, k6 streams bounded
+  aggregates to a scalable sink. Proposes a **scale-adaptive fidelity ladder**
+  (T0 exact default → T1 bounded sketch → T2 tree-merge → T3 external-sink) so
+  compromises (approx percentiles, no per-record artifacts, looser start) are
+  gated behind scale; counts/sums/rates stay exact at every tier. Six ordered
+  steps; recommended first cut = Steps 1+2 (sketch `StorePartition` ship +
+  streaming per-worker fold-and-drop) = tier T1, ~80% of k6 scale for ~20% of
+  the work, no velo change, T0 byte-exact preserved as default.
+- `specs/2026-07-15-velo-cell-transport-design.md` + `specs/2026-07-15-ultimate-cellular-velo-runtime-design.md`
+  — **the cellular cross-host + north-star pair.** The velo transport swap is
+  **built** (connect-by-endpoint on the `feat/connect-by-endpoint` velo fork:
+  `Velo::connect(Endpoint)`/`_hello`; four `aiperf.cell.*` rmp handlers;
+  synchronized START via a velo `EventHandle` + an AIPerf-side count barrier;
+  Stages B–G HTTP+zstd artifact/dataset shipping; k8s operator/JobSet
+  zero-discovery emptyDir launch; multi-turn exact-fold + graph cellular). The
+  **ultimate** spec is the Phase-3+ north-star (designed, not built): dataset
+  fan-out over a **producer-owned SPMC add-only broadcast anchor velo must add**
+  (velo today has only SPSC/MPSC consumer-owned anchors, no replay, no fan-out;
+  rendezvous RDMA is Phase-2-unbuilt), a **monotonic phaser** control plane
+  (synchronized START generalized to every phase transition, cyclic), a
+  per-request dispatch state machine with a counted `DistributionMiss`, and
+  bounded-memory record collection (ship the merged t-digest sketch as a
+  `StorePartition`). It supersedes the two prior cellular specs going forward.
 
 ## Build / test / run
 
