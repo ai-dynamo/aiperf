@@ -992,6 +992,15 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
         let phase_start_ns = self.clock.now_ns();
         let start_ns = plan.start_ns.unwrap_or(phase_start_ns);
         let mut controller = plan.controller.clone();
+        // Live metrics for the profiling phase's periodic realtime block: a
+        // persistent accumulator fed one complete record per completion (see
+        // `crate::realtime`). Built with the phase's metrics config, cloned here
+        // before it is moved into the observer below. Only for the profiling
+        // phase AND only when the realtime block is enabled, so a default run
+        // pays zero per-completion cost.
+        let realtime_live = (config.kind == PhaseKind::Profiling
+            && crate::realtime::stats_interval_ns().is_some())
+        .then(|| crate::realtime::LiveMetrics::new(plan.metrics_config.clone()));
         let collector = Rc::new(CollectorObserver::new(plan.capture_performance_records));
         let native_metrics = Rc::new(if !plan.retain_native_metric_record_dimensions {
             NativeMetricsObserver::new_aggregate_only(
@@ -1009,11 +1018,6 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
             delegates.push(collector.clone());
         }
         delegates.push(native_metrics.clone());
-        // Retain the aggregate observer for the profiling phase's periodic
-        // realtime block (`crate::realtime`). Cloned before `native_metrics` is
-        // moved into the runtime below; `None` for warmup.
-        let realtime_observer =
-            (config.kind == PhaseKind::Profiling).then(|| native_metrics.clone());
         delegates.append(&mut plan.additional_observers);
         // The common offline phase has only native metrics. Avoid routing every
         // callback through a fan-out allocation and loop when there is no fan-out.
@@ -1048,6 +1052,14 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
             } else {
                 (delegate, None, Vec::new())
             };
+        // Build the live-metrics processor (cloning the observer) before
+        // `native_metrics` is moved into the runtime; registered below.
+        let realtime_processor = realtime_live.as_ref().map(|live| {
+            Rc::new(crate::realtime::LiveMetricsProcessor::new(
+                native_metrics.clone(),
+                live.clone(),
+            )) as Rc<dyn TurnRecordProcessor>
+        });
         let runtime = ScheduledRuntime::new_with_observer(
             self.clock.clone(),
             start_ns,
@@ -1069,6 +1081,11 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
         for processor in extension_processors {
             runtime.add_record_processor(processor);
         }
+        // Fold each completed profiling request into the live accumulator the
+        // realtime reporter reads.
+        if let Some(processor) = realtime_processor {
+            runtime.add_record_processor(processor);
+        }
         runtime.configure_ancillary(
             plan.ancillary.cancellation_policy,
             plan.ancillary.url_selector,
@@ -1088,7 +1105,7 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
             reports: self.reports.clone(),
             defer_report: self.defer_reports,
             finalized: Cell::new(false),
-            realtime_observer,
+            realtime_live,
             // Elapsed for the realtime line is measured from the actual phase
             // boundary, not the (possibly earlier) shared transport timeline
             // origin `start_ns` warmup and profiling share.
@@ -1156,10 +1173,10 @@ struct ScheduledPhaseExecution {
     reports: Rc<RefCell<Vec<(String, PendingScheduledPhaseReport)>>>,
     defer_report: bool,
     finalized: Cell<bool>,
-    /// Live-metrics observer + phase-start origin for the periodic realtime block
-    /// (`crate::realtime`). `Some` only for the profiling phase; a warmup phase
-    /// never emits the block.
-    realtime_observer: Option<Rc<NativeMetricsObserver>>,
+    /// Live-metrics accumulator + phase-start origin for the periodic realtime
+    /// block (`crate::realtime`). `Some` only for the profiling phase; a warmup
+    /// phase never emits the block.
+    realtime_live: Option<crate::realtime::LiveMetrics>,
     realtime_origin_ns: i64,
 }
 
@@ -1199,22 +1216,23 @@ impl PhaseExecution for ScheduledPhaseExecution {
         let wait_for_natural_drain = self.wait_for_natural_drain;
         let controller = self.controller.clone();
         // Periodic realtime-metrics block for the profiling phase: a
-        // Clock-driven task snapshots the live aggregate every interval and logs
-        // one `[realtime …]` block, aborted when this phase completes.
-        let realtime = self.realtime_observer.clone();
+        // Clock-driven task summarizes the live accumulator every interval and
+        // logs one `[realtime …]` block, aborted when this phase completes.
+        let realtime = self.realtime_live.clone();
         let realtime_clock = self.clock.clone();
         let realtime_origin_ns = self.realtime_origin_ns;
         Box::pin(async move {
-            let realtime_task = realtime.zip(crate::realtime::stats_interval_ns()).map(
-                |(observer, interval_ns)| {
-                    tokio::task::spawn_local(crate::realtime::realtime_reporter_loop(
-                        realtime_clock,
-                        observer,
-                        realtime_origin_ns,
-                        interval_ns,
-                    ))
-                },
-            );
+            let realtime_task =
+                realtime
+                    .zip(crate::realtime::stats_interval_ns())
+                    .map(|(live, interval_ns)| {
+                        tokio::task::spawn_local(crate::realtime::realtime_reporter_loop(
+                            realtime_clock,
+                            live,
+                            realtime_origin_ns,
+                            interval_ns,
+                        ))
+                    });
 
             let execution = workload.execute(runtime.clone());
             let stop = controller.wait_until_stop();

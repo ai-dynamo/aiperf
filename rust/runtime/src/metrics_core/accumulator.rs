@@ -428,13 +428,6 @@ impl MetricsAccumulator {
         Self::default()
     }
 
-    /// Borrows the runtime-independent configuration this accumulator was built
-    /// with. Used by the live realtime reporter to spin up a throwaway
-    /// accumulator with matching config for a non-consuming snapshot.
-    pub fn config(&self) -> &MetricsConfig {
-        &self.config
-    }
-
     /// Builds an accumulator with explicit runtime-independent configuration.
     pub fn with_config(config: MetricsConfig) -> Self {
         // Forces one-time catalog validation; the topo order is cached for reuse.

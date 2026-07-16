@@ -151,12 +151,12 @@ async fn native_front_door_writes_full_log_narrative() {
 }
 
 /// With `AIPERF_STATS_INTERVAL` set, the profiling phase must emit the periodic
-/// `[realtime MM:SS profiling]` progress heartbeat (completed / in-flight / rps)
-/// into `logs/aiperf.log`. Request-rate pacing guarantees the profiling phase
-/// spans several intervals regardless of mock speed, so at least one heartbeat
-/// fires.
+/// `[realtime MM:SS profiling]` metrics block (header + `done/ok/err` counter row
+/// + TTFT/ITL/e2e latency rows) into `logs/aiperf.log`. Request-rate pacing
+/// guarantees the profiling phase spans several intervals regardless of mock
+/// speed, so at least one block fires.
 #[tokio::test]
-async fn realtime_progress_heartbeat_is_logged() {
+async fn realtime_metrics_block_is_logged() {
     let mock = MockServer::start();
     let dir = tempfile::tempdir().expect("tempdir");
 
@@ -181,14 +181,24 @@ async fn realtime_progress_heartbeat_is_logged() {
     let log = std::fs::read_to_string(&log_path)
         .unwrap_or_else(|e| panic!("logs/aiperf.log missing at {}: {e}", log_path.display()));
 
-    let heartbeats = log
+    let headers = log
         .lines()
-        .filter(|line| line.contains("[realtime ") && line.contains(" profiling] completed="))
+        .filter(|line| line.contains("[realtime ") && line.contains(" profiling]"))
         .count();
     assert!(
-        heartbeats >= 1,
-        "expected at least one [realtime …] progress heartbeat in the log; got none.\n\
+        headers >= 1,
+        "expected at least one [realtime …] block header in the log; got none.\n\
          --- log ---\n{log}"
+    );
+    // The block carries the counter row and the latency rows (proving the live
+    // per-completion accumulator was fed, not just a counts heartbeat).
+    assert!(
+        log.contains("done=") && log.contains("ok=") && log.contains("err="),
+        "realtime block must include the done/ok/err counter row.\n--- log ---\n{log}"
+    );
+    assert!(
+        log.contains("  ttft ") && log.contains("  itl ") && log.contains("  e2e "),
+        "realtime block must include the TTFT/ITL/e2e latency rows.\n--- log ---\n{log}"
     );
 }
 
