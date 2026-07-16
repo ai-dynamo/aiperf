@@ -16,8 +16,7 @@
 //! - **File**: every line is also written to `<artifact_dir>/logs/aiperf.log`
 //!   once [`set_log_file`] is called (Python's `FileHandler`). The parent front
 //!   door owns the file; the `--execute` child logs only to its (piped) stderr,
-//!   which the parent forwards via `tracing::info!("aiperf-runner: …")` — exactly
-//!   mirroring Python's `_forward_runner_stderr_line`.
+//!   which the parent forwards via `tracing::info!("aiperf: …")`.
 //! - The resolved level directive is propagated to the re-exec child through the
 //!   `AIPERF_LOG` env (see [`current_directive`]); no reload handle is needed.
 

@@ -13,7 +13,7 @@
 //! tolerance.
 //!
 //! This operationalizes the feature-complete bar: per-request timing must
-//! survive the full `Python -> aiperf-runner -> transport -> record` path, and
+//! survive the full `Python -> aiperf runner -> transport -> record` path, and
 //! the cellular fold+ship+merge and graph partition+merge, byte-for-byte at the
 //! record level — not just aggregate summary metrics.
 //!

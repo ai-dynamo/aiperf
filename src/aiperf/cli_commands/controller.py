@@ -19,7 +19,7 @@ def controller(
     """Run this pod as the native cellular controller.
 
     The Kubernetes counterpart of ``aiperf profile`` for the controller pod: resolve
-    Config v2, launch ``aiperf-runner`` in controller mode (it binds the cell
+    Config v2, launch ``aiperf`` in controller mode (it binds the cell
     transport, merges the cells' record shards, and runs the native export plane),
     push live progress to the owning AIPerfJob ``.status`` while the run is in flight,
     and signal completion when it finishes. Launched by the operator's JobSet, not by

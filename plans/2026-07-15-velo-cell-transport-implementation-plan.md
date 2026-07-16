@@ -27,7 +27,7 @@ SPDX-License-Identifier: Apache-2.0
 - **No `git stash`** (repo rule). Commit each task. Commit whole files (`git add <file>`), never `git add -p`. Commit on the current branch `worktree-velo-cell-transport`. Use `git commit --no-verify` and run guards manually (see below) to avoid the pre-commit auto-stash hazard.
 - **Docs guard:** `python tools/check_docs_current.py` must pass before any commit that touches `specs/`. `python tools/check_agent_files_sync.py` must pass after the agent-file edits (Task 12).
 - **Windows:** UDS is `#[cfg(unix)]`; Windows uses TCP-loopback. The `LocalLauncher` transport must compile on both.
-- **Build/test commands:** `cargo build -p aiperf-runner --features velo`; `cargo test -p aiperf --features velo --lib`; `cargo test -p aiperf-runner --features velo`; `cargo clippy --all-targets --features velo`. A no-feature build (`cargo build -p aiperf-runner`) must still succeed.
+- **Build/test commands:** `cargo build -p aiperf-cli --features velo`; `cargo test -p aiperf --features velo --lib`; `cargo test -p aiperf-cli --features velo`; `cargo clippy --all-targets --features velo`. A no-feature build (`cargo build -p aiperf-cli`) must still succeed.
 
 ---
 
@@ -436,7 +436,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
   - `fn select_launcher() -> Box<dyn CellLauncher>` reading `AIPERF_CELL_LAUNCHER` (default `local`).
   - Env consts: `CELL_LAUNCHER_ENV = "AIPERF_CELL_LAUNCHER"`.
 
-- [ ] **Step 1: Write the failing test**: `LocalLauncher::launch` with `cell_count=2` spawns two `aiperf-runner --cell` children whose env carries `AIPERF_CELL_ID` ∈ {0,1} and `AIPERF_CELL_CONTROLLER_ADDR == ctx.controller_addr`. (Use a stub exe or assert on the constructed `Command` via a seam; simplest: a unit test asserting `LocalLauncher::cell_command(&ctx, cell_id)` sets the right env — extract command construction into a testable helper.)
+- [ ] **Step 1: Write the failing test**: `LocalLauncher::launch` with `cell_count=2` spawns two `aiperf --cell` children whose env carries `AIPERF_CELL_ID` ∈ {0,1} and `AIPERF_CELL_CONTROLLER_ADDR == ctx.controller_addr`. (Use a stub exe or assert on the constructed `Command` via a seam; simplest: a unit test asserting `LocalLauncher::cell_command(&ctx, cell_id)` sets the right env — extract command construction into a testable helper.)
 
 ```rust
 #[test]
@@ -452,14 +452,14 @@ fn local_launcher_sets_cell_env() {
 
 - [ ] **Step 2: Run to confirm fail**
 
-Run: `cargo test -p aiperf-runner --features velo cell_launcher`
+Run: `cargo test -p aiperf-cli --features velo cell_launcher`
 Expected: FAIL (no such module).
 
 - [ ] **Step 3: Implement** `cell_launcher.rs`. `LocalLauncher::cell_command(ctx, cell_id)` builds `Command::new(current_exe()).arg("--cell")` with env `AIPERF_CELL_ID`, `AIPERF_CELL_COUNT`, `AIPERF_CELL_CONTROLLER_ADDR` (and `AIPERF_CELL_CONTROLLER_BOOTSTRAP_ADDR` when `Some`), `stdout(null)`, `stderr(inherit)`, `kill_on_drop(true)`. `launch` spawns `cell_count` of them and returns `CellHandle`s wrapping the children. `K8sLauncher::launch` returns an empty `Vec` (pods already exist; the controller just waits on the barrier) — with a `tracing::info!` naming `cell_count`. `wait_failure` for a local handle awaits `child.wait()` and returns `Some(msg)` on non-zero; for k8s returns `None` (pod failure surfaces via the missing registration + a controller-side timeout added in Task 8).
 
 - [ ] **Step 4: Run to green**
 
-Run: `cargo test -p aiperf-runner --features velo cell_launcher`
+Run: `cargo test -p aiperf-cli --features velo cell_launcher`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -485,11 +485,11 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 - [ ] **Step 1: Write the failing test** (`cellular_cell.rs` `#[cfg(test)]`): a `VeloControllerTransport` stub whose `spec_for` returns a known `CellLaunchSpec`; a `VeloCellClient::register` returns bytes that deserialize to that spec. (This overlaps Task 4's test; here assert the *runner-side* `fetch_spec_from_controller(coord, cell_id) -> CellLaunchSpec` helper end-to-end.)
 
-- [ ] **Step 2: Run to confirm fail** — `cargo test -p aiperf-runner --features velo fetch_spec` → FAIL.
+- [ ] **Step 2: Run to confirm fail** — `cargo test -p aiperf-cli --features velo fetch_spec` → FAIL.
 
 - [ ] **Step 3: Implement.** In `cellular_cell.rs`: `CellRecordsShipper::ship` builds a `VeloCellClient` (via `build_cell_velo` + `resolve_controller_peer`) and sends `CellMessage::Heartbeat` then the partition (rendezvous), replacing the `TcpCellClient::connect`. Add `fetch_spec_from_controller(coord, cell_id) -> Result<CellLaunchSpec>` = register + rmp-decode reply. In `main.rs`: `run_cell` reads `AIPERF_CELL_ID`/`AIPERF_CELL_COUNT`/`AIPERF_CELL_CONTROLLER_ADDR`(+bootstrap) from env, builds a small multi-thread runtime, `fetch_spec_from_controller`, sets the same `AIPERF_CELL_*` env the stdin path set (partition/controller/phase-bases), then runs `run_v2` on the fetched envelope. Remove the stdin `CellLaunchSpec` read.
 
-- [ ] **Step 4: Run to green** — `cargo test -p aiperf-runner --features velo` → PASS (cell tests).
+- [ ] **Step 4: Run to green** — `cargo test -p aiperf-cli --features velo` → PASS (cell tests).
 
 - [ ] **Step 5: Commit**
 
@@ -517,7 +517,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 - [ ] **Step 3: Implement.** In `run_cellular`: build the controller velo (`build_controller_velo` — `TcpBind` for k8s from the controller's own known addr, or `TcpLoopback`/UDS locally), precompute each cell's `CellLaunchSpec` (the existing `build_cell_envelope` + phase bases, keyed by `cell_id`), `bind_controller(velo, cell_count, spec_for)`. Replace `spawn_cell` loop with `select_launcher().launch(&ctx)`; keep the child-failure watcher (`wait_failure`) feeding the same `select!`-against-failure the current code uses. The partition-collect loop, merge, report write, export plane, and heartbeat sidecar are **unchanged** (they already consume `ControllerTransport::recv()` and `RecordsShardPartition`). Remove `spawn_cell` and its stdin serialization.
 
-- [ ] **Step 4: Run to green** — `cargo test -p aiperf-runner --features velo cellular_controller` → PASS.
+- [ ] **Step 4: Run to green** — `cargo test -p aiperf-cli --features velo cellular_controller` → PASS.
 
 - [ ] **Step 5: Commit**
 
@@ -558,15 +558,15 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `cell_count_from_envelope` (unchanged).
-- Produces: a `#[cfg(not(feature="velo"))]` arm emitting a typed `success:false` execution envelope: "aiperf-runner built without the `velo` feature; multi-cell runs (`cells>1`) require it".
+- Produces: a `#[cfg(not(feature="velo"))]` arm emitting a typed `success:false` execution envelope: "aiperf runner built without the `velo` feature; multi-cell runs (`cells>1`) require it".
 
 - [ ] **Step 1: Write the failing test** (a `#[cfg(not(feature="velo"))]` unit test): `cells>1` envelope → the controller-detection helper returns the fail-closed diagnostic, not a run.
 
-- [ ] **Step 2: Run to confirm fail** — `cargo test -p aiperf-runner` (no feature) → FAIL.
+- [ ] **Step 2: Run to confirm fail** — `cargo test -p aiperf-cli` (no feature) → FAIL.
 
 - [ ] **Step 3: Implement.** In `main.rs`, the `run_controller` branch is `#[cfg(feature="velo")]`; add a `#[cfg(not(feature="velo"))]` sibling that, on `execute` + `cells>1`, calls `emit_cellular_failure(benchmark_id, "velo_feature_required", "...")`. `cells=1` is unaffected (never enters this branch).
 
-- [ ] **Step 4: Run to green** — `cargo test -p aiperf-runner` (no feature) → PASS; `cargo build -p aiperf-runner` (no feature) → PASS.
+- [ ] **Step 4: Run to green** — `cargo test -p aiperf-cli` (no feature) → PASS; `cargo build -p aiperf-cli` (no feature) → PASS.
 
 - [ ] **Step 5: Commit** (`feat(runner): fail closed on cells>1 without the velo feature`).
 
@@ -580,7 +580,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 **Interfaces:** Consumes the full `aiperf profile --cells N` path (Python frontend → runner controller → cells over velo).
 
-- [ ] **Step 1:** Add `#![cfg(feature = "velo")]`-gating (or a `required-features`) so the e2e cellular tests build/run only with velo. Confirm the tests launch `aiperf-runner` built with `--features velo` (adjust the harness's cargo invocation / binary selection).
+- [ ] **Step 1:** Add `#![cfg(feature = "velo")]`-gating (or a `required-features`) so the e2e cellular tests build/run only with velo. Confirm the tests launch `aiperf` built with `--features velo` (adjust the harness's cargo invocation / binary selection).
 
 - [ ] **Step 2: Run** `cargo test -p aiperf-e2e-tests --features velo test_cellular_run_from_python_frontend -- --nocphr="" `
 
@@ -642,7 +642,7 @@ Out of scope: the k8s operator/JobSet/CRD (the Python operator is the reference)
 routing, cross-cell sidecar telemetry aggregation.
 ```
 
-- [ ] **Step 2: Update the four agent files' identical body** — the `aiperf-runner`/`aiperf` crate-table cellular note (velo transport + `velo` feature) and the "Build, test, run" cellular paragraph (add `cargo build -p aiperf-runner --features velo`; note `cells>1` needs the feature). Make the SAME edit in all four.
+- [ ] **Step 2: Update the four agent files' identical body** — the `aiperf`/`aiperf` crate-table cellular note (velo transport + `velo` feature) and the "Build, test, run" cellular paragraph (add `cargo build -p aiperf-cli --features velo`; note `cells>1` needs the feature). Make the SAME edit in all four.
 
 - [ ] **Step 3: Update `llms.txt`** where it summarizes the cellular transport / crate features.
 
@@ -657,10 +657,10 @@ Expected: both exit 0.
 
 ## Task 13: Full-suite green + clippy/fmt
 
-- [ ] **Step 1:** `cargo fmt` ; `cargo clippy -p aiperf -p aiperf-runner --features velo --all-targets -- -D warnings`
+- [ ] **Step 1:** `cargo fmt` ; `cargo clippy -p aiperf -p aiperf-cli --features velo --all-targets -- -D warnings`
 - [ ] **Step 2:** `cargo test -p aiperf --features velo --lib` → PASS
-- [ ] **Step 3:** `cargo test -p aiperf-runner --features velo` → PASS
-- [ ] **Step 4:** `cargo build -p aiperf-runner` (no feature) → PASS ; `cargo test -p aiperf-runner` (no feature) → PASS (fail-closed test)
+- [ ] **Step 3:** `cargo test -p aiperf-cli --features velo` → PASS
+- [ ] **Step 4:** `cargo build -p aiperf-cli` (no feature) → PASS ; `cargo test -p aiperf-cli` (no feature) → PASS (fail-closed test)
 - [ ] **Step 5:** `cargo test -p aiperf-e2e-tests --features velo test_cellular test_graph_cellular` → PASS
 - [ ] **Step 6: Commit** any fmt/clippy fixups (`chore: fmt + clippy for velo cell transport`).
 

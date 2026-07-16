@@ -587,7 +587,7 @@ fn metrics_only_config(url: &str, entries: u32, requests: u32, concurrency: u32)
     )
 }
 
-/// Peak `VmHWM` (KiB) of any live `aiperf-runner` process, sampled from `/proc`.
+/// Peak `VmHWM` (KiB) of any live `aiperf` process, sampled from `/proc`.
 /// `VmHWM` is a monotonic high-water mark, so the max over frequent samples is the
 /// process peak even though the process exits before the final read.
 #[cfg(target_os = "linux")]
@@ -599,7 +599,7 @@ fn max_runner_vmhwm_kb() -> u64 {
     for entry in entries.flatten() {
         let p = entry.path();
         let comm = std::fs::read_to_string(p.join("comm")).unwrap_or_default();
-        if comm.trim() != "aiperf-runner" {
+        if comm.trim() != "aiperf runner" {
             continue;
         }
         if let Ok(status) = std::fs::read_to_string(p.join("status")) {
@@ -665,7 +665,7 @@ fn measure_runner_vmhwm(url: &str, exact_fold: bool, entries: u32, requests: u32
 /// peak `VmHWM` is materially below the legacy retain runner's, and the gap widens
 /// with request count. Ignored by default: it runs two ~large benchmarks (minutes)
 /// and scans `/proc` for the runner by name, so it must run ALONE (no other
-/// `aiperf-runner` process in flight). Run with:
+/// `aiperf` process in flight). Run with:
 ///
 /// ```text
 /// cargo test -p aiperf-e2e-tests --test test_exact_fold_ab_parity \
@@ -680,7 +680,7 @@ fn measure_runner_vmhwm(url: &str, exact_fold: bool, entries: u32, requests: u32
 /// accumulator term, which is what this delta measures.
 #[cfg(target_os = "linux")]
 #[tokio::test]
-#[ignore = "long-running RSS benchmark; must run alone (scans /proc for aiperf-runner)"]
+#[ignore = "long-running RSS benchmark; must run alone (scans /proc for aiperf runner)"]
 async fn exact_fold_runner_rss_below_legacy() {
     let h = AIPerfHarness::new().await;
     // 40k requests over 2k seeded conversations: large enough for a robust,

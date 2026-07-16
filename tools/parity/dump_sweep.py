@@ -5,7 +5,7 @@
 Reuses the production `resolve_config` -> `build_benchmark_plan` -> per-variation
 `BenchmarkRun` construction (`_resolve_artifact_dir` / `resolve_run_seed`) so the
 dumped list is byte-identical to what the Python orchestrator would hand each
-`aiperf-runner` cell. The native Rust sweep engine must reproduce this list.
+`aiperf` cell. The native Rust sweep engine must reproduce this list.
 
 Usage: python tools/parity/dump_sweep.py <fixture.args>
 Emits a JSON object: {sweep_id_present, trials, cells: [{index, trial, label,

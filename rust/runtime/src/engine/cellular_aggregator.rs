@@ -3,7 +3,7 @@
 
 //! Tier-T2 hierarchical merge — the aggregator role.
 //!
-//! An *aggregator* is an `aiperf-runner --aggregator` process placed between the
+//! An *aggregator* is an `aiperf --aggregator` process placed between the
 //! cells and the controller to lift the single-controller fan-in ceiling. Instead of
 //! all `N` cells shipping their folded stores to one controller (a star: the
 //! controller merges `O(N)` partitions and receives `O(N)` shipments on one NIC), the

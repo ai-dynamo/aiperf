@@ -424,13 +424,13 @@ class TestKubernetesDeploymentRBACServiceAccount:
             config=sample_config,
             deployment=DeploymentConfig(
                 image="aiperf:latest",
-                pod_template=PodTemplateConfig(service_account_name="aiperf-runner"),
+                pod_template=PodTemplateConfig(service_account_name="aiperf runner"),
             ),
         )
         rbac = deployment.get_rbac_spec()
-        assert rbac.service_account == "aiperf-runner"
+        assert rbac.service_account == "aiperf runner"
         subject = rbac.to_role_binding_manifest()["subjects"][0]
-        assert subject["name"] == "aiperf-runner"
+        assert subject["name"] == "aiperf runner"
         assert subject["namespace"] == "bench"
 
 

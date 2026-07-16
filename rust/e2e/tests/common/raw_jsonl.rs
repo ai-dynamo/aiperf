@@ -8,14 +8,14 @@
 //! `--itl I`, `--ttft-jitter-cv 0 --itl-jitter-cv 0`, analytic mode, fixed
 //! synthetic ISL/OSL), every raw record's on-the-wire token timing must
 //! reproduce the tuned model within a tight transport tolerance — proving the
-//! whole `Python -> aiperf-runner -> transport -> record` path measures and
+//! whole `Python -> aiperf runner -> transport -> record` path measures and
 //! persists per-request timing faithfully (single-process, cellular fold+ship+
 //! merge, multi-turn, or graph).
 //!
 //! # The raw-record schema this parses
 //!
 //! Each line of `profile_export_raw.jsonl` (see
-//! `aiperf_runtime::runner_protocol::records::RawRecordRow`) carries:
+//! `aiperf_runtime::engine::records::RawRecordRow`) carries:
 //!   * `metadata.request_start_ns` / `request_end_ns` — wall-clock request
 //!     bounds; their difference is the authoritative `request_latency`.
 //!   * `start_perf_ns` — the request's start on the perf-counter timeline that

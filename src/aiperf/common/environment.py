@@ -247,7 +247,7 @@ class _CLIRunnerSettings(BaseSettings):
 class _RuntimeSettings(BaseSettings):
     """Selects which execution engine runs a single benchmark.
 
-    ``rust`` (default) dispatches through the Rust ``aiperf-runner``; that is
+    ``rust`` (default) dispatches through the Rust ``aiperf``; that is
     the only Rust executable on the product path. ``python`` routes the same
     ``BenchmarkRun`` through the pre-Rust pure-Python service mesh
     (SystemController + Worker / TimingManager / RecordsManager children) so the
@@ -262,7 +262,7 @@ class _RuntimeSettings(BaseSettings):
     ENGINE: Literal["rust", "python"] = Field(
         default="rust",
         description="Execution engine for a single benchmark: `rust` (the "
-        "aiperf-runner, default) or `python` (the legacy pure-Python "
+        "aiperf runner, default) or `python` (the legacy pure-Python "
         "service mesh, for A/B benchmarking against the Rust core). "
         "Set via AIPERF_RUNTIME_ENGINE.",
     )
@@ -283,7 +283,7 @@ class _RuntimeSettings(BaseSettings):
 
     EXACT_FOLD: bool = Field(
         default=True,
-        description="Whether the native aiperf-runner folds each completed record's "
+        description="Whether the native aiperf runner folds each completed record's "
         "metric scalars into the EXACT accumulator (keeping exact NaN-sparse columns "
         "for exact percentiles/timeslices/series) and drops the heavy per-record data "
         "during the run, instead of retaining every record until end-of-run. When true "
@@ -690,7 +690,7 @@ class _MetricsSettings(BaseSettings):
     )
     SKETCH: bool = Field(
         default=False,
-        description="Opt-in bounded-memory metrics mode (--sketch-metrics). Stream every per-record metric value into a t-digest sketch (compression TDIGEST_COMPRESSION) instead of retaining each value, so the native aiperf-runner's metric memory stays O(1) in the request count at very high request rates. Counts, sums, averages, and min/max stay exact; percentiles become approximate. Per-record artifacts (records/raw/outputs JSONL, per-record OTLP histograms) and the per-row-only trend outputs (timeslices, per-model/endpoint inference series, sweep curves) are unavailable in this mode and are dropped from the run request. Off by default.",
+        description="Opt-in bounded-memory metrics mode (--sketch-metrics). Stream every per-record metric value into a t-digest sketch (compression TDIGEST_COMPRESSION) instead of retaining each value, so the native aiperf runner's metric memory stays O(1) in the request count at very high request rates. Counts, sums, averages, and min/max stay exact; percentiles become approximate. Per-record artifacts (records/raw/outputs JSONL, per-record OTLP histograms) and the per-row-only trend outputs (timeslices, per-model/endpoint inference series, sweep curves) are unavailable in this mode and are dropped from the run request. Off by default.",
     )
     LIST_BACKEND: Literal["ragged", "tdigest"] = Field(
         default="ragged",

@@ -5,7 +5,7 @@
 //!
 //! When a run requests `cfg.runtime.cells > 1`, the receiving runner becomes the
 //! controller rather than executing in-process. It partitions the request budget by
-//! `(cell_id, cell_count)`, spawns one `aiperf-runner --cell` child per cell (each a
+//! `(cell_id, cell_count)`, spawns one `aiperf --cell` child per cell (each a
 //! separate OS process, wired with the autonomous issuer and per-cell sampler),
 //! serves the [`transport`](crate::cellular::transport) endpoint the cells ship
 //! their records-shard partitions and heartbeats back over, merges every cell's
@@ -512,7 +512,7 @@ pub fn run_cellular(
         // exact-fold): the retain path keeps the star topology (needs global order).
         //
         // Placement differs by deployment, exactly like the cells:
-        // - SAME-HOST (`!is_k8s`): the controller spawns M `aiperf-runner --aggregator`
+        // - SAME-HOST (`!is_k8s`): the controller spawns M `aiperf --aggregator`
         //   subprocesses at fixed loopback ports and injects each cell's loopback ship
         //   address (via `CellLaunchContext::aggregator_count`).
         // - K8S: the operator created the aggregator pods and injected each cell pod's
@@ -1741,7 +1741,7 @@ fn validate_graph_cellular_phases(envelope: &serde_json::Value, cell_count: u32)
 /// report. Mirrors [`crate::engine::protocol::BenchmarkRunConfigWireV2`]'s
 /// `from_value(cfg.metrics).unwrap_or_default()` so an absent/loose `metrics` block
 /// falls back the same way (`metrics_config` still validates any SLO names present).
-/// Spawns the tier-T2 aggregator subprocesses (`aiperf-runner --aggregator`), one per
+/// Spawns the tier-T2 aggregator subprocesses (`aiperf --aggregator`), one per
 /// aggregator, each fed the run envelope on stdin (for the merge `MetricsConfig`) and
 /// its subtree parameters via env: its id, the fixed loopback `tcp://` coordinate it
 /// binds (its cells dial it there), how many cells ship to it, and the controller
@@ -1764,7 +1764,7 @@ async fn spawn_aggregators(
 
     let envelope_bytes =
         serde_json::to_vec(envelope).context("serializing envelope for aggregators")?;
-    let exe = std::env::current_exe().unwrap_or_else(|_| "aiperf-runner".into());
+    let exe = std::env::current_exe().unwrap_or_else(|_| "aiperf runner".into());
     let mut children = Vec::with_capacity(agg_count as usize);
     for agg_id in 0..agg_count {
         let child_count = children_of(agg_id, agg_count, cell_count);

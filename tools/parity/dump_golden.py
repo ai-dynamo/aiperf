@@ -5,7 +5,7 @@
 Single-run only. Reuses the production ``resolve_config`` -> ``build_benchmark_plan``
 -> single-run ``BenchmarkRun`` construction -> ``build_authored_run_request`` path so
 the captured JSON is byte-identical to what the Python orchestrator hands
-``aiperf-runner``. The runner request is the golden vector the native Rust CLI
+``aiperf``. The runner request is the golden vector the native Rust CLI
 must reproduce (runner-consumed projection; see the plan's parity mechanism).
 
 Determinism: ``benchmark_id`` is pinned (Python defaults it to a random uuid) so

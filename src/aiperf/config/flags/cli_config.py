@@ -152,7 +152,7 @@ class CLIConfig(BaseConfig):
         EndpointId,
         Field(
             description="Endpoint dialect identifier compiled into the selected "
-            "aiperf-runner. Common stock identifiers include `chat`, "
+            "aiperf runner. Common stock identifiers include `chat`, "
             "`messages`, and `responses`; custom runner distributions may add more.",
         ),
         CLIParameter(
@@ -3831,8 +3831,8 @@ class CLIConfig(BaseConfig):
                 "Number of native execution cells to partition the run across "
                 "(cellular mode). 1 (default) runs the ordinary single-process native "
                 "path, byte-for-byte unchanged. With cells > 1 the launched "
-                "aiperf-runner becomes a controller that spawns that many "
-                "`aiperf-runner --cell` subprocesses over a (cell_id, cell_count) "
+                "aiperf runner becomes a controller that spawns that many "
+                "`aiperf --cell` subprocesses over a (cell_id, cell_count) "
                 "partition of the request budget and merges their records in global "
                 "dispatch order into one report. Supported only for the scheduled HTTP "
                 "transport over seeded, single-turn synthetic datasets against a single "
@@ -3853,7 +3853,7 @@ class CLIConfig(BaseConfig):
                 "Opt-in bounded-memory metrics mode (equivalent to "
                 "AIPERF_METRICS_SKETCH=1). Stream each per-record metric value into a "
                 "t-digest sketch instead of retaining every value, so the native "
-                "aiperf-runner's metric memory stays O(1) in the request count at "
+                "aiperf runner's metric memory stays O(1) in the request count at "
                 "very high request rates. Counts, sums, averages, and min/max stay "
                 "exact; percentiles become approximate. Per-record artifacts "
                 "(records/raw/outputs JSONL, per-record OTLP) and per-row-only "

@@ -95,9 +95,9 @@ def native_server():
 
 @pytest.fixture(scope="module")
 def runner_binary() -> Path:
-    default = Path(__file__).parents[2] / "target/debug/aiperf-runner"
+    default = Path(__file__).parents[2] / "target/debug/aiperf runner"
     binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default))
-    assert binary.is_file(), f"build aiperf-runner before this integration test: {binary}"
+    assert binary.is_file(), f"build aiperf runner before this integration test: {binary}"
     return binary
 
 

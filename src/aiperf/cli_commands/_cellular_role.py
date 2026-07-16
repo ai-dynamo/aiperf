@@ -4,7 +4,7 @@
 
 ``aiperf controller`` and ``aiperf cell`` are the Kubernetes-cellular counterparts
 of ``aiperf profile``: each is the Python frontend (the orchestrator) on its pod. It
-resolves Config v2, projects it through ``rust_wire``, and launches ``aiperf-runner``
+resolves Config v2, projects it through ``rust_wire``, and launches ``aiperf``
 over stdio -- the runner becomes a controller or a cell from the ``CELL_*`` env the
 operator sets, and (once the ai-dynamo/velo cell transport lands) the cells stream
 their record shards to the controller, which merges them and runs the native export
@@ -66,7 +66,7 @@ def run_cellular_role(cli_config: CLIConfig, *, role: str) -> None:
 
     # A cell needs no config: it fetches its sliced protocol-v2 envelope from the
     # controller over velo (using the operator-set AIPERF_CELL_* env), so it just
-    # execs ``aiperf-runner --cell``. Only the controller reads Config v2 + reports.
+    # execs ``aiperf --cell``. Only the controller reads Config v2 + reports.
     if role == "cell":
         _run_cell()
         return
@@ -94,7 +94,7 @@ def run_cellular_role(cli_config: CLIConfig, *, role: str) -> None:
 
 
 def _run_cell() -> None:
-    """Run this pod as a cell: exec ``aiperf-runner --cell`` and wait.
+    """Run this pod as a cell: exec ``aiperf --cell`` and wait.
 
     The velo cell reads no config and no stdin -- it fetches its ``(cell_id,
     cell_count)`` budget slice + sliced execute envelope from the controller over

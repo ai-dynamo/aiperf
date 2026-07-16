@@ -5,7 +5,7 @@
 //! The native type is both the domain object and the wire request. This suite
 //! asserts two things per golden:
 //!
-//! 1. The unchanged `aiperf-runner` input type (`RunnerEnvelopeV2`) accepts the
+//! 1. The unchanged `aiperf` input type (`RunnerEnvelopeV2`) accepts the
 //!    golden bytes — structural validity against the real consumer.
 //! 2. Each already-ported `cfg` section round-trips byte-exact: deserializing
 //!    the golden through the native `BenchmarkRun` (which drops not-yet-ported
@@ -17,7 +17,7 @@
 use aiperf_cli::flags::ProfileFlags;
 use aiperf_cli::load;
 use aiperf_cli::model::BenchmarkRun;
-use aiperf_runtime::runner_protocol::protocol_v2::RunnerEnvelopeV2;
+use aiperf_runtime::engine::protocol_v2::RunnerEnvelopeV2;
 
 /// `cfg` sections the native type currently models; asserted for byte-exact
 /// round-trip. Extend as each section is ported.

@@ -5,8 +5,8 @@
 //! ordinary Python frontend via `--cells N`.
 //!
 //! `--cells N` sets `runtime.cells` in the projected protocol-v2 envelope; the
-//! launched `aiperf-runner` becomes a controller that (via the `LocalLauncher`)
-//! spawns `N` `aiperf-runner --cell` subprocesses over a `(cell_id, cell_count)`
+//! launched `aiperf` becomes a controller that (via the `LocalLauncher`)
+//! spawns `N` `aiperf --cell` subprocesses over a `(cell_id, cell_count)`
 //! partition of the request budget. Cells fetch their sliced envelope over the
 //! **velo** transport, await the controller's synchronized START, run their slice,
 //! ship their records over velo, and the controller merges them into one report.
@@ -15,7 +15,7 @@
 //! dataset-deterministic metrics byte-for-byte through the full presentation
 //! pipeline.
 //!
-//! Requires the launched `aiperf-runner` (`AIPERF_EXEC_BIN`) to include the
+//! Requires the launched `aiperf` (`AIPERF_EXEC_BIN`) to include the
 //! `velo` cell transport — it is in the default runner build, so a default
 //! `cargo test` run drives it; a lean `--no-default-features` runner fails closed.
 
@@ -456,7 +456,7 @@ async fn test_cellular_sketch_matches_single_cell() {
 
 /// Tier T2 (hierarchical tree-merge): with `AIPERF_CELL_AGG_FANOUT` set, the controller
 /// routes the cells through an aggregator tier — `M = ceil(cells / fanout)` extra
-/// `aiperf-runner --aggregator` processes, each collecting its round-robin subtree of
+/// `aiperf --aggregator` processes, each collecting its round-robin subtree of
 /// cells' folded stores, merging them, and shipping ONE merged store up — instead of the
 /// flat star where all cells ship to the controller. Because the fold-mode store merge
 /// (`merge_store_partitions` → t-digest merge) is associative and deterministic-at-topology,
@@ -760,7 +760,11 @@ async fn test_cellular_shared_origin_zeroes_at_the_barrier() {
     // Flag OFF: each cell's origin is its own post-setup local run start.
     let h_off = AIPerfHarness::new().await;
     let off = h_off.run(&format!("{} --cells 3", args(&h_off.mock.url)));
-    assert!(off.success(), "flag-off cellular run failed: {}", off.stderr);
+    assert!(
+        off.success(),
+        "flag-off cellular run failed: {}",
+        off.stderr
+    );
 
     // Flag ON: every cell zeroes at the shared velo START barrier.
     let h_on = AIPerfHarness::new().await;
@@ -768,7 +772,11 @@ async fn test_cellular_shared_origin_zeroes_at_the_barrier() {
         &format!("{} --cells 3", args(&h_on.mock.url)),
         &[("AIPERF_CELL_SHARED_ORIGIN", "1")],
     );
-    assert!(on.success(), "shared-origin cellular run failed: {}", on.stderr);
+    assert!(
+        on.success(),
+        "shared-origin cellular run failed: {}",
+        on.stderr
+    );
 
     // Both cellular runs went through the controller.
     for (label, run) in [("off", &off), ("on", &on)] {

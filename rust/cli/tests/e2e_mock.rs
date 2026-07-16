@@ -3,9 +3,9 @@
 //! End-to-end tests for the native `aiperf` binary.
 //!
 //! The full run test is `#[ignore]` because it needs the sibling
-//! `aiperf-runner` and `aiperf-mock-server` binaries built into the same target
+//! `aiperf` and `aiperf-mock-server` binaries built into the same target
 //! directory. Run it with:
-//!   cargo build -p aiperf-runner --no-default-features -p aiperf-mock-server
+//!   cargo build -p aiperf-cli --no-default-features -p aiperf-mock-server
 //!   cargo test -p aiperf-cli --test e2e_mock -- --ignored
 
 use std::net::TcpListener;
@@ -64,11 +64,11 @@ fn wait_for_port(port: u16, child: &mut Child) {
 }
 
 #[test]
-#[ignore = "needs sibling aiperf-runner + aiperf-mock-server built in the target dir"]
+#[ignore = "needs sibling aiperf runner + aiperf-mock-server built in the target dir"]
 fn profile_single_run_against_mock_writes_native_report() {
-    let runner = sibling("aiperf-runner");
+    let runner = sibling("aiperf runner");
     let mock = sibling("aiperf-mock-server");
-    assert!(runner.exists(), "build aiperf-runner first: {runner:?}");
+    assert!(runner.exists(), "build aiperf runner first: {runner:?}");
     assert!(mock.exists(), "build aiperf-mock-server first: {mock:?}");
 
     let out_dir = tempfile::tempdir().expect("tempdir");
@@ -112,12 +112,12 @@ fn profile_single_run_against_mock_writes_native_report() {
 }
 
 #[test]
-#[ignore = "needs sibling aiperf-runner + aiperf-mock-server built in the target dir"]
+#[ignore = "needs sibling aiperf runner + aiperf-mock-server built in the target dir"]
 fn profile_yaml_config_against_mock_writes_native_report() {
     // Exercises the full YAML `--config` path end-to-end (not just the flag path).
-    let runner = sibling("aiperf-runner");
+    let runner = sibling("aiperf runner");
     let mock = sibling("aiperf-mock-server");
-    assert!(runner.exists(), "build aiperf-runner first: {runner:?}");
+    assert!(runner.exists(), "build aiperf runner first: {runner:?}");
     assert!(mock.exists(), "build aiperf-mock-server first: {mock:?}");
 
     let out_dir = tempfile::tempdir().expect("tempdir");
@@ -180,12 +180,12 @@ fn profile_yaml_config_against_mock_writes_native_report() {
 }
 
 #[test]
-#[ignore = "needs sibling aiperf-runner + aiperf-mock-server built in the target dir"]
+#[ignore = "needs sibling aiperf runner + aiperf-mock-server built in the target dir"]
 fn profile_sweep_against_mock_writes_per_cell_reports() {
     // A 2-cell concurrency sweep runs both cells and writes an aggregate.
-    let runner = sibling("aiperf-runner");
+    let runner = sibling("aiperf runner");
     let mock = sibling("aiperf-mock-server");
-    assert!(runner.exists(), "build aiperf-runner first: {runner:?}");
+    assert!(runner.exists(), "build aiperf runner first: {runner:?}");
     assert!(mock.exists(), "build aiperf-mock-server first: {mock:?}");
 
     let out_dir = tempfile::tempdir().expect("tempdir");

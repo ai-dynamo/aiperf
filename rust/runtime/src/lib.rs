@@ -9,7 +9,7 @@
 //! Graph-IR engine lives in `crate::graph`; the clock-native scheduling policy
 //! (arrivals, slots, stop conditions, ramps, cancellation, and URL selection)
 //! lives in shared [`crate::timing`]. This library owns runtime composition used
-//! by `aiperf-runner`: the online HTTP sink over `aiperf-transport-http` ([`http`]),
+//! by the `aiperf` binary: the online HTTP sink over `aiperf-transport-http` ([`http`]),
 //! ancillary policy wiring ([`ancillary`]), phased scheduled execution
 //! ([`phase_runtime`]), workload shaping ([`workload`]), the online run loop
 //! ([`run`]), reporting ([`report`]), and canonical static-accuracy execution
@@ -44,9 +44,9 @@ pub mod scheduler;
 pub mod user_centric;
 pub mod workload;
 
-// The v2 protocol / registry / execution layer relocated out of `aiperf-runner`
-// so there can eventually be one registry in `aiperf`. Gated by `engine`
-// so `mock-server` and other library consumers skip it entirely.
+// The v2 protocol / registry / execution layer for the `aiperf` binary.
+// Gated by `engine` so `mock-server` and other library consumers skip it
+// entirely.
 #[cfg(feature = "engine")]
 pub mod engine;
 

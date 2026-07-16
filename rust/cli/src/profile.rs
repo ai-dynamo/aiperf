@@ -4,7 +4,7 @@
 //!
 //! Flow: parse flags → expand any comma-list sweep (or a YAML `sweep:` block) →
 //! for each cell load the native [`BenchmarkRun`], serialize the protocol-v2
-//! execute envelope, spawn the unchanged `aiperf-runner`, and map its terminal
+//! execute envelope, spawn the unchanged `aiperf`, and map its terminal
 //! outcome. A single run is a degenerate one-cell sweep. A YAML `--config` with a
 //! `sweep:` block expands to a native sweep; otherwise it is one run.
 
@@ -228,7 +228,7 @@ fn run_recipe_sweep(
 /// --search-style monotonic`): a byte-exact [`crate::search::MonotonicPlanner`]
 /// (verified against the production planner in `tests/monotonic_parity.rs`)
 /// proposes one concurrency to probe at a time; each probe is one
-/// `aiperf-runner` invocation whose per-iteration SLA feasibility verdict (all
+/// `aiperf` invocation whose per-iteration SLA feasibility verdict (all
 /// filters satisfied by a successful run) is fed back to steer the next probe.
 /// Ports the orchestrator's `while planner.ask()` loop (`orchestrator.py`).
 fn run_search_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {

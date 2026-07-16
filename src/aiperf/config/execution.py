@@ -3,7 +3,7 @@
 
 """Runner transport, workload, and provider selection models.
 
-The selected ``aiperf-runner`` distribution owns the registries behind these
+The selected ``aiperf`` distribution owns the registries behind these
 identifiers.  Config v2 therefore validates only a normalized, non-empty ID
 and the shape of its opaque configuration object.  It deliberately does not
 copy a runner catalog into a Python enum.
@@ -89,7 +89,7 @@ class _NamedRunnerComponentConfig(BaseConfig):
 # (``dataset``, ``phases``, ``endpoint``): ``type`` plus the variant's own fields on
 # the same object, never a nested ``{type, config}`` envelope. The
 # :func:`aiperf.orchestrator.rust_wire` projector re-nests the selected variant into
-# the runner's ``{type, config}`` wire frame, so the strict ``aiperf-runner``
+# the runner's ``{type, config}`` wire frame, so the strict ``aiperf``
 # contract is unchanged.
 
 

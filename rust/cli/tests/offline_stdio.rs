@@ -134,7 +134,7 @@ fn one_line(output: &Output) -> Value {
 
 fn target(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
-        "aiperf-runner-offline-stdio-{}-{name}",
+        "aiperf runner-offline-stdio-{}-{name}",
         std::process::id()
     ))
 }

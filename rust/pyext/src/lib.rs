@@ -6,31 +6,30 @@
 //! This module exists so maturin has a legal binding target to build alongside
 //! the `aiperf` `[project.scripts]` console command (maturin forbids
 //! `bindings = "bin"` there; see the crate-level docs in `Cargo.toml`). The
-//! full-fat native `aiperf-runner` executable ships in the same wheel as interned
-//! package data at `aiperf/_bin/aiperf-runner`, resolved at runtime by
-//! `aiperf.orchestrator.runner_installation` via `importlib.resources` — that path
-//! deliberately does **not** import this module, so a load failure here never
-//! blocks runner discovery.
+//! full-fat native `aiperf` executable ships in the same wheel as interned
+//! package data at `aiperf/_bin/aiperf`, resolved at runtime via
+//! `importlib.resources` — that path deliberately does **not** import this
+//! module, so a load failure here never blocks binary discovery.
 //!
 //! The functions below expose build metadata for `aiperf --version` / support
 //! diagnostics only.
 
 use pyo3::prelude::*;
 
-/// Basename of the interned native runner executable inside the wheel.
+/// Basename of the interned native executable inside the wheel.
 ///
 /// The single authority for the filename shared by the maturin `include` glob
-/// (`aiperf/_bin/aiperf-runner`) and Python discovery.
+/// (`aiperf/_bin/aiperf`) and Python discovery.
 #[pyfunction]
 fn runner_filename() -> &'static str {
-    "aiperf-runner"
+    "aiperf"
 }
 
-/// Package-relative path of the interned runner within the installed `aiperf`
+/// Package-relative path of the interned binary within the installed `aiperf`
 /// package (POSIX separators; the wheel is built on Unix build hosts).
 #[pyfunction]
 fn runner_relpath() -> &'static str {
-    "_bin/aiperf-runner"
+    "_bin/aiperf"
 }
 
 /// Cargo profile this extension (and, by the same maturin build, the wheel) was

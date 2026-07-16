@@ -4,8 +4,8 @@
 //! End-to-end coverage for graph-mode cellular: a `dag_jsonl` graph run through the
 //! ordinary Python frontend with `--cells N`.
 //!
-//! `--cells 3` on a graph dataset makes the launched `aiperf-runner` a controller that
-//! spawns three `aiperf-runner --cell` children; each partitions the trace instances by
+//! `--cells 3` on a graph dataset makes the launched `aiperf` a controller that
+//! spawns three `aiperf --cell` children; each partitions the trace instances by
 //! `instance_ordinal % cell_count` (PartitionedGraphTraceSource), runs its interleaved
 //! slice, and ships its graph records; the controller concatenation-merges them (records
 //! carry local per-cell indices, wall-clock ordered) into one report. This proves the
@@ -358,7 +358,11 @@ async fn test_graph_cellular_sketch_ships_store() {
         ),
         120,
     );
-    assert!(r.success(), "sketch graph cellular run failed: {}", r.stderr);
+    assert!(
+        r.success(),
+        "sketch graph cellular run failed: {}",
+        r.stderr
+    );
 
     // The controller ran (only it writes the cellular-heartbeat.json sidecar).
     let heartbeat = r.artifacts.read_json_file("**/cellular-heartbeat.json");

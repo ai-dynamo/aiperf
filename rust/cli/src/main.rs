@@ -13,7 +13,7 @@
 
 use aiperf_cli::{dispatch, execute_mode};
 
-// mimalloc as the global allocator (moved from the deleted aiperf-runner binary):
+// mimalloc as the global allocator (moved from the former runner binary):
 // per-request allocation churn on the execution hot path was the top profiled
 // hotspot.
 #[global_allocator]

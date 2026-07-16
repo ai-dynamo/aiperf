@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Graceful SIGINT/SIGTERM forwarding to the active `aiperf-runner` child.
+//! Graceful SIGINT/SIGTERM forwarding to the active `aiperf` child.
 //!
 //! Ports `orchestrator/runner_installation.py::_communicate_forwarding_signals`:
 //! block the terminating signals in the process and, on the first delivery,

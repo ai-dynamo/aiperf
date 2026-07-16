@@ -24,7 +24,7 @@ description: >-
 
 `aiperf-mock-server` is a high-throughput, OpenAI-compatible (plus KServe/Riva/TGI/rerank/
 image/RAG) mock inference server. It is a **standalone** developer/test target — it is NOT part
-of the `aiperf-runner` dependency graph and Python never supervises it. You launch it yourself,
+of the `aiperf` dependency graph and Python never supervises it. You launch it yourself,
 it exposes an ordinary HTTP (or gRPC/HTTPS/UDS) URL, and you point a benchmark (or the transport
 tests) at that URL.
 

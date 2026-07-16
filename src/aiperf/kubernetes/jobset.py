@@ -160,7 +160,7 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
         default=1,
         ge=1,
         description="Number of native cellular cell pods for a cross-pod run. Each "
-        "cell is one aiperf-runner slice over a (cell_id, cell_count) budget "
+        "cell is one aiperf runner slice over a (cell_id, cell_count) budget "
         "partition; the controller pod merges their shards. cells=1 is a "
         "single-cell run (still the cellular topology, one cell pod).",
     )
@@ -348,9 +348,9 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
             else None
         )
 
-        # Native cross-pod cellular topology: one aiperf-runner controller pod that
+        # Native cross-pod cellular topology: one aiperf runner controller pod that
         # binds the cell transport + merges shards, and `cells` cell pods that each
-        # run an aiperf-runner budget slice and stream their shard back. Replaces the
+        # run an aiperf runner budget slice and stream their shard back. Replaces the
         # retired Python service mesh (controller-of-services + worker pods over ZMQ).
         controller_job = builder.build_cellular_controller_replicated_job(
             volumes,

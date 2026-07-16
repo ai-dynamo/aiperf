@@ -33,14 +33,14 @@ It is retained as a before-state ledger entry, not current truth.
 - `aiperf-telemetry-archive` exists and owns the archive schema/descriptors,
   canonical frame identity, WAL, local filesystem store, Parquet projection,
   loss ledger, receipts, object-store interfaces, sync, and query surfaces.
-- `aiperf-runner` registers `telemetry_watch` workload execution and archive
+- `aiperf` registers `telemetry_watch` workload execution and archive
   ownership modules on the strict protocol-v2 path.
 - The Python package exposes the human-facing `aiperf watch` command and projects
   `transport.type: http` plus `workload.type: telemetry_watch` into the runner
   request.
 - The remaining completion condition is the final §18/§21 evidence audit by the
   non-authoring validator named above.
-- `aiperf-runner` already owns the sole product executable, strict runner-v2
+- `aiperf` already owns the sole product executable, strict runner-v2
   registry/protocol, typed server/GPU/network sidecars, native report assembly,
   and current scheduled phase integration. These are now integration substrates
   consumed by the archive implementation.
@@ -48,7 +48,7 @@ It is retained as a before-state ledger entry, not current truth.
   use path-limited staging/commit and must not absorb or revert those changes.
 - Baseline `env -u RUSTC_WRAPPER cargo test --workspace` compiled the current
   workspace and passed every completed suite shown before
-  `aiperf-runner/tests/stdio_e2e.rs`; it was interrupted after the existing
+  `aiperf-cli/tests/stdio_e2e.rs`; it was interrupted after the existing
   `stdio_child_replays_anthropic_thinking_signature_and_tool_blocks` test made
   no progress for several minutes. An isolated run under a 120-second hard
   timeout reproduced the hang and exited 143. This pre-change failure must be
@@ -153,7 +153,7 @@ It is retained as a before-state ledger entry, not current truth.
 - [ ] `cargo clippy --all-targets` with no new warnings.
 - [ ] Full workspace `cargo test` plus focused new-crate/property/crash suites.
 - [ ] Python unit/config/wire/CLI tests.
-- [ ] Real Python → packaged `aiperf-runner` collect and sync-only subprocesses.
+- [ ] Real Python → packaged `aiperf` collect and sync-only subprocesses.
 - [ ] Attached scheduled benchmark against the real mock with parity receipts.
 - [ ] HTTP 500, slow source, oversized source, malformed exposition, signal,
   forced crash, ENOSPC/inode, object-store outage/lag/conflict, and resume matrix.

@@ -108,10 +108,8 @@ pub fn run_once(
         for line in reader.lines().map_while(Result::ok) {
             if !line.trim().is_empty() {
                 // Forward each child (execution-engine) stderr line through our
-                // own tracing so it reaches the console AND `logs/aiperf.log`,
-                // mirroring Python's `_forward_runner_stderr_line`
-                // (`logger.info("aiperf-runner: %s", line)`).
-                tracing::info!(target: "aiperf_runner", "aiperf-runner: {line}");
+                // own tracing so it reaches the console AND `logs/aiperf.log`.
+                tracing::info!(target: "aiperf", "aiperf: {line}");
             }
         }
     });
@@ -174,7 +172,7 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
-    /// A tiny shell script standing in for `aiperf-runner`: discards stdin and
+    /// A tiny shell script standing in for `aiperf`: discards stdin and
     /// prints `script_body` verbatim (the caller supplies the emit commands).
     fn fake_runner_raw(script_body: &str) -> tempfile::TempPath {
         let mut f = tempfile::Builder::new().suffix(".sh").tempfile().unwrap();

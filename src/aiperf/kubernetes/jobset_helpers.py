@@ -193,7 +193,7 @@ def build_container_ports(
 # ---------------------------------------------------------------------------
 
 # The controller serves its velo PeerInfo bootstrap on this port
-# (aiperf-runner's AIPERF_CONTROLLER_BOOTSTRAP_BIND default 0.0.0.0:9500,
+# (aiperf runner's AIPERF_CONTROLLER_BOOTSTRAP_BIND default 0.0.0.0:9500,
 # cellular_controller.rs::controller_bootstrap); cells fetch it from
 # tcp://<controller-dns>:9500. The velo DATA plane binds an ephemeral port and is
 # reached via the PeerInfo, so only this bootstrap port is a fixed contract.
@@ -242,7 +242,7 @@ def _config_path() -> str:
 
 
 def build_runner_env_vars(pod_template: PodTemplateConfig) -> list[dict[str, Any]]:
-    """The clean base env for an aiperf-runner (controller or cell) pod.
+    """The clean base env for an aiperf runner (controller or cell) pod.
 
     Deliberately NOT build_env_vars: the native runner reads none of the mesh
     container env (AIPERF_DATASET_MMAP_BASE_PATH, AIPERF_SERVICE_HEALTH_*,
@@ -265,7 +265,7 @@ def build_controller_args() -> list[str]:
     """Build the `aiperf controller` frontend args for the controller pod.
 
     The controller frontend reads Config v2 (cells count included as
-    runtime.cells), projects it through rust_wire, launches aiperf-runner in
+    runtime.cells), projects it through rust_wire, launches aiperf runner in
     controller mode -- binding its cell transport on CELL_CONTROLLER_PORT so the
     sibling cell pods can dial it -- collects one records-shard partition per cell,
     merges them into the single authoritative report, and runs the native export
@@ -278,7 +278,7 @@ def build_cell_args() -> list[str]:
     """Build the `aiperf cell` frontend args for a cell pod.
 
     The cell frontend reads the same Config v2, derives its budget slice from
-    CELL_ID/CELL_COUNT, projects through rust_wire, launches aiperf-runner in cell
+    CELL_ID/CELL_COUNT, projects through rust_wire, launches aiperf runner in cell
     mode, and ships its records-shard partition to CELL_CONTROLLER_ADDR.
     Subcommand/flags are the velo integration point.
     """
@@ -289,7 +289,7 @@ def build_aggregator_args() -> list[str]:
     """Build the `aiperf aggregator` frontend args for a tier-T2 aggregator pod.
 
     The aggregator frontend reads the same Config v2, projects through rust_wire, and
-    pipes the run envelope to `aiperf-runner --aggregator` on stdin (the runner needs
+    pipes the run envelope to `aiperf --aggregator` on stdin (the runner needs
     only the merge MetricsConfig from it). The runner then binds AGG_BIND, collects its
     subtree's folded stores, merges them, and ships one merged store to the controller.
     """

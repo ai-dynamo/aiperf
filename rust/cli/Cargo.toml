@@ -36,7 +36,7 @@ pyo3-embed = ["dep:pyo3"]
 search-pyo3 = ["pyo3-embed"]
 
 # Execution features, forwarded to the `aiperf` library. Previously the default
-# feature set of the deleted `aiperf-runner` crate. `dynosim` requires the
+# feature set of the former runner crate. `dynosim` requires the
 # sibling `dynamo-aiperf-native/lib/mocker` checkout at build time.
 dynosim = ["aiperf-runtime/dynosim"]
 # Server-metrics Parquet + public `.parquet` reader (arrow/parquet). Sibling-free.
@@ -75,7 +75,7 @@ regex.workspace = true
 minijinja = { version = "2.21", features = ["json"] }
 # mimalloc as the global allocator for the unified `aiperf` binary: the execution
 # hot path's per-request allocation churn was the top profiled hotspot (moved here
-# from the deleted `aiperf-runner`). `libmimalloc-sys` exposes the experimental
+# from the former runner crate). `libmimalloc-sys` exposes the experimental
 # option constants the arena-preinit C shim (build.rs) resolves.
 mimalloc = "0.1"
 libmimalloc-sys.workspace = true
@@ -104,13 +104,13 @@ tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 [build-dependencies]
 # Compiles the typed bridge to libmimalloc-sys experimental option constants
-# (src/mimalloc_options.c), moved from the deleted aiperf-runner crate.
+# (src/mimalloc_options.c), moved from the former runner crate.
 cc = "1"
 
 [dev-dependencies]
 tempfile = "3"
 # The relocated `aiperf --execute` stdio integration tests (from the deleted
-# aiperf-runner crate) spin up in-process mock servers. hyper/hyper-util/rustls/
+# former runner crate) spin up in-process mock servers. hyper/hyper-util/rustls/
 # tokio-rustls/http-body-util are already normal deps above; their `server`/http2
 # features union in for the dev build.
 axum.workspace = true

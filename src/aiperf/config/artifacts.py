@@ -133,7 +133,7 @@ class ArtifactsConfig(BaseConfig):
             "`{metric}_unit` column pair per metric); 'parquet' writes a wide, "
             "columnar `profile_export.parquet` sidecar. Combine them "
             "(`[jsonl, csv, parquet]`) or select any subset. Parquet requires an "
-            "`aiperf-runner` built with the `parquet` feature (the default build). "
+            "`aiperf` built with the `parquet` feature (the default build). "
             "Set to false to disable per-record export entirely.",
         ),
     ]

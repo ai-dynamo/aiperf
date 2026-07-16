@@ -3,7 +3,7 @@
 
 //! The `aiperf` binary's execution modes — one benchmark run over the stdio seam.
 //!
-//! This is the relocated body of the deleted `aiperf-runner` binary. The single
+//! This is the relocated body of the deleted `aiperf` binary. The single
 //! `aiperf` binary is BOTH the entry point and the execution engine: for each
 //! run/probe/cell the entry point re-execs **itself** (`aiperf --execute`) and the
 //! child enters [`dispatch`] here, preserving the process/SIGINT/panic isolation
@@ -25,14 +25,14 @@
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 
-use aiperf_runtime::runner_protocol::application::RunnerApplication;
-use aiperf_runtime::runner_protocol::cellular_kind::CellularRunKind;
-use aiperf_runtime::runner_protocol::distribution_identity::current_distribution_id;
-use aiperf_runtime::runner_protocol::protocol_v2::{
+use aiperf_runtime::engine::application::RunnerApplication;
+use aiperf_runtime::engine::cellular_kind::CellularRunKind;
+use aiperf_runtime::engine::distribution_identity::current_distribution_id;
+use aiperf_runtime::engine::protocol_v2::{
     RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2, RunnerEnvelopeV2,
     RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
 };
-use aiperf_runtime::runner_protocol::redaction::redact_diagnostic;
+use aiperf_runtime::engine::redaction::redact_diagnostic;
 use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
 
@@ -69,8 +69,7 @@ pub fn is_execution_mode(args: &[String]) -> bool {
 /// The catalog is a direct in-process call — there is no `--capabilities`
 /// subprocess/argv mode and no Python preflight. Any Rust caller that needs the
 /// linked distribution's plugins.yaml-shaped inventory calls this.
-pub fn capabilities_catalog()
--> anyhow::Result<aiperf_runtime::runner_protocol::protocol::RunnerCatalog> {
+pub fn capabilities_catalog() -> anyhow::Result<aiperf_runtime::engine::protocol::RunnerCatalog> {
     let distribution_id = current_distribution_id()
         .map_err(|error| anyhow::anyhow!("failed to identify aiperf distribution: {error}"))?;
     let application = RunnerApplication::stock(distribution_id)
@@ -107,7 +106,7 @@ pub fn dispatch(args: &[String]) -> ! {
     if std::env::var(aiperf_runtime::cellular::partition::CELL_ID_ENV).is_err()
         && let Ok(envelope) = serde_json::from_slice::<Value>(&input)
         && envelope.pointer("/operation").and_then(Value::as_str) == Some("execute")
-        && aiperf_runtime::runner_protocol::cell_launcher::cell_count_from_envelope(&envelope) > 1
+        && aiperf_runtime::engine::cell_launcher::cell_count_from_envelope(&envelope) > 1
     {
         run_controller(&envelope);
     }
@@ -138,23 +137,22 @@ fn run_cell() -> ! {
             std::process::exit(2);
         }
     };
-    let envelope_bytes = match runtime
-        .block_on(aiperf_runtime::runner_protocol::cellular_cell::fetch_cell_envelope())
-    {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            tracing::error!(
-                error = format!("{error:#}"),
-                "cell failed to fetch its envelope"
-            );
-            std::process::exit(2);
-        }
-    };
+    let envelope_bytes =
+        match runtime.block_on(aiperf_runtime::engine::cellular_cell::fetch_cell_envelope()) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                tracing::error!(
+                    error = format!("{error:#}"),
+                    "cell failed to fetch its envelope"
+                );
+                std::process::exit(2);
+            }
+        };
     // Ultimate spec §3 + §4.5: when dataset fan-out is enabled, build this cell's owned
     // index over the controller's broadcast and run the dispatch state machine over it
     // (a no-op otherwise). Done before dropping the fetch runtime, after START.
     if let Err(error) =
-        runtime.block_on(aiperf_runtime::runner_protocol::cellular_cell::verify_dataset_fanout())
+        runtime.block_on(aiperf_runtime::engine::cellular_cell::verify_dataset_fanout())
     {
         tracing::error!(error = format!("{error:#}"), "cell dataset fan-out failed");
         std::process::exit(2);
@@ -166,9 +164,8 @@ fn run_cell() -> ! {
     // inline-records / public datasets and for a same-host cell (which reads the
     // controller-local path directly).
     let envelope_bytes =
-        match aiperf_runtime::runner_protocol::cellular_cell::download_cell_dataset_if_needed(
-            envelope_bytes,
-        ) {
+        match aiperf_runtime::engine::cellular_cell::download_cell_dataset_if_needed(envelope_bytes)
+        {
             Ok(bytes) => bytes,
             Err(error) => {
                 tracing::error!(
@@ -207,9 +204,9 @@ fn run_aggregator(input: &[u8]) -> ! {
             std::process::exit(2);
         }
     };
-    match runtime
-        .block_on(aiperf_runtime::runner_protocol::cellular_aggregator::run_aggregator(&envelope))
-    {
+    match runtime.block_on(aiperf_runtime::engine::cellular_aggregator::run_aggregator(
+        &envelope,
+    )) {
         Ok(()) => std::process::exit(0),
         Err(error) => {
             tracing::error!(error = format!("{error:#}"), "aggregator failed");
@@ -265,8 +262,7 @@ fn run_controller(envelope: &Value) -> ! {
         .and_then(Value::as_str)
         .unwrap_or_default();
     let report_path = std::path::Path::new(artifact_dir).join("native-v2.json");
-    let cell_count =
-        aiperf_runtime::runner_protocol::cell_launcher::cell_count_from_envelope(envelope);
+    let cell_count = aiperf_runtime::engine::cell_launcher::cell_count_from_envelope(envelope);
     // Compose the stock application so the merged-report export plane resolves the
     // built-in exporter sinks from the one unified `AIPerfRegistry`, exactly as the
     // single-process coordinator path does via `product_registry().exporters()`.
@@ -278,7 +274,7 @@ fn run_controller(envelope: &Value) -> ! {
     // abort the controller (exit 101) with no envelope, so the parent would see a
     // crashed subprocess instead of a typed execution failure.
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        aiperf_runtime::runner_protocol::cellular_controller::run_cellular(
+        aiperf_runtime::engine::cellular_controller::run_cellular(
             envelope,
             cell_count,
             &report_path,

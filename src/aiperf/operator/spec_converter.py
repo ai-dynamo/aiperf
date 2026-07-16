@@ -299,7 +299,7 @@ def apply_k8s_runtime_config(
 ) -> None:
     """Apply Kubernetes runtime settings for the native Rust-runner execution path.
 
-    Unlike the retired Python service mesh, the native ``aiperf-runner`` path has
+    Unlike the retired Python service mesh, the native ``aiperf`` path has
     no ZMQ dual-bind, no ``service_run_type``, no per-service API host/port, and no
     HTTP dataset service: one runner (or, for cellular runs, a controller plus its
     cell pods) owns the whole run and resolves its dataset in-process.

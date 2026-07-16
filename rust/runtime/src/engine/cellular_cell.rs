@@ -3,7 +3,7 @@
 
 //! Cell-mode support for the multi-cell cellular runtime.
 //!
-//! A *cell* is one `aiperf-runner --cell` process (a local subprocess or a k8s
+//! A *cell* is one `aiperf --cell` process (a local subprocess or a k8s
 //! pod). It runs the ordinary online scheduled execution over its budget slice,
 //! but with the `CellularAutonomousIssuer` assigning dense global dispatch
 //! ordinals from its `(cell_id, cell_count)` partition, and it ships its captured

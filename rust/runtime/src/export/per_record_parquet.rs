@@ -115,7 +115,7 @@ pub struct PerRecordRow {
 /// Constant `worker_id` column value, matching the JSONL metadata.
 const WORKER_ID: &str = "rust-0";
 /// Constant `record_processor_id` column value, matching the JSONL metadata.
-const RECORD_PROCESSOR_ID: &str = "aiperf-runner";
+const RECORD_PROCESSOR_ID: &str = "aiperf runner";
 
 /// Write the wide per-record Parquet file.
 ///

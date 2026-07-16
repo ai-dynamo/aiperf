@@ -40,7 +40,7 @@
 //!   `VeloControllerTransport` / `VeloCellClient` pair over rmp raw payloads, with
 //!   discovery-free connection via [`transport::connect`]
 //!   (`specs/2026-07-15-velo-cell-transport-design.md`). The multi-process /
-//!   multi-pod controller/cell topology that drives it lives in `aiperf-runner`.
+//!   multi-pod controller/cell topology that drives it lives in `aiperf`.
 //!
 //! Everything here is object-safe where it crosses a `dyn` boundary and generic
 //! where it is hot-path monomorphized, per the crate's extensibility discipline.

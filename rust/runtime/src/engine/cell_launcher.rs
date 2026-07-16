@@ -6,7 +6,7 @@
 //! The velo transport is uniform across deployments; only *how the cell processes
 //! come to exist* differs, so that is the one seam here:
 //!
-//! - [`LocalLauncher`] (default, dev/test) spawns `aiperf-runner --cell`
+//! - [`LocalLauncher`] (default, dev/test) spawns `aiperf --cell`
 //!   subprocesses on the same host. Each child learns only its `cell_id`, the
 //!   `cell_count`, and the controller's bootstrap coordinate — all via env — and
 //!   fetches its full `CellLaunchSpec` over velo (no stdin pipe).
@@ -99,7 +99,7 @@ pub trait CellLauncher {
     fn launch(&self, ctx: &CellLaunchContext) -> Result<Vec<CellHandle>>;
 }
 
-/// Spawns `aiperf-runner --cell` subprocesses on this host.
+/// Spawns `aiperf --cell` subprocesses on this host.
 pub struct LocalLauncher;
 
 impl LocalLauncher {
@@ -108,7 +108,7 @@ impl LocalLauncher {
     pub fn cell_command(&self, ctx: &CellLaunchContext, cell_id: u32) -> tokio::process::Command {
         use std::process::Stdio;
         // `current_exe` can fail; a failure surfaces at launch, so build eagerly.
-        let exe = std::env::current_exe().unwrap_or_else(|_| "aiperf-runner".into());
+        let exe = std::env::current_exe().unwrap_or_else(|_| "aiperf runner".into());
         let mut command = tokio::process::Command::new(exe);
         command
             .arg("--cell")

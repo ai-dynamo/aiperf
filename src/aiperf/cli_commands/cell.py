@@ -19,7 +19,7 @@ def cell(
     """Run this pod as one native cellular cell.
 
     The Kubernetes counterpart of ``aiperf profile`` for a cell pod: resolve Config
-    v2 and launch ``aiperf-runner`` in cell mode, which runs this pod's
+    v2 and launch ``aiperf`` in cell mode, which runs this pod's
     ``(cell_id, cell_count)`` budget slice (from the ``CELL_*`` env the operator sets)
     and streams its records shard to the controller. A cell reports nothing to
     Kubernetes -- the controller owns the aggregate progress and completion. Launched

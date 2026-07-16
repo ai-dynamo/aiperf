@@ -4,7 +4,7 @@
 """Configuration-only loader identities for Rust-native recorded graphs.
 
 The Python frontend owns plugin names and Config-v2 validation, but it does not
-parse or lower these sources. The selected ``aiperf-runner`` adapter acquires,
+parse or lower these sources. The selected ``aiperf`` adapter acquires,
 validates, reconstructs, and compiles each trace exactly once.
 """
 
@@ -31,7 +31,7 @@ class _RecordedGraphNativeLoader(BaseFileLoader):
     def load_dataset(self) -> dict[str, list[Any]]:
         raise RuntimeError(
             f"{type(self).__name__} is a Rust-native Graph-IR input; "
-            "it must be loaded by aiperf-runner"
+            "it must be loaded by aiperf runner"
         )
 
     def convert_to_conversations(self, custom_data: dict[str, list[Any]]) -> list[Any]:

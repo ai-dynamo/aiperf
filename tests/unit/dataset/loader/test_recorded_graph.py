@@ -95,7 +95,7 @@ def test_dynamo_directory_uses_numeric_segment_order_and_fails_closed(
 
 def test_configuration_only_loaders_cannot_enter_python_data_plane() -> None:
     loader = object.__new__(WekaTraceNativeLoader)
-    with pytest.raises(RuntimeError, match="aiperf-runner"):
+    with pytest.raises(RuntimeError, match="aiperf runner"):
         loader.load_dataset()
     with pytest.raises(RuntimeError, match="legacy linear"):
         loader.convert_to_conversations({})

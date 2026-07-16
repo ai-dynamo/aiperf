@@ -424,7 +424,7 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         Field(
             default_factory=HttpTransport,
             description="Orthogonal native transport selection. The open type ID and "
-            "factory-owned config are validated by the selected aiperf-runner. The "
+            "factory-owned config are validated by the selected aiperf runner. The "
             "clock rides on the transport ID (dynosim_offline=virtual, "
             "dynosim_online/http/grpc=wall clock).",
         ),

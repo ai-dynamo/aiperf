@@ -6,7 +6,7 @@
 //! controller reassembles them correctly.
 //!
 //! True multi-HOST (k8s) cannot run in-sandbox, but multi-PROCESS on localhost
-//! proves the exact same mechanism: real `aiperf-runner --cell` subprocesses, the
+//! proves the exact same mechanism: real `aiperf --cell` subprocesses, the
 //! real controller HTTP artifact upload server bound on loopback, real zstd over a
 //! real TCP socket, and the real Stage D concat. The only residue this cannot
 //! exercise is cross-host DNS — not the shipping mechanism itself.
@@ -15,7 +15,7 @@
 //!
 //! The cross-host HTTP artifact path is normally gated to k8s (a `tcp://` velo
 //! coordinate). The test/dev force seam
-//! [`AIPERF_CELL_ARTIFACT_HTTP_FORCE`](aiperf-runner) makes a SAME-HOST `--cells N`
+//! [`AIPERF_CELL_ARTIFACT_HTTP_FORCE`](aiperf runner) makes a SAME-HOST `--cells N`
 //! run drive it over loopback: the controller binds its upload server on
 //! `127.0.0.1:0`, injects that authority into each locally-launched cell, the cells
 //! POST their per-record artifact files (+ `inputs.json`) back with
@@ -105,8 +105,7 @@ fn run_full_coverage(h: &AIPerfHarness, cells: u32, force_http: bool) -> RunResu
     std::fs::write(&cfg, full_coverage_config(&h.mock.url, cells)).unwrap();
     // Surface just the cellular artifact-upload observable at `info`; everything else
     // stays at the runner's default `warn`.
-    let mut env: Vec<(&str, &str)> =
-        vec![("AIPERF_LOG", "warn,aiperf_cellular_artifact=info")];
+    let mut env: Vec<(&str, &str)> = vec![("AIPERF_LOG", "warn,aiperf_cellular_artifact=info")];
     if force_http {
         env.push(("AIPERF_CELL_ARTIFACT_HTTP_FORCE", "1"));
     }

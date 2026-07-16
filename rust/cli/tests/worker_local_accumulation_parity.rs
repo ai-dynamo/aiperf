@@ -8,7 +8,7 @@
 //! single coordinator observer); the coordinator drains per-worker records,
 //! stamps the global dispatch ordinal, and re-ingests them in dispatch order.
 //!
-//! This test drives the real `aiperf-runner` subprocess against an in-process
+//! This test drives the real `aiperf` subprocess against an in-process
 //! deterministic HTTP mock, running the identical request set once with
 //! `worker_count = 1` (which accumulates on the coordinator reactor, matching the
 //! superseded single-observer path) and once with `worker_count = 4` (the

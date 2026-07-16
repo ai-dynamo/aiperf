@@ -4,7 +4,7 @@
 """Offline parity gate: `aiperf profile` vs `python -m dynamo.replay`.
 
 Drives the real AIPerf product path — `aiperf profile --config <dynosim YAML>`
-spawning the dynosim `aiperf-runner` — against the official Dynamo offline replay
+spawning the dynosim `aiperf` — against the official Dynamo offline replay
 frontend, across the full supported dynosim feature matrix (topology × router ×
 worker counts), and checks the two backend Dynamo reports agree.
 
@@ -154,7 +154,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--aiperf", type=Path, required=True,
                         help="AIPerf console entrypoint (e.g. .venv/bin/aiperf).")
     parser.add_argument("--runner-bin", type=Path, required=True,
-                        help="dynosim aiperf-runner (exported as AIPERF_RUNNER_BIN).")
+                        help="dynosim aiperf runner (exported as AIPERF_RUNNER_BIN).")
     parser.add_argument("--python", type=Path, required=True,
                         help="Python with the dynamo bindings importable.")
     parser.add_argument("--official-pythonpath", required=True,

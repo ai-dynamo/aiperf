@@ -706,7 +706,7 @@ default `--features full`); `maturin build` emits one platform-specific wheel
 carrying the `pyext` `aiperf._native` module and the `src/aiperf` frontend; and
 `tools/wheel_repack.py` then repacks the binary directly into the wheel's scripts
 directory as `aiperf-<ver>.data/scripts/aiperf` — no separate
-`aiperf-runner`/`aiperf_rust` wheel. The installed `aiperf` command IS the native
+`aiperf`/`aiperf_rust` wheel. The installed `aiperf` command IS the native
 binary. End users run `aiperf profile --config benchmark.yaml`; the pure-Python
 frontend is reachable as `aiperf-python` and `python -m aiperf`.
 `cargo run -p aiperf-runtime` and native `--offline`/mode flags do not exist.

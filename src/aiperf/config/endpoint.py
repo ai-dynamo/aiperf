@@ -156,7 +156,7 @@ class EndpointConfig(BaseConfig):
         Field(
             default=EndpointDefaults.TYPE,
             description="Endpoint dialect identifier compiled into the selected "
-            "aiperf-runner. The portable config accepts any non-empty string; "
+            "aiperf runner. The portable config accepts any non-empty string; "
             "execution validates availability against that exact runner.",
         ),
     ]

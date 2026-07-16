@@ -561,7 +561,7 @@ pub(crate) fn record_csv_row(
     cells.push(csv_opt_i64(record.first_token_ns));
     cells.push(record.end_ns.to_string());
     cells.push("rust-0".to_string());
-    cells.push("aiperf-runner".to_string());
+    cells.push("aiperf runner".to_string());
     cells.push(phase_str(record.phase).to_string());
     cells.push(record.canceled.to_string());
     cells.push(csv_opt_i64(record.canceled.then_some(record.end_ns)));
@@ -914,7 +914,7 @@ fn record_row(captured: &CapturedRecord, config: &MetricsConfig, include_trace: 
             request_ack_ns: record.first_token_ns,
             request_end_ns: record.end_ns,
             worker_id: "rust-0",
-            record_processor_id: "aiperf-runner",
+            record_processor_id: "aiperf runner",
             benchmark_phase: record.phase,
             was_cancelled: record.canceled,
             cancellation_time_ns: record.canceled.then_some(record.end_ns),
@@ -954,7 +954,7 @@ fn raw_record_row<'a>(
             request_ack_ns: ingest.first_token_ns,
             request_end_ns: ingest.end_ns,
             worker_id: "rust-0",
-            record_processor_id: "aiperf-runner",
+            record_processor_id: "aiperf runner",
             benchmark_phase: ingest.phase,
             was_cancelled: ingest.canceled,
             cancellation_time_ns: ingest.canceled.then_some(ingest.end_ns),

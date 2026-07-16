@@ -909,7 +909,7 @@ fn rows_from_remote_bytes(
 #[cfg(not(feature = "parquet"))]
 fn decode_parquet(_bytes: Bytes, label: &str, _max_rows: Option<usize>) -> Result<Vec<Value>> {
     Err(DatasetError::Validation(format!(
-        "Parquet dataset {label} requires an aiperf-runner built with the `parquet` \
+        "Parquet dataset {label} requires an aiperf runner built with the `parquet` \
          feature; this build has it disabled"
     )))
 }

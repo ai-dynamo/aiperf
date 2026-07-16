@@ -6,9 +6,8 @@
 # maturin refuses to emit a `bindings = "bin"` binary alongside
 # `[project.scripts]` (maturin #368), and the `aiperf` package must keep its
 # `aiperf` console command. maturin also requires a real binding target. So this
-# tiny cdylib is the wheel's compiled target (`aiperf._native`); the full-fat
-# native `aiperf-runner` rides along as interned package data
-# (`aiperf/_bin/aiperf-runner`) via `[tool.maturin] include` in the root
+# tiny cdylib is the wheel's compiled target (`aiperf._native`); # native `aiperf` binary rides along as interned package data
+# (`aiperf/_bin/aiperf`) via `[tool.maturin] include` in the root
 # pyproject.toml. It carries only build metadata for `aiperf --version`
 # diagnostics — runner discovery does not import it.
 [package]

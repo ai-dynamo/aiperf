@@ -499,7 +499,7 @@ class _JobSetManifestBuilder:
         agg_ship_template: str | None = None,
         barrier_free: bool = False,
     ) -> list[AIPerfContainerSpec]:
-        """Controller pod for a native cellular run: one aiperf-runner in controller
+        """Controller pod for a native cellular run: one aiperf runner in controller
         mode plus the results-serving sidecar.
 
         The controller container binds its cell transport on CELL_CONTROLLER_PORT
@@ -515,7 +515,7 @@ class _JobSetManifestBuilder:
             image=self.spec.image,
             image_pull_policy=self.spec.image_pull_policy,
             # The Python `aiperf` frontend is the orchestrator; `aiperf controller`
-            # reads Config v2, projects via rust_wire, and launches aiperf-runner in
+            # reads Config v2, projects via rust_wire, and launches aiperf runner in
             # controller mode over stdio (see jobset_helpers cellular section).
             command=["aiperf"],
             args=build_controller_args(),
@@ -549,7 +549,7 @@ class _JobSetManifestBuilder:
         agg_fanout: int | None = None,
         agg_ship_template: str | None = None,
     ) -> list[AIPerfContainerSpec]:
-        """One cell pod: a single aiperf-runner cell slice that ships its shard back.
+        """One cell pod: a single aiperf runner cell slice that ships its shard back.
 
         Under tier-T2 (agg_fanout/agg_ship_template set) the cell also gets the fanout +
         ship-DNS template so it ships to its round-robin aggregator instead of the
@@ -560,7 +560,7 @@ class _JobSetManifestBuilder:
             image=self.spec.image,
             image_pull_policy=self.spec.image_pull_policy,
             # `aiperf cell` frontend: reads Config v2 + CELL_* env, projects via
-            # rust_wire, launches aiperf-runner in cell mode, ships its shard.
+            # rust_wire, launches aiperf runner in cell mode, ships its shard.
             command=["aiperf"],
             args=build_cell_args(),
             env=[
@@ -584,7 +584,7 @@ class _JobSetManifestBuilder:
     def create_aggregator_containers(
         self, controller_dns: str, *, fanout: int
     ) -> list[AIPerfContainerSpec]:
-        """One tier-T2 aggregator pod: an aiperf-runner --aggregator that collects its
+        """One tier-T2 aggregator pod: an aiperf --aggregator that collects its
         subtree of cells' folded stores, merges them, and ships one store up.
 
         The `aiperf aggregator` frontend reads the same mounted Config v2, projects via

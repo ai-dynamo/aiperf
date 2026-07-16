@@ -2404,7 +2404,7 @@ mod tests {
     #[test]
     fn graph_adapter_runs_without_http_and_commits_exact_backend_artifacts() {
         let root = std::env::temp_dir().join(format!(
-            "aiperf-runner-offline-graph-{}-{}",
+            "aiperf runner-offline-graph-{}-{}",
             std::process::id(),
             std::thread::current().name().unwrap_or("test")
         ));

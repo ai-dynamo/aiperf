@@ -3,7 +3,7 @@
 
 //! Full-stack e2e for the mock server's TLS/HTTPS frontend.
 //!
-//! Runs the real `python -m aiperf profile` CLI (native `aiperf-runner` + its
+//! Runs the real `python -m aiperf profile` CLI (native `aiperf` + its
 //! production Clock-injected hyper HTTPS client) against an
 //! `aiperf-mock-server` HTTPS listener terminated by a fresh in-memory
 //! self-signed certificate ([`aiperf_mock_server::tls::self_signed_acceptor`] —
@@ -274,7 +274,8 @@ fn start_grpcs_mock() -> String {
         rt.block_on(async move {
             let acceptor = tls::self_signed_acceptor().expect("self-signed acceptor");
             let state = AppState::build(cfg);
-            let _ = aiperf_mock_server::grpc::serve_grpc_with_tls(addr, state, Some(acceptor)).await;
+            let _ =
+                aiperf_mock_server::grpc::serve_grpc_with_tls(addr, state, Some(acceptor)).await;
         });
     });
     std::thread::sleep(Duration::from_millis(400));
@@ -328,7 +329,10 @@ async fn grpcs_kserve_infer_via_aiperf_profile_raw_records() {
     let cfg_file = h.artifact_path().join("grpcs.yaml");
     std::fs::write(&cfg_file, grpcs_config(&url)).expect("write grpcs config");
 
-    let r = h.run(&format!("--config {} --export-level raw", cfg_file.display()));
+    let r = h.run(&format!(
+        "--config {} --export-level raw",
+        cfg_file.display()
+    ));
     assert!(
         r.success(),
         "grpcs run failed (exit {}):\nstdout:\n{}\nstderr:\n{}",
@@ -344,11 +348,12 @@ async fn grpcs_kserve_infer_via_aiperf_profile_raw_records() {
         "one raw record per grpcs request"
     );
     for (i, rec) in records.iter().enumerate() {
-        let errored = rec
-            .get("error")
-            .map(|e| !e.is_null())
-            .unwrap_or(false);
-        assert!(!errored, "record {i} errored over grpcs: {:?}", rec.get("error"));
+        let errored = rec.get("error").map(|e| !e.is_null()).unwrap_or(false);
+        assert!(
+            !errored,
+            "record {i} errored over grpcs: {:?}",
+            rec.get("error")
+        );
         let has_response = rec
             .get("responses")
             .and_then(|v| v.as_array())

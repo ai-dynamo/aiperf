@@ -8,7 +8,7 @@
 //! and a separate `rust_wire` projection into a JSON request — the Rust CLI has
 //! ONE typed object. The pre-translation layer parses CLI flags + YAML *into*
 //! this object (see `crate::flags` / the loader), and serializing it *is* the
-//! protocol-v2 request the unchanged `aiperf-runner` consumes. There is no
+//! protocol-v2 request the unchanged `aiperf` consumes. There is no
 //! separate wire DTO and no config→wire projection step.
 //!
 //! Typing discipline (maximal): every closed string set is an `enum`, units are

@@ -318,7 +318,7 @@ async def _serve() -> int:
     processor: OTelMetricsResultsProcessor | None
     disabled_reason: str | None = None
     try:
-        processor = OTelMetricsResultsProcessor("aiperf-runner", run)
+        processor = OTelMetricsResultsProcessor("aiperf", run)
     except PostProcessorDisabled as error:
         processor = None
         disabled_reason = str(error)

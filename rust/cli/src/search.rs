@@ -14,7 +14,7 @@
 //! static sweep: [`MonotonicPlanner`] is a byte-exact pure-logic port of
 //! `aiperf.orchestrator.search_planner.monotonic::MonotonicSLASearchPlanner`
 //! (exponential probe + bisection over a 1D SLA-saturation boundary), driven by
-//! [`crate::profile::run_search_loop`] which runs one `aiperf-runner` child per
+//! [`crate::profile::run_search_loop`] which runs one `aiperf` child per
 //! probe and feeds back a per-iteration feasibility verdict. The `bayes` /
 //! `optuna` / `smooth_isotonic` styles additionally need GP/isotonic fits (the
 //! former via in-process pyo3 optuna) and remain future work.

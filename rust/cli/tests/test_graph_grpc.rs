@@ -15,7 +15,7 @@
 //! The test stands up an in-process gRPC KServe (v2 infer) target — the same
 //! `OipService`/`RawCodec` harness `grpc_v2_stdio.rs` uses for the scheduled
 //! gRPC path — authors a multi-node `dag_jsonl` DAG (a root that forks to two
-//! children), runs the native `aiperf-runner` with `transport.type: grpc`, and
+//! children), runs the native `aiperf` with `transport.type: grpc`, and
 //! asserts every graph node dispatched over Tonic (one captured
 //! `ModelInferRequest` per node) with per-node records folded into the report.
 //! Channel dependencies (turn N+1 referencing turn N's generated text) flow via
@@ -58,7 +58,7 @@ fn capabilities() -> Value {
     .expect("catalog to Value")
 }
 
-/// Drive one `aiperf-runner` child over the protocol-v2 stdio surface, returning
+/// Drive one `aiperf` child over the protocol-v2 stdio surface, returning
 /// its terminal envelope line on stdout.
 fn run_child(request: &Value) -> Output {
     let mut child = Command::new(binary())

@@ -337,7 +337,7 @@ def test_config_v2_streams_rust_metrics_live_through_canonical_python_otel(
             label="native-live-otel",
             random_seed=43,
         )
-        default_binary = Path(__file__).parents[2] / "target/debug/aiperf-runner"
+        default_binary = Path(__file__).parents[2] / "target/debug/aiperf runner"
         binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default_binary))
         result_holder: dict[str, object] = {}
 
@@ -484,7 +484,7 @@ def test_config_v2_collects_server_metrics_in_rust_across_exact_phase_boundaries
             label="native-server-metrics",
             random_seed=31,
         )
-        default_binary = Path(__file__).parents[2] / "target/debug/aiperf-runner"
+        default_binary = Path(__file__).parents[2] / "target/debug/aiperf runner"
         binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default_binary))
 
         with mock.patch.object(Environment.SERVER_METRICS, "COLLECTION_INTERVAL", 0.01):
@@ -611,7 +611,7 @@ def test_config_v2_joins_rust_gpu_telemetry_into_all_artifacts(
             label="native-gpu",
             random_seed=19,
         )
-        default_binary = Path(__file__).parents[2] / "target/debug/aiperf-runner"
+        default_binary = Path(__file__).parents[2] / "target/debug/aiperf runner"
         binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default_binary))
 
         with mock.patch.object(Environment.RUNTIME, "NATIVE_EXPORT", False):
@@ -701,7 +701,7 @@ def test_config_v2_runs_native_tcp_rtt_calibration_and_adjusts_metrics(
             label="native-network-rtt",
             random_seed=23,
         )
-        default_binary = Path(__file__).parents[2] / "target/debug/aiperf-runner"
+        default_binary = Path(__file__).parents[2] / "target/debug/aiperf runner"
         binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default_binary))
 
         result = NativeExecutor(tmp_path, binary=binary).execute_sync(run)
@@ -780,7 +780,7 @@ def test_config_v2_fixed_network_rtt_bypasses_probes_and_shifts_metrics(
             label="native-fixed-network-rtt",
             random_seed=29,
         )
-        default_binary = Path(__file__).parents[2] / "target/debug/aiperf-runner"
+        default_binary = Path(__file__).parents[2] / "target/debug/aiperf runner"
         binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default_binary))
 
         result = NativeExecutor(tmp_path, binary=binary).execute_sync(run)
@@ -843,7 +843,7 @@ def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
             label="native",
             random_seed=11,
         )
-        default_binary = Path(__file__).parents[2] / "target/debug/aiperf-runner"
+        default_binary = Path(__file__).parents[2] / "target/debug/aiperf runner"
         binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default_binary))
         result = NativeExecutor(tmp_path, binary=binary).execute_sync(run)
 
@@ -1244,7 +1244,7 @@ def test_config_v2_controls_native_connection_reuse(tmp_path: Path) -> None:
     thread.start()
     try:
         port = server.server_address[1]
-        default_binary = Path(__file__).parents[2] / "target/debug/aiperf-runner"
+        default_binary = Path(__file__).parents[2] / "target/debug/aiperf runner"
         binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default_binary))
         observed: dict[str, list[bool]] = {}
         peer_ports: dict[str, list[int]] = {}
@@ -1358,7 +1358,7 @@ def test_config_v2_enforces_one_native_end_to_end_request_timeout(
             label="timeout",
             random_seed=43,
         )
-        default_binary = Path(__file__).parents[2] / "target/debug/aiperf-runner"
+        default_binary = Path(__file__).parents[2] / "target/debug/aiperf runner"
         binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default_binary))
 
         result = NativeExecutor(tmp_path, binary=binary).execute_sync(run)
@@ -1447,7 +1447,7 @@ def test_config_v2_adaptive_phase_controls_the_native_live_issuer(
             label="native-adaptive",
             random_seed=37,
         )
-        default_binary = Path(__file__).parents[2] / "target/debug/aiperf-runner"
+        default_binary = Path(__file__).parents[2] / "target/debug/aiperf runner"
         binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default_binary))
         result = NativeExecutor(tmp_path, binary=binary).execute_sync(run)
 

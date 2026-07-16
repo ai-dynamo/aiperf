@@ -242,7 +242,7 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
             metadata = plugins.get_endpoint_metadata(self._endpoint_type)
         except Exception:
             # Runner-only endpoint dialects (e.g. ``dynosim``, ``vllm_generate``)
-            # are compiled into the selected aiperf-runner and have no Python
+            # are compiled into the selected aiperf runner and have no Python
             # metadata entry. The console title degrades to the product default
             # rather than failing the whole export.
             return "NVIDIA AIPerf"

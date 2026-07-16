@@ -434,7 +434,7 @@ class KubernetesDeployment(AIPerfBaseModel):
             resource_mode=self.deployment.resource_mode,
             # Cellular cell-pod count comes straight from the authored
             # runtime.cells; the JobSet spins up this many cell pods, each an
-            # aiperf-runner slice of the (cell_id, cell_count) budget partition.
+            # aiperf runner slice of the (cell_id, cell_count) budget partition.
             cells=self.config.benchmark.runtime.cells or 1,
             worker_replicas=self.worker_replicas,
             workers_per_pod=self.workers_per_pod

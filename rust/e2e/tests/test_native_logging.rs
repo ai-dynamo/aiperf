@@ -11,7 +11,7 @@
 //! - the entry-point lifecycle lines (`Starting native AIPerf run` … `Native
 //!   AIPerf run completed`) are emitted,
 //! - the `--execute` child's runtime narrative (dataset / phase lifecycle /
-//!   export) is forwarded as `aiperf-runner:` lines, and
+//!   export) is forwarded as `aiperf runner:` lines, and
 //! - every line lands in `<artifact_dir>/logs/aiperf.log` (Python's FileHandler).
 
 mod common;
@@ -111,7 +111,7 @@ async fn native_front_door_writes_full_log_narrative() {
 
     // The run's milestone narrative, in the order it must appear. Entry-point
     // lines come from `aiperf_cli`; the runtime lines are forwarded from the
-    // `--execute` child as `aiperf-runner:` lines. Wording mirrors the Python
+    // `--execute` child as `aiperf runner:` lines. Wording mirrors the Python
     // frontend so existing log-scraping keeps matching on the native path.
     let ordered_milestones = [
         "Starting native AIPerf run",
