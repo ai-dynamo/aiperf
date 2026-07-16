@@ -187,3 +187,21 @@ class TestAccuracyAccumulator:
 
         sliced = acc.query_time_range(20, 40)
         assert [r.timestamp_ns for r in sliced] == [20, 30]
+
+    async def test_query_time_range_handles_out_of_order_arrival(self) -> None:
+        # Records arrive interleaved from multiple record processors, so the
+        # backing list is NOT globally sorted by timestamp. A binary search would
+        # slice wrong here; the direct filter must still return every in-range row.
+        acc = _make_accumulator()
+        await _seed(
+            acc,
+            [
+                _record(timestamp_ns=30),
+                _record(timestamp_ns=10),
+                _record(timestamp_ns=40),
+                _record(timestamp_ns=20),
+            ],
+        )
+
+        sliced = acc.query_time_range(20, 40)
+        assert sorted(r.timestamp_ns for r in sliced) == [20, 30]

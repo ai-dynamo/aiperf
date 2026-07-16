@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import bisect
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
@@ -50,22 +49,19 @@ class AccuracyAccumulator(BaseMetricsProcessor):
         super().__init__(run=run, **kwargs)
         self.run = run
         self._records: list[AccuracyRecordsData] = []
-        self._timestamps_ns: list[int] = []
 
     async def process_record(self, record: AccuracyRecordsData) -> None:
-        """Append a graded record, preserving per-worker insertion order."""
+        """Append a graded record in arrival order."""
         self._records.append(record)
-        self._timestamps_ns.append(record.timestamp_ns)
 
     def query_time_range(self, start_ns: int, end_ns: int) -> list[AccuracyRecordsData]:
         """Return records whose ``timestamp_ns`` is in ``[start_ns, end_ns)``.
 
-        Analyzer query surface. Uses ``bisect`` on the append-ordered
-        ``_timestamps_ns`` (records arrive time-ordered per worker).
+        Analyzer query surface. Filters directly rather than bisecting: records
+        arrive interleaved from multiple record processors, so ``_records`` is not
+        globally sorted by ``timestamp_ns`` and a binary search would slice wrong.
         """
-        lo = bisect.bisect_left(self._timestamps_ns, start_ns)
-        hi = bisect.bisect_left(self._timestamps_ns, end_ns)
-        return self._records[lo:hi]
+        return [r for r in self._records if start_ns <= r.timestamp_ns < end_ns]
 
     def _build_summary(self, phase: CreditPhase | None) -> AccuracySummary | None:
         """Roll scoped records into an ``AccuracySummary`` (None when empty).
