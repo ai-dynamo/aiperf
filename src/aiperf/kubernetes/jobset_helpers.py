@@ -215,6 +215,21 @@ CELL_LAUNCHER_ENV = "AIPERF_CELL_LAUNCHER"
 # and lets artifact/file-dataset cellular runs reach the controller cross-pod.
 CELL_ARTIFACT_PORT: int = 9600
 
+# Tier-T2 aggregator tree env contract (rust: runner_protocol::cellular_aggregator +
+# cellular_cell). Names/values must match the runner exactly.
+CELL_AGG_FANOUT_ENV = "AIPERF_CELL_AGG_FANOUT"
+CELL_BARRIER_FREE_ENV = "AIPERF_CELL_BARRIER_FREE"
+# Set on the CONTROLLER pod (presence = operator wired the aggregator tier, so the
+# controller expects M aggregator pods instead of spawning) AND on each CELL pod (the
+# concrete ship-DNS template with a `{agg_id}` placeholder the cell fills from its
+# round-robin aggregator `cell_id % M`). cellular_aggregator::AGG_DNS_TEMPLATE_ENV.
+CELL_AGG_DNS_TEMPLATE_ENV = "AIPERF_CELL_AGG_DNS_TEMPLATE"
+# The aggregator pod's velo bind port. Each aggregator pod binds tcp://0.0.0.0:9700
+# (all interfaces so its pod DNS resolves); cells ship to {aggregator_dns}:9700.
+AGGREGATOR_PORT: int = 9700
+AGG_ID_ENV = "AIPERF_AGG_ID"
+AGG_BIND_ENV = "AIPERF_AGG_BIND"
+
 # HF tokenizer cache dir; the runner tokenizes in-process, so it is the one piece
 # of the mesh container env the native pods still need. Matches the tokenizer-cache
 # volume mount from build_runner_volume_mounts.
@@ -270,7 +285,24 @@ def build_cell_args() -> list[str]:
     return ["cell", "--config", _config_path()]
 
 
-def build_cell_env_vars(*, cells: int, controller_dns: str) -> list[dict[str, Any]]:
+def build_aggregator_args() -> list[str]:
+    """Build the `aiperf aggregator` frontend args for a tier-T2 aggregator pod.
+
+    The aggregator frontend reads the same Config v2, projects through rust_wire, and
+    pipes the run envelope to `aiperf-runner --aggregator` on stdin (the runner needs
+    only the merge MetricsConfig from it). The runner then binds AGG_BIND, collects its
+    subtree's folded stores, merges them, and ships one merged store to the controller.
+    """
+    return ["aggregator", "--config", _config_path()]
+
+
+def build_cell_env_vars(
+    *,
+    cells: int,
+    controller_dns: str,
+    agg_fanout: int | None = None,
+    agg_ship_template: str | None = None,
+) -> list[dict[str, Any]]:
     """Env for a cell pod: its partition index, the cell count, and the controller.
 
     CELL_ID is the JobSet job-index of this cell's replicated-job replica (each of
@@ -278,8 +310,15 @@ def build_cell_env_vars(*, cells: int, controller_dns: str) -> list[dict[str, An
     `0..cells-1`), sourced from the same `jobset.sigs.k8s.io/job-index` label the
     mesh used for AIPERF_POD_INDEX. CELL_CONTROLLER_ADDR is the controller pod's
     stable JobSet DNS name plus the transport port.
+
+    Tier-T2: when `agg_fanout` + `agg_ship_template` are given, the cell also gets the
+    fanout (to compute M) and the concrete ship-DNS template with a `{agg_id}`
+    placeholder. A JobSet indexed replicatedJob shares one env template, so the cell
+    fills `{agg_id}` from its own `cell_id % M` pod-side (cellular_cell::ship_target);
+    it still fetches its envelope + START from the controller and only *ships* to the
+    aggregator, so its partition is byte-identical to the flat topology.
     """
-    return [
+    env: list[dict[str, Any]] = [
         {
             "name": CELL_ID_ENV,
             "valueFrom": {
@@ -297,16 +336,75 @@ def build_cell_env_vars(*, cells: int, controller_dns: str) -> list[dict[str, An
             "value": f"tcp://{controller_dns}:{CELL_CONTROLLER_PORT}",
         },
     ]
+    if agg_fanout is not None and agg_ship_template is not None:
+        env.append({"name": CELL_AGG_FANOUT_ENV, "value": str(agg_fanout)})
+        env.append(
+            {"name": CELL_AGG_DNS_TEMPLATE_ENV, "value": agg_ship_template}
+        )
+    return env
 
 
-def build_controller_env_vars() -> list[dict[str, Any]]:
-    """Env for the controller pod: select the k8s cell launcher.
+def build_controller_env_vars(
+    *,
+    agg_fanout: int | None = None,
+    agg_ship_template: str | None = None,
+    barrier_free: bool = False,
+) -> list[dict[str, Any]]:
+    """Env for the controller pod: select the k8s cell launcher + tier T2/T3 knobs.
 
     ``AIPERF_CELL_LAUNCHER=k8s`` tells the runner-controller not to spawn cell
     children (the JobSet already created the ``cells`` cell pods); it binds its velo
     bootstrap on the default ``0.0.0.0:9500`` and waits for the cell pods to register.
+
+    Tier-T2: when `agg_fanout` + `agg_ship_template` are given, the controller gets the
+    fanout (to compute M = expected_partitions) and the DNS template whose *presence*
+    is the k8s "expect, don't spawn" gate (cellular_controller effective_aggregator_count
+    / AGG_DNS_TEMPLATE_ENV). Tier-T3: `barrier_free` triggers START immediately.
     """
-    return [{"name": CELL_LAUNCHER_ENV, "value": "k8s"}]
+    env: list[dict[str, Any]] = [{"name": CELL_LAUNCHER_ENV, "value": "k8s"}]
+    if agg_fanout is not None and agg_ship_template is not None:
+        env.append({"name": CELL_AGG_FANOUT_ENV, "value": str(agg_fanout)})
+        env.append(
+            {"name": CELL_AGG_DNS_TEMPLATE_ENV, "value": agg_ship_template}
+        )
+    if barrier_free:
+        env.append({"name": CELL_BARRIER_FREE_ENV, "value": "1"})
+    return env
+
+
+def build_aggregator_env_vars(
+    *, cells: int, agg_fanout: int, controller_dns: str
+) -> list[dict[str, Any]]:
+    """Env for a tier-T2 aggregator pod.
+
+    The aggregator binds all interfaces (so its pod DNS resolves to it) and collects
+    its subtree's cells. Its per-pod collect barrier `children_of(agg_id, M, cells)` is
+    derived runner-side from AGG_ID + the static cell-count + fanout (a JobSet indexed
+    replicatedJob shares one env template, so an uneven split cannot be a static value):
+
+    - AGG_ID: the pod's `jobset.sigs.k8s.io/job-index` (like the cell's CELL_ID).
+    - AGG_BIND: `tcp://0.0.0.0:{AGGREGATOR_PORT}` (all interfaces, not loopback).
+    - CELL_COUNT + CELL_AGG_FANOUT: static, so the runner derives M and this pod's
+      child count via the same gates as the controller.
+    - CELL_CONTROLLER_ADDR: where the merged store ships up.
+    """
+    return [
+        {
+            "name": AGG_ID_ENV,
+            "valueFrom": {
+                "fieldRef": {
+                    "fieldPath": "metadata.labels['jobset.sigs.k8s.io/job-index']"
+                }
+            },
+        },
+        {"name": AGG_BIND_ENV, "value": f"tcp://0.0.0.0:{AGGREGATOR_PORT}"},
+        {"name": CELL_COUNT_ENV, "value": str(cells)},
+        {"name": CELL_AGG_FANOUT_ENV, "value": str(agg_fanout)},
+        {
+            "name": CELL_CONTROLLER_ADDR_ENV,
+            "value": f"tcp://{controller_dns}:{CELL_CONTROLLER_PORT}",
+        },
+    ]
 
 
 def build_cr_identity_env(*, job_id: str, namespace: str) -> list[dict[str, Any]]:

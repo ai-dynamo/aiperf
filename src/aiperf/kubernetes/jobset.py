@@ -36,6 +36,10 @@ __all__ = [
     "AIPerfContainerSpec",
     "AIPerfJobSetSpec",
     "AIPerfReplicatedJobSpec",
+    "aggregator_children",
+    "aggregator_count",
+    "aggregator_dns_name",
+    "aggregator_ship_template",
     "controller_dns_name",
     "get_jobset_install_hint",
     "get_jobset_manifest_url",
@@ -60,6 +64,72 @@ def controller_dns_name(jobset_name: str, namespace: str) -> str:
         Fully qualified DNS hostname for the controller pod.
     """
     return f"{jobset_name}-controller-0-0.{jobset_name}.{namespace}.svc.cluster.local"
+
+
+def aggregator_dns_name(jobset_name: str, namespace: str, agg_id: int) -> str:
+    """Build a tier-T2 aggregator pod's DNS hostname for a JobSet.
+
+    The ``aggregators`` replicatedJob is an indexed Job (like ``cells``), so pod
+    ``agg_id`` gets the deterministic name
+    ``{jobset}-aggregators-{agg_id}-0.{jobset}.{ns}.svc.cluster.local`` under the
+    JobSet's ``enableDNSHostnames`` headless service. Cells ship to this coordinate
+    (+ the aggregator port); the aggregator ships up to the controller.
+
+    Args:
+        jobset_name: The JobSet resource name.
+        namespace: Kubernetes namespace.
+        agg_id: The aggregator's job-index (``0..M``).
+
+    Returns:
+        Fully qualified DNS hostname for aggregator pod ``agg_id``.
+    """
+    return (
+        f"{jobset_name}-aggregators-{agg_id}-0."
+        f"{jobset_name}.{namespace}.svc.cluster.local"
+    )
+
+
+def aggregator_ship_template(jobset_name: str, namespace: str) -> str:
+    """The cell ship-DNS template a cell fills with its round-robin aggregator id.
+
+    A JobSet indexed cell replicatedJob shares one env template, so the operator gives
+    every cell the same concrete ``tcp://…svc.cluster.local:PORT`` coordinate with a
+    single ``{agg_id}`` placeholder (jobset/namespace resolved here); each cell
+    substitutes its own ``cell_id % M`` pod-side (rust ``cellular_cell::ship_target``).
+    Set on both the cells (to ship) and the controller (its *presence* is the k8s
+    expect-don't-spawn gate).
+    """
+    from aiperf.kubernetes.jobset_helpers import AGGREGATOR_PORT
+
+    return (
+        f"tcp://{jobset_name}-aggregators-{{agg_id}}-0."
+        f"{jobset_name}.{namespace}.svc.cluster.local:{AGGREGATOR_PORT}"
+    )
+
+
+def aggregator_count(cells: int, fanout: int | None) -> int | None:
+    """Number of tier-T2 aggregators for ``cells`` at ``fanout``, or ``None`` for flat.
+
+    Mirrors the Rust ``cellular_aggregator::aggregator_count`` gate exactly so the
+    operator and the controller never disagree on M: unset ``fanout``, ``< 1``, or
+    ``>= cells`` keeps the flat star (one aggregator per cell or fewer is pointless);
+    otherwise M = ``ceil(cells / fanout)``.
+    """
+    if fanout is None or fanout < 1 or fanout >= cells:
+        return None
+    return -(-cells // fanout)  # ceil division
+
+
+def aggregator_children(agg_id: int, agg_count: int, cells: int) -> int:
+    """Cells assigned to aggregator ``agg_id`` under round-robin (``cell_id % M``).
+
+    Mirrors Rust ``cellular_aggregator::children_of`` exactly (the aggregator's
+    collect barrier must match what the operator sizes): ``ceil((cells - agg_id) /
+    agg_count)``, or 0 when ``agg_id >= cells``.
+    """
+    if agg_id >= cells:
+        return 0
+    return -(-(cells - agg_id) // agg_count)  # ceil division
 
 
 class AIPerfJobSetSpec(AIPerfBaseModel):
@@ -93,6 +163,24 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
         "cell is one aiperf-runner slice over a (cell_id, cell_count) budget "
         "partition; the controller pod merges their shards. cells=1 is a "
         "single-cell run (still the cellular topology, one cell pod).",
+    )
+    cell_agg_fanout: int | None = Field(
+        default=None,
+        ge=1,
+        description="Tier-T2 aggregator fan-out: the max cells one aggregator pod "
+        "collects. When set and < cells, the operator inserts an `aggregators` "
+        "replicatedJob of M=ceil(cells/fanout) pods between the cells and the "
+        "controller (each cell ships its folded store to its round-robin aggregator; "
+        "each aggregator merges its subtree and ships one store up), lifting the "
+        "single-controller fan-in ceiling. Unset or >= cells keeps the flat star. "
+        "Fold-only (sketch or exact-fold); the byte-exact retain path stays flat.",
+    )
+    barrier_free: bool = Field(
+        default=False,
+        description="Tier-T3 master-less start: the controller triggers START "
+        "immediately instead of waiting for all N cell registrations (the O(N) "
+        "rendezvous is a scale limit at high cell counts). Aggregate-equivalent to "
+        "the synchronized start on data-deterministic metrics.",
     )
     worker_replicas: int = Field(default=1, description="Number of worker pods")
     workers_per_pod: int | None = Field(
@@ -248,12 +336,34 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
         controller_dns = controller_dns_name(self.name, self.namespace)
         volumes = build_runner_volumes(self.name, self.pod_template)
 
+        # Tier-T2 aggregator tree: M = ceil(cells / fanout) aggregator pods between the
+        # cells and the controller (fold-only; None keeps the flat star). When present,
+        # cells ship to their round-robin aggregator via the DNS template, aggregators
+        # merge their subtree and ship one store up, and the controller collects M.
+        agg_count = aggregator_count(self.cells, self.cell_agg_fanout)
+        agg_fanout = self.cell_agg_fanout if agg_count is not None else None
+        agg_ship_template = (
+            aggregator_ship_template(self.name, self.namespace)
+            if agg_count is not None
+            else None
+        )
+
         # Native cross-pod cellular topology: one aiperf-runner controller pod that
         # binds the cell transport + merges shards, and `cells` cell pods that each
         # run an aiperf-runner budget slice and stream their shard back. Replaces the
         # retired Python service mesh (controller-of-services + worker pods over ZMQ).
-        controller_job = builder.build_cellular_controller_replicated_job(volumes)
-        cells_job = builder.build_cell_replicated_job(volumes, controller_dns)
+        controller_job = builder.build_cellular_controller_replicated_job(
+            volumes,
+            agg_fanout=agg_fanout,
+            agg_ship_template=agg_ship_template,
+            barrier_free=self.barrier_free,
+        )
+        cells_job = builder.build_cell_replicated_job(
+            volumes,
+            controller_dns,
+            agg_fanout=agg_fanout,
+            agg_ship_template=agg_ship_template,
+        )
 
         metadata: dict[str, Any] = {
             "name": self.name,
@@ -282,6 +392,18 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
                 "replicatedJobs": [
                     controller_job.to_k8s_spec(),
                     cells_job.to_k8s_spec(),
+                    *(
+                        [
+                            builder.build_aggregator_replicated_job(
+                                volumes,
+                                controller_dns,
+                                agg_count=agg_count,
+                                fanout=self.cell_agg_fanout,
+                            ).to_k8s_spec()
+                        ]
+                        if agg_count is not None
+                        else []
+                    ),
                 ],
             },
         }

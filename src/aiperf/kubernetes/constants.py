@@ -113,6 +113,11 @@ class Containers:
     reports up to the CR. The cellular successor to CONTROL_PLANE; the two never
     coexist in one pod, so the completion/orphan-recovery gate checks for either."""
 
+    CELL_AGGREGATOR: str = "aggregator"
+    """A tier-T2 aggregator container (``aiperf aggregator``): collects a subtree of
+    cells' folded stores, merges them, and ships one merged store up to the controller.
+    Present only when ``runtime.cell_agg_fanout`` inserts an aggregator tier."""
+
     DATASET_MANAGER: str = "dataset-manager"
     """Dataset generation and memory-map serving."""
 

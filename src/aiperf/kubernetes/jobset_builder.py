@@ -16,8 +16,11 @@ from aiperf.kubernetes.constants import Containers
 from aiperf.kubernetes.enums import RestartPolicy
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset_helpers import (
+    AGGREGATOR_PORT,
     CELL_ARTIFACT_PORT,
     CELL_CONTROLLER_PORT,
+    build_aggregator_args,
+    build_aggregator_env_vars,
     build_cell_args,
     build_cell_env_vars,
     build_container_args,
@@ -489,7 +492,13 @@ class _JobSetManifestBuilder:
 
     # ------------------------------------------------------------------ native cellular topology
 
-    def create_cellular_controller_containers(self) -> list[AIPerfContainerSpec]:
+    def create_cellular_controller_containers(
+        self,
+        *,
+        agg_fanout: int | None = None,
+        agg_ship_template: str | None = None,
+        barrier_free: bool = False,
+    ) -> list[AIPerfContainerSpec]:
         """Controller pod for a native cellular run: one aiperf-runner in controller
         mode plus the results-serving sidecar.
 
@@ -498,7 +507,8 @@ class _JobSetManifestBuilder:
         service), reads the mounted protocol-v2 run envelope, and merges the cells'
         shards into the single authoritative report + native exports under /results.
         Unlike the mesh controller there is no ZMQ event-bus proxy, no dataset/
-        timing/records manager, and no API service.
+        timing/records manager, and no API service. Tier-T2/T3 knobs
+        (agg_fanout/agg_ship_template/barrier_free) drive the controller env.
         """
         controller = AIPerfContainerSpec(
             name=Containers.CELL_CONTROLLER,
@@ -514,7 +524,11 @@ class _JobSetManifestBuilder:
                 *build_cr_identity_env(
                     job_id=self.spec.job_id, namespace=self.spec.namespace
                 ),
-                *build_controller_env_vars(),
+                *build_controller_env_vars(
+                    agg_fanout=agg_fanout,
+                    agg_ship_template=agg_ship_template,
+                    barrier_free=barrier_free,
+                ),
             ],
             resources=self._resolve_pod_resources("SYSTEM_CONTROLLER"),
             volume_mounts=build_runner_volume_mounts(self.spec.pod_template),
@@ -528,8 +542,19 @@ class _JobSetManifestBuilder:
         )
         return [controller, self._create_results_sidecar()]
 
-    def create_cell_containers(self, controller_dns: str) -> list[AIPerfContainerSpec]:
-        """One cell pod: a single aiperf-runner cell slice that ships its shard back."""
+    def create_cell_containers(
+        self,
+        controller_dns: str,
+        *,
+        agg_fanout: int | None = None,
+        agg_ship_template: str | None = None,
+    ) -> list[AIPerfContainerSpec]:
+        """One cell pod: a single aiperf-runner cell slice that ships its shard back.
+
+        Under tier-T2 (agg_fanout/agg_ship_template set) the cell also gets the fanout +
+        ship-DNS template so it ships to its round-robin aggregator instead of the
+        controller (rust computes cell_id % M pod-side).
+        """
         cell = AIPerfContainerSpec(
             name="cell",
             image=self.spec.image,
@@ -543,7 +568,12 @@ class _JobSetManifestBuilder:
                 *build_cr_identity_env(
                     job_id=self.spec.job_id, namespace=self.spec.namespace
                 ),
-                *build_cell_env_vars(cells=self.spec.cells, controller_dns=controller_dns),
+                *build_cell_env_vars(
+                    cells=self.spec.cells,
+                    controller_dns=controller_dns,
+                    agg_fanout=agg_fanout,
+                    agg_ship_template=agg_ship_template,
+                ),
             ],
             resources=self._resolve_pod_resources("WORKER_POD"),
             volume_mounts=build_runner_volume_mounts(self.spec.pod_template),
@@ -551,15 +581,56 @@ class _JobSetManifestBuilder:
         )
         return [cell]
 
+    def create_aggregator_containers(
+        self, controller_dns: str, *, fanout: int
+    ) -> list[AIPerfContainerSpec]:
+        """One tier-T2 aggregator pod: an aiperf-runner --aggregator that collects its
+        subtree of cells' folded stores, merges them, and ships one store up.
+
+        The `aiperf aggregator` frontend reads the same mounted Config v2, projects via
+        rust_wire, and pipes the envelope to the runner (for the merge MetricsConfig).
+        The runner binds tcp://0.0.0.0:9700 and derives its collect barrier
+        children_of(agg_id, M, cells) from AGG_ID + the static cell-count/fanout.
+        """
+        aggregator = AIPerfContainerSpec(
+            name=Containers.CELL_AGGREGATOR,
+            image=self.spec.image,
+            image_pull_policy=self.spec.image_pull_policy,
+            command=["aiperf"],
+            args=build_aggregator_args(),
+            env=[
+                *build_runner_env_vars(self.spec.pod_template),
+                *build_aggregator_env_vars(
+                    cells=self.spec.cells,
+                    agg_fanout=fanout,
+                    controller_dns=controller_dns,
+                ),
+            ],
+            resources=self._resolve_pod_resources("WORKER_POD"),
+            volume_mounts=build_runner_volume_mounts(self.spec.pod_template),
+            ports=[{"containerPort": AGGREGATOR_PORT, "name": "cell-agg"}],
+            security_context=build_security_context(self.spec.pod_template),
+        )
+        return [aggregator]
+
     def build_cellular_controller_replicated_job(
-        self, volumes: list[dict[str, Any]]
+        self,
+        volumes: list[dict[str, Any]],
+        *,
+        agg_fanout: int | None = None,
+        agg_ship_template: str | None = None,
+        barrier_free: bool = False,
     ) -> AIPerfReplicatedJobSpec:
         """Build the controller replicatedJob (1 replica) for a cellular run."""
         jobset_config = K8sEnvironment.JOBSET
         return AIPerfReplicatedJobSpec(
             name="controller",
             replicas=1,
-            containers=self.create_cellular_controller_containers(),
+            containers=self.create_cellular_controller_containers(
+                agg_fanout=agg_fanout,
+                agg_ship_template=agg_ship_template,
+                barrier_free=barrier_free,
+            ),
             volumes=volumes,
             restart_policy=RestartPolicy.NEVER,
             backoff_limit=jobset_config.CONTROLLER_BACKOFF_LIMIT,
@@ -568,7 +639,12 @@ class _JobSetManifestBuilder:
         )
 
     def build_cell_replicated_job(
-        self, volumes: list[dict[str, Any]], controller_dns: str
+        self,
+        volumes: list[dict[str, Any]],
+        controller_dns: str,
+        *,
+        agg_fanout: int | None = None,
+        agg_ship_template: str | None = None,
     ) -> AIPerfReplicatedJobSpec:
         """Build the cells replicatedJob (`cells` replicas) for a cellular run.
 
@@ -579,7 +655,39 @@ class _JobSetManifestBuilder:
         return AIPerfReplicatedJobSpec(
             name="cells",
             replicas=self.spec.cells,
-            containers=self.create_cell_containers(controller_dns),
+            containers=self.create_cell_containers(
+                controller_dns,
+                agg_fanout=agg_fanout,
+                agg_ship_template=agg_ship_template,
+            ),
+            volumes=volumes,
+            restart_policy=RestartPolicy.ON_FAILURE,
+            backoff_limit=jobset_config.WORKER_BACKOFF_LIMIT,
+            job_ttl_seconds=None if self.spec.keep_failed_pods else 0,
+            pod_template=self.spec.pod_template,
+            job_id=self.spec.job_id,
+        )
+
+    def build_aggregator_replicated_job(
+        self,
+        volumes: list[dict[str, Any]],
+        controller_dns: str,
+        *,
+        agg_count: int,
+        fanout: int,
+    ) -> AIPerfReplicatedJobSpec:
+        """Build the tier-T2 `aggregators` replicatedJob (M replicas) for a cellular run.
+
+        Like `cells`, each of the M replicas is a distinct indexed job, so the job
+        indices tile `0..M-1` and become each aggregator's AGG_ID
+        (see build_aggregator_env_vars). ON_FAILURE + surfaced by monitor.py, mirroring
+        the cells job (an aggregator is a restartable stateless merge node).
+        """
+        jobset_config = K8sEnvironment.JOBSET
+        return AIPerfReplicatedJobSpec(
+            name="aggregators",
+            replicas=agg_count,
+            containers=self.create_aggregator_containers(controller_dns, fanout=fanout),
             volumes=volumes,
             restart_policy=RestartPolicy.ON_FAILURE,
             backoff_limit=jobset_config.WORKER_BACKOFF_LIMIT,
