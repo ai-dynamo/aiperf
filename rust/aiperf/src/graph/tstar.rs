@@ -82,73 +82,102 @@ pub fn seed_for_trace_lane(base_seed: u64, trace_id: &str, lane: u64) -> u64 {
     u64::from_be_bytes(low8)
 }
 
-/// Derive a per-pass RNG seed for the shuffle/random dataset-sampling draw.
+/// Derive the legacy agentx `ShuffleSampler` child RNG seed from the RUN root.
 ///
-/// Byte-exact port of `graph_ir_replay.py:_seed_for_draw_pass` (lines 205-216,
-/// branch `ajc/aiperf-graph-ir`): SHA-256 the ASCII string
-/// `"{base_seed}:dataset-draw:{pass_index}"` and take the low 8 bytes
-/// big-endian. This mirrors [`seed_for_trace_lane`]'s derivation so each recycle
-/// pass re-permutes under a distinct-yet-deterministic seed drawn from the run's
-/// `t_star_random_seed`: the same base seed + pass index always yields the same
-/// permutation (cross-run reproducibility), while different passes decorrelate.
-pub fn seed_for_draw_pass(base_seed: u64, pass_index: u64) -> u64 {
+/// Byte-exact port of `_RNGManager.derive` (agentx
+/// `common/random_generator.py:392-410`, the `sha256` low-8-big-endian child
+/// seed) specialized to the label `ShuffleSampler` requests at
+/// `dataset/dataset_samplers.py:76` (`rng.derive("dataset.sampler.shuffle")`):
+/// SHA-256 the ASCII string `"{root_seed}:dataset.sampler.shuffle"` and take the
+/// low 8 bytes big-endian. The argument is the RUN root seed
+/// (`rng.init(config.random_seed)`), NOT `t_star_random_seed`.
+pub fn legacy_shuffle_seed(root_seed: u64) -> u64 {
     let mut hasher = Sha256::new();
-    hasher.update(format!("{base_seed}:dataset-draw:{pass_index}").as_bytes());
+    hasher.update(format!("{root_seed}:dataset.sampler.shuffle").as_bytes());
     let digest = hasher.finalize();
     let mut low8 = [0u8; 8];
     low8.copy_from_slice(&digest[..8]);
     u64::from_be_bytes(low8)
 }
 
-/// Return the seeded permutation of `range(total)` for one draw pass.
+/// Persistent-epoch shuffle state for one corpus size (the legacy sampler model).
 ///
-/// Byte-exact port of `graph_ir_replay.py:_draw_permutation` (lines 837-855,
-/// branch `ajc/aiperf-graph-ir`): a pass-salted numpy RNG
-/// ([`seed_for_draw_pass`] -> `np.random.default_rng` -> in-place Fisher-Yates
-/// `shuffle`, reproduced by [`NumpyPcg64::permutation`]) permutes `range(total)`
-/// without replacement. Each pass of `total` draws covers every index exactly
-/// once, then a fresh seeded permutation begins — the music-shuffle contract the
-/// conversation-plane `ShuffleSampler` provides. Callers cache the result per
-/// `(total, pass_index)`; the derivation is pure, so caching is a pure
-/// optimization (the permutation is identical whether cached or recomputed).
-pub fn draw_permutation(base_seed: u64, pass_index: u64, total: usize) -> Vec<usize> {
-    NumpyPcg64::from_u64_seed(seed_for_draw_pass(base_seed, pass_index)).permutation(total)
+/// agentx `ShuffleSampler` (`dataset/dataset_samplers.py:66`) shuffles
+/// `arange(total)` in place at init (pass 0) with ONE generator, then re-shuffles
+/// that SAME persistent generator each time the cursor wraps (pass 1, 2, ...).
+/// This is a CONTINUOUS-STATE generator: pass `k` is `arange(total)` after
+/// `k + 1` in-place `numpy Generator.shuffle` calls, NOT a fresh per-pass seed.
+/// We keep the generator and the running array alive and snapshot each pass, so
+/// producing pass `k` is O(total) amortized (one shuffle) rather than replaying
+/// `k + 1` shuffles from scratch.
+struct ShuffleEpochs {
+    /// The single persistent generator (`np.random.default_rng(child_seed)`).
+    generator: NumpyPcg64,
+    /// The running array, mutated in place by each pass's shuffle.
+    running: Vec<usize>,
+    /// Snapshot of the array AFTER pass `k`'s shuffle (`passes[k]` == pass `k`).
+    passes: Vec<Rc<Vec<usize>>>,
+}
+
+impl ShuffleEpochs {
+    fn new(child_seed: u64, total: usize) -> Self {
+        Self {
+            generator: NumpyPcg64::from_u64_seed(child_seed),
+            running: (0..total).collect(),
+            passes: Vec::new(),
+        }
+    }
+
+    /// Return the array after pass `pass_index`, advancing the generator only as
+    /// far as needed (each additional pass is exactly one more in-place shuffle).
+    fn pass(&mut self, pass_index: usize) -> Rc<Vec<usize>> {
+        while self.passes.len() <= pass_index {
+            self.generator.shuffle(&mut self.running);
+            self.passes.push(Rc::new(self.running.clone()));
+        }
+        self.passes[pass_index].clone()
+    }
 }
 
 /// Strategy-aware corpus-index remap shared by every graph recycle draw site.
 ///
-/// Faithful port of `graph_ir_replay.py:_draw_index`/`_draw_permutation`
-/// (lines 792-855, branch `ajc/aiperf-graph-ir`): the SINGLE choke point every
+/// Reproduces legacy agentx `ShuffleSampler`/`SequentialSampler`
+/// (`dataset/dataset_samplers.py`) BYTE-EXACT: the SINGLE choke point every
 /// cross-trace draw in the pressure lane fan-out, the pass-0 lane resolve, AND
 /// the profiling recycle draw routes through, so `--dataset-sampling-strategy`
 /// governs WHICH corpus template a freed lane serves without changing the draw
-/// COUNTERS (only the counter -> index remap changes). `Sequential` (the
-/// default) returns `x % total` unchanged; `Shuffle`/`Random` map `x` to
-/// `perm[pass][x % total]` where `pass = x / total`, each pass drawing a
-/// distinct seeded permutation ([`draw_permutation`]).
+/// COUNTERS (only the counter -> index remap changes). `Sequential`
+/// (`SequentialSampler`, the default) returns `x % total` unchanged;
+/// `Shuffle`/`Random` return `epoch[x / total][x % total]` where each epoch is
+/// the running array after one more in-place shuffle of the SAME persistent
+/// generator (the continuous-state model — see [`ShuffleEpochs`]), seeded once
+/// with [`legacy_shuffle_seed`]`(run_root)`.
 ///
-/// The permutation is cached per `(total, pass_index)` in a `RefCell` (single
-/// event-loop mutation, mirroring Python's per-instance `_draw_perm_cache`); the
-/// cache is a pure optimization since [`draw_permutation`] is deterministic.
+/// The epoch snapshots are cached per `total` in a `RefCell` (single event-loop
+/// mutation); the derivation is deterministic given `(base_seed, total)`, so two
+/// instances with the same base seed produce identical draws regardless of call
+/// order (the cache is a pure optimization).
 ///
 /// Reused by both the runner's `PressureDraw` (pressure/pass-0 draws) and the
 /// [`crate::graph::workload::CyclingGraphTraceSource`] /
 /// `PartitionedGraphTraceSource` profiling recycle, so the profiling recycle
-/// continues the SAME per-pass permutation contract the pressure stage replays
-/// under (a freed profiling lane never re-serves a template the pressure stage
-/// already drew under a different order).
+/// continues the SAME persistent-epoch order the pressure stage replays under (a
+/// freed profiling lane never re-serves a template the pressure stage already
+/// drew under a different order).
 pub struct PermutationDraw {
     /// Whether the resolved strategy permutes (shuffle/random) vs. sequential.
     shuffled: bool,
-    /// Base seed for [`seed_for_draw_pass`] (the run's `t_star_random_seed`).
+    /// The legacy `ShuffleSampler` child seed ([`legacy_shuffle_seed`] of the run
+    /// root), NOT `t_star_random_seed`.
     base_seed: u64,
-    /// Per-`(total, pass_index)` permutation cache (`_draw_perm_cache`).
-    cache: RefCell<HashMap<(usize, u64), Rc<Vec<usize>>>>,
+    /// Per-`total` persistent-epoch shuffle state (mirrors the sampler's own
+    /// single-generator, running-array state across wraps).
+    cache: RefCell<HashMap<usize, ShuffleEpochs>>,
 }
 
 impl PermutationDraw {
-    /// Build a draw for a resolved strategy: `shuffled` selects the per-pass
-    /// permutation remap; `base_seed` salts each pass's permutation seed.
+    /// Build a draw for a resolved strategy: `shuffled` selects the persistent
+    /// shuffle-epoch remap; `base_seed` is the legacy `ShuffleSampler` child seed.
     pub fn new(shuffled: bool, base_seed: u64) -> Self {
         Self {
             shuffled,
@@ -164,8 +193,8 @@ impl PermutationDraw {
 
     /// Remap draw counter `x` to a corpus index in `[0, total)`.
     ///
-    /// `graph_ir_replay.py:_draw_index`: `total <= 0` yields `0`; sequential
-    /// returns `x % total`; shuffle returns `perm[x // total][x % total]`.
+    /// `total == 0` yields `0`; `SequentialSampler` returns `x % total`;
+    /// `ShuffleSampler` returns `epoch[x / total][x % total]`.
     pub fn index(&self, x: u64, total: usize) -> usize {
         if total == 0 {
             return 0;
@@ -174,21 +203,13 @@ impl PermutationDraw {
         if !self.shuffled {
             return usize::try_from(x % total_u64).unwrap_or(0);
         }
-        let pass_index = x / total_u64;
+        let pass_index = usize::try_from(x / total_u64).unwrap_or(0);
         let offset = usize::try_from(x % total_u64).unwrap_or(0);
-        self.permutation(pass_index, total)[offset]
-    }
-
-    /// Return the cached seeded permutation of `range(total)` for a draw pass,
-    /// building it once per `(total, pass_index)` (`_draw_permutation`).
-    fn permutation(&self, pass_index: u64, total: usize) -> Rc<Vec<usize>> {
-        let key = (total, pass_index);
-        if let Some(cached) = self.cache.borrow().get(&key) {
-            return cached.clone();
-        }
-        let perm = Rc::new(draw_permutation(self.base_seed, pass_index, total));
-        self.cache.borrow_mut().insert(key, perm.clone());
-        perm
+        let mut cache = self.cache.borrow_mut();
+        let epochs = cache
+            .entry(total)
+            .or_insert_with(|| ShuffleEpochs::new(self.base_seed, total));
+        epochs.pass(pass_index)[offset]
     }
 }
 
@@ -266,25 +287,55 @@ mod tests {
     }
 
     #[test]
-    fn draw_pass_seed_matches_python_sha256_low8_be() {
+    fn legacy_shuffle_seed_matches_python_sha256_low8_be() {
         // python3 -c "import hashlib; print(int.from_bytes(
-        //   hashlib.sha256(b'0:dataset-draw:0').digest()[:8],'big'))"
-        assert_eq!(seed_for_draw_pass(0, 0), 14221486954297044610);
-        assert_eq!(seed_for_draw_pass(0, 1), 10278907799327951431);
-        assert_eq!(seed_for_draw_pass(42, 3), 991418308715691445);
+        //   hashlib.sha256(b'0:dataset.sampler.shuffle').digest()[:8],'big'))"
+        // These are exactly the `seed` fields of the committed golden vectors.
+        assert_eq!(legacy_shuffle_seed(0), 5203359018791016587);
+        assert_eq!(legacy_shuffle_seed(42), 7029856620319297634);
+        assert_eq!(legacy_shuffle_seed(12345), 9928324691828912718);
     }
 
     #[test]
-    fn draw_permutation_matches_numpy_and_covers_every_index_once() {
-        // python: list(np.random.default_rng(_seed_for_draw_pass(0, p)).permutation(5))
-        assert_eq!(draw_permutation(0, 0, 5), vec![4, 3, 0, 2, 1]);
-        assert_eq!(draw_permutation(0, 1, 5), vec![1, 2, 0, 4, 3]);
-        // Distinct per-pass seed => pass 1 differs from pass 0.
-        assert_ne!(draw_permutation(0, 0, 5), draw_permutation(0, 1, 5));
-        // A full pass is a permutation: every index in [0, total) exactly once.
-        let mut sorted = draw_permutation(0, 0, 5);
-        sorted.sort_unstable();
-        assert_eq!(sorted, vec![0, 1, 2, 3, 4]);
+    fn legacy_shuffle_sampler_golden_vectors() {
+        // Authoritative parity gate: for each committed vector, the persistent-
+        // epoch `PermutationDraw` seeded with the legacy `ShuffleSampler` child
+        // seed must reproduce the exact recycle-order `sequence` (pass 0, pass 1,
+        // into pass 2) that agentx `ShuffleSampler` emits for the same run root.
+        #[derive(serde::Deserialize)]
+        struct Vector {
+            root_seed: u64,
+            n: usize,
+            seed: u64,
+            sequence: Vec<usize>,
+        }
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/data/legacy_shuffle_sampler_vectors.json"
+        );
+        let raw = std::fs::read_to_string(path).expect("read legacy shuffle vectors");
+        let vectors: Vec<Vector> =
+            serde_json::from_str(&raw).expect("parse legacy shuffle vectors");
+        assert!(!vectors.is_empty(), "golden vectors must not be empty");
+        for vector in &vectors {
+            // The child-seed derivation itself is part of the parity contract.
+            assert_eq!(
+                legacy_shuffle_seed(vector.root_seed),
+                vector.seed,
+                "child seed for root {}",
+                vector.root_seed
+            );
+            let draw = PermutationDraw::new(true, vector.seed);
+            for (x, &expected) in vector.sequence.iter().enumerate() {
+                assert_eq!(
+                    draw.index(x as u64, vector.n),
+                    expected,
+                    "root {} n {} at draw {x}",
+                    vector.root_seed,
+                    vector.n
+                );
+            }
+        }
     }
 
     #[test]
@@ -300,23 +351,29 @@ mod tests {
     }
 
     #[test]
-    fn permutation_draw_shuffle_matches_seeded_permutation_each_pass() {
-        // Shuffle: index(x) == draw_permutation(base, x/total, total)[x%total],
-        // each pass covers every index exactly once, and distinct passes differ.
-        let draw = PermutationDraw::new(true, 0);
-        let total = 5usize;
-        for pass in 0u64..2 {
-            let expected = draw_permutation(0, pass, total);
+    fn permutation_draw_shuffle_covers_each_pass_and_is_call_order_independent() {
+        // Every full pass of the persistent-epoch shuffle covers each corpus index
+        // exactly once (music-shuffle contract), and the draw is a pure function of
+        // (base_seed, x, total): two instances agree regardless of the order in
+        // which passes are requested (the incremental cache is only optimization).
+        let draw = PermutationDraw::new(true, 5203359018791016587);
+        let total = 8usize;
+        for pass in 0u64..3 {
             let mut seen = Vec::new();
             for offset in 0..total as u64 {
-                let x = pass * total as u64 + offset;
-                assert_eq!(draw.index(x, total), expected[offset as usize]);
-                seen.push(draw.index(x, total));
+                seen.push(draw.index(pass * total as u64 + offset, total));
             }
             seen.sort_unstable();
-            assert_eq!(seen, (0..total).collect::<Vec<_>>());
+            assert_eq!(seen, (0..total).collect::<Vec<_>>(), "pass {pass} coverage");
         }
-        assert_ne!(draw.index(0, total), draw.index(total as u64, total));
+        // A second instance drawing passes in reverse order agrees index-for-index.
+        let reverse = PermutationDraw::new(true, 5203359018791016587);
+        for pass in (0u64..3).rev() {
+            for offset in 0..total as u64 {
+                let x = pass * total as u64 + offset;
+                assert_eq!(reverse.index(x, total), draw.index(x, total), "draw {x}");
+            }
+        }
     }
 
     #[test]

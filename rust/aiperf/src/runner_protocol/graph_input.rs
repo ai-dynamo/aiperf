@@ -26,6 +26,7 @@ use crate::graph::recorded::{
     PromptCorpus, RecordedTraceInputConfig, compile_aiperf_trace_input, compile_dynamo_trace_input,
     compile_weka_trace_input,
 };
+use crate::graph::tstar::legacy_shuffle_seed;
 use crate::rng::RngRoot;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
@@ -53,35 +54,50 @@ pub struct TStarWindow {
     pub start_min_ratio: f64,
     /// Upper window bound as a fraction of each trace's replayable span.
     pub start_max_ratio: f64,
-    /// Base RNG seed salted per `(trace_id, lane)` by the sampler, and the base
-    /// seed for the shuffle/random dataset-sampling draw (`_seed_for_draw_pass`).
+    /// Base RNG seed salted per `(trace_id, lane)` by the `t*` sampler
+    /// (`_seed_for_trace_lane`). This is `t_star_random_seed`, and is DISTINCT
+    /// from the shuffle draw's seed below.
     pub random_seed: u64,
+    /// The legacy agentx `ShuffleSampler` child seed
+    /// ([`crate::graph::tstar::legacy_shuffle_seed`] of the RUN root seed), used
+    /// as the persistent-epoch base seed for the shuffle/random dataset-sampling
+    /// recycle draw. This is NOT `t_star_random_seed`: legacy `ShuffleSampler`
+    /// derives its generator from the run root (`rng.init(config.random_seed)`),
+    /// not the trajectory-window seed. Defaults to `0`.
+    pub dataset_shuffle_seed: u64,
     /// Resolved dataset-sampling strategy governing WHICH corpus template a
     /// freed recycle lane serves. `Sequential` (the default) keeps the historic
-    /// `x % total` cursor draw; `Shuffle`/`Random` route through a per-pass
-    /// seeded permutation. See [`GraphSamplingStrategy`].
+    /// `x % total` cursor draw; `Shuffle`/`Random` route through the legacy
+    /// persistent-epoch shuffle. See [`GraphSamplingStrategy`].
     pub sampling_strategy: GraphSamplingStrategy,
 }
 
 /// Resolved dataset-sampling strategy for the recorded-graph recycle draw.
 ///
 /// Port of the `sequential`/`shuffle`/`random` values of the Python
-/// `DatasetSamplingStrategy` dynamic enum (`aiperf/plugin/enums.py:53`), as
-/// consumed by `graph_ir_replay.py:_draw_index`/`_draw_is_shuffled`
-/// (lines 792-834, branch `ajc/aiperf-graph-ir`). `Random` coerces to `Shuffle`
-/// (without-replacement) semantics: each lane recycle is a single corpus pass,
-/// so with-replacement `random` would duplicate/omit templates within a pass;
-/// coercing to shuffle keeps coverage exact (`random == shuffle` in this
-/// context). Extension seam: a new sampling policy adds a variant here plus its
-/// draw branch, never a hardcoded mode string elsewhere.
+/// `DatasetSamplingStrategy` dynamic enum (`aiperf/plugin/enums.py:53`).
+/// `Sequential`/`Shuffle` reproduce legacy agentx `SequentialSampler`
+/// (`x % total`) and `ShuffleSampler` (persistent-epoch shuffle) BYTE-EXACT.
+/// `Random` currently coerces to `Shuffle` (without-replacement): each lane
+/// recycle is a single corpus pass, so shuffle keeps coverage exact within a
+/// pass. Extension seam: a new sampling policy adds a variant here plus its draw
+/// branch, never a hardcoded mode string elsewhere.
+///
+// FUTURE: legacy `RandomSampler` (agentx `dataset_samplers.py`) draws WITH
+// replacement via `rng.derive("dataset.sampler.random").choice(...)`, a SEPARATE
+// divergence from the coerce-to-shuffle behavior here. Aligning `Random`
+// byte-exact needs its own derive-label + `choice` draw and is out of scope of
+// the `ShuffleSampler` recycle-order parity change.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum GraphSamplingStrategy {
-    /// Historic cursor-with-wrap draw (`x % total`); byte-unchanged default.
+    /// Historic cursor-with-wrap draw (`x % total`); byte-unchanged default
+    /// (legacy `SequentialSampler`).
     #[default]
     Sequential,
-    /// Per-pass seeded permutation (without replacement).
+    /// Legacy `ShuffleSampler` persistent-epoch shuffle (without replacement).
     Shuffle,
-    /// Coerced to [`GraphSamplingStrategy::Shuffle`] (see type docs).
+    /// Coerced to [`GraphSamplingStrategy::Shuffle`] (see type docs; legacy
+    /// `RandomSampler` is with-replacement — see the `FUTURE` note above).
     Random,
 }
 
@@ -636,6 +652,17 @@ fn prepare_recorded_file(
             start_min_ratio: value.trajectory_start_min_ratio,
             start_max_ratio: value.trajectory_start_max_ratio,
             random_seed: value.t_star_random_seed,
+            // Legacy `ShuffleSampler` seeds its generator from the RUN root
+            // (`rng.init(config.random_seed)`), not `t_star_random_seed`. When the
+            // run root is absent legacy uses `default_rng(None)` (non-deterministic);
+            // the scenario always threads a seed, so an absent run seed falls back to
+            // a derived entropy seed (mirroring `content_root_seed` at the site below).
+            dataset_shuffle_seed: context
+                .run_random_seed
+                .map(legacy_shuffle_seed)
+                .unwrap_or_else(|| {
+                    RngRoot::new(None).derive_seed_or_entropy("dataset.sampler.shuffle")
+                }),
             sampling_strategy: GraphSamplingStrategy::parse(
                 value.dataset_sampling_strategy.as_deref(),
             ),
