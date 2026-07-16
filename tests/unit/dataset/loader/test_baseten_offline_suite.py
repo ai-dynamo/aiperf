@@ -16,7 +16,6 @@ Every check is a hard assertion: a failure means a real regression.
 
 from __future__ import annotations
 
-from itertools import pairwise
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -167,7 +166,7 @@ class TestTimingNoHang:
         # exceeds the cap, so fixed-schedule replay never idles longer than that.
         _, data = _load(fixture_path, max_idle_gap_cap_seconds=GAP_CAP_MS / 1000)
         ts = sorted(t.timestamp for traces in data.values() for t in traces)
-        gaps = [b - a for a, b in pairwise(ts)]
+        gaps = [b - a for a, b in zip(ts, ts[1:], strict=False)]
         assert gaps, "fixture should have multiple events"
         assert max(gaps) <= GAP_CAP_MS, f"global gaps exceed cap: {gaps}"
 
@@ -175,7 +174,7 @@ class TestTimingNoHang:
         # Default (no cap): the large dead-air gap is preserved verbatim.
         _, data = _load(fixture_path)
         ts = sorted(t.timestamp for traces in data.values() for t in traces)
-        gaps = [b - a for a, b in pairwise(ts)]
+        gaps = [b - a for a, b in zip(ts, ts[1:], strict=False)]
         assert max(gaps) > GAP_CAP_MS
 
     def test_back_pressure_turn0_absolute_continuation_delay(self, fixture_path):

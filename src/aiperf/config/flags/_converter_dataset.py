@@ -15,10 +15,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from aiperf.config.dataset.constants import (
-    BASETEN_ONLY_REPLAY_BOOL_FIELD_FLAGS,
-    BASETEN_ONLY_REPLAY_FIELD_FLAGS,
-)
 from aiperf.config.flags._section_fields import (
     TOKENIZER_FIELDS,
 )
@@ -557,6 +553,22 @@ def _reject_file_dataset_incompatible(cli: CLIConfig) -> None:
         )
 
 
+_BASETEN_ONLY_TRACE_FLAGS: tuple[tuple[str, str], ...] = (
+    ("trace_session_sample_ratio", "--trace-session-sample-ratio"),
+    ("replay_speedup", "--replay-speedup"),
+    ("max_idle_gap_cap_seconds", "--max-idle-gap-cap-seconds"),
+)
+
+# Boolean knobs are never None, so an explicit set of either polarity
+# (membership in model_fields_set) is the guard signal.
+_BASETEN_ONLY_TRACE_BOOL_FLAGS: tuple[tuple[str, str], ...] = (
+    ("open_loop_replay", "--open-loop-replay/--no-open-loop-replay"),
+    ("open_loop_strict", "--open-loop-strict"),
+    ("omit_kv_hints", "--omit-kv-hints"),
+    ("force_min_tokens", "--force-min-tokens/--no-force-min-tokens"),
+)
+
+
 def _reject_baseten_only_trace_flags(cli: CLIConfig) -> None:
     """Reject baseten_trace-only replay knobs on incompatible datasets.
 
@@ -571,12 +583,12 @@ def _reject_baseten_only_trace_flags(cli: CLIConfig) -> None:
 
     set_flags = [
         flag
-        for attr, flag in BASETEN_ONLY_REPLAY_FIELD_FLAGS
+        for attr, flag in _BASETEN_ONLY_TRACE_FLAGS
         if attr in cli.model_fields_set and getattr(cli, attr) is not None
     ]
     set_flags += [
         flag
-        for attr, flag in BASETEN_ONLY_REPLAY_BOOL_FIELD_FLAGS
+        for attr, flag in _BASETEN_ONLY_TRACE_BOOL_FLAGS
         if attr in cli.model_fields_set
     ]
     if not set_flags:

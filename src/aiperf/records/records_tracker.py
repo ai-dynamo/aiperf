@@ -174,7 +174,9 @@ class RecordsTracker:
     """
 
     def __init__(self) -> None:
-        self._phase_trackers: dict[tuple[CreditPhase, int | None], CreditPhaseRecordsTracker] = {}
+        self._phase_trackers: dict[
+            tuple[CreditPhase, int | None], CreditPhaseRecordsTracker
+        ] = {}
         self._latest_phase_index: dict[CreditPhase, int | None] = {}
 
     def _get_phase_tracker(
@@ -187,7 +189,9 @@ class RecordsTracker:
         self._latest_phase_index[phase] = phase_index
         return self._phase_trackers[key]
 
-    def _latest_tracker_for_phase(self, phase: CreditPhase) -> CreditPhaseRecordsTracker:
+    def _latest_tracker_for_phase(
+        self, phase: CreditPhase
+    ) -> CreditPhaseRecordsTracker:
         return self._get_phase_tracker(phase, self._latest_phase_index.get(phase))
 
     def create_overall_worker_stats(self) -> dict[str, WorkerProcessingStats]:
@@ -228,7 +232,9 @@ class RecordsTracker:
 
         starts = [s.start_ns for s in stats if s.start_ns is not None]
         sent_ends = [s.sent_end_ns for s in stats if s.sent_end_ns is not None]
-        request_ends = [s.requests_end_ns for s in stats if s.requests_end_ns is not None]
+        request_ends = [
+            s.requests_end_ns for s in stats if s.requests_end_ns is not None
+        ]
         record_ends = [s.records_end_ns for s in stats if s.records_end_ns is not None]
 
         def optional_sum(values: list[int | None]) -> int | None:
@@ -241,14 +247,22 @@ class RecordsTracker:
             sent_end_ns=max(sent_ends) if sent_ends else None,
             requests_end_ns=max(request_ends) if request_ends else None,
             records_end_ns=max(record_ends) if record_ends else None,
-            total_expected_requests=optional_sum([s.total_expected_requests for s in stats]),
+            total_expected_requests=optional_sum(
+                [s.total_expected_requests for s in stats]
+            ),
             success_records=sum(s.success_records for s in stats),
             error_records=sum(s.error_records for s in stats),
-            final_requests_completed=optional_sum([s.final_requests_completed for s in stats]),
-            final_requests_cancelled=optional_sum([s.final_requests_cancelled for s in stats]),
+            final_requests_completed=optional_sum(
+                [s.final_requests_completed for s in stats]
+            ),
+            final_requests_cancelled=optional_sum(
+                [s.final_requests_cancelled for s in stats]
+            ),
             final_request_errors=optional_sum([s.final_request_errors for s in stats]),
             timeout_triggered=any(s.timeout_triggered for s in stats),
-            grace_period_timeout_triggered=any(s.grace_period_timeout_triggered for s in stats),
+            grace_period_timeout_triggered=any(
+                s.grace_period_timeout_triggered for s in stats
+            ),
             was_cancelled=any(s.was_cancelled for s in stats),
         )
 
@@ -328,7 +342,9 @@ class RecordsTracker:
         for tracker in phase_trackers:
             if tracker._sent_all_records_received:
                 continue
-            newly_completed = tracker.check_and_set_all_records_received() or newly_completed
+            newly_completed = (
+                tracker.check_and_set_all_records_received() or newly_completed
+            )
         return newly_completed
 
     def check_and_set_all_records_received_for_stats(

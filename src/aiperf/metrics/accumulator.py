@@ -209,7 +209,9 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 "worker_id": meta.worker_id,
                 "record_processor_id": meta.record_processor_id,
                 "benchmark_phase": str(meta.benchmark_phase),
-                "phase_index": str(meta.phase_index) if meta.phase_index is not None else None,
+                "phase_index": str(meta.phase_index)
+                if meta.phase_index is not None
+                else None,
                 "x_correlation_id": meta.x_correlation_id,
                 "conversation_id": meta.conversation_id,
             },

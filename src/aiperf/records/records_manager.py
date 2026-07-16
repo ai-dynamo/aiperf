@@ -569,7 +569,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             handler_names = [handler.__class__.__name__ for handler in handlers]
             self.debug(lambda rt=record_type, hn=handler_names: f"  {rt} -> {hn}")
 
-
     def _has_multiple_profiling_phases(self) -> bool:
         """Return whether this run has more than one profiling-kind phase."""
         try:
@@ -628,7 +627,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             )
             and self._check_all_records_received(phase, message.metadata.phase_index)
         ):
-            await self._maybe_handle_all_records_received(phase)
+            await self._handle_all_records_received_once(phase)
 
     @on_pull_message(MessageType.TELEMETRY_RECORDS)
     async def _on_telemetry_records(self, message: TelemetryRecordsMessage) -> None:
@@ -670,9 +669,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         elif message.error:
             self._network_latency_state.error_counts[message.error] += 1
 
-
-    async def _maybe_handle_all_records_received(self, phase: CreditPhase) -> None:
-        """Run finalization once per phase kind."""
+    async def _handle_all_records_received_once(self, phase: CreditPhase) -> None:
+        """Idempotently trigger all-records finalization for one phase kind."""
         handled = getattr(self, "_all_records_received_phases", set())
         if phase in handled:
             return
@@ -831,16 +829,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # This check is to prevent a race condition where the records manager processes
         # all records before the timing manager has sent the final completed count.
         if (
-            (
-                message.stats.phase != CreditPhase.PROFILING
-                or not self._has_multiple_profiling_phases()
-                or self._credits_complete_received
-            )
-            and self._check_all_records_received(
-                message.stats.phase, message.stats.phase_index
-            )
+            message.stats.phase != CreditPhase.PROFILING
+            or not self._has_multiple_profiling_phases()
+            or self._credits_complete_received
+        ) and self._check_all_records_received(
+            message.stats.phase, message.stats.phase_index
         ):
-            await self._maybe_handle_all_records_received(message.stats.phase)
+            await self._handle_all_records_received_once(message.stats.phase)
 
     def _snapshot_branch_stats(self, phase: CreditPhase) -> BranchStats | None:
         """Return the orchestrator-published BranchStats for ``phase``.
@@ -864,7 +859,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 CreditPhase.PROFILING
             )
         ):
-            await self._maybe_handle_all_records_received(CreditPhase.PROFILING)
+            await self._handle_all_records_received_once(CreditPhase.PROFILING)
 
     @background_task(
         interval=Environment.RECORD.PROGRESS_REPORT_INTERVAL, immediate=False
@@ -1535,7 +1530,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         await self._finalize_stream_exporters()
 
         phase_stats = RecordsManager._create_result_stats_for_phase(self, phase)
-        phase_records = await RecordsManager._build_phase_profile_results(self, phase, cancelled)
+        phase_records = await RecordsManager._build_phase_profile_results(
+            self, phase, cancelled
+        )
         # Snapshot count BEFORE extending with derived aggregates (efficiency,
         # analyzers) — `completed` reports request-derived records only.
         records_completed = len(records_results)

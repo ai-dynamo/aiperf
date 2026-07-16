@@ -293,15 +293,12 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
             if "request_body" in type(trace).model_fields
             else None
         )
-        extra_body = (
-            request_body if request_body is not None else getattr(trace, "extra", None)
-        )
         return Turn(
             timestamp=getattr(trace, "timestamp", None),
             delay=getattr(trace, "delay", None),
             texts=[Text(name="text", contents=[prompt])],
             max_tokens=getattr(trace, "output_length", None),
-            extra_body=extra_body,
+            extra_body=request_body or getattr(trace, "extra", None),
         )
 
     def convert_to_conversations(
