@@ -15,6 +15,7 @@
 pub mod analyze_trace;
 #[cfg(feature = "search-pyo3")]
 pub mod bayes;
+pub mod cellular_role;
 pub mod chat;
 pub mod config;
 pub mod delegate;
