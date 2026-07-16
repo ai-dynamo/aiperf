@@ -330,6 +330,176 @@ async fn test_graph_cellular_metrics_only_exact_fold_ships_store() {
     }
 }
 
+/// The sorted multiset of each PROFILING graph record's dataset-deterministic
+/// `(input_sequence_length, output_sequence_length)` projection, read from
+/// `profile_export.jsonl`. Wall-clock timing differs run to run, but this projection
+/// depends only on the seeded trace + deterministic mock, so it is a stable per-record
+/// key for a row-SET comparison across topologies (completion order accepted).
+fn graph_record_isl_osl_multiset(r: &RunResult) -> Vec<(i64, i64)> {
+    let metric = |record: &serde_json::Value, tag: &str| -> i64 {
+        record["metrics"][tag]["value"].as_f64().unwrap_or(f64::NAN) as i64
+    };
+    let mut rows: Vec<(i64, i64)> = r
+        .artifacts
+        .jsonl()
+        .iter()
+        .filter(|record| record["metadata"]["benchmark_phase"] == "profiling")
+        .map(|record| {
+            (
+                metric(record, "input_sequence_length"),
+                metric(record, "output_sequence_length"),
+            )
+        })
+        .collect();
+    rows.sort_unstable();
+    rows
+}
+
+/// Task G2: a `--cells N` graph run WITH per-record artifacts (`--export-level raw`)
+/// takes the exact-fold STREAMING LANE path — each cell folds each record into its exact
+/// accumulator and DROPS it while STREAMING that record's artifact rows to its cell dir
+/// (records/raw via `RecordArtifactLane`), then ships the folded EXACT STORE
+/// (`StorePartition`: empty heartbeat sketches, exact counters) instead of the full
+/// record `Vec`. The controller concatenates the per-cell artifact files into the run
+/// dir (Stage D concat) and `merge_store_partitions`-merges the stores.
+///
+/// Proof it was EXACT-FOLD (not the legacy retain path) WITH artifacts present: the
+/// merged `cellular-heartbeat.json` has `latency_ms.count == 0` (a folded store ships
+/// empty sketches; a records-shipping retain cell would populate them) with
+/// `counters.issued > 0`, AND the per-record `profile_export.jsonl`/`_raw.jsonl` are
+/// emitted anyway. Its merged per-record row SET equals a 1-cell run's for the same
+/// seed, and the summary matches within tolerance.
+#[tokio::test]
+async fn test_graph_cellular_exact_fold_streams_per_record_artifacts() {
+    let h3 = AIPerfHarness::new().await;
+    let cellular = h3.run_timeout(
+        &format!(
+            "--model Qwen3-0.6B --url {} --endpoint-type chat --input-file {FIXTURE} \
+             --custom-dataset-type dag_jsonl --num-conversations 6 --concurrency 3 \
+             --cells 3 --random-seed 7 --export-level raw --ui simple",
+            h3.mock.url
+        ),
+        120,
+    );
+    assert!(
+        cellular.success(),
+        "graph cellular artifact run failed: {}",
+        cellular.stderr
+    );
+
+    // Topology guard: the 3-cell run went through the controller.
+    let heartbeat = cellular
+        .artifacts
+        .read_json_file("**/cellular-heartbeat.json");
+    assert!(
+        !heartbeat.is_null(),
+        "graph --cells 3 with artifacts must go through the controller (cellular-heartbeat.json)"
+    );
+
+    // EXACT-FOLD-WITH-ARTIFACTS proof: a folded store ships EMPTY latency sketches
+    // (count 0) but EXACT counters. A retain (records-shipping) cell would carry
+    // populated sketches — so count == 0 with issued > 0 uniquely proves the store path
+    // was taken even though per-record files were requested (task G2 relaxed the gate).
+    let issued = heartbeat["counters"]["issued"].as_u64().unwrap_or(0);
+    assert!(
+        issued > 0,
+        "merged heartbeat must carry the cells' exact issued counter; got {heartbeat}"
+    );
+    assert_eq!(
+        heartbeat["latency_ms"]["count"].as_u64(),
+        Some(0),
+        "an exact-fold (folded-store) graph cell ships EMPTY latency sketches, so the merged \
+         heartbeat latency count must be 0 (proving StorePartition, not records) even with \
+         per-record artifacts requested; got {heartbeat}"
+    );
+
+    // The controller emitted the merged per-record files (Stage D concat over the cells'
+    // streaming-lane output) — the whole point of G2: exact-fold no longer drops them.
+    assert!(
+        cellular
+            .artifacts
+            .find_file("**/profile_export.jsonl")
+            .is_some(),
+        "graph --cells 3 must emit the merged profile_export.jsonl (lane + Stage D concat)"
+    );
+    assert!(
+        cellular
+            .artifacts
+            .find_file("**/profile_export_raw.jsonl")
+            .is_some(),
+        "graph --cells 3 must emit the merged profile_export_raw.jsonl (lane + Stage D concat)"
+    );
+
+    // A 1-cell graph run over the same seed also takes the single-process exact-fold lane
+    // path (no controller sidecar) and writes its records directly.
+    let h1 = AIPerfHarness::new().await;
+    let baseline = h1.run_timeout(
+        &format!(
+            "--model Qwen3-0.6B --url {} --endpoint-type chat --input-file {FIXTURE} \
+             --custom-dataset-type dag_jsonl --num-conversations 6 --concurrency 3 \
+             --cells 1 --random-seed 7 --export-level raw --ui simple",
+            h1.mock.url
+        ),
+        120,
+    );
+    assert!(
+        baseline.success(),
+        "1-cell graph artifact run failed: {}",
+        baseline.stderr
+    );
+    assert!(
+        baseline
+            .artifacts
+            .find_file("**/cellular-heartbeat.json")
+            .is_none(),
+        "a 1-cell graph run must take the single-process path (no controller sidecar)"
+    );
+
+    // Row-SET parity: the 3-cell merged per-record rows equal the 1-cell run's (same
+    // seeded trace set; completion order accepted, so SET — not byte order — is compared).
+    let base_records = graph_record_isl_osl_multiset(&baseline);
+    let cell_records = graph_record_isl_osl_multiset(&cellular);
+    assert!(
+        !base_records.is_empty(),
+        "1-cell graph baseline must emit per-record rows"
+    );
+    assert_eq!(
+        base_records, cell_records,
+        "3-cell merged graph per-record row SET must equal the 1-cell run's for the same seed"
+    );
+    assert_eq!(
+        baseline.artifacts.raw_records().len(),
+        cellular.artifacts.raw_records().len(),
+        "1-cell and 3-cell graph runs must emit the same number of raw per-record rows"
+    );
+
+    // Summary parity within tolerance (counts/min/max/percentiles exact; sums/means ULPs).
+    let base_json = baseline.artifacts.json();
+    let cell_json = cellular.artifacts.json();
+    assert_eq!(
+        cellular.artifacts.request_count() as u64,
+        baseline.artifacts.request_count() as u64,
+        "3-cell graph run must dispatch the same total record count as 1-cell"
+    );
+    for metric in [
+        "input_sequence_length",
+        "output_sequence_length",
+        "request_count",
+    ] {
+        let base = &base_json[metric];
+        let cell = &cell_json[metric];
+        assert!(!base.is_null(), "baseline missing metric {metric}");
+        for stat in ["min", "max", "avg", "p50", "p99"] {
+            if let (Some(b), Some(c)) = (base[stat].as_f64(), cell[stat].as_f64()) {
+                assert!(
+                    (b - c).abs() <= 1e-9 * b.abs().max(1.0),
+                    "graph cellular artifact {metric}.{stat} diverged: 1-cell={b} 3-cell={c}"
+                );
+            }
+        }
+    }
+}
+
 /// The full text of the run's `logs/aiperf.log` (empty if absent).
 fn aiperf_log(r: &RunResult) -> String {
     match r.artifacts.find_file("**/aiperf.log") {
