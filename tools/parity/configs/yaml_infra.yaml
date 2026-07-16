@@ -1,0 +1,42 @@
+schemaVersion: "2.0"
+benchmark:
+  model: Qwen/Qwen3-0.6B
+  endpoint:
+    type: chat
+    url: 127.0.0.1:8000
+  slos:
+    request_latency: 200
+    time_to_first_token: 50
+  gpu_telemetry:
+    urls: [http://dcgm:9400]
+  server_metrics:
+    urls: [http://127.0.0.1:9090]
+    formats: [json, csv, parquet]
+  network_latency:
+    enabled: true
+    mean_ms: 5.0
+  otel:
+    metrics_url: http://otel:4317
+  mlflow:
+    tracking_uri: http://mlflow:5000
+    experiment: exp1
+    run_name: run1
+  wandb:
+    project: proj1
+    entity: ent1
+    run_name: wrun1
+  runtime:
+    workers: 4
+    cells: 1
+    workers_min: 2
+  dataset:
+    prompts:
+      isl: 512
+      osl: 128
+  artifacts:
+    dir: /tmp/aiperf-parity/yaml_infra
+    slice_duration: 10.0
+  phases:
+    type: concurrency
+    requests: 5
+    concurrency: 2

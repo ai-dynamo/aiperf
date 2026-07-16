@@ -1,0 +1,41 @@
+schemaVersion: "2.0"
+randomSeed: 99
+benchmark:
+  model: Qwen/Qwen3-0.6B
+  endpoint:
+    type: chat
+    url: 127.0.0.1:8000
+    streaming: true
+    apiKey: k
+    connectionReuse: never
+    useServerTokenCount: true
+    sessionHeader: x-s
+    waitForModelTimeout: 10.0
+    waitForModelMode: both
+    waitForModelInterval: 3.0
+  tokenizer:
+    name: Qwen/Qwen3-0.6B
+    trustRemoteCode: true
+    applyChatTemplate: true
+  dataset:
+    prompts: {isl: 256, osl: 64, blockSize: 32}
+    prefixPrompts: {poolSize: 4, length: 8}
+    turnDelayRatio: 0.5
+  runtime:
+    workers: 3
+    workersMin: 1
+  serverMetrics:
+    urls: [http://sm:9090]
+  networkLatency:
+    enabled: true
+    meanMs: 4.0
+  profiling:
+    type: gamma
+    rate: 8
+    smoothness: 1.5
+    duration: 20
+    concurrencyRamp: 4.0
+    rateRamp: 2.0
+  artifacts:
+    dir: /tmp/aiperf-parity/yaml_camel
+    sliceDuration: 5.0

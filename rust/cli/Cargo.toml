@@ -1,0 +1,65 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name = "aiperf-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Native Rust front door for AIPerf; owns `aiperf profile` (single run)."
+
+[lib]
+name = "aiperf_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "aiperf"
+path = "src/main.rs"
+
+[features]
+# Base: embed a CPython interpreter (pyo3 `auto-initialize`). Enables in-process
+# delegation of every non-profile/config subcommand (chat/plot/plugins/service/
+# synthesize/analyze-trace/…) through `aiperf.entrypoint.main` — ZERO subprocess
+# shell-out. OFF by default so the shipped lean binary stays Python-free (those
+# subcommands then fall back to a `python -m aiperf` subprocess).
+pyo3-embed = ["dep:pyo3"]
+# Opt-in scipy/optuna numerical seam for the dynamic search styles
+# (`--search-style smooth_isotonic|bo|optuna`). Implies `pyo3-embed`, so the
+# search build also gets in-process subcommand delegation (fully shell-out-free).
+search-pyo3 = ["pyo3-embed"]
+
+[dependencies]
+aiperf = { path = "../aiperf", default-features = false, features = ["runner-protocol"] }
+anyhow.workspace = true
+clap = { version = "4", features = ["derive", "string"] }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml = "0.9"
+chrono = { workspace = true }
+uuid = { version = "1", features = ["v4"] }
+tracing.workspace = true
+regex.workspace = true
+minijinja = { version = "2.21", features = ["json"] }
+# Async streaming HTTP client for the native `chat` subcommand (hyper, matching
+# the runner's transport stack — no reqwest so loopback is never proxied).
+tokio = { workspace = true, features = ["rt", "macros", "io-util", "net", "time"] }
+hyper = { version = "1.10", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+futures = "0.3"
+# TLS for `chat` https endpoints (mirrors the runner's transport-http / otel TLS:
+# tokio-rustls + webpki roots).
+rustls = "0.23"
+tokio-rustls = "0.26"
+webpki-roots = "0.26"
+# Embedding (not extension-module): `auto-initialize` starts a CPython
+# interpreter inside the native binary so the search planners can call the exact
+# scipy/optuna numerical primitives. Optional + feature-gated (see `search-pyo3`).
+pyo3 = { version = "0.23", features = ["auto-initialize"], optional = true }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["signal"] }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+
+[dev-dependencies]
+tempfile = "3"

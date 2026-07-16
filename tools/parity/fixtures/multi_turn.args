@@ -1,0 +1,1 @@
+--model Qwen/Qwen3-0.6B --url 127.0.0.1:8000 --endpoint-type chat --concurrency 1 --request-count 4 --artifact-dir /tmp/x --session-turns-mean 3 --session-turns-stddev 1 --num-sessions 7 --session-delay-ratio 0.5 --session-turn-delay-mean 200 --session-header X-Session-ID

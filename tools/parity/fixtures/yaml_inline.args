@@ -1,0 +1,1 @@
+--config tools/parity/configs/inline_ds.yaml --artifact-dir /tmp/aiperf-parity/inline_ds

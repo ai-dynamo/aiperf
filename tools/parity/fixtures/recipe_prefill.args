@@ -1,0 +1,1 @@
+--model Qwen/Qwen3-0.6B --url 127.0.0.1:8000 --endpoint-type chat --streaming --request-count 10 --search-recipe prefill-ttft-curve --isl-min 256 --isl-max 1024 --isl-steps 3 --artifact-dir /tmp/aiperf-parity/prefill

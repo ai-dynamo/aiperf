@@ -1,0 +1,1 @@
+--model Qwen/Qwen3-0.6B --url 127.0.0.1:8000 --endpoint-type chat --concurrency 1 --request-count 2 --artifact-dir /tmp/x --video-width 320 --video-audio-num-channels 2 --video-audio-depth 24 --video-audio-sample-rate 48000

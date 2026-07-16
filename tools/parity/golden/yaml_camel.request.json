@@ -1,0 +1,1300 @@
+{
+  "operation": "execute",
+  "protocol_version": 2,
+  "run": {
+    "artifact_dir": "/tmp/aiperf-parity/yaml_camel",
+    "benchmark_id": "parity-benchmark",
+    "cfg": {
+      "accuracy": null,
+      "artifacts": {
+        "inputs_path": "inputs.json",
+        "records_path": "profile_export.jsonl",
+        "trace": false
+      },
+      "datasets": [
+        {
+          "entries": 100,
+          "prefix_prompts": {
+            "length": 8,
+            "pool_size": 4
+          },
+          "prompts": {
+            "batch_size": 1,
+            "block_size": 32,
+            "isl": {
+              "value": 256.0
+            },
+            "osl": {
+              "value": 64.0
+            }
+          },
+          "sampling": "sequential",
+          "turn_delay_ratio": 0.5,
+          "type": "synthetic"
+        }
+      ],
+      "endpoint": {
+        "api_key": "k",
+        "connection_limit": 2500,
+        "connection_reuse": "never",
+        "download_video_content": false,
+        "extra": {},
+        "headers": {},
+        "http2": false,
+        "keepalive_timeout": 300.0,
+        "session_header": "x-s",
+        "ssl_verify": true,
+        "streaming": true,
+        "timeout_seconds": 21600.0,
+        "type": "chat",
+        "urls": [
+          "http://127.0.0.1:8000"
+        ],
+        "use_legacy_max_tokens": false,
+        "use_server_token_count": true,
+        "wait_for_model_interval": 3.0,
+        "wait_for_model_mode": "both",
+        "wait_for_model_timeout": 10.0
+      },
+      "endpoint_profiles": {},
+      "export": {
+        "console_txt": {
+          "dev": false,
+          "enabled": true,
+          "metrics": {
+            "accuracy.correct": {
+              "group": "none",
+              "header": "Accuracy Correct",
+              "internal": true
+            },
+            "accuracy.unparsed": {
+              "group": "none",
+              "header": "Accuracy Unparsed",
+              "internal": true
+            },
+            "audio_duration": {
+              "display_order": 870,
+              "group": "none",
+              "header": "Audio Duration"
+            },
+            "benchmark_duration": {
+              "group": "none",
+              "header": "Benchmark Duration"
+            },
+            "completed_request_count": {
+              "display_order": 1075,
+              "group": "default",
+              "header": "Completed Requests (Success + Error)"
+            },
+            "credit_drop_latency": {
+              "group": "none",
+              "header": "Credit Drop Latency",
+              "internal": true
+            },
+            "e2e_output_token_throughput": {
+              "display_order": 510,
+              "group": "default",
+              "header": "E2E Output Token Throughput"
+            },
+            "energy_per_user": {
+              "display_order": 903,
+              "group": "default",
+              "header": "Energy per User"
+            },
+            "error_isl": {
+              "display_order": 700,
+              "error_only": true,
+              "group": "none",
+              "header": "Error Input Sequence Length"
+            },
+            "error_request_count": {
+              "error_only": true,
+              "group": "default",
+              "header": "Error Request Count"
+            },
+            "good_request_count": {
+              "group": "none",
+              "header": "Good Request Count"
+            },
+            "good_request_fraction": {
+              "group": "none",
+              "header": "GoodRequestFraction"
+            },
+            "goodput": {
+              "display_order": 1000,
+              "group": "default",
+              "header": "Goodput"
+            },
+            "http_req_blocked": {
+              "display_order": 2000,
+              "group": "none",
+              "header": "HTTP Blocked"
+            },
+            "http_req_chunks_received": {
+              "display_order": 2100,
+              "group": "none",
+              "header": "HTTP Chunks Received"
+            },
+            "http_req_chunks_sent": {
+              "display_order": 2080,
+              "group": "none",
+              "header": "HTTP Chunks Sent"
+            },
+            "http_req_connecting": {
+              "display_order": 2020,
+              "group": "none",
+              "header": "HTTP Connecting"
+            },
+            "http_req_connection_overhead": {
+              "display_order": 2110,
+              "group": "none",
+              "header": "HTTP Connection Overhead"
+            },
+            "http_req_connection_reused": {
+              "display_order": 2060,
+              "group": "none",
+              "header": "HTTP Connection Reused"
+            },
+            "http_req_data_received": {
+              "display_order": 2090,
+              "group": "none",
+              "header": "HTTP Data Received"
+            },
+            "http_req_data_sent": {
+              "display_order": 2070,
+              "group": "none",
+              "header": "HTTP Data Sent"
+            },
+            "http_req_dns_lookup": {
+              "display_order": 2010,
+              "group": "none",
+              "header": "HTTP DNS Lookup"
+            },
+            "http_req_duration": {
+              "display_order": 2120,
+              "group": "none",
+              "header": "HTTP Duration (excl. conn)"
+            },
+            "http_req_receiving": {
+              "display_order": 2050,
+              "group": "none",
+              "header": "HTTP Receiving"
+            },
+            "http_req_sending": {
+              "display_order": 2030,
+              "group": "none",
+              "header": "HTTP Sending"
+            },
+            "http_req_total": {
+              "display_order": 2130,
+              "group": "none",
+              "header": "HTTP Total Time"
+            },
+            "http_req_waiting": {
+              "display_order": 2040,
+              "group": "none",
+              "header": "HTTP Waiting (TTFB)"
+            },
+            "image_latency": {
+              "display_order": 861,
+              "group": "default",
+              "header": "Image Latency"
+            },
+            "image_throughput": {
+              "display_order": 860,
+              "group": "default",
+              "header": "Image Throughput"
+            },
+            "input_sequence_length": {
+              "display_order": 700,
+              "group": "default",
+              "header": "Input Sequence Length"
+            },
+            "input_token_throughput": {
+              "display_order": 805,
+              "group": "default",
+              "header": "Input Token Throughput"
+            },
+            "inter_chunk_latency": {
+              "group": "none",
+              "header": "Inter Chunk Latency"
+            },
+            "inter_token_latency": {
+              "display_order": 400,
+              "group": "default",
+              "header": "Inter Token Latency"
+            },
+            "max_response_timestamp": {
+              "group": "none",
+              "header": "Maximum Response Timestamp",
+              "internal": true
+            },
+            "min_request_timestamp": {
+              "group": "none",
+              "header": "Minimum Request Timestamp",
+              "internal": true
+            },
+            "network_adjusted_request_latency": {
+              "display_order": 301,
+              "group": "default",
+              "header": "Network-Adjusted Request Latency"
+            },
+            "network_adjusted_time_to_first_output_token": {
+              "display_order": 211,
+              "group": "default",
+              "header": "Network-Adjusted Time to First Output Token"
+            },
+            "network_adjusted_time_to_first_token": {
+              "display_order": 101,
+              "group": "default",
+              "header": "Network-Adjusted Time to First Token"
+            },
+            "network_rtt": {
+              "display_order": 305,
+              "group": "default",
+              "header": "Network RTT"
+            },
+            "num_images": {
+              "group": "none",
+              "header": "Number of Images"
+            },
+            "osl_mismatch_count": {
+              "group": "none",
+              "header": "OSL Mismatch Count"
+            },
+            "osl_mismatch_diff_pct": {
+              "group": "none",
+              "header": "OSL Mismatch Diff"
+            },
+            "output_sequence_length": {
+              "display_order": 600,
+              "group": "default",
+              "header": "Output Sequence Length"
+            },
+            "output_token_count": {
+              "group": "none",
+              "header": "Output Token Count"
+            },
+            "output_token_throughput": {
+              "display_order": 800,
+              "group": "default",
+              "header": "Output Token Throughput"
+            },
+            "output_token_throughput_per_user": {
+              "display_order": 500,
+              "group": "default",
+              "header": "Output Token Throughput Per User"
+            },
+            "output_tokens_per_joule": {
+              "display_order": 902,
+              "group": "default",
+              "header": "Output Tokens per Joule"
+            },
+            "overall_thinking_efficiency": {
+              "experimental": true,
+              "group": "default",
+              "header": "Overall Thinking Efficiency"
+            },
+            "overall_usage_prompt_cache_read_pct": {
+              "display_order": 2012,
+              "group": "usage",
+              "header": "Overall Usage Prompt Cache Read %"
+            },
+            "prefill_throughput_per_user": {
+              "group": "none",
+              "header": "Prefill Throughput Per User"
+            },
+            "reasoning_token_count": {
+              "group": "none",
+              "header": "Reasoning Token Count"
+            },
+            "request_count": {
+              "display_order": 1100,
+              "group": "default",
+              "header": "Request Count"
+            },
+            "request_error_rate": {
+              "display_order": 1080,
+              "group": "default",
+              "header": "Request Error Rate"
+            },
+            "request_latency": {
+              "display_order": 300,
+              "group": "default",
+              "header": "Request Latency"
+            },
+            "request_throughput": {
+              "display_order": 900,
+              "group": "default",
+              "header": "Request Throughput"
+            },
+            "requested_osl": {
+              "group": "none",
+              "header": "Requested OSL",
+              "internal": true
+            },
+            "rtfx": {
+              "display_order": 850,
+              "group": "default",
+              "header": "Inverse Real-Time Factor (RTFx)"
+            },
+            "stream_prefill_latency": {
+              "experimental": true,
+              "group": "default",
+              "header": "Stream Prefill Latency"
+            },
+            "stream_setup_latency": {
+              "experimental": true,
+              "group": "default",
+              "header": "Stream Setup Latency"
+            },
+            "thinking_efficiency": {
+              "experimental": true,
+              "group": "default",
+              "header": "Thinking Efficiency"
+            },
+            "time_to_first_output_token": {
+              "display_order": 210,
+              "group": "default",
+              "header": "Time to First Output Token"
+            },
+            "time_to_first_token": {
+              "display_order": 100,
+              "group": "default",
+              "header": "Time to First Token"
+            },
+            "time_to_second_token": {
+              "display_order": 200,
+              "group": "default",
+              "header": "Time to Second Token"
+            },
+            "total_error_isl": {
+              "error_only": true,
+              "group": "none",
+              "header": "Total Error Input Sequence Length"
+            },
+            "total_gpu_energy": {
+              "display_order": 901,
+              "group": "default",
+              "header": "Total GPU Energy"
+            },
+            "total_gpu_power": {
+              "display_order": 900,
+              "group": "default",
+              "header": "Total GPU Power"
+            },
+            "total_isl": {
+              "group": "none",
+              "header": "Total Input Sequence Length"
+            },
+            "total_osl": {
+              "group": "none",
+              "header": "Total Output Sequence Length"
+            },
+            "total_output_tokens": {
+              "group": "none",
+              "header": "Total Output Tokens"
+            },
+            "total_reasoning_tokens": {
+              "group": "none",
+              "header": "Total Reasoning Tokens"
+            },
+            "total_token_throughput": {
+              "group": "none",
+              "header": "Total Token Throughput"
+            },
+            "total_usage_accepted_prediction_tokens": {
+              "display_order": 2130,
+              "group": "usage",
+              "header": "Total Usage Accepted Prediction Tokens"
+            },
+            "total_usage_completion_audio_tokens": {
+              "display_order": 2120,
+              "group": "usage",
+              "header": "Total Usage Completion Audio Tokens"
+            },
+            "total_usage_completion_tokens": {
+              "display_order": 2100,
+              "group": "usage",
+              "header": "Total Usage Completion Tokens"
+            },
+            "total_usage_prompt_audio_seconds": {
+              "display_order": 2040,
+              "group": "usage",
+              "header": "Total Usage Prompt Audio Seconds"
+            },
+            "total_usage_prompt_audio_tokens": {
+              "display_order": 2020,
+              "group": "usage",
+              "header": "Total Usage Prompt Audio Tokens"
+            },
+            "total_usage_prompt_cache_miss_tokens": {
+              "display_order": 2017,
+              "group": "usage",
+              "header": "Total Usage Prompt Cache Miss Tokens"
+            },
+            "total_usage_prompt_cache_read_tokens": {
+              "display_order": 2010,
+              "group": "usage",
+              "header": "Total Usage Prompt Cache Read Tokens"
+            },
+            "total_usage_prompt_cache_write_tokens": {
+              "display_order": 2015,
+              "group": "usage",
+              "header": "Total Usage Prompt Cache Write Tokens"
+            },
+            "total_usage_prompt_tokens": {
+              "display_order": 2000,
+              "group": "usage",
+              "header": "Total Usage Prompt Tokens"
+            },
+            "total_usage_reasoning_tokens": {
+              "display_order": 2110,
+              "group": "usage",
+              "header": "Total Usage Reasoning Tokens"
+            },
+            "total_usage_rejected_prediction_tokens": {
+              "display_order": 2140,
+              "group": "usage",
+              "header": "Total Usage Rejected Prediction Tokens"
+            },
+            "total_usage_tool_use_prompt_tokens": {
+              "display_order": 2030,
+              "group": "usage",
+              "header": "Total Usage Tool Use Prompt Tokens"
+            },
+            "total_usage_total_tokens": {
+              "display_order": 2200,
+              "group": "usage",
+              "header": "Total Usage Total Tokens"
+            },
+            "usage_accepted_prediction_tokens": {
+              "display_order": 1130,
+              "group": "usage",
+              "header": "Usage Accepted Prediction Tokens"
+            },
+            "usage_completion_audio_tokens": {
+              "display_order": 1120,
+              "group": "usage",
+              "header": "Usage Completion Audio Tokens"
+            },
+            "usage_completion_tokens": {
+              "display_order": 1100,
+              "group": "usage",
+              "header": "Usage Completion Tokens"
+            },
+            "usage_completion_tokens_diff_pct": {
+              "group": "none",
+              "header": "Usage Completion Diff"
+            },
+            "usage_discrepancy_count": {
+              "group": "none",
+              "header": "Usage Discrepancy Count"
+            },
+            "usage_prompt_audio_seconds": {
+              "display_order": 1040,
+              "group": "usage",
+              "header": "Usage Prompt Audio Seconds"
+            },
+            "usage_prompt_audio_tokens": {
+              "display_order": 1020,
+              "group": "usage",
+              "header": "Usage Prompt Audio Tokens"
+            },
+            "usage_prompt_cache_miss_tokens": {
+              "display_order": 1017,
+              "group": "usage",
+              "header": "Usage Prompt Cache Miss Tokens"
+            },
+            "usage_prompt_cache_read_tokens": {
+              "display_order": 1010,
+              "group": "usage",
+              "header": "Usage Prompt Cache Read Tokens"
+            },
+            "usage_prompt_cache_write_tokens": {
+              "display_order": 1015,
+              "group": "usage",
+              "header": "Usage Prompt Cache Write Tokens"
+            },
+            "usage_prompt_tokens": {
+              "display_order": 1000,
+              "group": "usage",
+              "header": "Usage Prompt Tokens"
+            },
+            "usage_prompt_tokens_diff_pct": {
+              "group": "none",
+              "header": "Usage Prompt Diff"
+            },
+            "usage_reasoning_tokens": {
+              "display_order": 1110,
+              "group": "usage",
+              "header": "Usage Reasoning Tokens"
+            },
+            "usage_reasoning_tokens_diff_pct": {
+              "group": "none",
+              "header": "Usage Reasoning Diff"
+            },
+            "usage_rejected_prediction_tokens": {
+              "display_order": 1140,
+              "group": "usage",
+              "header": "Usage Rejected Prediction Tokens"
+            },
+            "usage_tool_use_prompt_tokens": {
+              "display_order": 1030,
+              "group": "usage",
+              "header": "Usage Tool Use Prompt Tokens"
+            },
+            "usage_total_tokens": {
+              "display_order": 1200,
+              "group": "usage",
+              "header": "Usage Total Tokens"
+            },
+            "video_inference_time": {
+              "display_order": 310,
+              "group": "default",
+              "header": "Video Inference Time"
+            },
+            "video_peak_memory": {
+              "display_order": 311,
+              "group": "default",
+              "header": "Video Peak Memory"
+            }
+          },
+          "title": "NVIDIA AIPerf | LLM Metrics",
+          "width": 140
+        },
+        "genai_perf": {
+          "enabled": true,
+          "envelope": {
+            "aiperf_version": "0.11.0",
+            "benchmark_id": "parity-benchmark",
+            "input_config": {
+              "artifacts": {
+                "dir": "/tmp/aiperf-parity/yaml_camel",
+                "slice_duration": 5.0
+              },
+              "datasets": [
+                {
+                  "name": "default",
+                  "prefix_prompts": {
+                    "length": 8,
+                    "pool_size": 4
+                  },
+                  "prompts": {
+                    "block_size": 32,
+                    "isl": {
+                      "value": 256.0
+                    },
+                    "osl": {
+                      "value": 64.0
+                    }
+                  },
+                  "turn_delay_ratio": 0.5,
+                  "type": "synthetic"
+                }
+              ],
+              "endpoint": {
+                "api_key": "<redacted>",
+                "connection_reuse": "never",
+                "session_header": "x-s",
+                "streaming": true,
+                "type": "chat",
+                "urls": [
+                  "http://127.0.0.1:8000"
+                ],
+                "use_server_token_count": true,
+                "wait_for_model_interval": 3.0,
+                "wait_for_model_mode": "both",
+                "wait_for_model_timeout": 10.0
+              },
+              "models": {
+                "items": [
+                  {
+                    "name": "Qwen/Qwen3-0.6B"
+                  }
+                ]
+              },
+              "network_latency": {
+                "enabled": true,
+                "mean_ms": 4.0
+              },
+              "phases": [
+                {
+                  "concurrency_ramp": {
+                    "duration": 4.0
+                  },
+                  "duration": 20.0,
+                  "name": "profiling",
+                  "rate": 8.0,
+                  "rate_ramp": {
+                    "duration": 2.0
+                  },
+                  "smoothness": 1.5,
+                  "type": "gamma"
+                }
+              ],
+              "runtime": {
+                "ui": "none",
+                "workers": 3,
+                "workers_min": 1
+              },
+              "server_metrics": {
+                "urls": [
+                  "http://sm:9090"
+                ]
+              },
+              "tokenizer": {
+                "apply_chat_template": true,
+                "name": "Qwen/Qwen3-0.6B",
+                "trust_remote_code": true
+              }
+            },
+            "run_info": {
+              "benchmark_id": "parity-benchmark",
+              "cli_command": "aiperf '/tmp/regen.args'",
+              "random_seed": 99,
+              "trial": 0
+            }
+          },
+          "filtered_tags": [
+            "accuracy.correct",
+            "accuracy.unparsed",
+            "credit_drop_latency",
+            "max_response_timestamp",
+            "min_request_timestamp",
+            "overall_thinking_efficiency",
+            "requested_osl",
+            "stream_prefill_latency",
+            "stream_setup_latency",
+            "thinking_efficiency"
+          ],
+          "header_map": {
+            "accuracy.correct": "Accuracy Correct",
+            "accuracy.unparsed": "Accuracy Unparsed",
+            "audio_duration": "Audio Duration",
+            "benchmark_duration": "Benchmark Duration",
+            "completed_request_count": "Completed Requests (Success + Error)",
+            "credit_drop_latency": "Credit Drop Latency",
+            "e2e_output_token_throughput": "E2E Output Token Throughput",
+            "energy_per_user": "Energy per User",
+            "error_isl": "Error Input Sequence Length",
+            "error_request_count": "Error Request Count",
+            "good_request_count": "Good Request Count",
+            "good_request_fraction": "GoodRequestFraction",
+            "goodput": "Goodput",
+            "http_req_blocked": "HTTP Blocked",
+            "http_req_chunks_received": "HTTP Chunks Received",
+            "http_req_chunks_sent": "HTTP Chunks Sent",
+            "http_req_connecting": "HTTP Connecting",
+            "http_req_connection_overhead": "HTTP Connection Overhead",
+            "http_req_connection_reused": "HTTP Connection Reused",
+            "http_req_data_received": "HTTP Data Received",
+            "http_req_data_sent": "HTTP Data Sent",
+            "http_req_dns_lookup": "HTTP DNS Lookup",
+            "http_req_duration": "HTTP Duration (excl. conn)",
+            "http_req_receiving": "HTTP Receiving",
+            "http_req_sending": "HTTP Sending",
+            "http_req_total": "HTTP Total Time",
+            "http_req_waiting": "HTTP Waiting (TTFB)",
+            "image_latency": "Image Latency",
+            "image_throughput": "Image Throughput",
+            "input_sequence_length": "Input Sequence Length",
+            "input_token_throughput": "Input Token Throughput",
+            "inter_chunk_latency": "Inter Chunk Latency",
+            "inter_token_latency": "Inter Token Latency",
+            "max_response_timestamp": "Maximum Response Timestamp",
+            "min_request_timestamp": "Minimum Request Timestamp",
+            "network_adjusted_request_latency": "Network-Adjusted Request Latency",
+            "network_adjusted_time_to_first_output_token": "Network-Adjusted Time to First Output Token",
+            "network_adjusted_time_to_first_token": "Network-Adjusted Time to First Token",
+            "network_rtt": "Network RTT",
+            "num_images": "Number of Images",
+            "osl_mismatch_count": "OSL Mismatch Count",
+            "osl_mismatch_diff_pct": "OSL Mismatch Diff",
+            "output_sequence_length": "Output Sequence Length",
+            "output_token_count": "Output Token Count",
+            "output_token_throughput": "Output Token Throughput",
+            "output_token_throughput_per_user": "Output Token Throughput Per User",
+            "output_tokens_per_joule": "Output Tokens per Joule",
+            "overall_thinking_efficiency": "Overall Thinking Efficiency",
+            "overall_usage_prompt_cache_read_pct": "Overall Usage Prompt Cache Read %",
+            "prefill_throughput_per_user": "Prefill Throughput Per User",
+            "reasoning_token_count": "Reasoning Token Count",
+            "request_count": "Request Count",
+            "request_error_rate": "Request Error Rate",
+            "request_latency": "Request Latency",
+            "request_throughput": "Request Throughput",
+            "requested_osl": "Requested OSL",
+            "rtfx": "Inverse Real-Time Factor (RTFx)",
+            "stream_prefill_latency": "Stream Prefill Latency",
+            "stream_setup_latency": "Stream Setup Latency",
+            "thinking_efficiency": "Thinking Efficiency",
+            "time_to_first_output_token": "Time to First Output Token",
+            "time_to_first_token": "Time to First Token",
+            "time_to_second_token": "Time to Second Token",
+            "total_error_isl": "Total Error Input Sequence Length",
+            "total_gpu_energy": "Total GPU Energy",
+            "total_gpu_power": "Total GPU Power",
+            "total_isl": "Total Input Sequence Length",
+            "total_osl": "Total Output Sequence Length",
+            "total_output_tokens": "Total Output Tokens",
+            "total_reasoning_tokens": "Total Reasoning Tokens",
+            "total_token_throughput": "Total Token Throughput",
+            "total_usage_accepted_prediction_tokens": "Total Usage Accepted Prediction Tokens",
+            "total_usage_completion_audio_tokens": "Total Usage Completion Audio Tokens",
+            "total_usage_completion_tokens": "Total Usage Completion Tokens",
+            "total_usage_prompt_audio_seconds": "Total Usage Prompt Audio Seconds",
+            "total_usage_prompt_audio_tokens": "Total Usage Prompt Audio Tokens",
+            "total_usage_prompt_cache_miss_tokens": "Total Usage Prompt Cache Miss Tokens",
+            "total_usage_prompt_cache_read_tokens": "Total Usage Prompt Cache Read Tokens",
+            "total_usage_prompt_cache_write_tokens": "Total Usage Prompt Cache Write Tokens",
+            "total_usage_prompt_tokens": "Total Usage Prompt Tokens",
+            "total_usage_reasoning_tokens": "Total Usage Reasoning Tokens",
+            "total_usage_rejected_prediction_tokens": "Total Usage Rejected Prediction Tokens",
+            "total_usage_tool_use_prompt_tokens": "Total Usage Tool Use Prompt Tokens",
+            "total_usage_total_tokens": "Total Usage Total Tokens",
+            "usage_accepted_prediction_tokens": "Usage Accepted Prediction Tokens",
+            "usage_completion_audio_tokens": "Usage Completion Audio Tokens",
+            "usage_completion_tokens": "Usage Completion Tokens",
+            "usage_completion_tokens_diff_pct": "Usage Completion Diff",
+            "usage_discrepancy_count": "Usage Discrepancy Count",
+            "usage_prompt_audio_seconds": "Usage Prompt Audio Seconds",
+            "usage_prompt_audio_tokens": "Usage Prompt Audio Tokens",
+            "usage_prompt_cache_miss_tokens": "Usage Prompt Cache Miss Tokens",
+            "usage_prompt_cache_read_tokens": "Usage Prompt Cache Read Tokens",
+            "usage_prompt_cache_write_tokens": "Usage Prompt Cache Write Tokens",
+            "usage_prompt_tokens": "Usage Prompt Tokens",
+            "usage_prompt_tokens_diff_pct": "Usage Prompt Diff",
+            "usage_reasoning_tokens": "Usage Reasoning Tokens",
+            "usage_reasoning_tokens_diff_pct": "Usage Reasoning Diff",
+            "usage_rejected_prediction_tokens": "Usage Rejected Prediction Tokens",
+            "usage_tool_use_prompt_tokens": "Usage Tool Use Prompt Tokens",
+            "usage_total_tokens": "Usage Total Tokens",
+            "video_inference_time": "Video Inference Time",
+            "video_peak_memory": "Video Peak Memory"
+          },
+          "scalar_tags": [
+            "accuracy.correct",
+            "accuracy.unparsed",
+            "benchmark_duration",
+            "completed_request_count",
+            "energy_per_user",
+            "error_request_count",
+            "good_request_count",
+            "good_request_fraction",
+            "goodput",
+            "input_token_throughput",
+            "max_response_timestamp",
+            "min_request_timestamp",
+            "network_adjusted_request_latency",
+            "network_adjusted_time_to_first_output_token",
+            "network_adjusted_time_to_first_token",
+            "network_rtt",
+            "osl_mismatch_count",
+            "output_token_throughput",
+            "output_tokens_per_joule",
+            "overall_thinking_efficiency",
+            "overall_usage_prompt_cache_read_pct",
+            "request_count",
+            "request_error_rate",
+            "request_throughput",
+            "total_error_isl",
+            "total_gpu_energy",
+            "total_gpu_power",
+            "total_isl",
+            "total_osl",
+            "total_output_tokens",
+            "total_reasoning_tokens",
+            "total_token_throughput",
+            "total_usage_accepted_prediction_tokens",
+            "total_usage_completion_audio_tokens",
+            "total_usage_completion_tokens",
+            "total_usage_prompt_audio_seconds",
+            "total_usage_prompt_audio_tokens",
+            "total_usage_prompt_cache_miss_tokens",
+            "total_usage_prompt_cache_read_tokens",
+            "total_usage_prompt_cache_write_tokens",
+            "total_usage_prompt_tokens",
+            "total_usage_reasoning_tokens",
+            "total_usage_rejected_prediction_tokens",
+            "total_usage_tool_use_prompt_tokens",
+            "total_usage_total_tokens",
+            "usage_discrepancy_count"
+          ]
+        },
+        "server_metrics": {
+          "aiperf_version": "0.11.0",
+          "benchmark_id": "parity-benchmark",
+          "csv": true,
+          "input_config": {
+            "artifacts": {
+              "dir": "/tmp/aiperf-parity/yaml_camel",
+              "slice_duration": 5.0
+            },
+            "datasets": [
+              {
+                "name": "default",
+                "prefix_prompts": {
+                  "length": 8,
+                  "pool_size": 4
+                },
+                "prompts": {
+                  "block_size": 32,
+                  "isl": {
+                    "value": 256.0
+                  },
+                  "osl": {
+                    "value": 64.0
+                  }
+                },
+                "turn_delay_ratio": 0.5,
+                "type": "synthetic"
+              }
+            ],
+            "endpoint": {
+              "api_key": "<redacted>",
+              "connection_reuse": "never",
+              "session_header": "x-s",
+              "streaming": true,
+              "type": "chat",
+              "urls": [
+                "http://127.0.0.1:8000"
+              ],
+              "use_server_token_count": true,
+              "wait_for_model_interval": 3.0,
+              "wait_for_model_mode": "both",
+              "wait_for_model_timeout": 10.0
+            },
+            "models": {
+              "items": [
+                {
+                  "name": "Qwen/Qwen3-0.6B"
+                }
+              ]
+            },
+            "network_latency": {
+              "enabled": true,
+              "mean_ms": 4.0
+            },
+            "phases": [
+              {
+                "concurrency_ramp": {
+                  "duration": 4.0
+                },
+                "duration": 20.0,
+                "name": "profiling",
+                "rate": 8.0,
+                "rate_ramp": {
+                  "duration": 2.0
+                },
+                "smoothness": 1.5,
+                "type": "gamma"
+              }
+            ],
+            "runtime": {
+              "ui": "none",
+              "workers": 3,
+              "workers_min": 1
+            },
+            "server_metrics": {
+              "urls": [
+                "http://sm:9090"
+              ]
+            },
+            "tokenizer": {
+              "apply_chat_template": true,
+              "name": "Qwen/Qwen3-0.6B",
+              "trust_remote_code": true
+            }
+          },
+          "json": true
+        },
+        "timeslice": {
+          "csv": true,
+          "filtered_tags": [
+            "accuracy.correct",
+            "accuracy.unparsed",
+            "credit_drop_latency",
+            "max_response_timestamp",
+            "min_request_timestamp",
+            "overall_thinking_efficiency",
+            "requested_osl",
+            "stream_prefill_latency",
+            "stream_setup_latency",
+            "thinking_efficiency"
+          ],
+          "header_map": {
+            "accuracy.correct": "Accuracy Correct",
+            "accuracy.unparsed": "Accuracy Unparsed",
+            "audio_duration": "Audio Duration",
+            "benchmark_duration": "Benchmark Duration",
+            "completed_request_count": "Completed Requests (Success + Error)",
+            "credit_drop_latency": "Credit Drop Latency",
+            "e2e_output_token_throughput": "E2E Output Token Throughput",
+            "energy_per_user": "Energy per User",
+            "error_isl": "Error Input Sequence Length",
+            "error_request_count": "Error Request Count",
+            "good_request_count": "Good Request Count",
+            "good_request_fraction": "GoodRequestFraction",
+            "goodput": "Goodput",
+            "http_req_blocked": "HTTP Blocked",
+            "http_req_chunks_received": "HTTP Chunks Received",
+            "http_req_chunks_sent": "HTTP Chunks Sent",
+            "http_req_connecting": "HTTP Connecting",
+            "http_req_connection_overhead": "HTTP Connection Overhead",
+            "http_req_connection_reused": "HTTP Connection Reused",
+            "http_req_data_received": "HTTP Data Received",
+            "http_req_data_sent": "HTTP Data Sent",
+            "http_req_dns_lookup": "HTTP DNS Lookup",
+            "http_req_duration": "HTTP Duration (excl. conn)",
+            "http_req_receiving": "HTTP Receiving",
+            "http_req_sending": "HTTP Sending",
+            "http_req_total": "HTTP Total Time",
+            "http_req_waiting": "HTTP Waiting (TTFB)",
+            "image_latency": "Image Latency",
+            "image_throughput": "Image Throughput",
+            "input_sequence_length": "Input Sequence Length",
+            "input_token_throughput": "Input Token Throughput",
+            "inter_chunk_latency": "Inter Chunk Latency",
+            "inter_token_latency": "Inter Token Latency",
+            "max_response_timestamp": "Maximum Response Timestamp",
+            "min_request_timestamp": "Minimum Request Timestamp",
+            "network_adjusted_request_latency": "Network-Adjusted Request Latency",
+            "network_adjusted_time_to_first_output_token": "Network-Adjusted Time to First Output Token",
+            "network_adjusted_time_to_first_token": "Network-Adjusted Time to First Token",
+            "network_rtt": "Network RTT",
+            "num_images": "Number of Images",
+            "osl_mismatch_count": "OSL Mismatch Count",
+            "osl_mismatch_diff_pct": "OSL Mismatch Diff",
+            "output_sequence_length": "Output Sequence Length",
+            "output_token_count": "Output Token Count",
+            "output_token_throughput": "Output Token Throughput",
+            "output_token_throughput_per_user": "Output Token Throughput Per User",
+            "output_tokens_per_joule": "Output Tokens per Joule",
+            "overall_thinking_efficiency": "Overall Thinking Efficiency",
+            "overall_usage_prompt_cache_read_pct": "Overall Usage Prompt Cache Read %",
+            "prefill_throughput_per_user": "Prefill Throughput Per User",
+            "reasoning_token_count": "Reasoning Token Count",
+            "request_count": "Request Count",
+            "request_error_rate": "Request Error Rate",
+            "request_latency": "Request Latency",
+            "request_throughput": "Request Throughput",
+            "requested_osl": "Requested OSL",
+            "rtfx": "Inverse Real-Time Factor (RTFx)",
+            "stream_prefill_latency": "Stream Prefill Latency",
+            "stream_setup_latency": "Stream Setup Latency",
+            "thinking_efficiency": "Thinking Efficiency",
+            "time_to_first_output_token": "Time to First Output Token",
+            "time_to_first_token": "Time to First Token",
+            "time_to_second_token": "Time to Second Token",
+            "total_error_isl": "Total Error Input Sequence Length",
+            "total_gpu_energy": "Total GPU Energy",
+            "total_gpu_power": "Total GPU Power",
+            "total_isl": "Total Input Sequence Length",
+            "total_osl": "Total Output Sequence Length",
+            "total_output_tokens": "Total Output Tokens",
+            "total_reasoning_tokens": "Total Reasoning Tokens",
+            "total_token_throughput": "Total Token Throughput",
+            "total_usage_accepted_prediction_tokens": "Total Usage Accepted Prediction Tokens",
+            "total_usage_completion_audio_tokens": "Total Usage Completion Audio Tokens",
+            "total_usage_completion_tokens": "Total Usage Completion Tokens",
+            "total_usage_prompt_audio_seconds": "Total Usage Prompt Audio Seconds",
+            "total_usage_prompt_audio_tokens": "Total Usage Prompt Audio Tokens",
+            "total_usage_prompt_cache_miss_tokens": "Total Usage Prompt Cache Miss Tokens",
+            "total_usage_prompt_cache_read_tokens": "Total Usage Prompt Cache Read Tokens",
+            "total_usage_prompt_cache_write_tokens": "Total Usage Prompt Cache Write Tokens",
+            "total_usage_prompt_tokens": "Total Usage Prompt Tokens",
+            "total_usage_reasoning_tokens": "Total Usage Reasoning Tokens",
+            "total_usage_rejected_prediction_tokens": "Total Usage Rejected Prediction Tokens",
+            "total_usage_tool_use_prompt_tokens": "Total Usage Tool Use Prompt Tokens",
+            "total_usage_total_tokens": "Total Usage Total Tokens",
+            "usage_accepted_prediction_tokens": "Usage Accepted Prediction Tokens",
+            "usage_completion_audio_tokens": "Usage Completion Audio Tokens",
+            "usage_completion_tokens": "Usage Completion Tokens",
+            "usage_completion_tokens_diff_pct": "Usage Completion Diff",
+            "usage_discrepancy_count": "Usage Discrepancy Count",
+            "usage_prompt_audio_seconds": "Usage Prompt Audio Seconds",
+            "usage_prompt_audio_tokens": "Usage Prompt Audio Tokens",
+            "usage_prompt_cache_miss_tokens": "Usage Prompt Cache Miss Tokens",
+            "usage_prompt_cache_read_tokens": "Usage Prompt Cache Read Tokens",
+            "usage_prompt_cache_write_tokens": "Usage Prompt Cache Write Tokens",
+            "usage_prompt_tokens": "Usage Prompt Tokens",
+            "usage_prompt_tokens_diff_pct": "Usage Prompt Diff",
+            "usage_reasoning_tokens": "Usage Reasoning Tokens",
+            "usage_reasoning_tokens_diff_pct": "Usage Reasoning Diff",
+            "usage_rejected_prediction_tokens": "Usage Rejected Prediction Tokens",
+            "usage_tool_use_prompt_tokens": "Usage Tool Use Prompt Tokens",
+            "usage_total_tokens": "Usage Total Tokens",
+            "video_inference_time": "Video Inference Time",
+            "video_peak_memory": "Video Peak Memory"
+          },
+          "input_config": {
+            "artifacts": {
+              "dir": "/tmp/aiperf-parity/yaml_camel",
+              "slice_duration": 5.0
+            },
+            "datasets": [
+              {
+                "name": "default",
+                "prefix_prompts": {
+                  "length": 8,
+                  "pool_size": 4
+                },
+                "prompts": {
+                  "block_size": 32,
+                  "isl": {
+                    "value": 256.0
+                  },
+                  "osl": {
+                    "value": 64.0
+                  }
+                },
+                "turn_delay_ratio": 0.5,
+                "type": "synthetic"
+              }
+            ],
+            "endpoint": {
+              "api_key": "<redacted>",
+              "connection_reuse": "never",
+              "session_header": "x-s",
+              "streaming": true,
+              "type": "chat",
+              "urls": [
+                "http://127.0.0.1:8000"
+              ],
+              "use_server_token_count": true,
+              "wait_for_model_interval": 3.0,
+              "wait_for_model_mode": "both",
+              "wait_for_model_timeout": 10.0
+            },
+            "models": {
+              "items": [
+                {
+                  "name": "Qwen/Qwen3-0.6B"
+                }
+              ]
+            },
+            "network_latency": {
+              "enabled": true,
+              "mean_ms": 4.0
+            },
+            "phases": [
+              {
+                "concurrency_ramp": {
+                  "duration": 4.0
+                },
+                "duration": 20.0,
+                "name": "profiling",
+                "rate": 8.0,
+                "rate_ramp": {
+                  "duration": 2.0
+                },
+                "smoothness": 1.5,
+                "type": "gamma"
+              }
+            ],
+            "runtime": {
+              "ui": "none",
+              "workers": 3,
+              "workers_min": 1
+            },
+            "server_metrics": {
+              "urls": [
+                "http://sm:9090"
+              ]
+            },
+            "tokenizer": {
+              "apply_chat_template": true,
+              "name": "Qwen/Qwen3-0.6B",
+              "trust_remote_code": true
+            }
+          },
+          "json": true,
+          "scalar_tags": [
+            "accuracy.correct",
+            "accuracy.unparsed",
+            "benchmark_duration",
+            "completed_request_count",
+            "energy_per_user",
+            "error_request_count",
+            "good_request_count",
+            "good_request_fraction",
+            "goodput",
+            "input_token_throughput",
+            "max_response_timestamp",
+            "min_request_timestamp",
+            "network_adjusted_request_latency",
+            "network_adjusted_time_to_first_output_token",
+            "network_adjusted_time_to_first_token",
+            "network_rtt",
+            "osl_mismatch_count",
+            "output_token_throughput",
+            "output_tokens_per_joule",
+            "overall_thinking_efficiency",
+            "overall_usage_prompt_cache_read_pct",
+            "request_count",
+            "request_error_rate",
+            "request_throughput",
+            "total_error_isl",
+            "total_gpu_energy",
+            "total_gpu_power",
+            "total_isl",
+            "total_osl",
+            "total_output_tokens",
+            "total_reasoning_tokens",
+            "total_token_throughput",
+            "total_usage_accepted_prediction_tokens",
+            "total_usage_completion_audio_tokens",
+            "total_usage_completion_tokens",
+            "total_usage_prompt_audio_seconds",
+            "total_usage_prompt_audio_tokens",
+            "total_usage_prompt_cache_miss_tokens",
+            "total_usage_prompt_cache_read_tokens",
+            "total_usage_prompt_cache_write_tokens",
+            "total_usage_prompt_tokens",
+            "total_usage_reasoning_tokens",
+            "total_usage_rejected_prediction_tokens",
+            "total_usage_tool_use_prompt_tokens",
+            "total_usage_total_tokens",
+            "usage_discrepancy_count"
+          ]
+        }
+      },
+      "failure_policy": null,
+      "gpu_telemetry": {
+        "collector": "dcgm",
+        "enabled": true,
+        "metrics_file": null,
+        "mode": "summary",
+        "urls": []
+      },
+      "metrics": {
+        "slice_duration_seconds": 5.0,
+        "slos": {}
+      },
+      "models": {
+        "items": [
+          {
+            "name": "Qwen/Qwen3-0.6B"
+          }
+        ],
+        "strategy": "round_robin"
+      },
+      "network_latency": {
+        "enabled": true,
+        "mean_ms": 4.0,
+        "ping_interval": 1.0
+      },
+      "phases": [
+        {
+          "concurrency_ramp": {
+            "duration": 4.0,
+            "strategy": "linear"
+          },
+          "duration": 20.0,
+          "exclude_from_results": false,
+          "name": "profiling",
+          "rate": 8.0,
+          "rate_ramp": {
+            "duration": 2.0,
+            "strategy": "linear"
+          },
+          "seamless": false,
+          "smoothness": 1.5,
+          "type": "gamma"
+        }
+      ],
+      "runtime": {
+        "cells": 1,
+        "workers": 3,
+        "workers_min": 1
+      },
+      "scenario": null,
+      "server_metrics": {
+        "discovery": {
+          "label_selector": null,
+          "mode": "auto",
+          "namespace": null
+        },
+        "enabled": true,
+        "formats": [
+          "json",
+          "csv"
+        ],
+        "urls": [
+          "http://sm:9090"
+        ]
+      },
+      "sidecars": {
+        "gpu_telemetry": {
+          "collection_interval_ns": 333000000,
+          "records_path": "gpu_telemetry_export.jsonl",
+          "request_timeout_ns": 10000000000,
+          "sources": [
+            {
+              "type": "dcgm",
+              "url": "http://localhost:9400/metrics"
+            },
+            {
+              "type": "dcgm",
+              "url": "http://localhost:9401/metrics"
+            }
+          ]
+        },
+        "network_latency": {
+          "mean_rtt_ns": 4000000
+        },
+        "server_metrics": {
+          "collection_interval_ns": 333000000,
+          "formats": [
+            "json",
+            "csv"
+          ],
+          "reachability_timeout_ns": 10000000000,
+          "urls": [
+            "http://127.0.0.1:8000/metrics",
+            "http://sm:9090/metrics"
+          ]
+        }
+      },
+      "slos": null,
+      "tokenizer": {
+        "apply_chat_template": true,
+        "name": "Qwen/Qwen3-0.6B",
+        "revision": "main",
+        "trust_remote_code": true
+      },
+      "trajectory_start_max_ratio": 0.0,
+      "trajectory_start_min_ratio": 0.0,
+      "transport": {
+        "type": "http"
+      },
+      "unsafe_override": false
+    },
+    "cli_command": "aiperf '/tmp/regen.args'",
+    "label": "",
+    "random_seed": 99,
+    "resolved": {
+      "artifact_dir_created": false,
+      "comm_config": null,
+      "dataset_file_paths": null,
+      "dataset_has_timing_data": null,
+      "dataset_is_forking": null,
+      "dataset_root_count": null,
+      "dataset_sampling_strategies": null,
+      "dataset_session_count": null,
+      "dataset_total_records": null,
+      "dataset_types": null,
+      "gpu_custom_metrics": null,
+      "gpu_dcgm_mappings": null,
+      "gpu_telemetry_mode": "summary",
+      "scenario_outcome": null,
+      "tokenizer_names": null,
+      "total_expected_duration": null
+    },
+    "sweep_id": null,
+    "trial": 0,
+    "variables": {},
+    "variation": null
+  }
+}

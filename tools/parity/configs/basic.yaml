@@ -1,0 +1,16 @@
+schemaVersion: "2.0"
+benchmark:
+  model: Qwen/Qwen3-0.6B
+  endpoint:
+    type: chat
+    url: http://127.0.0.1:8000
+    streaming: true
+  dataset:
+    type: synthetic
+    entries: 5
+    prompts:
+      isl: 550
+  phases:
+    type: concurrency
+    concurrency: 2
+    requests: 5

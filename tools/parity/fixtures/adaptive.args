@@ -1,0 +1,1 @@
+--model Qwen/Qwen3-0.6B --url 127.0.0.1:8000 --endpoint-type chat --streaming --concurrency 8 --benchmark-duration 30 --artifact-dir /tmp/x --adaptive-scale --adaptive-sustain-duration 5 --adaptive-scale-sla request_latency:p99:le:500

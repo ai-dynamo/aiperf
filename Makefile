@@ -150,8 +150,19 @@ coverage: #? run the tests and generate an html coverage report.
 
 install: install-app install-mock-server #? install the project and mock server in editable mode.
 
-install-app: bundle-runner #? install the project in editable mode (with the interned runner).
+install-app: bundle-cli #? install the project in editable mode (with the interned native front door + runner).
 	$(activate_venv) && uv pip install -e ".[dev]"
+
+native-cli: #? build the native Rust `aiperf` binary (aiperf-cli) + the runner.
+	cargo build --release -p aiperf-cli -p aiperf-runner
+
+install-native: native-cli #? install the pure-Rust `aiperf` + runner side-by-side into dist/native-bin (no Python on the profile/config path).
+	mkdir -p dist/native-bin
+	cp target/release/aiperf dist/native-bin/aiperf
+	cp target/release/aiperf-runner dist/native-bin/aiperf-runner
+	@echo "Pure-Rust aiperf installed to dist/native-bin/. Add it to PATH:"
+	@echo "  export PATH=\"$$(pwd)/dist/native-bin:$$PATH\""
+	@echo "Then: aiperf profile --model M --url 127.0.0.1:8000 --endpoint-type chat --concurrency 1,2,4 --request-count 100"
 
 # RUNNER_FEATURES selects the runner profile, mirroring the Dockerfile's
 # AIPERF_RUNNER_PROFILE knob. Default (empty) = full-fat crate defaults
@@ -165,7 +176,13 @@ bundle-runner: #? build the aiperf-runner (RUNNER_FEATURES-selectable) and inter
 	cp target/release/aiperf-runner src/aiperf/_bin/aiperf-runner
 	chmod +x src/aiperf/_bin/aiperf-runner
 
-wheel: bundle-runner #? build the single interned aiperf wheel (maturin, manylinux) into dist/.
+bundle-cli: bundle-runner #? build the native aiperf-cli front door and intern it beside the runner.
+	cargo build --release -p aiperf-cli
+	mkdir -p src/aiperf/_bin
+	cp target/release/aiperf src/aiperf/_bin/aiperf-native
+	chmod +x src/aiperf/_bin/aiperf-native
+
+wheel: bundle-cli #? build the single interned aiperf wheel (maturin, manylinux) into dist/.
 	$(activate_venv) && uv pip install "maturin[patchelf]" \
 		&& maturin build --release --out dist
 

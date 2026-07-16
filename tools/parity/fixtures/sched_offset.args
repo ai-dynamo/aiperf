@@ -1,0 +1,1 @@
+--model Qwen/Qwen3-0.6B --url 127.0.0.1:8000 --endpoint-type chat --input-file /tmp/s.jsonl --fixed-schedule --fixed-schedule-start-offset 1 --fixed-schedule-end-offset 4 --artifact-dir /tmp/x

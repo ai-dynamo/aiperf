@@ -1,0 +1,1 @@
+--model M --url 127.0.0.1:8000 --endpoint-type chat --concurrency 2 --num-conversations 8 --request-count 8 --artifact-dir /tmp/x

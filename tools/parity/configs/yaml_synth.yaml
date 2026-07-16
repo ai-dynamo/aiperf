@@ -1,0 +1,31 @@
+schemaVersion: "2.0"
+benchmark:
+  model: Qwen/Qwen3-0.6B
+  endpoint:
+    type: chat
+    url: 127.0.0.1:8000
+  dataset:
+    type: synthetic
+    sampling: random
+    entries: 8
+    prompts:
+      isl: 512
+      osl: 128
+      block_size: 64
+      batch_size: 2
+    prefix_prompts:
+      pool_size: 10
+      length: 20
+    turns:
+      mean: 3
+      stddev: 1
+    turn_delay:
+      mean: 100
+      stddev: 10
+    turn_delay_ratio: 0.5
+  phases:
+    type: concurrency
+    requests: 5
+    concurrency: 2
+  artifacts:
+    dir: /tmp/aiperf-parity/yaml_synth

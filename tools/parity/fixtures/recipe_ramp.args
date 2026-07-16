@@ -1,0 +1,1 @@
+--model Qwen/Qwen3-0.6B --url 127.0.0.1:8000 --endpoint-type chat --request-count 10 --search-recipe concurrency-ramp --concurrency-min 1 --concurrency-max 100 --concurrency-steps 5 --artifact-dir /tmp/aiperf-parity/ramp

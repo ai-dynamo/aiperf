@@ -1,0 +1,1 @@
+--config tools/parity/configs/sweep_dist.yaml --artifact-dir /tmp/aiperf-parity/sweep_dist

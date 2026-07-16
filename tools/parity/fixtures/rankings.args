@@ -1,0 +1,1 @@
+--model Qwen/Qwen3-0.6B --url 127.0.0.1:8000 --endpoint-type rankings --request-count 10 --rankings-passages-mean 5 --rankings-passages-stddev 1 --rankings-passages-prompt-token-mean 128 --rankings-passages-prompt-token-stddev 8 --rankings-query-prompt-token-mean 20 --artifact-dir /tmp/aiperf-parity/rankings

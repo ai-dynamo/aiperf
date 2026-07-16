@@ -1,0 +1,43 @@
+schemaVersion: "2.0"
+randomSeed: 123
+benchmark:
+  models:
+    strategy: random
+    items:
+      - name: Qwen/Qwen3-0.6B
+  endpoint:
+    type: chat
+    url: 127.0.0.1:8000
+    streaming: true
+    api_key: secret-key
+    timeout: 90.0
+    connection_reuse: never
+    use_legacy_max_tokens: true
+    use_server_token_count: true
+    download_video_content: true
+    request_content_type: multipart/form-data
+    session_header: x-session
+    wait_for_model_timeout: 30.0
+    wait_for_model_interval: 2.5
+    wait_for_model_mode: both
+    headers:
+      x-custom: abc
+      authorization: Bearer z
+    extra:
+      top_p: 0.9
+      seed: 7
+  tokenizer:
+    name: Qwen/Qwen3-0.6B
+    revision: dev
+    trust_remote_code: true
+    apply_chat_template: true
+  dataset:
+    prompts:
+      isl: 512
+      osl: 128
+  phases:
+    type: concurrency
+    requests: 5
+    concurrency: 2
+  artifacts:
+    dir: /tmp/aiperf-parity/yaml_endpoint

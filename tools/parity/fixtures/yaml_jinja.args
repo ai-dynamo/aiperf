@@ -1,0 +1,1 @@
+--config tools/parity/configs/jinja_vars.yaml --artifact-dir /tmp/aiperf-parity/jinja_vars

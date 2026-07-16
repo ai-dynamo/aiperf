@@ -85,7 +85,12 @@ dependencies = [
 
 # CLI Entrypoints
 [project.scripts]
-aiperf = "aiperf.entrypoint:main"
+# `aiperf` hands off to the interned native Rust front door (aiperf-cli) for
+# `profile`/`config`, delegating every other subcommand back to the pure-Python
+# `python -m aiperf` app. `aiperf.native_launcher` execs the binary; the Python
+# app remains reachable as `python -m aiperf` (and as the launcher's fallback
+# when the binary is absent or `AIPERF_NATIVE=0`).
+aiperf = "aiperf.native_launcher:main"
 
 # Plugin entry point definition to discover plugins at runtime
 [project.entry-points."aiperf.plugins"]
@@ -104,7 +109,7 @@ bindings = "pyo3"
 manifest-path = "rust/pyext/Cargo.toml"
 python-source = "src"
 module-name = "aiperf._native"
-include = ["aiperf/_bin/aiperf-runner"]
+include = ["aiperf/_bin/aiperf-runner", "aiperf/_bin/aiperf-native"]
 profile = "release"
 strip = true
 

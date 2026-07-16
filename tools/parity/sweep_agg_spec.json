@@ -1,0 +1,26 @@
+{
+  "cells": [
+    {
+      "variation": {"index": 0, "label": "phases.profiling.concurrency=2", "values": {"phases.profiling.concurrency": 2}},
+      "report": {
+        "schema_version": "2.0",
+        "metrics": {
+          "time_to_first_token": {"type": "distribution", "unit": "ms", "series": [{"labels": null, "stats": {"count": 100, "avg": 12.5, "min": 8.0, "max": 30.25, "std": 3.5, "percentiles": {"p50": 12.0, "p95": 20.5, "p99": 28.75}}}]},
+          "output_token_throughput": {"type": "distribution", "unit": "tokens/sec", "series": [{"labels": null, "stats": {"count": 100, "avg": 1500.5, "min": 1200.0, "max": 1800.0, "std": 120.0, "percentiles": {"p50": 1490.0, "p95": 1750.0, "p99": 1795.0}}}]},
+          "request_count": {"type": "counter", "unit": "requests", "series": [{"labels": null, "stats": {"total": 100}}]}
+        }
+      }
+    },
+    {
+      "variation": {"index": 1, "label": "phases.profiling.concurrency=4", "values": {"phases.profiling.concurrency": 4}},
+      "report": {
+        "schema_version": "2.0",
+        "metrics": {
+          "time_to_first_token": {"type": "distribution", "unit": "ms", "series": [{"labels": null, "stats": {"count": 200, "avg": 18.75, "min": 9.5, "max": 45.0, "std": 5.25, "percentiles": {"p50": 18.0, "p95": 31.5, "p99": 42.0}}}]},
+          "output_token_throughput": {"type": "distribution", "unit": "tokens/sec", "series": [{"labels": null, "stats": {"count": 200, "avg": 2450.0, "min": 1900.0, "max": 3000.0, "std": 210.5, "percentiles": {"p50": 2440.0, "p95": 2900.0, "p99": 2980.0}}}]},
+          "request_count": {"type": "counter", "unit": "requests", "series": [{"labels": null, "stats": {"total": 200}}]}
+        }
+      }
+    }
+  ]
+}

@@ -710,6 +710,10 @@ async fn run_scheduled_phases_inner(
         defer_reports,
     });
     let phase_execution_factory: Rc<dyn PhaseExecutionFactory> = execution_factory.clone();
+    // The virtual (offline) clock builds a bare `current_thread` runtime with no
+    // I/O/signal driver, so `tokio::signal` would panic there; capture the axis
+    // before the clock is moved and arm the listener only under the wall clock.
+    let clock_is_virtual = clock.is_virtual();
     let runner_factory = Rc::new(ClockPhaseRunnerFactory::new(
         clock,
         observer.clone(),
@@ -724,7 +728,7 @@ async fn run_scheduled_phases_inner(
     // yields `PhaseStats { was_cancelled: true }` while the runner still writes
     // its partial native report. Subsequent signals are ignored: the task
     // completes after the first `cancel()`.
-    let signal_guard = spawn_cancel_on_signal(orchestrator.clone());
+    let signal_guard = spawn_cancel_on_signal(orchestrator.clone(), !clock_is_virtual);
     let phase_result = orchestrator.run_all().await.map_err(|error| anyhow!(error));
     drop(signal_guard);
     let processor_result = execution_factory.wait_record_processors().await;
@@ -755,7 +759,15 @@ async fn run_scheduled_phases_inner(
 /// runs outside the executor. On the first delivered signal the active phase is
 /// cancelled once; later signals are ignored because the task has completed.
 #[cfg(unix)]
-fn spawn_cancel_on_signal(orchestrator: ClockPhaseOrchestrator) -> SignalCancelGuard {
+fn spawn_cancel_on_signal(
+    orchestrator: ClockPhaseOrchestrator,
+    enabled: bool,
+) -> SignalCancelGuard {
+    if !enabled {
+        // No signal driver on this runtime (virtual clock): a deterministic
+        // offline run has no wall-clock owner to Ctrl-C, so skip the listener.
+        return SignalCancelGuard { handle: None };
+    }
     let handle = tokio::task::spawn_local(async move {
         use tokio::signal::unix::{SignalKind, signal};
         let mut sigint = signal(SignalKind::interrupt()).ok();
@@ -778,14 +790,22 @@ fn spawn_cancel_on_signal(orchestrator: ClockPhaseOrchestrator) -> SignalCancelG
         }
         let _ = orchestrator.cancel().await;
     });
-    SignalCancelGuard { handle }
+    SignalCancelGuard {
+        handle: Some(handle),
+    }
 }
 
 /// Windows equivalent: cancel on the first Ctrl+C or Ctrl+Break. tokio's
 /// `ctrl_c`/`ctrl_break` sources are async and runtime-driven, so the listener
 /// stays on the thread-per-core `!Send` model exactly like the unix path.
 #[cfg(windows)]
-fn spawn_cancel_on_signal(orchestrator: ClockPhaseOrchestrator) -> SignalCancelGuard {
+fn spawn_cancel_on_signal(
+    orchestrator: ClockPhaseOrchestrator,
+    enabled: bool,
+) -> SignalCancelGuard {
+    if !enabled {
+        return SignalCancelGuard { handle: None };
+    }
     let handle = tokio::task::spawn_local(async move {
         use tokio::signal::windows::{ctrl_break, ctrl_c};
         let mut interrupt = ctrl_c().ok();
@@ -808,25 +828,34 @@ fn spawn_cancel_on_signal(orchestrator: ClockPhaseOrchestrator) -> SignalCancelG
         }
         let _ = orchestrator.cancel().await;
     });
-    SignalCancelGuard { handle }
+    SignalCancelGuard {
+        handle: Some(handle),
+    }
 }
 
-/// Aborts the background signal listener when the phase run returns.
+/// Aborts the background signal listener when the phase run returns. `handle` is
+/// `None` when the listener was skipped (virtual-clock runtime with no signal
+/// driver).
 #[cfg(any(unix, windows))]
 struct SignalCancelGuard {
-    handle: tokio::task::JoinHandle<()>,
+    handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 #[cfg(any(unix, windows))]
 impl Drop for SignalCancelGuard {
     fn drop(&mut self) {
-        self.handle.abort();
+        if let Some(handle) = &self.handle {
+            handle.abort();
+        }
     }
 }
 
 /// Other targets carry no signal listener; the product target is Linux.
 #[cfg(not(any(unix, windows)))]
-fn spawn_cancel_on_signal(_orchestrator: ClockPhaseOrchestrator) -> SignalCancelGuard {
+fn spawn_cancel_on_signal(
+    _orchestrator: ClockPhaseOrchestrator,
+    _enabled: bool,
+) -> SignalCancelGuard {
     SignalCancelGuard
 }
 

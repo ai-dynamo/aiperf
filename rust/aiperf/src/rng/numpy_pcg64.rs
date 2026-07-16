@@ -142,7 +142,7 @@ impl NumpyPcg64 {
     /// (`pcg64.h`): return the buffered high-32 word if present, otherwise draw
     /// a fresh 64-bit word, return its low 32 bits, and buffer the high 32 bits
     /// for the next call.
-    fn next_u32(&mut self) -> u32 {
+    pub(crate) fn next_u32(&mut self) -> u32 {
         if self.has_uint32 {
             self.has_uint32 = false;
             return self.uinteger;

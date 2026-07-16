@@ -1,0 +1,1 @@
+--model Qwen/Qwen3-0.6B --url 127.0.0.1:8000 --endpoint-type chat --artifact-dir /tmp/x --concurrency 2 --request-count 4 --request-cancellation-rate 0.1 --request-cancellation-delay 2
