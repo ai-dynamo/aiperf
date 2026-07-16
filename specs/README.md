@@ -123,10 +123,6 @@ The current workspace extracted `loadgen-core`; default builds have no Dynamo
 dependency, while `dynosim` uses only the curated public mocker boundary.
 These are lineage, not current architecture.
 
-Related app documentation outside this index: `docs/superpowers/specs/2026-07-12-architecture-atlas-graph-first-redesign.md`
-tracks the shipped `apps/architecture-atlas` UI and is deliberately not a `specs/`
-architecture row.
-
 | Spec | Status | Purpose |
 |---|---|---|
 | `2026-07-09-dynamo-aiperf-shared-core-design.md` | superseded | Increment-1 walking skeleton sharing DynoSim's collector/driver via a curated facade; origin of the `RequestSink` / `RequestObserver` seam. |
