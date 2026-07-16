@@ -203,6 +203,47 @@ pub trait ScheduledPhaseSidecar {
     fn finish(&self) -> LocalPhaseFuture<Result<()>>;
 }
 
+/// Start every phase sidecar, then mark the phase-start instant on each.
+///
+/// Shared by the scheduled and graph `PhaseExecution::setup` paths; `label`
+/// selects the workload word in the error context ("scheduled"/"graph").
+pub(crate) async fn start_phase_sidecars(
+    sidecars: &[Rc<dyn ScheduledPhaseSidecar>],
+    clock: &dyn crate::clock::Clock,
+    label: &str,
+) -> Result<(), PhaseExecutionError> {
+    for sidecar in sidecars {
+        sidecar.start().await.map_err(|error| {
+            PhaseExecutionError::new(format!("starting {label} phase sidecar: {error:#}"))
+        })?;
+    }
+    let phase_start_ns = clock.now_ns();
+    for sidecar in sidecars {
+        sidecar.on_phase_start(phase_start_ns);
+    }
+    Ok(())
+}
+
+/// Mark the phase-end instant on every sidecar, then finish each.
+///
+/// Shared by the scheduled and graph `PhaseExecution::execute` finish paths.
+pub(crate) async fn finish_phase_sidecars(
+    sidecars: &[Rc<dyn ScheduledPhaseSidecar>],
+    clock: &dyn crate::clock::Clock,
+    label: &str,
+) -> Result<(), PhaseExecutionError> {
+    let phase_end_ns = clock.now_ns();
+    for sidecar in sidecars {
+        sidecar.on_phase_end(phase_end_ns);
+    }
+    for sidecar in sidecars {
+        sidecar.finish().await.map_err(|error| {
+            PhaseExecutionError::new(format!("finishing {label} phase sidecar: {error:#}"))
+        })?;
+    }
+    Ok(())
+}
+
 /// Resources used by workloads with no shared admission state.
 #[derive(Default)]
 pub struct NoopScheduledPhaseResources;
@@ -1107,18 +1148,7 @@ impl PhaseExecution for ScheduledPhaseExecution {
     fn setup(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
         let sidecars = self.sidecars.clone();
         let clock = self.clock.clone();
-        Box::pin(async move {
-            for sidecar in &sidecars {
-                sidecar.start().await.map_err(|error| {
-                    PhaseExecutionError::new(format!("starting scheduled phase sidecar: {error:#}"))
-                })?;
-            }
-            let phase_start_ns = clock.now_ns();
-            for sidecar in &sidecars {
-                sidecar.on_phase_start(phase_start_ns);
-            }
-            Ok(())
-        })
+        Box::pin(async move { start_phase_sidecars(&sidecars, clock.as_ref(), "scheduled").await })
     }
 
     fn execute(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
@@ -1225,17 +1255,7 @@ impl PhaseExecution for ScheduledPhaseExecution {
         let defer_report = self.defer_report;
         Box::pin(async move {
             runtime.scheduler().wait_idle().await;
-            let phase_end_ns = clock.now_ns();
-            for sidecar in &sidecars {
-                sidecar.on_phase_end(phase_end_ns);
-            }
-            for sidecar in &sidecars {
-                sidecar.finish().await.map_err(|error| {
-                    PhaseExecutionError::new(format!(
-                        "finishing scheduled phase sidecar: {error:#}"
-                    ))
-                })?;
-            }
+            finish_phase_sidecars(&sidecars, clock.as_ref(), "scheduled").await?;
             let report = if defer_report {
                 PendingScheduledPhaseReport::Deferred {
                     runtime,

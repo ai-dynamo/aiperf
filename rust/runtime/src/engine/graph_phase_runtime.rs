@@ -40,6 +40,7 @@ use crate::graph::workload::{
 use crate::metrics_core::Phase as MetricsPhase;
 use crate::phase_runtime::{
     RampScheduledPhaseController, ScheduledPhaseController, ScheduledPhaseSidecar,
+    finish_phase_sidecars, start_phase_sidecars,
 };
 use crate::rng::{RngRoot, namespace};
 use crate::timing::{
@@ -1525,18 +1526,7 @@ impl PhaseExecution for GraphPhaseExecution {
     fn setup(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
         let sidecars = self.sidecars.clone();
         let clock = self.clock.clone();
-        Box::pin(async move {
-            for sidecar in &sidecars {
-                sidecar.start().await.map_err(|error| {
-                    PhaseExecutionError::new(format!("starting graph phase sidecar: {error:#}"))
-                })?;
-            }
-            let phase_start_ns = clock.now_ns();
-            for sidecar in &sidecars {
-                sidecar.on_phase_start(phase_start_ns);
-            }
-            Ok(())
-        })
+        Box::pin(async move { start_phase_sidecars(&sidecars, clock.as_ref(), "graph").await })
     }
 
     fn start_ramps(&self) -> Result<(), PhaseExecutionError> {
@@ -1649,15 +1639,7 @@ impl PhaseExecution for GraphPhaseExecution {
                     PhaseExecutionError::new(format!("graph record drain failed: {error}"))
                 })?;
             }
-            let phase_end_ns = clock.now_ns();
-            for sidecar in &sidecars {
-                sidecar.on_phase_end(phase_end_ns);
-            }
-            for sidecar in &sidecars {
-                sidecar.finish().await.map_err(|error| {
-                    PhaseExecutionError::new(format!("finishing graph phase sidecar: {error:#}"))
-                })?;
-            }
+            finish_phase_sidecars(&sidecars, clock.as_ref(), "graph").await?;
             if let Some(error) = failures.first() {
                 return Err(PhaseExecutionError::new(error));
             }
