@@ -37,13 +37,13 @@ same `hash_ids` via Dynamo's own `TurnTrace::synthesize_tokens`.
 
 ┌──────────────────────────────────────────┐   ┌──────────────────────────────────────────┐
 │ (1) AIPERF PRODUCT PATH  [subprocess]      │   │ (2) NATIVE DYNAMO  [subprocess]            │
-│     the binary Python invokes              │   │     the real native CLI                    │
+│     the `aiperf --execute` engine          │   │     the real native CLI                    │
 └──────────────────────────────────────────┘   └──────────────────────────────────────────┘
 
   protocol-v2 JSON on stdin                        python -m dynamo.replay <trace>
         │                                                --replay-mode online
         ▼                                                --replay-concurrency N
-  aiperf-runner  BINARY                                  --extra-engine-args '{"block_size":16}'
+  aiperf --execute  ENGINE                               --extra-engine-args '{"block_size":16}'
         │  backend=dynosim                        --report-json <out>
         │  replay_mode=online                                  │
         ▼                                                       ▼
@@ -62,7 +62,7 @@ same `hash_ids` via Dynamo's own `TurnTrace::synthesize_tokens`.
   │  • DynosimSink.dispatch     │                   └──────────────────────────────────┘
   │  • RequestObserver / collector    │                          │
   │  • drive_real_with_source ────────┼──┐               ┌───────┘  steps engine, sleeps real time
-  │    (aiperf-graph real-clock pump; │  │               │
+  │    (aiperf_runtime::graph real-clock │  │             │
   │     steps at event's sim-time,    │  │               │
   │     sleeps to deadline real time) │  ▼               ▼
   └──────────────────────────────────┘  ┌───────────────────────────────────────┐
@@ -86,9 +86,9 @@ same `hash_ids` via Dynamo's own `TurnTrace::synthesize_tokens`.
 
 | | AIPerf online (path 1) | Native Dynamo (path 2) |
 |---|---|---|
-| Process | `aiperf-runner` binary | `python -m dynamo.replay` |
+| Process | `aiperf --execute` (the `aiperf` binary) | `python -m dynamo.replay` |
 | Trace driving | **AIPerf's own** `ScheduledRuntime`/`SlotPool`/`DynosimSink` | **Dynamo's own** `LiveRuntime`/demux/channels |
-| Real-clock pump | `aiperf-graph::drive_real_with_source` | Dynamo's tokio reactor + `sleep_until` |
+| Real-clock pump | `aiperf_runtime::graph::drive_real_with_source` | Dynamo's tokio reactor + `sleep_until` |
 | Tokens | `hash_ids → TurnTrace::synthesize_tokens` | `hash_ids → TurnTrace::synthesize_tokens` |
 | Engine | passive `SteppableReplay` (library) | **same** passive `SteppableReplay` (library) |
 | Latency measurement | AIPerf observer, real clock | `Instant::elapsed`, real clock |
@@ -111,31 +111,25 @@ the engine is a linked library on both sides.
 
 ## Tests
 
-`rust/runner/tests/online_replay_stdio.rs`:
+The parity gate runs **in-process** at the library level in `rust/runtime/src/dynosim.rs`
+(behind the `dynosim` feature), comparing AIPerf's online driver against Dynamo's own
+in-process native driver — no Python subprocess and no external checkout required:
 
-- `online_product_path_matches_python_dynamo_replay_subprocess_within_3pct` —
-  the end-to-end **subprocess vs subprocess** gate above. Skips cleanly when the
-  sibling `dynamo-aiperf-native` checkout or `python -m dynamo.replay` is
-  unavailable (set `AIPERF_DYNAMO_NATIVE_DIR`, else the conventional
-  `~/nvidia/projects/dynamo-aiperf-native`).
-- `online_product_path_matches_native_live_replay_within_3pct` — the same gate
-  with the native side run **in-process** via Dynamo's public
-  `simulate_concurrency_live_requests` (no Python required; always runs).
+- `online_matches_native_dynamo_live_replay_apples_to_apples` — replays the same
+  trace through AIPerf's online driver and Dynamo's public
+  `simulate_concurrency_live_requests`, asserting request/token counts exact and
+  every latency mean within the 3% bound.
+- `online_wall_clock_runs_end_to_end_in_process_without_http` — proves the online
+  wall-clock path runs end to end in process with no HTTP/socket.
 
-`rust/aiperf/src/dynosim.rs`:
-
-- `online_matches_native_dynamo_live_replay_apples_to_apples` — library-level
-  check of the online driver against the in-process native driver.
-
-## Running the subprocess gate manually
+## Running the parity gate manually
 
 ```bash
-AIPERF_DYNAMO_NATIVE_DIR=~/nvidia/projects/dynamo-aiperf-native \
-  cargo test -p aiperf-runner --features dynosim --test online_replay_stdio \
-  online_product_path_matches_python_dynamo_replay_subprocess_within_3pct -- --nocapture
+cargo test -p aiperf-runtime --features dynosim --lib \
+  online_matches_native_dynamo_live_replay_apples_to_apples -- --nocapture
 ```
 
-The native CLI is invoked as:
+For a hand comparison against Dynamo's own CLI, the native side is invoked as:
 
 ```bash
 PYTHONPATH="$NATIVE/components/src:$NATIVE/lib/bindings/python/src" \

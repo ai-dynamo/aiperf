@@ -2,8 +2,8 @@
 
 **Date:** 2026-07-12
 **Status:** Proposed (verified against code; compile-checked projection skeleton attached)
-**Scope:** `rust/aiperf` (scheduled/run/phase_runtime/metrics), `rust/loadgen-core` (collector), `rust/aiperf/src/metrics_core` (accumulator/report), `rust/loadgen-core` (observer). Repo is READ-ONLY for this spec; no repo files were modified.
-**Verification artifact:** `~/tmp/a2-spec/` — a throwaway Cargo crate with path deps on `loadgen-core` + `aiperf` (for the `aiperf::metrics_core` module) that compiles `fn project_trace_report(summary: &AccumulatorSummary, records: &[RecordIngest], wall_ms) -> TraceSimulationReport`. `cargo build` is green (see "Verification evidence").
+**Scope:** `rust/runtime` (scheduled/run/phase_runtime/metrics), `rust/loadgen-core` (collector), `rust/runtime/src/metrics_core` (accumulator/report), `rust/loadgen-core` (observer). Repo is READ-ONLY for this spec; no repo files were modified.
+**Verification artifact:** `~/tmp/a2-spec/` — a throwaway Cargo crate with path deps on `loadgen-core` + `aiperf` (for the `aiperf_runtime::metrics_core` module) that compiles `fn project_trace_report(summary: &AccumulatorSummary, records: &[RecordIngest], wall_ms) -> TraceSimulationReport`. `cargo build` is green (see "Verification evidence").
 
 ---
 
@@ -11,11 +11,11 @@
 
 On the paths where the dispatcher forwards the runtime's observer, **every request is measured twice**:
 
-- `rust/aiperf/src/scheduled.rs:482-486` builds
+- `rust/runtime/src/scheduled.rs:482-486` builds
   `ObserverTee::new(vec![CollectorObserver, NativeMetricsObserver])` and stores it as the runtime `observer`.
-- `rust/aiperf/src/metrics.rs:688-736` (`ObserverTee`) fans **every** callback (`on_arrival`/`on_admit`/`on_token`/`on_classified_token`/`on_output_tokens`/`on_usage`/`on_terminal`) to **both** delegates in order.
+- `rust/runtime/src/metrics.rs:688-736` (`ObserverTee`) fans **every** callback (`on_arrival`/`on_admit`/`on_token`/`on_classified_token`/`on_output_tokens`/`on_usage`/`on_terminal`) to **both** delegates in order.
 - Delegate 1 — `CollectorObserver` (`rust/loadgen-core/src/observer.rs:19-68`) → `TraceCollector` (`rust/loadgen-core/src/collector.rs:466-746`): a `FxHashMap<Uuid, TraceRequestStats>`; `on_token` does one map lookup + one `Vec::push` per token (`collector.rs:740-746`).
-- Delegate 2 — `NativeMetricsObserver` (`rust/aiperf/src/metrics.rs:190-673`): a second `FxHashMap<Uuid, usize>` slot lookup + `Vec<i64>` push per token (`metrics.rs:599-635`).
+- Delegate 2 — `NativeMetricsObserver` (`rust/runtime/src/metrics.rs:190-673`): a second `FxHashMap<Uuid, usize>` slot lookup + `Vec<i64>` push per token (`metrics.rs:599-635`).
 
 So each token pays **two hashmap lookups + two vec pushes**, and each request pays **two per-request allocations** that are reduced by two independent finalizers at `finish_at` (`scheduled.rs:1115-1127`: `collector.finish()` **and** `native_metrics.finish()`, optionally in `rayon::join`).
 
@@ -25,7 +25,7 @@ So each token pays **two hashmap lookups + two vec pushes**, and each request pa
 |---|---|---|
 | **Library online** (`run.rs` `run_scheduled_online`/`run_request_rate_online_*`/`run_paced_*`, and `accuracy.rs` `run_single_turn_dataset_online`) | Yes — TransportSink-backed dispatcher forwards `observer` | **Yes** |
 | **Offline Dynamo** (`dynosim.rs:2878-2885` `run_trace_offline`, `dynosim.rs:3265-3266` graph sink) | Yes — engine/graph sink forwards `observer` | **Yes** |
-| **Runner product online** (`aiperf-runner` `execute.rs:3262-3311` `ConfiguredDispatcher`) | **No** | **No** — see below |
+| **Runner product online** (`aiperf-cli` `runner_protocol/execute.rs:3262-3311` `ConfiguredDispatcher`) | **No** | **No** — see below |
 
 The runner's product dispatcher deliberately **ignores** the `ScheduledRuntime` observer and feeds its own single `RunCapture` observer instead:
 
@@ -44,7 +44,7 @@ The runner's product dispatcher deliberately **ignores** the `ScheduledRuntime` 
 
 Concretely:
 1. Stop adding `CollectorObserver` to the runtime delegate list on the online/offline paths (reuse the **existing** `PhaseScheduledPlan::collect_performance_summary` seam — `phase_runtime.rs:287,775-786` — which already drops the collector and collapses the `ObserverTee` to a single delegate when only native metrics remain).
-2. Add one shared `project_trace_report(&AccumulatorSummary, &[RecordIngest], wall_ms) -> TraceSimulationReport` in `rust/aiperf` (consumed by both online and offline), replacing the live `CollectorObserver` finalization with a projection off the native accumulator that the run already computes.
+2. Add one shared `project_trace_report(&AccumulatorSummary, &[RecordIngest], wall_ms) -> TraceSimulationReport` in `rust/runtime` (consumed by both online and offline), replacing the live `CollectorObserver` finalization with a projection off the native accumulator that the run already computes.
 3. Keep the offline Dynamo `compatibility_report_from_dynamo` projection (`dynosim.rs:986-1050`) for the SimClock byte-parity gate — it is a **different** projection source (see §4).
 
 Net: the online/offline hot path loses `CollectorObserver`/`TraceCollector`/`ObserverTee`; the compat report becomes a pure function of the native accumulator plus its retained records.
@@ -135,12 +135,12 @@ Native units for latency metrics are nanoseconds with `display_unit = Millisecon
 
 Drop `CollectorObserver` from the delegate list / stop feeding it, then project at finalize:
 
-- `rust/aiperf/src/scheduled.rs:482-486` — `new_with_metrics_config` builds the 2-delegate tee. Change to native-only; keep `collector` field removal or make it optional. `finish_at` at `scheduled.rs:1115-1127` replaces `collector.finish()` with `project_trace_report(&native_collection)`.
-- `rust/aiperf/src/phase_runtime.rs:762-786` — already conditional on `plan.collect_performance_summary`; default it `false` for the online/offline plans (`phase_runtime.rs:324`) and route `finish` through the projection. The single-delegate collapse (`phase_runtime.rs:782-786`) already removes the `ObserverTee` allocation when only native remains.
-- `rust/aiperf/src/run.rs:434-441`, `run.rs:897-904`, `run.rs:1151-1158` — three online entry points build the tee; switch to native-only + projection at `run.rs:667` (`performance: collector.finish(wall_ms)` → `project_trace_report(...)`).
-- `rust/aiperf/src/dynosim.rs:2878-2885`, `dynosim.rs:3265-3266`, `dynosim.rs:3647-3648`, `dynosim.rs:3791-3792` — offline tees; native-only, and keep `compatibility_report_from_dynamo` (`dynosim.rs:986-1050`) for the SimClock byte gate. The `independently_accumulated` branch (`dynosim.rs:924-932`) already handles an unfed collector.
-- `rust/runner/src/execute.rs:3067-3080,3262-3311` — already single-observer for tokens; the win here is removing the idle runtime collector+native allocation and their discarded finalization (or setting `collect_performance_summary=false` on the runner plan at `execute.rs:1963`).
-- After no caller feeds it: `CollectorObserver` (`rust/loadgen-core/src/observer.rs`) and `ObserverTee` (`rust/aiperf/src/metrics.rs:677-736`) lose their online/offline users; `TraceCollector` (`rust/loadgen-core/src/collector.rs`) survives only as the projection **target type** + the Dynamo parity path.
+- `rust/runtime/src/scheduled.rs:482-486` — `new_with_metrics_config` builds the 2-delegate tee. Change to native-only; keep `collector` field removal or make it optional. `finish_at` at `scheduled.rs:1115-1127` replaces `collector.finish()` with `project_trace_report(&native_collection)`.
+- `rust/runtime/src/phase_runtime.rs:762-786` — already conditional on `plan.collect_performance_summary`; default it `false` for the online/offline plans (`phase_runtime.rs:324`) and route `finish` through the projection. The single-delegate collapse (`phase_runtime.rs:782-786`) already removes the `ObserverTee` allocation when only native remains.
+- `rust/runtime/src/run.rs:434-441`, `run.rs:897-904`, `run.rs:1151-1158` — three online entry points build the tee; switch to native-only + projection at `run.rs:667` (`performance: collector.finish(wall_ms)` → `project_trace_report(...)`).
+- `rust/runtime/src/dynosim.rs:2878-2885`, `dynosim.rs:3265-3266`, `dynosim.rs:3647-3648`, `dynosim.rs:3791-3792` — offline tees; native-only, and keep `compatibility_report_from_dynamo` (`dynosim.rs:986-1050`) for the SimClock byte gate. The `independently_accumulated` branch (`dynosim.rs:924-932`) already handles an unfed collector.
+- `rust/runtime/src/runner_protocol/execute.rs:3067-3080,3262-3311` — already single-observer for tokens; the win here is removing the idle runtime collector+native allocation and their discarded finalization (or setting `collect_performance_summary=false` on the runner plan at `execute.rs:1963`).
+- After no caller feeds it: `CollectorObserver` (`rust/loadgen-core/src/observer.rs`) and `ObserverTee` (`rust/runtime/src/metrics.rs:677-736`) lose their online/offline users; `TraceCollector` (`rust/loadgen-core/src/collector.rs`) survives only as the projection **target type** + the Dynamo parity path.
 
 ---
 
@@ -152,7 +152,7 @@ A1 (retiring / relocating `loadgen-core`'s live `TraceCollector`/`CollectorObser
 
 ## 9. Verification evidence
 
-**Compile-checked skeleton:** `~/tmp/a2-spec/` (`Cargo.toml` path-deps `loadgen-core` + `aiperf` for the `aiperf::metrics_core` module; `src/lib.rs` implements `project_trace_report`). `cargo build` → `Finished dev` (green). It proves against the **real** public types that:
+**Compile-checked skeleton:** `~/tmp/a2-spec/` (`Cargo.toml` path-deps `loadgen-core` + `aiperf` for the `aiperf_runtime::metrics_core` module; `src/lib.rs` implements `project_trace_report`). `cargo build` → `Finished dev` (green). It proves against the **real** public types that:
 
 - `AccumulatorSummary::result(tag).distribution()` yields `DistributionStats { avg, min, max, std: Option<f64>, percentiles: BTreeMap<u32, MetricValue> }` (`kernel.rs:24-43`) — exactly the `mean/min/max/std` + `p50/p75/p90/p95/p99` the compat `TraceDistributionStats` needs.
 - `AccumulatorSummary::finite_value(MetricTag)` supplies every scalar count/throughput/duration/goodput field.
@@ -168,5 +168,5 @@ The skeleton also encodes, in comments at each field, the two hard mismatches (l
 ## 10. Open decisions for the implementer
 
 1. **Percentile/time-base fidelity:** records-exact (byte-identical to legacy, recommended) vs summary-cheap (adopt native semantics). Pick per-consumer; library tests (`run.rs:1693`, `tests/scheduled_real_mock.rs`) pin some values and will need updating if summary-cheap is chosen.
-2. **Where `project_trace_report` lives:** `rust/aiperf/src/report.rs` (shared by `scheduled`/`run`/`phase_runtime`/`dynosim`), taking `&NativeMetricsCollection`.
+2. **Where `project_trace_report` lives:** `rust/runtime/src/report.rs` (shared by `scheduled`/`run`/`phase_runtime`/`dynosim`), taking `&NativeMetricsCollection`.
 3. **GAP-1 / GAP-3:** add a native "arrivals" scalar and a good-only OTPS scalar to the catalog, or recompute both from records (records-first path already has the data).

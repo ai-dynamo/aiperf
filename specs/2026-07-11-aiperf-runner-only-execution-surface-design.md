@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# AIPerf: `aiperf-runner` as the sole native execution surface
+# AIPerf: `aiperf --execute` as the sole native execution surface
 
 **Date:** 2026-07-11
 **Author:** Anthony Casagrande (Tech Lead) + Codex
@@ -13,9 +13,9 @@ described historically here are **superseded by**
 `2026-07-13-benchmarkrun-wire-and-runner-catalog-design.md`, which owns the current
 BenchmarkRun-shaped wire and the plugins.yaml-shaped runner catalog.
 **Decision:** every end-user AIPerf execution backed by the native Rust implementation enters
-through a versioned `aiperf-runner` operation. There is no native `aiperf` CLI, Python inference
-fallback, second Rust executable, direct Python-to-Rust library binding, or mode-specific process
-surface.
+through the `aiperf` binary's versioned execution operation (`aiperf --execute`, the internal hidden
+mode the front door re-execs). There is no separate second Rust executable, Python inference
+fallback, direct Python-to-Rust library binding, or mode-specific process surface.
 
 **Companions:**
 
@@ -54,7 +54,7 @@ Python aiperf command
 BenchmarkRun-shaped run (protocol v2)
     |
     v
-aiperf-runner
+aiperf --execute   (the aiperf binary's execution engine)
     |
     +-- RunnerRegistry
     |     +-- endpoint factories
@@ -100,8 +100,10 @@ them inline, so it still never matches on transport or workload strings.
 
 ## 1. Current code truth
 
-`aiperf-runner` (`rust/runner/src/`) is the sole strict Rust executable on the product path. It
-speaks **protocol v2 only**: `main.rs` reads one stdin request, composes the stock application, and
+`aiperf --execute` (the `aiperf` binary's hidden execution mode; crate `aiperf-cli`, execution layer
+`aiperf_runtime::runner_protocol` under `rust/runtime/src/runner_protocol/`) is the sole strict Rust
+execution surface on the product path. It
+speaks **protocol v2 only**: it reads one stdin request, composes the stock application, and
 `run_v2` rejects any non-v2 or malformed request as a v2 failure envelope. `--capabilities` is the
 only command-line operation and writes the plugins.yaml-shaped catalog (§8).
 
@@ -116,9 +118,9 @@ cross-product (no pair objects). The base build's executable protocol-v2 combina
 | Base | `http + scheduled`, `http + graph`, `grpc + scheduled` |
 | `dynosim` feature | every base pair plus `dynosim_offline + {scheduled, graph}` and `dynosim_online + {scheduled, graph}` |
 
-`http` is a `RealClock` hyper transport (`aiperf::transport_http`) with h1/h2c/UDS/TLS/SSE,
+`http` is a `RealClock` hyper transport (`aiperf_runtime::transport_http`) with h1/h2c/UDS/TLS/SSE,
 connection reuse, and post-send cancellation. `grpc` is a `RealClock` Tonic transport
-(`aiperf::transport_grpc`) where every multi-worker lane owns a current-thread runtime, `LocalSet`,
+(`aiperf_runtime::transport_grpc`) where every multi-worker lane owns a current-thread runtime, `LocalSet`,
 Clock, prepared endpoint table, and dense gRPC binding table. `dynosim_offline` uses `SimClock` and
 the idle/quiescence DES pump; `dynosim_online` uses `RealClock` for apples-to-apples comparison with
 Dynamo's live driver. All four feed the same observer/metrics/report path.
@@ -160,7 +162,7 @@ frozen factories, never a handwritten static array.
 
 ## 2. Required invariants
 
-1. **One native executable.** Every native AIPerf run uses `aiperf-runner`.
+1. **One native executable.** Every native AIPerf run uses `aiperf-cli`.
 2. **Fresh process per run.** Validation may use a separate short-lived process, but execution
    retains one fresh child per variation/trial.
 3. **No Python inference fallback.** Missing runner capabilities fail before execution.
@@ -200,7 +202,7 @@ The runner advertises `protocol_versions: [2]` only. Protocol v1 has been **full
 `dispatch` entry, `execute_v1`/`execute_run*` chain, the `RunRequest`/`RunSpec`/`RunTerminal`/
 `EndpointSpec`/`DatasetSpec`/`AccuracySpec` wire DTOs, the `load_protocol_v1` graph-input adapters,
 and the `Legacy` capability/enum variants are gone. No v1 decoder, authority, request builder, or
-fallback remains on the runner. (The `aiperf::endpoints` module keeps its own internal
+fallback remains on the runner. (The `aiperf_runtime::endpoints` module keeps its own internal
 `EndpointType` metadata/compatibility adapters — unrelated to the removed runner wire protocol.)
 
 ### 3.1 Request envelope
@@ -283,7 +285,7 @@ descriptors and feature flags are enumerated deterministically into the catalog.
 
 ### 5.2 `http` and `grpc`
 
-`http` owns `RealClock`, `aiperf::transport_http` hyper client configuration, h1/h2c/UDS/TLS,
+`http` owns `RealClock`, `aiperf_runtime::transport_http` hyper client configuration, h1/h2c/UDS/TLS,
 connection reuse, cancellation, SSE, trace timing, URL selection, and sticky routing. Real inference
 endpoints and loopback mock endpoints use identical code; ONLINE-real versus ONLINE-mock is not
 represented in the protocol — the configured URL determines the target. Python accepts `grpc://` /
@@ -298,7 +300,7 @@ summaries. `dynosim_offline` runs on `SimClock` and the idle/quiescence DES pump
 runs on `RealClock` for apples-to-apples comparison with Dynamo's live driver. Optional router
 runtime, ZMQ events, KV offload, AIC forward pass, and profiling ride the same seam.
 
-`aiperf-runner` forwards Cargo features explicitly:
+`aiperf-cli` forwards Cargo features explicitly:
 
 ```toml
 [features]
@@ -504,27 +506,30 @@ derived from Rust-owned results and are not another metric authority.
 
 ## 11. Packaging and distribution selection
 
-The normal Python installation selects a platform-specific `aiperf-runner` companion package.
-Official distributions may differ in compiled optional transports, but every distribution is
-self-describing through its catalog.
+There is exactly **one** `aiperf` wheel. maturin compiles the `pyext` pyo3 module into
+`aiperf._native` and packages the `src/aiperf` frontend; `tools/wheel_repack.py` (run by
+`make wheel`) then repacks the native `aiperf` binary directly into the wheel's scripts directory
+(`aiperf-<ver>.data/scripts/aiperf`). Because the wheel carries a native binary it is platform +
+CPython-ABI specific. There is no separate platform-specific companion package.
 
-Discovery order remains:
-
-1. explicit `--runner-bin`;
-2. `AIPERF_RUNNER_BIN`;
-3. matching installed companion package;
-4. `PATH` for development.
+The execution child is the **same `aiperf` binary re-execing itself** as `aiperf --execute`; no
+external binary is discovered and there is no discovery-order search. The only override is
+`AIPERF_EXEC_BIN`, which points the execution child at a differently-compiled build (for example a
+`dynosim`/custom-features binary). Official builds may differ in compiled optional transports, but
+every build is self-describing through its in-process capabilities catalog.
 
 The release matrix MUST contain:
 
-- a stock online runner for every supported platform;
-- an official offline-capable runner wherever the pinned Dynamo dependency is supported;
+- a stock online `aiperf` wheel for every supported platform;
+- an official offline-capable build (`dynosim`/`full` features) wherever the pinned Dynamo
+  dependency is supported, selectable at run time via `AIPERF_EXEC_BIN`;
 - source/lock/feature provenance for each;
 - fresh-install catalog and loopback subprocess tests;
 - no silent substitution of an online-only binary for an offline request.
 
-Custom statically linked extensions ship a custom runner distribution and are selected explicitly.
-Protocol/catalog/report compatibility — not Python package-version equality — is authoritative.
+Custom statically linked extensions ship a custom `aiperf` build and are selected explicitly via
+`AIPERF_EXEC_BIN`. Protocol/catalog/report compatibility — not Python package-version equality —
+is authoritative.
 
 ---
 
@@ -574,7 +579,7 @@ Protocol/catalog/report compatibility — not Python package-version equality �
 ### Keep a native `aiperf` CLI for missing modes
 
 Rejected. That recreates a second schema, capability surface, and product entry point. A
-library-only mode remains unavailable until projected through `aiperf-runner`.
+library-only mode remains unavailable until projected through `aiperf-cli`.
 
 ### Let Python execute the missing mode temporarily
 
@@ -610,7 +615,7 @@ state. The Python outer loop owns iteration and convergence.
 
 ### Claim product support from library tests
 
-Rejected. Product reachability requires a real Python-orchestrator -> `aiperf-runner` subprocess
+Rejected. Product reachability requires a real Python-orchestrator -> `aiperf-cli` subprocess
 proof for the exact transport/workload pair and report contract.
 
 ---
@@ -619,7 +624,7 @@ proof for the exact transport/workload pair and report contract.
 
 This design is complete when:
 
-- the only native AIPerf executable is `aiperf-runner`;
+- the only native AIPerf executable is `aiperf-cli`;
 - protocol v2 accepts authored, side-effect-free `validate` and `execute` operations, and protocol
   v1 has been removed;
 - the exact linked runner image is verified across capability and execution processes;
@@ -650,7 +655,7 @@ What changed, and why:
 - **No pair object, no compatibility predicate, no pair inventory.** There is no
   `RunnerPairFactory`, no `pairs: BTreeMap<(transport_id, workload_id), …>` map, no
   `register_pair`, no `validate_descriptor_compatibility`, and no `supported_pairs`
-  catalog field. `git grep` for any of these in `rust/runner/src` returns nothing.
+  catalog field. `git grep` for any of these in `rust/runtime/src/runner_protocol` returns nothing.
 - **Two independent registries, no gate.** The runner now exposes a transport registry
   and a workload registry as **orthogonal axes with no admission gate between them**:
   every workload runs over every transport. `prepare` / `validate_run` moved onto the
@@ -667,7 +672,7 @@ What changed, and why:
   registry-time compatibility rejection.
 - **`grpc + graph` falls out for free.** The visible symptom this unlocks — a `dag_jsonl`
   graph dataset dispatching over Tonic — needs no hand-added cell; it is proven by
-  `rust/runner/tests/test_graph_grpc.rs`.
+  `rust/runtime/tests/test_graph_grpc.rs`.
 
 The body above is retained as the historical record of the pair-factory design; where it
 and this addendum conflict, the addendum is authoritative.

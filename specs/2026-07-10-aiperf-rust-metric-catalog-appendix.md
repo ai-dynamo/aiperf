@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 **Date:** 2026-07-10
 **Author:** Anthony Casagrande (Tech Lead) + Claude
-**Status:** built — `aiperf::metrics_core::catalog` (`rust/aiperf/src/metrics*` / `metrics_core`).
+**Status:** built — `aiperf_runtime::metrics_core::catalog` (`rust/runtime/src/metrics*` / `metrics_core`).
 The `CATALOG` holds 103 inherited Python metric identities plus 16 native sweep-result
 identities, with exact metadata/dependencies and record/aggregate/derived implementations
 for every row whose source data exists; validation + a deterministic metadata fingerprint
@@ -30,7 +30,7 @@ catalog + `AggregationKind` fold for RECORD/AGGREGATE, a typed `DeriveFn` table 
 DERIVED, real `petgraph` toposort deps. This appendix is that catalog — every metric's
 identity fields + compute logic — so the engine has data to run.
 
-The catalog and its compute layer are built in `aiperf::metrics_core`. `CATALOG` holds all
+The catalog and its compute layer are built in `aiperf_runtime::metrics_core`. `CATALOG` holds all
 103 inherited Python metric rows with source-faithful headers, short headers, units/display
 units, flags, console groups, display order, value types, aggregation kinds, and dependency
 edges, followed by 16 native sweep-result rows. Startup/test validation rejects duplicate

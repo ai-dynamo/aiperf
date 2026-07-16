@@ -200,7 +200,7 @@ framing + completion + cancellation. Full design:
 
 ## Addendum — 2026-07-13 (implementation status: stage 1 landed; stage 2 scoped)
 
-Grounded in `rust/aiperf/src/dataset/body_plan.rs`. **Built:**
+Grounded in `rust/runtime/src/dataset/body_plan.rs`. **Built:**
 
 - **§3/§7 stage 1 — `BodyPlan` + `JsonBodyMaterializer`** (`dataset/body_plan.rs`):
   `BodyPlan` is `Raw(Handle)` (the degenerate whole-body case) or an ordered

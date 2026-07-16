@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Rust-native generated-content server
 
-**Status:** built for the canonical Python Config-v2 → `aiperf-runner` online
+**Status:** built for the canonical Python Config-v2 → `aiperf-cli` online
 HTTP path.
 
 ## Decision
@@ -19,7 +19,7 @@ projects it into the strict authored protocol-v2 request. The runner validates
 that projection without filesystem or socket effects. At execution time one
 run-owned Rust resource binds the HTTP listener, serves a confined directory,
 tracks complete transfers, and shuts down after benchmark drain. Synthetic
-media generation remains in `aiperf::dataset`; an injected publication trait
+media generation remains in `aiperf_runtime::dataset`; an injected publication trait
 selects the existing inline representation or persisted image/video URLs.
 
 This is an online delivery sidecar, not a new transport or execution mode.
@@ -89,7 +89,7 @@ adapters decide whether it is executable:
 
 ## Dataset publication seam
 
-`aiperf::dataset::SyntheticMediaPublisher` is the extension boundary between a
+`aiperf_runtime::dataset::SyntheticMediaPublisher` is the extension boundary between a
 codec/generator and its endpoint-ready representation:
 
 ```text
@@ -128,9 +128,9 @@ base64 after the user explicitly selected externalization.
 
 ## Native server module
 
-The `aiperf::content_server` module (formerly the `aiperf-content-server` crate,
+The `aiperf_runtime::content_server` module (formerly the `aiperf-content-server` crate,
 now inlined as a module of `aiperf`) is a run-resource leaf that depends on the
-sibling `aiperf::dataset` module for the publication trait. Its replaceable
+sibling `aiperf_runtime::dataset` module for the publication trait. Its replaceable
 boundaries are:
 
 - `ContentServerClock`: wall time for correlation plus monotonic time for
@@ -138,7 +138,7 @@ boundaries are:
 - `ContentServerFactory`: listener/resource construction.
 - `ContentServerRuntime`: status, bound address, tracker snapshot, and graceful
   shutdown.
-- `SyntheticMediaPublisher` (owned by `aiperf::dataset`): final media delivery
+- `SyntheticMediaPublisher` (owned by `aiperf_runtime::dataset`): final media delivery
   representation.
 
 The built factory uses Axum and `tower-http::ServeDir`. It binds the listener
@@ -243,11 +243,11 @@ The implementation is complete only when these remain green:
 
 - Public settings: `src/aiperf/common/environment.py`
 - Config-v2 projection: `src/aiperf/orchestrator/rust_wire.py`
-- Strict sidecar adapter: `rust/runner/src/sidecar_input.rs`
-- Wire field: `rust/runner/src/protocol_v2.rs`
-- Dataset adapter injection: `rust/runner/src/dataset_input.rs`
-- Pair preparation: `rust/runner/src/online_execution.rs`
-- Lifecycle ownership: `rust/runner/src/execute.rs`
-- Publication seam/generators: `rust/aiperf/src/dataset/generator/`
-- Server/runtime/tracking: `rust/aiperf/src/content_server/`
-- Product subprocess proof: `rust/runner/tests/online_v2_stdio.rs`
+- Strict sidecar adapter: `rust/runtime/src/runner_protocol/sidecar_input.rs`
+- Wire field: `rust/runtime/src/protocol_v2.rs`
+- Dataset adapter injection: `rust/runtime/src/runner_protocol/dataset_input.rs`
+- Pair preparation: `rust/runtime/src/runner_protocol/online_execution.rs`
+- Lifecycle ownership: `rust/runtime/src/runner_protocol/execute.rs`
+- Publication seam/generators: `rust/runtime/src/dataset/generator/`
+- Server/runtime/tracking: `rust/runtime/src/content_server/`
+- Product subprocess proof: `rust/cli/tests/online_v2_stdio.rs`

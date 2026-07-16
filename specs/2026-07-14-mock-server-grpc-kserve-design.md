@@ -8,7 +8,7 @@
 
 `aiperf-mock-server` is today HTTP-only (axum + hyper): OpenAI chat/completions/embeddings, TGI,
 rerank, image, multimodal, RAG. AIPerf's runner already ships a native gRPC **client**
-(`rust/aiperf/src/transport_grpc`) that dials KServe OIP v2
+(`rust/runtime/src/transport_grpc`) that dials KServe OIP v2
 (`/inference.GRPCInferenceService/{ModelInfer, ModelStreamInfer, ModelReady}`), but there is no
 in-repo gRPC mock to test/benchmark that client against. This adds one.
 
@@ -22,7 +22,7 @@ in-repo gRPC mock to test/benchmark that client against. This adds one.
 - **Surface:** KServe `GRPCInferenceService` **only** (dynamo parity). No Riva. The 9 Riva ASR/TTS/NLP
   methods AIPerf's client can also dial are explicitly out of scope (Riva is not part of ai-dynamo).
 - **Proto strategy:** **hand-rolled, no build-time `protoc`.** Reuse the checked-in prost message
-  types already living in `aiperf::transport_grpc::proto` — the exact structs AIPerf's own client
+  types already living in `aiperf_runtime::transport_grpc::proto` — the exact structs AIPerf's own client
   encodes/decodes — guaranteeing wire parity by construction. This matches the workspace discipline:
   the runner checks in prost types by hand and hand-rolls its client with `RawBytesCodec` +
   `PathAndQuery`; no crate in the workspace uses `tonic-build`/`prost-build`/`protoc`.
@@ -36,7 +36,7 @@ in-repo gRPC mock to test/benchmark that client against. This adds one.
 
 ## The contract (verified against code, both sides)
 
-AIPerf's KServe binding (`rust/aiperf/src/transport_grpc/binding.rs`) dials:
+AIPerf's KServe binding (`rust/runtime/src/transport_grpc/binding.rs`) dials:
 
 | RPC | Path | Kind (client) |
 |---|---|---|
@@ -44,7 +44,7 @@ AIPerf's KServe binding (`rust/aiperf/src/transport_grpc/binding.rs`) dials:
 | `ModelStreamInfer` | `/inference.GRPCInferenceService/ModelStreamInfer` | **server-streaming** (one request in, N responses out; `bidi_streaming_method()` is `None`) |
 | `ModelReady` | `/inference.GRPCInferenceService/ModelReady` | unary |
 
-**Request tensors** (from `rust/aiperf/src/endpoints/kserve.rs::V2InferBehavior::format_payload`,
+**Request tensors** (from `rust/runtime/src/endpoints/kserve.rs::V2InferBehavior::format_payload`,
 lines ~601-609, encoded by `codec.rs::encode_model_infer_request`):
 - `text_input` — `BYTES` tensor, `data[0]` = the joined prompt text. (Name overridable via
   `v2_input_name`, default `text_input`.)
@@ -59,7 +59,7 @@ lines ~601-609, encoded by `codec.rs::encode_model_infer_request`):
   whose `data[0]` is the incremental chunk; `error_message` empty on success
   (`codec.rs::decode_model_stream_infer_response`).
 
-Both sides use the **same** `aiperf::transport_grpc::proto` prost structs, so encode/decode is
+Both sides use the **same** `aiperf_runtime::transport_grpc::proto` prost structs, so encode/decode is
 symmetric and parity is structural, not test-enforced.
 
 ## Architecture
@@ -119,7 +119,7 @@ stream. `error_message` stays empty on success. This produces genuine TTFT (firs
 
 `ModelReady` → `ModelReadyResponse { ready: true }`. `ServerLive` → `{ live: true }`,
 `ServerReady` → `{ ready: true }` (trivial prost messages; add the two tiny `ServerLive*`/`ServerReady*`
-structs to the mock's codec module if not already present in `aiperf::transport_grpc::proto` — the
+structs to the mock's codec module if not already present in `aiperf_runtime::transport_grpc::proto` — the
 client only decodes `ModelReadyResponse`, so `ServerLive`/`ServerReady` messages are defined locally).
 
 ## Error handling
@@ -141,11 +141,11 @@ client only decodes `ModelReadyResponse`, so `ServerLive`/`ServerReady` messages
    - `ModelReady` returns `ready: true`;
    - malformed request → `invalid_argument`.
 2. **Wire round-trip (`rust/mock-server/tests/grpc_integration.rs`)** — a real tonic client drives
-   `serve_grpc` over h2 using AIPerf's own `aiperf::transport_grpc` encode/decode helpers, exercising
+   `serve_grpc` over h2 using AIPerf's own `aiperf_runtime::transport_grpc` encode/decode helpers, exercising
    the framing/trailers/prost round-trip the handler unit tests bypass (unary, server-streaming,
    readiness).
 3. **Full-stack e2e (`rust/e2e/tests/test_kserve_grpc_endpoint.rs`)** — the real `python -m aiperf
-   profile` CLI (Python frontend → native `aiperf-runner` → its production gRPC KServe client) drives
+   profile` CLI (Python frontend → native `aiperf` binary → its production gRPC KServe client) drives
    the mock's `serve_grpc` listener, enabled via the harness's `MockServer::start_with_grpc`
    /`AIPerfHarness::new_with_grpc` (a second in-process listener sharing the mock's `AppState`),
    selected via a Config-v2 YAML with `transport.type: grpc` + `grpc://127.0.0.1:<port>` + endpoint

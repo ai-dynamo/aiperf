@@ -7,14 +7,14 @@ SPDX-License-Identifier: Apache-2.0
 
 **Date:** 2026-07-11
 **Author:** Anthony Casagrande (Tech Lead) + Claude
-**Status:** superseded (realized by the `aiperf::graph` async dataflow) — lineage + reconciliation document, NOT a build plan
+**Status:** superseded (realized by the `aiperf_runtime::graph` async dataflow) — lineage + reconciliation document, NOT a build plan
 **Grounding:** end-to-end line-by-line read of the Python branch-orchestrator subsystem —
 `src/aiperf/timing/branch_orchestrator.py` (518 lines), `_branch_orchestrator_state.py`,
 `_branch_orchestrator_spawn.py`, `_branch_orchestrator_helpers.py`, `_branch_orchestrator_drain.py`,
 `_branch_orchestrator_logging.py`; plus the collaborators it drives —
 `src/aiperf/credit/sticky_router.py` (`StickyCreditRouter`), `common/models/branch.py`
 (`ConversationBranchInfo`). Reconciled against the **built** Rust graph dataflow engine —
-`rust/aiperf/src/graph/{executor.rs,channel_store.rs,scheduler.rs,model.rs,runtime.rs,reducers.rs}`.
+`rust/runtime/src/graph/{executor.rs,channel_store.rs,scheduler.rs,model.rs,runtime.rs,reducers.rs}`.
 Companions: `2026-07-11-aiperf-rust-request-rate-multiturn-design.md` (the credit issuer; DAG children
 dispatched DIRECTLY, bypassing session-slot acquisition + the continuation queue — `agent_depth>0`,
 inherit parent's session slot), `2026-07-09-graph-ir-rust-port-design.md` (the dataflow port),
@@ -24,13 +24,13 @@ inherit parent's session slot), `2026-07-09-graph-ir-rust-port-design.md` (the d
 
 ## 0. Thesis — this whole subsystem collapses into the graph dataflow
 
-**The Python `BranchOrchestrator` is superseded by the `aiperf::graph` async-dataflow engine; it is NOT a
+**The Python `BranchOrchestrator` is superseded by the `aiperf_runtime::graph` async-dataflow engine; it is NOT a
 port target.** The orchestrator is a ~1000-line credit-side driver whose entire job is to reconstruct, on
 top of a fire-and-forget multiprocess credit protocol, the dependency semantics that a dataflow graph
 expresses *directly*. Fan-out (spawn children on a parent turn), fan-in (a parent turn gated until N
 children complete), sticky routing (keep a session's turns on one worker), and the join refcount are all
 credit-protocol reconstructions of a **firing gate on an input channel** — which is exactly what
-`rust/aiperf/src/graph/executor.rs` + `channel_store.rs` already implement natively, running under one
+`rust/runtime/src/graph/executor.rs` + `channel_store.rs` already implement natively, running under one
 single-threaded `LocalSet` per trace (`runtime.rs:5-13`), deterministic under `SimClock` (`drive_sim`,
 `runtime.rs:107`).
 
@@ -162,9 +162,9 @@ for gates that ended zero-outstanding. **The drain path** is §1.5.
 
 ---
 
-## 3. Reconciliation — each responsibility mapped onto `aiperf::graph`
+## 3. Reconciliation — each responsibility mapped onto `aiperf_runtime::graph`
 
-The three columns: **Python orchestrator mechanism (path:line)** | **how the `aiperf::graph` dataflow already
+The three columns: **Python orchestrator mechanism (path:line)** | **how the `aiperf_runtime::graph` dataflow already
 expresses it** | **genuine residual, if any**.
 
 | Responsibility | Python orchestrator mechanism (path:line) | How the graph dataflow already expresses it | Genuine residual |
@@ -175,14 +175,14 @@ expresses it** | **genuine residual, if any**.
 | **Sticky routing (FORK child pinned to parent worker)** | `register_child_routing` / `release_child_routing` refcount on `StickyCreditRouter` (`spawn.py:193-197`, `branch_orchestrator.py:387-391`) | **Deleted, not ported.** There are no worker processes and no KV-cache-affinity routing: a trace (parent + all descendants) runs on ONE `current_thread` `LocalSet` (`runtime.rs:5-13`); "same worker" is automatic. Parent-context inheritance (FORK) is `PromptItem::Splice` reading the parent's output channel (`model.rs:128-136`, `executor.rs:189-190`). | **None for routing.** Residual is *materialization*: FORK = child prompt splices parent turn_list; SPAWN = fresh context. That is a `PromptMaterializer` concern (dataset-segment seam), not orchestration. |
 | **Pre-session spawn (background sub-agents before parent turn-0)** | `dispatch_pre_session_branches` + `_pre_dispatched_branches` dedup (`branch_orchestrator.py:128-163`, `spawn.py:137-139`) | An **entry node** (successor of `START`) with no in-edge from the parent — `Scheduler::entry_nodes` fires it at trace start (`scheduler.rs:79-82`, `executor.rs:106-110`). "Fires before the parent, never gates it" = a node on its own START-rooted branch with no edge into the parent's gated turn. | **None** — pre-session vs post-turn is edge topology (rooted at `START` vs rooted at the spawning node). The dedup set exists only because Python has two dispatch entry points; the graph has one scheduler. |
 | **Gated parent turn takeover (suppress strategy dispatch, dispatch later)** | `intercept` returns `True` → strategy suppresses; `_release_blocked_join` → `dispatch_join_turn` (`branch_orchestrator.py:165-189, 338-347`) | The gated node simply **`.await`s its inputs** (`executor.rs:181-184, 273-296`); there is no "strategy" to suppress and no separate dispatch — the node fires itself when the store wakes its parked reader (`channel_store.rs:207-245`). The intercept/suppress/re-dispatch dance is a credit-protocol artifact. | **None** — the await *is* the gate. |
-| **Descendant accounting / per-parent slot release** | `_descendant_counts` decrement → `_release_slot` (`branch_orchestrator.py:400-410, 482-484`) | Trace lifetime = the `TraceExecutor` future draining under `drive_sim`/`drive_real`; the in-flight counter on `Handle` tracks liveness so the driver knows when the whole trace (parent + descendants) has drained (`runtime.rs:59-61`). No per-parent lock/slot to release. | **Residual = the *session concurrency cap*** — how many traces run at once — which is a `SlotPool` / `ConcurrencyManager` policy in `aiperf::timing`, acquired per trace, not per DAG-child (children inherit; see companion spec §1.1). |
+| **Descendant accounting / per-parent slot release** | `_descendant_counts` decrement → `_release_slot` (`branch_orchestrator.py:400-410, 482-484`) | Trace lifetime = the `TraceExecutor` future draining under `drive_sim`/`drive_real`; the in-flight counter on `Handle` tracks liveness so the driver knows when the whole trace (parent + descendants) has drained (`runtime.rs:59-61`). No per-parent lock/slot to release. | **Residual = the *session concurrency cap*** — how many traces run at once — which is a `SlotPool` / `ConcurrencyManager` policy in `aiperf_runtime::timing`, acquired per trace, not per DAG-child (children inherit; see companion spec §1.1). |
 | **Drain observer (final-step-after-last-return race)** | `_drain_observer` + `_notify_drain` (`drain.py`, `branch_orchestrator.py:413`) | The race **does not exist**: completion is "the trace future resolved" (`runtime.rs:100-107`), a single well-defined edge, not a reconciliation of an async counter against a deferred callback. | **None** — deleted with the credit protocol. |
 | **FAIL_FAST (abort parent + orphan siblings + whole run)** | `_handle_child_errored_fail_fast` + `_notify_abort` (`branch_orchestrator.py:433-480`) | Trace-scoped abort already exists: `ctx.set_abort(err)` short-circuits the whole trace — every node checks `ctx.is_aborted()` (`executor.rs:127-129, 178-186`), and a mid-trace dispatch failure writes a type-correct empty so successors degrade instead of orphaning (`executor.rs:199-205`). Orphan-sibling teardown = the aborted trace's other in-flight nodes seeing `is_aborted`. | **Residual = whole-*run* abort policy** (stop issuing NEW traces on first error) — a `StopChecker` / run-lifecycle concern, not per-trace. The per-trace abort + degrade is built. |
 | **Malformed / rolled-back child classification (error vs truncated vs no-op)** | `_rollback_failed_child` three-way classify + `BranchStats` counters (`spawn.py:229-282`) | A child that fails to dispatch is a node whose sink returns `Err` → `empty_value` degrade (`executor.rs:199-205`) or a node that never schedules. Rollback of `expected` is unnecessary because producer counts are static. | **Residual = observability**: the `BranchStats` counters (spawned/completed/errored/truncated/suppressed) are a reporting surface; map onto the metrics accumulator, not orchestrator state. |
 
 ### 3.1 What the graph executor already does (summary)
 
-Built and unit-tested in the `aiperf::graph` module: multi-node DAG with fan-out (multiple out-edges) and fan-in
+Built and unit-tested in the `aiperf_runtime::graph` module: multi-node DAG with fan-out (multiple out-edges) and fan-in
 (`ChannelRequirement.count` incl. `"all"`); firing gates honoring completion / start-anchored / first-token
 / min-start delays with compress/ignore overrides (`executor.rs:298-364`); a versioned append-only channel
 store with static producer accounting and per-reader orphan propagation (`channel_store.rs`); reducers
@@ -197,7 +197,7 @@ Everything genuinely residual is **policy or observability at the run/issuer bou
 resurrected orchestrator:
 
 1. **Session concurrency cap** — how many *traces* (root conversations) run concurrently; per-trace acquire,
-   children inherit (companion spec §1.1). Lives on `SlotPool` / `ConcurrencyManager` (`aiperf::timing`,
+   children inherit (companion spec §1.1). Lives on `SlotPool` / `ConcurrencyManager` (`aiperf_runtime::timing`,
    built) + the `Workload`/`CreditIssuer` seam (designed).
 2. **Whole-run FAIL_FAST** — "stop admitting new traces on first child error." A `StopChecker` /
    run-lifecycle flag, not per-trace (per-trace abort is built).
@@ -216,16 +216,16 @@ resurrected orchestrator:
 
 | Concern | Primitive | Module (crate `aiperf`) | Status |
 |---|---|---|---|
-| DAG fan-out / fan-in / firing gates | `TraceExecutor` + `Scheduler` | `aiperf::graph` | **built** |
-| Join refcount (arrival vs static producer count) | `VersionedChannelStore` (`await_inputs`, `count:"all"`) | `aiperf::graph` | **built** |
-| Parent-context splice (FORK inheritance) | `PromptItem::Splice` + `PromptMaterializer` | `aiperf::graph` | **built** (materializer trait); dataset-backed **designed** |
-| Per-trace abort + mid-trace degrade (per-parent FAIL_FAST) | `ctx.set_abort` + `empty_value` | `aiperf::graph` | **built** |
-| Deterministic offline / live execution | `drive_sim` / `drive_real` on `LocalSet` | `aiperf::graph` / `aiperf::clock` | **built** |
+| DAG fan-out / fan-in / firing gates | `TraceExecutor` + `Scheduler` | `aiperf_runtime::graph` | **built** |
+| Join refcount (arrival vs static producer count) | `VersionedChannelStore` (`await_inputs`, `count:"all"`) | `aiperf_runtime::graph` | **built** |
+| Parent-context splice (FORK inheritance) | `PromptItem::Splice` + `PromptMaterializer` | `aiperf_runtime::graph` | **built** (materializer trait); dataset-backed **designed** |
+| Per-trace abort + mid-trace degrade (per-parent FAIL_FAST) | `ctx.set_abort` + `empty_value` | `aiperf_runtime::graph` | **built** |
+| Deterministic offline / live execution | `drive_sim` / `drive_real` on `LocalSet` | `aiperf_runtime::graph` / `aiperf_runtime::clock` | **built** |
 | Sticky routing | — | — | **deleted** (no worker processes; single-`LocalSet`-per-trace) |
 | Future/active two-level join, `PendingBranchJoin`, `_child_to_join`, `_descendant_counts`, drain observer | — | — | **deleted** (credit-protocol artifacts subsumed by the channel store) |
-| Session concurrency cap (traces in flight; children inherit) | `SlotPool` / `ConcurrencyManager` | `aiperf::timing` | **built** (pool); issuer wiring **designed** |
-| Whole-run FAIL_FAST (stop admitting new traces) | `StopChecker` run flag | `aiperf::timing` | **built** (checker); DAG flag **designed** |
-| Branch observability counters | metrics accumulator | `aiperf::metrics_core` | **designed** |
+| Session concurrency cap (traces in flight; children inherit) | `SlotPool` / `ConcurrencyManager` | `aiperf_runtime::timing` | **built** (pool); issuer wiring **designed** |
+| Whole-run FAIL_FAST (stop admitting new traces) | `StopChecker` run flag | `aiperf_runtime::timing` | **built** (checker); DAG flag **designed** |
+| Branch observability counters | metrics accumulator | `aiperf_runtime::metrics_core` | **designed** |
 
 **No new `BranchOrchestrator` trait is needed.** The would-be seams collapse:
 
@@ -243,7 +243,7 @@ resurrected orchestrator:
 
 ## 5. Offline / online parity
 
-Because DAG branching is the `aiperf::graph` module, parity is inherited for free — no orchestrator-specific parity work.
+Because DAG branching is the `aiperf_runtime::graph` module, parity is inherited for free — no orchestrator-specific parity work.
 The executor runs the identical node/edge program under both drivers: `drive_real` (tokio reactor,
 `runtime.rs:161`) and `drive_sim` (integer-ns DES idle-pump, `runtime.rs:107`) over the **same** `LocalSet`
 and the **same** `TraceExecutor`. Firing gates read `handle.now_ns()` (`executor.rs:119-121`), so every join
@@ -255,7 +255,7 @@ schema**, not byte-identical real-vs-sim timings (per the port-exact ledger adde
 
 ---
 
-## 6. Residual work (if any) on `aiperf::graph`
+## 6. Residual work (if any) on `aiperf_runtime::graph`
 
 This section is deliberately NOT a port plan. The residual is small and lives at the issuer/run boundary and
 the graph-build boundary — not inside a resurrected orchestrator:
@@ -325,7 +325,7 @@ not spuriously suspended.
 ## 8. One-line summary
 
 The Python `BranchOrchestrator` (~1000 lines reconstructing fan-out / fan-in / join-refcount / sticky-routing
-on top of a multiprocess credit protocol) is **superseded wholesale by the already-built `aiperf::graph`
+on top of a multiprocess credit protocol) is **superseded wholesale by the already-built `aiperf_runtime::graph`
 async-dataflow engine** — FORK/SPAWN fan-out is out-edges, join gating is a `ChannelRequirement.count` the
 `VersionedChannelStore` blocks on with static producer accounting, sticky routing and the future/active gate
 and the drain-observer race are **deleted credit-protocol artifacts**, per-trace FAIL_FAST is `ctx.set_abort`

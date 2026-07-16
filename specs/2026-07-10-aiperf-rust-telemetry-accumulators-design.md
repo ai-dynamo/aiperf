@@ -7,8 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 
 **Date:** 2026-07-10
 **Author:** Anthony Casagrande (Tech Lead) + Claude
-**Status:** built — `aiperf::gpu_telemetry`, `aiperf::server_metrics` (owns its self-contained
-Prometheus/OpenMetrics parser), and `aiperf::network_latency`, driven by Clock-paced runner
+**Status:** built — `aiperf_runtime::gpu_telemetry`, `aiperf_runtime::server_metrics` (owns its self-contained
+Prometheus/OpenMetrics parser), and `aiperf_runtime::network_latency`, driven by Clock-paced runner
 sidecars that snapshot at the phase boundaries the runtime owns.
 **Grounding:** line-by-line read of `gpu_telemetry/{accumulator,constants,metrics_config,dcgm_collector}.py`
 + `common/models/telemetry_models.py`; `server_metrics/{accumulator,data_collector,units,histogram_percentiles}.py`
@@ -50,7 +50,7 @@ calibration** (fresh-unpooled/TLS-skip/DNS-once/MIN_SAMPLES top-up). One thing t
 
 ---
 
-## 1. The shared counter engine (`aiperf::metrics_core::counter`)
+## 1. The shared counter engine (`aiperf_runtime::metrics_core::counter`)
 
 GPU energy and every server COUNTER use one algorithm, and it rides the phase boundaries the
 runtime owns rather than reconstructing windows from an async sample series.
@@ -105,7 +105,7 @@ move to boundary snapshots.)
 
 ---
 
-## 2. GPU telemetry (`aiperf::gpu_telemetry`)
+## 2. GPU telemetry (`aiperf_runtime::gpu_telemetry`)
 
 ### 2.1 Ingest + storage
 Gauge samples land in a `TelemetryHierarchy` (`dcgm_url → gpu_uuid → per-signal columnar
@@ -172,7 +172,7 @@ only DCGM-Prometheus is in the first cut. Custom-metrics CSV (`--custom-metrics`
 
 ---
 
-## 3. Server metrics (`aiperf::server_metrics`) — the routing/fallback/auto-disable state machine
+## 3. Server metrics (`aiperf_runtime::server_metrics`) — the routing/fallback/auto-disable state machine
 
 This is the highest-risk domain logic, and it is the part that survives the boundary-snapshot
 rethink untouched — it is server-compatibility behavior, not scrape-transport bookkeeping. It
@@ -210,7 +210,7 @@ Earned-in-blood details the port keeps (all process-independent):
   reader filters by metric type to avoid cross-contamination.
 
 ### 3.1 Sequential Clock-paced scrape loop
-`aiperf::server_metrics` owns a **self-contained** Prometheus/OpenMetrics exposition parser
+`aiperf_runtime::server_metrics` owns a **self-contained** Prometheus/OpenMetrics exposition parser
 (`server_metrics/parser.rs`) — there is no separate parsing leaf; the `_total` strip,
 `_created`/`_uptime` skip, OpenMetrics-vs-classic routing, and label-dedup are all custom, so
 they live here.
@@ -293,7 +293,7 @@ already-percent values). SGLang `cache_hit_rate` gauge is the *last* fallback (p
 
 ---
 
-## 4. The polynomial histogram percentile estimator (`aiperf::server_metrics::histogram`)
+## 4. The polynomial histogram percentile estimator (`aiperf_runtime::server_metrics::histogram`)
 
 Server histograms (Prometheus cumulative buckets) need percentiles; standard linear
 interpolation is ~950% P99 error when data lands in `+Inf`. Port the estimator from
@@ -349,7 +349,7 @@ Python.
 
 ---
 
-## 5. Network-RTT calibration (`aiperf::network_latency`)
+## 5. Network-RTT calibration (`aiperf_runtime::network_latency`)
 
 Feeds the `network_adjusted_*` catalog metrics: a constant mean RTT subtracted from
 request-start-anchored latencies (§4.8 of the catalog scars).
@@ -404,10 +404,10 @@ verbatim; let the Rust histogram store accept per-scrape bucket sets. (This is t
   kernel's `ddof=1` path for gauges. They are **side-channel accumulators** (record_type ≠
   `metric_records`), summarized separately in the finalize order, injecting `total_gpu_*` /
   `network_adjusted_*` into the main results.
-- **Three producer modules** (`aiperf::gpu_telemetry`, `aiperf::server_metrics` — which owns its
+- **Three producer modules** (`aiperf_runtime::gpu_telemetry`, `aiperf_runtime::server_metrics` — which owns its
   self-contained Prometheus/OpenMetrics parser and the `histogram` estimator —
-  `aiperf::network_latency`) implement the shared side-channel accumulator seam. The dependency
-  direction runs from the telemetry producers **toward the IO-free `aiperf::metrics_core` seam**;
+  `aiperf_runtime::network_latency`) implement the shared side-channel accumulator seam. The dependency
+  direction runs from the telemetry producers **toward the IO-free `aiperf_runtime::metrics_core` seam**;
   the core metrics engine is runtime-neutral and never depends back on a telemetry-specific
   collector. The scrape *managers* are plain Clock-paced tasks in the runner, not services, and
   they snapshot at the phase boundaries the runtime owns.

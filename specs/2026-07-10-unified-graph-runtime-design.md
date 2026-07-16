@@ -51,7 +51,7 @@ produces aiperf's report offline too.** That last clause is the **Level-B** deci
 **Terminology mapping to today's crates.** `Backend` and `ResponseSink` are the
 north-star *explanatory* vocabulary used throughout this doc; the built workspace
 exposes the same dispatch seam concretely as `loadgen-core::{RequestSink<R>,
-RequestObserver, Dispatchable}`, with time supplied by `aiperf::clock::Clock`. When
+RequestObserver, Dispatchable}`, with time supplied by `aiperf_runtime::clock::Clock`. When
 implementing against the current crates, read `Backend::dispatch` as
 `RequestSink<R>::dispatch`, `ResponseSink`/`Event`-emission as `RequestObserver`
 callbacks (`on_arrival`/`on_admit`/`on_token`/`on_usage`/`on_terminal`), and a
@@ -173,7 +173,7 @@ is "every command produces *aiperf's* report in all three modes" — including
 adaptive-scale's window sampler and the live dashboard, which need per-token events
 *during* the run, not a post-hoc dump.
 
-- **HttpBackend** already emits `Event`s from SSE (the `aiperf::transport_http` module). ✓
+- **HttpBackend** already emits `Event`s from SSE (the `aiperf_runtime::transport_http` module). ✓
 - **SimBackend** must emit the *same* `Event`s from the engine. That requires the
   engine to emit timed measurement events **through an injected observer as it
   steps** — i.e. dynamo's `execute_pass` becomes **observer-generic**

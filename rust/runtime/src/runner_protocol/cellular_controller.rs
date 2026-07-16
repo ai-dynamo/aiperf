@@ -25,6 +25,7 @@ use crate::metrics_core::{ExportContext, MetricsAccumulator, MetricsConfig, PERC
 use anyhow::{Context, Result, anyhow, bail, ensure};
 
 use crate::runner_protocol::cell_launcher::owned_positions;
+use crate::runner_protocol::cellular_kind::{CellularRunKind, is_graph_dataset};
 
 // The velo transport + launcher wiring is the only part of the controller that
 // needs the `velo` feature; the validation, budget-slicing, merge, and report
@@ -79,45 +80,7 @@ impl Drop for ScratchTreeGuard {
     }
 }
 
-/// Whether the run targets a graph program (`dag_jsonl` / `weka_trace` / `dynamo_trace`),
-/// as opposed to a scheduled synthetic dataset. Graph programs partition cleanly by whole
-/// trace, so they take the concatenation merge and bypass the scheduled request-budget guards.
-fn is_graph_dataset(envelope: &serde_json::Value) -> bool {
-    envelope
-        .pointer("/run/cfg/datasets")
-        .and_then(serde_json::Value::as_array)
-        .is_some_and(|datasets| {
-            datasets.iter().any(|dataset| {
-                matches!(
-                    dataset.get("format").and_then(serde_json::Value::as_str),
-                    Some("dag_jsonl" | "weka_trace" | "dynamo_trace")
-                )
-            })
-        })
-}
-
-/// Which execution path a cellular run drives. The scheduled arrival-paced executor and
-/// the graph trace executor differ in exactly three ways — how the phases are validated,
-/// whether a per-phase global ordinal base applies, and how the cells' records merge — so
-/// each kind answers those three. A future kind (e.g. gRPC) is one variant plus three arms.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CellularRunKind {
-    /// Synthetic scheduled runs: request-bounded phases, pre-tiled global dispatch ordinals.
-    Scheduled,
-    /// Graph programs (dag_jsonl/weka_trace/dynamo_trace): trace-partitioned, concatenation-merged.
-    Graph,
-}
-
 impl CellularRunKind {
-    /// A graph-format dataset selects the graph path; anything else is scheduled.
-    fn detect(envelope: &serde_json::Value) -> Self {
-        if is_graph_dataset(envelope) {
-            Self::Graph
-        } else {
-            Self::Scheduled
-        }
-    }
-
     /// Validate the phases for this kind (scheduled: request-bounded budgets + a profiling
     /// budget; graph: no static `requests` budget, caps >= cell_count).
     fn validate_phases(&self, envelope: &serde_json::Value, cell_count: u32) -> Result<()> {
@@ -761,7 +724,7 @@ pub fn run_cellular(
         // dispatch order would silently reorder / re-sample a multi-turn report, so fail
         // loud instead. Scheduled-only: a graph run partitions by whole trace and merges by
         // concatenation regardless of turn count.
-        if matches!(kind, CellularRunKind::Scheduled)
+        if kind.enforces_multiturn_retain_backstop()
             && cellular_run_is_multi_turn(envelope)
             && !partitions.is_empty()
         {
@@ -1345,24 +1308,31 @@ fn cellular_will_use_exact_fold(envelope: &serde_json::Value) -> bool {
 }
 
 /// Whitelists a cellular run to the shape the cell topology is currently *wired* for:
-/// the shared online-scheduled executor over the `http` transport, on **synthetic,
-/// file, or public single-turn** datasets. There is no bespoke HTTP layer — a cell
+/// the shared online-scheduled executor over the `http` or `grpc` transport, on
+/// **synthetic, file, or public single-turn** datasets. There is no bespoke HTTP layer — a cell
 /// runs the same `execute.rs` path as any single-process run, differing only by an
 /// injected [`IssuanceAuthority`] and an env-gated records sink (`CellRecordsShipper`).
 /// The partition/issuance seam is transport-neutral; this whitelist reflects wiring
 /// coverage, not an HTTP special case. Two invariants underpin byte parity and each
 /// fails closed here:
 ///
-/// - **Only the online-scheduled executor ships a partition today.** The gRPC and
-///   offline executors are separate paths that do not yet inject the cell issuer or
-///   ship records, so a `grpc`/`dynosim` transport runs an unwired executor and hangs
-///   the controller; it is rejected, not silently divergent. Synthetic, `file`, and
-///   `public` linear datasets ARE wired: synthetic regenerates from the shared seed,
-///   a cross-host `file`/`path` source ships controller->cell over HTTP+zstd (Stage G)
-///   and recompiles deterministically per cell, and `public` URL/HF each cell fetches
-///   itself. Graph programs (dag_jsonl/weka_trace/dynamo_trace) take the whole-trace
-///   partition below. Multi-turn `file` traces (per-conversation partition, like the
-///   graph path) remain a documented follow-up, rejected by the single-turn guard.
+/// - **The online-scheduled executor ships a partition, over HTTP *or* gRPC.** Both
+///   `http` and `grpc` transports run the SAME `execute_native_inner` scheduled loop —
+///   the transport differs only in the `RequestExecutorFactory` the coordinator selects
+///   (`NativeRequestExecutorFactory` vs `NativeGrpcExecutionBackendFactory`), while the
+///   cell-issuer injection ([`CellularAutonomousIssuer`]) and the env-gated records sink
+///   ([`CellRecordsShipper`]) live in that shared loop, above the transport. So gRPC
+///   ships a partition exactly as HTTP does and is admitted here. The `dynosim`
+///   offline/online executors are a genuinely separate SimClock driver
+///   (`offline_execution.rs`) that does not inject the cell issuer or ship records, so a
+///   `dynosim_*` transport runs an unwired executor and hangs the controller; it is
+///   rejected, not silently divergent. Synthetic, `file`, and `public` linear datasets
+///   ARE wired: synthetic regenerates from the shared seed, a cross-host `file`/`path`
+///   source ships controller->cell over HTTP+zstd (Stage G) and recompiles
+///   deterministically per cell, and `public` URL/HF each cell fetches itself. Graph
+///   programs (dag_jsonl/weka_trace/dynamo_trace) take the whole-trace partition below.
+///   Multi-turn `file` traces (per-conversation partition, like the graph path) remain a
+///   documented follow-up, rejected by the single-turn guard.
 /// - **One sampler draw must equal one dispatched turn.** [`PartitionedSampler`]
 ///   partitions by conversation *draw*, but the issuer stamps a per-*turn* ordinal
 ///   ([`CellularAutonomousIssuer`]); a multi-turn conversation makes the two diverge,
@@ -1391,11 +1361,12 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
         .and_then(serde_json::Value::as_str)
     {
         ensure!(
-            transport == "http",
-            "cellular is currently wired only for transport.type=\"http\"; got {transport:?}. \
-             A cell reuses the shared online-scheduled executor + hyper transport (not a \
-             bespoke HTTP layer); the partition/issuance seam is transport-neutral, but \
-             records-shipping is only threaded through the HTTP path so far"
+            matches!(transport, "http" | "grpc"),
+            "cellular is wired for transport.type=\"http\" or \"grpc\"; got {transport:?}. \
+             Both run the shared online-scheduled executor (the cell issuer + records \
+             shipper live above the transport, so gRPC ships partitions exactly as HTTP); \
+             the `dynosim_*` offline/online SimClock executors are a separate driver that \
+             does not yet inject the cell issuer or ship records, so they fail closed here"
         );
     }
     // Multi-turn conversations merge correctly only on the exact-fold concat path;
@@ -2182,6 +2153,9 @@ mod tests {
             serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "public", "format": "accuracy"}]}}}),
             // `raw_payload` is strictly single-turn (unique per-row group key).
             serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "file", "format": "raw_payload", "path": "/data/p.jsonl"}]}}}),
+            // gRPC is accepted: it runs the same online-scheduled executor as HTTP (the
+            // cell issuer + records shipper live above the transport).
+            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "synthetic"}], "transport": {"type": "grpc"}}}}),
         ] {
             assert!(
                 validate_cellular_run_shape(&ok).is_ok(),
@@ -2190,7 +2164,9 @@ mod tests {
         }
         // Fail closed on each unsupported aspect (all else valid + seeded):
         for bad in [
-            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "synthetic"}], "transport": {"type": "grpc"}}}}),
+            // dynosim (offline/online SimClock) is a separate executor with no cell-issuer
+            // / records-shipping wiring, so it fails closed.
+            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "synthetic"}], "transport": {"type": "dynosim_offline"}}}}),
             // An unknown dataset type is still rejected (only synthetic/file/public wired).
             serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "agentic"}]}}}),
             serde_json::json!({"run": {"random_seed": 42, "cfg": {}}}),

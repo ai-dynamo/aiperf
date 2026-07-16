@@ -35,7 +35,7 @@ ends with the concrete GAPS to fold into the master ledger or a new sub-spec.
 ## 1. Metrics / records / post-processing plane — CLOSED
 
 **CLOSED** by the metrics-accumulator and metric-catalog specs, and built as
-`aiperf::metrics_core` (119-row catalog, NaN-sparse columnar storage, ragged ICL, the
+`aiperf_runtime::metrics_core` (119-row catalog, NaN-sparse columnar storage, ragged ICL, the
 sweep-line curves, phase windows, worker merge, typed native-v2 `Reporter`). The
 findings below are retained as the research record of what those specs had to absorb;
 they are no longer open gaps.
@@ -273,8 +273,8 @@ a collision.)
 
 ## 5. Telemetry planes (gpu_telemetry / server_metrics / network_latency) — CLOSED
 
-**CLOSED** by the telemetry-accumulators spec and built as `aiperf::gpu_telemetry`,
-`aiperf::server_metrics`, and `aiperf::network_latency` (Clock-injected side-channel
+**CLOSED** by the telemetry-accumulators spec and built as `aiperf_runtime::gpu_telemetry`,
+`aiperf_runtime::server_metrics`, and `aiperf_runtime::network_latency` (Clock-injected side-channel
 accumulator modules feeding a shared accumulator seam). One authoritative revision to
 note: the telemetry-accumulators spec's 2026-07-10 addendum replaces the
 scrape-then-reconstruct window model described below with **phase-boundary counter
@@ -380,7 +380,7 @@ enums.
   (`sha256(f"{root}:{identifier}")[:8]`), bounded rejection sampling, gammavariate
   arrival burstiness. **RESOLVED (RNG derive-system spec, CLOSED):** there is NO
   cross-language byte-parity requirement with the Python tool; native Rust seed
-  derivation is locked to BLAKE3-derived order-independent seeds (`aiperf::rng`:
+  derivation is locked to BLAKE3-derived order-independent seeds (`aiperf_runtime::rng`:
   `RngRoot::derive`, `RandomGenerator`, `HashIdRandomGenerator`), not Python SHA-256
   parity.
 - **`models/sequence_distribution.py`** — 3-syntax ISL/OSL distribution parser
@@ -418,7 +418,7 @@ level set TRACE/NOTICE/SUCCESS is a log-parity UX contract).
    are `numeric_sum(tag)`. (Resolves the master ledger §4 open decision.)
 2. **Cross-language byte-for-byte RNG reproducibility — RESOLVED: no** (RNG
    derive-system spec, CLOSED). No Python byte-parity requirement; native derivation is
-   REDO-with-BLAKE3-order-independent-seeds (`aiperf::rng`), not PORT-EXACT SHA-256.
+   REDO-with-BLAKE3-order-independent-seeds (`aiperf_runtime::rng`), not PORT-EXACT SHA-256.
 3. **BO/SLA-search subsystem: native Rust vs Python-outer-shell-shelling-out-to-Rust.**
    Recommend the shell for SmoothIsotonic/Optuna/BoTorch (multi-month to port);
    native for Monotonic/MultiTier/grid/convergence/confidence.
@@ -442,9 +442,9 @@ The spine specs nailed the injection-seam architecture and the earned-in-blood
 algorithms they named. This research found the risk in **five large unspec'd bodies**,
 of which two are now CLOSED: (1) the sweep-line time-weighted metrics + the columnar
 accumulator — **CLOSED** (metrics-accumulator + metric-catalog specs, built as
-`aiperf::metrics_core`); (5) the telemetry counter-delta + histogram estimator +
+`aiperf_runtime::metrics_core`); (5) the telemetry counter-delta + histogram estimator +
 backend metric atlas — **CLOSED** (telemetry-accumulators spec, built as
-`aiperf::gpu_telemetry` / `server_metrics` / `network_latency`). The three still-open
+`aiperf_runtime::gpu_telemetry` / `server_metrics` / `network_latency`). The three still-open
 bodies are (2) the endpoint payload/parse zoo + genai-perf export contracts, (3) the
 already-v2 config system with hidden runtime algorithms, and (4) the timing engine's
 depth (UserCentric, debt/drain, cancel-drain, yield-on-zero) plus the whole outer-loop

@@ -41,9 +41,9 @@ The parse logic is a minefield of vendor quirks paid for in wrong-metric bugs (t
 agentic-OSL-undercount fix; the ~64%-of-streaming-turns function-call fix). **Port the behavior
 exactly, guard with fixtures.** This is redo-*port*, not redo-*clean* — unlike the exporters.
 
-**Rust home:** the `aiperf::endpoints` module owns the `Endpoint` trait, every native dialect, the
+**Rust home:** the `aiperf_runtime::endpoints` module owns the `Endpoint` trait, every native dialect, the
 shared body-build skeleton, the input-ISL extractor, and each adapter's capability descriptor. It
-remains transport-neutral. The `aiperf::transport_http` module owns the object-safe
+remains transport-neutral. The `aiperf_runtime::transport_http` module owns the object-safe
 `HttpEndpointBinding` seam plus URL construction, header composition, body encoding, inline-media
 fetch, SSE framing, polling, download, cancellation, and decoding back into the canonical response
 shape; the rest of `aiperf` retains endpoint parsing, observation, and scheduled result composition.
@@ -228,7 +228,7 @@ parser, replay, extraction, and lifecycle behavior described here remain authori
   failure to dispatch; static accuracy likewise rejects raw-token-required endpoints (evaluator
   problems carry semantic text), and agentic validation already requires a streaming text dialect.
 
-**Riva family.** `aiperf::endpoints::riva` adds the native ASR/TTS/NLP adapters that bind to the
+**Riva family.** `aiperf_runtime::endpoints::riva` adds the native ASR/TTS/NLP adapters that bind to the
 Tonic transport; they follow the same open-descriptor, protocol-v2-only registry discipline.
 
 **Config validators** (`EndpointConfig`): streaming auto-disable when unsupported;
@@ -241,25 +241,25 @@ run inside the runner's shared preparation path, not as a separate Python layer.
 
 The endpoint config carries the wire knobs (`headers`, `api_key`→Bearer, `url_params`, `streaming`,
 `use_legacy_max_tokens`, `use_server_token_count`, `extra`, `session_header`, `connection_reuse`,
-`download_video_content`) — most consumed by `aiperf::transport_http`; the body-relevant ones
+`download_video_content`) — most consumed by `aiperf_runtime::transport_http`; the body-relevant ones
 (`use_legacy_max_tokens`, `use_server_token_count`, `extra`, `primary_model_name`) by the endpoint.
 
 ---
 
 ## 5. Rust shape + scope
 
-- **In (`aiperf::endpoints`):** the `Endpoint` trait; tier-1 chat, responses, completions,
+- **In (`aiperf_runtime::endpoints`):** the `Endpoint` trait; tier-1 chat, responses, completions,
   embeddings, and chat-embeddings dialects; every tier-2, KServe, Riva, and `vllm_generate` adapter
   named above; the shared body-build skeleton and content-part hooks; the `extract_inputs` ISL walk
   (§3, including tool-schema byte-parity); each adapter's open-ID `EndpointMetadata` descriptor; and
   config validators. Raw/template use the Rust `jmespath` and `minijinja` implementations, with safe
   template-file resolution.
-- **Built wire lifecycles (`aiperf::transport_http`):** the `HttpEndpointBinding` translation seam,
+- **Built wire lifecycles (`aiperf_runtime::transport_http`):** the `HttpEndpointBinding` translation seam,
   multipart encoding, async polling and content download, inline-media retrieval/deduplication,
   endpoint-specific streaming paths, and canonical HTTP/SSE response decoding. All sleeps and
   cancellation deadlines use the injected `Clock`; polling retains one cancellation deadline rooted
   at the original submission's captured send completion.
-- **Not here (in `aiperf::transport_http`):** URL construction (`build_url`/`_dedup_path_overlap` — the
+- **Not here (in `aiperf_runtime::transport_http`):** URL construction (`build_url`/`_dedup_path_overlap` — the
   `/v1`+`v1/…` collapse), header composition (correlation header under `session_header`), SSE framing,
   cancellation. Endpoints build the body + parse decoded JSON only.
 - **Testing (parity fixtures):** a Python twin emits, per quirk, `{turns → wire body}` and

@@ -38,7 +38,7 @@ changes shape between them (aiperf-v2 REQ 10, REQ 5).
   releases it on terminal, through one object-safe seam. Carries the **global
   dispatch ordinal** assignment (see A1: single, dense, deterministic → byte-parity).
 - **Today (Tier 0 "Direct"):** in-process — one coordinator-owned `SlotPool`
-  (`aiperf::timing`, `slots.rs`) + the sequential `record_index` counter
+  (`aiperf_runtime::timing`, `slots.rs`) + the sequential `record_index` counter
   (`scheduled.rs:868`). **Exact** global concurrency; deterministic assignment.
   Implement as a **single central assignment point**, NOT a shared-atomic self-issue
   (shared-atomic breaks run-to-run float reproducibility — A1).
@@ -78,7 +78,7 @@ changes shape between them (aiperf-v2 REQ 10, REQ 5).
   percentiles are **sketch-derived; the final report is exact** from S2 partitions
   (aiperf-v2 REQ 7, line 399).
 - **Today:** a single cheap live lane — one `WindowSampler`-style consumer
-  (`aiperf::adaptive_core`, `window.rs`) of the drained record stream computing counts + a
+  (`aiperf_runtime::adaptive_core`, `window.rs`) of the drained record stream computing counts + a
   **t-digest** of TTFT/ITL/latency, plus per-record live streaming to Python
   (`live_streaming.rs`, already per-record). In-process merge of shard sketches on a
   timer. Live counts from the monotonic issuer (S1), not summed shards (avoids the
@@ -97,7 +97,7 @@ changes shape between them (aiperf-v2 REQ 10, REQ 5).
 - **Contract:** identical `(workload_seed, cell_count, partition_assignment)` →
   byte-stable artifacts; per-shard RNG derivation composable so different cell counts
   produce the same trace **set** with different **ownership/order** (aiperf-v2 REQ 3).
-- **Today:** **already most of the way there** — `aiperf::rng::RngRoot::derive`
+- **Today:** **already most of the way there** — `aiperf_runtime::rng::RngRoot::derive`
   (order-independent `blake3(root:id)` per trace/hash id) is composable by
   construction; trace identity does not depend on who runs it. Basic case:
   `cell_count = 1`, `partition = identity`. Take `(cell_id, cell_count)` in the
@@ -114,7 +114,7 @@ changes shape between them (aiperf-v2 REQ 10, REQ 5).
   loop, with a **flat-graph fast path** whose overhead matches non-graph dispatch
   (aiperf-v2 REQ 8/9).
 - **Today:** the scheduled dispatch path *is* the flat/degenerate case; the graph
-  executor (`aiperf::graph`) already exists for DAG workloads. No new work for Track-A
+  executor (`aiperf_runtime::graph`) already exists for DAG workloads. No new work for Track-A
   beyond keeping the scheduled path lean (A4).
 - **Later:** unify scheduled + graph under the one `VirtualTraceRunner`/`FlatGraphActor`
   pool (aiperf-v2 "unified substrate"). Noted, not scheduled here.
@@ -165,8 +165,8 @@ every seam is the one the cellular runtime consumes, so none of it is throwaway.
 
 ## Addendum — 2026-07-14 — Phase 1 seams built (S1, S2, S4)
 
-Phase 1 seam extraction is **built** as the always-on `aiperf::cellular` module
-(`rust/aiperf/src/cellular/`), each seam a trait with its Direct in-process impl.
+Phase 1 seam extraction is **built** as the always-on `aiperf_runtime::cellular` module
+(`rust/runtime/src/cellular/`), each seam a trait with its Direct in-process impl.
 Implementation design: `~/.aiperf/docs/superpowers/specs/2026-07-14-rust-cellular-runtime-implementation-design.md`.
 
 - **S1 `cellular::issuance`** — `IssuanceAuthority` (map a cell-local dispatch index
@@ -198,9 +198,9 @@ controller/cell multi-process topology (Phase 2). Section 124's "What ships toda
 ## Addendum — 2026-07-14 — S3 heartbeat + t-digest live lane built
 
 S3 is **built** (supersedes the "still designed, not built: S3" note in the prior
-addendum): `aiperf::cellular::sketch::TDigest` (a deterministic, serde-serializable,
+addendum): `aiperf_runtime::cellular::sketch::TDigest` (a deterministic, serde-serializable,
 associatively-mergeable merging t-digest — the frozen sketch type), and
-`aiperf::cellular::heartbeat::{MetricsHeartbeat, HeartbeatAccumulator}` (counters +
+`aiperf_runtime::cellular::heartbeat::{MetricsHeartbeat, HeartbeatAccumulator}` (counters +
 saturation + TTFT/ITL/latency sketches; `MetricsHeartbeat::merge` folds cells by
 sum + t-digest-merge). The single-process **live lane** is built in the runner
 (`heartbeat_lane.rs`): env-gated `AIPERF_CELLULAR_HEARTBEAT_LOG` feeds the
@@ -223,7 +223,7 @@ controller/cell topology" note in the prior addendum). This completes the roadma
 is transport-neutral, so a cross-host impl is a `CellClient`/`ControllerTransport`
 swap, not a rewrite.
 
-- **`CellTransport` seam** (`aiperf::cellular::transport`): a length-prefixed
+- **`CellTransport` seam** (`aiperf_runtime::cellular::transport`): a length-prefixed
   MessagePack frame (`u32` BE length + `rmp-serde` body) carrying `CellMessage`
   (`Heartbeat` / `Partition` — the initial `Hello`/`Done` framing was later dropped as
   unused; see the 2026-07-14 addenda). MessagePack because it is
@@ -234,7 +234,7 @@ swap, not a rewrite.
   their framed streams into one channel). `TcpCellClient` / `TcpControllerTransport`
   are the process impls; a thread-cell would implement the same two traits over an
   in-process channel.
-- **Cell mode** (`aiperf-runner --cell`, `runner::cellular_cell`): a child runs the
+- **Cell mode** (`aiperf-cli --cell`, `aiperf_runtime::runner_protocol::cellular_cell`): a child runs the
   ordinary single-process execute path over its budget slice, made cell-aware purely
   by three controller-set env vars — `AIPERF_CELL_ID` / `AIPERF_CELL_COUNT` (select
   the `CellularAutonomousIssuer`'s partition, so its dense global dispatch ordinals
@@ -242,7 +242,7 @@ swap, not a rewrite.
   trace set) and `AIPERF_CELL_CONTROLLER_ADDR` (the records shipper's target). After
   the run it ships one final `RecordsShardPartition` + its merged heartbeat, never
   writing a report.
-- **Controller** (`runner::cellular_controller`): a non-cell execute request with
+- **Controller** (`aiperf_runtime::runner_protocol::cellular_controller`): a non-cell execute request with
   `cfg.runtime.cells > 1` becomes the controller. It slices each phase's request
   budget and concurrency cap by the `owned_share` round-robin (shares tile `0..total`
   exactly), spawns one `--cell` child per cell (`current_exe`, spec piped to stdin),
@@ -387,7 +387,7 @@ e2e-tested through the ordinary `aiperf profile` frontend.
   (default) keeps the single-process path byte-for-byte unchanged.
 - **`--cells N`** — a CLI flag (`cli_config.py`) mapped to `runtime_dict["cells"]` in
   `_converter_runtime.py`, mirroring `--workers-max`. `aiperf profile --cells N` drives
-  the controller/cell topology; Python still launches exactly one `aiperf-runner` (which
+  the controller/cell topology; Python still launches exactly one `aiperf-cli` (which
   becomes the controller and spawns the cells) and reads the one merged `native-v2.json`,
   so the orchestrator flow is unchanged.
 - **E2e from the frontend** — `rust/e2e/tests/test_cellular.rs`:
@@ -457,7 +457,7 @@ for a seeded `concurrency` phase with none of the approximate knobs.
 
 **Next: graph-mode cellular.** The scheduled path's multi-turn / trace restrictions are
 artifacts of partitioning a shared linear sampler *by draw* while numbering *by turn*.
-The graph-IR path (`aiperf::graph::TraceExecutor` over `GraphSink`) already models a run
+The graph-IR path (`aiperf_runtime::graph::TraceExecutor` over `GraphSink`) already models a run
 as independent whole traces selected by a `RootPolicy::next_trace()` seam, each with a
 run-unique instance ordinal — so partitioning is `instance_ordinal % cell_count == cell_id`
 with no sampler surgery, and duration/trace/multi-turn distribution falls out cleanly.
@@ -475,7 +475,7 @@ simply does not arise. Realized as the design's *deterministic-per-topology* con
 byte-parity.
 
 Four steps, each reviewed:
-- **`PartitionedGraphTraceSource`** (`aiperf::graph::workload`): cell `k` of `C` owns the
+- **`PartitionedGraphTraceSource`** (`aiperf_runtime::graph::workload`): cell `k` of `C` owns the
   interleaved global session ordinals `k, k+C, …` and cycles templates by the global
   ordinal, so the union across cells reproduces the 1-cell trace set. One formula covers
   the finite (`--num-conversations`) and unbounded (duration) modes; `cell_count == 1`

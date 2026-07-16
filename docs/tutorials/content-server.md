@@ -10,7 +10,7 @@ requests as base64 data URIs. The optional content server writes those encoded
 objects to disk and replaces them with short HTTP URLs. The inference server
 then fetches each object through its ordinary `image_url` or `video_url` path.
 
-The content server is owned by the same `aiperf-runner` child as the benchmark:
+The content server is owned by the same `aiperf --execute` child as the benchmark:
 it binds before endpoint readiness and request execution, remains available
 while in-flight requests drain, and shuts down before the child exits. It also
 retains a bounded record of complete HTTP transfers, including response status,

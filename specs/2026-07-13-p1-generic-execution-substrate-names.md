@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 # P1 — Generic shared names for the execution substrate
 
 **Date:** 2026-07-13
-**Status:** built — see the 2026-07-14 addenda. Group A/B identifier + method renames and the method-count *fold* are implemented; the `inference_dimensions` signature decoupling is intentionally not done (it would double-build `PreparedTurn` on the hot path — see the 2026-07-14b addendum). **Revised 2026-07-13** after a naming review caught two collisions: `PreparedRequest` and `TraceExecutor` are already-taken names in crate `aiperf`, so the picks are now `PreparedTurn` and `TracePlacement` (see §3 note).
+**Status:** built — see the 2026-07-14 addenda. Group A/B identifier + method renames and the method-count *fold* are implemented; the `inference_dimensions` signature decoupling is intentionally not done (it would double-build `PreparedTurn` on the hot path — see the 2026-07-14b addendum). **Revised 2026-07-13** after a naming review caught two collisions: `PreparedRequest` and `TraceExecutor` are already-taken names in crate `aiperf-runtime`, so the picks are now `PreparedTurn` and `TracePlacement` (see §3 note).
 **Scope:** A **naming + dispatch-method-consolidation** pass over the execution substrate the scheduled and graph online paths *already share*. Pure rename + de-duplication — **no behavior change, no structural merge**. Premised on the production audit `2026-07-13-scheduled-graph-production-convergence.md`.
 
 > This supersedes the withdrawn "unify the dispatch seam" P1 draft, which was built on the false premise that the graph path was metrics-lite. The graph path (`RunnerGraphSink`) is full-fidelity and already calls the same `TransportSink` with the same `PreparedHttpTurn` and `NativeMetricsObserver`. What's actually wrong is that the shared substrate is **named path-specifically** (`Http*` / `Turn*`) and reached through a **sprawl of ~6 near-duplicate `TransportSink` dispatch methods**, so the convergence is invisible in the code.
@@ -15,7 +15,7 @@ SPDX-License-Identifier: Apache-2.0
 
 The scheduled and graph online paths share these exact types/instances (audit §"Already shared"), but under names that imply otherwise:
 
-- **Shared DTOs, `Http*`/`Turn*`-named:** `PreparedHttpTurn`, `MeasuredTurnContext`, `MeasuredTurnOutcome`, `HttpTurnDispatchResult` (`rust/aiperf/src/http.rs:190,209,306,329`). Both the scheduled worker and `RunnerGraphSink` build/consume these.
+- **Shared DTOs, `Http*`/`Turn*`-named:** `PreparedHttpTurn`, `MeasuredTurnContext`, `MeasuredTurnOutcome`, `HttpTurnDispatchResult` (`rust/runtime/src/http.rs:190,209,306,329`). Both the scheduled worker and `RunnerGraphSink` build/consume these.
 - **Shared transport dispatch, sprawling:** `TransportSink` exposes `execute_turn_measured[_streaming]`, `dispatch_prepared_turn_measured`, `dispatch_prepared_turn_collect_record[_streaming]`, `dispatch_prepared_turn_collect_record_with_response_observer` (`http.rs:1155-1405`). The scheduled worker calls `dispatch_prepared_turn_measured` (`turn_execution.rs:670`); `RunnerGraphSink` calls `dispatch_prepared_turn_collect_record` (`graph_execution.rs:816`). They bottom out in the **same** underlying function.
 - **Two placement seams named non-parallel:** `HttpTurnExecutionBackend` (per-request, `http.rs:343`) and `GraphTraceExecutionBackend` (per-trace, `graph/placement.rs`). Both are "execute on thread-per-core workers" at different granularity, but nothing in the names says so, and `HttpTurnExecutionBackend` serves gRPC too (the `Http` is a lie).
 

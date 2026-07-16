@@ -17,7 +17,7 @@ rename clean.
 
 ## 1. Problem — five ways to say "the body"
 
-`Turn` (`rust/aiperf/src/dataset/model.rs:211`) carries the request body in **five
+`Turn` (`rust/runtime/src/dataset/model.rs:211`) carries the request body in **five
 overlapping optional fields**, resolved by implicit precedence:
 
 - `content: SmallVec<[ContentGroup; 1]>` — inline authored groups (the one field
@@ -43,7 +43,7 @@ domain*. The pool already has the domains for all of them.
 
 ## 2. The model — `SegmentPool` is the one content IR
 
-`SegmentPool` (`rust/aiperf/src/dataset/segment.rs:232`) already content-addresses
+`SegmentPool` (`rust/runtime/src/dataset/segment.rs:232`) already content-addresses
 every content shape across **six BLAKE3 domains** (`segment.rs:5-11`): `message`,
 `text-only`, `raw`, `token-ids`, `media`, `trace-hash-ids`. Hashing is
 prefix-dependent (a child folds its parent's content hash), so shared prefixes
@@ -239,7 +239,7 @@ tests are the guard.
 
 ## Addendum — 2026-07-13 (implementation status: stage 1 + raw stage 2 landed)
 
-Grounded in `rust/aiperf/src/`; the four migration stages in §9 are landing
+Grounded in `rust/runtime/src/`; the four migration stages in §9 are landing
 incrementally with the suite green each step. **Built so far:**
 
 - **§2/§9 stage 1 — `SegmentStore::domain(handle)`** (`dataset/segment.rs`): the

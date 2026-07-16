@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 **Author:** Anthony Casagrande (Tech Lead) + Codex
 **Status:** foundation built (open registry, KServe factories, prepared online/gRPC execution,
 protocol-v2-only runner); remaining workload/lifecycle adapter convergence is open.
-**Decision:** the exact selected `aiperf-runner` binary is the sole authority for endpoint
+**Decision:** the exact selected `aiperf-cli` binary is the sole authority for endpoint
 identity, metadata, semantic validation, normalization, request/response behavior, and execution.
 Python remains a structural Config-v2 and orchestration front end while that front end exists; it
 does not retain an endpoint implementation, endpoint manifest, endpoint enum, metadata fallback,
@@ -23,9 +23,11 @@ Product deletion is complete only when that companion makes every built Rust mod
 with the same composed endpoint registry.
 
 The `aiperf-endpoints`, `aiperf-dataset`, and `aiperf-extensions` crates named throughout this record
-are now modules of the `aiperf` runtime library (`aiperf::endpoints`, `aiperf::dataset`,
-`aiperf::extensions`); the `aiperf-runner` executable is the `rust/runner` crate. Code truth lives in
-`rust/aiperf/src/endpoints*`, `rust/aiperf/src/extensions*`, and `rust/runner/src/*`.
+are now modules of the `aiperf-runtime` runtime library (`aiperf_runtime::endpoints`,
+`aiperf_runtime::dataset`, `aiperf_runtime::extensions`); the `aiperf` product binary is the
+`aiperf-cli` crate (`rust/cli`), and the v2 execution layer lives in `aiperf_runtime::runner_protocol`.
+Code truth lives in `rust/runtime/src/endpoints*`, `rust/runtime/src/extensions*`, and
+`rust/runtime/src/runner_protocol/*`.
 
 **Companions:**
 
@@ -34,7 +36,7 @@ are now modules of the `aiperf` runtime library (`aiperf::endpoints`, `aiperf::d
 - `2026-07-11-aiperf-rust-compile-time-extension-registry-design.md` remains authoritative for
   explicit, transactional, statically linked extension composition.
 - `2026-07-11-python-orchestrator-rust-single-run-design.md` remains authoritative for the process
-  boundary: Python plans runs and a fresh `aiperf-runner` process executes one run.
+  boundary: Python plans runs and a fresh `aiperf-cli` process executes one run.
 
 This spec supersedes only the older records' endpoint **identity, registry ownership, capability
 publication, and configuration-validation ownership**. It does not relax any endpoint parser,
@@ -54,7 +56,7 @@ CLI / YAML
 explicit versioned RunRequest
     |
     v
-the selected aiperf-runner binary
+the selected aiperf binary (aiperf --execute)
     |
     +-- one frozen Rust registry
     |     +-- built-in endpoints
@@ -96,7 +98,7 @@ Today Python constructs `EndpointType` from Python plugin registrations at impor
   capabilities.
 
 This ordering is already observably wrong. The Rust runner advertises `messages` in
-`rust/runner/src/protocol.rs:49-68`, while the Python endpoint block in
+`rust/runtime/src/runner_protocol/protocol.rs:49-68`, while the Python endpoint block in
 `src/aiperf/plugin/plugins.yaml:184-421` and its checked-in Config-v2 schema do not contain
 `messages`. A valid endpoint compiled into the selected runner is consequently rejected before
 the selected runner can see it.
@@ -119,7 +121,7 @@ Endpoint metadata currently drives Python behavior in at least these paths:
 | `common/readiness_probe.py:45-63,189-218` | hardcoded endpoint paths and payloads | Rust endpoint formatter/header/transport path |
 
 The corresponding streaming, form-data, template, URL, and endpoint-metadata validation already
-exists in `rust/aiperf/src/endpoints/config.rs:100-182`. Feeding Rust metadata into the existing
+exists in `rust/runtime/src/endpoints/config.rs:100-182`. Feeding Rust metadata into the existing
 Python validators would remove one data-copy but leave two executable rule engines. That is not
 the target architecture.
 
@@ -127,12 +129,12 @@ the target architecture.
 
 The native implementation also needs consolidation:
 
-1. `rust/aiperf/src/endpoints/metadata.rs:8-48` defines a closed `EndpointType` enum.
+1. `rust/runtime/src/endpoints/metadata.rs:8-48` defines a closed `EndpointType` enum.
 2. The same file stores a separate metadata table selected by that enum.
-3. `rust/aiperf/src/dataset/request.rs:97-226` manually registers endpoint names and keeps a
+3. `rust/runtime/src/dataset/request.rs:97-226` manually registers endpoint names and keeps a
    second enum-indexed map.
-4. `rust/runner/src/protocol.rs:49-68` hardcodes the capability list independently.
-5. `rust/runner/src/execute.rs:351` constructs `AiperfRegistry::builtin()` inside
+4. `rust/runtime/src/runner_protocol/protocol.rs:49-68` hardcodes the capability list independently.
+5. `rust/runtime/src/runner_protocol/execute.rs:351` constructs `AiperfRegistry::builtin()` inside
    execution rather than accepting the runner's composed registry.
 
 As a result, the current compile-time endpoint extension proof is not a proof of a new dialect. It
@@ -143,10 +145,10 @@ uses for capabilities or execution.
 
 ### 1.4 Per-turn selection can produce an invalid adapter/config pair
 
-`rust/aiperf/src/multiturn.rs:1017-1038` resolves an authored per-turn endpoint, clones the
+`rust/runtime/src/multiturn.rs:1017-1038` resolves an authored per-turn endpoint, clones the
 default configuration, overwrites its enum identity, and clamps streaming. It does not fully
 revalidate that configuration for the selected dialect. A form-data mismatch can therefore
-survive until the dispatch invariant in `rust/aiperf/src/http/endpoint_dispatch.rs:297-327`.
+survive until the dispatch invariant in `rust/runtime/src/http/endpoint_dispatch.rs:297-327`.
 
 The final model MUST make the selected adapter and its validated effective configuration
 inseparable and MUST bind every distinct endpoint/profile before request scheduling.
@@ -156,7 +158,7 @@ inseparable and MUST bind every distinct endpoint/profile before request schedul
 ## 2. Required invariants
 
 1. **Exact-binary authority.** Capabilities, validation, and execution use one registry composed
-   by the exact selected `aiperf-runner` binary.
+   by the exact selected `aiperf-cli` binary.
 2. **Open endpoint identity.** The process boundary accepts a validated string identifier; a core
    enum cannot bound statically linked extensions.
 3. **One registration record.** An endpoint's canonical ID, aliases, descriptor, and implementation
@@ -407,7 +409,7 @@ The extension list is explicit, feature-gated, ordered, searchable, and fixed at
 environment variable, manifest, Python package, linker inventory, or shared library can inject
 code into an already-built runner.
 
-`aiperf-runner` builds this registry once at process startup. `--capabilities`, validation, and
+`aiperf-cli` builds this registry once at process startup. `--capabilities`, validation, and
 normal execution all borrow the same frozen value. `execute_run` is changed to accept an injected
 registry or becomes a method on a runner application object. It MUST NOT call
 `AiperfRegistry::builtin()` internally.
@@ -449,7 +451,7 @@ Python structural Config-v2 validation and outer-loop expansion
 side-effect-free AuthoredRunSpecV2 projection
     |
     v
-aiperf-runner static validation
+aiperf static validation
     |
     v
 Rust dataset/tokenizer/backend preparation and deferred validation
@@ -522,7 +524,7 @@ The normalized effective configuration and notices are recorded in native report
 
 ### 5.3 Structured validation result and completeness
 
-Validation is a strict JSON operation of `aiperf-runner`, using the same one-line stdout discipline
+Validation is a strict JSON operation of `aiperf-cli`, using the same one-line stdout discipline
 as capabilities and terminal results:
 
 ```json
@@ -646,12 +648,12 @@ The current dataset field `turn.endpoint` ambiguously names a dialect while inhe
 URLs, path, credentials, content type, and headers. That is sufficient only when every dialect in a
 conversation targets the same service configuration.
 
-The runner's protocol-v1 support has been deleted: `aiperf-runner` advertises `protocol_versions:
+The runner's protocol-v1 support has been deleted: `aiperf-cli` advertises `protocol_versions:
 [2]` only and rejects any non-v2 request as a protocol-v2 failure envelope. The former v1 `dispatch`
 entry, `execute_v1`/`execute_run*` chain, the `RunRequest`/`RunSpec`/`RunTerminal`/`EndpointSpec`/
 `DatasetSpec`/`AccuracySpec` wire DTOs, the `load_protocol_v1` graph-input adapters, and the
 `Legacy` capability/enum variants are gone. No v1 authority remains on the runner; only unregistered
-workload/lifecycle combinations continue to fail closed. (The `aiperf::endpoints` module retains its
+workload/lifecycle combinations continue to fail closed. (The `aiperf_runtime::endpoints` module retains its
 own internal `EndpointType` metadata/compatibility adapters, independent of the removed runner wire
 protocol.)
 
@@ -785,7 +787,8 @@ endpoint_type: str = "chat"
 ```
 
 The portable checked-in JSON schema likewise declares `endpoint.type` as a string. It cannot list
-the extensions compiled into an arbitrary `AIPERF_RUNNER_BIN`.
+the extensions compiled into the selected `aiperf --execute` binary (overridable via
+`AIPERF_EXEC_BIN`).
 
 Python continues to validate structure needed for orchestration: field shapes, interpolation,
 sweep syntax, trial/search configuration, and path projection. It does not:
@@ -801,10 +804,10 @@ sweep syntax, trial/search configuration, and path projection. It does not:
 Direct `AIPerfConfig.model_validate()` means structural validation. A command/API promising an
 executable configuration MUST additionally call the selected runner's validation operation.
 
-### 8.2 `RunnerInstallation` is explicit and injected
+### 8.2 The execution handle is explicit and injected
 
-Extract runner discovery and capability negotiation from `RustSubprocessExecutor` into a reusable
-value:
+Capability negotiation and the execution handle are a reusable value rather than a hidden module
+global:
 
 ```python
 @dataclass(frozen=True)
@@ -821,16 +824,13 @@ It is resolved once per CLI invocation and passed explicitly through runner-awar
 executor. It is not a module-global singleton and Pydantic constructors do not secretly spawn a
 subprocess.
 
-Discovery precedence is:
-
-1. explicit `--runner-bin` API/CLI selection;
-2. `AIPERF_RUNNER_BIN`;
-3. the matching installed stock runner package;
-4. `PATH`, primarily for development.
+The execution `binary` is the **same `aiperf` binary re-execing itself** as `aiperf --execute`; no
+external binary is discovered and there is no discovery-order search. The only override is
+`AIPERF_EXEC_BIN`, which points the execution child at a differently-compiled build (for example a
+`dynosim`/custom-features binary).
 
 `aiperf --help`, schema generation, plotting, and other non-execution commands continue to work
-without a runner. `profile` and exact executable-config validation fail early with installation
-guidance if no compatible runner exists.
+without composing the execution engine.
 
 ### 8.3 Plan validation
 
@@ -876,24 +876,25 @@ system this spec forbids.
 
 ## 9. Packaging the only executor
 
-The runner-only architecture is not shippable until the normal installation contains a compatible
-runner. The current project packaging is Python-only, runner discovery relies on an external
-binary, and current container/release paths do not establish a stock native artifact.
-
-The stock release uses a platform-specific companion wheel containing `aiperf-runner`; the main
-orchestration wheel may remain pure Python and depends on the matching platform package. A custom
-compile-time extension distribution ships its own runner and selects it explicitly.
+There is exactly **one** `aiperf` wheel that carries the native execution engine. maturin compiles
+the `pyext` pyo3 module into `aiperf._native` and packages the `src/aiperf` frontend;
+`tools/wheel_repack.py` (run by `make wheel`) then repacks the native `aiperf` binary directly into
+the wheel's scripts directory (`aiperf-<ver>.data/scripts/aiperf`). Because the wheel carries a
+native binary it is platform + CPython-ABI specific — there is no separate companion package and no
+pure-Python-only orchestration wheel depending on one. The execution child is the same binary
+re-execing itself as `aiperf --execute`; a custom compile-time extension build is selected
+explicitly via `AIPERF_EXEC_BIN`.
 
 Release gates include:
 
-- platform wheels for every supported OS/architecture;
-- a fresh-environment smoke test that finds the packaged runner without `AIPERF_RUNNER_BIN`;
-- `--capabilities` protocol/digest verification;
-- a Python -> runner -> loopback mock benchmark in the release container;
+- one platform + ABI-specific `aiperf` wheel for every supported OS/architecture;
+- a fresh-environment smoke test that runs the repacked binary without `AIPERF_EXEC_BIN`;
+- capabilities-catalog protocol/digest verification;
+- a frontend -> `aiperf --execute` -> loopback mock benchmark in the release container;
 - native Cargo tests in the primary CI path, not only inherited Python tests;
-- exact runner identity and linked extension provenance in native-v2 output.
+- exact binary identity and linked extension provenance in native-v2 output.
 
-Package version equality is not the compatibility authority because custom runner distributions
+Package version equality is not the compatibility authority because custom feature-bearing builds
 are valid. Protocol versions, capability schema, report schema, and the distribution digest are.
 
 ---
@@ -941,7 +942,7 @@ are valid. Protocol versions, capability schema, report schema, and the distribu
 
 ### Increment 5 — packaging and deletion
 
-1. Ship the stock runner companion package and container artifact.
+1. Ship the single repacked `aiperf` wheel and container artifact.
 2. Delete the Python endpoint plugin category, enum, classes, validators, transport, and migrated
    consumers.
 3. Delete temporary parity machinery.
@@ -1003,7 +1004,7 @@ drifted for `messages`. A parity test detects duplication; it does not remove it
 ### Generate a permanent Python endpoint manifest or enum from Rust
 
 Rejected as a runtime authority. A checked-in/generated artifact describes the stock build that
-produced it, not an arbitrary selected `AIPERF_RUNNER_BIN` with different linked extensions. Such
+produced it, not an arbitrary `AIPERF_EXEC_BIN` build with different linked extensions. Such
 artifacts are acceptable only for documentation or IDE assistance and must carry the source digest.
 
 ### Query Rust metadata and keep Python's endpoint validators
@@ -1046,7 +1047,7 @@ error, not a request to fall back to legacy Python inference.
 
 This design is complete only when all of the following are true:
 
-- `aiperf-runner` constructs one frozen, extension-aware registry used by capabilities, validation,
+- `aiperf-cli` constructs one frozen, extension-aware registry used by capabilities, validation,
   and execution;
 - endpoint identity is open and registry-addressed rather than a closed enum;
 - endpoint descriptors and behavior are co-located and registered once;
@@ -1064,7 +1065,7 @@ This design is complete only when all of the following are true:
 
 The following are built:
 
-- `aiperf::endpoints` (formerly `aiperf-endpoints`) owns validated open `EndpointId` syntax,
+- `aiperf_runtime::endpoints` (formerly `aiperf-endpoints`) owns validated open `EndpointId` syntax,
   adapter-local descriptors, explicit aliases, deterministic `BTreeMap`-backed startup registration,
   and a frozen registry. Endpoint identity is separate from `RawEndpointConfig`, and the registry
   alone constructs the private validated `EffectiveEndpointConfig`.
@@ -1076,11 +1077,11 @@ The following are built:
 - The frozen registry owns nine open KServe factories (three OpenAI-compatible HTTP routes, KServe V1
   Predict, five KServe V2 OIP dialects) plus `vllm_generate`; each owns its descriptor and prepared
   behavior without a closed `EndpointType` variant.
-- `aiperf::extensions` transactionally registers a genuinely new test dialect whose ID and behavior
+- `aiperf_runtime::extensions` transactionally registers a genuinely new test dialect whose ID and behavior
   have no `EndpointType` variant; duplicate IDs and aliases fail atomically and catalogs remain
   sorted.
 - Selected online execution convergence is built: runner-v2 HTTP scheduled and native gRPC scheduled
-  adapters prepare one dense endpoint table per worker; the `aiperf::transport_grpc` registry
+  adapters prepare one dense endpoint table per worker; the `aiperf_runtime::transport_grpc` registry
   prepares a matching dense `GrpcEndpointBinding` table for the five gRPC-capable KServe V2 IDs (see
   `2026-07-12-aiperf-native-grpc-kserve-v2-design.md`).
 - The runner is protocol-v2-only, advertising `protocol_versions: [2]`.

@@ -14,9 +14,9 @@ registry, or dynamic-library ABI.
 
 One dialect crosses two independent open registries:
 
-1. `aiperf_endpoints::EndpointFactory` prepares transport-neutral canonical
+1. `aiperf_runtime::endpoints::EndpointFactory` prepares transport-neutral canonical
    request/response behavior and a co-located `EndpointDescriptor`.
-2. `aiperf_transport_grpc::GrpcEndpointBindingFactory` prepares worker-local
+2. `aiperf_runtime::transport_grpc::GrpcEndpointBindingFactory` prepares worker-local
    protobuf encoding, method paths, readiness encoding, and response decoding.
 
 `GrpcTransport` owns channels, Clock deadlines, cancellation, metadata, status

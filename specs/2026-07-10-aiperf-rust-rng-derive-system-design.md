@@ -3,12 +3,12 @@ SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# AIPerf-Rust: Hash-Derived RNG System (`aiperf::rng`)
+# AIPerf-Rust: Hash-Derived RNG System (`aiperf_runtime::rng`)
 
 **Date:** 2026-07-10
 **Author:** Anthony Casagrande (Tech Lead) + Claude
-**Status:** built — the hash-derived RNG substrate ships as the `aiperf::rng`
-module (`rust/aiperf/src/rng/`). Dataset composition/samplers, ancillary timing,
+**Status:** built — the hash-derived RNG substrate ships as the `aiperf_runtime::rng`
+module (`rust/runtime/src/rng/`). Dataset composition/samplers, ancillary timing,
 and graph phase/arrival/node-cancellation/worker synthesis streams consume it.
 Broader non-graph request-scheduler integration remains future work.
 **Companions:** `2026-07-10-aiperf-rust-coverage-gap-ledger.md` §7 (the
@@ -226,15 +226,15 @@ thing the Tech Lead confirmed is not needed.
 
 ---
 
-## 3. Rust API design (`aiperf::rng`)
+## 3. Rust API design (`aiperf_runtime::rng`)
 
-The substrate ships as the `aiperf::rng` module (`rust/aiperf/src/rng/`), depending
+The substrate ships as the `aiperf_runtime::rng` module (`rust/runtime/src/rng/`), depending
 only on a hash impl + `rand`/`rand_distr`; **nothing else in the workspace depends
 on it the other way**. Consumers (`dataset`, `timing`, graph synthesis, and — as
 future work — the request scheduler in `run.rs`) depend on it.
 
 ```
-rust/aiperf/src/rng/
+rust/runtime/src/rng/
   mod.rs              # module docs + re-exports
   derive.rs           # the hash algebra (derive / variation / hash-id key) — the substrate
   generator.rs        # RandomGenerator: one PRNG + rand_distr, the 20-method contract
@@ -525,9 +525,9 @@ functions, and lines.
   helpers, byte filling, and hash-id scopes byte-for-byte, catching accidental
   determinism breakage (a reordered draw, a changed PRNG) — the same protection the
   Python canary gives, but against a Rust baseline. The fixture deliberately lives
-  at the `aiperf::rng` contract boundary rather than importing the dataset module
+  at the `aiperf_runtime::rng` contract boundary rather than importing the dataset module
   back into this leaf module; it preserves the same consumer-shaped regression
-  signal without the dependency cycle. `aiperf::dataset` separately tests
+  signal without the dependency cycle. `aiperf_runtime::dataset` separately tests
   reproducible model selection, random-with-replacement sampling, shuffling, and
   random-pool loading against the substrate.
 
@@ -541,9 +541,9 @@ functions, and lines.
   sampler traits (`SamplingRng` / `DistributionSampler` / `SequenceSampler`), the
   5-way `SamplingDistribution` + `SequenceLengthDistribution`, the `namespace.rs`
   census constants, and the §4 semantic invariants.
-- **Consumers wired (built):** `aiperf::dataset` uses the substrate for model
+- **Consumers wired (built):** `aiperf_runtime::dataset` uses the substrate for model
   selection, output/sequence-length composition, random-with-replacement sampling,
-  and reproducible shuffling; `aiperf::timing` uses it for Poisson ramping and
+  and reproducible shuffling; `aiperf_runtime::timing` uses it for Poisson ramping and
   request-cancellation decisions; graph synthesis uses it for
   phase/arrival/node-cancellation/worker streams and per-`hash_id` content.
 - **Future work:** broader non-graph request-scheduler RNG integration (the

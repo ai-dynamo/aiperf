@@ -50,15 +50,18 @@ fn sweep_cells_match_oracle() {
 
         let flags = ProfileFlags::parse_from_args(&fixture_args(name))
             .unwrap_or_else(|e| panic!("[{name}] flags: {e}"));
-        let expansion = sweep::expand(&flags, *sweep_type)
-            .unwrap_or_else(|e| panic!("[{name}] expand: {e}"));
+        let expansion =
+            sweep::expand(&flags, *sweep_type).unwrap_or_else(|e| panic!("[{name}] expand: {e}"));
         let cells = run::plan_cells(
             &flags,
             &expansion,
             1,
             IterationOrder::Repeated,
             "parity-sweep",
-            run::SeedPolicy { base: Some(run::DEFAULT_SWEEP_SEED), same_seed: false },
+            run::SeedPolicy {
+                base: Some(run::DEFAULT_SWEEP_SEED),
+                same_seed: false,
+            },
             true,
             load::resolve,
         )
@@ -74,7 +77,9 @@ fn sweep_cells_match_oracle() {
 
         // The `cfg` sections the single-run parity already asserts; here we check
         // the swept scalar landed and the per-cell coordinates match the oracle.
-        let ported = ["phases", "datasets", "endpoint", "models", "runtime", "metrics"];
+        let ported = [
+            "phases", "datasets", "endpoint", "models", "runtime", "metrics",
+        ];
         for (i, (cell, want)) in cells.iter().zip(cells_g).enumerate() {
             assert_eq!(cell.label, want["label"], "[{name}] cell {i} label");
             assert_eq!(
@@ -122,7 +127,9 @@ fn yaml_sweep_cells_match_oracle() {
     .expect("plan yaml cells");
 
     assert_eq!(cells.len(), cells_g.len(), "cell count");
-    let ported = ["phases", "datasets", "endpoint", "models", "runtime", "metrics"];
+    let ported = [
+        "phases", "datasets", "endpoint", "models", "runtime", "metrics",
+    ];
     for (i, (cell, want)) in cells.iter().zip(cells_g).enumerate() {
         assert_eq!(cell.label, want["label"], "cell {i} label");
         assert_eq!(
@@ -130,7 +137,11 @@ fn yaml_sweep_cells_match_oracle() {
             want["artifact_dir"].as_str().unwrap(),
             "cell {i} artifact_dir"
         );
-        assert_eq!(cell.run.random_seed, want["random_seed"].as_u64(), "cell {i} random_seed");
+        assert_eq!(
+            cell.run.random_seed,
+            want["random_seed"].as_u64(),
+            "cell {i} random_seed"
+        );
         let built = serde_json::to_value(&cell.run).expect("serialize");
         for section in ported {
             assert_eq!(
@@ -146,7 +157,13 @@ fn yaml_sweep_cells_match_oracle() {
 fn search_recipe_cells_match_oracle() {
     // A grid `--search-recipe` expands its log-spaced search space into a static
     // sweep; native must reproduce the oracle's per-cell list byte-exact.
-    for name in ["recipe_ramp", "recipe_prefill", "recipe_decode", "recipe_pareto", "recipe_maxconc"] {
+    for name in [
+        "recipe_ramp",
+        "recipe_prefill",
+        "recipe_decode",
+        "recipe_pareto",
+        "recipe_maxconc",
+    ] {
         let golden = load_golden(name);
         let cells_g = golden["cells"].as_array().expect("cells array");
         let flags = ProfileFlags::parse_from_args(&fixture_args(name))
@@ -160,7 +177,11 @@ fn search_recipe_cells_match_oracle() {
         let ported = ["phases", "datasets", "endpoint", "models"];
         for (i, (cell, want)) in cells.iter().zip(cells_g).enumerate() {
             assert_eq!(cell.label, want["label"], "[{name}] cell {i} label");
-            assert_eq!(cell.run.random_seed, want["random_seed"].as_u64(), "[{name}] cell {i} seed");
+            assert_eq!(
+                cell.run.random_seed,
+                want["random_seed"].as_u64(),
+                "[{name}] cell {i} seed"
+            );
             let built = serde_json::to_value(&cell.run).expect("serialize");
             for section in ported {
                 assert_eq!(
@@ -218,15 +239,18 @@ fn multi_run_cells_match_oracle() {
 
         let flags = ProfileFlags::parse_from_args(&fixture_args(name))
             .unwrap_or_else(|e| panic!("[{name}] flags: {e}"));
-        let expansion = sweep::expand(&flags, *sweep_type)
-            .unwrap_or_else(|e| panic!("[{name}] expand: {e}"));
+        let expansion =
+            sweep::expand(&flags, *sweep_type).unwrap_or_else(|e| panic!("[{name}] expand: {e}"));
         let cells = run::plan_cells(
             &flags,
             &expansion,
             *trials,
             IterationOrder::Repeated,
             "parity-sweep",
-            run::SeedPolicy { base: Some(run::DEFAULT_SWEEP_SEED), same_seed: false },
+            run::SeedPolicy {
+                base: Some(run::DEFAULT_SWEEP_SEED),
+                same_seed: false,
+            },
             true,
             load::resolve,
         )
@@ -240,9 +264,15 @@ fn multi_run_cells_match_oracle() {
             cells_g.len()
         );
 
-        let ported = ["phases", "datasets", "endpoint", "models", "runtime", "metrics"];
+        let ported = [
+            "phases", "datasets", "endpoint", "models", "runtime", "metrics",
+        ];
         for (i, (cell, want)) in cells.iter().zip(cells_g).enumerate() {
-            assert_eq!(cell.trial, want["trial"].as_u64().unwrap() as u32, "[{name}] cell {i} trial");
+            assert_eq!(
+                cell.trial,
+                want["trial"].as_u64().unwrap() as u32,
+                "[{name}] cell {i} trial"
+            );
             assert_eq!(
                 cell.run.artifact_dir.to_str().unwrap(),
                 want["artifact_dir"].as_str().unwrap(),

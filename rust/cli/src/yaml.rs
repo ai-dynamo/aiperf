@@ -44,8 +44,8 @@ pub(crate) fn resolve_str(
 ) -> anyhow::Result<crate::model::BenchmarkRun> {
     // Parse to a generic value, apply `${ENV}` + Jinja2 expansion (matching
     // Python's loader pipeline), then deserialize the expanded tree.
-    let raw: serde_json::Value = serde_yaml::from_str(text)
-        .map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))?;
+    let raw: serde_json::Value =
+        serde_yaml::from_str(text).map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))?;
     let expanded = crate::expand::expand_config(raw)?;
     resolve_expanded_value(expanded, artifact_dir)
 }
@@ -126,9 +126,9 @@ where
     match Option::<DurOrNum>::deserialize(d)? {
         None => Ok(None),
         Some(DurOrNum::Num(n)) => Ok(Some(n)),
-        Some(DurOrNum::Str(s)) => {
-            load::parse_duration_secs(&s).map(Some).map_err(serde::de::Error::custom)
-        }
+        Some(DurOrNum::Str(s)) => load::parse_duration_secs(&s)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
     }
 }
 
@@ -498,7 +498,11 @@ struct PhaseSection {
     /// Gamma smoothness shape.
     smoothness: Option<f64>,
     /// Concurrency-ramp duration, seconds.
-    #[serde(default, alias = "concurrencyRamp", deserialize_with = "de_duration_opt")]
+    #[serde(
+        default,
+        alias = "concurrencyRamp",
+        deserialize_with = "de_duration_opt"
+    )]
     concurrency_ramp: Option<f64>,
     /// Rate-ramp duration, seconds.
     #[serde(default, alias = "rateRamp", deserialize_with = "de_duration_opt")]
@@ -617,11 +621,15 @@ impl Benchmark {
         let dataset_entries = dataset.as_ref().and_then(|d| d.entries);
         // Per-dataset seed is separate from the top-level run seed.
         let dataset_random_seed = dataset.as_ref().and_then(|d| d.random_seed);
-        let inter_turn_delay_cap_seconds =
-            dataset.as_ref().and_then(|d| d.inter_turn_delay_cap_seconds);
+        let inter_turn_delay_cap_seconds = dataset
+            .as_ref()
+            .and_then(|d| d.inter_turn_delay_cap_seconds);
 
         // Multi-turn (turns / inter-turn delay / think-time ratio).
-        let turns = dataset.as_ref().and_then(|d| d.turns.as_ref()).map(dist_from);
+        let turns = dataset
+            .as_ref()
+            .and_then(|d| d.turns.as_ref())
+            .map(dist_from);
         let turn_delay_ms = dataset
             .as_ref()
             .and_then(|d| d.turn_delay.as_ref())
@@ -632,44 +640,53 @@ impl Benchmark {
             .unwrap_or(1.0);
 
         // Shared-prefix / prefix-pool policy (`synthetic.prefix_prompts`).
-        let prefix_prompts = dataset.as_ref().and_then(|d| d.prefix_prompts.as_ref()).map(
-            |p| crate::model::dataset::PrefixPrompts {
+        let prefix_prompts = dataset
+            .as_ref()
+            .and_then(|d| d.prefix_prompts.as_ref())
+            .map(|p| crate::model::dataset::PrefixPrompts {
                 shared_system_length: p.shared_system_length,
                 user_context_length: p.user_context_length,
                 length: p.length,
                 pool_size: p.pool_size,
-            },
-        );
+            });
 
         // Synthetic media (present when the block is authored; defaults mirror
         // the flag builders, but sample rates stay raw like the config path).
-        let image_spec =
-            dataset
-                .as_ref()
-                .and_then(|d| d.images.as_ref())
-                .map(|i| crate::model::dataset::ImageSpec {
-                    batch_size: i.batch_size.unwrap_or(1),
-                    format: i.format.clone().unwrap_or_else(|| "jpeg".to_string()),
-                    height: i.height.as_ref().map(clone_num_or_dist).unwrap_or_else(load::default_media_dim),
-                    width: i.width.as_ref().map(clone_num_or_dist).unwrap_or_else(load::default_media_dim),
-                    source: i.source.clone().unwrap_or_else(|| "noise".to_string()),
-                    source_sampling: i
-                        .source_sampling
-                        .clone()
-                        .unwrap_or_else(|| "random-with-replacement".to_string()),
-                });
-        let audio_spec =
-            dataset
-                .as_ref()
-                .and_then(|d| d.audio.as_ref())
-                .map(|a| crate::model::dataset::AudioSpec {
-                    batch_size: a.batch_size.unwrap_or(1),
-                    channels: a.channels.unwrap_or(1),
-                    depths: a.depths.clone().unwrap_or_else(|| vec![16]),
-                    format: a.format.clone().unwrap_or_else(|| "wav".to_string()),
-                    length: a.length.as_ref().map(clone_num_or_dist).unwrap_or_else(load::default_media_dim),
-                    sample_rates: a.sample_rates.clone().unwrap_or_else(|| vec![16.0]),
-                });
+        let image_spec = dataset.as_ref().and_then(|d| d.images.as_ref()).map(|i| {
+            crate::model::dataset::ImageSpec {
+                batch_size: i.batch_size.unwrap_or(1),
+                format: i.format.clone().unwrap_or_else(|| "jpeg".to_string()),
+                height: i
+                    .height
+                    .as_ref()
+                    .map(clone_num_or_dist)
+                    .unwrap_or_else(load::default_media_dim),
+                width: i
+                    .width
+                    .as_ref()
+                    .map(clone_num_or_dist)
+                    .unwrap_or_else(load::default_media_dim),
+                source: i.source.clone().unwrap_or_else(|| "noise".to_string()),
+                source_sampling: i
+                    .source_sampling
+                    .clone()
+                    .unwrap_or_else(|| "random-with-replacement".to_string()),
+            }
+        });
+        let audio_spec = dataset.as_ref().and_then(|d| d.audio.as_ref()).map(|a| {
+            crate::model::dataset::AudioSpec {
+                batch_size: a.batch_size.unwrap_or(1),
+                channels: a.channels.unwrap_or(1),
+                depths: a.depths.clone().unwrap_or_else(|| vec![16]),
+                format: a.format.clone().unwrap_or_else(|| "wav".to_string()),
+                length: a
+                    .length
+                    .as_ref()
+                    .map(clone_num_or_dist)
+                    .unwrap_or_else(load::default_media_dim),
+                sample_rates: a.sample_rates.clone().unwrap_or_else(|| vec![16.0]),
+            }
+        });
         let video_spec = dataset.as_ref().and_then(|d| d.video.as_ref()).map(|v| {
             let va = v.audio.as_ref();
             crate::model::dataset::VideoSpec {
@@ -796,7 +813,12 @@ impl Benchmark {
         if let Some(t) = phase_type
             && !matches!(
                 t,
-                "concurrency" | "poisson" | "gamma" | "constant" | "user_centric" | "fixed_schedule"
+                "concurrency"
+                    | "poisson"
+                    | "gamma"
+                    | "constant"
+                    | "user_centric"
+                    | "fixed_schedule"
             )
         {
             anyhow::bail!(
@@ -843,7 +865,12 @@ impl Benchmark {
 
         let (tokenizer_name, tokenizer_revision, tokenizer_trust, apply_chat_template) =
             match self.tokenizer {
-                Some(t) => (t.name, t.revision, t.trust_remote_code, t.apply_chat_template),
+                Some(t) => (
+                    t.name,
+                    t.revision,
+                    t.trust_remote_code,
+                    t.apply_chat_template,
+                ),
                 None => (None, None, false, false),
             };
 
@@ -859,14 +886,23 @@ impl Benchmark {
         let slos: serde_json::Map<String, serde_json::Value> = self
             .slos
             .as_ref()
-            .map(|m| m.iter().map(|(k, v)| (k.clone(), serde_json::json!(v))).collect())
+            .map(|m| {
+                m.iter()
+                    .map(|(k, v)| (k.clone(), serde_json::json!(v)))
+                    .collect()
+            })
             .unwrap_or_default();
 
         // GPU telemetry (default enabled): optional custom DCGM URLs.
         let (gpu_enabled, gpu_urls) = self
             .gpu_telemetry
             .as_ref()
-            .map(|g| (g.enabled.unwrap_or(true), g.urls.clone().unwrap_or_default()))
+            .map(|g| {
+                (
+                    g.enabled.unwrap_or(true),
+                    g.urls.clone().unwrap_or_default(),
+                )
+            })
             .unwrap_or((true, Vec::new()));
 
         // Server metrics (default enabled): optional scrape URLs and formats.
@@ -949,7 +985,10 @@ impl Benchmark {
         };
         let export_raw = self.artifacts.as_ref().is_some_and(|a| a.raw);
         let export_trace = self.artifacts.as_ref().is_some_and(|a| a.trace);
-        let export_outputs_json = self.artifacts.as_ref().is_some_and(|a| a.export_outputs_json);
+        let export_outputs_json = self
+            .artifacts
+            .as_ref()
+            .is_some_and(|a| a.export_outputs_json);
 
         Ok(Inputs {
             model_names,
@@ -1123,13 +1162,11 @@ fn extract_prompts(
 /// Build an [`AdaptiveScale`] from a YAML phase's `adaptive_*` fields, mirroring
 /// `rust_wire._adaptive_scale`. Bounds preserve Python's int-vs-float form: an
 /// explicit config bound is a float, a defaulted/axis-derived bound is an int.
-fn build_adaptive_yaml(
-    phase: &PhaseSection,
-) -> anyhow::Result<crate::model::phase::AdaptiveScale> {
+fn build_adaptive_yaml(phase: &PhaseSection) -> anyhow::Result<crate::model::phase::AdaptiveScale> {
     use crate::model::phase::{AdaptiveScale, SlaFilter};
-    let sustain = phase.adaptive_sustain_duration.ok_or_else(|| {
-        anyhow::anyhow!("adaptive_scale requires adaptive_sustain_duration")
-    })?;
+    let sustain = phase
+        .adaptive_sustain_duration
+        .ok_or_else(|| anyhow::anyhow!("adaptive_scale requires adaptive_sustain_duration"))?;
     anyhow::ensure!(
         !phase.sla.is_empty(),
         "adaptive_scale requires at least one sla filter"
@@ -1139,9 +1176,8 @@ fn build_adaptive_yaml(
         .clone()
         .unwrap_or_else(|| "concurrency".to_string());
     // Explicit config bound -> float; else the control axis value -> int.
-    let float_num = |v: f64| {
-        serde_json::Number::from_f64(v).unwrap_or_else(|| serde_json::Number::from(0))
-    };
+    let float_num =
+        |v: f64| serde_json::Number::from_f64(v).unwrap_or_else(|| serde_json::Number::from(0));
     let minimum = match phase.adaptive_control_min {
         Some(v) => float_num(v),
         None => serde_json::Number::from(1i64),
@@ -1152,7 +1188,9 @@ fn build_adaptive_yaml(
         "prefill_concurrency" => phase
             .prefill_concurrency
             .map(|c| serde_json::Number::from(i64::from(c))),
-        _ => phase.concurrency.map(|c| serde_json::Number::from(i64::from(c))),
+        _ => phase
+            .concurrency
+            .map(|c| serde_json::Number::from(i64::from(c))),
     };
     let maximum = match phase.adaptive_control_max {
         Some(v) => float_num(v),
@@ -1262,19 +1300,25 @@ mod tests {
 
     #[test]
     fn rejects_unknown_dataset_type() {
-        let e = err("  dataset: {type: bogus}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n");
+        let e = err(
+            "  dataset: {type: bogus}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
+        );
         assert!(e.contains("unknown dataset.type"), "{e}");
     }
 
     #[test]
     fn rejects_file_dataset_without_path() {
-        let e = err("  dataset: {type: file, format: mooncake_trace}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n");
+        let e = err(
+            "  dataset: {type: file, format: mooncake_trace}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
+        );
         assert!(e.contains("requires a `path:`"), "{e}");
     }
 
     #[test]
     fn rejects_public_dataset_without_name() {
-        let e = err("  dataset: {type: public}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n");
+        let e = err(
+            "  dataset: {type: public}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
+        );
         assert!(e.contains("requires a `dataset:` catalog name"), "{e}");
     }
 
@@ -1286,7 +1330,9 @@ mod tests {
 
     #[test]
     fn rejects_phases_with_profiling() {
-        let e = err("  dataset: {prompts: {isl: 128}}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n  profiling: {type: concurrency, requests: 1, concurrency: 1}\n");
+        let e = err(
+            "  dataset: {prompts: {isl: 128}}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n  profiling: {type: concurrency, requests: 1, concurrency: 1}\n",
+        );
         assert!(e.contains("cannot be combined"), "{e}");
     }
 
@@ -1298,6 +1344,9 @@ mod tests {
         )
         .expect("valid config resolves");
         let v = serde_json::to_value(&run).unwrap();
-        assert_eq!(v["cfg"]["datasets"][0]["type"], serde_json::json!("synthetic"));
+        assert_eq!(
+            v["cfg"]["datasets"][0]["type"],
+            serde_json::json!("synthetic")
+        );
     }
 }

@@ -3,12 +3,12 @@
 **Date:** 2026-07-10
 **Author:** Anthony Casagrande (Tech Lead) + Claude
 **Status:** the first-class accuracy accumulator/analyzer and the static-accuracy
-evaluator worker seam (`aiperf::accuracy_core`, `PythonEvaluator` over the
+evaluator worker seam (`aiperf_runtime::accuracy_core`, `PythonEvaluator` over the
 Lighteval/DeepEval worker) are built, but the `http + static_accuracy` pair is NOT
 registered on the default product wire — it is a linked-but-off-wire worker seam
 today, not a product-reachable pair. The stateful agentic vertical
 (Harbor / AgentLab+BrowserGym / MCPMark) has been **REMOVED** from the `ajc/rust`
-branch (`rust/aiperf/src/accuracy_core/mod.rs`: "The external-evaluator provider-host
+branch (`rust/runtime/src/accuracy_core/mod.rs`: "The external-evaluator provider-host
 and agentic verticals have been removed; only the static lighteval worker path
 remains"); its design is retained below as historical record only. The **long-term**
 provider-neutral evaluator architecture was superseded by
@@ -41,7 +41,7 @@ below are code truth, not intent.
 
 ## Data model — carry the full grading result, keyed by a real id
 
-`aiperf::metrics_core::accuracy` (`rust/aiperf/src/metrics_core/accuracy.rs`) owns the
+`aiperf_runtime::metrics_core::accuracy` (`rust/runtime/src/metrics_core/accuracy.rs`) owns the
 typed record and grading result. The `correlation_id` is the REAL per-request id (from
 the scheduling/dataset seam), never `session_num % len(tasks)`.
 
@@ -186,19 +186,19 @@ The implemented boundary:
   preparation, prompts, generation settings, private test material, task execution, and
   scoring. Rust launches and supervises it with `tokio::process::Command` and exchanges
   correlated, versioned JSONL over stdin/stdout; worker diagnostics use stderr only.
-- **Data-plane ownership is absolute.** The `aiperf::accuracy` module never creates or
+- **Data-plane ownership is absolute.** The `aiperf_runtime::accuracy` module never creates or
   calls an HTTP client. Every model request — static or agentic, primary or environment-
   or verifier-originated — flows through the same `ScheduledRuntime` / `TurnDispatcher` /
   `TransportSink`, SSE parser, observers, timing, metrics, credit, and report path used by
   ordinary scheduled runs.
 
-`aiperf::accuracy` (`rust/aiperf/src/accuracy.rs`) is the control-plane integration: the
+`aiperf_runtime::accuracy` (`rust/runtime/src/accuracy.rs`) is the control-plane integration: the
 `AccuracyDataset` lowers opaque evaluator-authored problems into the unified
 content-addressed dataset with typed correlation/task/ground-truth associations, and
 `AccuracyRecordProcessor` captures terminal text and timestamps through the generic
 `TurnRecordProcessor` hook. It runs after transport measurement and credit return, so
 slow grading — especially sandboxed code execution — cannot contaminate throughput or
-latency. `aiperf::accuracy_core` (`rust/aiperf/src/accuracy_core/`) is the static
+latency. `aiperf_runtime::accuracy_core` (`rust/runtime/src/accuracy_core/`) is the static
 evaluator worker seam: only the `AccuracyEvaluator` trait, versioned protocol DTOs, and
 the supervised `PythonEvaluator` implementation.
 
@@ -224,7 +224,7 @@ static worker is the pinned Python/Lighteval evaluator.
 ### Stateful agentic evaluator vertical — REMOVED (historical record)
 
 **This vertical no longer exists on the `ajc/rust` branch.**
-`rust/aiperf/src/accuracy_core/mod.rs` states verbatim: "The external-evaluator
+`rust/runtime/src/accuracy_core/mod.rs` states verbatim: "The external-evaluator
 provider-host and agentic verticals have been removed; only the static lighteval
 worker path remains." There is no stateful evaluator protocol, no
 `AgenticHarnessProvider`, no `AgenticWorkload`, no `AgenticInferenceGateway`, no
@@ -271,7 +271,7 @@ canonical providers.
 ## Product reachability
 
 The runner is **protocol-v2 only**. Runner protocol v1 was fully removed:
-`aiperf-runner` advertises `protocol_versions: [2]` and rejects any non-v2 request as a
+`aiperf --execute` advertises `protocol_versions: [2]` and rejects any non-v2 request as a
 v2 failure envelope; the v1 `dispatch` entry, `execute_v1`/`execute_run*` chain, the
 `RunRequest`/`RunSpec`/`RunTerminal`/`EndpointSpec`/`DatasetSpec`/`AccuracySpec` DTOs, the
 `load_protocol_v1` graph-input adapters, the `Legacy` enum variants, and the v1 tests are
@@ -280,7 +280,7 @@ gone.
 - **Static evaluator-backed accuracy** is defined as the strict protocol-v2
   `http + static_accuracy` pair (`StaticAccuracyWorkloadConfigV2` carries the opaque
   evaluator-authored `accuracy` object; `register_http_static_accuracy_pair` and
-  `NativeStaticAccuracyEvaluatorFactory` are present in `rust/runner`). But it is **not
+  `NativeStaticAccuracyEvaluatorFactory` are present in `rust/runtime/src/runner_protocol`). But it is **not
   registered on the default product wire**: `build_default_registry` registers only the
   http/grpc scheduled and graph pairs (`register_http_pairs`,
   `register_http_scheduled_pair`, `register_grpc_pairs`) plus dynosim behind its feature —
@@ -306,7 +306,7 @@ agent, environment, verifier, scorer, reducer, and bundle semantics while AIPerf
 admission, routing, retries, cancellation, accounting, and every external network
 operation. That RFC has itself since been removed, and the agentic vertical it would have
 subsumed no longer exists on this branch (see above). What remains is the static path: the
-accumulator/analyzer and the linked-but-off-wire `aiperf::accuracy_core` worker seam.
+accumulator/analyzer and the linked-but-off-wire `aiperf_runtime::accuracy_core` worker seam.
 
 Net: accuracy is no longer a bolted-on side pipeline — it is one more accumulator the
 analyzers compose (the same shape as energy, the precondition for every quality×perf×energy

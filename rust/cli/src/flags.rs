@@ -150,7 +150,10 @@ pub struct ProfileFlags {
     #[arg(long = "accuracy-system-prompt")]
     pub accuracy_system_prompt: Option<String>,
     /// Enable chain-of-thought (`--accuracy-enable-cot`).
-    #[arg(long = "accuracy-enable-cot", overrides_with = "accuracy_no_enable_cot")]
+    #[arg(
+        long = "accuracy-enable-cot",
+        overrides_with = "accuracy_no_enable_cot"
+    )]
     pub accuracy_enable_cot: bool,
     /// Disable chain-of-thought (`--accuracy-no-enable-cot`).
     #[arg(long = "accuracy-no-enable-cot")]
@@ -160,19 +163,31 @@ pub struct ProfileFlags {
     pub accuracy_verbose: bool,
 
     /// Auto-set a consistent run seed (default; `--no-set-consistent-seed` disables).
-    #[arg(long = "set-consistent-seed", default_value_t = true, overrides_with = "no_set_consistent_seed")]
+    #[arg(
+        long = "set-consistent-seed",
+        default_value_t = true,
+        overrides_with = "no_set_consistent_seed"
+    )]
     pub set_consistent_seed: bool,
     /// Disable the auto consistent seed (`--no-set-consistent-seed`).
     #[arg(long = "no-set-consistent-seed")]
     pub no_set_consistent_seed: bool,
     /// Use the same seed for every sweep variation (`--parameter-sweep-same-seed`).
-    #[arg(long = "parameter-sweep-same-seed", default_value_t = false, overrides_with = "no_parameter_sweep_same_seed")]
+    #[arg(
+        long = "parameter-sweep-same-seed",
+        default_value_t = false,
+        overrides_with = "no_parameter_sweep_same_seed"
+    )]
     pub parameter_sweep_same_seed: bool,
     /// Inverse of the above (`--no-parameter-sweep-same-seed`).
     #[arg(long = "no-parameter-sweep-same-seed")]
     pub no_parameter_sweep_same_seed: bool,
     /// Derive a distinct seed per trial (`--vary-seed-per-trial`).
-    #[arg(long = "vary-seed-per-trial", default_value_t = false, overrides_with = "no_vary_seed_per_trial")]
+    #[arg(
+        long = "vary-seed-per-trial",
+        default_value_t = false,
+        overrides_with = "no_vary_seed_per_trial"
+    )]
     pub vary_seed_per_trial: bool,
     /// Inverse of the above (`--no-vary-seed-per-trial`).
     #[arg(long = "no-vary-seed-per-trial")]
@@ -381,7 +396,10 @@ pub struct ProfileFlags {
     #[arg(long = "workers-max", visible_alias = "max-workers")]
     pub workers_max: Option<u32>,
     /// Record-processor service count (`--record-processor-service-count` / `--record-processors`).
-    #[arg(long = "record-processor-service-count", visible_alias = "record-processors")]
+    #[arg(
+        long = "record-processor-service-count",
+        visible_alias = "record-processors"
+    )]
     pub record_processor_service_count: Option<u32>,
     /// Live stats refresh interval, seconds (`--stats-interval`).
     #[arg(long = "stats-interval")]
@@ -390,7 +408,11 @@ pub struct ProfileFlags {
     #[arg(long = "show-trace-timing", default_value_t = false)]
     pub show_trace_timing: bool,
     /// Auto-generate plots after the run (`--auto-plot` / `--no-auto-plot`).
-    #[arg(long = "auto-plot", overrides_with = "no_auto_plot", default_value_t = false)]
+    #[arg(
+        long = "auto-plot",
+        overrides_with = "no_auto_plot",
+        default_value_t = false
+    )]
     pub auto_plot: bool,
     /// Inverse of `--auto-plot`.
     #[arg(long = "no-auto-plot", default_value_t = false)]
@@ -441,7 +463,10 @@ pub struct ProfileFlags {
     pub session_turns_mean: Option<f64>,
 
     /// Stddev of turns per session (`--session-turns-stddev`).
-    #[arg(long = "session-turns-stddev", visible_alias = "conversation-turn-stddev")]
+    #[arg(
+        long = "session-turns-stddev",
+        visible_alias = "conversation-turn-stddev"
+    )]
     pub session_turns_stddev: Option<f64>,
 
     /// Number of sessions to generate (`--num-sessions`); comma ⇒ sweep.
@@ -449,15 +474,24 @@ pub struct ProfileFlags {
     pub num_sessions: Option<String>,
 
     /// Per-session think-time delay ratio (`--session-delay-ratio`).
-    #[arg(long = "session-delay-ratio", visible_alias = "conversation-turn-delay-ratio")]
+    #[arg(
+        long = "session-delay-ratio",
+        visible_alias = "conversation-turn-delay-ratio"
+    )]
     pub session_delay_ratio: Option<f64>,
 
     /// Mean inter-turn delay, milliseconds (`--session-turn-delay-mean`).
-    #[arg(long = "session-turn-delay-mean", visible_alias = "conversation-turn-delay-mean")]
+    #[arg(
+        long = "session-turn-delay-mean",
+        visible_alias = "conversation-turn-delay-mean"
+    )]
     pub session_turn_delay_mean: Option<f64>,
 
     /// Stddev of inter-turn delay, milliseconds (`--session-turn-delay-stddev`).
-    #[arg(long = "session-turn-delay-stddev", visible_alias = "conversation-turn-delay-stddev")]
+    #[arg(
+        long = "session-turn-delay-stddev",
+        visible_alias = "conversation-turn-delay-stddev"
+    )]
     pub session_turn_delay_stddev: Option<f64>,
 
     /// Per-session affinity header name (`--session-header`).
@@ -858,7 +892,10 @@ pub struct ProfileFlags {
     #[arg(long = "adaptive-control-max")]
     pub adaptive_control_max: Option<i64>,
     /// Adaptive assessment period, seconds (`--adaptive-assessment-period`).
-    #[arg(long = "adaptive-assessment-period", visible_alias = "adaptive-scale-assessment-period")]
+    #[arg(
+        long = "adaptive-assessment-period",
+        visible_alias = "adaptive-scale-assessment-period"
+    )]
     pub adaptive_assessment_period: Option<f64>,
     /// Adaptive sustain duration, seconds (`--adaptive-sustain-duration`).
     #[arg(long = "adaptive-sustain-duration")]

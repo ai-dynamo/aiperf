@@ -171,7 +171,7 @@ The Rust `MetricEntry` is `{ type, unit, group, higher_is_better, series: Vec<Se
 and `Stats` is an enum `Scalar{value} | Distribution{…} | Counter{…} | Histogram{…}` — the
 type-tagged shape serializes to exactly the leaf above.
 
-**Built.** This IO-free native-v2 core lives in `aiperf::metrics_core::report` (`rust/aiperf/src/
+**Built.** This IO-free native-v2 core lives in `aiperf_runtime::metrics_core::report` (`rust/runtime/src/
 metrics_core/report.rs`): `NativeReporter` behind the `Reporter` trait produces a typed
 `NativeReport` with run/summary/error, metric, series, timeslice, and distribution/scalar/counter
 stats plus warmup and accuracy joins. Metrics are name-keyed with typed series; per-metric metadata
@@ -259,16 +259,16 @@ Rust runtime library. The lore below is the porting contract for that layer:
 
 ## 5. The redesign — one `Report` → static `Exporter`s
 
-**Built state.** The typed IO-free `NativeReport` model lives in `aiperf::metrics_core` and the sole
-native-v2 JSON write lives in `aiperf::report` (`rust/aiperf/src/report.rs`), which
-`aiperf-runner` calls to atomically commit the unified report. There is no plugin registry and no
+**Built state.** The typed IO-free `NativeReport` model lives in `aiperf_runtime::metrics_core` and the sole
+native-v2 JSON write lives in `aiperf_runtime::report` (`rust/runtime/src/report.rs`), which
+`aiperf-cli` calls to atomically commit the unified report. There is no plugin registry and no
 shard-glob path. The broader static-`Exporter`-list design below (multiple sink impls behind one
 trait, `enabled(cfg)` gating, console/uploader stages) is **the target shape once a second IO sink
 exists in Rust**; today only the single JSON writer is implemented, so no `aiperf-report` crate has
-been extracted — the writer stays in the runner-facing `aiperf::report` module. The type-driven
-`MetricEntry` enum described here is realized in `aiperf::metrics_core::report`.
+been extracted — the writer stays in the runner-facing `aiperf_runtime::report` module. The type-driven
+`MetricEntry` enum described here is realized in `aiperf_runtime::metrics_core::report`.
 
-The design (for when a second sink lands): a thin sink layer above `aiperf::metrics_core` (it does
+The design (for when a second sink lands): a thin sink layer above `aiperf_runtime::metrics_core` (it does
 file/console/network IO). Consumes the typed `Report` (metrics + telemetry + accuracy + `RunInfo` +
 errors + timeslices + per-record).
 
@@ -318,10 +318,10 @@ table can show the `type`/`higher_is_better` metadata inline.
 
 ## 8. Scope + testing
 
-- **Built (Rust):** the typed IO-free native-v2 `Report` core in `aiperf::metrics_core::report`
+- **Built (Rust):** the typed IO-free native-v2 `Report` core in `aiperf_runtime::metrics_core::report`
   (`NativeReporter` behind the `Reporter` trait; typed run/summary/error, metric, series, timeslice,
   distribution/scalar/counter stats; warmup + accuracy joins; absent-omitted / non-finite-null
-  discipline) and the single native-v2 JSON writer in `aiperf::report` that `aiperf-runner` invokes,
+  discipline) and the single native-v2 JSON writer in `aiperf_runtime::report` that `aiperf-cli` invokes,
   pinned by a deterministic exact-JSON golden.
 - **Unbuilt in Rust (Python-owned or deferred):** the native **v2 CSV** projection, the
   genai-perf-**v1** JSON/CSV + `outputs.json` compatibility sink, the warning/insight and error-table
@@ -355,7 +355,7 @@ table can show the `type`/`higher_is_better` metadata inline.
    multi-model runs, per-worker)? The `series[]` structure supports it for free; emit `labels:null`
    until a breakdown is wired.
 4. **Extract an `aiperf-report` crate vs keep the writer as a runner-facing module** — today the
-   single JSON writer stays as the `aiperf::report` module; extract a lean crate when a second IO
+   single JSON writer stays as the `aiperf_runtime::report` module; extract a lean crate when a second IO
    sink lands, testable on a synthetic `Report`.
 
 ---
@@ -363,7 +363,7 @@ table can show the `type`/`higher_is_better` metadata inline.
 ## Addendum — 2026-07-14 (the full native-Rust exporter plane is BUILT and is the default)
 
 Supersedes the "unbuilt in Rust / Python-owned" status throughout §2, §3, §5, §6, §7, §8. The
-static `Exporter` plane (`aiperf::export`) is now built, wired into the runner's report-commit
+static `Exporter` plane (`aiperf_runtime::export`) is now built, wired into the runner's report-commit
 site (`coordinator::persist_prepared_report`), and is the **default sole emitter** on the native
 path. Nine sinks behind one object-safe `Exporter` trait with explicit `enabled(&ExportConfig)`
 gating, projected from the frontend via `rust_wire._export`:

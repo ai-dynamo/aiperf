@@ -23,41 +23,41 @@ Today's infra has **strong cross-*engine* parity (offline AIPerf==Dynamo byte ga
 
 ### 1.1 The online↔offline byte-parity gate (the "74-field common summary")
 
-- **Mechanism:** `verify_parity` / `verify_parity_online` in `rust/runner/src/offline_execution.rs:2266-2317`. It calls `canonical_shared_metric_bytes()` on both the AIPerf compat report and the Dynamo report and asserts `aiperf_bytes == dynamo_bytes` (`offline_execution.rs:2271-2286`).
-- **The trait + serialization:** `CanonicalSharedMetrics::canonical_shared_metric_bytes` — `rust/aiperf/src/dynosim.rs:655-666`; the whole gate lives in `finish_shared_metrics_enforcing` (`dynosim.rs:907-969`), which sets `independently_accumulated` (`dynosim.rs:924-932`) and, when the AIPerf collector is unfed, substitutes `compatibility_report_from_dynamo` (`dynosim.rs:931, 986-1050`), then byte-compares (`dynosim.rs:957-968`) and counts `shared_fields` (`dynosim.rs:969`).
-- **Field count is 74 base + 3 goodput = 77.** Product proof: `rust/runner/tests/offline_scheduled_stdio.rs:196,214` asserts `provenance["parity_shared_fields"] == "77"` and `native["run"]["dynamo"]["parity"]["shared_fields"] == 77`. Runner-level acceptance test `offline_execution.rs:2543` asserts `"74"` for the no-goodput case.
+- **Mechanism:** `verify_parity` / `verify_parity_online` in `rust/runtime/src/runner_protocol/offline_execution.rs:2266-2317`. It calls `canonical_shared_metric_bytes()` on both the AIPerf compat report and the Dynamo report and asserts `aiperf_bytes == dynamo_bytes` (`offline_execution.rs:2271-2286`).
+- **The trait + serialization:** `CanonicalSharedMetrics::canonical_shared_metric_bytes` — `rust/runtime/src/dynosim.rs:655-666`; the whole gate lives in `finish_shared_metrics_enforcing` (`dynosim.rs:907-969`), which sets `independently_accumulated` (`dynosim.rs:924-932`) and, when the AIPerf collector is unfed, substitutes `compatibility_report_from_dynamo` (`dynosim.rs:931, 986-1050`), then byte-compares (`dynosim.rs:957-968`) and counts `shared_fields` (`dynosim.rs:969`).
+- **Field count is 74 base + 3 goodput = 77.** Product proof: `rust/cli/tests/offline_scheduled_stdio.rs:196,214` asserts `provenance["parity_shared_fields"] == "77"` and `native["run"]["dynamo"]["parity"]["shared_fields"] == 77`. Runner-level acceptance test `offline_execution.rs:2543` asserts `"74"` for the no-goodput case.
 - **CRITICAL SCOPE LIMIT:** this gate proves **AIPerf-collector == Dynamo-engine** on the *offline SimClock* path only. It is **not** a golden-vs-refactored self-comparison, and it does **not** run on the online product path (the runner discards `report.performance` online — `execute.rs:3276-3282`, confirmed in the A2 spec §6). So it guards A2's *offline* projection (which projects from `DynamoSimulationReport`, unaffected by dropping the online collector) but does **nothing** for A2's online projection risk.
 
 ### 1.2 Accumulator / store merge tests (the A1 unit substrate — already strong)
 
-- **`per_worker_merge_matches_single_accumulator_ingest_order`** — `rust/aiperf/src/metrics_core/accumulator.rs:1781-1835`. Builds two records, ingests both into one `direct` accumulator, ingests one each into `left`/`right`, `left.merge(&right)`, and asserts `left.summarize() == direct.summarize()` **plus** per-endpoint `inference_series()` ordering and per-worker masks. **This is the closest existing A1 guard** — but it is 2 records, 2 workers, one merge order.
-- **`worker_stores_merge_with_numeric_categorical_and_ragged_alignment`** — `rust/aiperf/src/metrics_core/store.rs:1437-1471`. Pins `append_store` numeric/categorical re-interning + ragged ICL `append_shifted` alignment.
+- **`per_worker_merge_matches_single_accumulator_ingest_order`** — `rust/runtime/src/metrics_core/accumulator.rs:1781-1835`. Builds two records, ingests both into one `direct` accumulator, ingests one each into `left`/`right`, `left.merge(&right)`, and asserts `left.summarize() == direct.summarize()` **plus** per-endpoint `inference_series()` ordering and per-worker masks. **This is the closest existing A1 guard** — but it is 2 records, 2 workers, one merge order.
+- **`worker_stores_merge_with_numeric_categorical_and_ragged_alignment`** — `rust/runtime/src/metrics_core/store.rs:1437-1471`. Pins `append_store` numeric/categorical re-interning + ragged ICL `append_shifted` alignment.
 - **`ragged_series_preserves_out_of_order_rows_masks_and_shifted_merge`** — `store.rs:1267`.
 - **Merge primitive:** `MetricsAccumulator::merge` (`accumulator.rs:485-514`), dense precondition asserted in `ColumnStore::append_store` (`store.rs:569-656`, dense check ~575-578).
-- **Reference production merge:** `rust/aiperf/src/graph/transport_bench.rs:385-395` (graph bench merges per-worker `native` accumulators at the join).
+- **Reference production merge:** `rust/runtime/src/graph/transport_bench.rs:385-395` (graph bench merges per-worker `native` accumulators at the join).
 - **GAPS:** no test asserts (a) **merge-order independence** (reverse the fold), (b) **workers=1 vs workers=N produce the identical summary** for the same request set, (c) the runner's new **uuid-keyed `finish` join** (the A1 load-bearing change) reorders rows without changing report bytes. `accumulator.rs:1781` is order-sensitive by construction (it fixes ingest order); it does not prove order-*independence*.
 
 ### 1.3 Rust integration / product-path tests
 
-- **`rust/aiperf/tests/scheduled_real_mock.rs`** — real wall-clock against a spawned `aiperf-mock-server` binary (`--random-seed`, `spawn()` at :25, `mock_binary()` at :81). Asserts `num_requests`/`completed_requests` exactly (`:175-177,224-225`), scheduled offsets exactly (`:183-191`), and TTFT via **tolerance** ranges (`assert_real_ttft_and_lateness` :116-138: "12ms mock TTFT should remain recognizable"). This is the template for the real-mock tier.
-- **`rust/aiperf/tests/scheduled_sim.rs`, `request_rate_sim.rs`, `phase_runtime_sim.rs`** — SimClock deterministic proofs with fixed-latency test dispatchers. Assert **exact** ns offsets and `mean_ttft_ms == 10.0`, `total_output_tokens == 12` (`scheduled_sim.rs:282-346`). **This is the deterministic substrate the value-parity golden must build on.**
-- **Runner stdio E2E** (`rust/runner/tests/*_stdio.rs`) — JSONL-over-stdio subprocess driver (`offline_scheduled_stdio.rs:29-62` writes request, splits stdout on `\n`, reads terminal frame). Assert `terminal["success"]`, `provenance`, `native["schema_version"] == "2.0"`. `online_v2_stdio.rs` uses an in-process axum fixture server; `thread_per_core_product.rs:66-180` proves **round-robin placement across 3 workers** and counts one server request per turn — the closest thing to a multi-worker online product test, but it asserts placement, not metric values.
+- **`rust/runtime/tests/scheduled_real_mock.rs`** — real wall-clock against a spawned `aiperf-mock-server` binary (`--random-seed`, `spawn()` at :25, `mock_binary()` at :81). Asserts `num_requests`/`completed_requests` exactly (`:175-177,224-225`), scheduled offsets exactly (`:183-191`), and TTFT via **tolerance** ranges (`assert_real_ttft_and_lateness` :116-138: "12ms mock TTFT should remain recognizable"). This is the template for the real-mock tier.
+- **`rust/runtime/tests/scheduled_sim.rs`, `request_rate_sim.rs`, `phase_runtime_sim.rs`** — SimClock deterministic proofs with fixed-latency test dispatchers. Assert **exact** ns offsets and `mean_ttft_ms == 10.0`, `total_output_tokens == 12` (`scheduled_sim.rs:282-346`). **This is the deterministic substrate the value-parity golden must build on.**
+- **Runner stdio E2E** (`rust/cli/tests/*_stdio.rs`) — JSONL-over-stdio subprocess driver (`offline_scheduled_stdio.rs:29-62` writes request, splits stdout on `\n`, reads terminal frame). Assert `terminal["success"]`, `provenance`, `native["schema_version"] == "2.0"`. `online_v2_stdio.rs` uses an in-process axum fixture server; `thread_per_core_product.rs:66-180` proves **round-robin placement across 3 workers** and counts one server request per turn — the closest thing to a multi-worker online product test, but it asserts placement, not metric values.
 - **Note:** `dag_stdio_e2e.rs` is referenced in `git status` but is **absent** from the tree today (renamed → `recorded_graph_stdio_e2e.rs`). Do not target the old name.
-- **Graph parity:** `rust/aiperf/tests/graph_recorded_adapter_parity.rs` (WEKA↔Dynamo lower to identical topology + materialized bytes, `:166-184`).
+- **Graph parity:** `rust/runtime/tests/graph_recorded_adapter_parity.rs` (WEKA↔Dynamo lower to identical topology + materialized bytes, `:166-184`).
 
 ### 1.4 Throughput harnesses
 
-- **`rust/aiperf/examples/rps_bench.rs`** — thread-per-core RPS driver (`THREADS`/`CONNS`/`LANES`/`WARMUP_S`/`WINDOW_S`, h2c or `HTTP1=1`), prints achieved RPS against a running `aiperf-mock-server --fast`. **Not** wired to `origin_key`/UDS today (uses `establish` directly).
-- **`fast_sse` (ultra-cheap fixed-SSE server, `UDS_PATH`-aware) — REMOVED.** It lived at `rust/aiperf-core/examples/fast_sse.rs`; the `aiperf-core` crate was dissolved into its proper seams and the example deleted (commit `1011863f4`). A `UDS_PATH`-listening pure-transport driver must be re-created (e.g. as an example under `rust/aiperf/`) before it can serve as the TCP-vs-UDS win driver once A3 lands a `unix:`-scheme client path.
-- **`rust/aiperf/src/graph/transport_bench.rs`** — the per-worker-merge graph bench (also the A1 reference impl).
+- **`rust/runtime/examples/rps_bench.rs`** — thread-per-core RPS driver (`THREADS`/`CONNS`/`LANES`/`WARMUP_S`/`WINDOW_S`, h2c or `HTTP1=1`), prints achieved RPS against a running `aiperf-mock-server --fast`. **Not** wired to `origin_key`/UDS today (uses `establish` directly).
+- **`fast_sse` (ultra-cheap fixed-SSE server, `UDS_PATH`-aware) — REMOVED.** It lived at `rust/aiperf-core/examples/fast_sse.rs`; the `aiperf-core` crate was dissolved into its proper seams and the example deleted (commit `1011863f4`). A `UDS_PATH`-listening pure-transport driver must be re-created (e.g. as an example under `rust/runtime/`) before it can serve as the TCP-vs-UDS win driver once A3 lands a `unix:`-scheme client path.
+- **`rust/runtime/src/graph/transport_bench.rs`** — the per-worker-merge graph bench (also the A1 reference impl).
 - **GAP:** no product-path (`aiperf profile`) throughput baseline with `records:false`, and no automated ratio/regression check — the benches print numbers, nothing asserts them.
 
 ### 1.5 Transport / connector tests (A3 substrate)
 
-- **`rust/aiperf/tests/transport_http/pool.rs`** — pool bounds, sticky-session serialization (`:224`), sim-clock timeout accounting (`:361`). **No `origin_key` collision test** (the A3 highest-attention risk).
-- **`rust/aiperf/tests/transport_http/connect.rs:12`** — establishes an h1 connection to the mock and records socket info (the shape a Duplex/UDS connect test mirrors).
-- **`rust/aiperf/tests/transport_http/no_direct_time.rs`** — guards against raw `Instant::now()` (Clock discipline); A3 impls must keep passing it.
-- **`rust/aiperf/tests/transport_http/tls.rs`, `h2c.rs`, `reuse.rs`, `cancel.rs`** — the dispatch-above-`Sender` behaviors A3 must leave byte-identical.
+- **`rust/runtime/tests/transport_http/pool.rs`** — pool bounds, sticky-session serialization (`:224`), sim-clock timeout accounting (`:361`). **No `origin_key` collision test** (the A3 highest-attention risk).
+- **`rust/runtime/tests/transport_http/connect.rs:12`** — establishes an h1 connection to the mock and records socket info (the shape a Duplex/UDS connect test mirrors).
+- **`rust/runtime/tests/transport_http/no_direct_time.rs`** — guards against raw `Instant::now()` (Clock discipline); A3 impls must keep passing it.
+- **`rust/runtime/tests/transport_http/tls.rs`, `h2c.rs`, `reuse.rs`, `cancel.rs`** — the dispatch-above-`Sender` behaviors A3 must leave byte-identical.
 
 ### 1.6 Python product-path tests
 
@@ -115,7 +115,7 @@ Each harness names the risk it guards, where it lives, CI vs manual, the run com
 **Risk caught:** any change to accumulation, merge, projection, batching, or ICL retention that shifts a reported metric value. Specifically the A2 fields: `ttft/ttst/e2e` percentiles (native linear-interp vs collector nearest-rank), `itl` distribution + `max_itl_ms`, `output_token_throughput_per_user`, `num_requests` incl. canceled, good-only goodput; and A4 ICL ordering.
 
 **Design:**
-- **Location:** new deterministic test file `rust/aiperf/tests/report_value_golden.rs` (SimClock tier) + assertions extended into `rust/aiperf/tests/scheduled_real_mock.rs` (real tier). Golden fixtures as committed JSON under `rust/aiperf/tests/golden/` (or, since repo is read-only for *this* plan, staged under `~/tmp/track-a/golden/` during capture, then committed by the implementer at land time).
+- **Location:** new deterministic test file `rust/runtime/tests/report_value_golden.rs` (SimClock tier) + assertions extended into `rust/runtime/tests/scheduled_real_mock.rs` (real tier). Golden fixtures as committed JSON under `rust/runtime/tests/golden/` (or, since repo is read-only for *this* plan, staged under `~/tmp/track-a/golden/` during capture, then committed by the implementer at land time).
 - **Workload matrix** (each a row → one golden file): `{concurrency, poisson, constant/request-rate, fixed-schedule, user-centric, graph}` × `{streaming, non-streaming}` × `{records:true, records:false}`, **plus an error/cancellation-injection variant** of at least the concurrency and request-rate rows (force `WorkerCommand` send failure, worker-drop, and `PlacementCancellation` — turn_execution.rs:476,501-503,465-466,681-692 — and library Canceled/Failed synthesis scheduled.rs:951-999). Small deterministic dataset (fixed synthetic prompts), fixed RNG seed (`RngRoot::derive`), **fixed worker count = 2** (to exercise multi-worker record concatenation while staying byte-stable), fixed-latency dispatcher (ttft/itl constants like `scheduled_sim.rs:118`). **On the runner product path a single varied-latency profile suffices and is byte-exact vs HEAD (Finding 6)** — the records-first re-ingest folds in dispatch order, so no equal-vs-varied split is needed to dodge a reorder. **The two-latency-profile split ((i) equal, (ii) varied) is only required for the LIBRARY merge-summary path (Harness E / A2)** where the accumulator merge reorders the fold; on that path (i) is byte-exact and (ii) is tolerance-compared. **`records:false` rows additionally guard: (a) the uuid-join keys on the drain uuid, not the empty `correlation_id` (Finding 3 — assert the run does not abort/collapse in aggregate-only mode), and (b) TTST is still present/correct despite the `token_arrivals_ns` retention gate (Finding 5 — `second_token_ns` retained).**
 - **Why the error/cancellation rows are mandatory (A1 spec §3.3/Risk 4):** A1 moves arrival+terminal worker-local, so a pre-worker failure produces an identity with no worker record. The coordinator-side fallback accumulator must synthesize the HEAD-identical errored/canceled `RecordIngest`. These rows pin `errored`, `canceled`, `ErrorRequestCount`, and admit/start/end timing against HEAD and prove the run does **not** abort fail-closed on a missing uuid-join lookup. Without them the entire pre-worker-failure surface is untested.
 - **What is byte-identical vs what is tolerance-compared (deterministic SimClock tier) — A1 spec §4.5 + Finding 6:** **for the RUNNER product path, ALL fields — integer aggregates AND float latency distributions — must be byte-identical to the HEAD golden.** The runner is records-first: worker records concatenate, uuid-join into **dispatch order**, and re-ingest into one fresh accumulator in that order (`execute.rs:1557-1560`), so the IEEE-754 fold matches HEAD's single-observer dispatch-order fold and no reorder occurs. There is **no ULP tolerance and no A1-recapture for runner floats**; a runner float delta is a real regression. The two-latency-profile split ((i) equal-latency, (ii) varied-latency) and the ULP/relative-tolerance apparatus are relevant only to the **library merge-summary path** (Harness E / A2), where the accumulator merge reorders the fold: there varied-latency floats are (a) captured from A1 output or (b) ULP/tolerance-compared, and equal-latency floats stay byte-exact. **A2's percentile-algorithm and time-base choices are still fully gated on the library path here:** a records-exact A2 projection is byte-unchanged, while a summary-cheap one shows exactly which fields moved — forcing an intentional, justified golden update. Do not import the library-path reorder tolerance into the runner golden.
@@ -126,8 +126,8 @@ Each harness names the risk it guards, where it lives, CI vs manual, the run com
 
 **Run command:**
 ```bash
-cargo test -p aiperf --test report_value_golden          # SimClock byte-exact tier
-cargo test -p aiperf --test scheduled_real_mock          # real-mock counts-exact + latency-band tier
+cargo test -p aiperf-runtime --test report_value_golden          # SimClock byte-exact tier
+cargo test -p aiperf-runtime --test scheduled_real_mock          # real-mock counts-exact + latency-band tier
 ```
 **Failure meaning:** a metric value moved. SimClock-tier failure = a *deterministic* regression (or an intentional A2 semantic change → update golden with a documented reason). Real-tier count/token failure = a real bug; real-tier latency-band failure at >band = investigate before assuming noise.
 
@@ -140,7 +140,7 @@ cargo test -p aiperf --test scheduled_real_mock          # real-mock counts-exac
 **Risk caught:** worker-local aggregates that depend on worker count or merge order; the uuid-keyed `finish` join reordering rows in a way that changes report bytes.
 
 **Design (extends the existing strong unit substrate):**
-- **Location:** extend `rust/aiperf/src/metrics_core/accumulator.rs` tests (alongside `per_worker_merge_matches_single_accumulator_ingest_order:1781`) and `store.rs` tests (alongside `:1437`). Add a runner-level uuid-join test in `rust/runner/tests/`.
+- **Location:** extend `rust/runtime/src/metrics_core/accumulator.rs` tests (alongside `per_worker_merge_matches_single_accumulator_ingest_order:1781`) and `store.rs` tests (alongside `:1437`). Add a runner-level uuid-join test in `rust/cli/tests/`.
 - **Tests to add:**
   1. **workers=1 vs workers=N equality:** ingest the same fixed record set as (a) one accumulator, (b) N split accumulators merged. Assert `summarize()` equal for N ∈ {1,2,3,5}. Grounds directly on `MetricsAccumulator::merge` (`accumulator.rs:485-514`) + `append_store` (`store.rs:569-656`).
   2. **Merge-order independence (integer aggregates):** for ≥3 partial accumulators, assert `RequestCount`, `TotalOutputSequenceLength`, `TotalInputSequenceLength`, `GoodRequestCount`, `ErrorRequestCount` are identical across all merge permutations (spec §6 scratch already proved this in `~/tmp/a1-spec`; promote it to an in-tree test). Float percentiles are *not* asserted order-independent (documented sub-ULP caveat, spec §4.5) — pin worker order for those.
@@ -148,7 +148,7 @@ cargo test -p aiperf --test scheduled_real_mock          # real-mock counts-exac
   4. **uuid-keyed finish join + global `request_index`:** a runner test feeding merged per-worker records whose concatenated order ≠ dispatch order (and each worker's records carrying **local** `request_index = Some(0..n_w)`), asserting that `RunCapture::finish` (the `execute.rs:3200-3234` replacement) (a) stamps each record's `request_index` to its **globally-unique, dense, monotonic dispatch ordinal** from the identity, (b) re-ingests **collision-free** (no `insert_record_at` panic — the Finding-1 abort), (c) yields rows that are **dense `0..N-1`** and in **dispatch order** (byte-identical to a single-worker run over the same identities — proves `None`/push was correctly rejected), and (d) never aborts on the positional-zip assertion. Ragged ICL alignment across workers is already pinned by `store.rs:1437`; add the cross-worker ICL-order case explicitly (guards A4 too).
 
 **CI/manual:** **CI**, all unit-speed.
-**Run command:** `cargo test -p aiperf && cargo test -p aiperf-runner --test <new_uuid_join_test>`
+**Run command:** `cargo test -p aiperf-runtime && cargo test -p aiperf-cli --test <new_uuid_join_test>`
 **Failure meaning:** the merge is not associative/commutative over aggregates, or the uuid-join reordered rows into the report — the A1 load-bearing refactor is broken; the run would fail closed in production.
 
 ---
@@ -161,8 +161,8 @@ cargo test -p aiperf --test scheduled_real_mock          # real-mock counts-exac
 
 **Design (ratio-based, never absolute — stable on a shared box):**
 - **Drivers:**
-  1. `rust/aiperf/examples/rps_bench.rs` against `aiperf-mock-server --fast` (existing) — TCP baseline.
-  2. Same `rps_bench` against a re-created `UDS_PATH`-listening pure-transport server (the removed `fast_sse` role — see §1.4) once A3 wires a `unix:`-scheme client — the **TCP-vs-UDS win**. **Neither piece exists yet:** the `fast_sse` example was deleted with `aiperf-core` and must be re-created (e.g. under `rust/aiperf/examples/`), and `rps_bench` calls `establish` directly and is not wired to a `unix:` client (§1.4). Rewiring `rps_bench` to select a `UdsConnector` (or point it at a `unix:` URL through `select_connector`), plus re-authoring the UDS pure-transport target, is **required PR3 work that the connector spec must budget** — without it there is no UDS-win measurement and the connector seam risks landing test-only.
+  1. `rust/runtime/examples/rps_bench.rs` against `aiperf-mock-server --fast` (existing) — TCP baseline.
+  2. Same `rps_bench` against a re-created `UDS_PATH`-listening pure-transport server (the removed `fast_sse` role — see §1.4) once A3 wires a `unix:`-scheme client — the **TCP-vs-UDS win**. **Neither piece exists yet:** the `fast_sse` example was deleted with `aiperf-core` and must be re-created (e.g. under `rust/runtime/examples/`), and `rps_bench` calls `establish` directly and is not wired to a `unix:` client (§1.4). Rewiring `rps_bench` to select a `UdsConnector` (or point it at a `unix:` URL through `select_connector`), plus re-authoring the UDS pure-transport target, is **required PR3 work that the connector spec must budget** — without it there is no UDS-win measurement and the connector seam risks landing test-only.
   3. A **product-path** `aiperf profile` run with `records:false` (A4/A1 aggregate-only mode) — the real ceiling-lift proof, since the ceiling is coordinator-side accumulation, not transport.
   4. `transport_bench.rs` (graph, already per-worker-merged) as the A1 reference upper bound.
 - **What to pin (ratios, not absolutes):**
@@ -176,7 +176,7 @@ cargo test -p aiperf --test scheduled_real_mock          # real-mock counts-exac
 ```bash
 # TCP baseline vs UDS win (A3)
 cargo run --release -p aiperf-mock-server -- --fast &          # pure-transport target
-THREADS=8 CONNS=8 LANES=16 cargo run --release -p aiperf --example rps_bench
+THREADS=8 CONNS=8 LANES=16 cargo run --release -p aiperf-runtime --example rps_bench
 # UDS_PATH=/tmp/fast.sock <UDS pure-transport server> &        # fast_sse example was removed (aiperf-core dissolved); re-create before use
 # (A3) point rps_bench at unix:/tmp/fast.sock, compare RPS
 # A1 lift: product path, records:false, workers sweep
@@ -191,7 +191,7 @@ aiperf profile --config bench-records-false.yaml   # workers=1 then workers=4, c
 **Risk caught:** Tcp/Uds/Duplex producing different metrics; scheme→connector misselection; `origin_key` pool-key collision (the A3 highest-attention item, spec §4/§6).
 
 **Design:**
-- **Location:** `rust/aiperf/tests/transport_http/` — new `connector.rs` (mirrors `connect.rs:12` shape) + extend `pool.rs`.
+- **Location:** `rust/runtime/tests/transport_http/` — new `connector.rs` (mirrors `connect.rs:12` shape) + extend `pool.rs`.
 - **Tests:**
   1. **Metric-identical Tcp==Uds==Duplex:** drive the *same* request against an in-process server reachable via all three connectors (loopback `TcpListener`, `UnixListener`, `tokio::io::duplex`), assert identical parsed response, identical trace fields **except** the synthesized `SocketInfo` dummies (spec §3.2/§3.3), and identical downstream observer facts (token count, usage). The Duplex round-trip is already proven in `~/tmp/connector-spec/tests/e2e.rs`; promote it in-tree.
   2. **Scheme selection:** `select_connector` returns `TcpConnector` for `http(s)://`, `UdsConnector` for `unix:`, `DuplexConnector` for `mem://` (spec §4 table).
@@ -200,7 +200,7 @@ aiperf profile --config bench-records-false.yaml   # workers=1 then workers=4, c
   5. **Regression guards stay green:** `no_direct_time.rs`, `reuse.rs`, `cancel.rs`, `tls.rs` (TCP-only) must all still pass — A3 is strictly below the `Sender` (spec §5).
 
 **CI/manual:** **CI** (Duplex needs no network; UDS/TCP loopback are already in-suite).
-**Run command:** `cargo test -p aiperf`
+**Run command:** `cargo test -p aiperf-runtime`
 **Failure meaning:** connectors diverge in metrics (UDS/Duplex not a drop-in), or the pool key aliases distinct endpoints (silent cross-talk) / fails sticky binding.
 
 ---
@@ -210,15 +210,15 @@ aiperf profile --config bench-records-false.yaml   # workers=1 then workers=4, c
 **Risk caught:** A2's online single-observer report diverging from the old dual-observer report; TCP≠UDS at the *report* level; online↔offline drift.
 
 **Design:**
-- **A2 dual→single equivalence (the core A2 gate):** BEFORE A2 lands, capture the current dual-observer (`CollectorObserver` + `NativeMetricsObserver`) `TraceSimulationReport` from a deterministic SimClock library run (`rust/aiperf` `run.rs`/`scheduled.rs` path, which *does* feed the tee — unlike the runner). AFTER A2, assert the **projected** report equals the captured golden. If the implementer takes the spec's **records-first** projection (§6 recommendation), this must be **byte-identical**; if summary-cheap, the diff enumerates the percentile/time-base fields that changed (forcing an explicit decision + golden update). Location: `rust/aiperf/tests/compat_projection_parity.rs` (new), golden captured from HEAD.
+- **A2 dual→single equivalence (the core A2 gate):** BEFORE A2 lands, capture the current dual-observer (`CollectorObserver` + `NativeMetricsObserver`) `TraceSimulationReport` from a deterministic SimClock library run (`rust/runtime` `run.rs`/`scheduled.rs` path, which *does* feed the tee — unlike the runner). AFTER A2, assert the **projected** report equals the captured golden. If the implementer takes the spec's **records-first** projection (§6 recommendation), this must be **byte-identical**; if summary-cheap, the diff enumerates the percentile/time-base fields that changed (forcing an explicit decision + golden update). Location: `rust/runtime/tests/compat_projection_parity.rs` (new), golden captured from HEAD.
 - **TCP==UDS report parity:** run the Harness A concurrency+streaming row over TCP and over UDS (real mock / the re-created UDS pure-transport target that replaces the removed `fast_sse`, see §1.4), assert byte-exact counts/tokens/throughput and latency within band. Reuses Harness A + Harness D.
 - **online↔offline:** **reuse the existing gate as-is** — `offline_scheduled_stdio.rs` (77-field parity) and `verify_parity` (`offline_execution.rs:2266`). A2's offline path projects from `DynamoSimulationReport` (spec §4), so this gate is unaffected and simply must **keep passing** after A2 (it proves A2 didn't break the offline projection). No extension needed.
 
 **CI/manual:** A2 equivalence + offline gate = **CI**; TCP==UDS report parity = **CI** (Duplex/loopback) with latency banded.
 **Run command:**
 ```bash
-cargo test -p aiperf --test compat_projection_parity     # A2 dual==single (or enumerated deltas)
-cargo test -p aiperf-runner --test offline_scheduled_stdio   # existing online↔offline 77-field gate (must stay green)
+cargo test -p aiperf-runtime --test compat_projection_parity     # A2 dual==single (or enumerated deltas)
+cargo test -p aiperf-cli --test offline_scheduled_stdio   # existing online↔offline 77-field gate (must stay green)
 ```
 **Failure meaning:** A2 changed a library-visible report value that a consumer pins (`run.rs:1693`, `scheduled_real_mock.rs`); or the offline byte gate broke (A2 touched the wrong projection).
 

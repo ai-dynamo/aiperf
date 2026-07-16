@@ -40,13 +40,48 @@ struct AxisDef {
 }
 
 const AXES: &[AxisDef] = &[
-    AxisDef { id: "concurrency", path: "phases.profiling.concurrency", seg: "concurrency", kind: AxisKind::Int },
-    AxisDef { id: "request_count", path: "phases.profiling.requests", seg: "requests", kind: AxisKind::Int },
-    AxisDef { id: "request_rate", path: "phases.profiling.rate", seg: "rate", kind: AxisKind::Float },
-    AxisDef { id: "benchmark_duration", path: "phases.profiling.duration", seg: "duration", kind: AxisKind::Float },
-    AxisDef { id: "num_conversations", path: "phases.profiling.sessions", seg: "sessions", kind: AxisKind::Int },
-    AxisDef { id: "isl", path: "datasets.main.prompts.isl.mean", seg: "mean", kind: AxisKind::Int },
-    AxisDef { id: "osl", path: "datasets.main.prompts.osl.mean", seg: "mean", kind: AxisKind::Int },
+    AxisDef {
+        id: "concurrency",
+        path: "phases.profiling.concurrency",
+        seg: "concurrency",
+        kind: AxisKind::Int,
+    },
+    AxisDef {
+        id: "request_count",
+        path: "phases.profiling.requests",
+        seg: "requests",
+        kind: AxisKind::Int,
+    },
+    AxisDef {
+        id: "request_rate",
+        path: "phases.profiling.rate",
+        seg: "rate",
+        kind: AxisKind::Float,
+    },
+    AxisDef {
+        id: "benchmark_duration",
+        path: "phases.profiling.duration",
+        seg: "duration",
+        kind: AxisKind::Float,
+    },
+    AxisDef {
+        id: "num_conversations",
+        path: "phases.profiling.sessions",
+        seg: "sessions",
+        kind: AxisKind::Int,
+    },
+    AxisDef {
+        id: "isl",
+        path: "datasets.main.prompts.isl.mean",
+        seg: "mean",
+        kind: AxisKind::Int,
+    },
+    AxisDef {
+        id: "osl",
+        path: "datasets.main.prompts.osl.mean",
+        seg: "mean",
+        kind: AxisKind::Int,
+    },
 ];
 
 /// Read the raw flag string for an axis id.

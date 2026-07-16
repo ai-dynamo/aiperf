@@ -47,24 +47,24 @@ package precedence, or a second source of truth beside the Rust type system.
 
 ## 3. Where the aggregate lives
 
-The aggregate contract is the `aiperf::extensions` module of the `aiperf`
-library crate (`rust/aiperf/src/extensions/`). It sits below the runner
+The aggregate contract is the `aiperf_runtime::extensions` module of the `aiperf-runtime`
+library crate (`rust/runtime/src/extensions/`). It sits below the runner
 executable: the leaf categories it composes (dataset formats, samplers, endpoint
 adapters) are sibling modules of the same library crate, and no leaf depends on
-the aggregate. The single strict executable, `aiperf-runner`, is the composition
+the aggregate. The single strict executable, `aiperf-cli`, is the composition
 root that constructs, extends, and freezes the aggregate.
 
 ```text
-extension crate ──▶ aiperf (extensions module) ──▶ {dataset, endpoints, samplers}
+extension crate ──▶ aiperf-runtime (extensions module) ──▶ {dataset, endpoints, samplers}
        │                                                     │
        └──────────────── implements leaf traits ─────────────┘
 
-aiperf-runner ─────▶ aiperf::extensions
+aiperf-cli ─────▶ aiperf_runtime::extensions
 ```
 
 Keeping the contract below the executable prevents a dependency cycle: a
-distribution may add an optional vendor extension dependency to `aiperf-runner`;
-that extension depends only on the `aiperf` library (its extension contract and
+distribution may add an optional vendor extension dependency to `aiperf-cli`;
+that extension depends only on the `aiperf-runtime` library (its extension contract and
 the leaf traits it implements), never back on the runner. The application crate
 never depends on a vendor extension.
 
@@ -94,7 +94,7 @@ distribution applies linked extensions explicitly:
 let mut registry = AiperfRegistry::builtin()?;
 
 #[cfg(feature = "acme")]
-registry.register_extension(&acme_aiperf::AcmeExtension)?;
+registry.register_extension(&acme_aiperf_runtime::AcmeExtension)?;
 
 run(registry)
 ```
@@ -143,7 +143,7 @@ hide ownership and would not improve configuration selection.
 **Accuracy is a directly injected process seam, not a registry entry.**
 Canonical dataset preparation, prompt construction, private tests, and grading
 belong to one pinned Python/Lighteval worker behind the directly injected
-`AccuracyEvaluator` stdio trait (`aiperf::accuracy_core`). Adding Rust benchmark
+`AccuracyEvaluator` stdio trait (`aiperf_runtime::accuracy_core`). Adding Rust benchmark
 or grader factories to `AiperfRegistry` would recreate the duplicated semantics
 that boundary removes. External evaluator implementations are selected by
 constructing and injecting an `AccuracyEvaluator`, exactly as clocks and
@@ -196,7 +196,7 @@ objects are reference-counted; payloads and mutable run state are not copied.
 
 ## 9. Runner wiring: one frozen object graph
 
-`aiperf-runner` is the composition root. One fresh runner process builds exactly
+`aiperf-cli` is the composition root. One fresh runner process builds exactly
 one `AiperfRegistry`, applies built-ins and any linked `AiperfExtension`s once,
 and freezes the aggregate. `RunnerApplication` freezes that linked registry
 together with the runner-owned graph-input resolver, the pair factories, the

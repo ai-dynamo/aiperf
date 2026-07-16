@@ -6,8 +6,9 @@ orthogonality discipline stand; the concrete `Backend` / `Engine` / `Harness` /
 workspace API. Where the north-star symbols differ from what is built, the body
 now names the built seam inline; the built vocabulary is `Clock` +
 `loadgen-core::{RequestSink<R>, RequestObserver, Dispatchable}`, and the
-application layer is Python Config v2 plus the strict `aiperf-runner` rather than
-a native `aiperf` binary.
+application layer is the native `aiperf` binary (crate `aiperf-cli`) — the front
+door that re-execs its own strict `aiperf --execute` execution engine (Python
+Config v2 owns the frontend only on the `AIPERF_NATIVE=0` path).
 
 > **Fresh-eyes design.** This describes the cleanest end-state abstraction, not a
 > migration. It deliberately ignores every existing symbol
@@ -15,8 +16,9 @@ a native `aiperf` binary.
 > `WorkloadDriver`, `drive_sim`, …). Those belong to the *path* spec
 > (`2026-07-10-steppable-clock-injected-engine-design.md`); this is the
 > *target*. The Rust workspace is the execution substrate; the human-facing
-> frontend and run resolution stay in Python (Config v2 + the `aiperf` command),
-> which launches the strict `aiperf-runner` child as the sole Rust process
+> frontend and run resolution are owned natively by the `aiperf` binary (crate
+> `aiperf-cli`; Config v2 stays in Python only on the `AIPERF_NATIVE=0` path),
+> which re-execs the strict `aiperf --execute` child as the sole Rust process
 > composition root.
 
 ## The one idea
@@ -287,8 +289,8 @@ the one that runs against the sim. That is the payoff.
 
 The only place concrete types meet. In the north-star sketch this is a native
 `aiperf` binary; **as built, that native binary does not exist.** Python Config v2
-and the Python `aiperf` command own the human-facing CLI and fully resolve a run,
-then launch `aiperf-runner` — the sole Rust process composition root — which
+and the native `aiperf` command own the human-facing CLI and fully resolve a run,
+then re-exec `aiperf --execute` — the sole Rust process composition root — which
 composes the injected clock, transport/backend, and workload seams once per child.
 The library-only `aiperf` crate supplies that composition; there is no
 `aiperf`-crate binary and no mode selection through native flags.
@@ -317,8 +319,8 @@ flowchart LR
     subgraph dyn["dynamo"]
         e["dynamo-engine : impl Engine (vllm/sglang/trt + perf model)"]
     end
-    subgraph ap["aiperf (library) + aiperf-runner (bin)"]
-        r["clock · backend · measure · harness · workload · runtime — composed by aiperf-runner"]
+    subgraph ap["aiperf-runtime (library) + aiperf-cli (bin)"]
+        r["clock · backend · measure · harness · workload · runtime — composed by aiperf-cli"]
     end
     e -->|implements| c
     r -->|consumes| c
@@ -333,10 +335,10 @@ flowchart LR
 - **AIPerf crates** — depend on the contract's `Engine`/`Backend` *traits*, not
   on `dynamo-engine`. Only the final binary names the concrete engine, so the
   coupling is trait-level and either side swaps impls freely. As built, the
-  library-only `aiperf` crate holds the clock/backend/measure/harness/workload/
-  runtime composition and the strict `aiperf-runner` binary is the "final binary"
-  that names concrete engines; the former per-concern `aiperf-*` crates are now
-  modules of `aiperf` (`aiperf::<module>::`).
+  library-only `aiperf-runtime` crate holds the clock/backend/measure/harness/workload/
+  runtime composition and the strict `aiperf-cli` binary (the `aiperf` command) is the
+  "final binary" that names concrete engines; the former per-concern `aiperf-*` crates are now
+  modules of `aiperf-runtime` (`aiperf_runtime::<module>::`).
 
 ## Why this is the cleanest possible shape
 

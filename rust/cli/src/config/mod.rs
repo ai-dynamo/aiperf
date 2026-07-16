@@ -144,7 +144,10 @@ fn list_templates(category: Option<&str>) {
 /// `aiperf config validate`: resolve the config through the native YAML surface
 /// (which validates it) and report success/failure.
 fn validate(args: ValidateArgs) -> anyhow::Result<i32> {
-    match crate::yaml::resolve(&args.config_file, Some(PathBuf::from("/tmp/aiperf-validate"))) {
+    match crate::yaml::resolve(
+        &args.config_file,
+        Some(PathBuf::from("/tmp/aiperf-validate")),
+    ) {
         Ok(_) => {
             println!("{} is valid", args.config_file.display());
             Ok(0)

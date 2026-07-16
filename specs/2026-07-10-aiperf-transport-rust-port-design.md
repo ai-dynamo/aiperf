@@ -1,17 +1,17 @@
-# aiperf::transport_http — Rust-native AIPerf HTTP client + timing recording
+# aiperf_runtime::transport_http — Rust-native AIPerf HTTP client + timing recording
 
 **Date:** 2026-07-10
 **Author:** Anthony Casagrande (with Claude)
-**Status:** Built as `aiperf::transport_http` (Clock-injected hyper stack). Two areas remain
+**Status:** Built as `aiperf_runtime::transport_http` (Clock-injected hyper stack). Two areas remain
 narrower than this design: full h2 connection-reuse/multiplexing semantics and the complete
 aiohttp-style trace field set. Post-send cancellation is built.
 
 ## 1. Summary
 
 The Clock-injected hyper HTTP transport described here is realized as the
-`aiperf::transport_http` module (formerly the standalone `aiperf-transport-http`
-crate, now a module of the `aiperf` crate; code lives under
-`rust/aiperf/src/transport_http*`). It ports AIPerf's
+`aiperf_runtime::transport_http` module (formerly the standalone `aiperf-transport-http`
+crate, now a module of the `aiperf-runtime` crate; code lives under
+`rust/runtime/src/transport_http*`). It ports AIPerf's
 Python `aiohttp`-based transport layer and its timing-*recording* machinery to
 idiomatic, high-performance Rust. It reproduces the measurement behavior of the
 Python `src/aiperf/transports/` package — streaming SSE inference over HTTP,
@@ -19,8 +19,8 @@ first-token (TTFT) capture, authoritative `usage` token counts, fine-grained
 connection trace timing, request cancellation, and connection-reuse strategies
 — without any of AIPerf's scheduling/credit subsystem or its ZMQ service mesh.
 Transport-neutral scheduling and observation are reserved for `loadgen-core`;
-`aiperf::transport_http` is the single Clock-injected hyper stack used by both
-the CLI online path (`rust/aiperf/src/http.rs`) and the graph benchmark.
+`aiperf_runtime::transport_http` is the single Clock-injected hyper stack used by both
+the CLI online path (`rust/runtime/src/http.rs`) and the graph benchmark.
 
 "Timing logic" here means **timing recording** (per-request/per-token/per-chunk
 measurement into a record), **not** load scheduling (interval generators,
@@ -31,7 +31,7 @@ measured metrics as the Python transport; the RNG and byte layout need not
 match Python bit-for-bit. Data models are **idiomatic Rust**, not a 1:1
 transcription of the Pydantic classes.
 
-**Hard constraint:** all time access goes through the `aiperf::clock` `Clock`
+**Hard constraint:** all time access goes through the `aiperf_runtime::clock` `Clock`
 abstraction — never `Instant::now()`, `SystemTime::now()`, or raw
 `tokio::time`. See §4.
 
@@ -81,13 +81,13 @@ Repo-relative to `/home/anthony/nvidia/projects/aiperf/ajc/rust`:
   `trace_models.py` (`BaseTraceData`, `AioHttpTraceData`, `*Export`),
   `error_models.py` (`ErrorDetails`).
 
-Local Rust reference: `rust/aiperf/src/clock` (the `Clock` contract) and
-`rust/aiperf` (existing `dynamo-aiperf` — HttpSink/SSE prior art, and the
+Local Rust reference: `rust/runtime/src/clock` (the `Clock` contract) and
+`rust/runtime` (existing `dynamo-aiperf` — HttpSink/SSE prior art, and the
 `graph::runtime` `drive_real`/`drive_sim` execution model we mirror).
 
 ## 4. Clock abstraction (mandatory foundation)
 
-Everything time-related is sourced from `aiperf::clock`:
+Everything time-related is sourced from `aiperf_runtime::clock`:
 
 ```rust
 pub trait Clock {
@@ -112,7 +112,7 @@ pub trait Clock {
 - Because `Clock::sleep` takes `Rc<Self>` and yields a `!Send` future, the
   transport runs on a **current-thread tokio runtime under a `LocalSet`**; the
   hyper `Connection` driver future is spawned with `tokio::task::spawn_local`.
-  This mirrors `aiperf::graph::runtime::{drive_real, drive_sim}`.
+  This mirrors `aiperf_runtime::graph::runtime::{drive_real, drive_sim}`.
 - **Execution modes:** live network I/O (against `aiperf-mock-server`) runs on
   `RealClock`. `SimClock` drives pure-logic tests where no real socket is
   involved (SSE parsing with clock-stamped arrivals, cancellation-timer logic,
@@ -262,7 +262,7 @@ on both. Timer starts at send-complete, not request-start — matching Python. U
 - `send_request(config, payload, first_token_cb) -> RequestRecord`.
 
 ### 7.5 Endpoint binding (`transport/endpoint_binding.rs`)
-The module depends on `aiperf::endpoints` only at the translation boundary:
+The module depends on `aiperf_runtime::endpoints` only at the translation boundary:
 `transport/endpoint_binding.rs` defines the object-safe `HttpEndpointBinding` and
 its metadata-driven implementation. The binding lowers canonical endpoint JSON to
 HTTP URL/body/lifecycle policy and decodes HTTP/SSE responses back into
@@ -279,11 +279,11 @@ config with matching default values.
 
 ## 8. Module layout
 
-The transport lives as the `aiperf::transport_http` module under
-`rust/aiperf/src/transport_http/`:
+The transport lives as the `aiperf_runtime::transport_http` module under
+`rust/runtime/src/transport_http/`:
 
 ```
-rust/aiperf/src/transport_http/
+rust/runtime/src/transport_http/
   mod.rs
   models/{mod,record,response,sse,trace,error,request}.rs
   client/{mod,http_client,connection,resolver,pool,cancellation}.rs
@@ -292,7 +292,7 @@ rust/aiperf/src/transport_http/
   config/defaults.rs
 ```
 
-Dependencies: `aiperf::clock` (the Clock), `tokio` (current-thread + macros +
+Dependencies: `aiperf_runtime::clock` (the Clock), `tokio` (current-thread + macros +
 net + io-util), `hyper` (features `client`, `http1`, `http2`), `hyper-util`
 **only** for `rt::{TokioIo, TokioExecutor}`, `http`, `http-body-util`,
 `tokio-rustls`, `rustls`, `webpki-roots`, `bytes`, `futures`, `serde`,

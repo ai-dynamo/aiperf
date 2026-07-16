@@ -321,9 +321,11 @@ async fn stream_turn(
         .filter_map(|frame| async move {
             match frame {
                 Ok(f) => f.into_data().ok().map(Ok),
-                Err(e) => Some(Err(aiperf_runtime::transport_http::models::ErrorDetails::other(
-                    format!("read body: {e}"),
-                ))),
+                Err(e) => Some(Err(
+                    aiperf_runtime::transport_http::models::ErrorDetails::other(format!(
+                        "read body: {e}"
+                    )),
+                )),
             }
         })
         .boxed_local();
@@ -458,7 +460,8 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     rt.block_on(async move {
         // One injected clock for the whole session (the runner's RealClock; a
         // SimClock can be substituted). All chat timing flows through it.
-        let clock: std::rc::Rc<dyn aiperf_runtime::clock::Clock> = aiperf_runtime::clock::RealClock::new();
+        let clock: std::rc::Rc<dyn aiperf_runtime::clock::Clock> =
+            aiperf_runtime::clock::RealClock::new();
         let tok = load_tokenizer(tokenizer.as_deref().unwrap_or(&model)).await?;
         let mut system_messages: Vec<Value> = Vec::new();
         if let Some(sp) = &system_prompt {

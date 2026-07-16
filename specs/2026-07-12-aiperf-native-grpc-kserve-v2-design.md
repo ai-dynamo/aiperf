@@ -46,7 +46,7 @@ and thread-per-core placement.
 
 ## Endpoint ownership
 
-`aiperf::endpoints::EndpointRegistry` registers nine open KServe factories:
+`aiperf_runtime::endpoints::EndpointRegistry` registers nine open KServe factories:
 
 - `kserve_chat`, `kserve_completions`, and `kserve_embeddings`
 - `kserve_v1_predict`
@@ -90,7 +90,7 @@ descriptor path rather than supplying an authored override.
 
 ## Native gRPC transport module
 
-`aiperf::transport_grpc` is the Clock-injected gRPC transport module of the
+`aiperf_runtime::transport_grpc` is the Clock-injected gRPC transport module of the
 `aiperf` crate. Its open seams are:
 
 - `GrpcEndpointBinding` for endpoint-specific wire encoding, RPC paths,

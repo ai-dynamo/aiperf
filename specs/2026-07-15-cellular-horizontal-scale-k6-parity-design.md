@@ -14,7 +14,7 @@ to close it. It reuses the ultimate spec's forward items (sketch-cellular, strea
 fan-out) and sequences them into a fidelity ladder.
 
 > **Grounding.** k6 claims are verified against `grafana/k6` source (`lib/execution_segment.go`,
-> `output/`). AIPerf claims cite `rust/aiperf/src/**`. Verify against `rust/` before relying on any step.
+> `output/`). AIPerf claims cite `rust/runtime/src/**`. Verify against `rust/` before relying on any step.
 
 ---
 
@@ -287,6 +287,6 @@ Even at T3, AIPerf keeps advantages k6 lacks, and the plan must not trade them a
   for `ai-dynamo/dynamo`.
 - **k6 model** (verified): `grafana/k6` `lib/execution_segment.go` (master-less segments), `output/`
   (external streaming sinks).
-- **AIPerf code**: `rust/aiperf/src/cellular/{partition,issuance,shard,sketch}.rs`,
-  `rust/aiperf/src/metrics_core/{store,accumulator}.rs` (sketch + Welford + `finish_fold_into`),
-  `rust/aiperf/src/runner_protocol/cellular_controller.rs` (merge orchestration).
+- **AIPerf code**: `rust/runtime/src/cellular/{partition,issuance,shard,sketch}.rs`,
+  `rust/runtime/src/metrics_core/{store,accumulator}.rs` (sketch + Welford + `finish_fold_into`),
+  `rust/runtime/src/runner_protocol/cellular_controller.rs` (merge orchestration).

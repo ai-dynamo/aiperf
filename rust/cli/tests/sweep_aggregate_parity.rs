@@ -10,17 +10,20 @@
 use std::path::PathBuf;
 
 use aiperf_cli::flags::ProfileFlags;
-use aiperf_cli::sweep::aggregate::{finish, CellOutcome};
+use aiperf_cli::sweep::aggregate::{CellOutcome, finish};
 
 fn repo_file(rel: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../").join(rel)
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../")
+        .join(rel)
 }
 
 #[test]
 fn single_trial_sweep_aggregate_matches_python() {
-    let spec: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(repo_file("tools/parity/sweep_agg_spec.json")).unwrap())
-            .unwrap();
+    let spec: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(repo_file("tools/parity/sweep_agg_spec.json")).unwrap(),
+    )
+    .unwrap();
     let golden: serde_json::Value = serde_json::from_slice(
         &std::fs::read(repo_file("tools/parity/sweep_golden/sweep_agg.json")).unwrap(),
     )

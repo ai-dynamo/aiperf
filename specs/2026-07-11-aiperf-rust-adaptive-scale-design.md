@@ -7,8 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 
 **Date:** 2026-07-11
 **Author:** Anthony Casagrande (Tech Lead) + Claude
-**Status:** built — `aiperf::adaptive_core` (formerly the `aiperf-adaptive` leaf crate,
-now a module of `aiperf`) plus the online/offline composition in `aiperf::run` and the
+**Status:** built — `aiperf_runtime::adaptive_core` (formerly the `aiperf-adaptive` leaf crate,
+now a module of `aiperf-runtime`) plus the online/offline composition in `aiperf_runtime::run` and the
 CLI surface. All four control variables ramp online and offline over an injected backend.
 **Grounding:** line-by-line read of the Python adaptive-scale subsystem —
 `src/aiperf/timing/strategies/adaptive_scale.py`,
@@ -23,8 +23,8 @@ issuer / `SlotPool` / `StopChecker` / two-plane framing that adaptive-scale driv
 top of), `2026-07-10-aiperf-rust-metrics-accumulator-sweepline-design.md` +
 `…-telemetry-accumulators-design.md` (the measured-metrics seam the window sampler
 reads — referenced, not re-designed), `2026-07-11-aiperf-rust-exporters-overhaul-design.md`
-(where the JSONL/summary artifacts land). `aiperf::timing` built primitives verified in
-`rust/aiperf/src/timing/{intervals,slots,stop}.rs`.
+(where the JSONL/summary artifacts land). `aiperf_runtime::timing` built primitives verified in
+`rust/runtime/src/timing/{intervals,slots,stop}.rs`.
 
 ---
 
@@ -91,7 +91,7 @@ last take (`time.perf_counter()`), `start_ns`/`end_ns` = `time.time_ns()`.
 > credit-return handler and the assessment task run on the **same** `LocalSet`, so the
 > `asyncio.Lock` collapses to a plain `Rc<RefCell<WindowState>>` — no lock, no `Arc`.
 > Both the `sleep(assessment_period)` and the `perf_counter`/`time_ns` window timing
-> **must** go through `Clock` (`aiperf::clock`), never `tokio::time`/`Instant::now`,
+> **must** go through `Clock` (`aiperf_runtime::clock`), never `tokio::time`/`Instant::now`,
 > so the loop runs unchanged under `SimClock` (see §5).
 
 ---
@@ -150,7 +150,7 @@ Metric families (`value`, `:234-264`):
   *fails* when no tokens arrived, rather than dividing by zero.
 - **Percentile kernel** (`percentile_value`, `:334-349`): sort; `rank=(p/100)*(n-1)`;
   linear interpolation between `floor`/`ceil`; single-sample returns that sample.
-  This is the **same interpolation the `aiperf::metrics_core` spec pins** — reuse that kernel,
+  This is the **same interpolation the `aiperf_runtime::metrics_core` spec pins** — reuse that kernel,
   do not re-derive.
 - **Goodput is per-request quality-gated** (`_good_request_count`, `:164-186`): a
   request is "good" iff it passes **every** quality filter (`request_latency`/`ttft`/`itl`,
@@ -276,24 +276,24 @@ dispatch (`backends.py:127-145`).
 
 | Concern | Primitive | Crate | Status |
 |---|---|---|---|
-| Concurrency ramp actuator (`set_session_limit`) | `SlotPool::set_limit` (debt-drain) | `aiperf::timing` | **built** (`slots.rs:151`) |
-| Prefill ramp actuator (`set_prefill_limit`) | `SlotPool::set_limit` (prefill pool) | `aiperf::timing` | **built** (`slots.rs`, `ConcurrencyManager`) |
-| Rate ramp actuator (`set_request_rate`) | `IntervalGenerator::set_rate` | `aiperf::timing` | **built** (`intervals.rs:50`) |
-| Assessment-period sleep + window/sustain timing | `Clock::sleep` / `now_ns` | `aiperf::clock` | **built** |
-| Loop gate (`can_send_any_turn`) | `StopChecker` | `aiperf::timing` | **built** (`stop.rs:167`) |
+| Concurrency ramp actuator (`set_session_limit`) | `SlotPool::set_limit` (debt-drain) | `aiperf_runtime::timing` | **built** (`slots.rs:151`) |
+| Prefill ramp actuator (`set_prefill_limit`) | `SlotPool::set_limit` (prefill pool) | `aiperf_runtime::timing` | **built** (`slots.rs`, `ConcurrencyManager`) |
+| Rate ramp actuator (`set_request_rate`) | `IntervalGenerator::set_rate` | `aiperf_runtime::timing` | **built** (`intervals.rs:50`) |
+| Assessment-period sleep + window/sustain timing | `Clock::sleep` / `now_ns` | `aiperf_runtime::clock` | **built** |
+| Loop gate (`can_send_any_turn`) | `StopChecker` | `aiperf_runtime::timing` | **built** (`stop.rs:167`) |
 | Underlying credit issuance path | `CreditIssuer` / `RateWorkload` | request-rate multiturn spec | **designed** (its own spec) |
-| Percentile / agg kernel over window samples | `aiperf::metrics_core` percentile kernel (`linear_distribution`) | `aiperf::metrics_core` | **built** (reused, not re-derived) |
-| Measured-return stream feeding the window | `RequestObserver` → `WindowSampler` (`AdaptiveObserver` tee) | `loadgen-core` / `aiperf::adaptive_core` | **built** |
-| **`ControlActuator` trait + 4 actuators** | — | `aiperf::adaptive_core` | **built** |
-| **`SlaEvaluator`** | — | `aiperf::adaptive_core` | **built** |
-| **`StepPolicy` (SlaMargin/FixedPercent)** | — | `aiperf::adaptive_core` | **built** |
-| **`WindowSampler` (tumbling, reset)** | — | `aiperf::adaptive_core` | **built** |
-| **`Controller` (RampUntilFail state machine)** | — | `aiperf::adaptive_core` | **built** |
-| **Adaptive events/summary artifacts** | — | `aiperf::adaptive_core` (`AdaptiveArtifactSink`/`FileArtifactSink`) | **built** |
+| Percentile / agg kernel over window samples | `aiperf_runtime::metrics_core` percentile kernel (`linear_distribution`) | `aiperf_runtime::metrics_core` | **built** (reused, not re-derived) |
+| Measured-return stream feeding the window | `RequestObserver` → `WindowSampler` (`AdaptiveObserver` tee) | `loadgen-core` / `aiperf_runtime::adaptive_core` | **built** |
+| **`ControlActuator` trait + 4 actuators** | — | `aiperf_runtime::adaptive_core` | **built** |
+| **`SlaEvaluator`** | — | `aiperf_runtime::adaptive_core` | **built** |
+| **`StepPolicy` (SlaMargin/FixedPercent)** | — | `aiperf_runtime::adaptive_core` | **built** |
+| **`WindowSampler` (tumbling, reset)** | — | `aiperf_runtime::adaptive_core` | **built** |
+| **`Controller` (RampUntilFail state machine)** | — | `aiperf_runtime::adaptive_core` | **built** |
+| **Adaptive events/summary artifacts** | — | `aiperf_runtime::adaptive_core` (`AdaptiveArtifactSink`/`FileArtifactSink`) | **built** |
 
-**Home module:** the control logic lives in `aiperf::adaptive_core` (the former
-`aiperf-adaptive` leaf crate, now a module of `aiperf`), depending on the timing
-primitives (actuators/stop), `aiperf::clock` (time), and the metrics seam (percentile
+**Home module:** the control logic lives in `aiperf_runtime::adaptive_core` (the former
+`aiperf-adaptive` leaf crate, now a module of `aiperf-runtime`), depending on the timing
+primitives (actuators/stop), `aiperf_runtime::clock` (time), and the metrics seam (percentile
 kernel). It is pure control logic with no HTTP/engine deps. All four actuators
 (`SessionConcurrencyActuator`, `PrefillConcurrencyActuator`, `RequestRateActuator`,
 `UsersActuator`) live together in `adaptive_core`, superseding the earlier proposal to
@@ -347,8 +347,8 @@ differ; the event/summary schema and the decision logic are identical.
 
 ## 6. Composition (built)
 
-All of the following are built in `aiperf::adaptive_core` plus the composition functions
-in `aiperf::run` and the CLI surface:
+All of the following are built in `aiperf_runtime::adaptive_core` plus the composition functions
+in `aiperf_runtime::run` and the CLI surface:
 
 1. **`ControlActuator` trait + concurrency/prefill/rate/users actuators** over
    `SlotPool::set_limit` / `IntervalGenerator::set_rate` and a live `UserTarget` gate,
@@ -356,7 +356,7 @@ in `aiperf::run` and the CLI surface:
    concurrency/prefill/users, `max>min`, prefill `max ≤ concurrency`, rate rejects
    `CONCURRENCY_BURST`).
 2. **`WindowStats` + `DefaultSlaEvaluator`** — the metric-family table, aliases, and
-   statistics with `passes`/`margin`/`binding`, reusing the `aiperf::metrics_core`
+   statistics with `passes`/`margin`/`binding`, reusing the `aiperf_runtime::metrics_core`
    `linear_distribution` percentile kernel. The Python SLA unit tests are ported as
    parity fixtures (empty→`inf`, ns→ms, goodput quality-gate).
 3. **`SlaMarginStep` + `FixedPercentStep`** — the margin→multiplier clamp exactly.
@@ -373,7 +373,7 @@ in `aiperf::run` and the CLI surface:
    `AdaptiveArtifactSink` / `FileArtifactSink` as schema-v2 `adaptive_scale_events.jsonl`
    + `adaptive_scale_summary.json` (binding-SLA + candidates, recursively sorted keys).
 
-**Backend-neutral online/offline composition.** `aiperf::run` exposes backend-neutral
+**Backend-neutral online/offline composition.** `aiperf_runtime::run` exposes backend-neutral
 paced, request-rate, user-centric, and adaptive composition functions. Online wrappers
 inject `RealClock + TransportSink`; offline (feature-gated) wrappers inject
 `SimClock + DynosimSink` and run the *same* futures, observers, actuators, issuance gates,
@@ -453,6 +453,6 @@ SLA-margin-scaled step** until the SLA breaks (`discover`), then **holds at the 
 passing level** for a sustain duration with a single recovery step-down (`sustain`),
 emitting per-window decision events + a boundary summary; the ramp actuators are already
 built over the timing ramp knobs, the controller/evaluator/step-policy/window-sampler are
-pure-logic seams in `aiperf::adaptive_core`, and the whole loop runs deterministically
+pure-logic seams in `aiperf_runtime::adaptive_core`, and the whole loop runs deterministically
 offline under `SimClock` **iff** completions flow during the run — which the feature-gated
 `DynosimSink` supplies for all four control variables.

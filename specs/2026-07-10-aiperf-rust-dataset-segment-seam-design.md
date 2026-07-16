@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-10
 **Author:** Anthony Casagrande (Tech Lead) + Claude
-**Status:** built — realized as the `aiperf::dataset` module (loader → compose → dense-handle store → sampler → materializer), shared by `aiperf-runner`, evaluator-authored static accuracy, Graph-IR, and the library-only offline adapter.
+**Status:** built — realized as the `aiperf_runtime::dataset` module (loader → compose → dense-handle store → sampler → materializer), shared by `aiperf --execute`, evaluator-authored static accuracy, Graph-IR, and the library-only offline adapter.
 **Companions:** `2026-07-10-aiperf-rust-port-exact-vs-redo-ledger.md`,
 `2026-07-10-shared-rust-architecture-northstar.md`,
 `2026-07-09-graph-ir-rust-port-design.md`,
@@ -73,7 +73,7 @@ mmap/backing-store/client-store or graph-private segment-store fallback remainin
 
 ## 2. The segment/blob store seam (Rust)
 
-The seam takes the `aiperf::graph` module's base (`rust/aiperf/src/graph/segment.rs`,
+The seam takes the `aiperf_runtime::graph` module's base (`rust/runtime/src/graph/segment.rs`,
 `materialize.rs`), adds the production interned-handle form from the Python unified
 store (`graph_segment_unified_store.py`), and generalizes it to carry media blobs
 and raw token arrays too.
@@ -324,9 +324,9 @@ than forks, the existing trace-hash native-materialization path.
 
 ## 7. Status and proof
 
-The dataset/segment seam is realized as the `aiperf::dataset` module
-(`rust/aiperf/src/dataset*`) and is shared by `aiperf-runner`, evaluator-authored
-static accuracy, Graph-IR (`aiperf::graph`), and the library-only offline adapter.
+The dataset/segment seam is realized as the `aiperf_runtime::dataset` module
+(`rust/runtime/src/dataset*`) and is shared by `aiperf --execute`, evaluator-authored
+static accuracy, Graph-IR (`aiperf_runtime::graph`), and the library-only offline adapter.
 There is no mmap/backing-store/client-store or graph-private segment-store fallback.
 
 Proof is executable and self-contained: the dataset suite passes under

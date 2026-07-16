@@ -14,10 +14,10 @@
 //! As sections land, add their key to `PORTED_CFG_SECTIONS`. A section not in
 //! the list is intentionally dropped by the native type and not asserted yet.
 
-use aiperf_runtime::runner_protocol::protocol_v2::RunnerEnvelopeV2;
 use aiperf_cli::flags::ProfileFlags;
 use aiperf_cli::load;
 use aiperf_cli::model::BenchmarkRun;
+use aiperf_runtime::runner_protocol::protocol_v2::RunnerEnvelopeV2;
 
 /// `cfg` sections the native type currently models; asserted for byte-exact
 /// round-trip. Extend as each section is ported.

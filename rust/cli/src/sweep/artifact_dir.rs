@@ -70,12 +70,16 @@ mod tests {
         // sweep, multi-run, REPEATED -> profile_runs/trial_NNNN/<dir_name>
         assert_eq!(
             resolve(b, true, 2, "concurrency_4", 0, IterationOrder::Repeated),
-            b.join("profile_runs").join("trial_0001").join("concurrency_4")
+            b.join("profile_runs")
+                .join("trial_0001")
+                .join("concurrency_4")
         );
         // sweep, multi-run, INDEPENDENT -> <dir_name>/profile_runs/trial_NNNN
         assert_eq!(
             resolve(b, true, 2, "concurrency_4", 1, IterationOrder::Independent),
-            b.join("concurrency_4").join("profile_runs").join("trial_0002")
+            b.join("concurrency_4")
+                .join("profile_runs")
+                .join("trial_0002")
         );
     }
 }

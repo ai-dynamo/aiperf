@@ -190,8 +190,10 @@ fn resolve_variables(
     base: &Map<String, Value>,
 ) -> anyhow::Result<Map<String, Value>> {
     let mut resolved: Map<String, Value> = Map::new();
-    let mut pending: Vec<(String, Value)> =
-        variables.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let mut pending: Vec<(String, Value)> = variables
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
 
     while !pending.is_empty() {
         // Deterministic order: sort the ready set by name (Python sorts too).
@@ -322,9 +324,9 @@ fn render_str_strict(
 
     let mut env = Environment::new();
     env.set_undefined_behavior(UndefinedBehavior::Strict);
-    let tmpl = env
-        .template_from_str(data)
-        .map_err(|e| RenderError::Fatal(anyhow::anyhow!("Jinja2 template error at {path:?}: {e}")))?;
+    let tmpl = env.template_from_str(data).map_err(|e| {
+        RenderError::Fatal(anyhow::anyhow!("Jinja2 template error at {path:?}: {e}"))
+    })?;
     let jinja_ctx = JinjaValue::from_serialize(Value::Object(context.clone()));
     match tmpl.render(jinja_ctx) {
         Ok(rendered) => Ok(coerce_scalar(&rendered)),

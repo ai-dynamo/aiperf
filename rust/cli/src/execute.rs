@@ -79,7 +79,12 @@ pub fn run_once(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| anyhow::anyhow!("failed to spawn aiperf --execute ({}): {e}", exec_bin.display()))?;
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "failed to spawn aiperf --execute ({}): {e}",
+                exec_bin.display()
+            )
+        })?;
     // Publish the PID so the signal forwarder can deliver a graceful SIGINT.
     child_pid.set(child.id());
 
@@ -192,7 +197,8 @@ mod tests {
         let runner = fake_runner(
             r#"{"protocol_version":2,"event":"run_terminal","benchmark_id":"b1","success":true,"report_path":"/tmp/x/native-v2.json"}"#,
         );
-        let terminal = run_once(runner.as_ref(), b"{}", &crate::signals::ChildPid::default()).unwrap();
+        let terminal =
+            run_once(runner.as_ref(), b"{}", &crate::signals::ChildPid::default()).unwrap();
         assert!(terminal.success);
         assert_eq!(
             terminal.report_path.as_deref(),
@@ -204,7 +210,8 @@ mod tests {
     fn rejects_multiple_stdout_lines() {
         // Two genuine stdout lines must violate the one-terminal-line contract.
         let runner = fake_runner_raw("printf 'first\\nsecond\\n'");
-        let err = run_once(runner.as_ref(), b"{}", &crate::signals::ChildPid::default()).unwrap_err();
+        let err =
+            run_once(runner.as_ref(), b"{}", &crate::signals::ChildPid::default()).unwrap_err();
         assert!(err.to_string().contains("exactly one terminal JSON line"));
     }
 }

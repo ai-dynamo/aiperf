@@ -81,7 +81,7 @@ directly, bypassing the queue (`:235-242`).
 - Each is a `DynamicConcurrencyLimit` = semaphore **+ debt tracking** for graceful
   ramp-down (`set_limit` cancels debt then adds, or drains + tracks debt),
   layered global+per-phase. **This is the debt-drain `SlotPool` already ported into
-  `aiperf::timing`.** DAG children inherit the parent's session slot (no acquire).
+  `aiperf_runtime::timing`.** DAG children inherit the parent's session slot (no acquire).
 
 ### 1.2 Stop conditions (`stop_conditions.py`) — already mirrored in Rust
 
@@ -90,7 +90,7 @@ Lifecycle (cancel / sending-complete), RequestCount (`requests_sent < N`),
 SessionCount (`sent_sessions < N` **or** `root_requests_sent < total_session_turns`),
 Duration (`time_left > 0`). `can_send_any_turn` = all pass; `can_start_new_session`
 = that **plus** the session quota; `can_send_dag_child_turn` excludes SessionCount.
-My `aiperf::timing::StopChecker` already carries this shape (`RunState` has
+My `aiperf_runtime::timing::StopChecker` already carries this shape (`RunState` has
 `root_requests_sent` / `total_session_turns`).
 
 ### 1.3 Numbering + counters (`credit_counter.py`) — atomic by single-loop serialization
@@ -140,15 +140,15 @@ no-policy max-throughput escape hatch only.
 
 | Concern | Primitive | Crate | Status |
 |---|---|---|---|
-| Inter-arrival (Poisson/Gamma/Const/Burst) + `set_rate` | `IntervalGenerator` | `aiperf::timing` | **built** |
-| Session + prefill caps (debt-drain, `set_limit`) | `SlotPool` / `ConcurrencyManager` | `aiperf::timing` | **built** |
-| Stop bounds (count/session/duration/lifecycle) | `StopChecker` / `RunState` | `aiperf::timing` | **built** |
-| Absolute-schedule pacer + catch-up | arrival loop | `aiperf::run` (`run_paced`) | **built** (single-turn only) |
-| Pacing / think-time sleeps | `Clock::sleep` | `aiperf::clock` | **built** |
-| Turn prompt = prior replies spliced | `SegmentStore` + `materialize` | `aiperf::dataset` | **built** |
-| Dispatch turn + record TTFT/ITL (TTFT releases prefill) | `TurnDispatcher` + scheduled lifecycle hooks | `aiperf` / `aiperf::transport_http` | **built** |
+| Inter-arrival (Poisson/Gamma/Const/Burst) + `set_rate` | `IntervalGenerator` | `aiperf_runtime::timing` | **built** |
+| Session + prefill caps (debt-drain, `set_limit`) | `SlotPool` / `ConcurrencyManager` | `aiperf_runtime::timing` | **built** |
+| Stop bounds (count/session/duration/lifecycle) | `StopChecker` / `RunState` | `aiperf_runtime::timing` | **built** |
+| Absolute-schedule pacer + catch-up | arrival loop | `aiperf_runtime::run` (`run_paced`) | **built** (single-turn only) |
+| Pacing / think-time sleeps | `Clock::sleep` | `aiperf_runtime::clock` | **built** |
+| Turn prompt = prior replies spliced | `SegmentStore` + `materialize` | `aiperf_runtime::dataset` | **built** |
+| Dispatch turn + record TTFT/ITL (TTFT releases prefill) | `TurnDispatcher` + scheduled lifecycle hooks | `aiperf` / `aiperf_runtime::transport_http` | **built** |
 | **Continuation queue + two-source issue loop** | `RequestRateWorkload` | `aiperf` | **built** |
-| **Conversation source over the segment pool** | `ConversationSource` trait | `aiperf` / `aiperf::dataset` | **built** |
+| **Conversation source over the segment pool** | `ConversationSource` trait | `aiperf` / `aiperf_runtime::dataset` | **built** |
 | **Prefill-release-on-TTFT wiring** | first-token lifecycle hook → `SlotGuard::drop` | `aiperf` | **built** |
 
 The implementation addendum below records the completed continuation queue,
@@ -169,7 +169,7 @@ priority issue loop, TTFT release edge, and dataset/CLI wiring.
   the issue loop pops it with priority.
 - **`Workload`** — the umbrella-spec seam; `RateWorkload` is the schedule generator
   that runs the loop above. Linear multi-turn needs no graph executor — the
-  continuation queue *is* the sequencer; the DAG executor (`aiperf::graph`) is only for
+  continuation queue *is* the sequencer; the DAG executor (`aiperf_runtime::graph`) is only for
   FORK/SPAWN branching.
 
 ---
@@ -190,7 +190,7 @@ byte-identical metric values** — simulated vs real timings differ by construct
 - The credit id (`credit_index = requests_sent++`) is unique and monotonically
   *assigned* — safe as a request key. Its mapping to wall-clock order is deterministic
   under the single loop (online *and* offline), because issuance is serial.
-- Arrival RNG (`IntervalGenerator`) is seeded (`aiperf::rng`, BLAKE3-derived,
+- Arrival RNG (`IntervalGenerator`) is seeded (`aiperf_runtime::rng`, BLAKE3-derived,
   order-independent) — bit-reproducible spacing for a given seed.
 - Under `SimClock` the whole run (inter-arrival + think-time + engine steps) is a DES
   on one integer-ns timeline → byte-reproducible. No wall clock outside `RealClock`.
@@ -208,7 +208,7 @@ byte-identical metric values** — simulated vs real timings differ by construct
    `prefill_slots.release()` (also the graph path's `prefill_concurrency`).
 4. **Think-time** — `delay_ms` → deferred continuation enqueue via `Clock::sleep`.
 5. **Dataset-backed `ConversationSource`** — over the unified segment/dataset store.
-6. **DAG branching** — route FORK/SPAWN through `aiperf::graph`; children bypass the
+6. **DAG branching** — route FORK/SPAWN through `aiperf_runtime::graph`; children bypass the
    session slot + the continuation queue (dispatched directly), per source.
 
 Increments 1–4 deliver linear multi-turn request-rate online + offline; 5–6 add real
@@ -241,7 +241,7 @@ final) and a **prefill `SlotPool`** (every turn → TTFT), bounded by `StopCheck
 with turns materialized from the segment pool and think-time deferred via
 `Clock::sleep` — control-plane on one loop (never the bottleneck), HTTP fanned out as
 the data plane, and the whole thing deterministic under `SimClock`. Most primitives
-exist in `aiperf::timing`; `aiperf::request_rate::RequestRateWorkload` composes them
+exist in `aiperf_runtime::timing`; `aiperf_runtime::request_rate::RequestRateWorkload` composes them
 through the shared scheduled runtime.
 
 ---
@@ -249,7 +249,7 @@ through the shared scheduled runtime.
 ## 9. Implementation addendum (2026-07-11)
 
 The linear request-rate chain is built in
-`rust/aiperf/src/request_rate.rs` as `RequestRateWorkload`, a normal
+`rust/runtime/src/request_rate.rs` as `RequestRateWorkload`, a normal
 `scheduled::Workload`. It owns the single issuer loop, FIFO continuation queue,
 cached next sampler draw, session guards, and per-turn prefill guards. The loop
 draws the next interval before admission, re-anchors rather than catching up,
@@ -275,26 +275,26 @@ store with the real prior assistant reply.
 
 Executable evidence:
 
-- `rust/aiperf/tests/request_rate_sim.rs` proves continuation priority, exact
+- `rust/runtime/tests/request_rate_sim.rs` proves continuation priority, exact
   turn pacing, cached-sample retry, session and prefill limits, TTFT release,
   terminal fallback, think time, request/session/duration stops, drain behavior,
   and reply-spliced materialization under `SimClock`.
 - Dataset-backed multi-turn dispatch and reply splicing is proven under
   `SimClock` in the same `request_rate_sim.rs` scenarios above; real wall-clock
   coverage of the shared scheduled runtime that this workload composes rides
-  `rust/aiperf/tests/scheduled_real_mock.rs` (fixed-schedule + user-centric over
+  `rust/runtime/tests/scheduled_real_mock.rs` (fixed-schedule + user-centric over
   the in-repo mock), and the runner product online path is covered by
-  `rust/runner/tests/online_v2_stdio.rs`.
+  `rust/cli/tests/online_v2_stdio.rs`.
 - Existing scheduled, ancillary, adaptive, and workspace suites cover the shared
   runtime and actuator regressions.
 
-DAG fan-out remains owned by `aiperf::graph`. The separately designed engine sink
-is now built behind the `aiperf` crate's `dynosim` feature: the unchanged
+DAG fan-out remains owned by `aiperf_runtime::graph`. The separately designed engine sink
+is now built behind the `aiperf-runtime` crate's `dynosim` feature: the unchanged
 continuation-priority request-rate workload runs against Dynamo on one `SimClock`
-without HTTP through `aiperf::dynosim::run_request_rate_offline`, and the
+without HTTP through `aiperf_runtime::dynosim::run_request_rate_offline`, and the
 feature-gated `dynosim_offline` transport is exercised end-to-end by the runner's
-`rust/runner/tests/offline_stdio.rs`. Adaptive request-rate composition is now
+`rust/cli/tests/offline_stdio.rs`. Adaptive request-rate composition is now
 available in that optional backend as well —
-`aiperf::dynosim::run_request_rate_offline_with_adaptive_and_ancillary` threads
+`aiperf_runtime::dynosim::run_request_rate_offline_with_adaptive_and_ancillary` threads
 the same adaptive actuators and ancillary policies through the offline path used
 by real HTTP.

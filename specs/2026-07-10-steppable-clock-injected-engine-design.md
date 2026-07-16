@@ -4,8 +4,8 @@
 through Python Config v2 (`transport.type: dynosim_offline | dynosim_online`).
 Default runner builds omit the transports.
 
-**Goal:** Define one Rust boundary through which AIPerf (`rust/aiperf`, module
-`aiperf::dynosim`) drives the Dynamo mocker's inference engine — real (HTTP) or
+**Goal:** Define one Rust boundary through which AIPerf (`rust/runtime`, module
+`aiperf_runtime::dynosim`) drives the Dynamo mocker's inference engine — real (HTTP) or
 simulated (in-process DES) — behind a single load-generation harness, by
 inverting the mocker's self-driving batch loops into a *passive, steppable,
 externally-clocked engine core*.
@@ -16,7 +16,7 @@ measurement events. Inject a wall clock → drive a real server or drive the
 engine in real time. Inject a virtual clock → drive the mocker engine
 in-process, faster-than-real. One driver, three modes, one report type.
 
-**Tech Stack:** Pure Rust, single workspace. `rust/aiperf` (tokio
+**Tech Stack:** Pure Rust, single workspace. `rust/runtime` (tokio
 `current_thread` + `LocalSet`, `?Send`, `spawn_local`) consumes the sibling
 `dynamo-aiperf-native/lib/mocker` checkout (scheduler cores
 `VllmCore`/`SglangCore`, perf model, `TraceCollector`) only under the `dynosim`
@@ -91,7 +91,7 @@ The passive `SteppableReplay` boundary resolves this.
 
 ```mermaid
 flowchart TB
-    subgraph aiperf["aiperf::dynosim  (driver — owns the run loop + clock)"]
+    subgraph aiperf["aiperf_runtime::dynosim  (driver — owns the run loop + clock)"]
         strat["Load strategy<br/>concurrency / rate / trace / graph-dataflow"]
         clock["Clock<br/>WallClock | SimClock"]
         driver["drive loop<br/>(unifies engine events + sleeper heap on ONE clock)"]
@@ -182,7 +182,7 @@ are pulled into the pure co-sim library (the feature-gated
 
 ## 5. The Clock (owned by `aiperf`)
 
-The realized seams are `aiperf::clock::Clock` and
+The realized seams are `aiperf_runtime::clock::Clock` and
 `loadgen_core::{RequestSink<R>, RequestObserver, Dispatchable}`:
 
 ```rust
@@ -200,7 +200,7 @@ every strategy, not just graph: concurrency, continuation-priority request rate,
 fixed trace, user-centric, and Graph-IR strategies all run on the same
 `Clock`-parameterized pacer, so the co-sim mode is a clock swap, not a new code
 path. The earlier PR2.5-era split HTTP clock was removed — the CLI and graph
-benchmark both use the Clock-injected `aiperf::transport_http` hyper client.
+benchmark both use the Clock-injected `aiperf_runtime::transport_http` hyper client.
 
 ## 6. The Observer / Completion Seam
 
@@ -212,7 +212,7 @@ The `RequestObserver` does double duty on the sim path:
    `oneshot`-like slot keyed by `uuid`); when it emits the first
    `on_token(uuid, …)`, it fires the graph first-token gate.
 
-`aiperf::dynosim` owns the `Rc`/`RefCell` engine host (`EngineHost`), the
+`aiperf_runtime::dynosim` owns the `Rc`/`RefCell` engine host (`EngineHost`), the
 completion mailboxes, the OpenAI request encoder/materializer, and the
 `RequestSink<HttpRequest>` / `TurnDispatcher` / `GraphSink` adapters
 (`DynosimSink`). A sim sink looks identical in shape to the HTTP sink,
@@ -221,7 +221,7 @@ the completion slot instead of streaming HTTP.
 
 ## 7. The Driver Loop (one loop, both event sources)
 
-`aiperf::runtime::SimEventSource` plus `drive_sim_with_source` is the
+`aiperf_runtime::runtime::SimEventSource` plus `drive_sim_with_source` is the
 backend-neutral two-queue DES pump — the externalized form of
 `SingleRuntime::run`'s `min(next_arrival, pass_end)` selection:
 
@@ -262,7 +262,7 @@ hardware/model for the two co-sim transports.
 **Wall-clock in-process online replay (`dynosim_online`).** The same passive
 `SteppableReplay` engine, `EngineHost`, `DynosimSink`, materializer, observer,
 native accumulator, and report are driven under the **real wall clock** by
-`aiperf::runtime::drive_real_with_source` — the equivalent of Dynamo's
+`aiperf_runtime::runtime::drive_real_with_source` — the equivalent of Dynamo's
 `--replay-mode online`. The real-time driver steps the engine at each event's
 own sim time (`set_time_ns(at_ns); step(at_ns)`) but sleeps to that deadline in
 real wall time (interruptible by a submission `Notify`), so the engine's
@@ -342,10 +342,10 @@ transports for **both** the scheduled and graph protocol-v2 pairs (four pairs:
 through Python Config v2; the default runner omits them and fails closed on the
 transport ids. The native `aiperf --offline` executable that briefly hosted this
 adapter was deleted with the native CLI; the sole end-user AIPerf entry point is
-`aiperf-runner` over protocol v2, with `aiperf::dynosim` remaining the shared
+`aiperf --execute` over protocol v2, with `aiperf_runtime::dynosim` remaining the shared
 library.
 
-`aiperf::metrics_core` accepts `ReportClockKind::Real` for the Dynamo report
+`aiperf_runtime::metrics_core` accepts `ReportClockKind::Real` for the Dynamo report
 block; the runner reports `clock=real` / `mode=online:*` on the wall-clock path
 and `clock=virtual` on the offline path. Python requires no schema change beyond
 selecting the transport type: the typed `DynosimTransportConfig` forwards the
@@ -461,5 +461,5 @@ point, every `SteppableReplay` method, all sweep model fields/operations, every
 trace/mode domain, and every Mocker Cargo feature — a new upstream field or
 feature fails the AIPerf suite until it has an explicit support mapping. This
 facade delegates to Dynamo's canonical Python-owned products; it is never used as
-an AIPerf execution fallback and is not a substitute for the `aiperf-runner`
+an AIPerf execution fallback and is not a substitute for the `aiperf --execute`
 co-sim transports.

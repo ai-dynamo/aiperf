@@ -37,7 +37,7 @@ handful of things the current `ajc/rust` spike dropped that will silently change
 benchmark semantics if not restored deliberately.
 
 State of the `ajc/rust` spike as of this writing: a "walking skeleton"
-(`rust/aiperf/src/run.rs:4`), ~11 commits, six crates (`aiperf-clock`,
+(`rust/runtime/src/run.rs:4`), ~11 commits, six crates (`aiperf-clock`,
 `loadgen-core`, `aiperf-transport-http`, `aiperf-core`, `aiperf-graph`, `aiperf`). It
 already implements thread-per-core single-threaded tokio runtimes, `Rc`/`RefCell`
 per-trace state, raw hyper + UDS transport, `timerfd`/`SimClock`, and has deleted
@@ -51,7 +51,7 @@ mostly "keep doing that, plus these gaps."
 This is the most important thing and it is **not** about performance. It is what
 buys all three modes for free.
 
-- **`Clock` trait (`aiperf::clock`, formerly the `aiperf-clock` crate)** — `now_ns` / `sleep` / `next_event_time` /
+- **`Clock` trait (`aiperf_runtime::clock`, formerly the `aiperf-clock` crate)** — `now_ns` / `sleep` / `next_event_time` /
   `advance_to` / `is_virtual`, with `RealClock` (Linux `timerfd`, CLOCK_MONOTONIC,
   awaited via tokio `AsyncFd`) and `SimClock` (integer-ns `BinaryHeap` DES,
   `(deadline, seq_no)` tie-break). `is_virtual()` selects `drive_sim` vs
@@ -63,7 +63,7 @@ buys all three modes for free.
   `RequestSink` / `RequestObserver` (`on_arrival/on_admit/on_token/on_terminal`).
   Real HTTP, mock HTTP, and in-process co-sim are three `RequestSink` impls behind
   one observer. This is the second half of "three modes for free."
-- **Gap:** `rust/aiperf/src/graph/mod.rs:14-15` explicitly says the offline
+- **Gap:** `rust/runtime/src/graph/mod.rs:14-15` explicitly says the offline
   virtual-clock co-sim path is **not** wired yet. The seam exists; the
   OFFLINE-MOCK sink is the missing third leg. Design it in now.
 
@@ -151,7 +151,7 @@ scheduler module unless a future design explicitly reintroduces one.
 
 - [ ] **Continuation-turn-before-new-session priority** (`request_rate.py:238`).
   Frees session slots faster, prevents starvation. Missing → latency distribution
-  shifts under load. *Where:* the online driver in `rust/aiperf/src/run.rs`
+  shifts under load. *Where:* the online driver in `rust/runtime/src/run.rs`
   currently just `Semaphore` + `tokio::spawn` per request with no turn priority.
 - [ ] **Prefill slot released on TTFT, not on completion** (`issuer.py`,
   `sticky_router.py:476` FirstToken early-return). Models GPU prompt-processing

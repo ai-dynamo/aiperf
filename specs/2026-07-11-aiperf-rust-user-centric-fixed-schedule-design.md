@@ -8,7 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 **Date:** 2026-07-11
 **Author:** Anthony Casagrande (Tech Lead) + Claude
 **Status:** built (online + offline). Both scheduled strategies run over shared
-Clock-backed `ScheduledRuntime` traits in `rust/aiperf`; Python Config v2 authors both,
+Clock-backed `ScheduledRuntime` traits in `rust/runtime`; Python Config v2 authors both,
 and the registered scheduled pair injects either the online or the feature-gated offline
 (`dynosim`) backend without changing workload policy.
 **Grounding:** end-to-end line-by-line read of
@@ -17,7 +17,7 @@ and the registered scheduled pair injects either the online or the feature-gated
 `src/aiperf/timing/strategies/fixed_schedule.py`,
 `src/aiperf/timing/conversation_source.py`,
 `src/aiperf/timing/intervals.py`, and the Rust realization in
-`rust/aiperf/src/{scheduled,scheduler,multiturn,fixed_schedule,user_centric}.rs`.
+`rust/runtime/src/{scheduled,scheduler,multiturn,fixed_schedule,user_centric}.rs`.
 **Companion (read first, not re-derived here):**
 `specs/2026-07-11-aiperf-rust-request-rate-multiturn-design.md` — establishes the
 single-loop credit-issuer model, the session/prefill `SlotPool` contract,
@@ -206,7 +206,7 @@ re-queues a blocked spawn at `now + stagger` (`user_centric_rate.py:302-303`).
 
 ## 3. The `plan_user_centric` seed and its binding
 
-`rust/aiperf/src/user_centric.rs` carries `plan_user_centric`, which realizes
+`rust/runtime/src/user_centric.rs` carries `plan_user_centric`, which realizes
 **exactly the §2.1 setup math** — the pure, RNG-free, clock-free seeding
 (`user_centric.rs:4-13`). It is the deterministic core; `UserPool` /
 `UserCentricWorkload` / `UserTargetController` (same file) bind it to sampled sessions
@@ -333,24 +333,24 @@ timestamp may already be in the past, and `ts_to_perf` can return a past `perf_s
 ## 5. Mapping onto the modules
 
 Sixteen former `aiperf-*` library crates are now modules of `aiperf`; these workloads
-live in `aiperf::{scheduled, scheduler, multiturn, fixed_schedule, user_centric}`.
+live in `aiperf_runtime::{scheduled, scheduler, multiturn, fixed_schedule, user_centric}`.
 
 | Concern | Primitive / seam | Module | Status |
 |---|---|---|---|
-| User-centric steady-state seeding math | `plan_user_centric` / `UserCentricPlan` / `InitialUser` | `aiperf::user_centric` (`user_centric.rs`) | **built** |
-| Open-loop replacement spawn time | `next_replacement_spawn_ns` | `aiperf::user_centric` (`user_centric.rs:186`) | **built** |
-| Inter-arrival (Poisson/Gamma/Const/Burst) + `set_rate` | `IntervalGenerator` | `aiperf::timing` | **built** (unused by these two: user-centric derives its own stagger/turn_gap; fixed-schedule has no rate) |
-| Session + prefill caps (debt-drain) | `SlotPool` / `ConcurrencyManager` | `aiperf::timing` | **built** (user-centric uses only under `--concurrency`; fixed-schedule uses none) |
-| Stop bounds | `StopChecker` / `RunState` | `aiperf::timing` | **built** (user-centric: the issuance-return stop path; fixed-schedule: injected-but-unused) |
-| Absolute-at pacing / think-time sleeps | `Clock::sleep`, `now_ns` | `aiperf::clock` | **built** |
-| Turn prompt = prior replies spliced | `SegmentStore` + `materialize` | `aiperf::dataset` / `aiperf::graph` | **built** |
-| Dispatch turn + record TTFT/ITL | `RequestSink` + observer | `loadgen-core` / `aiperf::transport_http` | **built** |
-| `schedule_at` / `schedule_later` / `execute_async` scheduler | `LocalTaskScheduler` / `ClockTaskScheduler` over `Clock` | `aiperf::scheduler` | **built** |
-| Shared scheduled runtime (issuance/dispatch, metrics, drain) | `ScheduledRuntime` / `Workload` / `TurnDispatcher` | `aiperf::scheduled` | **built** |
-| User-centric run loop (spawn heap + per-user pacer + churn) | `UserPool` + `UserCentricWorkload` | `aiperf::user_centric` | **built** |
-| Adaptive user target (ramp) | `UserTargetController` | `aiperf::user_centric` | **built** |
-| Fixed-schedule source (sorted absolute schedule + zero-offset) | `FixedScheduleSource` + `FixedScheduleWorkload` | `aiperf::fixed_schedule` | **built** |
-| `ConversationSource` (sample template, mint corr-id, next-turn meta) | `ConversationSource` trait | `aiperf::multiturn` | **built** |
+| User-centric steady-state seeding math | `plan_user_centric` / `UserCentricPlan` / `InitialUser` | `aiperf_runtime::user_centric` (`user_centric.rs`) | **built** |
+| Open-loop replacement spawn time | `next_replacement_spawn_ns` | `aiperf_runtime::user_centric` (`user_centric.rs:186`) | **built** |
+| Inter-arrival (Poisson/Gamma/Const/Burst) + `set_rate` | `IntervalGenerator` | `aiperf_runtime::timing` | **built** (unused by these two: user-centric derives its own stagger/turn_gap; fixed-schedule has no rate) |
+| Session + prefill caps (debt-drain) | `SlotPool` / `ConcurrencyManager` | `aiperf_runtime::timing` | **built** (user-centric uses only under `--concurrency`; fixed-schedule uses none) |
+| Stop bounds | `StopChecker` / `RunState` | `aiperf_runtime::timing` | **built** (user-centric: the issuance-return stop path; fixed-schedule: injected-but-unused) |
+| Absolute-at pacing / think-time sleeps | `Clock::sleep`, `now_ns` | `aiperf_runtime::clock` | **built** |
+| Turn prompt = prior replies spliced | `SegmentStore` + `materialize` | `aiperf_runtime::dataset` / `aiperf_runtime::graph` | **built** |
+| Dispatch turn + record TTFT/ITL | `RequestSink` + observer | `loadgen-core` / `aiperf_runtime::transport_http` | **built** |
+| `schedule_at` / `schedule_later` / `execute_async` scheduler | `LocalTaskScheduler` / `ClockTaskScheduler` over `Clock` | `aiperf_runtime::scheduler` | **built** |
+| Shared scheduled runtime (issuance/dispatch, metrics, drain) | `ScheduledRuntime` / `Workload` / `TurnDispatcher` | `aiperf_runtime::scheduled` | **built** |
+| User-centric run loop (spawn heap + per-user pacer + churn) | `UserPool` + `UserCentricWorkload` | `aiperf_runtime::user_centric` | **built** |
+| Adaptive user target (ramp) | `UserTargetController` | `aiperf_runtime::user_centric` | **built** |
+| Fixed-schedule source (sorted absolute schedule + zero-offset) | `FixedScheduleSource` + `FixedScheduleWorkload` | `aiperf_runtime::fixed_schedule` | **built** |
+| `ConversationSource` (sample template, mint corr-id, next-turn meta) | `ConversationSource` trait | `aiperf_runtime::multiturn` | **built** |
 
 ### 5.1 The seams (every extension point a trait)
 
@@ -405,7 +405,7 @@ live in `aiperf::{scheduled, scheduler, multiturn, fixed_schedule, user_centric}
   `TurnToSend` (`conversation_source.py:68-85`).
 
 Neither strategy needs the graph executor for its *linear* turns — the per-user pacer
-(user-centric) and the trace schedule (fixed) are the sequencers; `aiperf::graph` is
+(user-centric) and the trace schedule (fixed) are the sequencers; `aiperf_runtime::graph` is
 only for FORK/SPAWN DAG branching, exactly as in the companion spec.
 
 ---
@@ -450,7 +450,7 @@ ledger addendum): simulated vs real timings differ by construction.
 ## 7. How it is wired
 
 Python Config v2 authors both strategies once; the runner's registered scheduled pair
-(`aiperf-runner`) direct-loads the prepared operation and injects either the online
+(`aiperf-cli`) direct-loads the prepared operation and injects either the online
 Clock-injected hyper transport or, under `dynosim`, the offline in-process Dynamo
 `TurnDispatcher` — **the workload policy is identical either way**. The build layered
 cleanly on the shared seams:

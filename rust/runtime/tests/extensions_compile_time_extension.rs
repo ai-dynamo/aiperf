@@ -12,7 +12,9 @@ use aiperf_runtime::endpoints::{
     PreparedRequest, RawEndpointConfig, ReadinessPolicy, RequestRecord, ResponseData,
     ServerResponse, Turn,
 };
-use aiperf_runtime::extensions::{AIPerfExtension, AIPerfRegistry, AIPerfRegistryFactory, ExtensionError};
+use aiperf_runtime::extensions::{
+    AIPerfExtension, AIPerfRegistry, AIPerfRegistryFactory, ExtensionError,
+};
 use aiperf_runtime::rng::RngRoot;
 
 struct ExternalSampler {

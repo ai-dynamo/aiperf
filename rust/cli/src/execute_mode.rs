@@ -26,6 +26,7 @@ use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 
 use aiperf_runtime::runner_protocol::application::RunnerApplication;
+use aiperf_runtime::runner_protocol::cellular_kind::CellularRunKind;
 use aiperf_runtime::runner_protocol::distribution_identity::current_distribution_id;
 use aiperf_runtime::runner_protocol::protocol_v2::{
     RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2, RunnerEnvelopeV2,
@@ -137,17 +138,18 @@ fn run_cell() -> ! {
             std::process::exit(2);
         }
     };
-    let envelope_bytes =
-        match runtime.block_on(aiperf_runtime::runner_protocol::cellular_cell::fetch_cell_envelope()) {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                tracing::error!(
-                    error = format!("{error:#}"),
-                    "cell failed to fetch its envelope"
-                );
-                std::process::exit(2);
-            }
-        };
+    let envelope_bytes = match runtime
+        .block_on(aiperf_runtime::runner_protocol::cellular_cell::fetch_cell_envelope())
+    {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            tracing::error!(
+                error = format!("{error:#}"),
+                "cell failed to fetch its envelope"
+            );
+            std::process::exit(2);
+        }
+    };
     // Ultimate spec §3 + §4.5: when dataset fan-out is enabled, build this cell's owned
     // index over the controller's broadcast and run the dispatch state machine over it
     // (a no-op otherwise). Done before dropping the fetch runtime, after START.
@@ -205,9 +207,9 @@ fn run_aggregator(input: &[u8]) -> ! {
             std::process::exit(2);
         }
     };
-    match runtime.block_on(aiperf_runtime::runner_protocol::cellular_aggregator::run_aggregator(
-        &envelope,
-    )) {
+    match runtime
+        .block_on(aiperf_runtime::runner_protocol::cellular_aggregator::run_aggregator(&envelope))
+    {
         Ok(()) => std::process::exit(0),
         Err(error) => {
             tracing::error!(error = format!("{error:#}"), "aggregator failed");
@@ -263,7 +265,8 @@ fn run_controller(envelope: &Value) -> ! {
         .and_then(Value::as_str)
         .unwrap_or_default();
     let report_path = std::path::Path::new(artifact_dir).join("native-v2.json");
-    let cell_count = aiperf_runtime::runner_protocol::cell_launcher::cell_count_from_envelope(envelope);
+    let cell_count =
+        aiperf_runtime::runner_protocol::cell_launcher::cell_count_from_envelope(envelope);
     // Compose the stock application so the merged-report export plane resolves the
     // built-in exporter sinks from the one unified `AIPerfRegistry`, exactly as the
     // single-process coordinator path does via `product_registry().exporters()`.
@@ -293,7 +296,15 @@ fn run_controller(envelope: &Value) -> ! {
                     .unwrap_or("http")
                     .to_owned(),
             );
-            provenance.insert("workload".to_owned(), "scheduled".to_owned());
+            // Label the workload by the run's kind (scheduled vs graph), not a
+            // hardcoded "scheduled" — a graph cellular run must not report itself as
+            // scheduled. Transport (http/grpc) is the orthogonal label set above.
+            provenance.insert(
+                "workload".to_owned(),
+                CellularRunKind::detect(&envelope)
+                    .workload_label()
+                    .to_owned(),
+            );
             provenance.insert("cells".to_owned(), outcome.cell_count.to_string());
             provenance.insert("record_count".to_owned(), outcome.record_count.to_string());
             write_json_line(

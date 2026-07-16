@@ -3,8 +3,8 @@
 
 # AIPerf Rust Runtime — Architecture
 
-> Scope: the entire Rust implementation under `rust/` (crates `aiperf`, `aiperf-runner`,
-> `loadgen-core`, `aiperf-mock-server`). This document traces the whole path **from the
+> Scope: the entire Rust implementation under `rust/` (crates `aiperf-cli` — the `aiperf`
+> binary, `aiperf-runtime`, `loadgen-core`, `aiperf-mock-server`). This document traces the whole path **from the
 > command line to results**, annotating every component along the way, its structure, and its
 > configuration surface. Every claim is grounded in `crate/src/file.rs`; specs are design
 > intent, code is truth.
@@ -13,12 +13,14 @@
 
 ## 0. One-paragraph summary
 
-AIPerf is a **Python-orchestrated, Rust-executed** load generator and measurement front end for
-inference servers. The human-facing `aiperf` CLI (Python) owns Config-v2, sweep/trial planning,
-and presentation. For each run it serializes exactly one **protocol-v2 JSON envelope** and pipes
-it to a fresh `aiperf-runner` child over stdin. The runner is the **only Rust executable on the
-product path**: it validates the envelope against frozen registries, selects a `{transport,
-workload}` pair, builds a dataset/graph, drives a phased load test over a single injected
+AIPerf is a **Rust-executed** load generator and measurement front end for
+inference servers. The human-facing `aiperf` binary (crate `aiperf-cli`) is BOTH the native
+front door — it owns Config-v2, sweep/trial planning, and presentation natively — AND the
+execution engine. For each run it projects exactly one **protocol-v2 JSON envelope** and pipes
+it to a fresh `aiperf --execute` child over stdin (with `AIPERF_NATIVE=0`, the pure-Python
+frontend spawns the same `aiperf --execute` child). The `aiperf` binary is the **only Rust
+executable on the product path**: in `--execute` mode it validates the envelope against frozen
+registries, selects a `{transport, workload}` pair, builds a dataset/graph, drives a phased load test over a single injected
 `Clock` and dispatch seam, accumulates fine-grained timing metrics, writes the authoritative
 `native-v2.json` report, fans out native exporters, and emits one terminal JSONL line on stdout.
 The whole execution substrate is written against two seams — `{clock}` (real vs virtual time)
@@ -32,7 +34,7 @@ co-simulation.
 
 Everything else is built on two trait seams. If you understand these, the rest is composition.
 
-### 1.1 `{clock}` — `aiperf/src/clock/`
+### 1.1 `{clock}` — `rust/runtime/src/clock/`
 
 One `Clock` trait (`clock/clock.rs:20`) abstracts wall-vs-virtual time so the **same** tokio
 executor runs live or as a deterministic discrete-event simulation.
@@ -94,11 +96,11 @@ backend**.
 | Crate | Role | Depends on |
 |---|---|---|
 | `loadgen-core` | The `{transport}` seam + trace collector. Zero engine/HTTP deps. | — |
-| `aiperf` | Library-only runtime: clocks, transports, endpoints, datasets, RNG, timing/scheduling, graph engine, metrics, exporters, adaptive, accuracy, side-channel telemetry, cellular, dynosim. 16 former `aiperf-*` crates are now modules. Owns the single unified `AIPerfRegistry`/`AIPerfExtension` seam (`extensions`) and — behind the `runner-protocol` Cargo feature — hosts the relocated v2 layer `runner_protocol` (protocol/registry, execution factories and `*_execution` drivers, `RunnerV2Coordinator`/`RunnerApplication`, cellular controller/cell, control-plane HTTP, GPU/network/server side-channels). **No binary.** | `loadgen-core` (+ optional `dynamo-mocker` under `dynosim`) |
-| `aiperf-runner` | The sole strict Rust executable Python launches, now a thin (~550-line) process shell: `lib.rs` re-exports the v2 composition root (relocated into `aiperf::runner_protocol`, feature `runner-protocol`) and `main.rs` is the process/stdio/signal harness. Protocol-v2 only. | `aiperf` (with `runner-protocol`), `loadgen-core` |
-| `aiperf-mock-server` | Standalone online test/benchmark inference target (OpenAI/Anthropic/TGI/…); launched independently, **not** in the runner dep graph. | `aiperf` (only for `aiperf::rng`) |
+| `aiperf-runtime` | Library-only runtime: clocks, transports, endpoints, datasets, RNG, timing/scheduling, graph engine, metrics, exporters, adaptive, accuracy, side-channel telemetry, cellular, dynosim. 16 former `aiperf-*` crates are now modules. Owns the single unified `AIPerfRegistry`/`AIPerfExtension` seam (`extensions`) and — behind the `runner-protocol` Cargo feature — hosts the v2 layer `runner_protocol` (protocol/registry, execution factories and `*_execution` drivers, `RunnerV2Coordinator`/`RunnerApplication`, cellular controller/cell, control-plane HTTP, GPU/network/server side-channels). **No binary.** | `loadgen-core` (+ optional `dynamo-mocker` under `dynosim`) |
+| `aiperf-cli` | The ONE product binary `aiperf`: BOTH the native front door (owns `profile`/`config` natively) AND the execution engine. It re-execs ITSELF (`aiperf --execute`, an internal hidden mode) once per run/cell; the execution child is the strict process/stdio/signal harness that composes the v2 layer `aiperf_runtime::runner_protocol` (feature `runner-protocol`). Protocol-v2 only. | `aiperf-runtime` (with `runner-protocol`), `loadgen-core` |
+| `aiperf-mock-server` | Standalone online test/benchmark inference target (OpenAI/Anthropic/TGI/…); launched independently, **not** in the execution-engine dep graph. | `aiperf-runtime` (only for `aiperf_runtime::rng`) |
 
-`aiperf/src/lib.rs` declares the module universe: `clock`, `transport_http`, `transport_grpc`,
+`rust/runtime/src/lib.rs` declares the module universe: `clock`, `transport_http`, `transport_grpc`,
 `endpoints`, `dataset`, `rng`, `timing`, `graph`, `metrics_core`, `adaptive_core`,
 `accuracy_core`, `gpu_telemetry`, `network_latency`, `server_metrics`, `content_server`,
 `cellular`, `extensions`, plus the composition modules `http`, `grpc`, `run`, `scheduled`,
@@ -106,30 +108,29 @@ backend**.
 `fixed_schedule`, `body_plan`, `failure`, `report`, `metrics`, `export`, `adaptive`, `accuracy`,
 `ancillary`, the feature-gated `dynosim` and `aic_runtime`, and the feature-gated
 `runner_protocol` (the relocated v2 protocol/registry/execution layer, gated on
-`runner-protocol`; only `aiperf-runner` enables it).
+`runner-protocol`; only `aiperf-cli` enables it).
 
-> **Note (2026-07-15):** §A.5 and the double-dispatch / `RunnerPairFactory` /
-> `supported_pairs` narrative below predate two changes and are being reconciled: Stage 1
-> deleted the transport×workload pair layer (any workload runs over any transport, no
-> compatibility gate), and the v2 layer was relocated from the `aiperf-runner` crate into
-> `aiperf::runner_protocol` (feature `runner-protocol`) with all category registries
+> **Note:** §A.5 and the double-dispatch / `RunnerPairFactory` / `supported_pairs` narrative
+> below describe an older shape. Today there is no transport×workload pair layer — any workload
+> runs over any transport, with no compatibility gate — and the v2 layer lives in
+> `aiperf_runtime::runner_protocol` (feature `runner-protocol`) with all category registries
 > unified under one `AIPerfRegistry`/`AIPerfExtension` seam (endpoints, loaders, samplers,
-> transports, workloads, exporters, actuators). Ground registry/pair claims in
-> `rust/aiperf/src/extensions/mod.rs` and `rust/aiperf/src/runner_protocol/`.
+> transports, workloads, exporters, actuators). Ground registry claims in
+> `rust/runtime/src/extensions/mod.rs` and `rust/runtime/src/runner_protocol/`.
 
 ---
 
 ## 3. End-to-end flow: command line → results
 
 ```
-┌─ Python `aiperf profile --config x.yaml` ────────────────────────────────────────────┐
+┌─ `aiperf profile --config x.yaml`  (front door, crate aiperf-cli) ────────────────────┐
 │  Config-v2 → BenchmarkRun → ONE protocol-v2 JSON envelope                             │
 └───────────────────────────────┬───────────────────────────────────────────────────────┘
-                                 │  stdin (JSONL)
+                                 │  stdin (JSONL)  →  self-exec `aiperf --execute`
                                  ▼
-┌─ aiperf-runner  (main.rs) ────────────────────────────────────────────────────────────┐
+┌─ aiperf --execute  (execution engine, crate aiperf-cli) ──────────────────────────────┐
 │  • mimalloc global allocator; stderr tracing (AIPERF_RUNNER_LOG); stdout = protocol    │
-│  • arg dispatch: `--capabilities` | `--cell` | (default execute/validate) | controller │
+│  • arg dispatch: `--execute` | `--cell` | `--aggregator` | controller (validate too)   │
 │  • compose_stock_application() → RunnerApplication::stock(distribution_id)              │
 │  • run_v2(): parse EnvelopeBootstrapV2 → RunnerEnvelopeV2 (strict, deny_unknown_fields) │
 │    catch_unwind around handle_v2 → exactly ONE terminal/validation JSONL + exit code   │
@@ -172,19 +173,20 @@ backend**.
 │  → RunTerminalV2 { success:true, report_path, provenance{transport,workload,…} } exit 0 │
 └───────────────────────────────┬───────────────────────────────────────────────────────┘
                                  ▼
-                Python reads the terminal line + opens native-v2.json + artifact files
+        The front door (or the Python frontend when AIPERF_NATIVE=0) reads the terminal
+        line + opens native-v2.json + artifact files
 ```
 
 Every failure funnels to a **typed** `RunTerminalV2`/`RunValidationV2` with a
 `RunnerFailureStageV2 ∈ {Protocol, Validation, Preparation, Execution, Reporting}`, redacted
 diagnostic, and exit code (0 ok / 1 validated failure / 2 protocol failure). A caught panic
-becomes a typed failure, never a bare crash — Python always sees one JSONL line.
+becomes a typed failure, never a bare crash — the front door always sees one JSONL line.
 
 ---
 
 ## 4. Component reference
 
-### A. Process boundary & protocol v2 (`aiperf-runner`)
+### A. Process boundary & protocol v2 (`aiperf --execute`)
 
 #### A.1 `main.rs` — stdio entry point
 - Installs **mimalloc** as the global allocator (top profiled hotspot was per-request alloc
@@ -192,9 +194,11 @@ becomes a typed failure, never a bare crash — Python always sees one JSONL lin
   heap allocation.
 - Tracing subscriber writes only to **stderr** (stdout is the protocol channel); default filter
   `warn`, overridable with `AIPERF_RUNNER_LOG`.
-- Argument dispatch: `--capabilities` prints the plugins.yaml-shaped catalog; `--cell` runs one
-  cell of a multi-cell run; a plain `execute` envelope with `runtime.cells > 1` promotes this
-  process to the **cellular controller**; otherwise the normal single-process path.
+- Argument dispatch: `--execute` runs one run/probe/cell; `--cell` runs one cell of a multi-cell
+  run; `--aggregator` runs the velo-gated aggregator; a plain `execute` envelope with
+  `runtime.cells > 1` promotes this process to the **cellular controller**; otherwise the normal
+  single-process path. (Capabilities is not an argv mode — it is the in-process
+  `aiperf_cli::execute_mode::capabilities_catalog` function.)
 - `configure_dynosim_process_defaults` pins OpenBLAS/OMP/MKL/Rayon thread counts for the
   deterministic dynosim event loop.
 - `run_v2` parses a two-stage `EnvelopeBootstrapV2` (version + operation + raw run) then the
@@ -207,7 +211,7 @@ becomes a typed failure, never a bare crash — Python always sees one JSONL lin
 - `BenchmarkRunWireV2` — `benchmark_id`, `artifact_dir`, `cfg: BenchmarkConfigWireV2`, plus
   retained-but-uninterpreted `resolved`, `sweep_id`, `variation`, `trial`, `label`,
   `cli_command`, `random_seed`, `variables`.
-- `BenchmarkConfigWireV2` — deliberately **not** `deny_unknown_fields` (Python dumps the whole
+- `BenchmarkConfigWireV2` — deliberately **not** `deny_unknown_fields` (the front door dumps the whole
   BenchmarkConfig): `models`, `endpoint`, `endpoint_profiles`, `datasets`, `phases`,
   `tokenizer`, `transport`, `runtime`, `artifacts`, `metrics`, `failure_policy`, `slos`,
   `goodput`, `gpu_telemetry`, `server_metrics`, `network_latency`, `content_server`, `sidecars`,
@@ -233,7 +237,7 @@ becomes a typed failure, never a bare crash — Python always sees one JSONL lin
   registry, `RunnerExecutionFactories`, and the input resolvers. `handle()` runs the 10-step
   pipeline in §3, returning `RunnerProcessResultV2 {response, exit_code}`.
 - `persist_prepared_report` — refuses an existing `native-v2.json`, writes atomically via
-  `finalize_and_write_native_report_json`, runs `aiperf::export::run_exporters` (best-effort),
+  `finalize_and_write_native_report_json`, runs `aiperf_runtime::export::run_exporters` (best-effort),
   and invokes the one-shot `PreparedReportCommit` exactly once. `AIPERF_EXPORT_SUBDIR` redirects
   native sink outputs for byte-diff parity proofs.
 
@@ -272,7 +276,7 @@ transport factories, and `control_plane_http`. `native_execution_factories()` in
 in-process implementations; a custom distribution can swap any of them (e.g. a remote/RPC
 executor) without touching the coordinator.
 
-### B. Input resolution (`aiperf-runner`)
+### B. Input resolution (`aiperf_runtime::runner_protocol`)
 
 Three resolver traits injected into the coordinator; all do the **sole** strict decode of their
 input and are side-effect-free at validation time.
@@ -290,7 +294,7 @@ input and are side-effect-free at validation time.
   type-erased `PreparedSidecarInputs` store; runtime resource preparation (sockets, subprocess)
   is a separate later seam.
 
-### C. Execution paths (`aiperf-runner`)
+### C. Execution paths (`aiperf_runtime::runner_protocol`)
 
 `execute.rs` (the ~4.5k-line native driver) lowers a protocol-neutral `NativeRunSpec`
 (`NativeEndpointPlan`, `NativeDatasetPlan::{PreparedLinear, StaticAccuracy, Graph}`,
@@ -327,7 +331,7 @@ artifact dir creation** → branch graph vs scheduled.
   drops oldest, never backpressures). `network_latency.rs`, `gpu_telemetry.rs`,
   `server_metrics.rs` are `ScheduledPhaseSidecar`s barrier-synchronized to phases.
 
-### D. HTTP transport (`aiperf/src/http.rs`, `aiperf/src/transport_http/`)
+### D. HTTP transport (`rust/runtime/src/http.rs`, `rust/runtime/src/transport_http/`)
 
 - **`TransportSink`** (`http.rs`) — the online sink over the hyper client + `Clock`; `!Send`,
   `Rc`-based. `HttpRequest` (implements `Dispatchable`) carries either `request_body: Value`
@@ -360,7 +364,7 @@ artifact dir creation** → branch graph vs scheduled.
   `http_version: Auto|Http1Only|Http2PriorKnowledge`, `keepalive_ns` (300 s),
   `max_connections_per_origin` (2500), `use_dns_cache`, `dns_cache_ttl_ns`, `uds_path`.
 
-### E. gRPC transport (`aiperf/src/grpc.rs`, `aiperf/src/transport_grpc/`)
+### E. gRPC transport (`rust/runtime/src/grpc.rs`, `rust/runtime/src/transport_grpc/`)
 
 - **`GrpcTransportSink`** (`grpc.rs`) — protocol-v2-only scheduled sink over Tonic + `Clock`;
   accepts only worker-local prepared endpoints; produces the **same** observer callbacks and a
@@ -379,7 +383,7 @@ artifact dir creation** → branch graph vs scheduled.
 - `GrpcClientConfig`: `max_receive/send_message_size` (256 MiB), `channel_ready_timeout_ns`
   (30 s), `total_timeout_ns`, `trace_chunks`.
 
-### F. Endpoints (`aiperf/src/endpoints/`)
+### F. Endpoints (`rust/runtime/src/endpoints/`)
 
 Owns request-body construction and response/usage parsing per provider dialect; transport is out
 of scope; **auth headers are a dialect property**.
@@ -407,7 +411,7 @@ of scope; **auth headers are a dialect property**.
   fields, Gemini/Cohere envelopes, nested detail objects); `chat_chunk` is the typed OpenAI SSE
   codec.
 
-### G. Dataset pipeline (`aiperf/src/dataset/`)
+### G. Dataset pipeline (`rust/runtime/src/dataset/`)
 
 The linear `load → compose → store → sample → materialize` path.
 
@@ -435,7 +439,7 @@ The linear `load → compose → store → sample → materialize` path.
 - **Tokenizers** (`tokenizer.rs`): `TiktokenTokenizer` (o200k/harmony/cl100k/…),
   `HuggingFaceTokenizer` (local `tokenizer.json` + chat template).
 
-### H. RNG substrate (`aiperf/src/rng/`)
+### H. RNG substrate (`rust/runtime/src/rng/`)
 
 Hash-derived, **order-independent** randomness: a component names its stream and the stream
 depends only on `(root_seed, identifier)` via BLAKE3 seed algebra → `rand_pcg::Pcg64`.
@@ -451,7 +455,7 @@ depends only on `(root_seed, identifier)` via BLAKE3 seed algebra → `rand_pcg:
 - Cross-language parity: `AIPERF_RNG_BACKEND=rust_parity` swaps Python onto a byte-exact port of
   this Pcg64+BLAKE3 substrate.
 
-### I. Timing & scheduling (`aiperf/src/timing/`, `run.rs`, `scheduled.rs`, `request_rate.rs`, …)
+### I. Timing & scheduling (`rust/runtime/src/timing/`, `run.rs`, `scheduled.rs`, `request_rate.rs`, …)
 
 - **`ScheduledRuntime`** (`scheduled.rs`) — the policy-neutral bridge from a `Workload` schedule
   generator to a `TurnDispatcher`. `issue_turn_internal` synchronously mutates counters/URL/
@@ -490,7 +494,7 @@ depends only on `(root_seed, identifier)` via BLAKE3 seed algebra → `rand_pcg:
   re-serialize). `failure.rs` — `OnFailure::{Continue (scheduled default), Abort (graph
   default)}`.
 
-### J. Graph-IR engine (`aiperf/src/graph/`)
+### J. Graph-IR engine (`rust/runtime/src/graph/`)
 
 A thread-per-core async-dataflow engine for recorded traces / authored DAGs.
 
@@ -524,7 +528,7 @@ A thread-per-core async-dataflow engine for recorded traces / authored DAGs.
   `RequestObserver`). `validate.rs` runs a fireability-fixpoint deadlock check; the Sim dry-run
   is the backstop.
 
-### K. Metrics core (`aiperf/src/metrics_core/`) and runtime adapter (`metrics.rs`)
+### K. Metrics core (`rust/runtime/src/metrics_core/`) and runtime adapter (`metrics.rs`)
 
 - **Catalog** (`catalog.rs`): a declarative `MetricSpec` table (`MetricTag` names,
   units/flags/groups/dependencies), `MetricType::{Record, Aggregate, Derived}`, validated for
@@ -549,14 +553,14 @@ A thread-per-core async-dataflow engine for recorded traces / authored DAGs.
 - **Phase windows** (`window.rs`): `ExportContext {start_ns, end_ns, phase}` where **phase is
   authoritative over wall-clock bounds**; timeslicing by record start.
 
-### L. Reporting & export (`report.rs`, `aiperf/src/report.rs`, `aiperf/src/export/`)
+### L. Reporting & export (`report.rs`, `rust/runtime/src/report.rs`, `rust/runtime/src/export/`)
 
 - **Reporter** (`metrics_core/report.rs`): the `Reporter` trait → `NativeReport`
   (`schema_version = "2.0"`) with `run` (provenance + facts), `summary`, `metrics` (distribution/
   scalar/counter/histogram entries with labeled per-model/endpoint series + timeslices),
   `server_metrics`, `accuracy`, `errors`, and a transient in-memory `otel_per_record` side
   channel (never in committed bytes). All values are finite-or-absent (`ReportValue`).
-- **Persistence** (`aiperf/src/report.rs`, invoked from the runner's `coordinator.rs`):
+- **Persistence** (`rust/runtime/src/report.rs`, invoked from the runner_protocol `coordinator.rs`):
   `finalize_and_write_native_report_json` joins coordinator provenance + pair facts and does the
   sole atomic `create_new` temp + rename, refusing to overwrite an existing authoritative report.
 - **Export plane** (`export/`): the `Exporter` trait (`name`, `enabled(&ExportConfig)`,
@@ -568,7 +572,7 @@ A thread-per-core async-dataflow engine for recorded traces / authored DAGs.
   runtime), `Mlflow` (REST or file store), `Wandb` (offline `.wandb` LevelDB framing). Selected by
   `AIPERF_RUNTIME_NATIVE_EXPORT` (default `1`; `0` restores legacy Python emitters).
 
-### M. Adaptive scale (`aiperf/src/adaptive.rs`, `adaptive_core/`)
+### M. Adaptive scale (`rust/runtime/src/adaptive.rs`, `adaptive_core/`)
 
 Object-safe seam: `ControlActuator` (the load knob), `SlaEvaluator`, `StepPolicy`, `Controller`,
 `WindowSampler`. Four live actuators — session concurrency, prefill concurrency, request rate
@@ -581,7 +585,7 @@ boundary value. Terminal `Completed`/`Incomplete`/`Failed`. Schema-v2 JSONL even
 summary artifacts (`adaptive_scale_events.jsonl`, `adaptive_scale_summary.json`). Same futures
 online and offline (everything behind `Clock` + `ControlActuator`).
 
-### N. Accuracy (`aiperf/src/accuracy.rs`, `accuracy_core/`)
+### N. Accuracy (`rust/runtime/src/accuracy.rs`, `accuracy_core/`)
 
 Rust owns scheduling/IO/timing/metrics; a long-lived **Python/Lighteval worker** owns dataset
 prep, prompts, hidden tests, and grading over a versioned JSONL stdio protocol
@@ -614,10 +618,10 @@ boundary scrapes bypass dedup → exact reset-clamped counter/histogram deltas.
   (audio stays inline); path-traversal-confined `ServeDir` with per-request lifecycle tracking;
   implements the `SyntheticMediaPublisher` seam.
 
-### P. Cellular multi-process mode (`aiperf/src/cellular/`, `runner/src/cellular_*`)
+### P. Cellular multi-process mode (`rust/runtime/src/cellular/`, `rust/runtime/src/runner_protocol/`)
 
-`--cells N` (or `runtime.cells: N`) makes the launched runner a **controller** that spawns N
-`aiperf-runner --cell` children over a budget partition and merges their records into one report.
+`--cells N` (or `runtime.cells: N`) makes the launched `aiperf` a **controller** that spawns N
+`aiperf --cell` children over a budget partition and merges their records into one report.
 Five seams, each with a "Direct" single-process impl:
 
 - **Partition** (`ModuloCellPartition`) — cell k owns `i % cell_count == cell_id`; env
@@ -639,7 +643,7 @@ Five seams, each with a "Direct" single-process impl:
   ramps/rate/cancellation are aggregate-equivalent (warned). Merged report omits coordinator
   finalize provenance, grouped per-error detail, and side-channel sidecar data (warned).
 
-### Q. Dynosim co-simulation (`aiperf/src/dynosim.rs`, `#[cfg(feature="dynosim")]`)
+### Q. Dynosim co-simulation (`rust/runtime/src/dynosim.rs`, `#[cfg(feature="dynosim")]`)
 
 In-process co-simulation of Dynamo's passive mock engine over AIPerf's `SimClock` — no sockets/
 subprocesses. AIPerf owns clock/workload/observers/report; `dynamo-mocker` owns scheduler +
@@ -653,8 +657,8 @@ clock, `drive_real_with_source`, relaxed parity) differ **only** in the clock/dr
 
 ### R. Mock server (`aiperf-mock-server`)
 
-A standalone OpenAI/Anthropic/TGI-compatible inference target (depends on `aiperf` only for
-`aiperf::rng`); launched independently and supplies an ordinary online URL — Python does **not**
+A standalone OpenAI/Anthropic/TGI-compatible inference target (depends on `aiperf-runtime` only for
+`aiperf_runtime::rng`); launched independently and supplies an ordinary online URL — the frontend does **not**
 supervise it. A manual hyper accept loop sets `TCP_NODELAY` per socket (Nagle otherwise held
 small SSE chunks). Deterministic char-based token generation (~4 chars/token, per-prompt seeded
 output counts, optional Shakespeare corpus). Two latency models: **analytic** (closed-form TTFT/
@@ -671,7 +675,7 @@ disables the scheduler + prefix cache.
 
 | Axis | Options (Config-v2 → protocol-v2) |
 |---|---|
-| **Transport** (`cfg.transport.type`) | `http`, `grpc`, `dynosim_offline`, `dynosim_online` (last two need a `dynosim`-feature runner) |
+| **Transport** (`cfg.transport.type`) | `http`, `grpc`, `dynosim_offline`, `dynosim_online` (last two need a `dynosim`-feature build) |
 | **Workload** (derived from dataset format) | `scheduled` (linear datasets), `graph` (`dag_jsonl`/`weka_trace`/`dynamo_trace`) |
 | **Supported pairs (base build)** | `(http, scheduled)`, `(http, graph)`, `(grpc, scheduled)` (+ dynosim × scheduled/graph with the feature) |
 | **Phase types** (`cfg.phases[].type`) | `concurrency`, `poisson`, `gamma`, `constant`, `user_centric`, `fixed_schedule`; each with `warmup|profiling`, stop bounds (`requests`/`sessions`/`duration`), grace, ramps (`concurrency_ramp`/`prefill_ramp`/`rate_ramp`), `cancellation`, `adaptive_scale` |
@@ -689,10 +693,10 @@ disables the scheduler + prefix cache.
 
 | Var | Effect |
 |---|---|
-| `AIPERF_RUNTIME_ENGINE` | `rust` (default) native runner vs `python` legacy service mesh |
+| `AIPERF_RUNTIME_ENGINE` | `rust` (default) native execution engine vs `python` legacy A/B fallback service mesh |
 | `AIPERF_RUNTIME_NATIVE_EXPORT` | `1` (default) native exporter plane vs `0` legacy Python emitters |
 | `AIPERF_RNG_BACKEND` | `legacy` vs `rust_parity` (byte-exact Pcg64+BLAKE3 port in Python) |
-| `AIPERF_RUNNER_LOG` | runner stderr tracing filter |
+| `AIPERF_RUNNER_LOG` | execution-engine stderr tracing filter |
 | `AIPERF_CONTENT_SERVER_ENABLED` / `_CONTENT_DIR` | enable the run-owned content server |
 | `AIPERF_CELL_ID` / `AIPERF_CELL_COUNT` / `AIPERF_CELL_CONTROLLER_ADDR` / `AIPERF_CELL_PHASE_ORDINAL_BASES` | cellular child wiring |
 | `AIPERF_CACHE_DIR`, `HF_ENDPOINT`, `HF_TOKEN`, `HF_HUB_OFFLINE` | tokenizer/dataset fetch |
@@ -748,7 +752,8 @@ crosses a `dyn` boundary it is object-safe, where it is hot-path it is monomorph
 - **NaN/Inf discipline** — every metric value crossing a serialization boundary is finite or
   explicitly absent; cellular wire uses MessagePack because NaN-sparsity + `+inf` need a
   self-describing binary format.
-- **One product entry path** — Python projects exactly one side-effect-free protocol-v2 request;
-  the runner is v2-only and fails closed on any unregistered transport/workload/endpoint id.
+- **One product entry path** — the `aiperf` front door projects exactly one side-effect-free
+  protocol-v2 request; the `aiperf --execute` engine is v2-only and fails closed on any
+  unregistered transport/workload/endpoint id.
 - **Redaction at the boundary** — every diagnostic is credential-scrubbed before stdout; secrets
   never enter DTOs and zeroize on drop.

@@ -14,9 +14,12 @@ whose reality is folded in below.
 
 Python owns Config v2 and every outer control loop. Rust owns exactly one
 fully-resolved benchmark execution. The boundary is a fresh
-`aiperf-runner` subprocess with a strict, versioned protocol-v2 JSON request on
-stdin and one terminal JSON response on stdout. `aiperf-runner` is the only Rust
-executable on the product path.
+`aiperf --execute` subprocess — the same `aiperf` binary (crate `aiperf-cli`)
+re-execing itself into an internal hidden execution mode intercepted before clap —
+with a strict, versioned protocol-v2 JSON request on stdin and one terminal JSON
+response on stdout. The one `aiperf` binary is the only Rust executable on the
+product path; Python is only on that path when `AIPERF_NATIVE=0`, where the
+pure-Python frontend spawns the same `aiperf --execute` child.
 
 This is not a temporary compatibility path. It is the intended architecture:
 
@@ -41,11 +44,11 @@ are not alternate implementations of this design.
 | Grid, zip, scenario, QMC, Bayesian and monotonic search | Python | `aiperf.orchestrator` planners |
 | Trials, iteration order, cooldown, convergence, confidence, sweep aggregation | Python | `MultiRunOrchestrator` and aggregation/convergence packages |
 | Config resolution product (`BenchmarkRun.resolved`): artifact target, tokenizer/public-dataset policy | Python | Config-v2 resolver chain, sent on the wire as `resolved` |
-| Per-run dataset/tokenizer/endpoint preparation from that resolution | Rust | `aiperf-runner` frozen registries and pair adapters |
-| One run's models, dataset, phases, ramps, cancellation, adaptive policy | Rust | `aiperf-runner::execute` over scheduled runtime traits |
-| HTTP, TLS/UDS/h2c, request bodies, SSE, usage, raw exchanges | Rust | `aiperf::transport_http` and `aiperf::endpoints` |
-| Clock, phase lifecycle, arrivals, slots, TTFT release, stop/drain | Rust | `aiperf::clock`, `aiperf::timing`, runner phase runtime |
-| Request metrics, sweeps, SLO goodput, timeslices, native-v2 | Rust | `aiperf::metrics_core` |
+| Per-run dataset/tokenizer/endpoint preparation from that resolution | Rust | `aiperf-cli` frozen registries and pair adapters |
+| One run's models, dataset, phases, ramps, cancellation, adaptive policy | Rust | `aiperf-cli::execute` over scheduled runtime traits |
+| HTTP, TLS/UDS/h2c, request bodies, SSE, usage, raw exchanges | Rust | `aiperf_runtime::transport_http` and `aiperf_runtime::endpoints` |
+| Clock, phase lifecycle, arrivals, slots, TTFT release, stop/drain | Rust | `aiperf_runtime::clock`, `aiperf_runtime::timing`, runner phase runtime |
+| Request metrics, sweeps, SLO goodput, timeslices, native-v2 | Rust | `aiperf_runtime::metrics_core` |
 | GPU, server Prometheus, network RTT phase sidecars | Rust | native side-channel modules and runner adapters |
 | Canonical accuracy prompt/task/grader libraries | Python worker | supervised accuracy worker over stdio |
 | OTel SDK and live MLflow implementation | Python worker | native streaming worker using the existing `OTelMetricsResultsProcessor` |
@@ -71,17 +74,17 @@ The request body is exact `BenchmarkRun` JSON. Python sends a thin envelope:
 Config-resolution product Python already computed — a first-class wire field, not
 a private cache. The runner does not reinterpret it; frozen factories own the
 strict decode of component config during registry validation.
-`rust/runner/src/protocol_v2.rs` is the matching Rust DTO: `RunnerEnvelopeV2` and
-`BenchmarkRunWireV2`, every object `deny_unknown_fields`. `aiperf-runner`
+`rust/runtime/src/protocol_v2.rs` is the matching Rust DTO: `RunnerEnvelopeV2` and
+`BenchmarkRunWireV2`, every object `deny_unknown_fields`. `aiperf-cli`
 advertises `protocol_versions: [2]` only and rejects any non-v2 request as a
 protocol-v2 failure envelope; there is no runner protocol v1.
 
-Discovery is a linked-inventory JSON catalog, not a hand-built capability
-struct. Before launching a run, Python calls `aiperf-runner --capabilities`,
-which emits a `plugins.yaml`-shaped catalog of the exact linked runner image
-(the categories and inventories built into that binary). Python binds the run to
-the selected runner's executable-content identity and requires that exact image
-to advertise the requested pair.
+Discovery is a linked-inventory catalog, not a hand-built capability
+struct. There is no `--capabilities` argv mode: the catalog is produced
+in-process by `aiperf_cli::execute_mode::capabilities_catalog()`, which composes
+the stock application and returns the categories and inventories built into that
+exact `aiperf` binary. The run is bound to that binary's executable-content
+identity and requires the linked image to advertise the requested pair.
 
 Execution path selection is derived, not authored as a separate axis: the runner
 chooses scheduled vs graph execution from the dataset format and binds the
@@ -92,8 +95,8 @@ The normal process sequence is:
 
 1. Python loads and validates Config v2 and expands the plan to one
    variation/trial.
-2. Python selects and verifies one exact runner installation against its
-   `--capabilities` catalog.
+2. Python selects and verifies one exact `aiperf` binary against its in-process
+   linked capabilities catalog (`aiperf_cli::execute_mode::capabilities_catalog()`).
 3. Python resolves artifact, tokenizer, dataset and extension inputs into
    `BenchmarkRun.resolved`.
 4. Python writes one protocol-v2 envelope: `{protocol_version: 2, operation,
@@ -132,7 +135,7 @@ Rust child:
 
 ```text
 Python orchestrator
-    -> aiperf-runner
+    -> aiperf --execute
         -> Python native_streaming_worker
             -> canonical OTel/MLflow fanout process
 ```
@@ -213,9 +216,9 @@ These are process proofs, not mocked executor tests.
 ## Deleted alternatives
 
 - Keeping Python's multiprocess timing manager, credit protocol or ZMQ bus.
-- A native `aiperf` CLI, `src/main.rs`, or `cargo run -p aiperf` execution
-  surface. The `aiperf` Rust package is a library only; the sole native product
-  executable is `aiperf-runner`.
+- A `src/main.rs` or `cargo run -p aiperf-runtime` execution surface inside the
+  runtime library. The `aiperf-runtime` Rust package is a library only; the sole
+  native product executable is the `aiperf` binary (crate `aiperf-cli`).
 - Runner protocol v1: the v1 request dispatch, `execute_v1`/`execute_run*`
   chain, the `RunRequest`/`RunSpec`/`RunTerminal`/`EndpointSpec`/`DatasetSpec`/
   `AccuracySpec` DTOs, the v1 graph-input adapters, and the `Legacy` variants

@@ -59,7 +59,7 @@ unchanged**. Only the *wire*, the *launch mechanism*, and the *registration/barr
 
 ## 2. Background — what exists today
 
-`rust/aiperf/src/cellular/` is the always-on cellular module. The relevant pieces:
+`rust/runtime/src/cellular/` is the always-on cellular module. The relevant pieces:
 
 - **`transport.rs`** — the seam being replaced. Two traits: `CellClient` (cell side, blocking
   send) and `ControllerTransport` (controller side, merged inbound stream), carrying a
@@ -68,17 +68,17 @@ unchanged**. Only the *wire*, the *launch mechanism*, and the *registration/barr
   `std::net::TcpStream`) / `TcpControllerTransport` (Tokio listener accepting `expected_cells`
   connections, merging into one channel). **This file gains a velo impl; the TCP impls are
   removed.**
-- **`runner/src/cellular_controller.rs`** — `run_cellular(envelope, cell_count, report_path)`:
-  binds the transport, spawns `aiperf-runner --cell` subprocesses (`spawn_cell`, stdin-piped
+- **`runtime/src/runner_protocol/cellular_controller.rs`** — `run_cellular(envelope, cell_count, report_path)`:
+  binds the transport, spawns `aiperf --cell` subprocesses (`spawn_cell`, stdin-piped
   `CellLaunchSpec`), watches child exits, collects one partition + heartbeats per cell, merges
   in global-ordinal (scheduled) or concatenation (graph) order, writes `native-v2.json`, runs
   the export plane, writes the heartbeat sidecar. **The spawn + stdin-pipe + accept-N-connections
   parts are reworked; the slice/merge/report parts are unchanged.**
-- **`runner/src/cellular_cell.rs`** — `CellLaunchSpec` (piped to a cell's stdin), env vars
+- **`runtime/src/runner_protocol/cellular_cell.rs`** — `CellLaunchSpec` (piped to a cell's stdin), env vars
   (`AIPERF_CELL_CONTROLLER_ADDR`, `AIPERF_CELL_PHASE_ORDINAL_BASES`), `CellRecordsShipper`
   (connects, ships heartbeat then partition). **The stdin path is replaced by a velo `register`
   fetch; the shipper sends over velo.**
-- **`runner/src/main.rs`** — dispatches `--cell` (stdin `CellLaunchSpec` → env → single-process
+- **`cli/src/main.rs`** — dispatches `--cell` (stdin `CellLaunchSpec` → env → single-process
   execute) vs controller (`execute` + `cells>1` → `run_controller` → `run_cellular`). **Cell
   bootstrap changes from "stdin spec" to "env coordinate + velo register".**
 
@@ -139,20 +139,20 @@ baseline (mechanism B); any change is a PR against `ai-dynamo/main`, never a for
 
 ## 4. Architecture
 
-Unchanged topology shapes: one `aiperf-runner` **controller**, N **cells**, one merged
+Unchanged topology shapes: one `aiperf` **controller**, N **cells**, one merged
 `native-v2.json`, one v2 request from Python. New wire (velo), new launch/registration.
 
 ```
             (operator injects controller DNS:port + cell_id via env — ZERO discovery)
    ┌──────────────────────── controller pod / process ────────────────────────┐
-   │ aiperf-runner (controller)                                                │
+   │ aiperf (controller)                                                │
    │   Velo(bind known port) ── register handler ──┐  barrier: count==N       │
    │   run_cellular: slice budget, phase bases      │  heartbeat handler       │
    │   merge partitions → native-v2.json + exports  │  ship_partition handler  │
    └───────────────▲───────────────────────────────┴──────────▲───────────────┘
                    │ register(cell peer_info, cell_id) → CellLaunchSpec        │ heartbeat / partition
    ┌───────────────┴──────── cell pod / subprocess ───────────┴───────────────┐
-   │ aiperf-runner --cell                                                      │
+   │ aiperf --cell                                                      │
    │   Velo(bind ephemeral) ── register_peer(controller placeholder@DNS)       │
    │   fetch CellLaunchSpec via register → set env → ordinary execute path     │
    │   CellRecordsShipper: heartbeat (am_send) + partition (rendezvous)        │
@@ -248,7 +248,7 @@ trait CellLauncher {
 }
 ```
 
-- **`LocalLauncher`** (default; dev/test): spawns `aiperf-runner --cell` subprocesses as today, but
+- **`LocalLauncher`** (default; dev/test): spawns `aiperf --cell` subprocesses as today, but
   passes only the **controller velo coordinate + `cell_id` via env** (no stdin `CellLaunchSpec`);
   the cell fetches its full spec over velo `register`. Transport: **UDS on Unix, TCP-loopback on
   Windows** (`#[cfg(unix)]` UDS, else `127.0.0.1:0`). `kill_on_drop` + child-exit watcher retained.
@@ -270,12 +270,12 @@ fetch the spec. This unifies local and k8s: both deliver the spec over velo.
 ### 4.5 Feature gating
 
 All velo code (the `cellular/transport.rs` velo impl, `CellLauncher`, the cell register/ship
-paths) sits behind a **`velo` cargo feature** on `aiperf` + `aiperf-runner`. Because TCP is fully
+paths) sits behind a **`velo` cargo feature** on `aiperf-runtime` + `aiperf-cli`. Because TCP is fully
 replaced:
 
 - **Without `velo`:** `cells=1` (default) is byte-for-byte unchanged (never touches the
   transport). `cells>1` **fails closed** at controller detection with a clear diagnostic
-  ("aiperf-runner built without the `velo` feature; multi-cell runs require it").
+  ("aiperf built without the `velo` feature; multi-cell runs require it").
 - **With `velo`:** the full controller/cell/velo path. Mirrors how `dynosim` / `dynamo-full` gate
   optional runtime surface.
 
@@ -286,7 +286,7 @@ default-features = false, optional = true }`; `velo = ["dep:velo"]` feature.
 
 ## 5. Data flow (end to end)
 
-1. Python sends one v2 `execute` with `cfg.runtime.cells = N`. The receiving `aiperf-runner`
+1. Python sends one v2 `execute` with `cfg.runtime.cells = N`. The receiving `aiperf`
    becomes the **controller** (`main.rs`).
 2. Controller: validate cellular run shape (unchanged guards), compute per-phase ordinal bases +
    per-cell budget slices (unchanged), build `Velo` bound to the known port, register the three
@@ -338,7 +338,7 @@ cancellation, ramps, multi-URL) keep their existing warnings.
 ## 8. Docs to update (same change)
 
 - `rust/AGENTS.md` / `CLAUDE.md` / `.github/copilot-instructions.md` / `.cursor/rules/python.mdc`
-  (identical body): the crate-table `aiperf-runner`/`aiperf` cellular note (velo transport,
+  (identical body): the crate-table `aiperf-cli`/`aiperf-runtime` cellular note (velo transport,
   `velo` feature) and the "Build, test, run" cellular paragraph; run
   `python tools/check_agent_files_sync.py`.
 - `rust/specs/README.md` + root `llms.txt`: reference this design.
@@ -377,7 +377,7 @@ cancellation, ramps, multi-URL) keep their existing warnings.
 
 1. **Spike:** placeholder-address + peer-handoff round-trip against velo v0.5.0 (gate the whole
    design; pick placeholder vs bootstrap-file).
-2. **Cargo + feature:** add `velo` optional dep + `velo` feature to `aiperf` / `aiperf-runner`.
+2. **Cargo + feature:** add `velo` optional dep + `velo` feature to `aiperf-runtime` / `aiperf-cli`.
 3. **Transport:** velo `CellClient` / `ControllerTransport` impls behind the existing traits;
    remove the TCP impls; the three handlers; rendezvous partition ship.
 4. **Registration/barrier:** `register` handler + controller barrier; `CellLaunchSpec` over the

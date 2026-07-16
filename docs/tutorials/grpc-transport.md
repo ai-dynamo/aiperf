@@ -7,9 +7,9 @@ sidebar-title: Native gRPC Transport
 # Native gRPC Transport
 
 AIPerf’s native gRPC path uses Tonic and KServe’s Open Inference Protocol
-(OIP). Python owns Config v2, orchestration, and presentation; a fresh
-`aiperf-runner` process owns the run. There is no Python gRPC plugin,
-`plugins.yaml`, or runner-protocol-v1 fallback on this path.
+(OIP). The native `aiperf` front door owns Config v2, orchestration, and
+presentation; a fresh `aiperf --execute` child owns the run. There is no Python
+gRPC plugin, `plugins.yaml`, or protocol-v1 fallback on this path.
 
 ## Supported bindings
 

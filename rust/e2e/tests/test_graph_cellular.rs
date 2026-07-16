@@ -333,6 +333,103 @@ async fn test_graph_cellular_metrics_only_exact_fold_ships_store() {
     }
 }
 
+/// SKETCH graph cellular (bounded memory): `--cells 3 --sketch-metrics` over a graph
+/// dataset folds each record into the per-`(phase, tag)` t-digest and DROPS it, then a
+/// cell ships its folded SKETCH STORE (a `CellMessage::StorePartition`), which the
+/// controller merges (`merge_store_partitions` → t-digest merge) into one report — the
+/// SAME store path exact-fold uses, so it works through the unified graph fold gate
+/// (`graph_fold = graph_exact_fold || sketch`). Counts/sums/min/max stay EXACT; only
+/// percentiles are approximate.
+///
+/// Before the unification a sketch graph cellular cell fell to the retain path and
+/// shipped raw records (defeating bounded memory, and rebuilding an EXACT accumulator in
+/// the controller). This test proves it now ships a store: the merged heartbeat carries
+/// exact counters but EMPTY latency sketches (the fold dropped the samples), the same
+/// StorePartition signal the exact-fold test asserts.
+#[tokio::test]
+async fn test_graph_cellular_sketch_ships_store() {
+    let h = AIPerfHarness::new().await;
+    let r = h.run_timeout(
+        &format!(
+            "--model Qwen3-0.6B --url {} --endpoint-type chat --input-file {FIXTURE} \
+             --custom-dataset-type dag_jsonl --num-conversations 6 --concurrency 3 \
+             --cells 3 --random-seed 7 --sketch-metrics --export-level summary --ui simple",
+            h.mock.url
+        ),
+        120,
+    );
+    assert!(r.success(), "sketch graph cellular run failed: {}", r.stderr);
+
+    // The controller ran (only it writes the cellular-heartbeat.json sidecar).
+    let heartbeat = r.artifacts.read_json_file("**/cellular-heartbeat.json");
+    assert!(
+        !heartbeat.is_null(),
+        "sketch graph --cells 3 must go through the controller (cellular-heartbeat.json)"
+    );
+
+    // STORE-path proof: exact counters, EMPTY latency sketches. A retain (records) cell
+    // would carry `latency_ms.count > 0`; a folded-store (sketch) cell ships empty
+    // sketches, so the merged heartbeat latency count must be 0.
+    let issued = heartbeat["counters"]["issued"].as_u64().unwrap_or(0);
+    assert!(
+        issued > 0,
+        "merged sketch heartbeat must carry the cells' exact issued counter; got {heartbeat}"
+    );
+    assert_eq!(
+        heartbeat["latency_ms"]["count"].as_u64(),
+        Some(0),
+        "a folded-store (sketch) cell ships EMPTY latency sketches, so the merged heartbeat \
+         latency count must be 0 (proving StorePartition, not raw records); got {heartbeat}"
+    );
+
+    // The merged sketch report exists and carries the folded total. `request_count` and
+    // the sequence-length count/min/max are EXACT under sketch (only percentiles are
+    // approximate), so they match a 1-cell sketch baseline exactly.
+    let json = r.artifacts.json();
+    assert!(!json.is_null(), "sketch merged report must exist");
+    assert!(
+        r.artifacts.request_count() > 0.0,
+        "merged sketch report must carry the cells' folded record total"
+    );
+
+    let h1 = AIPerfHarness::new().await;
+    let baseline = h1.run_timeout(
+        &format!(
+            "--model Qwen3-0.6B --url {} --endpoint-type chat --input-file {FIXTURE} \
+             --custom-dataset-type dag_jsonl --num-conversations 6 --concurrency 3 \
+             --cells 1 --random-seed 7 --sketch-metrics --export-level summary --ui simple",
+            h1.mock.url
+        ),
+        120,
+    );
+    assert!(
+        baseline.success(),
+        "1-cell sketch graph run failed: {}",
+        baseline.stderr
+    );
+    assert_eq!(
+        r.artifacts.request_count() as u64,
+        baseline.artifacts.request_count() as u64,
+        "3-cell sketch graph run must fold the same total record count as 1-cell"
+    );
+    let base_json = baseline.artifacts.json();
+    for metric in ["input_sequence_length", "output_sequence_length"] {
+        let base = &base_json[metric];
+        let cell = &json[metric];
+        assert!(!base.is_null(), "sketch baseline missing metric {metric}");
+        // Sketch keeps count/min/max EXACT (order-independent set ops); percentiles are
+        // approximate, so only the exact stats are compared.
+        for stat in ["min", "max", "avg"] {
+            if let (Some(b), Some(c)) = (base[stat].as_f64(), cell[stat].as_f64()) {
+                assert!(
+                    (b - c).abs() <= 1e-9 * b.abs().max(1.0),
+                    "sketch graph cellular {metric}.{stat} diverged: 1-cell={b} 3-cell={c}"
+                );
+            }
+        }
+    }
+}
+
 /// The sorted multiset of each PROFILING graph record's dataset-deterministic
 /// `(input_sequence_length, output_sequence_length)` projection, read from
 /// `profile_export.jsonl`. Wall-clock timing differs run to run, but this projection

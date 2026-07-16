@@ -3,11 +3,11 @@ SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# AIPerf-Rust: Metrics Accumulator + Sweep-Line Engine (`aiperf::metrics_core`)
+# AIPerf-Rust: Metrics Accumulator + Sweep-Line Engine (`aiperf_runtime::metrics_core`)
 
 **Date:** 2026-07-10
 **Author:** Anthony Casagrande (Tech Lead) + Claude
-**Status:** built — the IO-free performance-metrics engine ships in `aiperf::metrics_core`
+**Status:** built — the IO-free performance-metrics engine ships in `aiperf_runtime::metrics_core`
 (NaN-sparse column store, exact ragged replay, record/aggregate/derived metrics,
 authoritative completion-usage reconciliation, SLO goodput, all effective/active +
 ICL-aware sweep curves, duration-weighted stats, phase windows/timeslices, deterministic
@@ -37,7 +37,7 @@ distribution, phase-authoritative masking) wrapped in a thick layer of
 **multiprocess/ZMQ accidental complexity** (a fan-in service, SUB/PULL ordering
 hacks, a legacy per-instance replay processor kept alive beside the real one, a
 plugin registry with reverse-lookup, dead dependency metadata). The
-**from-scratch** `aiperf::metrics_core` engine (a module of `aiperf`, formerly the
+**from-scratch** `aiperf_runtime::metrics_core` engine (a module of `aiperf-runtime`, formerly the
 standalone `aiperf-metrics` leaf crate):
 
 1. **Carries the scars exactly** — the numeric algorithms and boundary contracts
@@ -50,7 +50,7 @@ standalone `aiperf-metrics` leaf crate):
 3. **Fits the unified runtime** — it provides the columnar accumulator plus the typed
    `Reporter` (columns → `Report`) that the unified-graph-runtime spec names but leaves
    to "the columnar accumulator." Runtime translation lives one layer up, in
-   `aiperf::metrics::NativeMetricsObserver`, which joins the Clock-stamped observer
+   `aiperf_runtime::metrics::NativeMetricsObserver`, which joins the Clock-stamped observer
    `Event` stream into per-record columns; the `metrics_core` engine itself stays
    IO-free. Same summary math runs on ONLINE and OFFLINE because both feed the same
    observer stream — online, fixed-schedule, user-centric, adaptive, accuracy, and
@@ -81,7 +81,7 @@ AIPerf's numbers are trusted downstream. That contract does not move.
 The current Rust `loadgen-core::collector` is a *fixed struct* (nearest-rank
 percentiles, population std, a hand-written `Serialize`). It is the walking-skeleton
 seam; this spec is what it grew into (and largely moved out of `loadgen-core` into
-`aiperf::metrics_core`).
+`aiperf_runtime::metrics_core`).
 
 ---
 
@@ -128,11 +128,11 @@ All exist only because Python ran N record-processor *processes* over a ZMQ bus:
 
 ---
 
-## 4. The engine: `aiperf::metrics_core`
+## 4. The engine: `aiperf_runtime::metrics_core`
 
-The engine ships as the `metrics_core` module of `aiperf` (it began life as the
+The engine ships as the `metrics_core` module of `aiperf-runtime` (it began life as the
 standalone `aiperf-metrics` leaf crate and was inlined when the sixteen former
-`aiperf-*` library crates became modules of `aiperf`). **No `ndarray`** (the
+`aiperf-*` library crates became modules of `aiperf-runtime`). **No `ndarray`** (the
 sweep-line is `Vec<f64>` + `sort_by` + manual cumsum/searchsorted — full control over
 the tie-break and determinism, no hidden allocation). It depends only on a shared
 finite-float type, `serde`, and `rustc-hash` for categorical interning — **no
@@ -144,7 +144,7 @@ may contribute side-channel accumulators or summaries, but `metrics_core` never 
 on telemetry-specific modules and forms no dependency cycle.
 
 ```
-rust/aiperf/src/metrics_core/
+rust/runtime/src/metrics_core/
   mod.rs                # module root + Accumulator / Analyzer / Reporter seam
   value.rs              # MetricValue (finite | +inf | absent), FiniteFloat scrub
   catalog.rs            # MetricSpec table + MetricType/AggregationKind/Flags/ConsoleGroup + toposort
@@ -165,9 +165,9 @@ rust/aiperf/src/metrics_core/
   report.rs             # NativeReporter: AccumulatorSummary → native-v2 Report
 ```
 
-Dependency direction: `aiperf::run`/`aiperf::graph` (owning the observer →
-`RecordIngest` translation in `aiperf::metrics`) → `aiperf::metrics_core`.
-`metrics_core` is a leaf module beside `aiperf::clock` / `aiperf::rng`.
+Dependency direction: `aiperf_runtime::run`/`aiperf_runtime::graph` (owning the observer →
+`RecordIngest` translation in `aiperf_runtime::metrics`) → `aiperf_runtime::metrics_core`.
+`metrics_core` is a leaf module beside `aiperf_runtime::clock` / `aiperf_runtime::rng`.
 
 ---
 
@@ -434,7 +434,7 @@ pub struct ExportContext {
 ## 12. Seams: `Accumulator` / `Analyzer` / `Reporter` (`mod.rs`)
 
 The engine sits behind an observer feed and a typed `Reporter`. Runtime translation
-lives above the leaf module: `aiperf::metrics::NativeMetricsObserver` joins
+lives above the leaf module: `aiperf_runtime::metrics::NativeMetricsObserver` joins
 Clock-stamped observer events, terminal state, token classification, endpoint usage,
 fine-grained HTTP trace facts, and workload dimensions into `RecordIngest`. Fixed
 schedules explicitly omit the credit-relative latency family because they have no
@@ -567,7 +567,7 @@ text — keep them.
    ops** (control over the tie-break/FP-snap, deterministic, no hidden alloc); revisit
    only if a >1M-record summarize profiles hot.
 2. **Where does the record translation live** — **Resolved: above the leaf.**
-   `aiperf::metrics::NativeMetricsObserver` (in the runtime layer) owns the observer →
+   `aiperf_runtime::metrics::NativeMetricsObserver` (in the runtime layer) owns the observer →
    `RecordIngest` translation and knows the `Event` stream; `metrics_core` stays IO-free
    and testable on synthetic `RecordIngest`.
 3. **Report kernel ddof for the mixed console table** — inference metrics are ddof=0,

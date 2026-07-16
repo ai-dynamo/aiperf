@@ -21,7 +21,9 @@ use aiperf_runtime::clock::{Clock, RealClock};
 use aiperf_runtime::dataset::{
     ComposeConfig, DatasetSource, LoadConfig, LoaderRegistry, TiktokenTokenizer,
 };
-use aiperf_runtime::endpoints::{EndpointId, EndpointRegistry, PreparedEndpointTable, RawEndpointConfig};
+use aiperf_runtime::endpoints::{
+    EndpointId, EndpointRegistry, PreparedEndpointTable, RawEndpointConfig,
+};
 use aiperf_runtime::fixed_schedule::{
     DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload,
 };

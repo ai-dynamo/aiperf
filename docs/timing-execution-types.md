@@ -11,12 +11,12 @@ type's own doc comment. **◆** marks a trait (an extension seam). Code is truth
 verify before relying on any row; names drift.
 
 Layers: [1 Clock](#1-clock) · [2 Measurement foundation](#2-measurement--dispatch-foundation-loadgen-core) ·
-[3 Timing policy](#3-timing-policy-aiperftiming) · [4 Phase orchestration](#4-phase-orchestration-aiperftimingphase) ·
+[3 Timing policy](#3-timing-policy-aiperf_runtimetiming) · [4 Phase orchestration](#4-phase-orchestration-aiperf_runtimetimingphase) ·
 [5 Scheduled execution](#5-scheduled-execution) · [6 HTTP/gRPC dispatch + measurement](#6-http--grpc-dispatch--native-measurement) ·
-[7 Graph execution plane](#7-graph-execution-plane-aiperfgraph) · [8 Runner wiring](#8-runner-concrete-wiring-aiperf-runner) ·
+[7 Graph execution plane](#7-graph-execution-plane-aiperf_runtimegraph) · [8 Runner wiring](#8-runner-concrete-wiring-aiperf_runtimerunner_protocol) ·
 [Addendum: recommended renames](#addendum--recommended-renames)
 
-## 1. Clock — `aiperf::clock`
+## 1. Clock — `aiperf_runtime::clock`
 | Type | Kind | Description |
 |---|---|---|
 | `Clock` | trait ◆ | A sleepable time source (`now_ns`/`sleep`/`is_virtual`). |
@@ -40,7 +40,7 @@ Layers: [1 Clock](#1-clock) · [2 Measurement foundation](#2-measurement--dispat
 | `PerRequestRecord` | struct | Flat per-request record for `--report-jsonl`. |
 | `SlaThresholds` / `TraceGoodputStats` | struct | SLA classification + goodput (throughput restricted to SLA-satisfying requests). |
 
-## 3. Timing policy — `aiperf::timing`
+## 3. Timing policy — `aiperf_runtime::timing`
 
 **Arrival** (`intervals.rs`)
 | Type | Kind | Description |
@@ -79,7 +79,7 @@ Layers: [1 Clock](#1-clock) · [2 Measurement foundation](#2-measurement--dispat
 | `RampDriver` / `RampHandle` / `RamperConfig` | struct | Async driver applying a strategy to a setter closure; control handle; params. |
 | `UserCentricPlan` / `InitialUser` | struct | Deterministic steady-state seeding plan for the user-centric strategy. |
 
-## 4. Phase orchestration — `aiperf::timing::phase`
+## 4. Phase orchestration — `aiperf_runtime::timing::phase`
 | Type | Kind | Description |
 |---|---|---|
 | `PhaseExecution` | trait ◆ | Workload/backend adapter driven by `PhaseRunner` — the seam both scheduled & graph implement. |
@@ -135,7 +135,7 @@ Layers: [1 Clock](#1-clock) · [2 Measurement foundation](#2-measurement--dispat
 *Runner-internal (not `pub`): `ScheduledPhaseExecution` + `…Factory` — the `PhaseExecution` impl wrapping a `Workload` + `ScheduledRuntime`.*
 
 ## 6. HTTP / gRPC dispatch & native measurement
-`aiperf::http` / `aiperf::grpc` / `aiperf::metrics`
+`aiperf_runtime::http` / `aiperf_runtime::grpc` / `aiperf_runtime::metrics`
 | Type | Kind | Description |
 |---|---|---|
 | `TransportSink` | struct | Live sink over `transport_http` (hyper+Clock); shared by the scheduled worker & the graph sink. |
@@ -151,7 +151,7 @@ Layers: [1 Clock](#1-clock) · [2 Measurement foundation](#2-measurement--dispat
 | `RequestMetricMetadata` / `NativeResponseMetadata` | struct | Pre-arrival dimensions / post-terminal transport facts. |
 | `NativeMetricsFinalizer` / `NativeMetricsCollection` / `ObserverTee` | struct | Post-drain reduction / records+aggregate / local observer fan-out. |
 
-## 7. Graph execution plane — `aiperf::graph`
+## 7. Graph execution plane — `aiperf_runtime::graph`
 
 **Executor & driver** (`executor.rs`/`runtime.rs`/`execution.rs`/`scheduler.rs`/`context.rs`)
 | Type | Kind | Description |
@@ -197,7 +197,7 @@ Layers: [1 Clock](#1-clock) · [2 Measurement foundation](#2-measurement--dispat
 
 **Graph IR data model** (`model.rs` — inputs the executor consumes): `GraphRecord`, `TraceRecord`, `ParsedGraph`, `LlmNode`, `StaticEdge`, `ChannelSpec`, `ChannelRequirement`, `Count`, `PromptItem`, `ChannelType`, `ReducerName`.
 
-## 8. Runner concrete wiring — `aiperf-runner`
+## 8. Runner concrete wiring — `aiperf_runtime::runner_protocol`
 | Type | Kind | Description |
 |---|---|---|
 | `RunnerExecutionFactories` | struct | The exact execution-factory universe (HTTP + graph + gRPC + readiness). |

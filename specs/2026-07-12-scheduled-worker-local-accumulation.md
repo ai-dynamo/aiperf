@@ -32,7 +32,7 @@ observer.
 > replay loop no longer exist anywhere in `rust/` (see §3.1). The file:line
 > citations below are historical, describing the state the measured seam replaced.
 
-`rust/runner/src/turn_execution.rs` (pre-change):
+`rust/runtime/src/runner_protocol/turn_execution.rs` (pre-change):
 
 - `BufferedObserver` (lines 164–223): a `RequestObserver` whose `on_admit` /
   `on_token` / `on_classified_token` / `on_usage` / `on_endpoint_metrics` /
@@ -83,13 +83,13 @@ profiling for a request-bound vs token-bound ceiling, run **both** a long-output
 and a short-output/usage-only workload — a single ratio floor at N=4 cannot tell
 them apart.
 
-The gRPC path has an identical twin: `rust/runner/src/grpc_turn_execution.rs`
+The gRPC path has an identical twin: `rust/runtime/src/runner_protocol/grpc_turn_execution.rs`
 `BufferedObserver` (lines 156–204) and replay loop (lines 376–378).
 
 ### 1.2 Who the single coordinator observer actually is (runner product path)
 
 The runner product path does **not** use the `ScheduledRuntime` observer. In
-`rust/runner/src/execute.rs`, `ConfiguredDispatcher::dispatch_turn`
+`rust/runtime/src/runner_protocol/execute.rs`, `ConfiguredDispatcher::dispatch_turn`
 (lines 3268–3287) **ignores** the `ScheduledRuntime`-supplied `_observer`
 (line 3271) and feeds the backend `self.capture.observer` instead. The comment
 at lines 3276–3282 is explicit:
@@ -108,7 +108,7 @@ replayed onto this one observer. **This single observer is the runner ceiling.**
 
 ### 1.3 The reference design that already scales — graph bench
 
-`rust/aiperf/src/graph/transport_bench.rs` keeps a **per-worker**
+`rust/runtime/src/graph/transport_bench.rs` keeps a **per-worker**
 `MetricsAccumulator` and merges once at the thread join (lines 385–395):
 
 ```rust
@@ -121,7 +121,7 @@ for worker in workers {
 let native_metrics = merged.native.summarize();
 ```
 
-`rust/runner/src/graph_execution.rs` builds one `NativeMetricsObserver`
+`rust/runtime/src/runner_protocol/graph_execution.rs` builds one `NativeMetricsObserver`
 per graph worker and registers metadata worker-locally
 (`RunnerGraphSink`, lines 787–805). **The scheduled path is the last consumer
 still routing every token through a single coordinator observer.**
@@ -262,7 +262,7 @@ the regression matrix must add a gRPC parity row (currently absent).
 
 ### 3.1 Worker command / reply — the measured seam (built)
 
-`rust/runner/src/turn_execution.rs`:
+`rust/runtime/src/runner_protocol/turn_execution.rs`:
 
 - **`BufferedObserver` / `ObserverEvent` / `execute_turn(observer)` are DELETED.**
   The buffered replay path described in §1.1 no longer exists anywhere in `rust/`;
@@ -302,7 +302,7 @@ the regression matrix must add a gRPC parity row (currently absent).
 
 ### 3.2 gRPC twin — mirrors the change (built)
 
-`rust/runner/src/grpc_turn_execution.rs`: the `GrpcTransportSink` and
+`rust/runtime/src/runner_protocol/grpc_turn_execution.rs`: the `GrpcTransportSink` and
 `ThreadPerCoreGrpcExecutionBackend` implement the same measured seam
 (worker-local observer + `drain_records`, `grpc_turn_execution.rs:255/268`),
 exactly as on the HTTP side. Like the HTTP path, the gRPC buffered
@@ -311,7 +311,7 @@ measured seam is the sole path.
 
 ### 3.3 Runner capture — the real product surface
 
-`rust/runner/src/execute.rs`:
+`rust/runtime/src/runner_protocol/execute.rs`:
 
 - `RunCapture` no longer owns a single measurement `NativeMetricsObserver` for
   the scheduled path. Its responsibilities split:
@@ -422,7 +422,7 @@ measured seam is the sole path.
 
 ### 3.4 Library scheduled path (non-runner consumers)
 
-`rust/aiperf/src/scheduled.rs`:
+`rust/runtime/src/scheduled.rs`:
 
 - `ScheduledRuntime` builds one `ObserverTee` of `CollectorObserver` +
   `NativeMetricsObserver` (lines 482–486) and passes `runtime.observer`
@@ -435,7 +435,7 @@ measured seam is the sole path.
   reductions. Under worker-local it instead **merges the per-worker drained
   accumulators** then summarizes.
 
-`rust/aiperf/src/phase_runtime.rs`:
+`rust/runtime/src/phase_runtime.rs`:
 
 - `run_scheduled_phases_with_aggregate` (592–610) and `_deferred` (617–643)
   attach a whole-run `CollectorObserver` as an `additional_observer`. Per-phase
@@ -444,11 +444,11 @@ measured seam is the sole path.
 
 ### 3.5 Merge primitives (already built — reused as-is)
 
-- `MetricsAccumulator::merge` — `rust/aiperf/src/metrics_core/accumulator.rs:485–514`.
+- `MetricsAccumulator::merge` — `rust/runtime/src/metrics_core/accumulator.rs:485–514`.
 - `MetricsMergeError` — same file, 54–79.
-- `ColumnStore::append_store` — `rust/aiperf/src/metrics_core/store.rs:569–656`
+- `ColumnStore::append_store` — `rust/runtime/src/metrics_core/store.rs:569–656`
   (dense precondition asserted at 575–578).
-- `NativeMetricsFinalizer` (Send, plain data) — `rust/aiperf/src/metrics.rs:214–223`;
+- `NativeMetricsFinalizer` (Send, plain data) — `rust/runtime/src/metrics.rs:214–223`;
   `take_finalizer_at` 356–363; `finish`/`finish_with_records` 404–442.
 - Reference merge call: `transport_bench.rs:385–395`.
 

@@ -11,9 +11,20 @@ fn env_var_enables_sketch_without_flag() {
     // SAFETY: single-threaded test binary; no other test reads this env here.
     unsafe { std::env::set_var("AIPERF_METRICS_SKETCH", "1") };
     let args: Vec<String> = [
-        "--model", "m", "--url", "127.0.0.1:8000", "--endpoint-type", "chat",
-        "--concurrency", "1", "--request-count", "2", "--otel-url", "http://otel:4317",
-        "--artifact-dir", "/tmp/x",
+        "--model",
+        "m",
+        "--url",
+        "127.0.0.1:8000",
+        "--endpoint-type",
+        "chat",
+        "--concurrency",
+        "1",
+        "--request-count",
+        "2",
+        "--otel-url",
+        "http://otel:4317",
+        "--artifact-dir",
+        "/tmp/x",
     ]
     .iter()
     .map(|s| s.to_string())

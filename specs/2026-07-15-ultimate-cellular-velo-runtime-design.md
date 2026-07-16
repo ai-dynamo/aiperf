@@ -45,7 +45,7 @@ miss in the streaming case.**
 
 ### 1.1 Topology & lifecycle
 
-One `aiperf-runner` process is the **controller**; N are **cells**; Python sends one protocol‑v2
+One `aiperf` process is the **controller**; N are **cells**; Python sends one protocol‑v2
 `execute` and reads one merged `native-v2.json`. Mode dispatch: `runner_protocol` reads
 `/run/cfg/runtime/cells` (`cell_launcher.rs::cell_count_from_envelope`, clamp `[1,1024]`); `>1`
 diverts to `run_controller` → `cellular_controller::run_cellular`; `--cell` → `run_cell`; else the
@@ -567,3 +567,48 @@ QUIC/TIPC transports are *built‑but‑unmerged* (branch‑gated), not nonexist
 "velo must add" list for the *transfer* layer while leaving the *fan‑out* and *phaser* layers
 genuinely greenfield. Reusable to port back: the kvbm `ReplayStream` pattern and the seal state
 machine (§6).
+
+---
+
+## Addendum — 2026-07-16 — barrier-synchronized timing origin (§4, built, opt-in)
+
+**What changed / supersedes:** §4.2 noted START is a barrier but left the *timing origin* each
+cell adopts unspecified; §1.4 and §1.1 describe the START barrier as *releasing* cells only. In
+practice each cell then captured its run origin (`start_ns = clock.now_ns()`) inside
+`execute` **after** the barrier AND **after** its own per-cell dataset download + run setup
+(tokenizer load, dataset compile, connect). Cells with a larger shard / slower setup therefore
+zeroed their record timeline at a *later* instant than their peers, so the merged report's
+cross-cell absolute timestamps referenced a different `t0` per cell (all latency/throughput metrics
+are *differences* and so were unaffected — only absolute per-record timestamps drifted).
+
+**Built (opt-in behind `AIPERF_CELL_SHARED_ORIGIN`, default off):** the cell now captures a
+`RealClockAnchor` the instant its velo START barrier releases — inside `fetch_cell_envelope`
+(`runner_protocol::cellular_cell`), the shared logical instant every cell reaches together, *before*
+its per-cell setup — via `runner_protocol::cell_origin::capture_cell_shared_origin`. At run start,
+`execute` derives its origin from `cell_origin::run_origin_now_ns(&clock)` instead of
+`clock.now_ns()`: when a barrier anchor was captured it returns `clock.now_ns() - barrier.now_ns()`
+(read at one instant so the shared wall-`now` cancels), i.e. the barrier's reading on the execute
+clock's own timeline — negative when the barrier preceded the execute anchor (the common case),
+which shifts every record's timestamp forward so it is measured from the barrier. Default off ⇒
+`run_origin_now_ns` returns `clock.now_ns()` unchanged, so single-process and existing cellular runs
+are byte-unchanged.
+
+**Cross-host semantics (deliberate).** Cells may run on different hosts with unsynchronized wall
+clocks, so this does **not** adopt an absolute controller `t0` (which would import clock skew). Each
+cell zeroes at its *own* clock reading of the barrier-release instant; the barrier guarantees those
+instants coincide within network latency, so "elapsed since START" stays coherent cross-host with no
+clock-sync assumption. (The alternative — controller broadcasts an absolute `t0` in the
+`PhaseTransition::Started` / START payload — was rejected for that skew.)
+
+**Proven (2026-07-16):** unit `cell_origin::tests` (origin math + no-barrier pass-through) and e2e
+`test_cellular_shared_origin_zeroes_at_the_barrier` (`rust/e2e/tests/test_cellular.rs`): a `--cells
+N` run with the flag ON reproduces a single-cell baseline's ISL/OSL exactly (no regression) **and**
+its first request's `request_start_ns` exceeds the flag-off run's by the whole per-cell setup span
+(the deterministic signature of the origin having been pulled back to the shared barrier). Manual
+raw-record run: flag-off min `request_start_ns` ≈ 0.34s (each cell's post-setup start) vs flag-on ≈
+9.41s (measured from the barrier, dominated by the shared large-tokenizer load), ISL/OSL
+byte-identical to the single-cell baseline.
+
+**Not yet:** default-on (the flag is opt-in until it bakes); the controller's own report provenance
+still records its local finalize time, not the shared origin (the merged report's record timestamps
+are the cells', which is what the origin governs).

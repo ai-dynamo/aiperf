@@ -7,13 +7,13 @@ SPDX-License-Identifier: Apache-2.0
 
 **Date:** 2026-07-13
 **Status:** analysis (code-grounded, current tree)
-**Scope:** What the SCHEDULED and GRAPH online execution paths actually **share vs. duplicate in the product** (`rust/runner` + `rust/aiperf`), grounded in code — not specs. Records reality and flags follow-ups; proposes **no** refactor.
+**Scope:** What the SCHEDULED and GRAPH online execution paths actually **share vs. duplicate in the product** (`rust/runtime`), grounded in code — not specs. Records reality and flags follow-ups; proposes **no** refactor.
 
 > Motivated by a review of *"unify the scheduled and graph arrival/admission/failure policy seams, or write down why they're irreducibly different."* The answer, grounded in the runner: they are mostly **already unified** at the substrate; the arrival/admission "seams" are thin wrappers over shared primitives; the one genuine divergence is **failure behavior**.
 
 ## Why this exists (and a correction)
 
-The module map ("graph owns trait-backed root/arrival/admission/placement/failure policy") and the library sinks (`graph/transport_sink.rs::TransportChatSink`) suggest the graph is a separate, lower-fidelity execution world. In the **product** it is not. The runner's graph sink is `RunnerGraphSink` (`rust/runner/src/graph_execution.rs:703`), which materializes through the endpoint registry and dispatches through the same `TransportSink` as the scheduled path. An earlier draft of this analysis (a "unify the dispatch seam" design) was **withdrawn**: it was built on the library `TransportChatSink` and stale spec claims and wrongly concluded the graph was metrics-lite. Code is truth.
+The module map ("graph owns trait-backed root/arrival/admission/placement/failure policy") and the library sinks (`graph/transport_sink.rs::TransportChatSink`) suggest the graph is a separate, lower-fidelity execution world. In the **product** it is not. The runner's graph sink is `RunnerGraphSink` (`rust/runtime/src/runner_protocol/graph_execution.rs:703`), which materializes through the endpoint registry and dispatches through the same `TransportSink` as the scheduled path. An earlier draft of this analysis (a "unify the dispatch seam" design) was **withdrawn**: it was built on the library `TransportChatSink` and stale spec claims and wrongly concluded the graph was metrics-lite. Code is truth.
 
 ## Convergence map (product paths)
 
@@ -63,7 +63,7 @@ The only large remaining duplication is structural: two thread-per-core placemen
 
 ## Method / trust note
 
-Grounded in `rust/runner/src/{execute,turn_execution,graph_execution,graph_phase_runtime}.rs` and `rust/aiperf/src/{http,metrics,scheduled,request_rate}.rs`, verified against code (the surprising `_observer`-discard and `ensure! failed==0` claims were re-read directly). Specs are intent; where they disagreed with the runner (graph "metrics-lite"; a retained `BufferedObserver`), the code won.
+Grounded in `rust/runtime/src/runner_protocol/{execute,turn_execution,graph_execution,graph_phase_runtime}.rs` and `rust/runtime/src/{http,metrics,scheduled,request_rate}.rs`, verified against code (the surprising `_observer`-discard and `ensure! failed==0` claims were re-read directly). Specs are intent; where they disagreed with the runner (graph "metrics-lite"; a retained `BufferedObserver`), the code won.
 
 ## Related
 

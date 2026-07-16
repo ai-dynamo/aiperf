@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 **Date:** 2026-07-12
 **Author:** Anthony Casagrande (Tech Lead) + Codex
-**Status:** decided; implemented — workspace directory renamed `crates/` → `rust/`, the former per-capability `aiperf-*` library crates are consolidated into modules of `aiperf`, and the §8 conformance gate is built.
+**Status:** decided; implemented — workspace directory renamed `crates/` → `rust/`, the former per-capability `aiperf-*` library crates are consolidated into modules of `aiperf-runtime`, and the §8 conformance gate is built.
 **Decision:** AIPerf-owned Cargo packages use the `aiperf` namespace, their
 workspace directories omit the redundant `aiperf-` prefix and live directly
 under `rust/`, and the cross-product `loadgen-core` substrate keeps its neutral
@@ -29,12 +29,12 @@ This spec governs:
 - the intended product-neutral identity of `loadgen-core`.
 
 The workspace currently holds four product/library packages plus a test-harness
-package. Package names carry the product prefix (`aiperf`, `aiperf-runner`,
-`aiperf-mock-server`) while their directories drop it (`rust/aiperf`, `rust/runner`,
+package. Package names carry the product prefix (`aiperf-runtime`, `aiperf-cli`,
+`aiperf-mock-server`) while their directories drop it (`rust/runtime`, `rust/cli`,
 `rust/mock-server`). `loadgen-core` keeps its neutral name at `rust/loadgen-core`.
 The historical per-capability library crates (`aiperf-clock`, `aiperf-metrics`,
 `aiperf-transport-http`, and the rest) no longer exist as separate packages:
-they are consolidated into modules of the single `aiperf` crate (see §4).
+they are consolidated into modules of the single `aiperf-runtime` crate (see §4).
 
 Cargo terminology matters here:
 
@@ -44,8 +44,8 @@ Cargo terminology matters here:
   tests, or benches);
 - a **workspace directory** is only a repository path and need not equal the
   package name;
-- Cargo exposes a hyphenated library package such as `aiperf-runner` to Rust
-  source as the identifier `aiperf_runner`.
+- Cargo exposes a hyphenated library package such as `aiperf-cli` to Rust
+  source as the identifier `aiperf_cli`.
 
 ## 2. Normative naming rules
 
@@ -53,7 +53,7 @@ The words MUST, MUST NOT, SHOULD, and MAY are normative.
 
 ### 2.1 AIPerf-owned package identity
 
-1. The umbrella library package MUST be named `aiperf`.
+1. The umbrella runtime library package MUST be named `aiperf-runtime`.
 2. Every other AIPerf-owned package MUST be named
    `aiperf-<capability>` in kebab-case.
 3. `<capability>` MUST describe the package's stable responsibility, not its
@@ -64,17 +64,17 @@ The words MUST, MUST NOT, SHOULD, and MAY are normative.
    metadata, and possible publication; it therefore needs the product
    namespace.
 5. The corresponding Rust identifier MUST use Cargo's normal hyphen-to-
-   underscore mapping (`aiperf-runner` -> `aiperf_runner`). A package MUST NOT
+   underscore mapping (`aiperf-cli` -> `aiperf_cli`). A package MUST NOT
    add a custom `[lib].name` merely to remove the `aiperf_` prefix from imports.
 
 ### 2.2 Workspace directory identity
 
 1. An AIPerf capability package SHOULD live at `rust/<capability>`, not
    `rust/aiperf-<capability>`.
-2. The umbrella `aiperf` package SHOULD remain at `rust/aiperf` because it
-   has no capability suffix to use as a shorter directory name.
+2. The umbrella `aiperf-runtime` package SHOULD live at `rust/runtime`,
+   dropping the `aiperf-` prefix like every other capability package.
 3. Directory names MUST be kebab-case and SHOULD equal the capability suffix
-   exactly (`aiperf-runner` -> `rust/runner`, `aiperf-mock-server` -> `rust/mock-server`).
+   exactly (`aiperf-cli` -> `rust/cli`, `aiperf-mock-server` -> `rust/mock-server`).
 4. Code, scripts, CI, and documentation MUST treat Cargo metadata as the
    authority for package identity. They MUST NOT infer a package name by
    prepending or stripping text from its directory basename.
@@ -150,19 +150,21 @@ The workspace members and their directories are:
 
 | Directory | Cargo package | Rust identifier |
 |---|---|---|
-| `rust/aiperf` | `aiperf` | `aiperf` |
-| `rust/runner` | `aiperf-runner` | `aiperf_runner` |
+| `rust/runtime` | `aiperf-runtime` | `aiperf_runtime` |
+| `rust/cli` | `aiperf-cli` | `aiperf_cli` |
 | `rust/mock-server` | `aiperf-mock-server` | `aiperf_mock_server` |
 | `rust/e2e` | `aiperf-e2e-tests` | `aiperf_e2e_tests` |
+| `rust/pyext` | `aiperf-pyext` | `aiperf_pyext` |
 | `rust/loadgen-core` | `loadgen-core` | `loadgen_core` |
 
 Every package name follows §2.1; every directory follows §2.2 (the `aiperf-`
-prefix is stripped from the path, kept in the package identity). `rust/runner`
-additionally co-locates a maturin `pyproject.toml` beside its `Cargo.toml`,
-following ai-dynamo's `lib/bindings/python/` layout, so the `aiperf-runner`
-binary is packaged as a source-built wheel from within its own crate directory
-(the published wheel is online-only by default because the crate's default
-`dynosim` feature needs an external checkout absent in CI).
+prefix is stripped from the path, kept in the package identity). `rust/pyext`
+holds the packaging-only pyo3 `cdylib` (`aiperf-pyext`) that maturin compiles
+into `aiperf._native`; the workspace `pyproject.toml` at the repository root
+drives that build, and the single unified `aiperf` binary (crate `aiperf-cli`)
+is repacked into the wheel's scripts directory by `tools/wheel_repack.py`
+(via `make wheel`). The published wheel is online-only by default because the
+`dynosim` feature it can carry needs an external checkout absent in CI.
 
 ### 4.1 Consolidation of the former per-capability crates
 
@@ -173,8 +175,8 @@ The naming rules above were authored when AIPerf carried many separate
 `aiperf-adaptive`, `aiperf-accuracy`, `aiperf-gpu-telemetry`,
 `aiperf-network-latency`, `aiperf-server-metrics`, `aiperf-content-server`, and
 the rest). Those sixteen library crates are now consolidated into modules of the
-single `aiperf` crate, addressed as `aiperf::<module>::` (for example
-`aiperf::clock`, `aiperf::metrics_core`, `aiperf::transport_http`). No separate
+single `aiperf-runtime` crate, addressed as `aiperf_runtime::<module>::` (for example
+`aiperf_runtime::clock`, `aiperf_runtime::metrics_core`, `aiperf_runtime::transport_http`). No separate
 `aiperf-<capability>` library package remains. The module namespaces inherit the
 same capability vocabulary the crate names used, so the naming discipline still
 governs how a responsibility is named — it now names a module rather than a
@@ -187,7 +189,7 @@ capability is ever re-extracted into its own Cargo package, it MUST be named
 
 The `aiperf-core` responsibility name was never ratified as a long-term
 boundary; the OpenAI Chat/SSE wire helpers and the collector-backed observer
-adapter it once held now live inside `aiperf` alongside the neutral
+adapter it once held now live inside `aiperf-runtime` alongside the neutral
 `loadgen-core` contract. That responsibility boundary is a separate semantic
 question this spec does not decide.
 
@@ -205,8 +207,8 @@ Examples reviewed for this decision:
   `lib/mocker`, while their packages are `dynamo-runtime`, `dynamo-llm`, and
   `dynamo-mocker`. Its separately identified KV block-manager family uses
   `kvbm-*`. This is the closest organizational precedent for AIPerf, including
-  the co-located `Cargo.toml` + `pyproject.toml` maturin bindings layout adopted
-  by `rust/runner`.
+  the maturin bindings layout used for the `aiperf-pyext` packaging `cdylib`
+  (`rust/pyext`).
 - Wasmtime uses short paths such as `crates/environ` while retaining package
   identities such as `wasmtime-environ`; it additionally marks unsupported
   internals with `wasmtime-internal-*` package names.
@@ -239,7 +241,7 @@ downstream manifests, and they compete with broad ecosystem vocabulary.
 
 ### Prefixing both the directory and package
 
-`rust/aiperf-runner` containing `aiperf-runner` is valid but rejected because the
+`rust/aiperf-cli` containing `aiperf-cli` is valid but rejected because the
 repository path already supplies the AIPerf scope. Exact path/package equality
 is not valuable enough to retain the repeated prefix.
 
@@ -260,7 +262,7 @@ The layout is in place; the migration was a repository-path change, not a public
 Rust API rename:
 
 1. Each `aiperf-<capability>` directory dropped the `aiperf-` prefix, with Git
-   history preserved; `rust/aiperf` and `rust/loadgen-core` are unchanged.
+   history preserved; `rust/runtime` and `rust/loadgen-core` carry no capability prefix to strip.
 2. Every `[package].name` is unchanged.
 3. Root `[workspace.dependencies]` path values, relative path dependencies,
    scripts, CI, documentation, tests, and source references point at the short
@@ -278,7 +280,7 @@ and wired into `.pre-commit-config.yaml` as `check-crate-layout`. Given each
 workspace package's manifest path and package name from `cargo metadata
 --no-deps` (never a directory basename), it enforces:
 
-- `aiperf` is at `rust/aiperf`;
+- `aiperf-runtime` is at `rust/runtime`;
 - `aiperf-<capability>` is at `rust/<capability>`;
 - `loadgen-core` is the allowlisted exception at `rust/loadgen-core`;
 - every additional exception is explicitly allowlisted with a link to its

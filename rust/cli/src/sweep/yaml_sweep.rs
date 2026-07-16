@@ -29,7 +29,10 @@ use serde_json::{Map, Value};
 /// Bare-name sugar for the 12 most-swept phase fields (`_SWEEP_PATH_ALIASES`).
 const ALIASES: &[(&str, &str)] = &[
     ("concurrency", "phases.profiling.concurrency"),
-    ("prefill_concurrency", "phases.profiling.prefill_concurrency"),
+    (
+        "prefill_concurrency",
+        "phases.profiling.prefill_concurrency",
+    ),
     ("rate", "phases.profiling.rate"),
     ("requests", "phases.profiling.requests"),
     ("duration", "phases.profiling.duration"),
@@ -90,13 +93,15 @@ pub fn normalize_benchmark(config: &mut Value) {
         let mut phases = Vec::new();
         if let Some(mut w) = bench.remove("warmup") {
             if let Some(o) = w.as_object_mut() {
-                o.entry("name").or_insert_with(|| Value::String("warmup".into()));
+                o.entry("name")
+                    .or_insert_with(|| Value::String("warmup".into()));
             }
             phases.push(w);
         }
         if let Some(mut p) = bench.remove("profiling") {
             if let Some(o) = p.as_object_mut() {
-                o.entry("name").or_insert_with(|| Value::String("profiling".into()));
+                o.entry("name")
+                    .or_insert_with(|| Value::String("profiling".into()));
             }
             phases.push(p);
         }
@@ -111,11 +116,9 @@ pub fn normalize_benchmark(config: &mut Value) {
     if let Some(models) = bench.get_mut("models") {
         let items: Option<Vec<Value>> = match models {
             Value::String(s) => Some(vec![serde_json::json!({"name": s})]),
-            Value::Array(a) if a.iter().all(Value::is_string) => Some(
-                a.iter()
-                    .map(|s| serde_json::json!({"name": s}))
-                    .collect(),
-            ),
+            Value::Array(a) if a.iter().all(Value::is_string) => {
+                Some(a.iter().map(|s| serde_json::json!({"name": s})).collect())
+            }
             _ => None,
         };
         if let Some(items) = items {
@@ -171,15 +174,12 @@ pub fn parse(config: &Value) -> anyhow::Result<Option<YamlSweep>> {
     // path for a stable variation order.
     let mut axes: BTreeMap<String, Vec<Value>> = BTreeMap::new();
     for (path, values) in params {
-        let values = values
-            .as_array()
-            .filter(|v| !v.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("sweep parameter {path:?}: value list must be non-empty"))?;
+        let values = values.as_array().filter(|v| !v.is_empty()).ok_or_else(|| {
+            anyhow::anyhow!("sweep parameter {path:?}: value list must be non-empty")
+        })?;
         let resolved = validate_dotted_path(path)?;
         if axes.contains_key(&resolved) {
-            anyhow::bail!(
-                "sweep parameter {path:?} resolves to {resolved:?}, already a parameter"
-            );
+            anyhow::bail!("sweep parameter {path:?} resolves to {resolved:?}, already a parameter");
         }
         axes.insert(resolved, values.clone());
     }
@@ -273,10 +273,7 @@ fn cartesian(axes: &[(String, Vec<Value>)]) -> Vec<Vec<usize>> {
 fn render_value(v: &Value) -> String {
     match v {
         Value::Number(n) if n.is_i64() || n.is_u64() => n.to_string(),
-        Value::Number(n) => n
-            .as_f64()
-            .map(py_float)
-            .unwrap_or_else(|| n.to_string()),
+        Value::Number(n) => n.as_f64().map(py_float).unwrap_or_else(|| n.to_string()),
         Value::String(s) => s.clone(),
         Value::Bool(b) => {
             // Python str(True) == "True".
@@ -308,18 +305,31 @@ fn validate_dotted_path(p: &str) -> anyhow::Result<String> {
         p.to_string()
     };
     anyhow::ensure!(!resolved.is_empty(), "dimension path must be non-empty");
-    anyhow::ensure!(!resolved.starts_with('.'), "dimension path {resolved:?} must not start with '.'");
-    anyhow::ensure!(!resolved.ends_with('.'), "dimension path {resolved:?} must not end with '.'");
-    anyhow::ensure!(!resolved.contains(".."), "dimension path {resolved:?} must not contain '..'");
+    anyhow::ensure!(
+        !resolved.starts_with('.'),
+        "dimension path {resolved:?} must not start with '.'"
+    );
+    anyhow::ensure!(
+        !resolved.ends_with('.'),
+        "dimension path {resolved:?} must not end with '.'"
+    );
+    anyhow::ensure!(
+        !resolved.contains(".."),
+        "dimension path {resolved:?} must not contain '..'"
+    );
     let first = resolved.split('.').next().unwrap_or("");
     if first == "sweep" {
         anyhow::bail!("dimension path {resolved:?} targets the sweep config itself");
     }
     if NON_SWEEPABLE_FIRST.contains(&first) {
-        anyhow::bail!("dimension path {resolved:?} targets non-sweepable top-level field {first:?}");
+        anyhow::bail!(
+            "dimension path {resolved:?} targets non-sweepable top-level field {first:?}"
+        );
     }
     if first == "benchmark" {
-        anyhow::bail!("dimension path {resolved:?} must not include the redundant 'benchmark.' prefix");
+        anyhow::bail!(
+            "dimension path {resolved:?} must not include the redundant 'benchmark.' prefix"
+        );
     }
     Ok(resolved)
 }
@@ -335,7 +345,10 @@ fn is_named_dict_list(arr: &[Value]) -> bool {
 /// Find the list entry named `name`, with the `phases.profiling` recipe fallback
 /// (unique non-warmup phase). Returns the index into `arr`.
 fn find_named_index(arr: &[Value], name: &str, parent_key: &str) -> Option<usize> {
-    if let Some(i) = arr.iter().position(|it| it.get("name").and_then(Value::as_str) == Some(name)) {
+    if let Some(i) = arr
+        .iter()
+        .position(|it| it.get("name").and_then(Value::as_str) == Some(name))
+    {
         return Some(i);
     }
     if name != "profiling" || parent_key != "phases" {
@@ -377,7 +390,11 @@ fn set_nested_value(data: &mut Value, path: &str, value: Value) -> anyhow::Resul
     }
     let last = keys[keys.len() - 1];
     if current.is_array() && is_named_dict_list(current.as_array().unwrap()) {
-        let parent = if keys.len() >= 2 { keys[keys.len() - 2] } else { "" };
+        let parent = if keys.len() >= 2 {
+            keys[keys.len() - 2]
+        } else {
+            ""
+        };
         let arr = current.as_array().unwrap();
         let idx = find_named_index(arr, last, parent)
             .ok_or_else(|| anyhow::anyhow!("sweep path {path:?}: no entry named {last:?} found"))?;

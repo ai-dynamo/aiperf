@@ -32,7 +32,7 @@ Regression gates live in the companion plan `2026-07-12-track-a-regression-harne
 
 ## The correction that sets the order
 
-The product `aiperf-runner` path **does not** use the `ScheduledRuntime` `ObserverTee`:
+The product `aiperf-cli` path **does not** use the `ScheduledRuntime` `ObserverTee`:
 `ConfiguredDispatcher::dispatch_turn` (`execute.rs:3268-3311`) discards it and feeds a
 **single** `RunCapture` `NativeMetricsObserver` (`execute.rs:3067`). Therefore:
 
@@ -51,7 +51,7 @@ Sequence: **PR1 → PR2 (A1)**, **PR3 (A3)** and **PR4 (A4)** in parallel after 
 
 The one load-bearing refactor, isolated so it can land and bake before A1.
 
-- **Where:** `rust/runner/src/execute.rs:3200-3234` (`RunCapture::finish`; crate `aiperf-runner`).
+- **Where:** `rust/runtime/src/runner_protocol/execute.rs:3200-3234` (`RunCapture::finish`; crate `aiperf-runtime`, `runner_protocol` module).
 - **Change:** replace the positional record↔identity zip (`ingest.correlation_id ==
   identity.uuid`, `:3211-3218`) with a **uuid-keyed join** keyed on the record's
   **true `Uuid`** (built from the dispatch identities; each record resolved by its
@@ -214,10 +214,10 @@ The one load-bearing refactor, isolated so it can land and bake before A1.
   (`establish_with_resolver` → `connector.connect`), **`pool.rs:28-35` `origin_key`
   must key UDS/Duplex by path/name, not the synthetic host — highest-risk item**,
   `http_client.rs:276/330`, `config/defaults.rs:199-202` (drop `uds_path`), and
-  **`rust/aiperf/src/graph/transport_bench.rs:462-506,516` — the ONE live non-`None` writer
+  **`rust/runtime/src/graph/transport_bench.rs:462-506,516` — the ONE live non-`None` writer
   of `uds_path` (NOT dead code, correcting the earlier claim; it sets `uds_path` via
   struct-shorthand which a `grep "uds_path:"` misses). Migrate it to `unix:`-scheme
-  connector selection in this SAME PR or the `aiperf` crate's `graph` module (formerly
+  connector selection in this SAME PR or the `aiperf-runtime` crate's `graph` module (formerly
   the `aiperf-graph` crate) fails to compile (field drop) /
   silently TCP-connects its dummy `http://localhost` URL (branch drop).**
 - **Selection:** scheme→connector at the endpoint-prepare composition root
