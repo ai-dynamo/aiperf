@@ -250,7 +250,21 @@ fn send_merge_patch(cfg: &InClusterConfig, path: &str, body: &Value) -> anyhow::
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    runtime.block_on(send_merge_patch_async(cfg, path, body))
+    // Bound the whole request: connect + TLS handshake + response. Best-effort
+    // reporting must never HANG the controller — a black-holed/half-open API
+    // server (accepts the TCP connect but never responds) would otherwise wedge
+    // `report_completion` forever after a successful run and the pod never exits.
+    runtime.block_on(async {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            send_merge_patch_async(cfg, path, body),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(anyhow::anyhow!("k8s API PATCH timed out after 10s")),
+        }
+    })
 }
 
 async fn send_merge_patch_async(

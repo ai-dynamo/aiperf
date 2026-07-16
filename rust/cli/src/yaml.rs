@@ -136,6 +136,10 @@ enum NumOrDist {
 
 #[derive(Debug, Deserialize)]
 struct DistFields {
+    /// Scalar fixed value (`{value: N}` — the object form of the `isl: N`
+    /// shorthand, e.g. what the Kubernetes operator projects for a fixed
+    /// synthetic ISL/OSL). Selects a `Fixed` distribution.
+    value: Option<f64>,
     mean: Option<f64>,
     stddev: Option<f64>,
     /// Median selects a log-normal distribution (paired with `mean`).
@@ -344,8 +348,9 @@ impl<'de> Deserialize<'de> for ModelsSection {
             where
                 A: serde::de::SeqAccess<'de>,
             {
-                let items =
-                    Vec::<ModelItem>::deserialize(serde::de::value::SeqAccessDeserializer::new(seq))?;
+                let items = Vec::<ModelItem>::deserialize(
+                    serde::de::value::SeqAccessDeserializer::new(seq),
+                )?;
                 Ok(ModelsSection {
                     items,
                     strategy: None,
@@ -391,7 +396,9 @@ impl<'de> Deserialize<'de> for ModelItem {
                 f.write_str("a model-name string or a `{name, ...}` mapping")
             }
             fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<ModelItem, E> {
-                Ok(ModelItem { name: v.to_string() })
+                Ok(ModelItem {
+                    name: v.to_string(),
+                })
             }
             fn visit_map<A>(self, map: A) -> Result<ModelItem, A::Error>
             where
@@ -1625,6 +1632,7 @@ fn build_adaptive_yaml(phase: &PhaseSection) -> anyhow::Result<crate::model::pha
 /// applying the config discriminator's normal-distribution default.
 fn dist_from(d: &DistFields) -> Distribution {
     normalize_dist(Distribution {
+        value: d.value,
         mean: d.mean,
         stddev: d.stddev,
         median: d.median,
