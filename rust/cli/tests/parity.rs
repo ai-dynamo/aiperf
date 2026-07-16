@@ -106,6 +106,7 @@ const FIXTURES: &[&str] = &[
     "toplevel",
     "agentic",
     "rankings",
+    "accuracy",
 ];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).

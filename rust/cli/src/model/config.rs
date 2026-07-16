@@ -25,6 +25,27 @@ use super::telemetry::{GpuTelemetryConfig, NetworkLatencyConfig, ServerMetricsCo
 use super::tokenizer::Tokenizer;
 use super::transport::Transport;
 
+/// Accuracy-benchmark policy (`cfg.accuracy`). Present only when
+/// `--accuracy-benchmark` is set; every field is always serialized (Options as
+/// null) to match Python's `AccuracyConfig`. The runner owns accuracy execution.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Accuracy {
+    /// Benchmark id (`--accuracy-benchmark`, e.g. `mmlu`).
+    pub benchmark: String,
+    /// Chain-of-thought toggle (`--accuracy-enable-cot`/`--accuracy-no-enable-cot`; null default).
+    pub enable_cot: Option<bool>,
+    /// Grader id (`--accuracy-grader`; null default).
+    pub grader: Option<String>,
+    /// Few-shot example count (`--accuracy-n-shots`; null default).
+    pub n_shots: Option<i64>,
+    /// System prompt override (`--accuracy-system-prompt`; null default).
+    pub system_prompt: Option<String>,
+    /// Selected task ids (`--accuracy-tasks`; null default).
+    pub tasks: Option<Vec<String>>,
+    /// Verbose grader output (`--accuracy-verbose`; false default).
+    pub verbose: bool,
+}
+
 /// The canonical benchmark configuration (runner-consumed projection).
 ///
 /// Grows one typed section per port task. Sections not yet ported are simply
@@ -86,7 +107,7 @@ pub struct BenchmarkConfig {
     // `--scenario` / `--unsafe-override` / `--trajectory-start-*` flag values.
     /// Accuracy-benchmark policy (`cfg.accuracy`; null unless an accuracy run).
     #[serde(default)]
-    pub accuracy: Option<serde_json::Value>,
+    pub accuracy: Option<Accuracy>,
     /// Per-endpoint override profiles (`cfg.endpoint_profiles`; empty by default).
     #[serde(default)]
     pub endpoint_profiles: serde_json::Map<String, serde_json::Value>,

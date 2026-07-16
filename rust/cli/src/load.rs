@@ -195,6 +195,8 @@ pub(crate) struct Inputs {
     pub agentic_cache_warmup_duration: Option<f64>,
     /// Rankings/rerank query-passage generation (present when a rankings flag is set).
     pub rankings: Option<crate::model::dataset::Rankings>,
+    /// Accuracy-benchmark policy (present when `--accuracy-benchmark` is set).
+    pub accuracy: Option<crate::model::config::Accuracy>,
     /// File dataset format id (`--custom-dataset-type`).
     pub custom_dataset_type: Option<String>,
     /// Named public dataset (mutually exclusive with synthetic/file).
@@ -519,6 +521,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         unsafe_override: flags.unsafe_override,
         agentic_cache_warmup_duration: flags.agentic_cache_warmup_duration,
         rankings: build_rankings(flags),
+        accuracy: build_accuracy(flags),
         artifact_dir: flags
             .artifact_dir
             .clone()
@@ -908,7 +911,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         sidecars: Some(sidecars),
         // Always-emitted top-level cfg fields (match Python's unconditional
         // serialization; carry the scenario/trajectory/unsafe flag values).
-        accuracy: None,
+        accuracy: inputs.accuracy.clone(),
         endpoint_profiles: serde_json::Map::new(),
         failure_policy: None,
         scenario: inputs.scenario.clone(),
@@ -1184,6 +1187,29 @@ fn build_image_spec(flags: &ProfileFlags) -> Option<ImageSpec> {
 }
 
 /// Build the prefix-prompts block from the shared/user or pool flags.
+/// Build the accuracy block from the `--accuracy-*` flags. Present only when
+/// `--accuracy-benchmark` is set (Python `AccuracyConfig`); `enable_cot` is
+/// tri-state (`--accuracy-enable-cot`/`--accuracy-no-enable-cot`/unset→null).
+fn build_accuracy(flags: &ProfileFlags) -> Option<crate::model::config::Accuracy> {
+    let benchmark = flags.accuracy_benchmark.clone()?;
+    let enable_cot = if flags.accuracy_enable_cot {
+        Some(true)
+    } else if flags.accuracy_no_enable_cot {
+        Some(false)
+    } else {
+        None
+    };
+    Some(crate::model::config::Accuracy {
+        benchmark,
+        enable_cot,
+        grader: flags.accuracy_grader.clone(),
+        n_shots: flags.accuracy_n_shots,
+        system_prompt: flags.accuracy_system_prompt.clone(),
+        tasks: flags.accuracy_tasks.clone(),
+        verbose: flags.accuracy_verbose,
+    })
+}
+
 /// Build the rankings block (`RankingsConfig`) from the `--rankings-*` flags.
 /// Present only when at least one flag is set; each sub-field is a set-only
 /// `{mean, stddev}` distribution (Python `_build_rankings` + `_mean_stddev_pair`)

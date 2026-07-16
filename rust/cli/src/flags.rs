@@ -133,6 +133,32 @@ pub struct ProfileFlags {
     #[arg(long = "rankings-query-prompt-token-stddev")]
     pub rankings_query_prompt_token_stddev: Option<f64>,
 
+    /// Accuracy benchmark id (`--accuracy-benchmark`, e.g. `mmlu`); enables the
+    /// accuracy block. The runner owns accuracy execution.
+    #[arg(long = "accuracy-benchmark")]
+    pub accuracy_benchmark: Option<String>,
+    /// Accuracy task ids (`--accuracy-tasks`, repeatable).
+    #[arg(long = "accuracy-tasks", num_args = 1..)]
+    pub accuracy_tasks: Option<Vec<String>>,
+    /// Accuracy grader id (`--accuracy-grader`).
+    #[arg(long = "accuracy-grader")]
+    pub accuracy_grader: Option<String>,
+    /// Few-shot example count (`--accuracy-n-shots`).
+    #[arg(long = "accuracy-n-shots")]
+    pub accuracy_n_shots: Option<i64>,
+    /// Accuracy system prompt override (`--accuracy-system-prompt`).
+    #[arg(long = "accuracy-system-prompt")]
+    pub accuracy_system_prompt: Option<String>,
+    /// Enable chain-of-thought (`--accuracy-enable-cot`).
+    #[arg(long = "accuracy-enable-cot", overrides_with = "accuracy_no_enable_cot")]
+    pub accuracy_enable_cot: bool,
+    /// Disable chain-of-thought (`--accuracy-no-enable-cot`).
+    #[arg(long = "accuracy-no-enable-cot")]
+    pub accuracy_no_enable_cot: bool,
+    /// Verbose grader output (`--accuracy-verbose`).
+    #[arg(long = "accuracy-verbose", default_value_t = false)]
+    pub accuracy_verbose: bool,
+
     /// Trials per variation (`--num-profile-runs`); `>1` repeats each run.
     #[arg(long = "num-profile-runs")]
     pub num_profile_runs: Option<u32>,

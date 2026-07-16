@@ -1061,6 +1061,7 @@ impl Benchmark {
             unsafe_override: self.unsafe_override.unwrap_or(false),
             agentic_cache_warmup_duration: None,
             rankings: None,
+            accuracy: None,
             artifact_dir: artifact_dir
                 .or_else(|| config_artifact_dir.map(PathBuf::from))
                 .unwrap_or_else(|| PathBuf::from("artifacts")),
