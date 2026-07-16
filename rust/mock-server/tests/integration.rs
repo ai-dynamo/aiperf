@@ -1044,3 +1044,127 @@ async fn default_usage_omits_extended_fields() {
     // completion_tokens_details is absent entirely for a non-reasoning model.
     assert!(u.get("completion_tokens_details").is_none());
 }
+
+// ============================================================================
+// Tool-call / function-call emission (`--tool-call-rate`).
+// ============================================================================
+
+fn tool_call_cfg() -> MockServerConfig {
+    MockServerConfig {
+        fast: true,
+        no_tokenizer: true,
+        tool_call_rate: 1.0,
+        random_seed: Some(7),
+        ..MockServerConfig::default()
+    }
+}
+
+/// Non-streaming: at rate 1.0 the assistant message carries a single
+/// `tool_calls` entry with the configured function name and argument string,
+/// the finish reason is `tool_calls`, and the usage reports
+/// `toolUsePromptTokenCount`.
+#[tokio::test]
+async fn tool_call_non_streaming_emits_message_tool_calls() {
+    let (addr, _h) = spawn_server(tool_call_cfg()).await;
+    let resp = client()
+        .post(format!("http://{addr}/v1/chat/completions"))
+        .json(&json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "What is the weather?"}],
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    let choice = &body["choices"][0];
+    assert_eq!(choice["finish_reason"], "tool_calls");
+    let tc = &choice["message"]["tool_calls"][0];
+    assert_eq!(tc["type"], "function");
+    assert!(tc["id"].as_str().unwrap().starts_with("call_"));
+    assert_eq!(tc["function"]["name"], "get_weather");
+    assert_eq!(tc["function"]["arguments"], r#"{"location":"NYC"}"#);
+    // Tool-definition prompt tokens are reported under the exact key AIPerf reads.
+    assert!(body["usage"]["toolUsePromptTokenCount"].as_u64().unwrap() > 0);
+}
+
+/// Streaming: the argument string is split across two `delta.tool_calls`
+/// frames; merging them by `index` reconstructs the full function name and
+/// arguments, and the terminal frame carries `finish_reason: "tool_calls"`.
+#[tokio::test]
+async fn tool_call_streaming_emits_delta_tool_calls() {
+    let (addr, _h) = spawn_server(tool_call_cfg()).await;
+    let text = client()
+        .post(format!("http://{addr}/v1/chat/completions"))
+        .json(&json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "What is the weather?"}],
+            "stream": true,
+            "stream_options": {"include_usage": true},
+        }))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+
+    let mut name = String::new();
+    let mut arguments = String::new();
+    let mut saw_finish = false;
+    let mut frames_with_tool_calls = 0usize;
+    for line in text.lines() {
+        let Some(payload) = line.strip_prefix("data: ") else {
+            continue;
+        };
+        if payload.trim() == "[DONE]" {
+            continue;
+        }
+        let obj: Value = match serde_json::from_str(payload.trim()) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let choice = &obj["choices"][0];
+        if choice["finish_reason"] == "tool_calls" {
+            saw_finish = true;
+        }
+        if let Some(tcs) = choice["delta"]["tool_calls"].as_array() {
+            frames_with_tool_calls += 1;
+            for tc in tcs {
+                if let Some(n) = tc["function"]["name"].as_str() {
+                    name.push_str(n);
+                }
+                if let Some(a) = tc["function"]["arguments"].as_str() {
+                    arguments.push_str(a);
+                }
+            }
+        }
+    }
+    assert!(
+        frames_with_tool_calls >= 2,
+        "arguments should stream across >=2 frames, got {frames_with_tool_calls}"
+    );
+    assert_eq!(name, "get_weather");
+    assert_eq!(arguments, r#"{"location":"NYC"}"#);
+    assert!(saw_finish, "a frame must carry finish_reason=tool_calls");
+    assert!(text.contains("toolUsePromptTokenCount"));
+}
+
+/// Rate 0.0 (the default) never emits tool calls: a normal assistant turn.
+#[tokio::test]
+async fn tool_call_disabled_by_default() {
+    let (addr, _h) = spawn_server(fast_cfg()).await;
+    let resp = client()
+        .post(format!("http://{addr}/v1/chat/completions"))
+        .json(&json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hello"}],
+        }))
+        .send()
+        .await
+        .unwrap();
+    let body: Value = resp.json().await.unwrap();
+    assert!(body["choices"][0]["message"].get("tool_calls").is_none());
+    assert_ne!(body["choices"][0]["finish_reason"], "tool_calls");
+    assert!(body["usage"].get("toolUsePromptTokenCount").is_none());
+}

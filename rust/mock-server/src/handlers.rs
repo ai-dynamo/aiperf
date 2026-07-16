@@ -101,6 +101,53 @@ pub(crate) struct RequestCtx {
     /// When true (accuracy adversarial `NullObjectChunk`), the streaming path
     /// emits one `{"object": null}` SSE frame before `[DONE]` (github #1010).
     pub(crate) null_object_chunk: bool,
+    /// Present when the seeded `--tool-call-rate` draw fires for this request:
+    /// the chat response answers with this function tool call. Set only on the
+    /// chat endpoint (see [`chat_completions`]); every other front door leaves
+    /// it `None`, so their payloads are unchanged.
+    pub(crate) tool_call: Option<ToolCallSpec>,
+}
+
+/// A single deterministic function tool call the mock emits when
+/// `--tool-call-rate` fires. Mirrors the OpenAI wire shape: `arguments` is a
+/// JSON-encoded *string* (not an object), and `id`/`type` identify the call.
+pub(crate) struct ToolCallSpec {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) arguments: String,
+}
+
+impl ToolCallSpec {
+    /// Build the deterministic tool call from config, and report the count of
+    /// tool-definition prompt tokens to attribute to it (`toolUsePromptTokenCount`
+    /// in the emitted usage). The count is the mock-tokenized length of
+    /// `name + arguments`, so it is deterministic in the configured knobs.
+    fn from_config(cfg: &crate::config::MockServerConfig) -> (Self, usize) {
+        let name = cfg.tool_call_name.clone();
+        let arguments = cfg.tool_call_arguments.clone();
+        let tool_use_tokens = crate::tokens::tokenize(&format!("{name}{arguments}")).len();
+        let spec = Self {
+            // Stable-per-request id derived off the request id at the callsite is
+            // overkill; a fresh uuid matches real APIs and is opaque to the runner
+            // (which keys tool calls by streamed `index`, not id).
+            id: format!("call_{}", uuid::Uuid::new_v4()),
+            name,
+            arguments,
+        };
+        (spec, tool_use_tokens)
+    }
+
+    /// Split `arguments` into two contiguous halves on a char boundary, so the
+    /// streaming path can emit the argument string across two `delta.tool_calls`
+    /// frames and exercise the runner's argument-concatenation merge. Returns
+    /// `(first, second)`; `second` is empty for a one-or-zero-char argument.
+    fn split_arguments(&self) -> (&str, &str) {
+        let mid = self.arguments.len() / 2;
+        let boundary = (mid..=self.arguments.len())
+            .find(|i| self.arguments.is_char_boundary(*i))
+            .unwrap_or(self.arguments.len());
+        self.arguments.split_at(boundary)
+    }
 }
 
 impl RequestCtx {
@@ -191,6 +238,7 @@ impl RequestCtx {
             usage,
             start,
             null_object_chunk,
+            tool_call: None,
         }
     }
 }
@@ -321,7 +369,16 @@ pub async fn chat_completions(
     let start = Instant::now();
     state.recorder.init_model_config(&req.model);
     let req_gen = GenRequest::Chat(&req);
-    let ctx = RequestCtx::build("chatcmpl", &req_gen, endpoint, start, &state);
+    let mut ctx = RequestCtx::build("chatcmpl", &req_gen, endpoint, start, &state);
+    // Seeded per-request tool-call decision (chat endpoint only). When it fires,
+    // attach the deterministic tool call and report its tool-definition prompt
+    // tokens as `toolUsePromptTokenCount`, which the runner reads into
+    // `usage_tool_use_prompt_tokens`.
+    if state.inject_tool_call() {
+        let (spec, tool_use_tokens) = ToolCallSpec::from_config(&state.config);
+        ctx.usage.tool_use_prompt_token_count = Some(tool_use_tokens);
+        ctx.tool_call = Some(spec);
+    }
 
     if req.stream {
         state.recorder.record_streaming_start(endpoint, &ctx.model);
@@ -380,6 +437,23 @@ fn build_chat_response(ctx: &RequestCtx) -> Value {
     if let Some(reasoning) = ctx.tokenized.reasoning_content() {
         message["reasoning_content"] = Value::String(reasoning);
     }
+    // When a tool call fires, emit the OpenAI `message.tool_calls` array and
+    // switch the finish reason to `tool_calls`. The generated content stays
+    // alongside it (the mock's token/latency model is unchanged); the runner
+    // parses `function.name` + `function.arguments` into the record.
+    let finish_reason: Value = if let Some(tc) = &ctx.tool_call {
+        message["tool_calls"] = json!([{
+            "id": tc.id,
+            "type": "function",
+            "function": {
+                "name": tc.name,
+                "arguments": tc.arguments,
+            },
+        }]);
+        Value::String("tool_calls".to_string())
+    } else {
+        Value::String(ctx.tokenized.finish_reason.to_string())
+    };
     json!({
         "id": ctx.request_id,
         "object": "chat.completion",
@@ -387,7 +461,7 @@ fn build_chat_response(ctx: &RequestCtx) -> Value {
         "model": ctx.model,
         "choices": [{
             "index": 0,
-            "finish_reason": ctx.tokenized.finish_reason,
+            "finish_reason": finish_reason,
             "message": message,
         }],
         "usage": ctx.usage,
@@ -1316,6 +1390,32 @@ struct ChatDelta<'a> {
     content: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_content: Option<&'a str>,
+    /// Streamed function tool-call deltas (`--tool-call-rate`). Absent on every
+    /// normal frame, so a non-tool-call stream is byte-identical. Each frame
+    /// carries one delta; the runner merges them by `index` across frames,
+    /// concatenating `function.arguments`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<[ToolCallDelta<'a>; 1]>,
+}
+
+/// One `delta.tool_calls[*]` entry. `id`/`type`/`function.name` are sent on the
+/// first frame of a call; later frames omit them and carry only the next
+/// `function.arguments` fragment (matching how real streamed tool calls arrive).
+#[derive(serde::Serialize)]
+struct ToolCallDelta<'a> {
+    index: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "type")]
+    kind: Option<&'static str>,
+    function: ToolCallFunctionDelta<'a>,
+}
+
+#[derive(serde::Serialize)]
+struct ToolCallFunctionDelta<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<&'a str>,
+    arguments: &'a str,
 }
 
 #[derive(serde::Serialize)]
@@ -1441,12 +1541,17 @@ fn render_chat_fast_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
                     role: Some("assistant"),
                     content: None,
                     reasoning_content: Some(token.as_str()),
+                    tool_calls: None,
                 },
             }],
         };
         write_sse_into(&mut buf, &chunk);
     }
 
+    // When a tool call follows, the terminal `finish_reason` rides its final
+    // frame, so content tokens never carry it (real APIs finish once, on the
+    // last delta of the whole turn).
+    let has_tool_call = ctx.tool_call.is_some();
     let num = ctx.tokenized.tokens.len();
     for (i, token) in ctx.tokenized.tokens.iter().enumerate() {
         let role = if i == 0 && !has_reasoning {
@@ -1454,7 +1559,7 @@ fn render_chat_fast_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
         } else {
             None
         };
-        let finish = if i + 1 == num {
+        let finish = if i + 1 == num && !has_tool_call {
             Some(ctx.tokenized.finish_reason)
         } else {
             None
@@ -1471,10 +1576,18 @@ fn render_chat_fast_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
                     role,
                     content: Some(token.as_str()),
                     reasoning_content: None,
+                    tool_calls: None,
                 },
             }],
         };
         write_sse_into(&mut buf, &chunk);
+    }
+
+    if let Some(tc) = &ctx.tool_call {
+        let lead_role = !has_reasoning && num == 0;
+        for chunk in tool_call_frames(ctx, created, tc, lead_role) {
+            write_sse_into(&mut buf, &chunk);
+        }
     }
 
     if include_usage {
@@ -1558,6 +1671,71 @@ fn render_tgi_fast_body(ctx: &RequestCtx) -> Bytes {
     Bytes::from(buf)
 }
 
+/// Build the two streamed tool-call frames for a fired `--tool-call-rate` chat
+/// request. Frame 1 opens the call (`id`, `type`, `function.name`, and the first
+/// half of the arguments); frame 2 carries the second half plus the terminal
+/// `finish_reason: "tool_calls"`. Splitting the arguments across two frames
+/// exercises the runner's argument-concatenation merge. `lead_role` stamps
+/// `role: assistant` on the first frame when no content/reasoning token preceded
+/// it (so a tool-call-only stream still opens the assistant turn).
+fn tool_call_frames<'a>(
+    ctx: &'a RequestCtx,
+    created: i64,
+    tc: &'a ToolCallSpec,
+    lead_role: bool,
+) -> [ChatStreamChunk<'a>; 2] {
+    let (args_head, args_tail) = tc.split_arguments();
+    let open = ChatStreamChunk {
+        id: &ctx.request_id,
+        object: "chat.completion.chunk",
+        created,
+        model: &ctx.model,
+        choices: [ChatChoiceDelta {
+            index: 0,
+            finish_reason: None,
+            delta: ChatDelta {
+                role: if lead_role { Some("assistant") } else { None },
+                content: None,
+                reasoning_content: None,
+                tool_calls: Some([ToolCallDelta {
+                    index: 0,
+                    id: Some(&tc.id),
+                    kind: Some("function"),
+                    function: ToolCallFunctionDelta {
+                        name: Some(&tc.name),
+                        arguments: args_head,
+                    },
+                }]),
+            },
+        }],
+    };
+    let close = ChatStreamChunk {
+        id: &ctx.request_id,
+        object: "chat.completion.chunk",
+        created,
+        model: &ctx.model,
+        choices: [ChatChoiceDelta {
+            index: 0,
+            finish_reason: Some("tool_calls"),
+            delta: ChatDelta {
+                role: None,
+                content: None,
+                reasoning_content: None,
+                tool_calls: Some([ToolCallDelta {
+                    index: 0,
+                    id: None,
+                    kind: None,
+                    function: ToolCallFunctionDelta {
+                        name: None,
+                        arguments: args_tail,
+                    },
+                }]),
+            },
+        }],
+    };
+    [open, close]
+}
+
 fn chat_stream(
     state: Arc<AppState>,
     ctx: RequestCtx,
@@ -1599,6 +1777,7 @@ fn chat_stream(
                             role,
                             content: Some(token.as_str()),
                             reasoning_content: None,
+                            tool_calls: None,
                         },
                     }],
                 };
@@ -1680,12 +1859,16 @@ fn chat_stream(
                         role: Some("assistant"),
                         content: None,
                         reasoning_content: Some(token.as_str()),
+                        tool_calls: None,
                     },
                 }],
             };
             yield Ok::<Bytes, Infallible>(sse_chunk_ser(&chunk));
         }
 
+        // A pending tool call takes the terminal `finish_reason` on its own final
+        // frame, so no content token carries it (real APIs finish once).
+        let has_tool_call = ctx.tool_call.is_some();
         let num = ctx.tokenized.tokens.len();
         // Pre-serialize the constant per-request frame envelope once. Every
         // middle token's chunk is byte-for-byte `<prefix>"<escaped token>"<suffix>`
@@ -1722,7 +1905,7 @@ fn chat_stream(
             idx += 1;
             state.recorder.record_streamed_token_fast(&labeled);
             let role = if i == 0 && !has_reasoning { Some("assistant") } else { None };
-            let finish = if i + 1 == num { Some(ctx.tokenized.finish_reason) } else { None };
+            let finish = if i + 1 == num && !has_tool_call { Some(ctx.tokenized.finish_reason) } else { None };
             if role.is_none() && finish.is_none() {
                 // Common middle token: splice the pre-serialized envelope with the
                 // token's own escaped JSON string. Still one frame per token.
@@ -1744,9 +1927,17 @@ fn chat_stream(
                             role,
                             content: Some(token.as_str()),
                             reasoning_content: None,
+                            tool_calls: None,
                         },
                     }],
                 };
+                yield Ok::<Bytes, Infallible>(sse_chunk_ser(&chunk));
+            }
+        }
+
+        if let Some(tc) = &ctx.tool_call {
+            let lead_role = !has_reasoning && num == 0;
+            for chunk in tool_call_frames(&ctx, created, tc, lead_role) {
                 yield Ok::<Bytes, Infallible>(sse_chunk_ser(&chunk));
             }
         }
@@ -2332,6 +2523,7 @@ mod stream_frame_tests {
                     role: None,
                     content: Some(token),
                     reasoning_content: None,
+                    tool_calls: None,
                 },
             }],
         };
@@ -2391,5 +2583,27 @@ mod stream_frame_tests {
         let v: serde_json::Value = serde_json::from_slice(json).unwrap();
         assert_eq!(v["object"], "chat.completion.chunk");
         assert_eq!(v["choices"][0]["delta"]["content"], "hi");
+    }
+
+    #[test]
+    fn tool_call_arguments_split_reconstructs_and_respects_char_boundaries() {
+        // ASCII arguments split into two non-empty contiguous halves.
+        let spec = ToolCallSpec {
+            id: "call_x".into(),
+            name: "get_weather".into(),
+            arguments: r#"{"location":"NYC"}"#.into(),
+        };
+        let (head, tail) = spec.split_arguments();
+        assert!(!head.is_empty() && !tail.is_empty());
+        assert_eq!(format!("{head}{tail}"), spec.arguments);
+
+        // Multibyte arguments never split mid-codepoint.
+        let spec = ToolCallSpec {
+            id: "call_y".into(),
+            name: "f".into(),
+            arguments: "\u{4e2d}\u{6587}\u{1F600}".into(),
+        };
+        let (head, tail) = spec.split_arguments();
+        assert_eq!(format!("{head}{tail}"), spec.arguments);
     }
 }

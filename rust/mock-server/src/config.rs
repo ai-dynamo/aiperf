@@ -609,6 +609,41 @@ pub struct MockServerConfig {
         default_value_t = 0
     )]
     pub usage_tool_use_prompt_tokens: usize,
+
+    // ---- Tool-call / function-call emission --------------------------------
+    /// Seeded probability (0.0–1.0) that a *chat* request answers with a
+    /// function tool call (`message.tool_calls` non-streaming, `delta.tool_calls`
+    /// deltas streaming) instead of a plain assistant turn. The per-request draw
+    /// comes from the seeded `mock.tool_calls` stream, so which requests emit a
+    /// tool call is reproducible under `--random-seed`. When a tool call fires,
+    /// the finish reason becomes `tool_calls` and the emitted `usage` carries
+    /// `toolUsePromptTokenCount`. Default `0.0` disables tool-call emission
+    /// entirely (a normal run's payload is byte-unchanged). Only affects the
+    /// OpenAI-compatible chat endpoint.
+    #[arg(long, env = "MOCK_SERVER_TOOL_CALL_RATE", default_value_t = 0.0)]
+    pub tool_call_rate: f64,
+
+    /// Function name used for emitted tool calls (deterministic). Paired with
+    /// `--tool-call-arguments`; the runner parses `function.name` +
+    /// `function.arguments` back into the captured record.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_TOOL_CALL_NAME",
+        default_value = "get_weather"
+    )]
+    pub tool_call_name: String,
+
+    /// JSON-encoded argument string for emitted tool calls (deterministic). Sent
+    /// verbatim as `function.arguments` (OpenAI encodes tool-call arguments as a
+    /// JSON *string*, not an object). In streaming mode it is split across two
+    /// `delta.tool_calls` frames so the runner's argument-concatenation merge is
+    /// exercised end to end.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_TOOL_CALL_ARGUMENTS",
+        default_value = r#"{"location":"NYC"}"#
+    )]
+    pub tool_call_arguments: String,
 }
 
 impl MockServerConfig {
@@ -735,6 +770,14 @@ mod tests {
         assert_eq!(cfg.error_status_codes, vec![500u16]);
         assert_eq!(cfg.error_retry_after, 1);
         assert_eq!(cfg.error_midstream_rate, 0.0);
+    }
+
+    #[test]
+    fn tool_call_defaults_are_disabled() {
+        let cfg = MockServerConfig::default();
+        assert_eq!(cfg.tool_call_rate, 0.0);
+        assert_eq!(cfg.tool_call_name, "get_weather");
+        assert_eq!(cfg.tool_call_arguments, r#"{"location":"NYC"}"#);
     }
 
     #[test]

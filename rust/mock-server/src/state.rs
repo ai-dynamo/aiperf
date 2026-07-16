@@ -27,6 +27,10 @@ pub struct AppState {
     pub clock_anchor: RealClockAnchor,
     pub start_wallclock: std::time::SystemTime,
     pub error_rng: Mutex<ErrorRng>,
+    /// Seeded per-request draw for tool-call emission, on its own stream so it
+    /// never perturbs the `mock.errors` draw order. Reproducible under
+    /// `--random-seed`.
+    pub tool_call_rng: Mutex<ToolCallRng>,
     /// Step-based batched scheduler, present only when `--scheduler-enabled`.
     /// When set, the latency model is driven by scheduler admission instead of
     /// the closed-form analytic delays.
@@ -63,6 +67,28 @@ impl ErrorRng {
     }
 }
 
+/// Seeded RNG for the per-request tool-call decision. Kept on a dedicated
+/// `mock.tool_calls` stream (derived off the same `--random-seed` root) so its
+/// draws are reproducible and independent of the error stream.
+pub struct ToolCallRng {
+    rng: aiperf::rng::RandomGenerator,
+}
+
+impl ToolCallRng {
+    pub fn new(seed: Option<u64>) -> Self {
+        // The mock-server RNG namespaces (`mock.errors`, `mock.dcgm`) live in the
+        // frozen `aiperf::rng::namespace` module; this feature adds a sibling
+        // stream identifier without touching that crate.
+        let rng = aiperf::rng::RngRoot::new(seed).derive("mock.tool_calls");
+        Self { rng }
+    }
+
+    #[allow(clippy::should_implement_trait)]
+    pub fn next(&mut self) -> f64 {
+        self.rng.random()
+    }
+}
+
 impl AppState {
     pub fn build(config: MockServerConfig) -> Arc<Self> {
         let recorder = MetricRecorder::new();
@@ -90,6 +116,7 @@ impl AppState {
         });
         let state = Arc::new(AppState {
             error_rng: Mutex::new(ErrorRng::new(config.random_seed)),
+            tool_call_rng: Mutex::new(ToolCallRng::new(config.random_seed)),
             config: config.clone(),
             recorder,
             dcgm: dcgm_pool,
@@ -206,5 +233,17 @@ impl AppState {
             return false;
         }
         self.error_rng.lock().next() < rate
+    }
+
+    /// Seeded decision whether this chat request should answer with a function
+    /// tool call instead of a plain assistant turn. The draw comes from the
+    /// dedicated `mock.tool_calls` stream, so it is reproducible under
+    /// `--random-seed`. `--tool-call-rate` is a 0.0–1.0 probability.
+    pub fn inject_tool_call(&self) -> bool {
+        let rate = self.config.tool_call_rate;
+        if rate <= 0.0 {
+            return false;
+        }
+        self.tool_call_rng.lock().next() < rate
     }
 }
