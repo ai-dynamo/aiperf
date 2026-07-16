@@ -7,10 +7,21 @@
 //! unchanged `aiperf-runner`, and map its terminal outcome. A single run is a
 //! degenerate one-cell sweep. YAML `--config` currently takes the single-run path.
 
+use std::path::Path;
+
 use crate::model::{Operation, RunnerRequest};
 use crate::sweep::artifact_dir::IterationOrder;
 use crate::sweep::{self, run as sweep_run};
 use crate::{execute, flags::ProfileFlags, load, runner_install, yaml};
+
+/// Eagerly create the artifact dir and remove any prior `native-v2.json` so a
+/// re-run into the same directory doesn't trip the runner's write-once guard
+/// (ports `rust_executor._clear_prior_report` + the eager mkdir Python does in
+/// `setup_rich_logging`).
+fn clear_prior_report(artifact_dir: &Path) {
+    let _ = std::fs::create_dir_all(artifact_dir);
+    let _ = std::fs::remove_file(artifact_dir.join("native-v2.json"));
+}
 
 /// Run `aiperf profile <args>` natively. Returns the process exit code.
 pub fn run(args: &[String]) -> anyhow::Result<i32> {
@@ -43,6 +54,8 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
 /// Execute one built run through the runner and map its terminal outcome, echoing
 /// the runner's console summary to stdout on success.
 fn run_single(run: crate::model::BenchmarkRun) -> anyhow::Result<i32> {
+    let artifact_dir = run.artifact_dir.clone();
+    clear_prior_report(&artifact_dir);
     let request = RunnerRequest::new(Operation::Execute, run);
     let payload = serde_json::to_vec(&request)
         .map_err(|e| anyhow::anyhow!("failed to serialize the runner request: {e}"))?;
@@ -96,6 +109,7 @@ fn run_sweep(flags: &ProfileFlags, expansion: &sweep::Expansion) -> anyhow::Resu
             cell.label,
             cell.run.artifact_dir.display()
         );
+        clear_prior_report(&cell.run.artifact_dir);
         let request = RunnerRequest::new(Operation::Execute, cell.run.clone());
         let payload = serde_json::to_vec(&request)?;
         let terminal = execute::run_once(&runner, &payload, &child_pid)?;
