@@ -150,9 +150,32 @@ pub fn expand_recipe(flags: &ProfileFlags) -> anyhow::Result<Option<RecipeSweep>
                 kind: AxisKind::OslScalar,
             },
         ],
+        "max-concurrency-under-sla" => {
+            // Only the static `--search-style grid` variant expands to a sweep;
+            // the default smooth_isotonic (and monotonic/bo/optuna) styles run a
+            // dynamic ask-tell loop that is not yet native.
+            let style = flags.search_style.as_deref().unwrap_or("smooth_isotonic");
+            anyhow::ensure!(
+                style == "grid",
+                "max-concurrency-under-sla --search-style {style:?} runs a dynamic \
+                 ask-tell search loop (not yet native); use --search-style grid"
+            );
+            vec![RecipeAxis {
+                path: "phases.profiling.concurrency",
+                seg: "concurrency",
+                // Grid style is a fixed 8-step log-spaced concurrency sweep.
+                values: logspace_int_steps(
+                    flags.concurrency_min.unwrap_or(1) as f64,
+                    flags.concurrency_max.unwrap_or(1000) as f64,
+                    8,
+                )?,
+                kind: AxisKind::PhaseConcurrency,
+            }]
+        }
         other => anyhow::bail!(
             "search recipe {other:?} is not yet supported natively (grid recipes: \
-             concurrency-ramp, prefill-ttft-curve, decode-itl-curve)"
+             concurrency-ramp, prefill-ttft-curve, decode-itl-curve, pareto-sweep, \
+             max-concurrency-under-sla --search-style grid)"
         ),
     };
     Ok(Some(RecipeSweep {
