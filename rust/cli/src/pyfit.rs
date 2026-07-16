@@ -79,6 +79,60 @@ def isotonic_distinct(ys):
     """Count distinct round(y_hat, 9) values of the PAVA fit (_needs_more_fit_data)."""
     result = isotonic_regression(np.asarray(list(ys), dtype=float), increasing=True)
     return len({round(float(v), 9) for v in result.x})
+
+
+from statistics import pstdev
+
+_RESIDUAL_SIGMA_MULTIPLIER = 3.0
+_LOCAL_WINDOW = 3
+_MIN_LOCAL_POINTS = 3
+
+
+def detect_cliff(xs, ys, feasible_max, infeasible_min, x_hi, precision):
+    """Byte-faithful port of `_check_cliff` + `_cliff_detect.detect_cliff`.
+
+    `xs`/`ys` are the sorted-by-x, per-x averaged (x, margin) points for the
+    binding constraint. Builds the PAVA+PCHIP fit and applies the residual
+    guard. `feasible_max`/`infeasible_min` may be None.
+    """
+    raw_points = list(zip([int(x) for x in xs], [float(y) for y in ys]))
+    if len(raw_points) < 2:
+        return False
+    curve = _smooth_isotonic_fit([p[0] for p in raw_points], [p[1] for p in raw_points])
+    if len(raw_points) < _MIN_LOCAL_POINTS:
+        return False
+    recent = [m for _, m in raw_points[-_LOCAL_WINDOW:]]
+    sigma_local = pstdev(recent)
+    if sigma_local == 0.0:
+        return False
+    x_last, margin_last = raw_points[-1]
+    fit_last = float(curve(float(x_last)))
+    residual = abs(margin_last - fit_last)
+    if residual <= _RESIDUAL_SIGMA_MULTIPLIER * sigma_local:
+        return False
+    bracket_gap = (
+        infeasible_min - feasible_max
+        if feasible_max is not None and infeasible_min is not None
+        else 0
+    )
+    return bracket_gap > precision * x_hi
+
+
+def boundary_ci(margins, n_resamples=10000):
+    """Bootstrap 95% CI on the mean of replicate margins (`_replicate_budget.boundary_ci`).
+
+    NOTE: unseeded scipy.stats.bootstrap -> non-deterministic (as in Python).
+    """
+    from scipy.stats import bootstrap
+
+    margins = [float(m) for m in margins]
+    if len(margins) == 1:
+        return (margins[0], margins[0])
+    data = np.asarray(margins, dtype=float)
+    result = bootstrap(
+        (data,), statistic=np.mean, n_resamples=n_resamples, confidence_level=0.95
+    )
+    return (float(result.confidence_interval.low), float(result.confidence_interval.high))
 "#;
 
 /// Run `f` with the embedded pyfit module, importing scipy once per call. pyo3's
@@ -121,6 +175,42 @@ pub fn isotonic_distinct(ys: &[f64]) -> anyhow::Result<usize> {
         Ok(m.getattr("isotonic_distinct")?
             .call1((ys.to_vec(),))?
             .extract::<usize>()?)
+    })
+}
+
+/// PAVA-residual cliff guard over the sorted-by-x averaged points. Byte-faithful
+/// to `_smooth_isotonic_phases._check_cliff` + `_cliff_detect::detect_cliff`.
+pub fn detect_cliff(
+    xs: &[i64],
+    ys: &[f64],
+    feasible_max: Option<i64>,
+    infeasible_min: Option<i64>,
+    x_hi: i64,
+    precision: f64,
+) -> anyhow::Result<bool> {
+    with_pyfit(|m| {
+        Ok(m.getattr("detect_cliff")?
+            .call1((
+                xs.to_vec(),
+                ys.to_vec(),
+                feasible_max,
+                infeasible_min,
+                x_hi,
+                precision,
+            ))?
+            .extract::<bool>()?)
+    })
+}
+
+/// Bootstrap 95% CI on the mean of replicate margins. Wraps
+/// `_replicate_budget::boundary_ci`. NOTE: unseeded scipy bootstrap →
+/// non-deterministic (as in Python); the replicate branch is behaviorally, not
+/// byte, verifiable.
+pub fn boundary_ci(margins: &[f64]) -> anyhow::Result<(f64, f64)> {
+    with_pyfit(|m| {
+        Ok(m.getattr("boundary_ci")?
+            .call1((margins.to_vec(),))?
+            .extract::<(f64, f64)>()?)
     })
 }
 

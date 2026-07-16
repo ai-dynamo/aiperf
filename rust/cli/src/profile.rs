@@ -59,6 +59,20 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         return run_search_loop(&flags);
     }
 
+    // The default `smooth_isotonic` style (and an explicit request for it) runs
+    // the scipy-backed dynamic loop — available only in the `search-pyo3` build
+    // (embeds Python+scipy). Without the feature it falls through to the grid
+    // expander's clear "not yet native" error.
+    #[cfg(feature = "search-pyo3")]
+    if flags.search_recipe.as_deref() == Some("max-concurrency-under-sla")
+        && matches!(
+            flags.search_style.as_deref(),
+            None | Some("smooth_isotonic")
+        )
+    {
+        return run_isotonic_loop(&flags);
+    }
+
     // A grid `--search-recipe` expands its search space into a static grid sweep
     // over config paths (mutating the built cfg per variation). (bayes/isotonic
     // recipes run a dynamic ask-tell loop, handled elsewhere.)
@@ -299,6 +313,144 @@ fn write_search_boundary(
     std::fs::write(&path, serde_json::to_vec_pretty(&summary)?)
         .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", path.display()))?;
     Ok(())
+}
+
+/// Drive the dynamic smooth-isotonic SLA search (default `--search-style`):
+/// the native [`crate::isotonic::SmoothIsotonicPlanner`] (verified byte-exact
+/// against the production planner in `tests/isotonic_parity.rs`, PAVA+PCHIP fit
+/// via scipy) proposes one concurrency per probe; each probe is one runner
+/// invocation whose per-iteration feasibility + per-filter signed margins steer
+/// the fit. Requires the `search-pyo3` build.
+#[cfg(feature = "search-pyo3")]
+fn run_isotonic_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
+    use std::collections::HashMap;
+
+    let spec = crate::isotonic::IsotonicSpec::from_flags(flags)?;
+    let mut planner = crate::isotonic::SmoothIsotonicPlanner::new(spec);
+    // (filter_key, filter) pairs so the margin map keys match the planner's.
+    let filters: Vec<(String, crate::search::SlaFilter)> = planner
+        .filters()
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (planner.filter_key(i).to_string(), f.clone()))
+        .collect();
+
+    let mut base_flags = flags.clone();
+    base_flags.concurrency = Some("1".to_string());
+    let base = load::resolve(&base_flags)?;
+    let base_artifact_dir = base.artifact_dir.clone();
+
+    let sweep_id = uuid::Uuid::new_v4().simple().to_string();
+    let seed = seed_policy(flags);
+    let runner = runner_install::resolve()?;
+    let child_pid = crate::signals::install();
+
+    eprintln!("aiperf: smooth-isotonic SLA search (PAVA+PCHIP, scipy)");
+    let mut any_failure = false;
+    while let Some(value) = planner.ask() {
+        let iter = planner.iteration();
+        let label = format!("search_iter_{iter:04}");
+
+        let mut run = base.clone();
+        let mut cfg = serde_json::to_value(&run.cfg)?;
+        crate::search::apply_override(&mut cfg, crate::search::AxisKind::PhaseConcurrency, value);
+        run.cfg = serde_json::from_value(cfg)?;
+        let dir = crate::sweep::artifact_dir::resolve(
+            &base_artifact_dir,
+            true,
+            1,
+            &label,
+            0,
+            IterationOrder::Repeated,
+        );
+        run.sweep_id = Some(sweep_id.clone());
+        run.variation = Some(serde_json::json!({
+            "index": iter,
+            "label": label,
+            "values": { "phases.profiling.concurrency": value },
+        }));
+        run.random_seed = seed.seed(iter as usize);
+        run.trial = 0;
+        run.artifact_dir = dir.clone();
+
+        eprintln!(
+            "aiperf: [iter {iter}] concurrency={value} -> {}",
+            dir.display()
+        );
+        clear_prior_report(&dir);
+        let request = RunnerRequest::new(Operation::Execute, run);
+        let payload = serde_json::to_vec(&request)?;
+        let terminal = execute::run_once(&runner, &payload, &child_pid)?;
+
+        // Per-iteration feasibility + per-filter signed margins from the report.
+        let mut feasible = false;
+        let mut margins: HashMap<String, f64> = HashMap::new();
+        if terminal.success
+            && let Some(path) = terminal.report_path.as_deref()
+            && let Ok(bytes) = std::fs::read(path)
+            && let Ok(report) = serde_json::from_slice::<serde_json::Value>(&bytes)
+        {
+            feasible = filters
+                .iter()
+                .all(|(_, f)| f.satisfied_by(report_metric(&report, &f.metric_tag, &f.stat)));
+            for (key, f) in &filters {
+                if let Some(obs) = report_metric(&report, &f.metric_tag, &f.stat) {
+                    // Signed margin: negative = feasible, increasing in x
+                    // (`_signed_margins`): lt/le → obs-thr; gt/ge → thr-obs.
+                    let margin = match f.op {
+                        crate::search::SlaOp::Lt | crate::search::SlaOp::Le => obs - f.threshold,
+                        crate::search::SlaOp::Gt | crate::search::SlaOp::Ge => f.threshold - obs,
+                    };
+                    margins.insert(key.clone(), margin);
+                }
+            }
+        }
+        if !terminal.success {
+            any_failure = true;
+            eprintln!(
+                "aiperf: [iter {iter}] run failed (treated as infeasible): {}",
+                terminal.error.as_deref().unwrap_or("(no detail)")
+            );
+        } else {
+            eprintln!(
+                "aiperf: [iter {iter}] concurrency={value} -> {}",
+                if feasible { "FEASIBLE" } else { "infeasible" }
+            );
+        }
+        planner.tell(feasible, margins)?;
+    }
+
+    let reason = planner
+        .convergence_reason()
+        .unwrap_or("converged")
+        .to_string();
+    println!(
+        "\naiperf: smooth-isotonic SLA boundary\n  max feasible concurrency: {}\n  min infeasible concurrency: {}\n  boundary type: {}\n  convergence: {reason}",
+        planner
+            .feasible_max
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "-".into()),
+        planner
+            .infeasible_min
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "-".into()),
+        planner.boundary_type.unwrap_or("smooth"),
+    );
+    let _ = std::fs::create_dir_all(&base_artifact_dir);
+    let summary = serde_json::json!({
+        "swept_dim_path": "phases.profiling.concurrency",
+        "feasible_max": planner.feasible_max,
+        "infeasible_min": planner.infeasible_min,
+        "boundary_type": planner.boundary_type,
+        "non_monotonic_warning": planner.non_monotonic_warning,
+        "convergence_reason": reason,
+    });
+    std::fs::write(
+        base_artifact_dir.join("search_boundary.json"),
+        serde_json::to_vec_pretty(&summary)?,
+    )?;
+
+    Ok(if any_failure { 1 } else { 0 })
 }
 
 /// Build the stamped per-cell runs for a grid `--search-recipe` (testable

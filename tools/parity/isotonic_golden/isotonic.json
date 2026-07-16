@@ -1,0 +1,128 @@
+{
+  "cases": [
+    {
+      "lo": 1,
+      "hi": 1000,
+      "max_iterations": 30,
+      "boundary": 255,
+      "slope": 0.5,
+      "threshold": 200.0,
+      "asks": [
+        1,
+        2,
+        4,
+        8,
+        16,
+        32,
+        64,
+        128,
+        256,
+        160,
+        192,
+        224,
+        255,
+        254
+      ],
+      "feasible_max": 254,
+      "infeasible_min": 255,
+      "convergence_reason": "smooth_isotonic_precision_reached",
+      "boundary_type": "smooth",
+      "binding_constraint": "0:time_to_first_token.p95.lt.200.0"
+    },
+    {
+      "lo": 1,
+      "hi": 1000,
+      "max_iterations": 30,
+      "boundary": 100,
+      "slope": 1.0,
+      "threshold": 200.0,
+      "asks": [
+        1,
+        2,
+        4,
+        8,
+        16,
+        32,
+        64,
+        128,
+        80,
+        96,
+        112,
+        100
+      ],
+      "feasible_max": 96,
+      "infeasible_min": 100,
+      "convergence_reason": "smooth_isotonic_precision_reached",
+      "boundary_type": "smooth",
+      "binding_constraint": "0:time_to_first_token.p95.lt.200.0"
+    },
+    {
+      "lo": 1,
+      "hi": 1000,
+      "max_iterations": 30,
+      "boundary": 10000,
+      "slope": 0.5,
+      "threshold": 200.0,
+      "asks": [
+        1,
+        2,
+        4,
+        8,
+        16,
+        32,
+        64,
+        128,
+        256,
+        512,
+        1000
+      ],
+      "feasible_max": 1000,
+      "infeasible_min": null,
+      "convergence_reason": "smooth_isotonic_no_failure_in_range",
+      "boundary_type": null,
+      "binding_constraint": null
+    },
+    {
+      "lo": 1,
+      "hi": 1000,
+      "max_iterations": 30,
+      "boundary": 0,
+      "slope": 0.5,
+      "threshold": 200.0,
+      "asks": [
+        1
+      ],
+      "feasible_max": null,
+      "infeasible_min": 1,
+      "convergence_reason": "smooth_isotonic_no_pass_in_range",
+      "boundary_type": null,
+      "binding_constraint": null
+    },
+    {
+      "lo": 1,
+      "hi": 512,
+      "max_iterations": 30,
+      "boundary": 40,
+      "slope": 2.0,
+      "threshold": 200.0,
+      "asks": [
+        1,
+        2,
+        4,
+        8,
+        16,
+        32,
+        64,
+        40,
+        48,
+        56,
+        39
+      ],
+      "feasible_max": 39,
+      "infeasible_min": 40,
+      "convergence_reason": "smooth_isotonic_precision_reached",
+      "boundary_type": "smooth",
+      "binding_constraint": "0:time_to_first_token.p95.lt.200.0"
+    }
+  ]
+}

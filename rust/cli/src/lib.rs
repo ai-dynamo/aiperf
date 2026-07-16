@@ -18,6 +18,8 @@ pub mod dispatch;
 pub mod execute;
 pub mod expand;
 pub mod flags;
+#[cfg(feature = "search-pyo3")]
+pub mod isotonic;
 pub mod load;
 pub mod model;
 pub mod profile;
