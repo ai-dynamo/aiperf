@@ -33,6 +33,7 @@ anyhow = "1"
 async-trait = "0.1"
 axum = "0.8"
 base64 = "0.22"
+criterion = { version = "0.5", features = ["html_reports"] }
 bitflags = "2"
 blake3 = "1"
 bytes = "1"

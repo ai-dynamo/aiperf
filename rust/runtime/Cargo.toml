@@ -135,6 +135,9 @@ parking_lot = { version = "0.12", optional = true }
 # monocrate's normal deps already cover most needs; these add the extra feature
 # surface the integration tests require.
 [dev-dependencies]
+# Statistics-driven benchmark harness for the synthetic prompt generator
+# (`benches/prompt_gen.rs`). Dev-only: the shipped runner links no criterion.
+criterion = { workspace = true }
 # Cross-language parity tests load committed JSON reference fixtures and digest
 # token streams to compare against the Python reference generator.
 serde_json = { workspace = true }
@@ -205,3 +208,11 @@ path = "tests/transport_http/tls.rs"
 name = "velo_cell_spike"
 path = "examples/velo_cell_spike.rs"
 required-features = ["velo"]
+
+# Synthetic prompt generation throughput benchmark (criterion). `harness = false`
+# hands `main()` to criterion instead of libtest. Run with `cargo bench -p
+# aiperf-runtime --bench prompt_gen`.
+[[bench]]
+name = "prompt_gen"
+path = "benches/prompt_gen.rs"
+harness = false
