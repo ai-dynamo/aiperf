@@ -96,9 +96,12 @@ class AutoRoutedModel(BaseModel):
             else load_json_str(json_or_dict)
         )
 
-        # Only route if THIS class explicitly set a discriminator (not inherited)
+        # Only route if THIS class explicitly set a discriminator (not inherited).
+        # For strict hierarchies, enter even when the lookup table is empty: an
+        # empty table means the producing module isn't imported yet, and strict
+        # routing must still raise rather than silently degrade to the base.
         cls_discriminator = cls.__dict__.get("discriminator_field")
-        if cls_discriminator and cls._model_lookup_table:
+        if cls_discriminator and (cls._model_lookup_table or cls.strict_routing):
             discriminator_value = data.get(cls_discriminator)
 
             if not discriminator_value:

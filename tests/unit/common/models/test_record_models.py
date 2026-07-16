@@ -180,6 +180,20 @@ class TestRecordDataStrictRouting:
         assert routed.expected == "A"
         assert routed.grader_name == "multiple_choice"
 
+    def test_strict_routing_raises_with_empty_lookup_table(self) -> None:
+        # Even when NO subclass is registered (producing module not imported yet),
+        # a strict hierarchy must raise rather than silently degrade to the base.
+        from aiperf.common.models.auto_routed_model import AutoRoutedModel
+
+        class _StrictRoot(AutoRoutedModel):
+            discriminator_field = "kind"
+            strict_routing = True
+            kind: str
+
+        assert _StrictRoot._model_lookup_table == {}  # nothing registered
+        with pytest.raises(ValueError, match="Unknown kind 'nope'"):
+            _StrictRoot.from_json({"kind": "nope"})
+
 
 class TestSSEMessageDataclass:
     """Test that SSEMessage dataclass works correctly."""
