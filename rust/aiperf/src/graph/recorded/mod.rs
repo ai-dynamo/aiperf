@@ -23,6 +23,7 @@ use crate::dataset::LoadConfig;
 
 pub use aiperf_trace::compile_aiperf_trace_input;
 pub use dynamo::compile_dynamo_trace_input;
+pub use source::{RecordedTracePathKind, enumerate_recorded_trace_files};
 pub use weka::compile_weka_trace_input;
 
 /// Opaque recorded cache-block identity.

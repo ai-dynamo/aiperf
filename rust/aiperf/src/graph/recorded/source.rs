@@ -29,25 +29,7 @@ pub(crate) async fn load_weka_documents(
 ) -> Result<Vec<Box<RawValue>>, RecordedTraceError> {
     match &config.source {
         DatasetSource::Path(path) if path.is_dir() => {
-            let mut paths = fs::read_dir(path)
-                .map_err(|error| source_error(path, error))?
-                .filter_map(Result::ok)
-                .map(|entry| entry.path())
-                .filter(|candidate| {
-                    candidate.is_file()
-                        && candidate
-                            .extension()
-                            .and_then(|value| value.to_str())
-                            .is_some_and(|value| value.eq_ignore_ascii_case("json"))
-                })
-                .collect::<Vec<_>>();
-            paths.sort();
-            if paths.is_empty() {
-                return Err(RecordedTraceError(format!(
-                    "{}: WEKA trace directory contains no .json files",
-                    path.display()
-                )));
-            }
+            let paths = json_documents_in_dir(path, "WEKA trace")?;
             paths
                 .iter()
                 .map(|candidate| {
@@ -119,25 +101,7 @@ pub(crate) async fn load_aiperf_documents(
 ) -> Result<Vec<Value>, RecordedTraceError> {
     match &config.source {
         DatasetSource::Path(path) if path.is_dir() => {
-            let mut paths = fs::read_dir(path)
-                .map_err(|error| source_error(path, error))?
-                .filter_map(Result::ok)
-                .map(|entry| entry.path())
-                .filter(|candidate| {
-                    candidate.is_file()
-                        && candidate
-                            .extension()
-                            .and_then(|value| value.to_str())
-                            .is_some_and(|value| value.eq_ignore_ascii_case("json"))
-                })
-                .collect::<Vec<_>>();
-            paths.sort();
-            if paths.is_empty() {
-                return Err(RecordedTraceError(format!(
-                    "{}: aiperf.trace.v1 directory contains no .json files",
-                    path.display()
-                )));
-            }
+            let paths = json_documents_in_dir(path, "aiperf.trace.v1")?;
             let mut values = Vec::new();
             for candidate in &paths {
                 let bytes = fs::read(candidate).map_err(|error| source_error(candidate, error))?;
@@ -294,7 +258,142 @@ fn read_json_lines_raw(path: &Path) -> Result<Vec<Box<RawValue>>, RecordedTraceE
     parse_json_lines_from_raw(BufReader::new(file), &label)
 }
 
-fn discover_dynamo_segments(path: &Path) -> Result<Vec<PathBuf>, RecordedTraceError> {
+/// The ordered `.json` files the WEKA / `aiperf.trace.v1` directory loaders read
+/// from `path`, sorted lexicographically (the loaders' own `paths.sort()` order),
+/// filtered to case-insensitive `.json` files (non-recursive, matching
+/// [`fs::read_dir`]). `kind` names the format for the empty-directory error. This
+/// is the single source of truth for the directory read set: both the loaders
+/// above and the cross-host shipping enumerator ([`enumerate_recorded_trace_files`])
+/// call it, so the shipped file set can never diverge from the read set.
+fn json_documents_in_dir(path: &Path, kind: &str) -> Result<Vec<PathBuf>, RecordedTraceError> {
+    let mut paths = fs::read_dir(path)
+        .map_err(|error| source_error(path, error))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|candidate| {
+            candidate.is_file()
+                && candidate
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|value| value.eq_ignore_ascii_case("json"))
+        })
+        .collect::<Vec<_>>();
+    paths.sort();
+    if paths.is_empty() {
+        return Err(RecordedTraceError(format!(
+            "{}: {kind} directory contains no .json files",
+            path.display()
+        )));
+    }
+    Ok(paths)
+}
+
+/// The on-disk layout a recorded-trace `path` resolves to. Governs how the
+/// cross-host cell rewrites `datasets/0.path` after reconstructing the shipped
+/// files: a [`File`](Self::File) or [`SegmentedPrefix`](Self::SegmentedPrefix)
+/// points `path` back at a single (re-globbed) stem, while a
+/// [`Directory`](Self::Directory) points it at the reconstructed directory.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecordedTracePathKind {
+    /// A single trace file (the historic single-file shipping shape).
+    File,
+    /// A directory the loader enumerates (WEKA/aiperf `.json`; Dynamo
+    /// `.jsonl`/`.jsonl.gz`).
+    Directory,
+    /// A segmented-prefix stem (`parent/prefix`) whose `prefix.NNNNNN.jsonl.gz`
+    /// shards live beside it (Dynamo only).
+    SegmentedPrefix,
+}
+
+/// The exact ordered on-disk file set the recorded-trace loader for `format`
+/// reads for a `Path` source, plus the layout kind and the original path's file
+/// name. This is the shipping-side mirror of the loaders in this module — it
+/// reuses their own enumeration ([`json_documents_in_dir`] /
+/// [`discover_dynamo_segments`]), so the set the controller ships is byte-for-byte
+/// the set a 1-cell run reads (no over/under-ship).
+///
+/// `format` must be one of the graph recorded formats:
+/// - `weka_trace` / `aiperf_trace`: a single file, or a directory of `.json`
+///   files (see [`load_weka_documents`] / [`load_aiperf_documents`]);
+/// - `dynamo_trace`: a single file, a directory of `.jsonl`/`.jsonl.gz`, or a
+///   segmented-prefix stem (see [`discover_dynamo_segments`]);
+/// - `dag_jsonl`: a single file ONLY — its loader (`load_raw_rows`) reads one file
+///   via `std::fs::read`, so a directory/prefix is unreadable and rejected here.
+///
+/// Fails closed on a missing path, an empty directory, an unmatched prefix, or an
+/// unsupported format — the same errors the loader would raise, surfaced before
+/// the run launches cells.
+pub fn enumerate_recorded_trace_files(
+    format: &str,
+    path: &Path,
+) -> Result<(RecordedTracePathKind, String, Vec<PathBuf>), RecordedTraceError> {
+    let base_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| {
+            RecordedTraceError(format!("{}: trace path has no file name", path.display()))
+        })?
+        .to_owned();
+    match format {
+        "weka_trace" | "aiperf_trace" => {
+            let kind = if format == "weka_trace" {
+                "WEKA trace"
+            } else {
+                "aiperf.trace.v1"
+            };
+            if path.is_dir() {
+                Ok((
+                    RecordedTracePathKind::Directory,
+                    base_name,
+                    json_documents_in_dir(path, kind)?,
+                ))
+            } else if path.is_file() {
+                Ok((
+                    RecordedTracePathKind::File,
+                    base_name,
+                    vec![path.to_path_buf()],
+                ))
+            } else {
+                Err(RecordedTraceError(format!(
+                    "{}: {kind} path is not a file or directory",
+                    path.display()
+                )))
+            }
+        }
+        "dynamo_trace" => {
+            let kind = if path.is_file() {
+                RecordedTracePathKind::File
+            } else if path.is_dir() {
+                RecordedTracePathKind::Directory
+            } else {
+                RecordedTracePathKind::SegmentedPrefix
+            };
+            // `discover_dynamo_segments` owns all three shapes and fails closed on
+            // a missing path / empty dir / unmatched prefix.
+            Ok((kind, base_name, discover_dynamo_segments(path)?))
+        }
+        "dag_jsonl" => {
+            if path.is_file() {
+                Ok((
+                    RecordedTracePathKind::File,
+                    base_name,
+                    vec![path.to_path_buf()],
+                ))
+            } else {
+                Err(RecordedTraceError(format!(
+                    "{}: dag_jsonl reads a single file; a directory or segmented-prefix path is \
+                     not supported",
+                    path.display()
+                )))
+            }
+        }
+        other => Err(RecordedTraceError(format!(
+            "{other:?}: not a directory/prefix-capable recorded graph trace format"
+        ))),
+    }
+}
+
+pub(crate) fn discover_dynamo_segments(path: &Path) -> Result<Vec<PathBuf>, RecordedTraceError> {
     if path.is_file() {
         return Ok(vec![path.to_path_buf()]);
     }
@@ -485,6 +584,91 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(names, ["trace.999999.jsonl.gz", "trace.1000000.jsonl.gz"]);
         assert!(parse_segment_name(".000000.jsonl.gz").is_none());
+    }
+
+    #[test]
+    fn enumerate_single_file_returns_just_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("trace.jsonl");
+        fs::write(&file, b"{}\n").unwrap();
+        for format in ["weka_trace", "aiperf_trace", "dynamo_trace", "dag_jsonl"] {
+            let (kind, base, files) = enumerate_recorded_trace_files(format, &file).unwrap();
+            assert_eq!(kind, RecordedTracePathKind::File, "{format}");
+            assert_eq!(base, "trace.jsonl", "{format}");
+            assert_eq!(files, vec![file.clone()], "{format}");
+        }
+    }
+
+    #[test]
+    fn enumerate_weka_directory_matches_loader_json_read_set() {
+        let dir = tempfile::tempdir().unwrap();
+        // The loader reads only .json (case-insensitive), non-recursive, sorted.
+        for name in ["b.json", "a.json", "c.JSON"] {
+            fs::write(dir.path().join(name), b"{}").unwrap();
+        }
+        fs::write(dir.path().join("ignored.txt"), b"x").unwrap();
+        let nested = dir.path().join("sub");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("deep.json"), b"{}").unwrap();
+
+        let (kind, _base, files) =
+            enumerate_recorded_trace_files("weka_trace", dir.path()).unwrap();
+        assert_eq!(kind, RecordedTracePathKind::Directory);
+        let names = files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        // Sorted lexicographically; the nested dir and non-json are excluded (the
+        // loader is non-recursive and .json-only) — exactly the loader's read set.
+        assert_eq!(names, ["a.json", "b.json", "c.JSON"]);
+    }
+
+    #[test]
+    fn enumerate_dynamo_directory_and_prefix_match_discovery_order() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "trace.1000000.jsonl.gz",
+            "trace.999999.jsonl.gz",
+            "other.jsonl",
+        ] {
+            fs::write(dir.path().join(name), b"\n").unwrap();
+        }
+        let (dir_kind, _b, dir_files) =
+            enumerate_recorded_trace_files("dynamo_trace", dir.path()).unwrap();
+        assert_eq!(dir_kind, RecordedTracePathKind::Directory);
+        assert_eq!(
+            dir_files,
+            discover_dynamo_segments(dir.path()).unwrap(),
+            "directory enumeration must equal the loader's discovery"
+        );
+
+        let prefix = dir.path().join("trace.jsonl.gz");
+        let (prefix_kind, base, prefix_files) =
+            enumerate_recorded_trace_files("dynamo_trace", &prefix).unwrap();
+        assert_eq!(prefix_kind, RecordedTracePathKind::SegmentedPrefix);
+        assert_eq!(base, "trace.jsonl.gz");
+        let names = prefix_files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["trace.999999.jsonl.gz", "trace.1000000.jsonl.gz"]);
+    }
+
+    #[test]
+    fn enumerate_rejects_dag_jsonl_directory_and_missing_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        // dag_jsonl cannot read a directory (single-file loader): must fail closed.
+        assert!(enumerate_recorded_trace_files("dag_jsonl", dir.path()).is_err());
+        // A missing path fails closed for every format.
+        let missing = dir.path().join("nope");
+        for format in ["weka_trace", "aiperf_trace", "dynamo_trace", "dag_jsonl"] {
+            assert!(
+                enumerate_recorded_trace_files(format, &missing).is_err(),
+                "{format} missing path must fail closed"
+            );
+        }
+        // An empty WEKA directory fails closed (no .json files).
+        assert!(enumerate_recorded_trace_files("weka_trace", dir.path()).is_err());
     }
 
     #[test]

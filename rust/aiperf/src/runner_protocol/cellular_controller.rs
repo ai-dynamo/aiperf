@@ -22,7 +22,7 @@ use crate::cellular::{
 };
 use crate::metrics_core::report::NativeReport;
 use crate::metrics_core::{ExportContext, MetricsAccumulator, MetricsConfig, PERCENTILES};
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 
 use crate::runner_protocol::cell_launcher::owned_positions;
 
@@ -193,14 +193,24 @@ pub fn run_cellular(
     let dataset_ship = (is_k8s || force_http)
         && crate::runner_protocol::cellular_cell::http_artifact_shipping_enabled()
         && dataset_source.is_some();
-    // Fail closed BEFORE standing up the serve plane: the single-file Stage G plane
-    // cannot carry a graph trace whose `path` is a directory or segmented-prefix. Reject
-    // such a cross-host run with a clear message rather than shipping a directory as one
-    // file (a corrupt/half transfer). A scheduled `file`/`path` dataset always points at a
-    // single file, so this is inert for it (multi-file shipping is a follow-up).
-    if dataset_ship && let Some(source) = dataset_source.as_ref() {
-        ensure_single_file_trace_shippable(source)?;
-    }
+    // Compute the Stage G serve plan BEFORE standing up the serve plane so an
+    // unreadable/missing/unsupported source fails the run closed here rather than
+    // half-shipping. A single-file trace (or scheduled `file`/`path` dataset) ships as
+    // one file; a graph trace whose `path` is a DIRECTORY or SEGMENTED-PREFIX ships
+    // every shard the loader would read (`enumerate_recorded_trace_files`), reconstructed
+    // per cell from the manifest. dag_jsonl reads a single file only, so a dag_jsonl
+    // directory/prefix still fails closed.
+    let dataset_plan = if dataset_ship {
+        let source = dataset_source
+            .as_ref()
+            .expect("dataset_ship implies a source");
+        let format = envelope
+            .pointer("/run/cfg/datasets/0/format")
+            .and_then(serde_json::Value::as_str);
+        Some(build_dataset_serve_plan(format, source)?)
+    } else {
+        None
+    };
     // The controller's artifact HTTP server carries BOTH per-record uploads (Stage E)
     // and dataset serving (Stage G); stand it up when either is needed.
     let need_artifact_server = http_shipping || dataset_ship;
@@ -280,28 +290,20 @@ pub fn run_cellular(
             } else {
                 std::collections::HashSet::new()
             };
-            // Dataset serve allowlist (Stage G): the run's single `file`/`path` source,
-            // keyed by its file name (the name a cell requests). Empty otherwise.
-            let datasets: std::collections::HashMap<String, PathBuf> = match dataset_source
-                .as_ref()
-                .filter(|_| dataset_ship)
-            {
-                Some(path) => {
-                    let name = path
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .context("cellular file dataset path has no file name")?
-                        .to_owned();
-                    std::iter::once((name, path.clone())).collect()
-                }
-                None => std::collections::HashMap::new(),
+            // Dataset serve plan (Stage G): the run's `file`/`path` source(s), keyed
+            // by flat relative name, plus the manifest a cell fetches to reconstruct a
+            // directory / segmented-prefix trace. Empty (`None` manifest) otherwise.
+            let (datasets, manifest) = match dataset_plan {
+                Some((map, manifest)) => (map, Some(manifest)),
+                None => (std::collections::HashMap::new(), None),
             };
             Some(
-                crate::runner_protocol::artifact_shipping::ArtifactUploadServer::start_with_datasets(
+                crate::runner_protocol::artifact_shipping::ArtifactUploadServer::start_with_dataset_plan(
                     artifact_bind,
                     landing_root.clone(),
                     allowed,
                     datasets,
+                    manifest,
                 )
                 .await
                 .context("starting cellular artifact server")?,
@@ -1199,35 +1201,103 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
-/// Fail closed when a cross-host cellular run's dataset source cannot ride the
-/// single-file Stage G plane.
+/// The Stage G serve plan for a cross-host `file`/`path` dataset source: the exact
+/// file set the controller registers (keyed by flat relative name) plus the
+/// [`DatasetManifest`](crate::runner_protocol::artifact_shipping::DatasetManifest)
+/// a cell fetches to reconstruct the tree and rewrite `datasets/0.path`.
 ///
-/// Stage G serves ONE, name-keyed file (`file_name()` -> one serve-map entry -> one
-/// `fetch_dataset_to_file`), which covers every scheduled `file`/`path` dataset and a
-/// single-file graph trace (`dag_jsonl`, or a `weka_trace`/`dynamo_trace` that is one
-/// file). A graph trace `path`, however, may instead be a DIRECTORY or a
-/// segmented-prefix — multiple shard files under one stem (`graph_input.rs` accepts
-/// "a file, directory, or segmented-prefix path"). The single-file serve/fetch plane
-/// cannot carry those, so rather than silently shipping a directory as one file (a
-/// corrupt/half transfer), reject the run here with a clear message. Multi-file /
-/// manifest trace shipping is a follow-up; a shared volume or inline `records` are the
-/// current cross-host paths for a multi-file trace.
+/// A graph trace (`dag_jsonl` / `weka_trace` / `dynamo_trace` / `aiperf_trace`) is
+/// enumerated by the graph loader's OWN read set
+/// ([`enumerate_recorded_trace_files`](crate::graph::recorded::enumerate_recorded_trace_files)),
+/// so a DIRECTORY or SEGMENTED-PREFIX trace ships every shard the 1-cell run would
+/// read — no over/under-ship. Any other (scheduled) `file`/`path` dataset is a
+/// single file (its multi-file directory shapes, e.g. `raw_payload`, are out of
+/// scope and still fail closed).
 ///
-/// Only called when the run is genuinely cross-host and shipping-enabled
-/// (`dataset_ship`), where the controller holds the source locally, so `is_file()` is a
-/// reliable single-readable-file probe. A non-graph `file`/`path` dataset always points
-/// at a single file, so this is a no-op for it; the check earns its keep on the graph
-/// formats.
-fn ensure_single_file_trace_shippable(source: &Path) -> Result<()> {
-    ensure!(
-        source.is_file(),
-        "cross-host cellular graph runs support only a single-file trace; the trace path \
-         {} is not a single readable file (directory, segmented-prefix, or missing). Ship a \
-         single-file trace, mount a shared volume, or use an inline `records` dataset — \
-         multi-file trace shipping is a follow-up",
-        source.display()
+/// Fails closed on a missing/unreadable path, an empty trace directory, an
+/// unmatched segmented-prefix, a `dag_jsonl` directory/prefix (its loader reads one
+/// file), or a duplicate shard file name — exactly the errors the loader would
+/// raise, surfaced before the run launches cells. Only invoked when the run is
+/// genuinely cross-host and shipping-enabled, where the controller holds the source
+/// locally so its on-disk shape is authoritative.
+fn build_dataset_serve_plan(
+    format: Option<&str>,
+    source: &Path,
+) -> Result<(
+    std::collections::HashMap<String, PathBuf>,
+    crate::runner_protocol::artifact_shipping::DatasetManifest,
+)> {
+    use crate::graph::recorded::{RecordedTracePathKind, enumerate_recorded_trace_files};
+    use crate::runner_protocol::artifact_shipping::DatasetManifest;
+
+    let file_name = |path: &Path| -> Result<String> {
+        Ok(path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .with_context(|| format!("dataset path {} has no file name", path.display()))?
+            .to_owned())
+    };
+
+    let is_graph_format = matches!(
+        format,
+        Some("dag_jsonl" | "weka_trace" | "dynamo_trace" | "aiperf_trace")
     );
-    Ok(())
+    if is_graph_format {
+        let (kind, base_name, files) =
+            enumerate_recorded_trace_files(format.expect("matched Some above"), source)
+                .map_err(|error| anyhow!(error.to_string()))
+                .with_context(|| {
+                    format!(
+                        "enumerating cross-host graph trace files for {}",
+                        source.display()
+                    )
+                })?;
+        let kind_str = match kind {
+            RecordedTracePathKind::File => "file",
+            RecordedTracePathKind::Directory => "dir",
+            RecordedTracePathKind::SegmentedPrefix => "prefix",
+        };
+        let mut map = std::collections::HashMap::with_capacity(files.len());
+        let mut names = Vec::with_capacity(files.len());
+        for path in files {
+            let name = file_name(&path)?;
+            ensure!(
+                map.insert(name.clone(), path).is_none(),
+                "cross-host graph trace has two shards with the same file name {name:?}; \
+                 shard names must be unique to reconstruct the tree"
+            );
+            names.push(name);
+        }
+        Ok((
+            map,
+            DatasetManifest {
+                kind: kind_str.to_owned(),
+                base_name,
+                files: names,
+            },
+        ))
+    } else {
+        // A scheduled `file`/`path` dataset (single_turn, mooncake_trace, ...) always
+        // ships as one file. Its multi-file directory shapes are out of scope and,
+        // as before, fail closed here.
+        ensure!(
+            source.is_file(),
+            "cross-host cellular runs support a single-file dataset for this format; the path \
+             {} is not a single readable file (directory or missing). Ship a single file, mount \
+             a shared volume, or use an inline `records` dataset",
+            source.display()
+        );
+        let name = file_name(source)?;
+        let map = std::iter::once((name.clone(), source.to_path_buf())).collect();
+        Ok((
+            map,
+            DatasetManifest {
+                kind: "file".to_owned(),
+                base_name: name.clone(),
+                files: vec![name],
+            },
+        ))
+    }
 }
 
 /// Phase `type`s whose dispatch count is exactly the `requests` budget and whose
@@ -1914,43 +1984,59 @@ mod tests {
         );
     }
 
-    /// Stage G fail-closed: a cross-host cellular graph run whose trace path is a single
-    /// readable file is shippable; a DIRECTORY or a segmented-prefix (no file at the exact
-    /// path) is rejected — the single-file serve/fetch plane cannot carry it, and we must
-    /// not silently ship a directory as one file. (Multi-file trace shipping is a follow-up.)
+    /// Stage G serve plan: a single-file trace ships as one file; a DIRECTORY or
+    /// segmented-prefix GRAPH trace now ships every shard the loader reads (via
+    /// `enumerate_recorded_trace_files`) with a `dir`/`prefix` manifest; a missing
+    /// path or a dag_jsonl directory (single-file loader) still fails closed.
     #[test]
-    fn rejects_directory_and_prefix_trace_cross_host() {
+    fn build_dataset_serve_plan_ships_single_dir_and_prefix() {
         let tmp = tempfile::TempDir::new().unwrap();
 
-        // A single-file trace (e.g. one-file dag_jsonl / weka_trace) is shippable.
+        // Single-file trace (any graph format) → one-file plan, `file` manifest.
         let file = tmp.path().join("trace.dag.jsonl");
         std::fs::write(&file, b"{}\n").unwrap();
-        assert!(
-            ensure_single_file_trace_shippable(&file).is_ok(),
-            "a single readable trace file must be shippable over Stage G"
-        );
+        let (map, manifest) = build_dataset_serve_plan(Some("dag_jsonl"), &file).unwrap();
+        assert_eq!(manifest.kind, "file");
+        assert_eq!(manifest.files, vec!["trace.dag.jsonl".to_owned()]);
+        assert_eq!(map.len(), 1);
+        assert_eq!(map.get("trace.dag.jsonl"), Some(&file));
 
-        // A DIRECTORY trace path (weka_trace/dynamo_trace shard dir) fails closed.
+        // A DIRECTORY weka_trace ships every .json shard (loader read set), `dir` kind.
         let dir = tmp.path().join("shards");
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("part-0.jsonl"), b"{}\n").unwrap();
-        let dir_err = ensure_single_file_trace_shippable(&dir)
-            .unwrap_err()
-            .to_string();
-        assert!(
-            dir_err.contains("single-file trace"),
-            "directory trace path must be rejected with the single-file message; got {dir_err}"
-        );
+        std::fs::write(dir.join("a.json"), b"{}").unwrap();
+        std::fs::write(dir.join("b.json"), b"{}").unwrap();
+        let (map, manifest) = build_dataset_serve_plan(Some("weka_trace"), &dir).unwrap();
+        assert_eq!(manifest.kind, "dir");
+        let mut names = manifest.files.clone();
+        names.sort();
+        assert_eq!(names, vec!["a.json".to_owned(), "b.json".to_owned()]);
+        assert_eq!(map.len(), 2);
 
-        // A segmented-PREFIX path — no file exists at the exact stem, only `stem.N`
-        // shards beside it — also fails closed (not a single readable file).
-        let prefix = tmp.path().join("segmented");
-        std::fs::write(tmp.path().join("segmented.0"), b"{}\n").unwrap();
-        std::fs::write(tmp.path().join("segmented.1"), b"{}\n").unwrap();
+        // A segmented-PREFIX dynamo_trace ships the matching shards, `prefix` kind.
+        std::fs::write(tmp.path().join("seg.000000.jsonl.gz"), b"{}\n").unwrap();
+        std::fs::write(tmp.path().join("seg.000001.jsonl.gz"), b"{}\n").unwrap();
+        let prefix = tmp.path().join("seg.jsonl.gz");
+        let (map, manifest) = build_dataset_serve_plan(Some("dynamo_trace"), &prefix).unwrap();
+        assert_eq!(manifest.kind, "prefix");
+        assert_eq!(manifest.base_name, "seg.jsonl.gz");
+        assert_eq!(map.len(), 2);
+        assert!(map.contains_key("seg.000000.jsonl.gz"));
+
+        // A dag_jsonl DIRECTORY still fails closed (its loader reads one file).
         assert!(
-            ensure_single_file_trace_shippable(&prefix).is_err(),
-            "a segmented-prefix trace path (no file at the exact path) must be rejected"
+            build_dataset_serve_plan(Some("dag_jsonl"), &dir).is_err(),
+            "a dag_jsonl directory must fail closed (single-file loader)"
         );
+        // A missing path fails closed for a graph format and a scheduled format alike.
+        let missing = tmp.path().join("nope.jsonl");
+        assert!(build_dataset_serve_plan(Some("weka_trace"), &missing).is_err());
+        assert!(build_dataset_serve_plan(Some("single_turn"), &missing).is_err());
+        // A scheduled single-file dataset ships as one file.
+        let scheduled = tmp.path().join("prompts.jsonl");
+        std::fs::write(&scheduled, b"{}\n").unwrap();
+        let (_map, manifest) = build_dataset_serve_plan(Some("single_turn"), &scheduled).unwrap();
+        assert_eq!(manifest.kind, "file");
     }
 
     /// Multi-turn cellular requires a deterministic single-pass sampler: sequential/shuffle
