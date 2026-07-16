@@ -35,8 +35,9 @@ class MetricsBaseExporter(AIPerfLoggerMixin, ABC):
 
         INTERNAL and EXPERIMENTAL metrics are computed (they may be dependencies
         of other metrics) but excluded from file exports unless the dev-mode show
-        flags are set -- mirroring the console exporter's ``exclude_flags``.
-        The accumulator summary engine does NOT pre-filter, so the file exporters must. Tags not
+        flags are set -- mirroring the console exporter's ``exclude_flags`` and
+        the legacy ``MetricResultsProcessor.summarize`` filter. The accumulator
+        summary engine does NOT pre-filter, so the file exporters must. Tags not
         in ``MetricRegistry`` (dynamically injected, e.g. derived latency) are
         kept.
 

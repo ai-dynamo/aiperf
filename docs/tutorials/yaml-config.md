@@ -48,8 +48,8 @@ benchmark:
     entries: 500
     prompts: {isl: 512, osl: 128}
   phases:
-    - {name: warmup, type: concurrency, concurrency: 8, requests: 50, exclude_from_results: true}
-    - {name: profiling, type: concurrency, requests: 500}
+    - {name: warmup, kind: warmup, type: concurrency, concurrency: 8, requests: 50}
+    - {name: profiling, kind: profiling, type: concurrency, requests: 500}
   artifacts:
     dir: ./artifacts/my-test
 
@@ -156,11 +156,39 @@ benchmark:
   datasets:
     - {name: main, type: synthetic, prompts: {isl: 512, osl: 128}}
   phases:
-    - {name: warmup, type: concurrency, concurrency: 4, requests: 50, exclude_from_results: true}
-    - {name: profiling, type: poisson, rate: 30.0, duration: 120}
+    - {name: warmup, kind: warmup, type: concurrency, concurrency: 4, requests: 50}
+    - {name: profiling, kind: profiling, type: poisson, rate: 30.0, duration: 120}
 ```
 
-You can mix and match — the loader auto-expands `model:` into a one-element `models:` list, `dataset:` into a one-entry `datasets:` list named `default`, and a flat `phases:` block into a one-element list named `profiling`. The normalized `datasets:` form is future-facing but currently accepts exactly one dataset; multiple datasets are a roadmap item.
+You can mix and match — the loader auto-expands `model:` into a one-element `models:` list, `dataset:` into a one-entry `datasets:` list named `default`, and a flat `phases:` block into a one-element profiling phase named `profiling`. Named phases are additive: existing configs that use canonical phase names such as `warmup` and `profiling` without an explicit `kind` remain valid, and the loader infers the matching semantic kind. Explicit phase lists may set `name` as the unique workflow identifier and `kind` as the semantic (`warmup` or `profiling`); custom names such as `storm_1` must set `kind: profiling` or `kind: warmup`. The normalized `datasets:` form is future-facing but currently accepts exactly one dataset; multiple datasets are a roadmap item.
+
+Named phases are useful for long soaks with multiple profiling windows:
+
+```yaml
+benchmark:
+  phases:
+    - name: warmup
+      kind: warmup
+      type: concurrency
+      duration: 5m
+    - name: low_cancel_1
+      kind: profiling
+      type: concurrency
+      duration: 30m
+      cancellation: {rate: 5, delay: 0}
+    - name: storm_1
+      kind: profiling
+      type: concurrency
+      duration: 5m
+      cancellation: {rate: 50, delay: 0}
+    - name: recovery_1
+      kind: profiling
+      type: concurrency
+      duration: 30m
+      cancellation: {rate: 0, delay: 0}
+```
+
+Phase names must be strict identifiers (`^[A-Za-z_][A-Za-z0-9_-]*$`) and are unique case-insensitively because they are used in sweep paths and artifact directories.
 
 ### Inline datasets
 
@@ -336,6 +364,7 @@ benchmark:
     prompts: {isl: 512, osl: 128}
   phases:
     - name: profiling
+      kind: profiling
       type: concurrency
       concurrency: 200
       prefill_concurrency: 64
@@ -365,7 +394,7 @@ benchmark:
 
 Adaptive scale rejects fixed ramps on the same variable it controls. For example, do not combine `control.variable: prefill_concurrency` with `prefill_ramp`. Fixed ramps for other variables are allowed.
 
-The CLI exposes a compact sweep-like control flag for the common single-phase case: `--adaptive-scale-control variable:min,max:type`, plus repeated `--adaptive-scale-sla metric:stat:op:threshold` flags. For example: `--adaptive-scale-control "concurrency:1,1000:int" --adaptive-scale-sla "request_latency:p95:le:30000"`. Expanded `--adaptive-control-variable`, `--adaptive-control-min`, and `--adaptive-control-max` flags remain supported for advanced scripting; if expanded `--adaptive-control-max` is omitted, AIPerf infers it from the matching phase target such as `--concurrency`, `--prefill-concurrency`, `--request-rate`, or `--num-users`. Do not mix compact and expanded control forms.
+Adaptive scale is a YAML-only phase feature. Configure the control variable, min/max bounds, assessment windows, sustain duration, strategy, and SLA filters in the phase `adaptive_scale` and `sla` blocks, then run the benchmark with `aiperf profile --config <file>`. Existing command-line workflows for other settings and canonical YAML phase shapes remain valid.
 
 Adaptive scale combines SLA filters with simple AND semantics. A window passes only when every configured filter passes. Step sizing uses the smallest normalized passing margin, so the closest SLA boundary controls the next increase. There are no weights, formulas, or multi-objective scoring in single-run adaptive scale.
 
@@ -466,12 +495,15 @@ benchmark:
             le: 0.10
 ```
 
-Adaptive scale writes two timing-owned artifacts into the run directory:
+Adaptive scale writes phase-scoped timing artifacts plus a manifest into the run directory:
 
 ```text
-adaptive_scale_events.jsonl
-adaptive_scale_summary.json
+phases/<phase_name>/adaptive_scale_events.jsonl
+phases/<phase_name>/adaptive_scale_summary.json
+adaptive_scale_manifest.json
 ```
+
+A run with multiple adaptive profiling phases gets one event/summary pair per phase and one manifest entry per adaptive phase.
 
 These artifacts use schema version 2 and generic control fields such as `control_variable`, `control_value_before`, `control_value_after`, `boundary_value`, `last_passing_value`, and `first_failing_value`. Every `adaptive_window` event includes all evaluated SLA values and the binding constraint. Dynamo-style pollers should gate fault injection on explicit events such as `sustain_started` rather than fixed sleeps.
 
@@ -507,12 +539,14 @@ benchmark:
       duration: 120
 ```
 
-The `parameters:` keys are dot-paths into the `benchmark:` body. For lists, the second segment is the entry's `name`:
+The `parameters:` keys are dot-paths into the `benchmark:` body. For phase lists, the second segment resolves in this order: numeric index, exact unique phase `name`, then legacy `phases.profiling.*` shorthand for the unique profiling-kind phase when no phase is named `profiling`:
 
-- `phases.profiling.rate` → the phase named `profiling`, field `rate`
+- `phases.storm_1.cancellation.rate` → the phase named `storm_1`, field `cancellation.rate`
+- `phases.1.concurrency` → the second phase, field `concurrency`
+- `phases.profiling.rate` → the phase named `profiling`, or the unique profiling-kind phase when unambiguous
 - `datasets.default.prompts.isl` → the dataset named `default` (the singular `dataset:` shorthand auto-names it `default`)
 
-The 12 most-swept phase fields also have bare-name sugar: `concurrency`, `prefill_concurrency`, `rate`, `requests`, `duration`, `sessions`, `users`, `smoothness`, `grace_period`, `concurrency_ramp`, `prefill_ramp`, `rate_ramp`. Each expands to `phases.profiling.<name>` (resolves to the unique non-warmup phase). The two forms are equivalent — see [Bare-Name Aliases](sweeps.md#bare-name-aliases-for-common-phase-fields).
+The 12 most-swept phase fields also have bare-name sugar: `concurrency`, `prefill_concurrency`, `rate`, `requests`, `duration`, `sessions`, `users`, `smoothness`, `grace_period`, `concurrency_ramp`, `prefill_ramp`, `rate_ramp`. Each expands to `phases.profiling.<name>` and must still resolve unambiguously. The two forms are equivalent — see [Bare-Name Aliases](sweeps.md#bare-name-aliases-for-common-phase-fields).
 
 Other sweep modes available in YAML:
 
@@ -578,7 +612,7 @@ aiperf profile --config benchmark.yaml \
   --artifact-dir ./run-2026-05-09
 ```
 
-This loads `benchmark.yaml` as the base, then overrides the *profiling* phase's `concurrency` with `32` and the artifact directory with the new path. (CLI loadgen flags overlay onto the phase named `profiling` — they don't broadcast to every named phase, so multi-phase configs need YAML edits to tweak warmup or other phases.) Useful when most of your config is stable but you want to tweak one knob from a script or CI job.
+This loads `benchmark.yaml` as the base, then overrides the unique profiling phase's `concurrency` with `32` and the artifact directory with the new path. CLI loadgen flags target `kind: profiling` and work only when that target is unambiguous. If a config has multiple profiling phases, set per-phase values in YAML. Useful when most of your config is stable but you want to tweak one knob from a script or CI job.
 
 The precedence order, lowest to highest:
 

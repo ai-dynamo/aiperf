@@ -32,7 +32,7 @@ __all__ = [
 
 # Type aliases for format arrays.
 # Narrow to what the codebase actually emits: MetricsJsonExporter writes the
-# summary JSON, RecordExportJSONLWriter writes the records JSONL. No YAML
+# summary JSON, RecordExportResultsProcessor writes the records JSONL. No YAML
 # summary exporter and no records-CSV exporter exist; do not advertise them.
 SummaryExportFormat = Literal["json"]
 RecordsExportFormat = Literal["jsonl"]
@@ -335,13 +335,6 @@ class ArtifactsConfig(BaseConfig):
         """Path for the server metrics JSONL export file."""
         base = self._base()
         name = f"{base}_server_metrics.jsonl" if base else "server_metrics_export.jsonl"
-        return self.dir / name
-
-    @property
-    def accuracy_export_jsonl_file(self) -> Path:
-        """Path for the per-record accuracy JSONL export file."""
-        base = self._base()
-        name = f"{base}_accuracy.jsonl" if base else "accuracy_export.jsonl"
         return self.dir / name
 
     @property

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from itertools import pairwise
+
 import pytest
 
 from aiperf.dataset.loader._baseten_replay_timemodel import reflow_idle_gaps
@@ -64,7 +66,7 @@ class TestReflowIdleGaps:
         in_time_order = [out[i] for i in sorted(range(len(ts)), key=lambda i: ts[i])]
         assert in_time_order == sorted(in_time_order)
         # every consecutive gap <= cap
-        gaps = [b - a for a, b in zip(in_time_order, in_time_order[1:], strict=False)]
+        gaps = [b - a for a, b in pairwise(in_time_order)]
         assert all(g <= 2000 for g in gaps)
 
     def test_total_span_shrinks_by_excess(self):

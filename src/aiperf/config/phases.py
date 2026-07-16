@@ -19,6 +19,8 @@ from pydantic import (
     model_validator,
 )
 
+from aiperf.common.phase import infer_legacy_phase_kind
+from aiperf.common.types import PhaseKind
 from aiperf.config.adaptive_scale_phase import AdaptiveScalePhaseMixin
 from aiperf.config.base import BaseConfig
 from aiperf.config.cancellation import CancellationConfig
@@ -42,6 +44,7 @@ __all__ = [
     "PhaseConfig",
     "PhaseType",
     "PhaseTypeStr",
+    "PhaseKind",
     "PoissonPhase",
     "RampConfig",
     "RampSpec",
@@ -70,11 +73,29 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
     model_config = ConfigDict(extra="forbid")
 
     name: Annotated[
-        Literal["warmup", "profiling"],
+        str,
         Field(
-            description="Phase identifier — must be 'warmup' or 'profiling'. "
-            "The credit pipeline only distinguishes these two phase kinds. "
-            "Used in logs, status, sweep targeting, and result file naming.",
+            pattern=r"^[A-Za-z_][A-Za-z0-9_-]*$",
+            description="Unique workflow label for this phase, such as "
+            "'low', 'storm', or 'recover'. This is distinct from phase kind: "
+            "multiple phases may share kind='profiling' while each keeps a "
+            "different name. Used in logs, status, sweep targeting, artifact "
+            "paths, and result file naming. Must be a strict identifier: "
+            "letters, numbers, underscores, and hyphens; must start with a "
+            "letter or underscore.",
+        ),
+    ]
+
+    kind: Annotated[
+        PhaseKind | None,
+        Field(
+            default=None,
+            description="Semantic runtime role for the phase. Only 'warmup' "
+            "and 'profiling' are valid kinds because the credit/results "
+            "pipeline distinguishes those two roles. This field is nullable "
+            "only as an input compatibility bridge: legacy canonical names "
+            "('warmup' and 'profiling') infer kind during normalization, "
+            "while validated phases always carry a concrete kind.",
         ),
     ]
 
@@ -100,9 +121,9 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         Field(
             default=False,
             description="Exclude this phase's metrics from final results. "
-            "Forced by phase name: 'warmup' is always excluded, "
-            "'profiling' is always included. Explicitly setting this "
-            "field to a value inconsistent with the phase name is rejected.",
+            "Forced by phase kind: kind='warmup' is always excluded, "
+            "kind='profiling' is always included. Explicitly setting this "
+            "field to a value inconsistent with the phase kind is rejected.",
         ),
     ]
 
@@ -234,19 +255,30 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
     @model_validator(mode="after")
     def _validate_phase_constraints(self) -> Self:
         """Validate stop condition and cross-field constraints."""
-        required = {"warmup": True, "profiling": False}.get(self.name)
-        if required is not None:
-            if (
-                "exclude_from_results" in self.model_fields_set
-                and self.exclude_from_results != required
-            ):
-                raise ValueError(
-                    f"Phase '{self.name}': exclude_from_results must be "
-                    f"{required} (warmup is always excluded; profiling is "
-                    f"always included)"
-                )
-            if self.exclude_from_results != required:
-                self.exclude_from_results = required
+        self.kind = infer_legacy_phase_kind(self.name, self.kind)
+        if self.kind is None:
+            raise ValueError(
+                f"Phase '{self.name}': kind is required for non-canonical phase "
+                "names. Set kind to 'warmup' or 'profiling'."
+            )
+        if self.name in {"warmup", "profiling"} and self.kind != self.name:
+            raise ValueError(
+                f"Phase name '{self.name}' is reserved for kind '{self.name}'; "
+                f"got kind '{self.kind}'."
+            )
+
+        required = self.kind == "warmup"
+        if (
+            "exclude_from_results" in self.model_fields_set
+            and self.exclude_from_results != required
+        ):
+            raise ValueError(
+                f"Phase '{self.name}': exclude_from_results must be "
+                f"{required} for kind '{self.kind}' (warmup is always "
+                "excluded; profiling is always included)"
+            )
+        if self.exclude_from_results != required:
+            self.exclude_from_results = required
         if (
             self._stop_condition_required
             and self.requests is None

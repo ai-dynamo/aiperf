@@ -1042,13 +1042,27 @@
                       "type": "number"
                     },
                     "name": {
-                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                      "enum": [
-                        "warmup",
-                        "profiling"
-                      ],
+                      "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                       "title": "Name",
                       "type": "string"
+                    },
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "warmup",
+                            "profiling"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                      "title": "Kind"
                     },
                     "type": {
                       "const": "concurrency",
@@ -1058,7 +1072,7 @@
                     },
                     "excludeFromResults": {
                       "default": false,
-                      "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                      "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                       "title": "Excludefromresults",
                       "type": "boolean"
                     },
@@ -1340,13 +1354,27 @@
                       "type": "number"
                     },
                     "name": {
-                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                      "enum": [
-                        "warmup",
-                        "profiling"
-                      ],
+                      "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                       "title": "Name",
                       "type": "string"
+                    },
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "warmup",
+                            "profiling"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                      "title": "Kind"
                     },
                     "type": {
                       "const": "poisson",
@@ -1356,7 +1384,7 @@
                     },
                     "excludeFromResults": {
                       "default": false,
-                      "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                      "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                       "title": "Excludefromresults",
                       "type": "boolean"
                     },
@@ -1664,13 +1692,27 @@
                       "type": "number"
                     },
                     "name": {
-                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                      "enum": [
-                        "warmup",
-                        "profiling"
-                      ],
+                      "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                       "title": "Name",
                       "type": "string"
+                    },
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "warmup",
+                            "profiling"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                      "title": "Kind"
                     },
                     "type": {
                       "const": "gamma",
@@ -1680,7 +1722,7 @@
                     },
                     "excludeFromResults": {
                       "default": false,
-                      "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                      "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                       "title": "Excludefromresults",
                       "type": "boolean"
                     },
@@ -2002,13 +2044,27 @@
                       "type": "number"
                     },
                     "name": {
-                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                      "enum": [
-                        "warmup",
-                        "profiling"
-                      ],
+                      "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                       "title": "Name",
                       "type": "string"
+                    },
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "warmup",
+                            "profiling"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                      "title": "Kind"
                     },
                     "type": {
                       "const": "constant",
@@ -2018,7 +2074,7 @@
                     },
                     "excludeFromResults": {
                       "default": false,
-                      "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                      "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                       "title": "Excludefromresults",
                       "type": "boolean"
                     },
@@ -2326,13 +2382,27 @@
                       "type": "number"
                     },
                     "name": {
-                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                      "enum": [
-                        "warmup",
-                        "profiling"
-                      ],
+                      "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                       "title": "Name",
                       "type": "string"
+                    },
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "warmup",
+                            "profiling"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                      "title": "Kind"
                     },
                     "type": {
                       "const": "user_centric",
@@ -2342,7 +2412,7 @@
                     },
                     "excludeFromResults": {
                       "default": false,
-                      "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                      "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                       "title": "Excludefromresults",
                       "type": "boolean"
                     },
@@ -2657,13 +2727,27 @@
                       "type": "number"
                     },
                     "name": {
-                      "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                      "enum": [
-                        "warmup",
-                        "profiling"
-                      ],
+                      "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                       "title": "Name",
                       "type": "string"
+                    },
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "warmup",
+                            "profiling"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                      "title": "Kind"
                     },
                     "type": {
                       "const": "fixed_schedule",
@@ -2673,7 +2757,7 @@
                     },
                     "excludeFromResults": {
                       "default": false,
-                      "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                      "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                       "title": "Excludefromresults",
                       "type": "boolean"
                     },
@@ -3678,13 +3762,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "concurrency",
@@ -3694,7 +3792,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -3976,13 +4074,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "poisson",
@@ -3992,7 +4104,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -4300,13 +4412,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "gamma",
@@ -4316,7 +4442,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -4638,13 +4764,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "constant",
@@ -4654,7 +4794,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -4962,13 +5102,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "user_centric",
@@ -4978,7 +5132,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -5293,13 +5447,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "fixed_schedule",
@@ -5309,7 +5477,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -5648,13 +5816,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "concurrency",
@@ -5664,7 +5846,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -5946,13 +6128,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "poisson",
@@ -5962,7 +6158,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -6270,13 +6466,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "gamma",
@@ -6286,7 +6496,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -6608,13 +6818,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "constant",
@@ -6624,7 +6848,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -6932,13 +7156,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "user_centric",
@@ -6948,7 +7186,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -7263,13 +7501,27 @@
                   "type": "number"
                 },
                 "name": {
-                  "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-                  "enum": [
-                    "warmup",
-                    "profiling"
-                  ],
+                  "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                   "title": "Name",
                   "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "warmup",
+                        "profiling"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+                  "title": "Kind"
                 },
                 "type": {
                   "const": "fixed_schedule",
@@ -7279,7 +7531,7 @@
                 },
                 "excludeFromResults": {
                   "default": false,
-                  "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+                  "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
                   "title": "Excludefromresults",
                   "type": "boolean"
                 },
@@ -7850,13 +8102,27 @@
           "x-jinja2-supported": true
         },
         "name": {
-          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-          "enum": [
-            "warmup",
-            "profiling"
-          ],
+          "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "title": "Name",
           "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "warmup",
+                "profiling"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+          "title": "Kind"
         },
         "type": {
           "const": "concurrency",
@@ -7866,7 +8132,7 @@
         },
         "excludeFromResults": {
           "default": false,
-          "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+          "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
           "title": "Excludefromresults",
           "type": "boolean"
         },
@@ -8377,13 +8643,27 @@
           "x-jinja2-supported": true
         },
         "name": {
-          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-          "enum": [
-            "warmup",
-            "profiling"
-          ],
+          "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "title": "Name",
           "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "warmup",
+                "profiling"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+          "title": "Kind"
         },
         "type": {
           "const": "constant",
@@ -8393,7 +8673,7 @@
         },
         "excludeFromResults": {
           "default": false,
-          "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+          "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
           "title": "Excludefromresults",
           "type": "boolean"
         },
@@ -10009,13 +10289,27 @@
           "x-jinja2-supported": true
         },
         "name": {
-          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-          "enum": [
-            "warmup",
-            "profiling"
-          ],
+          "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "title": "Name",
           "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "warmup",
+                "profiling"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+          "title": "Kind"
         },
         "type": {
           "const": "fixed_schedule",
@@ -10025,7 +10319,7 @@
         },
         "excludeFromResults": {
           "default": false,
-          "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+          "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
           "title": "Excludefromresults",
           "type": "boolean"
         },
@@ -10600,13 +10894,27 @@
           "x-jinja2-supported": true
         },
         "name": {
-          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-          "enum": [
-            "warmup",
-            "profiling"
-          ],
+          "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "title": "Name",
           "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "warmup",
+                "profiling"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+          "title": "Kind"
         },
         "type": {
           "const": "gamma",
@@ -10616,7 +10924,7 @@
         },
         "excludeFromResults": {
           "default": false,
-          "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+          "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
           "title": "Excludefromresults",
           "type": "boolean"
         },
@@ -12942,13 +13250,27 @@
           "x-jinja2-supported": true
         },
         "name": {
-          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-          "enum": [
-            "warmup",
-            "profiling"
-          ],
+          "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "title": "Name",
           "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "warmup",
+                "profiling"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+          "title": "Kind"
         },
         "type": {
           "const": "poisson",
@@ -12958,7 +13280,7 @@
         },
         "excludeFromResults": {
           "default": false,
-          "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+          "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
           "title": "Excludefromresults",
           "type": "boolean"
         },
@@ -15942,13 +16264,27 @@
           "x-jinja2-supported": true
         },
         "name": {
-          "description": "Phase identifier — must be 'warmup' or 'profiling'. The credit pipeline only distinguishes these two phase kinds. Used in logs, status, sweep targeting, and result file naming.",
-          "enum": [
-            "warmup",
-            "profiling"
-          ],
+          "description": "Unique workflow label for this phase, such as 'low', 'storm', or 'recover'. This is distinct from phase kind: multiple phases may share kind='profiling' while each keeps a different name. Used in logs, status, sweep targeting, artifact paths, and result file naming. Must be a strict identifier: letters, numbers, underscores, and hyphens; must start with a letter or underscore.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "title": "Name",
           "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "warmup",
+                "profiling"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Semantic runtime role for the phase. Only 'warmup' and 'profiling' are valid kinds because the credit/results pipeline distinguishes those two roles. This field is nullable only as an input compatibility bridge: legacy canonical names ('warmup' and 'profiling') infer kind during normalization, while validated phases always carry a concrete kind.",
+          "title": "Kind"
         },
         "type": {
           "const": "user_centric",
@@ -15958,7 +16294,7 @@
         },
         "excludeFromResults": {
           "default": false,
-          "description": "Exclude this phase's metrics from final results. Forced by phase name: 'warmup' is always excluded, 'profiling' is always included. Explicitly setting this field to a value inconsistent with the phase name is rejected.",
+          "description": "Exclude this phase's metrics from final results. Forced by phase kind: kind='warmup' is always excluded, kind='profiling' is always included. Explicitly setting this field to a value inconsistent with the phase kind is rejected.",
           "title": "Excludefromresults",
           "type": "boolean"
         },

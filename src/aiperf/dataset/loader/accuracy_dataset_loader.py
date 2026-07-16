@@ -11,11 +11,9 @@ OpenAI-compatible messages in Turn.raw_messages.
 The problem ordering is deterministic: Conversation i corresponds to
 BenchmarkProblem i. Each Conversation carries accuracy_ground_truth and
 accuracy_task so that DatasetManager can propagate them through
-ConversationMetadata inside DatasetConfiguredNotification. The ground truth is
-read by AccuracyRecordProcessor, which stamps the per-conversation task label
-onto each graded record so AccuracyAccumulator can bucket by task. Processors
-receive these values from the notification instead of independently re-loading
-the benchmark.
+ConversationMetadata inside DatasetConfiguredNotification. Processors
+(AccuracyRecordProcessor, AccuracyResultsProcessor) receive these values
+from the notification instead of independently re-loading the benchmark.
 The session_num % len(conversations) mapping handles both single-pass and
 multi-pass (num_requests > dataset size) runs and is only valid when the
 dataset is sampled sequentially; DatasetManager enforces that invariant and

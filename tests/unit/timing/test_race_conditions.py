@@ -190,6 +190,48 @@ class TestRecordsManagerRace:
             CreditPhase.PROFILING
         )
 
+    def test_same_kind_phases_track_counts_and_metadata_independently(self):
+        rt = RecordsTracker()
+        low = CreditPhaseStats(
+            phase=CreditPhase.PROFILING,
+            phase_index=0,
+            profiling_index=0,
+            phase_name="low",
+            phase_kind="profiling",
+            final_requests_completed=1,
+            start_ns=1000,
+        )
+        storm = CreditPhaseStats(
+            phase=CreditPhase.PROFILING,
+            phase_index=1,
+            profiling_index=1,
+            phase_name="storm",
+            phase_kind="profiling",
+            final_requests_completed=2,
+            start_ns=2000,
+        )
+        rt.update_phase_info(low)
+        rt.update_phase_info(storm)
+        rt._get_phase_tracker(
+            CreditPhase.PROFILING, phase_index=0
+        ).increment_success_records()
+        for _ in range(2):
+            rt._get_phase_tracker(
+                CreditPhase.PROFILING, phase_index=1
+            ).increment_success_records()
+
+        assert rt.check_and_set_all_records_received_for_stats(low)
+        assert rt.check_and_set_all_records_received_for_stats(storm)
+        low_stats = rt.create_stats_for_phase(CreditPhase.PROFILING, phase_index=0)
+        storm_stats = rt.create_stats_for_phase(CreditPhase.PROFILING, phase_index=1)
+
+        assert low_stats.total_records == 1
+        assert low_stats.phase_name == "low"
+        assert low_stats.profiling_index == 0
+        assert storm_stats.total_records == 2
+        assert storm_stats.phase_name == "storm"
+        assert storm_stats.profiling_index == 1
+
 
 @pytest.mark.asyncio
 class TestStickyRouterWorkerRace:

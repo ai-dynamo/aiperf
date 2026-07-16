@@ -11,7 +11,7 @@ Use adaptive scale when you want one benchmark invocation to push a service unti
 
 ## YAML example
 
-YAML is the preferred way to configure adaptive scale because it keeps the control variable, assessment windows, sustain period, and SLA filters together. The canonical shape uses a nested `adaptive_scale.control` block:
+Adaptive scale is configured in YAML because it keeps the control variable, assessment windows, sustain period, and SLA filters together with the phase they control. The examples below set `kind: profiling` explicitly to show the current phase model, but existing configs that use canonical `warmup`/`profiling` names without `kind` remain valid because the loader infers it. The canonical shape uses a nested `adaptive_scale.control` block:
 
 ```yaml
 schemaVersion: "2.0"
@@ -28,6 +28,7 @@ benchmark:
     prompts: {isl: 512, osl: 128}
   phases:
     - name: profiling
+      kind: profiling
       type: concurrency
       concurrency: 200
       prefill_concurrency: 64
@@ -82,6 +83,7 @@ benchmark:
       osl: 16
   phases:
     - name: profiling
+      kind: profiling
       type: concurrency
       concurrency: 4
       duration: 45
@@ -155,39 +157,25 @@ Exact numbers depend on your server and hardware. If the run passes at `max`, lo
 
 For `users`, adaptive scale changes population pressure rather than acting as another spelling of request rate.
 
-## CLI quick start
+## YAML-only configuration
 
-The CLI is useful for scripts and simple one-phase runs. Prefer YAML for reusable benchmark definitions.
-
-```bash
-aiperf profile \
-  --url http://localhost:8000/v1/chat/completions \
-  --model meta-llama/Llama-3.1-8B-Instruct \
-  --endpoint-type chat \
-  --streaming \
-  --concurrency 400 \
-  --benchmark-duration 3600 \
-  --adaptive-scale \
-  --adaptive-scale-control concurrency:1,400:int \
-  --adaptive-scale-assessment-period 60 \
-  --adaptive-sustain-duration 1800 \
-  --adaptive-scale-sla request_latency:p95:le:30000
-```
-
-The compact control form is `--adaptive-scale-control variable:min,max:type`. Use `int` for `concurrency`, `prefill_concurrency`, and `users`; use `float` for `request_rate`. Do not mix compact control with expanded `--adaptive-control-*` flags.
+Adaptive scale does not expose standalone CLI flags. Put the adaptive settings in the target phase's `adaptive_scale` block and run the benchmark with `aiperf profile --config <file>`. General CLI flags such as `--tokenizer`, `--ui`, and `--output-artifact-dir` can still be used around the YAML benchmark definition.
 
 ## Artifacts
 
-Adaptive scale writes these timing-owned artifacts into the run artifact directory:
+Adaptive scale writes phase-scoped timing artifacts plus a manifest into the run artifact directory:
 
 ```text
-adaptive_scale_events.jsonl
-adaptive_scale_summary.json
+phases/<phase_name>/adaptive_scale_events.jsonl
+phases/<phase_name>/adaptive_scale_summary.json
+adaptive_scale_manifest.json
 ```
+
+A run with multiple adaptive profiling phases gets one event/summary pair per phase and one manifest entry per adaptive phase.
 
 `adaptive_scale_events.jsonl` is an event stream for orchestration and post-processing. Each line includes `schema_version`, timestamps, `event`, `control_variable`, `control_value_before`, `control_value_after`, `boundary_value`, `last_passing_value`, `first_failing_value`, `sla_values`, and `binding_sla` fields. Pollers should key off explicit events such as `sustain_started` rather than sleeping for a fixed amount of time.
 
-`adaptive_scale_summary.json` is the final controller summary. It records the discovered boundary, final control value, last passing value, first failing value, sustain status, throughput, sample counts, error counts, cancellation counts, and the evaluated candidate windows.
+`adaptive_scale_summary.json` is the final controller summary for one adaptive phase. It records the discovered boundary, final control value, last passing value, first failing value, sustain status, throughput, sample counts, error counts, cancellation counts, and the evaluated candidate windows.
 
 Artifact fields are intended for orchestration-facing consumers, so treat schema changes and field renames as compatibility events.
 

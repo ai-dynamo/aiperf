@@ -20,6 +20,8 @@ Covers former bugs in ``aiperf.config.flags._converter_profiling``:
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 
 from aiperf.config.flags._converter_profiling import build_profiling
@@ -256,196 +258,44 @@ class TestRateRampRequiresRequestRate:
         assert prof.get("rate_ramp") == {"duration": 30}
 
 
-class TestAdaptiveScaleRoutes:
-    def test_adaptive_scale_cli_fields_route_to_profiling_phase(
-        self: TestAdaptiveScaleRoutes,
-    ) -> None:
-        loadgen = CLIConfig(
-            adaptive_scale=True,
-            adaptive_sustain_duration=120.0,
-            adaptive_assessment_period=30.0,
-            adaptive_scale_sla=["request_latency:p95:le:30000"],
-            benchmark_duration=600.0,
-            concurrency=200,
-        )
-        user = _make_user(loadgen=loadgen)
-        prof = build_profiling(user)
-
-        assert prof["type"] == PhaseType.CONCURRENCY
-        assert prof["adaptive_scale"] is True
-        assert prof["adaptive_sustain_duration"] == 120.0
-        assert prof["adaptive_assessment_period"] == 30.0
-        assert prof["sla"] == [
-            {
-                "metric_tag": "request_latency",
-                "stat": "p95",
-                "op": "le",
-                "threshold": 30000.0,
-            }
-        ]
-
-    def test_adaptive_scale_compact_control_routes_to_profiling_phase(
-        self: TestAdaptiveScaleRoutes,
-    ) -> None:
-        loadgen = CLIConfig(
-            adaptive_scale=True,
-            adaptive_scale_control="request_rate:1,200:float",
-            adaptive_sustain_duration=120.0,
-            adaptive_scale_sla=["request_latency:p95:le:30000"],
-            benchmark_duration=600.0,
-            request_rate=200.0,
-        )
-        user = _make_user(loadgen=loadgen)
-        prof = build_profiling(user)
-
-        assert prof["adaptive_control_variable"] == "request_rate"
-        assert prof["adaptive_control_min"] == 1.0
-        assert prof["adaptive_control_max"] == 200.0
-        assert "adaptive_scale_control" not in prof
-
-    @pytest.mark.parametrize(
-        ("control", "match"),
-        [
-            pytest.param("concurrency:1", "variable:min,max:type", id="missing-type"),
-            pytest.param(
-                ":1,10:int", "requires a control variable", id="blank-variable"
-            ),
-            pytest.param(
-                "concurrency:1.5,10:int",
-                "min bound must be an integer",
-                id="bad-int-min",
-            ),
-            pytest.param(
-                "request_rate:one,10:float",
-                "min bound must be a number",
-                id="bad-float-min",
-            ),
-            pytest.param(
-                "concurrency:1,10:string",
-                "type must be 'int' or 'float'",
-                id="bad-type",
-            ),
-        ],
+class TestAdaptiveScaleCliRemoval:
+    REMOVED_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "adaptive_scale",
+            "adaptive_sustain_duration",
+            "adaptive_assessment_period",
+            "adaptive_scale_control",
+            "adaptive_control_variable",
+            "adaptive_control_min",
+            "adaptive_control_max",
+            "adaptive_scale_sla",
+        }
     )
-    def test_adaptive_scale_rejects_invalid_compact_control(
-        self: TestAdaptiveScaleRoutes, control: str, match: str
-    ) -> None:
-        loadgen = CLIConfig(
-            adaptive_scale=True,
-            adaptive_scale_control=control,
-            adaptive_sustain_duration=120.0,
-            adaptive_scale_sla=["request_latency:p95:le:30000"],
-            benchmark_duration=600.0,
-            concurrency=100,
+
+    def test_removed_adaptive_scale_cli_fields_are_not_on_cli_config(self) -> None:
+        assert self.REMOVED_FIELDS.isdisjoint(CLIConfig.model_fields)
+
+    def test_removed_adaptive_scale_cli_fields_are_not_loadgen_routes(self) -> None:
+        from aiperf.config.flags._section_fields import LOADGEN_FIELDS
+
+        assert self.REMOVED_FIELDS.isdisjoint(LOADGEN_FIELDS)
+
+    def test_build_profiling_does_not_emit_adaptive_scale_from_cli(self) -> None:
+        user = _make_user(
+            loadgen=CLIConfig(
+                concurrency=8,
+                benchmark_duration=60,
+                request_count=100,
+            )
         )
-        user = _make_user(loadgen=loadgen)
 
-        with pytest.raises(ValueError, match=match):
-            build_profiling(user)
-
-    def test_adaptive_scale_rejects_mixed_compact_and_expanded_control(
-        self: TestAdaptiveScaleRoutes,
-    ) -> None:
-        loadgen = CLIConfig(
-            adaptive_scale=True,
-            adaptive_scale_control="concurrency:1,100:int",
-            adaptive_control_variable="concurrency",
-            adaptive_sustain_duration=120.0,
-            adaptive_scale_sla=["request_latency:p95:le:30000"],
-            benchmark_duration=600.0,
-            concurrency=100,
-        )
-        user = _make_user(loadgen=loadgen)
-
-        with pytest.raises(ValueError, match="Use either --adaptive-scale-control"):
-            build_profiling(user)
-
-    def test_adaptive_scale_requires_concurrency(
-        self: TestAdaptiveScaleRoutes,
-    ) -> None:
-        loadgen = CLIConfig(
-            adaptive_scale=True,
-            adaptive_sustain_duration=120.0,
-            benchmark_duration=600.0,
-            request_rate=10.0,
-        )
-        user = _make_user(loadgen=loadgen)
-
-        with pytest.raises(ValueError, match="--adaptive-scale requires --concurrency"):
-            build_profiling(user)
-
-    def test_adaptive_scale_rejects_search_sla(
-        self: TestAdaptiveScaleRoutes,
-    ) -> None:
-        loadgen = CLIConfig(
-            adaptive_scale=True,
-            adaptive_sustain_duration=120.0,
-            benchmark_duration=600.0,
-            concurrency=200,
-            search_sla=["request_latency:p95:le:30000"],
-        )
-        user = _make_user(loadgen=loadgen)
-
-        with pytest.raises(ValueError, match="--adaptive-scale-sla"):
-            build_profiling(user)
-
-    def test_adaptive_scale_sla_requires_adaptive_scale(
-        self: TestAdaptiveScaleRoutes,
-    ) -> None:
-        loadgen = CLIConfig(
-            benchmark_duration=600.0,
-            concurrency=200,
-            adaptive_scale_sla=["request_latency:p95:le:30000"],
-        )
-        user = _make_user(loadgen=loadgen)
-
-        with pytest.raises(ValueError, match="--adaptive-scale-sla requires"):
-            build_profiling(user)
-
-    def test_adaptive_scale_sla_still_reports_malformed_filter_without_adaptive_scale(
-        self: TestAdaptiveScaleRoutes,
-    ) -> None:
-        loadgen = CLIConfig(
-            benchmark_duration=600.0,
-            concurrency=200,
-            adaptive_scale_sla=["bad"],
-        )
-        user = _make_user(loadgen=loadgen)
-
-        with pytest.raises(TypeError, match="--adaptive-scale-sla"):
-            build_profiling(user)
-
-    def test_adaptive_scale_cli_accepts_itl_and_goodput_slas(
-        self: TestAdaptiveScaleRoutes,
-    ) -> None:
-        loadgen = CLIConfig(
-            adaptive_scale=True,
-            adaptive_sustain_duration=120.0,
-            benchmark_duration=600.0,
-            concurrency=200,
-            adaptive_scale_sla=[
-                "itl:p95:le:100",
-                "goodput:avg:ge:20",
-            ],
-        )
-        user = _make_user(loadgen=loadgen)
         prof = build_profiling(user)
 
-        assert prof["sla"] == [
-            {
-                "metric_tag": "itl",
-                "stat": "p95",
-                "op": "le",
-                "threshold": 100.0,
-            },
-            {
-                "metric_tag": "goodput",
-                "stat": "avg",
-                "op": "ge",
-                "threshold": 20.0,
-            },
-        ]
+        assert self.REMOVED_FIELDS.isdisjoint(prof)
+        assert "adaptive_scale" not in prof
 
+
+class TestAdaptiveScaleRoutes:
     def test_adaptive_scale_rejects_concurrency_ramp(
         self: TestAdaptiveScaleRoutes,
     ) -> None:

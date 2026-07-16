@@ -1,11 +1,19 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.models import MetricResult, ProfileResults
+from aiperf.common.exceptions import DataExporterDisabled
+from aiperf.common.models import (
+    ErrorDetails,
+    ErrorDetailsCount,
+    MetricResult,
+    PhaseProfileResults,
+    ProfileResults,
+)
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.exporters.exporter_manager import ExporterManager
 from aiperf.plugin.enums import (
@@ -82,6 +90,158 @@ class TestExporterManager:
 
         mock_class.assert_called_once()
         mock_instance.export.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_export_writes_phase_metric_artifacts(
+        self, endpoint_config, output_config, mock_cfg
+    ) -> None:
+        phase_records = [
+            PhaseProfileResults(
+                phase_index=0,
+                phase_name="warmup_cache",
+                phase_kind="warmup",
+                records=[
+                    MetricResult(
+                        tag="request_latency",
+                        header="Request Latency",
+                        unit="ms",
+                        avg=12.0,
+                        count=2,
+                    )
+                ],
+                start_ns=1,
+                end_ns=2,
+                successful_request_count=2,
+            ),
+            PhaseProfileResults(
+                phase_index=1,
+                profiling_index=0,
+                phase_name="storm",
+                phase_kind="profiling",
+                records=[
+                    MetricResult(
+                        tag="request_latency",
+                        header="Request Latency",
+                        unit="ms",
+                        avg=34.0,
+                        count=3,
+                    )
+                ],
+                start_ns=3,
+                end_ns=4,
+                successful_request_count=3,
+                error_request_count=2,
+                error_summary=[
+                    ErrorDetailsCount(
+                        error_details=ErrorDetails(
+                            type="RequestCancellationError", message="cancelled"
+                        ),
+                        count=2,
+                    )
+                ],
+            ),
+        ]
+        manager = ExporterManager(
+            results=ProfileResults(
+                records=[],
+                start_ns=1,
+                end_ns=4,
+                completed=0,
+                was_cancelled=False,
+                error_summary=[],
+                phase_records=phase_records,
+            ),
+            run=make_run_from_cli(mock_cfg),
+            telemetry_results=None,
+        )
+
+        with patch(
+            "aiperf.exporters.exporter_manager.plugins.iter_all", return_value=[]
+        ):
+            await manager.export_data()
+
+        manifest_path = output_config / "phase_manifest.json"
+        assert manifest_path.exists()
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        storm_entry = manifest["phases"][1]
+        assert storm_entry["metrics_json"] == "phases/storm/profile_export_aiperf.json"
+        assert storm_entry["metrics_csv"] == "phases/storm/profile_export_aiperf.csv"
+        assert storm_entry["start_ns"] == 3
+        assert storm_entry["end_ns"] == 4
+        assert storm_entry["successful_request_count"] == 3
+        assert storm_entry["error_request_count"] == 2
+        assert storm_entry["total_request_count"] == 5
+        assert storm_entry["error_summary"][0]["count"] == 2
+        assert (
+            output_config / "phases" / "warmup_cache" / "profile_export_aiperf.json"
+        ).exists()
+        storm_json = json.loads(
+            (
+                output_config / "phases" / "storm" / "profile_export_aiperf.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert storm_json["error_summary"][0]["count"] == 2
+        assert (
+            output_config / "phases" / "storm" / "profile_export_aiperf.csv"
+        ).exists()
+
+    @pytest.mark.asyncio
+    async def test_write_phase_export_handles_disabled_and_failed_exporters(
+        self, endpoint_config, output_config, mock_cfg
+    ) -> None:
+        class DisabledPhaseExporter:
+            def __init__(self, exporter_config) -> None:
+                raise DataExporterDisabled("phase exporter disabled")
+
+        class FailingPhaseExporter:
+            def __init__(self, exporter_config) -> None:
+                pass
+
+            def _generate_content(self) -> str:
+                raise ValueError("content boom")
+
+        manager = ExporterManager(
+            results=ProfileResults(
+                records=[],
+                start_ns=1,
+                end_ns=2,
+                completed=0,
+                was_cancelled=False,
+                error_summary=[],
+            ),
+            run=make_run_from_cli(mock_cfg),
+            telemetry_results=None,
+        )
+        manager.error = MagicMock()
+        phase_profile = ProfileResults(
+            records=[],
+            start_ns=1,
+            end_ns=2,
+            completed=0,
+            was_cancelled=False,
+            error_summary=[],
+        )
+        manifest_entry = {"phase_name": "storm"}
+
+        await manager._write_phase_export(
+            exporter_cls=DisabledPhaseExporter,
+            phase_profile=phase_profile,
+            file_path=output_config / "disabled.json",
+            manifest_entry=manifest_entry,
+            manifest_key="disabled",
+        )
+        await manager._write_phase_export(
+            exporter_cls=FailingPhaseExporter,
+            phase_profile=phase_profile,
+            file_path=output_config / "failing.json",
+            manifest_entry=manifest_entry,
+            manifest_key="failing",
+        )
+
+        assert "disabled" not in manifest_entry
+        assert "failing" not in manifest_entry
+        manager.error.assert_called_once()
+        assert "Failed to write phase export" in manager.error.call_args.args[0]
 
     @pytest.mark.asyncio
     async def test_export_runs_mlflow_after_other_data_exporters(

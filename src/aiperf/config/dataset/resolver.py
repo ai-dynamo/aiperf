@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.config.dataset.constants import BASETEN_ONLY_REPLAY_FIELDS
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -25,15 +26,6 @@ _logger = AIPerfLogger(__name__)
 # explicit; with an auto-detected format they would otherwise silently
 # no-op (e.g. --replay-speedup on a mooncake JSONL replays at recorded
 # speed), so warn once the resolved format is known.
-_BASETEN_ONLY_REPLAY_FIELDS = (
-    "trace_session_sample_ratio",
-    "replay_speedup",
-    "max_idle_gap_cap_seconds",
-    "open_loop_replay",
-    "open_loop_strict",
-    "omit_kv_hints",
-    "force_min_tokens",
-)
 
 
 def _warn_ignored_baseten_only_fields(
@@ -47,7 +39,7 @@ def _warn_ignored_baseten_only_fields(
     fields_set = getattr(ds, "model_fields_set", set())
     ignored = [
         f
-        for f in _BASETEN_ONLY_REPLAY_FIELDS
+        for f in BASETEN_ONLY_REPLAY_FIELDS
         if f in fields_set and getattr(ds, f) is not None
     ]
     if ignored:

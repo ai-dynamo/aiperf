@@ -16,6 +16,7 @@ from aiperf.common.enums import CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.loop_scheduler import LoopScheduler
 from aiperf.common.mixins import TaskManagerMixin
+from aiperf.common.phase import phase_runtime_key
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, TimingMode
@@ -24,6 +25,7 @@ from aiperf.timing.phase.lifecycle import PhaseLifecycle
 from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
 from aiperf.timing.phase.stop_conditions import StopConditionChecker
 from aiperf.timing.ramping import Ramper, RamperConfig, RampType
+from aiperf.timing.request_cancellation import RequestCancellationSimulator
 from aiperf.timing.strategies.core import RateSettableProtocol
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 
@@ -77,7 +79,7 @@ class PhaseRunner(TaskManagerMixin):
         phase_publisher: PhasePublisher,
         credit_router: CreditRouterProtocol,
         concurrency_manager: ConcurrencyManager,
-        cancellation_policy: RequestCancellationSimulator,
+        cancellation_policy: RequestCancellationSimulator | None = None,
         callback_handler: CreditCallbackHandler,
         url_selection_strategy: URLSelectionStrategyProtocol | None = None,
         branch_orchestrator: BranchOrchestrator | None = None,
@@ -119,7 +121,9 @@ class PhaseRunner(TaskManagerMixin):
         self._phase_publisher = phase_publisher
         self._credit_router = credit_router
         self._concurrency_manager = concurrency_manager
-        self._cancellation_policy = cancellation_policy
+        self._cancellation_policy = cancellation_policy or RequestCancellationSimulator(
+            self._config.request_cancellation
+        )
         self._callback_handler = callback_handler
         self._on_phase_complete: Callable[[], None] | None = None
 
@@ -149,6 +153,10 @@ class PhaseRunner(TaskManagerMixin):
         ergonomics file-size cap."""
         return CreditIssuer(
             phase=self._config.phase,
+            phase_index=self._config.phase_index,
+            profiling_index=self._config.profiling_index,
+            phase_name=self._config.phase_name,
+            phase_kind=self._config.phase_kind,
             stop_checker=self._stop_checker,
             progress=self._progress,
             concurrency_manager=self._concurrency_manager,
@@ -178,6 +186,10 @@ class PhaseRunner(TaskManagerMixin):
             credit_issuer=self._credit_issuer,
             sticky_router=sticky_router,
         )
+
+    @property
+    def _phase_key(self) -> int | CreditPhase:
+        return phase_runtime_key(self._config.phase, self._config.phase_index)
 
     @property
     def phase(self) -> CreditPhase:
@@ -329,6 +341,7 @@ class PhaseRunner(TaskManagerMixin):
         """
         self._callback_handler.register_phase(
             phase=self._config.phase,
+            phase_index=self._config.phase_index,
             progress=self._progress,
             lifecycle=self._lifecycle,
             stop_checker=self._stop_checker,
@@ -357,7 +370,7 @@ class PhaseRunner(TaskManagerMixin):
         lifecycle state) lives in the caller's ``except``.
         """
         self._concurrency_manager.configure_for_phase(
-            self._config.phase,
+            self._phase_key,
             self._config.concurrency,
             self._config.prefill_concurrency,
         )
@@ -479,7 +492,7 @@ class PhaseRunner(TaskManagerMixin):
 
             def setter(limit: float) -> None:
                 return self._concurrency_manager.set_session_limit(
-                    config.phase, int(limit)
+                    self._phase_key, int(limit)
                 )
 
             self._rampers.append(Ramper(setter=setter, config=ramp_config))
@@ -499,7 +512,7 @@ class PhaseRunner(TaskManagerMixin):
 
             def setter(limit: float) -> None:
                 return self._concurrency_manager.set_prefill_limit(
-                    config.phase, int(limit)
+                    self._phase_key, int(limit)
                 )
 
             self._rampers.append(Ramper(setter=setter, config=ramp_config))
@@ -535,7 +548,13 @@ class PhaseRunner(TaskManagerMixin):
 
     def _format_phase_started(self, stats: CreditPhaseStats) -> str:
         """Format a concise log message for phase start."""
-        parts = [f"Phase {stats.phase} started"]
+        parts = [
+            f"Phase {stats.phase_name or stats.phase} ({stats.phase_kind or stats.phase}) started"
+        ]
+        if stats.phase_index is not None:
+            parts.append(f"phase_index={stats.phase_index}")
+        if stats.profiling_index is not None:
+            parts.append(f"profiling_index={stats.profiling_index}")
         targets = []
         if stats.total_expected_requests:
             targets.append(f"{stats.total_expected_requests:,} requests")
@@ -549,7 +568,9 @@ class PhaseRunner(TaskManagerMixin):
 
     def _format_phase_sending_complete(self, stats: CreditPhaseStats) -> str:
         """Format a concise log message for phase sending complete."""
-        parts = [f"Phase {stats.phase} sending complete"]
+        parts = [
+            f"Phase {stats.phase_name or stats.phase} ({stats.phase_kind or stats.phase}) sending complete"
+        ]
         parts.append(
             f"sent={stats.requests_sent:,}, "
             f"completed={stats.requests_completed:,}, "
@@ -566,7 +587,9 @@ class PhaseRunner(TaskManagerMixin):
 
     def _format_phase_complete(self, stats: CreditPhaseStats) -> str:
         """Format a concise log message for phase complete."""
-        parts = [f"Phase {stats.phase} complete"]
+        parts = [
+            f"Phase {stats.phase_name or stats.phase} ({stats.phase_kind or stats.phase}) complete"
+        ]
         parts.append(
             f"completed={stats.final_requests_completed:,}, "
             f"cancelled={stats.final_requests_cancelled:,}, "
@@ -701,7 +724,7 @@ class PhaseRunner(TaskManagerMixin):
     def _release_stuck_slots(self) -> None:
         """Release concurrency slots for credits that will never return."""
         session_released, prefill_released = (
-            self._concurrency_manager.release_stuck_slots(self._config.phase)
+            self._concurrency_manager.release_stuck_slots(self._phase_key)
         )
         if session_released or prefill_released:
             self.warning(

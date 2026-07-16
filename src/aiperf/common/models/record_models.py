@@ -39,7 +39,7 @@ from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.trace_models import BaseTraceData, TraceDataExport
 from aiperf.common.models.usage_models import Usage
-from aiperf.common.types import JsonObject, MetricTagT
+from aiperf.common.types import JsonObject, MetricTagT, PhaseKind
 from aiperf.common.utils import load_json_str
 
 _logger = AIPerfLogger(__name__)
@@ -208,6 +208,20 @@ class MetricRecordMetadata(AIPerfBaseModel):
         ...,
         description="The benchmark phase of the record, either warmup or profiling.",
     )
+    phase_index: int | None = Field(
+        default=None, ge=0, description="Absolute index in the ordered phases list."
+    )
+    profiling_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Index among profiling-kind phases; None for warmup.",
+    )
+    phase_name: str | None = Field(
+        default=None, description="User-provided unique phase name."
+    )
+    phase_kind: PhaseKind | None = Field(
+        default=None, description="Phase semantic kind: warmup or profiling."
+    )
     was_cancelled: bool = Field(
         default=False,
         description="Whether the request was cancelled during execution.",
@@ -276,6 +290,49 @@ class TimesliceResult(AIPerfBaseModel):
         return value
 
 
+class PhaseProfileResults(AIPerfBaseModel):
+    """Metric summary for one concrete named phase."""
+
+    phase_index: int | None = Field(
+        default=None, ge=0, description="Absolute index in the ordered phases list."
+    )
+    profiling_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Index among profiling-kind phases; None for warmup.",
+    )
+    phase_name: str = Field(description="User-provided unique phase name.")
+    phase_kind: PhaseKind = Field(
+        description="Phase semantic kind: warmup or profiling."
+    )
+    records: list[MetricResult] = Field(
+        default_factory=list, description="Metric results scoped to this phase."
+    )
+    start_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Phase start time in nanoseconds, when available.",
+    )
+    end_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Phase request completion time in nanoseconds, when available.",
+    )
+    was_cancelled: bool = Field(
+        default=False, description="Whether this phase was cancelled early."
+    )
+    successful_request_count: int = Field(
+        default=0, ge=0, description="Successful records for this phase."
+    )
+    error_request_count: int = Field(
+        default=0, ge=0, description="Errored records for this phase."
+    )
+    error_summary: list[ErrorDetailsCount] = Field(
+        default_factory=list,
+        description="A list of the unique phase error details and their counts",
+    )
+
+
 class ProfileResults(AIPerfBaseModel):
     """The results of a profile run."""
 
@@ -331,6 +388,10 @@ class ProfileResults(AIPerfBaseModel):
         "None for non-DAG runs; a populated snapshot for DAG-shaped "
         "runs. Forwarded to profile_export_aiperf.json under the "
         "``branch_stats`` key when present.",
+    )
+    phase_records: list[PhaseProfileResults] | None = Field(
+        default=None,
+        description="Internal per-phase metric summaries used for phase artifacts.",
     )
 
     def get(self, tag: MetricTagT) -> MetricResult | None:
@@ -644,6 +705,20 @@ class RecordContext(AIPerfBaseModel):
     credit_phase: CreditPhase = Field(
         ...,
         description="The type of credit phase (either warmup or profiling)",
+    )
+    phase_index: int | None = Field(
+        default=None, ge=0, description="Absolute index in the ordered phases list."
+    )
+    profiling_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Index among profiling-kind phases; None for warmup.",
+    )
+    phase_name: str | None = Field(
+        default=None, description="User-provided unique phase name."
+    )
+    phase_kind: PhaseKind | None = Field(
+        default=None, description="Phase semantic kind: warmup or profiling."
     )
     conversation_id: str = Field(
         ...,
@@ -1320,7 +1395,7 @@ class MetricRecordInfo(AIPerfBaseModel):
 
     metadata: MetricRecordMetadata = Field(
         ...,
-        description="The metadata of the record. Should match the metadata in the RecordsMessage.",
+        description="The metadata of the record. Should match the metadata in the MetricRecordsMessage.",
     )
     metrics: dict[str, MetricValue] = Field(
         ...,
@@ -1343,7 +1418,7 @@ class RawRecordInfo(AIPerfBaseModel):
 
     metadata: MetricRecordMetadata = Field(
         ...,
-        description="The metadata of the record. Should match the metadata in the RecordsMessage.",
+        description="The metadata of the record. Should match the metadata in the MetricRecordsMessage.",
     )
     start_perf_ns: int = Field(
         default_factory=time.perf_counter_ns,

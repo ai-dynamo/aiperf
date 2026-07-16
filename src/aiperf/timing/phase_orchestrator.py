@@ -129,9 +129,6 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             self._dataset_metadata, self._dataset_sampler
         )
         self._concurrency_manager = ConcurrencyManager()
-        self._cancellation_policy = RequestCancellationSimulator(
-            config.request_cancellation
-        )
 
         # URL sampler for multi-URL load balancing (None if single URL)
         self._url_sampler: URLSelectionStrategyProtocol | None = None
@@ -205,7 +202,9 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 phase_publisher=self._phase_publisher,
                 credit_router=self._credit_router,
                 concurrency_manager=self._concurrency_manager,
-                cancellation_policy=self._cancellation_policy,
+                cancellation_policy=RequestCancellationSimulator(
+                    phase_config.request_cancellation
+                ),
                 callback_handler=self._callback_handler,
                 url_selection_strategy=self._url_sampler,
             )
