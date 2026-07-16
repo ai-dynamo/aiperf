@@ -23,7 +23,7 @@ use serde_json::Value;
 /// Parse the single non-streaming response body out of a raw record. The runner
 /// records a non-SSE response as one `responses[]` entry `{perf_ns, text,
 /// content_type}` whose `text` is the verbatim JSON body
-/// (`aiperf::runner_protocol::records::text_response_value`).
+/// (`aiperf_runtime::runner_protocol::records::text_response_value`).
 fn non_streaming_body(record: &Value) -> Option<Value> {
     let responses = record.get("responses").and_then(Value::as_array)?;
     for resp in responses {

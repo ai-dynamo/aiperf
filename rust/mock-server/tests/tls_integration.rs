@@ -175,7 +175,7 @@ async fn tls_handshake_alpn(addr: SocketAddr) -> Option<Vec<u8>> {
 }
 
 /// A `ServerCertVerifier` that accepts any certificate, mirroring the runner's
-/// `ssl_verify=false` (`aiperf::transport_http::client::connection`) — used only
+/// `ssl_verify=false` (`aiperf_runtime::transport_http::client::connection`) — used only
 /// to reach the ALPN result of the handshake against a self-signed listener.
 #[derive(Debug)]
 struct NoVerify {

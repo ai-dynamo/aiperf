@@ -38,18 +38,18 @@ search-pyo3 = ["pyo3-embed"]
 # Execution features, forwarded to the `aiperf` library. Previously the default
 # feature set of the deleted `aiperf-runner` crate. `dynosim` requires the
 # sibling `dynamo-aiperf-native/lib/mocker` checkout at build time.
-dynosim = ["aiperf/dynosim"]
+dynosim = ["aiperf-runtime/dynosim"]
 # Server-metrics Parquet + public `.parquet` reader (arrow/parquet). Sibling-free.
-parquet = ["aiperf/parquet"]
+parquet = ["aiperf-runtime/parquet"]
 # Cellular cross-host cell transport over ai-dynamo/velo. Gates the velo
 # controller/cell/aggregator re-exec path; `cells=1` is byte-unchanged and
 # `cells>1` fails closed without it.
-velo = ["aiperf/velo"]
-dynamo-router-runtime = ["dynosim", "aiperf/dynamo-router-runtime"]
-dynamo-zmq-events = ["dynosim", "aiperf/dynamo-zmq-events"]
-dynamo-kvbm-offload = ["dynosim", "aiperf/dynamo-kvbm-offload"]
-dynamo-aic-forward-pass = ["dynosim", "aiperf/dynamo-aic-forward-pass"]
-dynamo-profile = ["dynosim", "aiperf/dynamo-profile"]
+velo = ["aiperf-runtime/velo"]
+dynamo-router-runtime = ["dynosim", "aiperf-runtime/dynamo-router-runtime"]
+dynamo-zmq-events = ["dynosim", "aiperf-runtime/dynamo-zmq-events"]
+dynamo-kvbm-offload = ["dynosim", "aiperf-runtime/dynamo-kvbm-offload"]
+dynamo-aic-forward-pass = ["dynosim", "aiperf-runtime/dynamo-aic-forward-pass"]
+dynamo-profile = ["dynosim", "aiperf-runtime/dynamo-profile"]
 dynamo-full = [
     "dynamo-router-runtime",
     "dynamo-zmq-events",
@@ -57,12 +57,12 @@ dynamo-full = [
     "dynamo-aic-forward-pass",
     "dynamo-profile",
 ]
-dynamo-parity = ["dynamo-full", "aiperf/dynamo-parity"]
+dynamo-parity = ["dynamo-full", "aiperf-runtime/dynamo-parity"]
 # Convenience: the full execution surface (sibling required).
 full = ["dynosim", "parquet", "velo"]
 
 [dependencies]
-aiperf = { path = "../aiperf", default-features = false, features = ["runner-protocol"] }
+aiperf-runtime = { path = "../runtime", default-features = false, features = ["runner-protocol"] }
 anyhow.workspace = true
 clap = { version = "4", features = ["derive", "string"] }
 serde.workspace = true

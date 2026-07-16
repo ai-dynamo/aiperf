@@ -9,7 +9,7 @@ use common::*;
 // real telemetry collector and assert the parsed records are well-formed and
 // respond to load. Here the mock faker (`aiperf_mock_server::dcgm::DcgmFaker`) is
 // driven directly and its exposition text is decoded with the product's real
-// decoder (`aiperf::gpu_telemetry::DcgmPrometheusDecoder`) — the same parsing
+// decoder (`aiperf_runtime::gpu_telemetry::DcgmPrometheusDecoder`) — the same parsing
 // logic the runner uses in production.
 //
 // Note: unlike the Python `DCGMFaker`, the Rust faker does not expose its
@@ -17,7 +17,7 @@ use common::*;
 // `approx` assertions are expressed as range assertions plus round-trip
 // metadata checks against the parsed records instead.
 
-use aiperf::gpu_telemetry::{DcgmPrometheusDecoder, GpuTelemetryDecoder, GpuTelemetryRecord};
+use aiperf_runtime::gpu_telemetry::{DcgmPrometheusDecoder, GpuTelemetryDecoder, GpuTelemetryRecord};
 use aiperf_mock_server::dcgm::{DcgmFaker, lookup_gpu};
 
 /// GPU config keys the faker recognizes (mirrors Python `GPU_CONFIGS.keys()`).

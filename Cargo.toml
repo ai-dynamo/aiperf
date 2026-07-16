@@ -9,7 +9,7 @@ resolver = "3"
 # --execute`) over the protocol-v2 stdio seam for each run/probe/cell.
 members = [
     "rust/loadgen-core",
-    "rust/aiperf",
+    "rust/runtime",
     "rust/cli",
     "rust/mock-server",
     "rust/e2e",
@@ -26,7 +26,7 @@ license = "Apache-2.0"
 [workspace.dependencies]
 # internal crates
 loadgen-core = { path = "rust/loadgen-core" }
-aiperf = { path = "rust/aiperf" }
+aiperf-runtime = { path = "rust/runtime" }
 
 # external (shared versions)
 anyhow = "1"

@@ -11,8 +11,8 @@ use std::process::{Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
-use aiperf::transport_grpc::proto::model_infer_response::InferOutputTensor;
-use aiperf::transport_grpc::proto::{
+use aiperf_runtime::transport_grpc::proto::model_infer_response::InferOutputTensor;
+use aiperf_runtime::transport_grpc::proto::{
     InferTensorContents, ModelInferRequest, ModelInferResponse, ModelStreamInferResponse,
 };
 use bytes::{Buf, BufMut, Bytes};

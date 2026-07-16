@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Live end-to-end proof that the `rust_parity` RNG backend reproduces the Rust
-//! `aiperf::rng` seeded Poisson arrival schedule inside a real `aiperf profile` run.
+//! `aiperf_runtime::rng` seeded Poisson arrival schedule inside a real `aiperf profile` run.
 //!
 //! The Python timing engine draws Poisson inter-arrivals from
 //! `rng.derive("timing.request.poisson_interval").expovariate(rate)`
 //! (`src/aiperf/timing/intervals.py`). With `AIPERF_RNG_BACKEND=rust_parity` that derive
-//! resolves to the pure-Python byte-exact port of `aiperf::rng`, so the interval sequence
+//! resolves to the pure-Python byte-exact port of `aiperf_runtime::rng`, so the interval sequence
 //! must equal the one this test computes directly from the Rust `RandomGenerator` — the
 //! same `timing.request.poisson_interval` stream, same root seed.
 //!
@@ -26,7 +26,7 @@ mod common;
 
 use std::io::Write;
 
-use aiperf::rng::{RandomGenerator, RngRoot, namespace};
+use aiperf_runtime::rng::{RandomGenerator, RngRoot, namespace};
 use common::*;
 
 /// Global seed for the run (also aiperf's default, set explicitly for clarity).
@@ -146,7 +146,7 @@ fn run_python_poisson(harness: &AIPerfHarness, backend: &str) -> Vec<f64> {
 }
 
 /// The `rust_parity` backend makes the live Python Poisson schedule reproduce the Rust
-/// `aiperf::rng` reference within loopback jitter, while `legacy` does not.
+/// `aiperf_runtime::rng` reference within loopback jitter, while `legacy` does not.
 #[tokio::test]
 async fn test_seeded_poisson_schedule_parity() {
     let mut cfg = MockServerConfig::default();
@@ -203,7 +203,7 @@ async fn test_seeded_poisson_schedule_parity() {
     // fraction of the mean interval.
     assert!(
         parity_err < mean_interval * 0.15,
-        "rust_parity schedule should match the Rust aiperf::rng reference within jitter, \
+        "rust_parity schedule should match the Rust aiperf_runtime::rng reference within jitter, \
          but mean per-gap error {parity_err:.6}s >= 15% of mean interval {mean_interval:.6}s"
     );
     // legacy is a different PRNG + derivation: its exponential draws are unrelated, so its

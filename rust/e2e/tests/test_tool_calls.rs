@@ -9,13 +9,13 @@
 //!   - streaming: the argument string is split across two `delta.tool_calls`
 //!     frames; merging them by `index` reconstructs the full function name and
 //!     arguments (this is exactly the runner's streamed tool-call merge in
-//!     `aiperf::endpoints::endpoints::merge_tool_call_delta`). A frame carries
+//!     `aiperf_runtime::endpoints::endpoints::merge_tool_call_delta`). A frame carries
 //!     `finish_reason: "tool_calls"`.
 //!   - non-streaming: the single response body carries `message.tool_calls` with
 //!     the same function name/arguments and `finish_reason: "tool_calls"`.
 //!
 //! The tool-definition prompt tokens are reported as `toolUsePromptTokenCount`
-//! (the exact key `aiperf::endpoints::usage::UsageView` reads into
+//! (the exact key `aiperf_runtime::endpoints::usage::UsageView` reads into
 //! `usage_tool_use_prompt_tokens`), which the streaming path exposes in the
 //! terminal usage frame and the summary export surfaces as a derived metric.
 

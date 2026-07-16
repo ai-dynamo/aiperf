@@ -10,7 +10,7 @@ use aiperf_mock_server::grpc_riva::{
 // Full-stack e2e for the mock server's NVIDIA Riva ASR/TTS/NLP gRPC services.
 //
 // Runs the real `python -m aiperf profile` CLI (native runner + its production
-// gRPC Riva client `aiperf::endpoints::riva`) against `aiperf-mock-server`'s own
+// gRPC Riva client `aiperf_runtime::endpoints::riva`) against `aiperf-mock-server`'s own
 // `serve_grpc` listener, selected via `transport.type: grpc` + a `grpc://` URL +
 // a `riva_*` endpoint. Proves the whole product path — Python frontend → runner
 // gRPC Riva client → mock gRPC Riva server — works for unary, server-streaming,

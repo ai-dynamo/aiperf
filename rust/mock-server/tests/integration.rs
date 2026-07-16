@@ -934,7 +934,7 @@ async fn chat_non_streaming_emits_extended_usage_fields() {
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().await.unwrap();
     let u = &body["usage"];
-    // Top-level OpenAI keys read by aiperf::endpoints::usage.
+    // Top-level OpenAI keys read by aiperf_runtime::endpoints::usage.
     assert_eq!(u["cache_creation_input_tokens"], 11);
     assert_eq!(u["prompt_cache_miss_tokens"], 22);
     assert_eq!(u["toolUsePromptTokenCount"], 99);

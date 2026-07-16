@@ -4,14 +4,14 @@
 //! NVIDIA Riva ASR / TTS / NLP gRPC target.
 //!
 //! Serves the Riva speech and language services AIPerf's native gRPC client
-//! dials (`aiperf::endpoints::riva` + `aiperf::transport_grpc::riva_binding`) so
+//! dials (`aiperf_runtime::endpoints::riva` + `aiperf_runtime::transport_grpc::riva_binding`) so
 //! the `riva_*` endpoints have a deterministic mock inference target. Like the
 //! KServe service in [`crate::grpc`], this is hand-routed by gRPC method path
 //! over the shared hyper h2c stack, reusing that module's [`ProstCodec`]
 //! (`crate::grpc::ProstCodec`); there is no build-time `protoc`. The wire
 //! contract is guaranteed by construction: every request/response message is the
 //! exact prost struct the runner's Riva codec
-//! (`aiperf::transport_grpc::riva_proto`) encodes/decodes, so there is no second
+//! (`aiperf_runtime::transport_grpc::riva_proto`) encodes/decodes, so there is no second
 //! schema to drift, and the field numbers match by sharing the same types.
 //!
 //! The mock is not a real speech/NLP model: it returns deterministic, fixed
@@ -36,7 +36,7 @@ use tonic::codec::Streaming;
 use tonic::server::Grpc;
 use tonic::{Request, Response, Status};
 
-use aiperf::transport_grpc::riva_proto::{
+use aiperf_runtime::transport_grpc::riva_proto::{
     AnalyzeEntitiesRequest, AnalyzeIntentRequest, AnalyzeIntentResponse, Classification,
     ClassificationResult, NaturalQueryRequest, NaturalQueryResponse, NaturalQueryResult,
     RecognizeRequest, RecognizeResponse, SpeechRecognitionAlternative, SpeechRecognitionResult,
@@ -50,7 +50,7 @@ use crate::grpc::ProstCodec;
 use crate::state::AppState;
 
 /// Riva ASR service method paths (must byte-match
-/// `aiperf::transport_grpc::riva_binding`).
+/// `aiperf_runtime::transport_grpc::riva_binding`).
 const ASR_RECOGNIZE: &str = "/nvidia.riva.asr.RivaSpeechRecognition/Recognize";
 const ASR_STREAMING_RECOGNIZE: &str = "/nvidia.riva.asr.RivaSpeechRecognition/StreamingRecognize";
 /// Riva TTS service method paths.

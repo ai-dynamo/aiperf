@@ -6,8 +6,8 @@
 //! per-turn stats block (TTFT / TPS / ITL / cache) after each turn.
 //!
 //! Reuses runner infrastructure rather than re-implementing it: the tiktoken/HF
-//! tokenizer (`aiperf::dataset::tokenizer`) for client-side token counts, the
-//! canonical SSE reader (`aiperf::transport_http::sse::read_sse`, the behavioral
+//! tokenizer (`aiperf_runtime::dataset::tokenizer`) for client-side token counts, the
+//! canonical SSE reader (`aiperf_runtime::transport_http::sse::read_sse`, the behavioral
 //! port of the same `AsyncSSEStreamReader` Python's `chat` uses — it owns the
 //! multibyte-across-TCP-chunk + JSON-continuation edge cases), and a single
 //! **injected `Clock`** for all timing (the runner's `RealClock`, substitutable
@@ -64,13 +64,13 @@ fn chat_completions_url(url: &str) -> String {
 
 /// A loaded tokenizer for client-side counts.
 enum ChatTokenizer {
-    Builtin(aiperf::dataset::tokenizer::TiktokenTokenizer),
-    Hf(aiperf::dataset::tokenizer::HuggingFaceTokenizer),
+    Builtin(aiperf_runtime::dataset::tokenizer::TiktokenTokenizer),
+    Hf(aiperf_runtime::dataset::tokenizer::HuggingFaceTokenizer),
 }
 
 impl ChatTokenizer {
     fn count(&self, text: &str) -> Option<usize> {
-        use aiperf::dataset::tokenizer::TextTokenizer;
+        use aiperf_runtime::dataset::tokenizer::TextTokenizer;
         if text.is_empty() {
             return None;
         }
@@ -85,7 +85,7 @@ impl ChatTokenizer {
 /// Load the tokenizer (`builtin` → tiktoken o200k; else an HF repo/dir, matching
 /// `Tokenizer.from_pretrained(tokenizer or model)`).
 async fn load_tokenizer(name: &str) -> anyhow::Result<ChatTokenizer> {
-    use aiperf::dataset::tokenizer::{HuggingFaceTokenizer, TiktokenTokenizer};
+    use aiperf_runtime::dataset::tokenizer::{HuggingFaceTokenizer, TiktokenTokenizer};
     if name == "builtin" || name == "o200k_base" {
         return Ok(ChatTokenizer::Builtin(TiktokenTokenizer::builtin()));
     }
@@ -99,7 +99,7 @@ async fn load_tokenizer(name: &str) -> anyhow::Result<ChatTokenizer> {
     if path.is_file() {
         return Ok(ChatTokenizer::Hf(HuggingFaceTokenizer::from_file(path)?));
     }
-    let dir = aiperf::dataset::tokenizer::download_hugging_face_tokenizer(name)
+    let dir = aiperf_runtime::dataset::tokenizer::download_hugging_face_tokenizer(name)
         .await
         .with_context(|| format!("resolving tokenizer {name:?}"))?;
     Ok(ChatTokenizer::Hf(HuggingFaceTokenizer::from_directory(
@@ -203,7 +203,7 @@ fn format_stats(
 }
 
 /// Build a tokio-rustls TLS connector with webpki roots (mirrors
-/// `aiperf::export::otel` / `transport_http`).
+/// `aiperf_runtime::export::otel` / `transport_http`).
 fn tls_connector() -> anyhow::Result<tokio_rustls::TlsConnector> {
     let mut roots = rustls::RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
@@ -236,7 +236,7 @@ async fn stream_turn(
     url: &str,
     headers: &[(String, String)],
     body: Vec<u8>,
-    clock: &std::rc::Rc<dyn aiperf::clock::Clock>,
+    clock: &std::rc::Rc<dyn aiperf_runtime::clock::Clock>,
 ) -> anyhow::Result<(Vec<Chunk>, Option<Value>)> {
     let uri: hyper::Uri = url.parse().with_context(|| format!("bad url {url}"))?;
     let https = match uri.scheme_str() {
@@ -321,7 +321,7 @@ async fn stream_turn(
         .filter_map(|frame| async move {
             match frame {
                 Ok(f) => f.into_data().ok().map(Ok),
-                Err(e) => Some(Err(aiperf::transport_http::models::ErrorDetails::other(
+                Err(e) => Some(Err(aiperf_runtime::transport_http::models::ErrorDetails::other(
                     format!("read body: {e}"),
                 ))),
             }
@@ -331,7 +331,7 @@ async fn stream_turn(
     let mut chunks = Vec::new();
     let mut last_usage = None;
     let stdout = std::io::stdout();
-    aiperf::transport_http::sse::read_sse(body_stream, clock.clone(), |msg| {
+    aiperf_runtime::transport_http::sse::read_sse(body_stream, clock.clone(), |msg| {
         if msg.is_done() {
             return;
         }
@@ -380,7 +380,7 @@ async fn run_turn(
     model: &str,
     conversation: &Value,
     tok: &ChatTokenizer,
-    clock: &std::rc::Rc<dyn aiperf::clock::Clock>,
+    clock: &std::rc::Rc<dyn aiperf_runtime::clock::Clock>,
 ) -> anyhow::Result<String> {
     let payload = json!({
         "messages": conversation,
@@ -458,7 +458,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     rt.block_on(async move {
         // One injected clock for the whole session (the runner's RealClock; a
         // SimClock can be substituted). All chat timing flows through it.
-        let clock: std::rc::Rc<dyn aiperf::clock::Clock> = aiperf::clock::RealClock::new();
+        let clock: std::rc::Rc<dyn aiperf_runtime::clock::Clock> = aiperf_runtime::clock::RealClock::new();
         let tok = load_tokenizer(tokenizer.as_deref().unwrap_or(&model)).await?;
         let mut system_messages: Vec<Value> = Vec::new();
         if let Some(sp) = &system_prompt {

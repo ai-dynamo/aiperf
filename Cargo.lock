@@ -47,7 +47,114 @@ dependencies = [
 ]
 
 [[package]]
-name = "aiperf"
+name = "aiperf-cli"
+version = "0.0.0"
+dependencies = [
+ "aiperf-runtime",
+ "anyhow",
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "bytes",
+ "cc",
+ "chrono",
+ "clap",
+ "futures",
+ "http 1.4.2",
+ "http-body-util",
+ "hyper 1.10.1",
+ "hyper-util",
+ "libmimalloc-sys",
+ "mimalloc",
+ "minijinja",
+ "nix 0.29.0",
+ "prost 0.14.4",
+ "pyo3",
+ "regex",
+ "rustls 0.23.41",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "tokio",
+ "tokio-rustls 0.26.4",
+ "tokio-stream",
+ "tonic 0.14.6",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+ "webpki-roots 0.26.11",
+]
+
+[[package]]
+name = "aiperf-e2e-tests"
+version = "0.0.0"
+dependencies = [
+ "aiperf-mock-server",
+ "aiperf-runtime",
+ "arrow",
+ "axum",
+ "base64 0.22.1",
+ "glob",
+ "nix 0.29.0",
+ "parquet 58.3.0",
+ "regex",
+ "reqwest",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "aiperf-mock-server"
+version = "0.0.0"
+dependencies = [
+ "aiperf-runtime",
+ "anyhow",
+ "async-stream",
+ "axum",
+ "base64 0.22.1",
+ "blake2",
+ "bytes",
+ "chrono",
+ "clap",
+ "dashmap",
+ "futures",
+ "http 1.4.2",
+ "hyper 1.10.1",
+ "hyper-util",
+ "libc",
+ "num_cpus",
+ "once_cell",
+ "parking_lot",
+ "prometheus 0.13.4",
+ "prost 0.14.4",
+ "rcgen",
+ "reqwest",
+ "rustls 0.23.41",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+ "socket2 0.5.10",
+ "tokio",
+ "tokio-rustls 0.26.4",
+ "tonic 0.14.6",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "aiperf-pyext"
+version = "0.0.0"
+dependencies = [
+ "pyo3",
+]
+
+[[package]]
+name = "aiperf-runtime"
 version = "0.0.0"
 dependencies = [
  "aiconfigurator-core",
@@ -113,140 +220,6 @@ dependencies = [
  "velo 0.5.0",
  "webpki-roots 0.26.11",
  "zstd",
-]
-
-[[package]]
-name = "aiperf-cli"
-version = "0.0.0"
-dependencies = [
- "aiperf",
- "anyhow",
- "bytes",
- "chrono",
- "clap",
- "futures",
- "http-body-util",
- "hyper 1.10.1",
- "hyper-util",
- "minijinja",
- "nix 0.29.0",
- "pyo3",
- "regex",
- "rustls 0.23.41",
- "serde",
- "serde_json",
- "serde_yaml",
- "tempfile",
- "tokio",
- "tokio-rustls 0.26.4",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "webpki-roots 0.26.11",
-]
-
-[[package]]
-name = "aiperf-e2e-tests"
-version = "0.0.0"
-dependencies = [
- "aiperf",
- "aiperf-mock-server",
- "arrow",
- "axum",
- "base64 0.22.1",
- "glob",
- "nix 0.29.0",
- "parquet 58.3.0",
- "regex",
- "reqwest",
- "serde_json",
- "tempfile",
- "tokio",
-]
-
-[[package]]
-name = "aiperf-mock-server"
-version = "0.0.0"
-dependencies = [
- "aiperf",
- "anyhow",
- "async-stream",
- "axum",
- "base64 0.22.1",
- "blake2",
- "bytes",
- "chrono",
- "clap",
- "dashmap",
- "futures",
- "http 1.4.2",
- "hyper 1.10.1",
- "hyper-util",
- "libc",
- "num_cpus",
- "once_cell",
- "parking_lot",
- "prometheus 0.13.4",
- "prost 0.14.4",
- "rcgen",
- "reqwest",
- "rustls 0.23.41",
- "rustls-pemfile",
- "serde",
- "serde_json",
- "socket2 0.5.10",
- "tokio",
- "tokio-rustls 0.26.4",
- "tonic 0.14.6",
- "tower",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "aiperf-pyext"
-version = "0.0.0"
-dependencies = [
- "pyo3",
-]
-
-[[package]]
-name = "aiperf-runner"
-version = "0.0.0"
-dependencies = [
- "aiperf",
- "anyhow",
- "async-trait",
- "axum",
- "base64 0.22.1",
- "blake3",
- "bytes",
- "cc",
- "csv",
- "http 1.4.2",
- "http-body-util",
- "hyper 1.10.1",
- "hyper-util",
- "libmimalloc-sys",
- "loadgen-core",
- "mimalloc",
- "prost 0.14.4",
- "regex",
- "rustls 0.23.41",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "tokio",
- "tokio-rustls 0.26.4",
- "tokio-stream",
- "tokio-util",
- "tonic 0.14.6",
- "tracing",
- "tracing-subscriber",
- "url",
- "uuid",
 ]
 
 [[package]]

@@ -19,7 +19,7 @@
 //!
 //! # Environment caveat (must run un-sandboxed)
 //!
-//! The mock injects latency through the RealClock `timerfd` (`aiperf::clock::
+//! The mock injects latency through the RealClock `timerfd` (`aiperf_runtime::clock::
 //! sleep_ns`). A seccomp/time-virtualizing sandbox that fast-forwards `timerfd`
 //! collapses every sleep to ~0 ms, so the tuned latencies vanish and these
 //! assertions fail. Run the suite on real wall-clock hardware (the normal CI /

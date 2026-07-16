@@ -9,7 +9,7 @@
 //! mock so the native runner actually SCRAPES the mock's `/dcgm{1,2}/metrics`
 //! (via `--gpu-telemetry`) and `/vllm/metrics` | `/sglang/metrics` (via
 //! `--server-metrics`) endpoints, then decodes them through
-//! `aiperf::gpu_telemetry` and `aiperf::server_metrics`. We assert the newly
+//! `aiperf_runtime::gpu_telemetry` and `aiperf_runtime::server_metrics`. We assert the newly
 //! filled fields land in the exported artifacts:
 //!
 //!   * GPU telemetry summary (`profile_export_aiperf.json` -> `telemetry_data`)

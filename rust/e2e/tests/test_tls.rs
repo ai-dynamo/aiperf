@@ -11,7 +11,7 @@
 //! self-signed cert by disabling verification via `endpoint.ssl_verify: false`,
 //! which the runner's HTTP client honors by installing a
 //! `NoCertificateVerification` verifier
-//! (`aiperf::transport_http::client::connection::rustls_config`,
+//! (`aiperf_runtime::transport_http::client::connection::rustls_config`,
 //! `rust/aiperf/src/transport_http/client/connection.rs:326-347`) — the Rust
 //! equivalent of the Python connector's `ssl=False`. The listener advertises
 //! ALPN `h2`+`http/1.1`; the client negotiates one and streams SSE over TLS.
@@ -177,7 +177,7 @@ async fn tuned_https_single_turn_raw_timing() {
         return; // artifact e2es are flaky on macOS CI
     }
 
-    // The harness supplies the venv + AIPERF_RUNNER_BIN env and the subprocess
+    // The harness supplies the venv + AIPERF_EXEC_BIN env and the subprocess
     // machinery; its own cleartext mock is unused — the config points the run at
     // the separate HTTPS listener below.
     let h = AIPerfHarness::new().await;

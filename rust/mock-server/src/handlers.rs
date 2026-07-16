@@ -7,7 +7,7 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use aiperf::rng::RandomGenerator;
+use aiperf_runtime::rng::RandomGenerator;
 use axum::Json;
 use axum::body::Body;
 use axum::extract::State;
@@ -577,7 +577,7 @@ fn apply_usage_fields(usage: &mut Usage, cfg: &crate::config::MockServerConfig) 
 }
 
 /// Anthropic `messages` usage object. Adds the disjoint cache-read/write fields
-/// AIPerf's `UsageView` re-totals (`aiperf::endpoints::usage` lines 37-45,
+/// AIPerf's `UsageView` re-totals (`aiperf_runtime::endpoints::usage` lines 37-45,
 /// 206-211) when the corresponding `--usage-*` knobs are set.
 fn anthropic_usage(usage: &Usage) -> Value {
     let mut obj = serde_json::Map::new();
@@ -702,7 +702,7 @@ fn token_native_usage(isl: usize, osl: usize) -> Usage {
 /// `token_ids` as the prompt (ISL = its length), derives the output length from
 /// `sampling_params` with the shared budget logic, and returns integer
 /// `choices[].token_ids` the runner parses into `ResponseData::TokenIds`
-/// (`aiperf::endpoints::vllm_generate`, vllm_generate.rs:259-303). Non-streaming:
+/// (`aiperf_runtime::endpoints::vllm_generate`, vllm_generate.rs:259-303). Non-streaming:
 /// the runner's descriptor pins `supports_streaming: false` and always sends
 /// `stream: false`.
 pub async fn vllm_generate(
@@ -1308,7 +1308,7 @@ pub async fn image_retrieval(
 // in `crate::grpc`, and these HTTP routes mirror the same lowering so a run with
 // `transport.type: http` against a `kserve_v*` endpoint has a target. The v2
 // route auto-detects text / rankings / images from the request's input tensor
-// names (matching `aiperf::endpoints::kserve`'s factories: `text_input`,
+// names (matching `aiperf_runtime::endpoints::kserve`'s factories: `text_input`,
 // `query`+`passages`, `prompt`), overridable with `--grpc-behavior`. Text is
 // non-streaming JSON here (the streaming KServe path is exercised over gRPC).
 // ============================================================================
@@ -2113,7 +2113,7 @@ fn sse_done() -> Bytes {
 
 /// A terminal mid-stream SSE error frame: `event: error` with the message as an
 /// SSE comment. The runner's SSE reader
-/// (`aiperf::transport_http::sse::reader::read_sse`) classifies any frame whose
+/// (`aiperf_runtime::transport_http::sse::reader::read_sse`) classifies any frame whose
 /// `event` field equals `error` as a transport `ErrorKind::Sse` (pseudo-status
 /// 502, type `sse_error`) via `SseMessage::error_message`, aborting the stream
 /// before `[DONE]`. Emitted after a few normal token frames so the record shows

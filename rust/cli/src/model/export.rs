@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Typed `export` section — the post-report sink policy the runner consumes.
 //!
-//! Mirrors the runner's `aiperf::export::ExportConfig` (and its `console_txt` /
+//! Mirrors the runner's `aiperf_runtime::export::ExportConfig` (and its `console_txt` /
 //! `genai_perf` sub-configs) exactly; the runner decodes this block with
 //! `deny_unknown_fields`, so only fields it owns are emitted.
 //!

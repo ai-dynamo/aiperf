@@ -11,7 +11,7 @@
 //! fully assertable. The runner is put in `--use-server-token-count` mode so the
 //! request carries `stream_options.include_usage` and the terminal usage chunk
 //! is emitted. The specific JSON keys / nesting mirror what
-//! `aiperf::endpoints::usage::UsageView` reads:
+//! `aiperf_runtime::endpoints::usage::UsageView` reads:
 //!   - top-level `cache_creation_input_tokens` -> `usage_prompt_cache_write_tokens`
 //!   - top-level `prompt_cache_miss_tokens`    -> `usage_prompt_cache_miss_tokens`
 //!   - top-level `toolUsePromptTokenCount`     -> `usage_tool_use_prompt_tokens`

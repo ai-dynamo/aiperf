@@ -4,7 +4,7 @@
 //! End-to-end wire test for the mock server's KServe gRPC target.
 //!
 //! Drives a real tonic client over h2 against a running `serve_grpc`, using
-//! AIPerf's own KServe encode/decode helpers (`aiperf::transport_grpc`) — the
+//! AIPerf's own KServe encode/decode helpers (`aiperf_runtime::transport_grpc`) — the
 //! exact codec the product client uses — so this closes the client↔server loop
 //! and exercises the real HTTP/2 framing, trailers, and prost round-trip that
 //! the in-crate unit tests (which call handlers directly) do not.
@@ -12,7 +12,7 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use aiperf::transport_grpc::{
+use aiperf_runtime::transport_grpc::{
     decode_model_infer_response, decode_model_ready_response, decode_model_stream_infer_response,
     encode_model_infer_request, encode_model_ready_request,
 };

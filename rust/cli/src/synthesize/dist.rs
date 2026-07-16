@@ -10,7 +10,7 @@
 //! Bernoulli selector FIRST, then ALWAYS draw both the agentic and human
 //! lognormals, then select — matching numpy's `np.where` over full arrays.
 
-use aiperf::rng::numpy_generator::NumpyGenerator;
+use aiperf_runtime::rng::numpy_generator::NumpyGenerator;
 
 use crate::synthesize::config::{LognormalParams, MixtureDelayConfig};
 

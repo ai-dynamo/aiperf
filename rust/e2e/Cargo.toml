@@ -10,7 +10,7 @@ publish = false
 description = "Full-stack e2e tests: aiperf-mock-server + python -m aiperf profile."
 
 [dev-dependencies]
-aiperf = { path = "../aiperf" }
+aiperf-runtime = { path = "../runtime" }
 aiperf-mock-server = { path = "../mock-server" }
 # Read back the per-record `profile_export.parquet` sidecar in the e2e that
 # enables `artifacts.records: [jsonl, parquet]`. Same workspace versions the

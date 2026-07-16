@@ -1,0 +1,207 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "aiperf-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Rust-native AIPerf load-generation runtime used by the subprocess runner."
+
+[features]
+default = ["parquet", "velo"]
+# Hosts the relocated v2 protocol / registry / execution layer (the ~30k-line
+# runner-protocol modules under `src/runner_protocol/`). Only `aiperf-runner`
+# opts in; `mock-server`/`e2e` and other library consumers build without it, so
+# the gated module and its dependency surface stay out of their builds.
+runner-protocol = []
+# Server-metrics Parquet export sink + public-dataset `.parquet` reader. Links
+# `arrow` + `parquet` (~2.6 MiB of `.text`, plus zstd/snap). A lite/online-only
+# runner (e.g. a lightweight nightly wheel) builds without it: the exporter is
+# unregistered and `.parquet` dataset inputs are rejected with a clear error.
+parquet = ["dep:arrow", "dep:parquet"]
+# Requires the sibling `dynamo-aiperf-native/lib/mocker` checkout. Its runtime
+# integration stays out of default builds.
+dynosim = ["dep:dynamo-mocker"]
+# Forward the mocker's optional capabilities. The mocker now always builds with
+# the runtime router and ZMQ publisher, so `dynamo-router-runtime` /
+# `dynamo-zmq-events` are retained as no-op aliases of `dynosim` (the runner's
+# capability enum still names them). `dynamo-full` is the complete gate.
+dynamo-router-runtime = ["dynosim"]
+dynamo-zmq-events = ["dynosim"]
+dynamo-kvbm-offload = ["dynosim", "dynamo-mocker/kvbm-offload"]
+dynamo-aic-forward-pass = ["dynosim", "dep:aiconfigurator-core", "dep:pyo3", "dep:dynamo-kv-router", "dep:parking_lot"]
+dynamo-profile = ["dynosim", "dynamo-mocker/profile"]
+dynamo-full = [
+    "dynamo-router-runtime",
+    "dynamo-zmq-events",
+    "dynamo-kvbm-offload",
+    "dynamo-aic-forward-pass",
+    "dynamo-profile",
+]
+# Exact official-harness builds align the enabled Dynamo capability set. The
+# embedding executable, not this library, owns process-global allocator choice.
+dynamo-parity = ["dynamo-full"]
+# Cellular cross-host cell transport over the official ai-dynamo/velo messaging
+# framework. Gates all velo-dependent code (the velo CellClient/ControllerTransport
+# impls + the cell connection seam). In the default build; a lean
+# `--no-default-features` build drops it, keeps `cells=1` byte-unchanged, and fails
+# closed on `cells>1`.
+velo = ["dep:velo", "dep:zstd"]
+
+[lib]
+name = "aiperf_runtime"
+path = "src/lib.rs"
+
+[dependencies]
+loadgen-core.workspace = true
+# External deps consolidated from the 16 absorbed aiperf-* library crates.
+anyhow.workspace = true
+arrow = { workspace = true, optional = true }
+async-trait.workspace = true
+axum.workspace = true
+base64.workspace = true
+bitflags.workspace = true
+blake3.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+csv.workspace = true
+futures.workspace = true
+half.workspace = true
+image.workspace = true
+itoa.workspace = true
+libc.workspace = true
+llm-tokenizer.workspace = true
+parquet = { workspace = true, optional = true }
+percent-encoding.workspace = true
+petgraph.workspace = true
+prost.workspace = true
+rand.workspace = true
+rand_distr.workspace = true
+rand_pcg.workspace = true
+rayon.workspace = true
+regex.workspace = true
+rustc-hash.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["preserve_order", "raw_value"] }
+sha2.workspace = true
+smallvec.workspace = true
+tiktoken-rs.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+velo = { git = "https://github.com/ajcasagrande/velo.git", branch = "feat/connect-by-endpoint", default-features = false, optional = true }
+tonic.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+url.workspace = true
+# External deps not pinned in the workspace: carried inline with the same
+# version/features as the absorbed crates declared them.
+flate2 = "1"
+http = "1"
+http-body = "1"
+http-body-util = "0.1"
+hyper = { version = "1.10", features = ["client", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+jmespath = "0.4"
+minijinja = { version = "2.21", features = ["json"] }
+num-bigint = "0.4.8"
+# Self-describing binary serde format for wire-shipped cellular records-shard
+# partitions and heartbeats: preserves NaN/`+inf` sentinels (JSON cannot) and
+# round-trips the untagged `MetricValue` boundary encoding (postcard, being
+# non-self-describing, cannot).
+rmp-serde = "1"
+rustls = "0.23"
+socket2 = "0.5"
+tempfile = "3"
+# Streaming zstd for cross-host cellular per-record artifact shipping (velo path).
+# Already linked transitively by `parquet` (its `zstd` feature); declared directly
+# so the streaming compress/decompress artifact-shipping module can `use zstd`
+# WITHOUT the `parquet` feature (a lite runner ships artifacts too). Enabled by the
+# `velo` feature (the only path that ships bytes cross-host).
+zstd = { version = "0.13", optional = true }
+tokio-rustls = "0.26"
+tokio-stream = "0.1"
+tower-http = { version = "0.6", features = ["fs"] }
+webpki-roots = "0.26"
+dynamo-mocker = { path = "../../../../../dynamo-aiperf-native/lib/mocker", optional = true, default-features = false }
+# AIC timing bridge (feature `dynamo-aic-forward-pass`): the embedded-Python AIC
+# runtime lives here in the consumer, not in the pure-Rust mocker.
+dynamo-kv-router = { path = "../../../../../dynamo-aiperf-native/lib/kv-router", default-features = false, optional = true }
+aiconfigurator-core = { git = "https://github.com/ai-dynamo/aiconfigurator.git", rev = "ffbab15797d3a3f14c382e937c0ab0c1c5cbc530", package = "aiconfigurator-core", features = ["embed-python"], optional = true }
+pyo3 = { version = "0.23.4", features = ["auto-initialize"], optional = true }
+parking_lot = { version = "0.12", optional = true }
+
+# Dev-only deps carried over from the 16 absorbed crates' test suites. The
+# monocrate's normal deps already cover most needs; these add the extra feature
+# surface the integration tests require.
+[dev-dependencies]
+# Cross-language parity tests load committed JSON reference fixtures and digest
+# token streams to compare against the Python reference generator.
+serde_json = { workspace = true }
+sha2.workspace = true
+# transport-http integration tests stand up an in-process hyper server.
+hyper = { version = "1.10", features = ["server", "http1", "http2"] }
+# transport-grpc integration tests stand up an in-process Tonic server.
+tonic = { workspace = true, features = ["server", "router", "codegen"] }
+# grpc test servers wrap a TcpListener as a stream.
+tokio-stream = { version = "0.1", features = ["net"] }
+# Authoritative OTLP message decoder for the export::otel parity test. Test-only
+# so the shipped runner links no OpenTelemetry SDK (the sink hand-writes its own
+# minimal prost subset for encoding). `gen-tonic-messages` + `metrics` expose
+# `opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest`.
+opentelemetry-proto = { version = "0.31", default-features = false, features = ["gen-tonic-messages", "metrics"] }
+
+# Explicit test targets for the transport-http integration suite, which lives in
+# a `tests/transport_http/` subdirectory so the shared `common.rs` helper is a
+# sibling module (`mod common;`) rather than an auto-discovered test binary.
+# Flat `tests/*.rs` files (endpoints_*, graph_*, rng_*, timing_*,
+# transport_grpc_*, extensions_*, and the pre-existing scheduled/online suites)
+# are auto-discovered and need no explicit entry.
+[[test]]
+name = "transport_http_cancel"
+path = "tests/transport_http/cancel.rs"
+
+[[test]]
+name = "transport_http_connect"
+path = "tests/transport_http/connect.rs"
+
+[[test]]
+name = "transport_http_facade"
+path = "tests/transport_http/facade.rs"
+
+[[test]]
+name = "transport_http_h2c"
+path = "tests/transport_http/h2c.rs"
+
+[[test]]
+name = "transport_http_mock_smoke"
+path = "tests/transport_http/mock_smoke.rs"
+
+[[test]]
+name = "transport_http_no_direct_time"
+path = "tests/transport_http/no_direct_time.rs"
+
+[[test]]
+name = "transport_http_pool"
+path = "tests/transport_http/pool.rs"
+
+[[test]]
+name = "transport_http_request"
+path = "tests/transport_http/request.rs"
+
+[[test]]
+name = "transport_http_response_body_limits"
+path = "tests/transport_http/response_body_limits.rs"
+
+[[test]]
+name = "transport_http_reuse"
+path = "tests/transport_http/reuse.rs"
+
+[[test]]
+name = "transport_http_tls"
+path = "tests/transport_http/tls.rs"
+
+[[example]]
+name = "velo_cell_spike"
+path = "examples/velo_cell_spike.rs"
+required-features = ["velo"]

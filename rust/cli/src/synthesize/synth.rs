@@ -8,7 +8,7 @@
 //! restart-split (default, `turns == None`) and explicit-turn (`turns` set).
 //! Cited line ranges refer to `session_synthesizer.py`.
 
-use aiperf::rng::numpy_generator::NumpyGenerator;
+use aiperf_runtime::rng::numpy_generator::NumpyGenerator;
 
 use crate::synthesize::config::{LognormalParams, SessionDistributionConfig};
 use crate::synthesize::dist::{sample_lognormal, sample_mixture_delay};

@@ -83,7 +83,7 @@ pub struct VllmSamplingParams {
 ///
 /// The AIPerf runner's `vllm_generate` endpoint sends validated raw input
 /// `token_ids` plus a `sampling_params` block (see
-/// `aiperf::endpoints::vllm_generate::format_payload`, vllm_generate.rs:146-162);
+/// `aiperf_runtime::endpoints::vllm_generate::format_payload`, vllm_generate.rs:146-162);
 /// the mock consumes the token array as the prompt (ISL = its length) and returns
 /// integer `token_ids` arrays the runner parses back into `ResponseData::TokenIds`
 /// (vllm_generate.rs:259-303). Non-streaming only (`stream: false` always).
@@ -435,7 +435,7 @@ pub struct Usage {
     pub prompt_tokens_details: Option<PromptTokensDetails>,
     /// Prompt tokens written into the provider KV cache. Emitted top-level for
     /// OpenAI-compatible dialects, matching the key AIPerf's `UsageView` reads
-    /// (`aiperf::endpoints::usage` line 110 -> `usage_prompt_cache_write_tokens`).
+    /// (`aiperf_runtime::endpoints::usage` line 110 -> `usage_prompt_cache_write_tokens`).
     /// Populated only when `--usage-cache-write-tokens` is set (else absent, so a
     /// normal run is byte-unchanged).
     #[serde(skip_serializing_if = "Option::is_none")]

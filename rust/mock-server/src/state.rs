@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use aiperf::clock::RealClockAnchor;
+use aiperf_runtime::clock::RealClockAnchor;
 use parking_lot::Mutex;
 
 use crate::config::MockServerConfig;
@@ -22,7 +22,7 @@ pub struct AppState {
     pub start_instant: Instant,
     /// Monotonic `RealClock` timeline anchor for this process. Latency injection
     /// reads `now_ns` off this anchor and sleeps via the RealClock `timerfd`
-    /// primitive ([`aiperf::clock::sleep_ns`]), so the mock's TTFT/ITL pacing has
+    /// primitive ([`aiperf_runtime::clock::sleep_ns`]), so the mock's TTFT/ITL pacing has
     /// nanosecond resolution instead of `tokio::time`'s 1 ms wheel.
     pub clock_anchor: RealClockAnchor,
     pub start_wallclock: std::time::SystemTime,
@@ -49,7 +49,7 @@ pub struct AppState {
 }
 
 pub struct ErrorRng {
-    rng: aiperf::rng::RandomGenerator,
+    rng: aiperf_runtime::rng::RandomGenerator,
 }
 
 impl ErrorRng {
@@ -57,7 +57,7 @@ impl ErrorRng {
     /// actual stream is derived from the canonical `mock.errors` namespace.
     /// When `None`, the derived stream seeds from OS entropy.
     pub fn new(seed: Option<u64>) -> Self {
-        let rng = aiperf::rng::RngRoot::new(seed).derive(aiperf::rng::namespace::MOCK_ERRORS);
+        let rng = aiperf_runtime::rng::RngRoot::new(seed).derive(aiperf_runtime::rng::namespace::MOCK_ERRORS);
         Self { rng }
     }
 
@@ -71,15 +71,15 @@ impl ErrorRng {
 /// `mock.tool_calls` stream (derived off the same `--random-seed` root) so its
 /// draws are reproducible and independent of the error stream.
 pub struct ToolCallRng {
-    rng: aiperf::rng::RandomGenerator,
+    rng: aiperf_runtime::rng::RandomGenerator,
 }
 
 impl ToolCallRng {
     pub fn new(seed: Option<u64>) -> Self {
         // The mock-server RNG namespaces (`mock.errors`, `mock.dcgm`) live in the
-        // frozen `aiperf::rng::namespace` module; this feature adds a sibling
+        // frozen `aiperf_runtime::rng::namespace` module; this feature adds a sibling
         // stream identifier without touching that crate.
-        let rng = aiperf::rng::RngRoot::new(seed).derive("mock.tool_calls");
+        let rng = aiperf_runtime::rng::RngRoot::new(seed).derive("mock.tool_calls");
         Self { rng }
     }
 
@@ -156,8 +156,8 @@ impl AppState {
                 Some(s + idx)
             } else {
                 config.random_seed.and_then(|root| {
-                    aiperf::rng::RngRoot::new(Some(root))
-                        .derive_indexed_seed(aiperf::rng::namespace::MOCK_DCGM, idx)
+                    aiperf_runtime::rng::RngRoot::new(Some(root))
+                        .derive_indexed_seed(aiperf_runtime::rng::namespace::MOCK_DCGM, idx)
                 })
             }
         };

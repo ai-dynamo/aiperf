@@ -18,7 +18,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use aiperf::rng::RandomGenerator;
+use aiperf_runtime::rng::RandomGenerator;
 use parking_lot::Mutex;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
@@ -219,7 +219,7 @@ impl BatchScheduler {
         // (not `tokio::time`'s 1 ms wheel, which would coarsen a sub-10 ms step).
         let step_ns = ((self.step_ms * 1_000_000.0).max(0.0)) as i64;
         loop {
-            aiperf::clock::sleep_ns(step_ns).await;
+            aiperf_runtime::clock::sleep_ns(step_ns).await;
             if self.stopped.load(Ordering::Relaxed) {
                 break;
             }

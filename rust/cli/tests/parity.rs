@@ -14,7 +14,7 @@
 //! As sections land, add their key to `PORTED_CFG_SECTIONS`. A section not in
 //! the list is intentionally dropped by the native type and not asserted yet.
 
-use aiperf::runner_protocol::protocol_v2::RunnerEnvelopeV2;
+use aiperf_runtime::runner_protocol::protocol_v2::RunnerEnvelopeV2;
 use aiperf_cli::flags::ProfileFlags;
 use aiperf_cli::load;
 use aiperf_cli::model::BenchmarkRun;

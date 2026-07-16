@@ -6,7 +6,7 @@
 //! AIPerf deliberately never sends ground truth to any inference server — it
 //! lives only in the Python accuracy worker
 //! (`src/aiperf/accuracy/worker.py`) and the Rust evaluator protocol strips it
-//! (`aiperf::accuracy_core::protocol`). So to make the mock return *correct*
+//! (`aiperf_runtime::accuracy_core::protocol`). So to make the mock return *correct*
 //! answers it must load the dataset itself and key on the request prompt. This
 //! module owns that: it loads a JSONL `{prompt, ground_truth}` dataset, decides
 //! (deterministically, from a per-prompt seed) whether a given request gets the
@@ -43,7 +43,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use aiperf::rng::{RandomGenerator, derive_seed_parts};
+use aiperf_runtime::rng::{RandomGenerator, derive_seed_parts};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

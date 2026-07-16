@@ -12,25 +12,25 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use aiperf::extensions::BuiltinAIPerfRegistryFactory;
-use aiperf::graph::errors::TraceError;
-use aiperf::graph::execution::TracePlacement;
-use aiperf::graph::placement::{GraphPlacementError, TracePlacementFactory};
-use aiperf::http::{MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor};
-use aiperf::metrics_core::InferenceDimensions;
-use aiperf::multiturn::TurnToSend;
-use aiperf::runner_protocol::coordinator::{RunnerResponseV2, RunnerV2Coordinator};
-use aiperf::runner_protocol::dataset_input::BuiltinRunnerDatasetInputAdapterResolver;
-use aiperf::runner_protocol::graph_input::BuiltinRunnerGraphInputAdapterResolver;
-use aiperf::runner_protocol::readiness::{
+use aiperf_runtime::extensions::BuiltinAIPerfRegistryFactory;
+use aiperf_runtime::graph::errors::TraceError;
+use aiperf_runtime::graph::execution::TracePlacement;
+use aiperf_runtime::graph::placement::{GraphPlacementError, TracePlacementFactory};
+use aiperf_runtime::http::{MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor};
+use aiperf_runtime::metrics_core::InferenceDimensions;
+use aiperf_runtime::multiturn::TurnToSend;
+use aiperf_runtime::runner_protocol::coordinator::{RunnerResponseV2, RunnerV2Coordinator};
+use aiperf_runtime::runner_protocol::dataset_input::BuiltinRunnerDatasetInputAdapterResolver;
+use aiperf_runtime::runner_protocol::graph_input::BuiltinRunnerGraphInputAdapterResolver;
+use aiperf_runtime::runner_protocol::readiness::{
     NativeHttpReadinessPlanFactory, NativeHttpReadinessTransportFactory, ReadinessTransportFactory,
 };
-use aiperf::runner_protocol::sidecar_input::BuiltinRunnerSidecarInputAdapterResolver;
-use aiperf::runner_protocol::execution_factories::RunnerExecutionFactories;
-use aiperf::runner_protocol::graph_execution::{
+use aiperf_runtime::runner_protocol::sidecar_input::BuiltinRunnerSidecarInputAdapterResolver;
+use aiperf_runtime::runner_protocol::execution_factories::RunnerExecutionFactories;
+use aiperf_runtime::runner_protocol::graph_execution::{
     NativeRunnerGraphPlacementFactory, RunnerGraphPlacementFactory,
 };
-use aiperf::runner_protocol::turn_execution::{
+use aiperf_runtime::runner_protocol::turn_execution::{
     HttpExecutionBackendConfig, NativeRequestExecutorFactory, RequestExecutorFactory,
 };
 use anyhow::{Result, anyhow};
@@ -115,7 +115,7 @@ impl RequestExecutor for FailingOriginBackend {
 impl TracePlacement for RecordingGraphBackend {
     async fn execute_trace(
         &self,
-        _plan: aiperf::graph::model::GraphTracePlan,
+        _plan: aiperf_runtime::graph::model::GraphTracePlan,
     ) -> Result<(), TraceError> {
         self.traces.fetch_add(1, Ordering::SeqCst);
         Ok(())
@@ -172,7 +172,7 @@ fn benchmark_run(legacy: Value) -> Value {
 fn execute(
     coordinator: &RunnerV2Coordinator,
     run: Value,
-) -> aiperf::runner_protocol::coordinator::RunnerProcessResultV2 {
+) -> aiperf_runtime::runner_protocol::coordinator::RunnerProcessResultV2 {
     let envelope = serde_json::from_value(json!({
         "protocol_version": 2,
         "operation": "execute",
@@ -182,7 +182,7 @@ fn execute(
     coordinator.handle(envelope)
 }
 
-fn assert_success(result: &aiperf::runner_protocol::coordinator::RunnerProcessResultV2) {
+fn assert_success(result: &aiperf_runtime::runner_protocol::coordinator::RunnerProcessResultV2) {
     assert_eq!(result.exit_code, 0, "{:?}", result.response);
     match &result.response {
         RunnerResponseV2::Terminal(terminal) => {

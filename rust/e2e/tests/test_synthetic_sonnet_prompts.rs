@@ -3,9 +3,9 @@
 mod common;
 use common::*;
 
-use aiperf::dataset::TextTokenizer;
-use aiperf::dataset::TiktokenTokenizer;
-use aiperf::dataset::corpus::tokenize_sonnet_corpus;
+use aiperf_runtime::dataset::TextTokenizer;
+use aiperf_runtime::dataset::TiktokenTokenizer;
+use aiperf_runtime::dataset::corpus::tokenize_sonnet_corpus;
 
 // End-to-end proof that the native synthetic prompt synthesizer serves
 // Shakespeare ("sonnet") corpus text of the requested length.

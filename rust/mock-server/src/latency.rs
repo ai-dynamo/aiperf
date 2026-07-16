@@ -13,9 +13,9 @@
 //!   admission and later tokens on per-step decode admission, so latency
 //!   emerges from batch contention (plus a small positive jitter).
 //!
-//! Timing runs on the `aiperf` [`RealClock`](aiperf::clock::RealClock) backend:
+//! Timing runs on the `aiperf` [`RealClock`](aiperf_runtime::clock::RealClock) backend:
 //! `now` is read off a shared [`RealClockAnchor`] and every wait uses
-//! [`aiperf::clock::sleep_ns`] — the RealClock `timerfd` primitive with
+//! [`aiperf_runtime::clock::sleep_ns`] — the RealClock `timerfd` primitive with
 //! nanosecond resolution, instead of `tokio::time`'s 1 ms wheel (which would
 //! quantize a 5 ms ITL by ~20%). The `Clock` trait's own `sleep` is `!Send` /
 //! `Rc`-based and cannot cross this crate's multi-threaded axum handler
@@ -25,8 +25,8 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use aiperf::clock::{RealClockAnchor, sleep_ns};
-use aiperf::rng::RandomGenerator;
+use aiperf_runtime::clock::{RealClockAnchor, sleep_ns};
+use aiperf_runtime::rng::RandomGenerator;
 
 use crate::config::MockServerConfig;
 use crate::scheduler::BatchScheduler;

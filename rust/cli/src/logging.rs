@@ -9,7 +9,7 @@
 //! - **Default level is INFO** (Python `config/runtime.py::LOG_LEVEL`), not the
 //!   old `warn`. `--extra-verbose` → TRACE, `--verbose`/`-v` → DEBUG,
 //!   `--log-level <lvl>` → explicit (Python `_converter_runtime`). `AIPERF_LOG`
-//!   (an env directive, e.g. `info,aiperf::foo=debug`) overrides everything.
+//!   (an env directive, e.g. `info,aiperf_runtime::foo=debug`) overrides everything.
 //! - **Console** goes to stderr (stdout is the runner's JSONL protocol channel),
 //!   ANSI off, `HH:MM:SS.mmm LEVEL message` — a close, not byte-exact, match for
 //!   Python's basic handler.
