@@ -171,44 +171,6 @@ class AccuracySummary(AIPerfBaseModel):
         default_factory=dict, description="Per-task accuracy rollups keyed by task name"
     )
 
-    def to_json(self) -> dict[str, Any]:
-        """Return a plain-dict representation of the summary."""
-        return self.model_dump()
-
-    def to_csv(self) -> list[dict[str, Any]]:
-        """Return one row per task (sorted by name) plus a trailing OVERALL row.
-
-        Columns: task, total, passed, unparsed, accuracy_rate, unparsed_rate.
-        Mirrors today's ``accuracy_results.csv`` shape (per-task rows + overall).
-        """
-        rows: list[dict[str, Any]] = [
-            {
-                "task": task,
-                "total": stats.total,
-                "passed": stats.passed,
-                "unparsed": stats.unparsed,
-                "accuracy_rate": stats.accuracy_rate,
-                "unparsed_rate": stats.unparsed_rate,
-            }
-            for task, stats in sorted(self.per_task.items())
-        ]
-        overall_unparsed_rate = (
-            self.overall_unparsed / self.total_evaluated
-            if self.total_evaluated
-            else 0.0
-        )
-        rows.append(
-            {
-                "task": "OVERALL",
-                "total": self.total_evaluated,
-                "passed": self.total_passed,
-                "unparsed": self.overall_unparsed,
-                "accuracy_rate": self.accuracy_rate,
-                "unparsed_rate": overall_unparsed_rate,
-            }
-        )
-        return rows
-
     def to_metric_results(self) -> list[MetricResult]:
         """Legacy ``accuracy.*`` MetricResult representation for byte-identical export.
 

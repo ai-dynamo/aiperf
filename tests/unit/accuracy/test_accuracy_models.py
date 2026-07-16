@@ -92,46 +92,6 @@ def _summary() -> AccuracySummary:
     )
 
 
-def test_summary_to_json_contains_keys() -> None:
-    data = _summary().to_json()
-    assert isinstance(data, dict)
-    assert data["accuracy_rate"] == 0.6
-    assert "per_task" in data
-
-
-def test_summary_to_csv_per_task_rows_sorted_with_overall_last() -> None:
-    rows = _summary().to_csv()
-    tasks = [row["task"] for row in rows]
-    assert tasks == ["mmlu.a", "mmlu.b", "OVERALL"]
-    overall = rows[-1]
-    assert overall["total"] == 5
-    assert overall["passed"] == 3
-    assert overall["accuracy_rate"] == 0.6
-    assert overall["unparsed"] == 1
-    first = rows[0]
-    assert set(first.keys()) == {
-        "task",
-        "total",
-        "passed",
-        "unparsed",
-        "accuracy_rate",
-        "unparsed_rate",
-    }
-
-
-def test_summary_to_csv_empty_no_zero_division() -> None:
-    empty = AccuracySummary(
-        total_evaluated=0,
-        total_passed=0,
-        accuracy_rate=0.0,
-        overall_unparsed=0,
-    )
-    rows = empty.to_csv()
-    assert rows[-1]["task"] == "OVERALL"
-    assert rows[-1]["accuracy_rate"] == 0.0
-    assert rows[-1]["unparsed_rate"] == 0.0
-
-
 def test_process_accuracy_result_defaults_none() -> None:
     assert ProcessAccuracyResult().results is None
     wrapped = ProcessAccuracyResult(results=_summary())

@@ -1145,7 +1145,6 @@ class SystemController(SignalHandlerMixin, BaseService):
             run=self.run,
             telemetry_results=self._telemetry_results,
             server_metrics_results=self._server_metrics_results,
-            accuracy_results=self._accuracy_results,
         )
 
         # Export data files (CSV, JSON) with complete dataset including telemetry

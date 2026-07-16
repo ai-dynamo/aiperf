@@ -129,7 +129,7 @@ Accuracy benchmarking is one such dedicated channel, joining `metric_records`, `
 
 The `AccuracyRecordProcessor` grades each parsed response against ground truth and returns an `AccuracyRecordsData` (`session_num`, `worker_id`, `benchmark_phase`, `timestamp_ns`, `task`, `grader_name`, `passed`, `unparsed`, `confidence`, `expected`, `actual`, `reasoning`). The `RecordProcessorService` partitions these typed records off the metric-dict stream and pushes an `AccuracyRecordsMessage` to the Records Manager, which fans each record out to the `AccuracyAccumulator` (rolls records into an `AccuracySummary` of overall + per-task pass/unparsed rates) and the `AccuracyJSONLWriter` (streams the full per-response grading detail to `accuracy_export.jsonl`).
 
-At end of the profiling phase, `RecordsManager._publish_accuracy_results(phase)` exports the phase-scoped `AccuracySummary` and publishes a `ProcessAccuracyResultMessage`. The `SystemController` receives it, stores the summary, and hands it to the exporters via `ExporterConfig.accuracy_results` — gated in shutdown like the telemetry and server-metrics results. The `AccuracyConsoleExporter` and `AccuracyDataExporter` render from that structured summary rather than filtering tagged metric results.
+At end of the profiling phase, `RecordsManager._publish_accuracy_results(phase)` exports the phase-scoped `AccuracySummary` and publishes a `ProcessAccuracyResultMessage`. The `SystemController` receives it and stores the summary — gated in shutdown like the telemetry and server-metrics results. At export time, `SystemController._inject_accuracy_results_into_records` converts that summary back into legacy `accuracy.*` `MetricResult`s (via `AccuracySummary.to_metric_results()`) and appends them to `ProfileResults.records`. The `AccuracyConsoleExporter` and `AccuracyDataExporter` — like the main perf CSV/JSON exporters — then read those injected `accuracy.*` records. This inject bridge is what keeps the exported files (`accuracy_results.csv`, `profile_export_aiperf.{csv,json}`) byte-identical to the pre-refactor output. The dedicated per-response `accuracy_export.jsonl` is produced independently by the `AccuracyJSONLWriter` and is unaffected by this bridge.
 
 ```mermaid
 flowchart TD
@@ -139,8 +139,9 @@ flowchart TD
     RM -->|process_record| JW[AccuracyJSONLWriter<br/>accuracy_export.jsonl]
     ACC -->|export_results phase=PROFILING| PUB[_publish_accuracy_results]
     PUB -->|ProcessAccuracyResultMessage| SC[SystemController<br/>stores AccuracySummary]
-    SC -->|ExporterConfig.accuracy_results| CE[AccuracyConsoleExporter]
-    SC -->|ExporterConfig.accuracy_results| DE[AccuracyDataExporter<br/>accuracy_results.csv]
+    SC -->|_inject_accuracy_results_into_records<br/>to_metric_results| REC[ProfileResults.records<br/>accuracy.* MetricResults]
+    REC -->|read accuracy.* records| CE[AccuracyConsoleExporter]
+    REC -->|read accuracy.* records| DE[AccuracyDataExporter<br/>accuracy_results.csv]
 ```
 
 ### GPU Telemetry Manager
