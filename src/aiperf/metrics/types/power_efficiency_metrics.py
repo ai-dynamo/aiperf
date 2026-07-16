@@ -70,8 +70,33 @@ class PerformancePerWattMetric(_InjectedEnergyMetric):
     flags = MetricFlags.LARGER_IS_BETTER
 
 
+class OutputTokensPerSecondPerWattMetric(_InjectedEnergyMetric):
+    """Output-token throughput per watt of GPU power draw (tokens/sec/W)."""
+
+    __is_abstract__ = False
+    tag = "output_tps_per_watt"
+    header = "Output Tokens per Second per Watt"
+    unit = GenericMetricUnit.TOKENS_PER_SECOND_PER_WATT
+    display_order = 712
+    flags = MetricFlags.LARGER_IS_BETTER | MetricFlags.PRODUCES_TOKENS_ONLY
+
+
+class GoodputPerWattMetric(_InjectedEnergyMetric):
+    """Goodput (SLO-passing requests/sec) per watt of GPU power draw (good-req/s/W).
+
+    Only meaningful when goodput SLOs are configured; omitted otherwise.
+    """
+
+    __is_abstract__ = False
+    tag = "goodput_per_watt"
+    header = "Goodput per Watt"
+    unit = GenericMetricUnit.GOODPUT_PER_WATT
+    display_order = 714
+    flags = MetricFlags.LARGER_IS_BETTER
+
+
 class AverageGpuPowerMetric(_InjectedEnergyMetric):
-    """Mean GPU power draw per GPU over the profiling window (W)."""
+    """Time-averaged total GPU power over the profiling window (energy / duration) (W)."""
 
     __is_abstract__ = False
     tag = "average_gpu_power"

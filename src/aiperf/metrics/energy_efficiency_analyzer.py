@@ -7,12 +7,18 @@ over the profiling window) with inference token/throughput/latency totals (read
 off the ``MetricsAccumulator`` summary) to emit the energy-efficiency metric
 family. Runs at summarize time via the SummaryContext; skipped by RecordsManager
 when GPU telemetry is not collected. See design doc ``0005-energy-efficiency-metrics.md``.
+
+Energy source: prefers the DCGM ``energy_consumption`` counter delta; falls back
+to power-integration (``fleet_power * duration``) when only the power gauge is
+available (e.g. pynvml/amdsmi collectors that expose no energy counter).
 """
 
 from __future__ import annotations
 
+import enum
 from typing import TYPE_CHECKING, Any
 
+from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.logging import AIPerfLogger
 from aiperf.common.models import MetricResult
 from aiperf.metrics.types.power_efficiency_metrics import (
@@ -22,7 +28,9 @@ from aiperf.metrics.types.power_efficiency_metrics import (
     EnergyPerRequestMetric,
     EnergyPerTotalTokenMetric,
     EnergyPerUserMetric,
+    GoodputPerWattMetric,
     OutputTokensPerJouleMetric,
+    OutputTokensPerSecondPerWattMetric,
     PerformancePerWattMetric,
     TotalGpuEnergyMetric,
     TotalGpuPowerMetric,
@@ -38,6 +46,14 @@ if TYPE_CHECKING:
 _logger = AIPerfLogger(__name__)
 
 _MS_PER_SECOND = 1000.0
+
+
+class EnergySource(str, enum.Enum):
+    """How total GPU energy was determined for this run."""
+
+    DCGM_COUNTER = "dcgm_counter"
+    POWER_INTEGRATION = "power_integration"
+    UNAVAILABLE = "unavailable"
 
 
 def _result(metric_cls: type, value: float) -> MetricResult:
@@ -57,8 +73,7 @@ class EnergyEfficiencyAnalyzer:
     Reads the live ``GPUTelemetryAccumulator`` (windowed energy/power) and the
     ``MetricsAccumulator`` summary (token/throughput/latency totals) from the
     SummaryContext, then computes the energy metric family. Each metric is
-    emitted only when its inputs are available, mirroring the per-signal omission
-    of the pipeline it replaces.
+    emitted only when its inputs are available.
     """
 
     def __init__(
@@ -95,71 +110,92 @@ class EnergyEfficiencyAnalyzer:
 
         start_ns = ctx.start_ns or None
         end_ns = ctx.end_ns or None
-        energy_j, energy_count = gpu.total_energy_joules(start_ns, end_ns)
-        power_w, power_count = gpu.total_power_watts(start_ns, end_ns)
+        duration_s = (
+            (ctx.end_ns - ctx.start_ns) / NANOS_PER_SECOND
+            if ctx.end_ns > ctx.start_ns
+            else 0.0
+        )
+        energy = gpu.total_energy_joules(start_ns, end_ns)
+        power = gpu.total_power_watts(start_ns, end_ns)
+        total_energy_j, avg_power_w, source = self._resolve_energy(
+            energy, power, duration_s
+        )
 
-        out = self._power_metrics(power_w, power_count)
-        out += self._energy_metrics(energy_j, energy_count, metric)
-        if (
-            power_count > 0
-            and power_w > 0
-            and (throughput := metric("request_throughput"))
-        ):
-            out.append(_result(PerformancePerWattMetric, throughput / power_w))
+        out: list[MetricResult] = []
+        if power[1] > 0:
+            out.append(_result(TotalGpuPowerMetric, power[0]))
+        if source is EnergySource.UNAVAILABLE or total_energy_j <= 0:
+            return out
+
+        out.append(_result(AverageGpuPowerMetric, avg_power_w))
+        out.append(_result(TotalGpuEnergyMetric, total_energy_j))
+        out += self._energy_ratio_metrics(total_energy_j, metric, self._concurrency())
+        out += self._per_watt_metrics(avg_power_w, metric)
 
         _logger.debug(
             lambda: (
                 f"EnergyEfficiencyAnalyzer emitted {len(out)} metrics "
-                f"(energy={energy_j:.2f}J/{energy_count}gpu, "
-                f"power={power_w:.2f}W/{power_count}gpu)"
+                f"(source={source.value}, energy={total_energy_j:.2f}J, "
+                f"avg_power={avg_power_w:.2f}W)"
             )
         )
         return out
 
     @staticmethod
-    def _power_metrics(power_w: float, power_count: int) -> list[MetricResult]:
-        if power_count <= 0:
-            return []
-        return [
-            _result(TotalGpuPowerMetric, power_w),
-            _result(AverageGpuPowerMetric, power_w / power_count),
-        ]
+    def _resolve_energy(
+        energy: tuple[float, int],
+        power: tuple[float, int],
+        duration_s: float,
+    ) -> tuple[float, float, EnergySource]:
+        """Total energy (J) + average fleet power (W) + how they were determined.
 
-    def _energy_metrics(
+        ``energy``/``power`` are ``(value, gpu_count)`` from the telemetry
+        accumulator. Prefers the DCGM energy counter (average power = energy /
+        duration); falls back to power-integration (energy = fleet_power *
+        duration, average power = fleet_power) when only the power gauge is
+        available.
+        """
+        energy_j, energy_count = energy
+        power_w, power_count = power
+        if energy_count > 0 and energy_j > 0:
+            avg = energy_j / duration_s if duration_s > 0 else 0.0
+            return energy_j, avg, EnergySource.DCGM_COUNTER
+        if power_count > 0 and power_w > 0 and duration_s > 0:
+            return power_w * duration_s, power_w, EnergySource.POWER_INTEGRATION
+        return 0.0, 0.0, EnergySource.UNAVAILABLE
+
+    def _energy_ratio_metrics(
         self,
-        energy_j: float,
-        energy_count: int,
+        total_energy_j: float,
         metric: Callable[[str], float | None],
+        concurrency: int | None,
     ) -> list[MetricResult]:
-        if energy_count <= 0 or energy_j <= 0:
-            return []
-        out: list[MetricResult] = [_result(TotalGpuEnergyMetric, energy_j)]
-
-        output_tokens = metric("total_output_tokens")
+        out: list[MetricResult] = []
+        output_tokens = metric("total_osl")
         if output_tokens:
-            out.append(_result(OutputTokensPerJouleMetric, output_tokens / energy_j))
+            out.append(
+                _result(OutputTokensPerJouleMetric, output_tokens / total_energy_j)
+            )
             out.append(
                 _result(
                     EnergyPerOutputTokenMetric,
-                    energy_j * _MS_PER_SECOND / output_tokens,
+                    total_energy_j * _MS_PER_SECOND / output_tokens,
                 )
             )
         total_tokens = (metric("total_isl") or 0.0) + (output_tokens or 0.0)
         if total_tokens > 0:
             out.append(
                 _result(
-                    EnergyPerTotalTokenMetric, energy_j * _MS_PER_SECOND / total_tokens
+                    EnergyPerTotalTokenMetric,
+                    total_energy_j * _MS_PER_SECOND / total_tokens,
                 )
             )
-
         energy_per_request_j = None
         if request_count := metric("request_count"):
-            energy_per_request_j = energy_j / request_count
+            energy_per_request_j = total_energy_j / request_count
             out.append(_result(EnergyPerRequestMetric, energy_per_request_j))
-        if (concurrency := self._concurrency()) is not None:
-            out.append(_result(EnergyPerUserMetric, energy_j / concurrency))
-
-        # Energy-delay product: J/request * mean request latency (s).
+        if concurrency is not None:
+            out.append(_result(EnergyPerUserMetric, total_energy_j / concurrency))
         latency_ms = metric("request_latency")
         if energy_per_request_j is not None and latency_ms:
             out.append(
@@ -168,4 +204,21 @@ class EnergyEfficiencyAnalyzer:
                     energy_per_request_j * (latency_ms / _MS_PER_SECOND),
                 )
             )
+        return out
+
+    @staticmethod
+    def _per_watt_metrics(
+        avg_power_w: float, metric: Callable[[str], float | None]
+    ) -> list[MetricResult]:
+        if avg_power_w <= 0:
+            return []
+        out: list[MetricResult] = []
+        if throughput := metric("request_throughput"):
+            out.append(_result(PerformancePerWattMetric, throughput / avg_power_w))
+        if output_tps := metric("output_token_throughput"):
+            out.append(
+                _result(OutputTokensPerSecondPerWattMetric, output_tps / avg_power_w)
+            )
+        if goodput := metric("goodput"):
+            out.append(_result(GoodputPerWattMetric, goodput / avg_power_w))
         return out

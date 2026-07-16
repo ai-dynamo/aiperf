@@ -16,8 +16,16 @@ import pytest
 from aiperf.common.accumulator_protocols import SummaryContext
 from aiperf.common.models import MetricResult
 from aiperf.metrics.accumulator_models import AccumulatorMetricsSummary
-from aiperf.metrics.energy_efficiency_analyzer import EnergyEfficiencyAnalyzer
+from aiperf.metrics.energy_efficiency_analyzer import (
+    EnergyEfficiencyAnalyzer,
+    EnergySource,
+)
 from aiperf.plugin.enums import AccumulatorType
+
+# 10-second profiling window in nanoseconds (round numbers for the formulas).
+_START_NS = 0
+_END_NS = 10 * 1_000_000_000
+_DURATION_S = 10.0
 
 
 class _StubGpu:
@@ -57,8 +65,8 @@ def _ctx(gpu, summary) -> SummaryContext:
         accumulator_outputs=(
             {AccumulatorType.METRIC_RESULTS: summary} if summary else {}
         ),
-        start_ns=1_000,
-        end_ns=2_000,
+        start_ns=_START_NS,
+        end_ns=_END_NS,
     )
 
 
@@ -67,10 +75,12 @@ class TestEnergyEfficiencyAnalyzer:
     async def test_full_metric_set_matches_doc_formulas(self) -> None:
         gpu = _StubGpu(energy=(1000.0, 2), power=(200.0, 2))
         summary = _metrics_summary(
-            total_output_tokens=5000.0,
+            total_osl=5000.0,
             total_isl=3000.0,
             request_count=100.0,
             request_throughput=10.0,
+            output_token_throughput=50.0,
+            goodput=8.0,
             request_latency=500.0,  # ms
         )
 
@@ -78,7 +88,8 @@ class TestEnergyEfficiencyAnalyzer:
         by_tag = {r.tag: r.avg for r in results}
 
         assert by_tag["total_gpu_power"] == pytest.approx(200.0)
-        assert by_tag["average_gpu_power"] == pytest.approx(100.0)  # 200 / 2 GPUs
+        # DCGM counter path: avg power = energy / duration = 1000 / 10s.
+        assert by_tag["average_gpu_power"] == pytest.approx(100.0)
         assert by_tag["total_gpu_energy"] == pytest.approx(1000.0)
         assert by_tag["output_tokens_per_joule"] == pytest.approx(5.0)  # 5000 / 1000
         assert by_tag["energy_per_output_token"] == pytest.approx(
@@ -90,11 +101,13 @@ class TestEnergyEfficiencyAnalyzer:
         assert by_tag["energy_per_request"] == pytest.approx(10.0)  # 1000 / 100
         assert by_tag["energy_per_user"] == pytest.approx(125.0)  # 1000 / 8
         assert by_tag["energy_delay_product"] == pytest.approx(5.0)  # 10 * 0.5s
-        assert by_tag["performance_per_watt"] == pytest.approx(0.05)  # 10 / 200
+        assert by_tag["performance_per_watt"] == pytest.approx(0.1)  # 10 / 100
+        assert by_tag["output_tps_per_watt"] == pytest.approx(0.5)  # 50 / 100
+        assert by_tag["goodput_per_watt"] == pytest.approx(0.08)  # 8 / 100
 
     @pytest.mark.asyncio
     async def test_no_gpu_accumulator_returns_empty(self) -> None:
-        summary = _metrics_summary(total_output_tokens=5000.0)
+        summary = _metrics_summary(total_osl=5000.0)
         results = await _analyzer().analyze(_ctx(None, summary))
         assert results == []
 
@@ -105,23 +118,45 @@ class TestEnergyEfficiencyAnalyzer:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_missing_signals_omit_dependent_metrics(self) -> None:
-        # No energy signal (count 0) and no tokens: only power-derived metrics.
+    async def test_power_integration_fallback_when_no_energy_counter(self) -> None:
+        # No energy counter (count 0); fall back to power * duration.
         gpu = _StubGpu(energy=(0.0, 0), power=(150.0, 3))
         summary = _metrics_summary(request_throughput=6.0)
         results = await _analyzer(concurrency=None).analyze(_ctx(gpu, summary))
         by_tag = {r.tag: r.avg for r in results}
 
         assert by_tag["total_gpu_power"] == pytest.approx(150.0)
-        assert by_tag["average_gpu_power"] == pytest.approx(50.0)
+        # Integrated energy = 150 W * 10 s = 1500 J; avg power = fleet power.
+        assert by_tag["total_gpu_energy"] == pytest.approx(1500.0)
+        assert by_tag["average_gpu_power"] == pytest.approx(150.0)
         assert by_tag["performance_per_watt"] == pytest.approx(0.04)  # 6 / 150
-        assert "total_gpu_energy" not in by_tag
-        assert "energy_per_output_token" not in by_tag
-        assert "energy_per_user" not in by_tag
+        assert "energy_per_output_token" not in by_tag  # no tokens
+        assert "energy_per_user" not in by_tag  # concurrency None
+
+    @pytest.mark.asyncio
+    async def test_no_energy_signal_at_all_returns_empty(self) -> None:
+        # Neither energy counter nor power gauge: source UNAVAILABLE, nothing emitted.
+        gpu = _StubGpu(energy=(0.0, 0), power=(0.0, 0))
+        summary = _metrics_summary(request_throughput=6.0)
+        results = await _analyzer().analyze(_ctx(gpu, summary))
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_resolve_energy_source_detection(self) -> None:
+        _, _, counter = EnergyEfficiencyAnalyzer._resolve_energy(
+            (1000.0, 2), (200.0, 2), _DURATION_S
+        )
+        assert counter is EnergySource.DCGM_COUNTER
+        _, _, integ = EnergyEfficiencyAnalyzer._resolve_energy(
+            (0.0, 0), (150.0, 3), _DURATION_S
+        )
+        assert integ is EnergySource.POWER_INTEGRATION
+        _, _, none = EnergyEfficiencyAnalyzer._resolve_energy((0.0, 0), (0.0, 0), 0.0)
+        assert none is EnergySource.UNAVAILABLE
 
     @pytest.mark.asyncio
     async def test_concurrency_gates_energy_per_user(self) -> None:
         gpu = _StubGpu(energy=(1000.0, 1), power=(100.0, 1))
-        summary = _metrics_summary(total_output_tokens=1000.0)
+        summary = _metrics_summary(total_osl=1000.0)
         results = await _analyzer(concurrency=None).analyze(_ctx(gpu, summary))
         assert "energy_per_user" not in {r.tag for r in results}
