@@ -158,8 +158,10 @@ class TestCliConvergenceStrategyWiring:
 
     @pytest.fixture(autouse=True)
     def mock_native_runner(self):
-        """Keep strategy-wiring tests independent of runner installation."""
-        with patch("aiperf.orchestrator.native_execution.NativeExecutor") as mock:
+        """Keep strategy-wiring tests independent of the mesh subprocess executor."""
+        with patch(
+            "aiperf.orchestrator.local_executor.LocalSubprocessExecutor"
+        ) as mock:
             yield mock
 
     @patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator")

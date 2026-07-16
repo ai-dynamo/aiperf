@@ -83,8 +83,10 @@ def _make_plan(
 
 @pytest.fixture(autouse=True)
 def _no_real_native_process():
-    """CLI policy tests inject the native executor instead of spawning it."""
-    with patch("aiperf.orchestrator.native_execution.NativeExecutor") as executor:
+    """CLI policy tests inject the mesh subprocess executor instead of spawning it."""
+    with patch(
+        "aiperf.orchestrator.local_executor.LocalSubprocessExecutor"
+    ) as executor:
         yield executor
 
 
@@ -524,9 +526,8 @@ class TestLocalPathUsesMesh:
         assert result.success is True
 
     def test_multi_run_executor_is_local_subprocess(self, tmp_path: Path):
-        """The multi-run path wires the mesh subprocess executor, not NativeExecutor."""
-        from aiperf.orchestrator.local_executor import LocalSubprocessExecutor
-
+        """The multi-run path constructs the mesh subprocess executor and hands it
+        to the orchestrator (never the deleted native bridge executor)."""
         captured = {}
 
         class _Recorder:
@@ -537,10 +538,17 @@ class TestLocalPathUsesMesh:
                 captured["executor"] = executor
                 return []
 
+        sentinel = object()
         with (
             patch(
                 "aiperf.orchestrator.orchestrator.MultiRunOrchestrator", _Recorder
             ),
+            # Override the autouse fixture's opaque patch with one that records
+            # construction and returns a recognizable sentinel instance.
+            patch(
+                "aiperf.orchestrator.local_executor.LocalSubprocessExecutor",
+                return_value=sentinel,
+            ) as ctor,
             patch("aiperf.cli_runner._multi_run._estimate_and_log_duration") as est,
         ):
             est.return_value = tmp_path
@@ -551,4 +559,5 @@ class TestLocalPathUsesMesh:
                 _make_plan(trials=2), tmp_path, AIPerfLogger(__name__)
             )
 
-        assert isinstance(captured["executor"], LocalSubprocessExecutor)
+        ctor.assert_called_once_with(base_dir=tmp_path)
+        assert captured["executor"] is sentinel

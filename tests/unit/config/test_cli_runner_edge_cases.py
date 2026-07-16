@@ -62,8 +62,10 @@ def _make_plan(**overrides) -> BenchmarkPlan:
 
 @pytest.fixture(autouse=True)
 def _no_real_native_process():
-    """CLI policy tests inject the native executor instead of spawning it."""
-    with patch("aiperf.orchestrator.native_execution.NativeExecutor") as executor:
+    """CLI policy tests inject the mesh subprocess executor instead of spawning it."""
+    with patch(
+        "aiperf.orchestrator.local_executor.LocalSubprocessExecutor"
+    ) as executor:
         yield executor
 
 
