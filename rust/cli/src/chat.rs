@@ -5,21 +5,30 @@
 //! OpenAI-compatible chat client that streams the reply live and prints the same
 //! per-turn stats block (TTFT / TPS / ITL / cache) after each turn.
 //!
-//! Reuses the runner's tiktoken/HF tokenizer (`aiperf::dataset::tokenizer`) for
-//! client-side token counts and a hyper streaming client (no reqwest, so
-//! loopback is never proxied). The per-turn metric formulas mirror the aiperf
-//! metric classes exactly (`TTFT = first content ts − start`, `RequestLatency =
-//! last content ts − start`, `ITL = (latency − ttft)/(osl−1)`); the timing ms
-//! values are wall-clock (non-deterministic) but OSL/ISL/cache and the line
-//! format are byte-exact (see `tests/chat.rs`, driven against the mock server).
+//! Reuses runner infrastructure rather than re-implementing it: the tiktoken/HF
+//! tokenizer (`aiperf::dataset::tokenizer`) for client-side token counts, the
+//! canonical SSE reader (`aiperf::transport_http::sse::read_sse`, the behavioral
+//! port of the same `AsyncSSEStreamReader` Python's `chat` uses — it owns the
+//! multibyte-across-TCP-chunk + JSON-continuation edge cases), and a single
+//! **injected `Clock`** for all timing (the runner's `RealClock`, substitutable
+//! by a `SimClock`) — never `Instant::now`/`SystemTime::now`. Only the
+//! connection itself is a lightweight direct hyper client (the full
+//! `transport_http` client is a Clock-injected, connection-pooled, cancellation-
+//! aware *measured-dispatch* engine — overkill for a sequential REPL); no
+//! reqwest, so loopback is never proxied.
 //!
-//! HTTP only for now (the dominant localhost sanity-check target); `https://`
-//! is rejected with a clear message pending a TLS connector.
+//! Per-turn metric formulas mirror the aiperf metric classes exactly (`TTFT =
+//! first content ts − start`, `RequestLatency = last content ts − start`, `ITL =
+//! (latency − ttft)/(osl−1)`); the wall-clock ms are non-deterministic but
+//! OSL/ISL/cache and the line format are byte-exact vs Python. Supports
+//! `http://` and `https://` (TLS via tokio-rustls + webpki roots, the same
+//! crypto stack the runner's transport / exporters use).
 
 use std::io::Write as _;
-use std::time::Instant;
+use std::sync::Arc;
 
 use anyhow::Context as _;
+use futures::StreamExt as _;
 use http_body_util::BodyExt as _;
 use hyper::Request;
 use serde_json::{Value, json};
@@ -193,6 +202,17 @@ fn format_stats(
     lines.join("\n")
 }
 
+/// Build a tokio-rustls TLS connector with webpki roots (mirrors
+/// `aiperf::export::otel` / `transport_http`).
+fn tls_connector() -> anyhow::Result<tokio_rustls::TlsConnector> {
+    let mut roots = rustls::RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let config = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    Ok(tokio_rustls::TlsConnector::from(Arc::new(config)))
+}
+
 /// Split a streaming `delta` into `(content, reasoning)` (`split_delta`).
 fn split_delta(delta: &Value) -> (String, String) {
     let content = delta
@@ -210,33 +230,62 @@ fn split_delta(delta: &Value) -> (String, String) {
 }
 
 /// Stream one chat completion: POST, read SSE, print live, return
-/// `(chunks, last_usage)`.
+/// `(chunks, last_usage)`. Supports `http://` and `https://` (TLS via
+/// tokio-rustls + webpki roots, mirroring the runner's transport).
 async fn stream_turn(
     url: &str,
     headers: &[(String, String)],
     body: Vec<u8>,
-    start: Instant,
+    clock: &std::rc::Rc<dyn aiperf::clock::Clock>,
 ) -> anyhow::Result<(Vec<Chunk>, Option<Value>)> {
     let uri: hyper::Uri = url.parse().with_context(|| format!("bad url {url}"))?;
-    anyhow::ensure!(
-        uri.scheme_str() == Some("http"),
-        "native chat currently supports http:// endpoints only (got {url:?}); \
-         use the pyo3-embed build for https"
-    );
+    let https = match uri.scheme_str() {
+        Some("http") => false,
+        Some("https") => true,
+        other => anyhow::bail!("chat url must be http/https (got {other:?})"),
+    };
     let host = uri.host().context("url has no host")?.to_string();
-    let port = uri.port_u16().unwrap_or(80);
+    let port = uri.port_u16().unwrap_or(if https { 443 } else { 80 });
     let authority = format!("{host}:{port}");
 
-    let stream = tokio::net::TcpStream::connect((host.as_str(), port))
+    // All timing flows through the INJECTED clock (never `Instant::now` /
+    // `SystemTime::now`): `start_ns` is captured before the connect (matching
+    // Python, whose `start_ns` precedes `session.post` opening the connection),
+    // and SSE arrival timestamps come from the same clock via `read_sse`.
+    let start_ns = clock.now_ns();
+
+    let tcp = tokio::net::TcpStream::connect((host.as_str(), port))
         .await
         .with_context(|| format!("connect {authority}"))?;
-    let io = hyper_util::rt::TokioIo::new(stream);
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(io)
-        .await
-        .context("http handshake")?;
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
+
+    // http1 SendRequest is the same type regardless of the underlying IO, so the
+    // request-send + SSE-read path is shared across the http / TLS branches.
+    let mut sender = if https {
+        let connector = tls_connector()?;
+        let dnsname = rustls::pki_types::ServerName::try_from(host.clone())
+            .with_context(|| format!("invalid TLS server name {host:?}"))?;
+        let tls = connector
+            .connect(dnsname, tcp)
+            .await
+            .context("TLS handshake")?;
+        let (sender, conn) =
+            hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(tls))
+                .await
+                .context("https handshake")?;
+        tokio::spawn(async move {
+            let _ = conn.await;
+        });
+        sender
+    } else {
+        let (sender, conn) =
+            hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(tcp))
+                .await
+                .context("http handshake")?;
+        tokio::spawn(async move {
+            let _ = conn.await;
+        });
+        sender
+    };
 
     let mut req = Request::builder()
         .method("POST")
@@ -247,17 +296,16 @@ async fn stream_turn(
         req = req.header(k, v);
     }
     let req = req.body(http_body_util::Full::new(bytes::Bytes::from(body)))?;
-    let mut resp = sender.send_request(req).await.context("send request")?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let mut detail = Vec::new();
-        while let Some(next) = resp.frame().await {
-            if let Ok(frame) = next {
-                if let Some(chunk) = frame.data_ref() {
-                    detail.extend_from_slice(chunk);
-                }
-            }
-        }
+    let resp = sender.send_request(req).await.context("send request")?;
+    let status = resp.status();
+    if !status.is_success() {
+        // OpenAI-compatible servers put the real diagnostic in the body.
+        let detail = resp
+            .into_body()
+            .collect()
+            .await
+            .map(|c| c.to_bytes())
+            .unwrap_or_default();
         let text = String::from_utf8_lossy(&detail);
         anyhow::bail!(
             "HTTP {status}: {}",
@@ -265,60 +313,63 @@ async fn stream_turn(
         );
     }
 
-    // SSE: buffer raw bytes, split on newlines, decode complete `data:` lines.
+    // Reuse the runner's canonical SSE reader (`read_sse`, the behavioral port of
+    // Python's `AsyncSSEStreamReader` that `chat` uses) rather than re-parsing SSE
+    // by hand — it owns the multibyte-across-TCP-chunk + JSON-continuation edge
+    // cases and timestamps each message off the injected clock.
+    let body_stream = http_body_util::BodyStream::new(resp.into_body())
+        .filter_map(|frame| async move {
+            match frame {
+                Ok(f) => f.into_data().ok().map(Ok),
+                Err(e) => Some(Err(aiperf::transport_http::models::ErrorDetails::other(
+                    format!("read body: {e}"),
+                ))),
+            }
+        })
+        .boxed_local();
+
     let mut chunks = Vec::new();
     let mut last_usage = None;
-    let mut buf: Vec<u8> = Vec::new();
     let stdout = std::io::stdout();
-    while let Some(next) = resp.frame().await {
-        let frame = next.context("read body")?;
-        let Some(data) = frame.data_ref() else {
-            continue;
-        };
-        buf.extend_from_slice(data);
-        while let Some(nl) = buf.iter().position(|&b| b == b'\n') {
-            let line: Vec<u8> = buf.drain(..=nl).collect();
-            let line = String::from_utf8_lossy(&line);
-            let line = line.trim();
-            let Some(payload) = line.strip_prefix("data:") else {
-                continue;
-            };
-            let payload = payload.trim();
-            if payload.is_empty() || payload == "[DONE]" {
-                continue;
-            }
-            let Ok(chunk): Result<Value, _> = serde_json::from_str(payload) else {
-                continue;
-            };
-            if let Some(u) = chunk.get("usage").filter(|u| !u.is_null()) {
-                last_usage = Some(u.clone());
-            }
-            let Some(delta) = chunk
-                .get("choices")
-                .and_then(Value::as_array)
-                .and_then(|c| c.first())
-                .and_then(|c| c.get("delta"))
-            else {
-                continue;
-            };
-            let (content, reasoning) = split_delta(delta);
-            if content.is_empty() && reasoning.is_empty() {
-                continue;
-            }
-            let perf_ns = start.elapsed().as_nanos();
-            {
-                let mut h = stdout.lock();
-                let _ = h.write_all(reasoning.as_bytes());
-                let _ = h.write_all(content.as_bytes());
-                let _ = h.flush();
-            }
-            chunks.push(Chunk {
-                perf_ns,
-                content,
-                reasoning,
-            });
+    aiperf::transport_http::sse::read_sse(body_stream, clock.clone(), |msg| {
+        if msg.is_done() {
+            return;
         }
-    }
+        let Some(data) = msg.data() else { return };
+        let Ok(chunk): Result<Value, _> = serde_json::from_str(data) else {
+            return;
+        };
+        if let Some(u) = chunk.get("usage").filter(|u| !u.is_null()) {
+            last_usage = Some(u.clone());
+        }
+        let Some(delta) = chunk
+            .get("choices")
+            .and_then(Value::as_array)
+            .and_then(|c| c.first())
+            .and_then(|c| c.get("delta"))
+        else {
+            return;
+        };
+        let (content, reasoning) = split_delta(delta);
+        if content.is_empty() && reasoning.is_empty() {
+            return;
+        }
+        let perf_ns = (msg.perf_ns - start_ns).max(0) as u128;
+        {
+            let mut h = stdout.lock();
+            let _ = h.write_all(reasoning.as_bytes());
+            let _ = h.write_all(content.as_bytes());
+            let _ = h.flush();
+        }
+        chunks.push(Chunk {
+            perf_ns,
+            content,
+            reasoning,
+        });
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("sse stream error: {}", e.message))?;
+
     Ok((chunks, last_usage))
 }
 
@@ -329,6 +380,7 @@ async fn run_turn(
     model: &str,
     conversation: &Value,
     tok: &ChatTokenizer,
+    clock: &std::rc::Rc<dyn aiperf::clock::Clock>,
 ) -> anyhow::Result<String> {
     let payload = json!({
         "messages": conversation,
@@ -337,8 +389,7 @@ async fn run_turn(
         "stream_options": {"include_usage": true},
     });
     let body = serde_json::to_vec(&payload)?;
-    let start = Instant::now();
-    let (chunks, last_usage) = stream_turn(url, headers, body, start).await?;
+    let (chunks, last_usage) = stream_turn(url, headers, body, clock).await?;
     println!();
 
     let output: String = chunks.iter().map(|c| c.content.as_str()).collect();
@@ -405,6 +456,9 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         .context("tokio runtime")?;
 
     rt.block_on(async move {
+        // One injected clock for the whole session (the runner's RealClock; a
+        // SimClock can be substituted). All chat timing flows through it.
+        let clock: std::rc::Rc<dyn aiperf::clock::Clock> = aiperf::clock::RealClock::new();
         let tok = load_tokenizer(tokenizer.as_deref().unwrap_or(&model)).await?;
         let mut system_messages: Vec<Value> = Vec::new();
         if let Some(sp) = &system_prompt {
@@ -413,7 +467,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
 
         if let Some(q) = quick {
             let conv = build_messages(&system_messages, &[], &q);
-            run_turn(&url, &headers, &model, &conv, &tok).await?;
+            run_turn(&url, &headers, &model, &conv, &tok, &clock).await?;
             return Ok(0);
         }
 
@@ -429,7 +483,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
             }
             let msg = line.trim_end_matches(['\n', '\r']).to_string();
             let conv = build_messages(&system_messages, &hist, &msg);
-            match run_turn(&url, &headers, &model, &conv, &tok).await {
+            match run_turn(&url, &headers, &model, &conv, &tok, &clock).await {
                 Ok(assistant) => {
                     if history {
                         hist.push(json!({"role": "user", "content": msg}));
