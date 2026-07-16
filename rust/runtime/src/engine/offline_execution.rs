@@ -64,6 +64,7 @@ use crate::phase_runtime::run_scheduled_phases_with_aggregate_deferred;
 use crate::rng::{RngRoot, namespace};
 use crate::timing::{BernoulliFixedDelay, DISABLED_PROGRESS_INTERVAL_NS, NoopPhaseObserver};
 use anyhow::{Context, Result, anyhow, ensure};
+use dynamo_mocker::replay::TraceSimulationReport as DynamoSimulationReport;
 use loadgen_core::sink::RequestObserver;
 use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
@@ -1833,15 +1834,8 @@ impl DynosimExecutor {
         } else {
             run_scheduled_backend_offline(self.engine.clone(), self.model.clone(), workload)?
         };
-        if online {
-            verify_parity_online(&report.performance, report.parity)?;
-        } else {
-            verify_parity(&report.performance, &report.dynamo, report.parity)?;
-        }
-        let artifacts = self.emit_backend_artifacts(
-            |path| write_dynamo_report_json(&report.dynamo, path),
-            |path| write_dynamo_per_request_jsonl(&report.dynamo, path),
-        )?;
+        verify_parity_for(online, &report.performance, &report.dynamo, report.parity)?;
+        let artifacts = self.emit_backend_artifacts(&report.dynamo)?;
         let provenance = self.provenance(report.parity);
         Ok(DynosimScheduledOutcome {
             report,
@@ -1888,15 +1882,8 @@ impl DynosimExecutor {
                 event_delivery,
             )?
         };
-        if online {
-            verify_parity_online(&report.performance, report.parity)?;
-        } else {
-            verify_parity(&report.performance, &report.dynamo, report.parity)?;
-        }
-        let artifacts = self.emit_backend_artifacts(
-            |path| write_dynamo_report_json(&report.dynamo, path),
-            |path| write_dynamo_per_request_jsonl(&report.dynamo, path),
-        )?;
+        verify_parity_for(online, &report.performance, &report.dynamo, report.parity)?;
+        let artifacts = self.emit_backend_artifacts(&report.dynamo)?;
         let provenance = self.provenance(report.parity);
         Ok(DynosimScheduledOutcome {
             report,
@@ -1918,10 +1905,7 @@ impl DynosimExecutor {
         config.model.clone_from(&self.model);
         let report = run_graph_offline(self.engine.clone(), config)?;
         verify_parity(&report.performance, &report.dynamo, report.parity)?;
-        let artifacts = self.emit_backend_artifacts(
-            |path| write_dynamo_report_json(&report.dynamo, path),
-            |path| write_dynamo_per_request_jsonl(&report.dynamo, path),
-        )?;
+        let artifacts = self.emit_backend_artifacts(&report.dynamo)?;
         let provenance = self.provenance(report.parity);
         Ok(DynosimGraphOutcome {
             report,
@@ -1971,16 +1955,9 @@ impl DynosimExecutor {
                 workload,
             )?
         };
-        if online {
-            verify_parity_online(&report.performance, report.parity)?;
-        } else {
-            verify_parity(&report.performance, &report.dynamo, report.parity)?;
-        }
+        verify_parity_for(online, &report.performance, &report.dynamo, report.parity)?;
         ensure_no_failed_traces(&report.workload)?;
-        let artifacts = self.emit_backend_artifacts(
-            |path| write_dynamo_report_json(&report.dynamo, path),
-            |path| write_dynamo_per_request_jsonl(&report.dynamo, path),
-        )?;
+        let artifacts = self.emit_backend_artifacts(&report.dynamo)?;
         let provenance = self.provenance(report.parity);
         Ok(DynosimDirectGraphOutcome {
             report,
@@ -2022,16 +1999,9 @@ impl DynosimExecutor {
                 workload,
             )?
         };
-        if online {
-            verify_parity_online(&report.performance, report.parity)?;
-        } else {
-            verify_parity(&report.performance, &report.dynamo, report.parity)?;
-        }
+        verify_parity_for(online, &report.performance, &report.dynamo, report.parity)?;
         ensure_no_failed_traces(&report.workload)?;
-        let artifacts = self.emit_backend_artifacts(
-            |path| write_dynamo_report_json(&report.dynamo, path),
-            |path| write_dynamo_per_request_jsonl(&report.dynamo, path),
-        )?;
+        let artifacts = self.emit_backend_artifacts(&report.dynamo)?;
         let provenance = self.provenance(report.parity);
         Ok(DynosimDirectGraphOutcome {
             report,
@@ -2050,10 +2020,7 @@ impl DynosimExecutor {
         );
         let report = run_trace_offline(self.engine.clone(), trace.clone())?;
         verify_parity(&report.aiperf.performance, &report.dynamo, report.parity)?;
-        let mut artifacts = self.emit_backend_artifacts(
-            |path| write_dynamo_report_json(&report.dynamo, path),
-            |path| write_dynamo_per_request_jsonl(&report.dynamo, path),
-        )?;
+        let mut artifacts = self.emit_backend_artifacts(&report.dynamo)?;
         if let Some(relative) = &self.artifacts.worker_artifacts_json {
             let path = self.artifact_path(relative);
             prepare_output_parent(&path)?;
@@ -2080,8 +2047,7 @@ impl DynosimExecutor {
 
     fn emit_backend_artifacts(
         &self,
-        write_report: impl FnOnce(&Path) -> Result<()>,
-        write_records: impl FnOnce(&Path) -> Result<()>,
+        dynamo: &DynamoSimulationReport,
     ) -> Result<DynosimArtifactOutputs> {
         let report_json = self
             .artifacts
@@ -2105,10 +2071,10 @@ impl DynosimExecutor {
             prepare_output_parent(path)?;
         }
         if let Some(path) = &report_json {
-            write_report(path)?;
+            write_dynamo_report_json(dynamo, path)?;
         }
         if let Some(path) = &per_request_jsonl {
-            write_records(path)?;
+            write_dynamo_per_request_jsonl(dynamo, path)?;
         }
         Ok(DynosimArtifactOutputs {
             report_json,
@@ -2259,6 +2225,21 @@ fn verify_parity_online(
         .canonical_shared_metric_bytes()
         .context("serializing runner-side AIPerf online parity summary")?;
     verify_parity_invariants(parity, aiperf_bytes.len())
+}
+
+/// Select byte-exact (`dynosim_offline`) or relaxed wall-clock (`dynosim_online`)
+/// parity verification on the shared clock axis.
+fn verify_parity_for(
+    online: bool,
+    aiperf: &impl CanonicalSharedMetrics,
+    dynamo: &impl CanonicalSharedMetrics,
+    parity: OfflineMetricParity,
+) -> Result<()> {
+    if online {
+        verify_parity_online(aiperf, parity)
+    } else {
+        verify_parity(aiperf, dynamo, parity)
+    }
 }
 
 /// Successful scheduled offline execution and backend-owned outputs.
