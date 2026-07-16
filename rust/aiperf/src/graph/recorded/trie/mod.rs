@@ -112,8 +112,7 @@ pub(crate) fn lower_recorded_graph(
     let mut edges = timing::build_interval_edges(&nodes);
     timing::apply_start_anchors(&nodes, &mut edges);
 
-    let caps = messages::compute_assistant_caps(&nodes, block_size);
-    let (tags, _) = messages::assign_block_tags(&nodes, block_size, &caps)?;
+    let (tags, _) = messages::assign_block_tags(&nodes, block_size)?;
     let mut state = BTreeMap::new();
     let mut graph_nodes = BTreeMap::new();
     let mut all_edges = Vec::new();
