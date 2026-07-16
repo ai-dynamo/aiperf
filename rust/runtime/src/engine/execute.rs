@@ -50,9 +50,9 @@ use crate::fixed_schedule::{
 use crate::graph::input::GraphInputBundle;
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
 use crate::metrics_core::{
-    CATALOG, ExportContext, InferenceDimensions, MetricTag, MetricsAccumulator, MetricsConfig,
-    NativeReport, Phase as MetricsPhase, RecordIngest, ReportRunInfo, ReportSummary, RunOutcome,
-    SloThreshold,
+    AccumulatorSummary, CATALOG, ExportContext, InferenceDimensions, MetricTag, MetricsAccumulator,
+    MetricsConfig, NativeReport, Phase as MetricsPhase, RecordIngest, ReportRunInfo,
+    ReportServerMetricsMetadata, ReportSummary, RunOutcome, SloThreshold,
 };
 use crate::multiturn::{
     AuthoredInputTokenCounter, ConversationSource, EndpointInputTokenCounter, InputTokenCounter,
@@ -131,6 +131,7 @@ use crate::engine::sidecar_input::{
 use crate::engine::turn_execution::{
     ExecutionBackendConfig, PreparedEndpointTableFactory, RequestExecutorFactory,
 };
+use crate::server_metrics::ServerMetricsSummary;
 
 type PhaseRuntimeParts = (
     Rc<dyn Workload>,
@@ -1800,41 +1801,20 @@ async fn execute_graph_native(
             shipper.ship_records(records, epoch_ns)?;
         }
     }
-    if let Some(network_latency) = network_latency {
-        let mean_rtt_ns = network_latency.mean_rtt_ns();
-        if network_latency.is_active_probe() && mean_rtt_ns.is_none() {
-            tracing::warn!(
-                "network latency calibration collected no successful probes; adjusted metrics are omitted"
-            );
-        }
-        accumulator.set_network_rtt_ns(mean_rtt_ns);
-    }
-    let mut profiling_metrics =
-        accumulator.export_results(&ExportContext::phase(MetricsPhase::Profiling));
-    if let Some(gpu_telemetry) = gpu_telemetry {
-        let total_output_tokens = profiling_metrics.finite_value(MetricTag::TotalOutputTokens);
-        let concurrency = request
-            .phases
-            .iter()
-            .find(|phase| phase.common().name == "profiling")
-            .and_then(PhaseSpec::concurrency)
-            .map(|value| value as u64);
-        gpu_telemetry
-            .summarize(total_output_tokens, concurrency)
-            .attach_to(&mut profiling_metrics);
-    }
-    let profiling_server_summary = server_metrics.map(|server_metrics| {
-        server_metrics.summarize(MetricsPhase::Profiling, metrics_config.slice_duration_ns)
-    });
-    // `has_warmup` was computed in the fold-and-drop pass over the full record set
-    // (before any drop), so it is correct on both the retain and exact-fold paths.
-    let warmup =
-        has_warmup.then(|| accumulator.export_results(&ExportContext::phase(MetricsPhase::Warmup)));
-    let warmup_server_summary = server_metrics
-        .filter(|_| warmup.is_some())
-        .map(|server_metrics| {
-            server_metrics.summarize(MetricsPhase::Warmup, metrics_config.slice_duration_ns)
-        });
+    let RunMetricsSummaries {
+        profiling_metrics,
+        profiling_server_summary,
+        warmup,
+        warmup_server_summary,
+    } = summarize_run_metrics(
+        &mut accumulator,
+        gpu_telemetry,
+        network_latency,
+        server_metrics,
+        &request,
+        &metrics_config,
+        has_warmup,
+    );
     // Under either fold path `captured` holds only the retained errored records (the clean
     // ones were dropped mid-run). Exact-fold already STREAMED any requested per-record
     // artifact through `record_lane` (task G2, flushed above); sketch requests none (it is
@@ -1844,33 +1824,17 @@ async fn execute_graph_native(
     if !graph_fold {
         write_graph_artifacts(&request, &captured, &metrics_config)?;
     }
-    if let (Some(gpu_telemetry), Some(gpu_records_path)) =
-        (gpu_telemetry, sidecars.gpu_records_path.as_ref())
-    {
-        gpu_telemetry.write_records_jsonl(gpu_records_path)?;
-    }
-    if let (Some(network_latency), Some(records_path)) = (
+    let server_metrics_report = write_sidecar_records(
+        gpu_telemetry,
         network_latency,
-        sidecars.network_latency_records_path.as_ref(),
-    ) {
-        network_latency.write_records_jsonl(records_path)?;
-    }
-    if let (Some(server_metrics), Some(path)) =
-        (server_metrics, sidecars.server_metrics_jsonl_path.as_ref())
-    {
-        server_metrics.write_slim_jsonl(path)?;
-    }
-    if let (Some(server_metrics), Some(path)) = (
         server_metrics,
-        sidecars.server_metrics_parquet_wire_path.as_ref(),
-    ) {
-        server_metrics.write_parquet_wire_jsonl(path)?;
-    }
-    let server_metrics_report = server_metrics.and_then(|server_metrics| {
-        profiling_server_summary.as_ref().map(|profiling| {
-            server_metrics.report_metadata(profiling, warmup_server_summary.as_ref())
-        })
-    });
+        sidecars.gpu_records_path.as_deref(),
+        sidecars.network_latency_records_path.as_deref(),
+        sidecars.server_metrics_jsonl_path.as_deref(),
+        sidecars.server_metrics_parquet_wire_path.as_deref(),
+        profiling_server_summary.as_ref(),
+        warmup_server_summary.as_ref(),
+    )?;
 
     // The profiling span + successful-endpoint set were accumulated over the FULL record
     // set in the fold-and-drop pass (before any drop), so they are correct on both the
@@ -1917,6 +1881,114 @@ async fn execute_graph_native(
         &request.artifacts,
     )?;
     Ok(NativeReport::from_outcome(&profiling_metrics, &outcome))
+}
+
+/// The post-capture metric summaries shared by both executors' finalize tails
+/// ([`summarize_run_metrics`]): the profiling metrics export (with any GPU
+/// telemetry already attached) plus the optional profiling/warmup server
+/// summaries and the optional warmup metrics export.
+struct RunMetricsSummaries {
+    profiling_metrics: AccumulatorSummary,
+    profiling_server_summary: Option<ServerMetricsSummary>,
+    warmup: Option<AccumulatorSummary>,
+    warmup_server_summary: Option<ServerMetricsSummary>,
+}
+
+/// Inject the calibrated network RTT into the accumulator, export the profiling
+/// metrics (attaching GPU telemetry when present), and derive the profiling and
+/// warmup server-metrics summaries plus the warmup metrics export. Byte-identical
+/// tail shared by the scheduled/accuracy and graph executors (previously
+/// duplicated verbatim in each) — the two callers differ only in the surrounding
+/// cell-ship, artifact-writer, and outcome-assembly regions, which stay inline.
+fn summarize_run_metrics(
+    accumulator: &mut MetricsAccumulator,
+    gpu_telemetry: Option<&GpuTelemetryRun>,
+    network_latency: Option<&NetworkLatencyRun>,
+    server_metrics: Option<&ServerMetricsRun>,
+    request: &NativeRunSpec,
+    metrics_config: &MetricsConfig,
+    has_warmup: bool,
+) -> RunMetricsSummaries {
+    if let Some(network_latency) = network_latency {
+        let mean_rtt_ns = network_latency.mean_rtt_ns();
+        if network_latency.is_active_probe() && mean_rtt_ns.is_none() {
+            tracing::warn!(
+                "network latency calibration collected no successful probes; adjusted metrics are omitted"
+            );
+        }
+        accumulator.set_network_rtt_ns(mean_rtt_ns);
+    }
+    let mut profiling_metrics =
+        accumulator.export_results(&ExportContext::phase(MetricsPhase::Profiling));
+    if let Some(gpu_telemetry) = gpu_telemetry {
+        let total_output_tokens = profiling_metrics.finite_value(MetricTag::TotalOutputTokens);
+        let concurrency = request
+            .phases
+            .iter()
+            .find(|phase| phase.common().name == "profiling")
+            .and_then(PhaseSpec::concurrency)
+            .map(|value| value as u64);
+        gpu_telemetry
+            .summarize(total_output_tokens, concurrency)
+            .attach_to(&mut profiling_metrics);
+    }
+    let profiling_server_summary = server_metrics.map(|server_metrics| {
+        server_metrics.summarize(MetricsPhase::Profiling, metrics_config.slice_duration_ns)
+    });
+    // `has_warmup` was computed in the fold-and-drop pass over the full record set
+    // (before any drop), so it is correct on both the retain and exact-fold paths.
+    let warmup =
+        has_warmup.then(|| accumulator.export_results(&ExportContext::phase(MetricsPhase::Warmup)));
+    let warmup_server_summary = server_metrics
+        .filter(|_| warmup.is_some())
+        .map(|server_metrics| {
+            server_metrics.summarize(MetricsPhase::Warmup, metrics_config.slice_duration_ns)
+        });
+    RunMetricsSummaries {
+        profiling_metrics,
+        profiling_server_summary,
+        warmup,
+        warmup_server_summary,
+    }
+}
+
+/// Write the GPU / network-latency / server-metrics record sidecars (each a no-op
+/// when its producer or destination path is absent) and build the additive
+/// server-metrics report metadata. Byte-identical tail shared by the
+/// scheduled/accuracy and graph executors; the record paths are passed in so both
+/// callers (graph inlines `sidecars.*`, scheduled pre-binds the same as locals)
+/// produce identical behavior.
+#[allow(clippy::too_many_arguments)]
+fn write_sidecar_records(
+    gpu_telemetry: Option<&GpuTelemetryRun>,
+    network_latency: Option<&NetworkLatencyRun>,
+    server_metrics: Option<&ServerMetricsRun>,
+    gpu_records_path: Option<&Path>,
+    network_latency_records_path: Option<&Path>,
+    server_metrics_jsonl_path: Option<&Path>,
+    server_metrics_parquet_wire_path: Option<&Path>,
+    profiling_server_summary: Option<&ServerMetricsSummary>,
+    warmup_server_summary: Option<&ServerMetricsSummary>,
+) -> Result<Option<ReportServerMetricsMetadata>> {
+    if let (Some(gpu_telemetry), Some(gpu_records_path)) = (gpu_telemetry, gpu_records_path) {
+        gpu_telemetry.write_records_jsonl(gpu_records_path)?;
+    }
+    if let (Some(network_latency), Some(records_path)) =
+        (network_latency, network_latency_records_path)
+    {
+        network_latency.write_records_jsonl(records_path)?;
+    }
+    if let (Some(server_metrics), Some(path)) = (server_metrics, server_metrics_jsonl_path) {
+        server_metrics.write_slim_jsonl(path)?;
+    }
+    if let (Some(server_metrics), Some(path)) = (server_metrics, server_metrics_parquet_wire_path) {
+        server_metrics.write_parquet_wire_jsonl(path)?;
+    }
+    let server_metrics_report = server_metrics.and_then(|server_metrics| {
+        profiling_server_summary
+            .map(|profiling| server_metrics.report_metadata(profiling, warmup_server_summary))
+    });
+    Ok(server_metrics_report)
 }
 
 /// Emit the optional wide per-record Parquet sidecar beside the per-request
@@ -3190,43 +3262,20 @@ async fn execute_native_inner(
     let gpu_telemetry = sidecars.gpu_telemetry.as_ref();
     let network_latency = sidecars.network_latency.as_ref();
     let server_metrics = sidecars.server_metrics.as_ref();
-    let gpu_records_path = sidecars.gpu_records_path.as_ref();
-    let network_latency_records_path = sidecars.network_latency_records_path.as_ref();
-    let server_metrics_jsonl_path = sidecars.server_metrics_jsonl_path.as_ref();
-    let server_metrics_parquet_wire_path = sidecars.server_metrics_parquet_wire_path.as_ref();
-    if let Some(network_latency) = network_latency {
-        let mean_rtt_ns = network_latency.mean_rtt_ns();
-        if network_latency.is_active_probe() && mean_rtt_ns.is_none() {
-            tracing::warn!(
-                "network latency calibration collected no successful probes; adjusted metrics are omitted"
-            );
-        }
-        accumulator.set_network_rtt_ns(mean_rtt_ns);
-    }
-    let mut profiling_metrics =
-        accumulator.export_results(&ExportContext::phase(MetricsPhase::Profiling));
-    if let Some(gpu_telemetry) = gpu_telemetry {
-        let total_output_tokens = profiling_metrics.finite_value(MetricTag::TotalOutputTokens);
-        let concurrency = request
-            .phases
-            .iter()
-            .find(|phase| phase.common().name == "profiling")
-            .and_then(PhaseSpec::concurrency)
-            .map(|value| value as u64);
-        gpu_telemetry
-            .summarize(total_output_tokens, concurrency)
-            .attach_to(&mut profiling_metrics);
-    }
-    let profiling_server_summary = server_metrics.map(|server_metrics| {
-        server_metrics.summarize(MetricsPhase::Profiling, metrics_config.slice_duration_ns)
-    });
-    let warmup =
-        has_warmup.then(|| accumulator.export_results(&ExportContext::phase(MetricsPhase::Warmup)));
-    let warmup_server_summary = server_metrics
-        .filter(|_| warmup.is_some())
-        .map(|server_metrics| {
-            server_metrics.summarize(MetricsPhase::Warmup, metrics_config.slice_duration_ns)
-        });
+    let RunMetricsSummaries {
+        profiling_metrics,
+        profiling_server_summary,
+        warmup,
+        warmup_server_summary,
+    } = summarize_run_metrics(
+        &mut accumulator,
+        gpu_telemetry,
+        network_latency,
+        server_metrics,
+        &request,
+        &metrics_config,
+        has_warmup,
+    );
     // The exact-fold path already streamed records.jsonl / raw.jsonl / the per-record
     // CSV AND the columnar Parquet sidecar row-by-row through the artifact lane (and
     // flushed it at the finalize), so `captured` here holds only the retained errored
@@ -3271,25 +3320,17 @@ async fn execute_native_inner(
         &request.artifact_dir,
         &request.artifacts,
     )?;
-    if let (Some(gpu_telemetry), Some(gpu_records_path)) = (gpu_telemetry, gpu_records_path) {
-        gpu_telemetry.write_records_jsonl(gpu_records_path)?;
-    }
-    if let (Some(network_latency), Some(records_path)) =
-        (network_latency, network_latency_records_path)
-    {
-        network_latency.write_records_jsonl(records_path)?;
-    }
-    if let (Some(server_metrics), Some(path)) = (server_metrics, server_metrics_jsonl_path) {
-        server_metrics.write_slim_jsonl(path)?;
-    }
-    if let (Some(server_metrics), Some(path)) = (server_metrics, server_metrics_parquet_wire_path) {
-        server_metrics.write_parquet_wire_jsonl(path)?;
-    }
-    let server_metrics_report = server_metrics.and_then(|server_metrics| {
-        profiling_server_summary.as_ref().map(|profiling| {
-            server_metrics.report_metadata(profiling, warmup_server_summary.as_ref())
-        })
-    });
+    let server_metrics_report = write_sidecar_records(
+        gpu_telemetry,
+        network_latency,
+        server_metrics,
+        sidecars.gpu_records_path.as_deref(),
+        sidecars.network_latency_records_path.as_deref(),
+        sidecars.server_metrics_jsonl_path.as_deref(),
+        sidecars.server_metrics_parquet_wire_path.as_deref(),
+        profiling_server_summary.as_ref(),
+        warmup_server_summary.as_ref(),
+    )?;
     let mut outcome = RunOutcome {
         run: ReportRunInfo {
             mode: Some("online".into()),
