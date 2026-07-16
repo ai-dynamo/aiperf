@@ -34,6 +34,7 @@ pub mod profile;
 pub mod pyfit;
 #[cfg(feature = "search-pyo3")]
 pub mod pyopt;
+pub mod redact;
 pub mod render;
 pub mod search;
 pub mod search_history;

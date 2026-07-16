@@ -69,7 +69,8 @@ pub fn run_once(
     request_json: &[u8],
     child_pid: &crate::signals::ChildPid,
 ) -> anyhow::Result<Terminal> {
-    let mut child = Command::new(exec_bin)
+    let mut command = Command::new(exec_bin);
+    command
         .arg(crate::execute_mode::EXECUTE_FLAG)
         // Hand the resolved log-level directive to the child: its argv is just
         // `--execute`, so the parent's level is the only way it inherits one
@@ -77,14 +78,18 @@ pub fn run_once(
         .env(crate::logging::LOG_ENV, crate::logging::current_directive())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| {
-            anyhow::anyhow!(
-                "failed to spawn aiperf --execute ({}): {e}",
-                exec_bin.display()
-            )
-        })?;
+        .stderr(Stdio::piped());
+    // The front door blocks SIGINT/SIGTERM in its main-thread mask so the
+    // forwarder can `sigwait` them; that blocked mask is inherited across
+    // fork+exec, so unblock it in the child or its `tokio::signal` graceful-
+    // cancel listener never observes the forwarded SIGINT.
+    unblock_signals_in_child(&mut command);
+    let mut child = command.spawn().map_err(|e| {
+        anyhow::anyhow!(
+            "failed to spawn aiperf --execute ({}): {e}",
+            exec_bin.display()
+        )
+    })?;
     // Publish the PID so the signal forwarder can deliver a graceful SIGINT.
     child_pid.set(child.id());
 
@@ -131,6 +136,37 @@ pub fn run_once(
     let returncode = status.code().unwrap_or(-1);
     parse_terminal(&out, returncode)
 }
+
+/// Reset the child's inherited signal mask so SIGINT/SIGTERM are deliverable to
+/// the runner's own `tokio::signal` graceful-cancel listener.
+///
+/// The front-door process BLOCKS SIGINT/SIGTERM in its main-thread mask so the
+/// [`crate::signals`] forwarder can `sigwait` them (see [`crate::signals::install`]).
+/// `Command::spawn` fork+execs from that thread, so the child inherits the
+/// blocked mask. A blocked signal is never delivered, so the forwarded SIGINT
+/// stays pending in the child, the phase orchestrator is never cancelled, and
+/// the run finishes with `was_cancelled=false` instead of draining into a
+/// partial `was_cancelled=true` report. Python's orchestrator forwards via
+/// `signal.signal` handlers (no mask change), so its child is already unblocked;
+/// this restores that behavior for the native execution child.
+#[cfg(unix)]
+fn unblock_signals_in_child(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    // SAFETY: only async-signal-safe work runs in the post-fork/pre-exec child.
+    // `SigSet::empty` touches only stack memory and `thread_set_mask` calls
+    // `pthread_sigmask`, which POSIX lists as async-signal-safe.
+    unsafe {
+        command.pre_exec(|| {
+            nix::sys::signal::SigSet::empty()
+                .thread_set_mask()
+                .map_err(|errno| std::io::Error::from_raw_os_error(errno as i32))
+        });
+    }
+}
+
+/// No-op on non-unix targets: the forwarder and its mask are unix-only.
+#[cfg(not(unix))]
+fn unblock_signals_in_child(_command: &mut Command) {}
 
 /// Parse the runner's stdout into a [`Terminal`], enforcing the "exactly one
 /// terminal JSON line" contract via typed deserialization (no `Value` poking).
