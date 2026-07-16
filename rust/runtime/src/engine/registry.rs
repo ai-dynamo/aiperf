@@ -204,6 +204,56 @@ pub trait RunnerTransportFactory: Debug + Send + Sync {
         authored: &RawValue,
         requirements: &WorkloadRequirements,
     ) -> Result<Box<dyn ValidatedTransportConfig>>;
+
+    /// Resolve this transport's native execution binding from a validated
+    /// config, or `None` when the transport uses a non-`RequestExecutor`
+    /// execution mode (dynosim's virtual-clock co-simulation) prepared through
+    /// its own module.
+    ///
+    /// This is the seam that makes a transport *swappable*: the workload asks the
+    /// registered transport for its execution binding and drives the shared
+    /// scheduled/graph runtime through it, never matching on a transport kind.
+    /// The default returns `None`; every RequestExecutor transport
+    /// (`http`/`grpc`/`dry_run`) overrides it.
+    fn native_execution(
+        &self,
+        _config: &dyn ValidatedTransportConfig,
+        _context: &RunnerRunContext,
+    ) -> Result<Option<Arc<dyn NativeTransportExecution>>> {
+        Ok(None)
+    }
+}
+
+/// Execution binding produced by a validated *native* transport — one that
+/// drives the `RequestExecutor` seam over a real clock (`http`, `grpc`,
+/// `dry_run`).
+///
+/// The scheduled and graph workloads resolve one of these from the
+/// transport-registry entry and drive the entire native runtime (pacing,
+/// admission, phase orchestration, metrics, export) through it. There is no
+/// `match` on a closed transport enum: adding a native transport means
+/// registering a factory that returns its own binding, and nothing in the
+/// workloads changes. A transport whose execution mode is not the
+/// `RequestExecutor` seam (dynosim) returns `None` from
+/// [`RunnerTransportFactory::native_execution`] instead.
+pub trait NativeTransportExecution: Send + Sync {
+    /// Turn-placement factory this transport drives below the shared dispatcher.
+    fn executor_factory(&self) -> Arc<dyn crate::engine::turn_execution::RequestExecutorFactory>;
+
+    /// Whether a model-readiness probe runs before profiling. Only the HTTP
+    /// transport polls a live server; `grpc`/`dry_run` skip it.
+    fn readiness_enabled(&self) -> bool;
+
+    /// Graph-dispatcher construction kind, or an error when this transport does
+    /// not (yet) drive the whole-trace graph workload.
+    fn graph_transport_kind(&self) -> Result<crate::engine::graph_execution::GraphTransportKind>;
+
+    /// Transport-specific run-level validation (endpoint URL schemes, server
+    /// reachability policy, …), performed after component configs decode.
+    fn validate_run(&self, run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> Result<()>;
+
+    /// Additive transport provenance stamped onto the terminal response.
+    fn provenance(&self) -> BTreeMap<String, String>;
 }
 
 /// Startup-only workload validation half of the registry.
@@ -454,6 +504,12 @@ impl AIPerfRegistry {
             .map_err(|DuplicateName(id)| anyhow!("duplicate runner workload ID {id:?}"))
     }
 
+    /// Resolve one registered transport factory by ID for native-execution
+    /// binding, returning `None` when no transport with that ID is compiled in.
+    pub fn transport_factory(&self, id: &str) -> Option<Arc<dyn RunnerTransportFactory>> {
+        self.transports.get(id).cloned()
+    }
+
     /// Return transport descriptors in deterministic ID order.
     pub fn transport_descriptors(&self) -> Vec<&'static RunnerTransportDescriptor> {
         self.transports
@@ -641,6 +697,11 @@ impl AIPerfExtension for HttpExtension {
         registry
             .register_transport(Arc::new(OnlineHttpTransportFactoryV2))
             .map_err(extension_rejected)?;
+        // The always-built lightweight `dry_run` transport rides alongside the
+        // HTTP path (no feature gate): it reuses the native scheduled/graph
+        // runtime and swaps only the execution leaf, so it is available in every
+        // distribution that has the HTTP path.
+        crate::engine::dry_run::register_dry_run_transport(registry).map_err(extension_rejected)?;
         crate::engine::online_execution::register_online_workloads(registry)
             .map_err(extension_rejected)
     }
@@ -648,15 +709,20 @@ impl AIPerfExtension for HttpExtension {
 
 /// Built-in native gRPC transport (Clock-injected Tonic HTTP/2 channels).
 ///
-/// gRPC is always compiled on this branch (there is no `grpc` Cargo feature),
-/// so this extension is unconditional. The Riva ASR/TTS/NLP endpoint dialects it
-/// serves are registered by [`BuiltinEndpointsExtension`]; were gRPC ever put
-/// behind a feature, they would move here under the same gate.
+/// gRPC is one transport over the same `RunnerTransportFactory` seam as
+/// `http`/`dynosim`, gated behind the `grpc` Cargo feature: a lite/HTTP-only
+/// runner drops this extension (and the `tonic` framework) entirely. The
+/// transport-neutral Riva ASR/TTS/NLP and KServe-gRPC endpoint *dialects* are
+/// pure request/response formatting with no `tonic`/`prost` imports, so they
+/// stay registered by [`BuiltinEndpointsExtension`] regardless and simply fail
+/// closed at transport selection when `grpc` is compiled out.
 ///
 /// [`BuiltinEndpointsExtension`]: crate::extensions::BuiltinEndpointsExtension
+#[cfg(feature = "grpc")]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GrpcExtension;
 
+#[cfg(feature = "grpc")]
 impl AIPerfExtension for GrpcExtension {
     fn name(&self) -> &str {
         "aiperf.transport.grpc"
@@ -714,6 +780,7 @@ pub struct OnlineHttpControlClientConfigV2 {
 ///
 /// Endpoint profiles own targets, deadlines, metadata, and channel-reuse
 /// policy, so the transport object remains intentionally empty and strict.
+#[cfg(feature = "grpc")]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OnlineGrpcTransportConfigV2 {}
@@ -1261,6 +1328,7 @@ pub static ONLINE_HTTP_TRANSPORT_DESCRIPTOR: RunnerTransportDescriptor =
     };
 
 /// Built-in online gRPC transport descriptor.
+#[cfg(feature = "grpc")]
 pub static ONLINE_GRPC_TRANSPORT_DESCRIPTOR: RunnerTransportDescriptor =
     RunnerTransportDescriptor {
         id: "grpc",
@@ -1319,11 +1387,25 @@ impl RunnerTransportFactory for OnlineHttpTransportFactoryV2 {
         );
         Ok(Box::new(config))
     }
+
+    fn native_execution(
+        &self,
+        _config: &dyn ValidatedTransportConfig,
+        context: &RunnerRunContext,
+    ) -> Result<Option<Arc<dyn NativeTransportExecution>>> {
+        Ok(Some(Arc::new(
+            crate::engine::online_execution::HttpNativeExecution::new(
+                context.execution_factories().http_handle(),
+            ),
+        )))
+    }
 }
 
+#[cfg(feature = "grpc")]
 #[derive(Debug)]
 struct OnlineGrpcTransportFactoryV2;
 
+#[cfg(feature = "grpc")]
 impl RunnerTransportFactory for OnlineGrpcTransportFactoryV2 {
     fn descriptor(&self) -> &'static RunnerTransportDescriptor {
         &ONLINE_GRPC_TRANSPORT_DESCRIPTOR
@@ -1338,6 +1420,16 @@ impl RunnerTransportFactory for OnlineGrpcTransportFactoryV2 {
             authored,
             "grpc transport config",
         )?))
+    }
+
+    fn native_execution(
+        &self,
+        _config: &dyn ValidatedTransportConfig,
+        _context: &RunnerRunContext,
+    ) -> Result<Option<Arc<dyn NativeTransportExecution>>> {
+        Ok(Some(Arc::new(
+            crate::engine::grpc_execution::GrpcNativeExecution::new(),
+        )))
     }
 }
 
@@ -1819,10 +1911,20 @@ mod tests {
         let registry = crate::extensions::BuiltinAIPerfRegistryFactory
             .build()
             .unwrap();
+        // Transports are exactly the components the composition-root extension
+        // list registered; each feature gate flips its transport into or out of
+        // the expected set (the registry returns them in sorted ID order).
+        // `http` and the always-built `dry_run` fake leaf are unconditional; the
+        // rest flip with their Cargo feature.
+        let mut expected_transports = vec!["http", "dry_run"];
+        #[cfg(feature = "grpc")]
+        expected_transports.push("grpc");
         #[cfg(feature = "dynosim")]
-        let expected_transports = vec!["dynosim_offline", "dynosim_online", "grpc", "http"];
-        #[cfg(not(feature = "dynosim"))]
-        let expected_transports = vec!["grpc", "http"];
+        {
+            expected_transports.push("dynosim_offline");
+            expected_transports.push("dynosim_online");
+        }
+        expected_transports.sort_unstable();
         assert_eq!(
             registry
                 .transport_descriptors()
@@ -1857,11 +1959,18 @@ mod tests {
 
         // Transports are exactly the components the composition-root extension
         // list registered; gating an extension out drops its transport from the
-        // catalog with no separate bookkeeping (dynosim flips the expected set).
+        // catalog with no separate bookkeeping (grpc/dynosim flip the set).
+        // `http` and the always-built `dry_run` fake leaf are unconditional; the
+        // rest flip with their Cargo feature.
+        let mut expected_transports = vec!["http", "dry_run"];
+        #[cfg(feature = "grpc")]
+        expected_transports.push("grpc");
         #[cfg(feature = "dynosim")]
-        let expected_transports = vec!["dynosim_offline", "dynosim_online", "grpc", "http"];
-        #[cfg(not(feature = "dynosim"))]
-        let expected_transports = vec!["grpc", "http"];
+        {
+            expected_transports.push("dynosim_offline");
+            expected_transports.push("dynosim_online");
+        }
+        expected_transports.sort_unstable();
         assert_eq!(
             catalog
                 .transport
@@ -1874,6 +1983,7 @@ mod tests {
             catalog.transport["http"].metadata["url_schemes"],
             serde_json::json!(["http", "https"])
         );
+        #[cfg(feature = "grpc")]
         assert_eq!(
             catalog.transport["grpc"].metadata["url_schemes"],
             serde_json::json!(["grpc", "grpcs"])

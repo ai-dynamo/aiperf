@@ -352,6 +352,10 @@ fn rustls_config(client: &ClientConfig) -> Arc<rustls::ClientConfig> {
 /// the same danger verifier for `grpcs` against a self-signed / untrusted
 /// server, matching the HTTP transport's behavior. Signatures stay
 /// cryptographically verified; only chain/hostname validation is skipped.
+///
+/// The HTTP transport uses [`NoCertificateVerification`] directly; this wrapper
+/// exists solely for the gRPC transport, so it is gated on the `grpc` feature.
+#[cfg(feature = "grpc")]
 pub(crate) fn insecure_server_cert_verifier() -> Arc<dyn rustls::client::danger::ServerCertVerifier>
 {
     Arc::new(NoCertificateVerification {

@@ -9,12 +9,24 @@ license.workspace = true
 description = "Rust-native AIPerf load-generation runtime used by the subprocess runner."
 
 [features]
-default = ["parquet", "velo"]
+default = ["parquet", "velo", "grpc"]
 # Hosts the v2 protocol / registry / execution layer (the ~30k-line engine
 # modules under `src/engine/`). Only `aiperf-cli` opts in; `mock-server`/`e2e`
 # and other library consumers build without it, so the gated module and its
 # dependency surface stay out of their builds.
 engine = []
+# Native gRPC transport (Clock-injected Tonic HTTP/2 channels): the
+# `transport_grpc` prepared-sink stack, the engine's `grpc`/`grpc_execution`
+# placement path, the `grpc` runner transport factory, and the KServe OIP v2 /
+# Riva ASR-TTS-NLP wire codecs. gRPC is *just another transport* over the same
+# `RequestSink`/`RunnerTransportFactory` seam as `http`/`dynosim`, so it composes
+# through one gated [`GrpcExtension`] in the built-in registry list. Links the
+# heavy `tonic` framework; a lite/HTTP-only runner drops it (the `grpc` transport
+# and Riva/KServe-gRPC endpoints then fail closed at selection). `prost` stays
+# unconditional (OTLP/W&B/graph-vocab also use it). HTTP remains the mandatory
+# base — the side channels (server-metrics, GPU telemetry, dataset fetch,
+# control plane) depend on it — so there is no symmetric `http` off switch.
+grpc = ["dep:tonic"]
 # Server-metrics Parquet export sink + public-dataset `.parquet` reader. Links
 # `arrow` + `parquet` (~2.6 MiB of `.text`, plus zstd/snap). A lite/online-only
 # runner (e.g. a lightweight nightly wheel) builds without it: the exporter is
@@ -90,7 +102,7 @@ tiktoken-rs.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 velo = { git = "https://github.com/ajcasagrande/velo.git", branch = "feat/connect-by-endpoint", default-features = false, optional = true }
-tonic.workspace = true
+tonic = { workspace = true, optional = true }
 tracing.workspace = true
 uuid.workspace = true
 url.workspace = true

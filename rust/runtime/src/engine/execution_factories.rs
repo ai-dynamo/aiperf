@@ -18,7 +18,6 @@ use crate::engine::control_plane_http::{
 use crate::engine::graph_execution::{
     NativeRunnerGraphPlacementFactory, RunnerGraphPlacementFactory,
 };
-use crate::engine::grpc_turn_execution::NativeGrpcExecutionBackendFactory;
 use crate::engine::readiness::{
     NativeHttpReadinessPlanFactory, NativeHttpReadinessTransportFactory,
     OnlineReadinessPlanFactory, ReadinessTransportFactory,
@@ -26,10 +25,18 @@ use crate::engine::readiness::{
 use crate::engine::turn_execution::{NativeRequestExecutorFactory, RequestExecutorFactory};
 
 /// Exact execution-factory universe retained from coordinator construction.
+///
+/// This holds only the seams shared across native transports: the base HTTP
+/// turn-placement factory (the primary injectable placement seam), graph
+/// placement, readiness, and the isolated control-plane HTTP provider. A
+/// transport's own turn-placement — the gRPC Tonic backend, the `dry_run` fake
+/// leaf — is owned by its [`NativeTransportExecution`] binding, not named here,
+/// so a transport is added by registering it, never by growing this struct.
+///
+/// [`NativeTransportExecution`]: crate::engine::registry::NativeTransportExecution
 #[derive(Clone)]
 pub struct RunnerExecutionFactories {
     http: Arc<dyn RequestExecutorFactory>,
-    grpc: Arc<dyn RequestExecutorFactory>,
     graph: Arc<dyn RunnerGraphPlacementFactory>,
     readiness_plans: Arc<dyn OnlineReadinessPlanFactory>,
     readiness_transport: Arc<dyn ReadinessTransportFactory>,
@@ -44,25 +51,13 @@ impl RunnerExecutionFactories {
         readiness_plans: Arc<dyn OnlineReadinessPlanFactory>,
         readiness_transport: Arc<dyn ReadinessTransportFactory>,
     ) -> Self {
-        let grpc = http.clone();
         Self {
             http,
-            grpc,
             graph,
             readiness_plans,
             readiness_transport,
             control_plane_http: Arc::new(NativeControlPlaneHttpProviderFactory::default()),
         }
-    }
-
-    /// Override gRPC turn placement independently from HTTP placement.
-    ///
-    /// The base constructor aliases both to the same generic turn-placement
-    /// factory, which keeps remote implementations transport-neutral. Native
-    /// composition installs the Tonic-specific factory explicitly.
-    pub fn with_grpc(mut self, grpc: Arc<dyn RequestExecutorFactory>) -> Self {
-        self.grpc = grpc;
-        self
     }
 
     /// Override isolated control-plane HTTP provider preparation.
@@ -82,16 +77,6 @@ impl RunnerExecutionFactories {
     /// Retain the HTTP turn-placement factory in a prepared operation.
     pub fn http_handle(&self) -> Arc<dyn RequestExecutorFactory> {
         self.http.clone()
-    }
-
-    /// Borrow the gRPC turn-placement factory used below the same dispatcher.
-    pub fn grpc(&self) -> &dyn RequestExecutorFactory {
-        self.grpc.as_ref()
-    }
-
-    /// Retain the gRPC turn-placement factory in a prepared operation.
-    pub fn grpc_handle(&self) -> Arc<dyn RequestExecutorFactory> {
-        self.grpc.clone()
     }
 
     /// Borrow the whole-trace graph-placement factory.
@@ -144,6 +129,12 @@ impl fmt::Debug for RunnerExecutionFactories {
 }
 
 /// Compose the stock in-process HTTP, graph, and readiness implementations.
+///
+/// gRPC and `dry_run` turn placement are not composed here: each is owned by its
+/// transport's [`NativeTransportExecution`] binding, resolved from the registry
+/// at prepare time.
+///
+/// [`NativeTransportExecution`]: crate::engine::registry::NativeTransportExecution
 pub fn native_execution_factories() -> RunnerExecutionFactories {
     RunnerExecutionFactories::new(
         Arc::new(NativeRequestExecutorFactory),
@@ -151,5 +142,4 @@ pub fn native_execution_factories() -> RunnerExecutionFactories {
         Arc::new(NativeHttpReadinessPlanFactory),
         Arc::new(NativeHttpReadinessTransportFactory),
     )
-    .with_grpc(Arc::new(NativeGrpcExecutionBackendFactory::default()))
 }

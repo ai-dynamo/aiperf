@@ -49,40 +49,74 @@ use crate::engine::readiness::{
     PreparedOnlineReadiness, ReadinessEndpointProfile, ReadinessPlanInput,
 };
 use crate::engine::registry::{
-    GRAPH_WORKLOAD_DESCRIPTOR, GraphWorkloadConfigV2, OnlineGrpcTransportConfigV2,
-    OnlineHttpTransportConfigV2, PreparedRunOutcome, PreparedRunnerOperation, RunnerRunContext,
-    RunnerWorkloadDescriptor, RunnerWorkloadFactory, SCHEDULED_WORKLOAD_DESCRIPTOR,
-    STATIC_ACCURACY_WORKLOAD_DESCRIPTOR, ScheduledWorkloadConfigV2, StaticAccuracyWorkloadConfigV2,
-    ValidatedTransportConfig, ValidatedWorkloadConfig, WorkloadRequirements,
-    inference_workload_requirements, strict_decode, validate_common_workload,
+    GRAPH_WORKLOAD_DESCRIPTOR, GraphWorkloadConfigV2, NativeTransportExecution, PreparedRunOutcome,
+    PreparedRunnerOperation, RunnerRunContext, RunnerWorkloadDescriptor, RunnerWorkloadFactory,
+    SCHEDULED_WORKLOAD_DESCRIPTOR, STATIC_ACCURACY_WORKLOAD_DESCRIPTOR, ScheduledWorkloadConfigV2,
+    StaticAccuracyWorkloadConfigV2, ValidatedTransportConfig, ValidatedWorkloadConfig,
+    WorkloadRequirements, inference_workload_requirements, strict_decode, validate_common_workload,
 };
 use crate::engine::turn_execution::RequestExecutorFactory;
 
-/// Native (`http`/`grpc`) transport execution selection, resolved from the
-/// validated transport config type. Non-native transports (e.g. dynosim) return
-/// `None` and are prepared through their own module.
+/// Native execution binding for the built-in `http` transport.
 ///
-/// This is a type dispatch, not a string switch: the coordinator resolves the
-/// transport factory by id and the workload reads its concrete validated config
-/// to pick the turn-placement factory and readiness policy. Adding a native
-/// `PreparedTurn` transport adds one arm here and nothing in the coordinator.
-#[derive(Clone, Copy)]
-enum NativeTransportSelection {
-    Http,
-    Grpc,
+/// HTTP is the base transport: it drives the shared hyper turn-placement factory
+/// (injected through [`RunnerExecutionFactories`], so a remote HTTP placement can
+/// replace it) and is the only native transport that performs a model-readiness
+/// probe before profiling.
+///
+/// [`RunnerExecutionFactories`]: crate::engine::execution_factories::RunnerExecutionFactories
+#[derive(Clone)]
+pub struct HttpNativeExecution {
+    executor: Arc<dyn RequestExecutorFactory>,
 }
 
-fn classify_native_transport(
-    transport: &dyn ValidatedTransportConfig,
-) -> Option<NativeTransportSelection> {
-    let any = ValidatedTransportConfig::as_any(transport);
-    if any.is::<OnlineHttpTransportConfigV2>() {
-        Some(NativeTransportSelection::Http)
-    } else if any.is::<OnlineGrpcTransportConfigV2>() {
-        Some(NativeTransportSelection::Grpc)
-    } else {
-        None
+impl HttpNativeExecution {
+    /// Bind the HTTP turn-placement factory resolved from the process context.
+    pub fn new(executor: Arc<dyn RequestExecutorFactory>) -> Self {
+        Self { executor }
     }
+}
+
+impl NativeTransportExecution for HttpNativeExecution {
+    fn executor_factory(&self) -> Arc<dyn RequestExecutorFactory> {
+        self.executor.clone()
+    }
+
+    fn readiness_enabled(&self) -> bool {
+        true
+    }
+
+    fn graph_transport_kind(&self) -> Result<GraphTransportKind> {
+        Ok(GraphTransportKind::Http)
+    }
+
+    fn validate_run(&self, _run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> Result<()> {
+        validate_online_run(context)
+    }
+
+    fn provenance(&self) -> BTreeMap<String, String> {
+        BTreeMap::new()
+    }
+}
+
+/// Resolve the native execution binding for a validated transport by resolving
+/// its registered factory by id and asking it for the binding.
+///
+/// Returns `Ok(None)` for a transport whose execution mode is not the
+/// `RequestExecutor` seam (dynosim's virtual-clock co-simulation), which the
+/// caller prepares through the offline module instead. This is the one place the
+/// native path consults the transport registry; there is no per-transport
+/// `match` in any workload.
+fn resolve_native_execution(
+    context: &RunnerRunContext,
+    transport: &dyn ValidatedTransportConfig,
+    transport_id: &str,
+) -> Result<Option<Arc<dyn NativeTransportExecution>>> {
+    let factory = context
+        .product_registry()
+        .transport_factory(transport_id)
+        .ok_or_else(|| anyhow::anyhow!("transport {transport_id:?} is not registered"))?;
+    factory.native_execution(transport, context)
 }
 
 use crate::engine::sidecar_input::{CONTENT_SERVER_SIDECAR_ID, ContentServerSpec};
@@ -176,11 +210,8 @@ impl RunnerWorkloadFactory for ScheduledWorkloadFactoryV2 {
         transport_id: &str,
     ) -> Result<()> {
         let workload = workload_config::<ScheduledWorkloadConfigV2>(workload, "scheduled")?;
-        match classify_native_transport(transport) {
-            Some(NativeTransportSelection::Http) => validate_online_run(context)?,
-            Some(NativeTransportSelection::Grpc) => {
-                crate::engine::grpc_execution::validate_grpc_run(run, context)?;
-            }
+        match resolve_native_execution(context, transport, transport_id)? {
+            Some(binding) => binding.validate_run(run, context)?,
             None => {
                 #[cfg(feature = "dynosim")]
                 return crate::engine::offline_execution::dynosim_scheduled_validate_run(
@@ -188,12 +219,13 @@ impl RunnerWorkloadFactory for ScheduledWorkloadFactoryV2 {
                 );
                 #[cfg(not(feature = "dynosim"))]
                 {
-                    let _ = (run, transport_id);
-                    anyhow::bail!("transport does not support the scheduled workload");
+                    let _ = run;
+                    anyhow::bail!(
+                        "transport {transport_id:?} does not support the scheduled workload"
+                    );
                 }
             }
         }
-        let _ = transport_id;
         validate_authored_tokenizer(&workload.tokenizer)
     }
 
@@ -203,14 +235,14 @@ impl RunnerWorkloadFactory for ScheduledWorkloadFactoryV2 {
         context: &RunnerRunContext,
         transport: Box<dyn ValidatedTransportConfig>,
         workload: Box<dyn ValidatedWorkloadConfig>,
-        _transport_id: &str,
+        transport_id: &str,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
-        match classify_native_transport(transport.as_ref()) {
-            Some(selection) => {
+        match resolve_native_execution(context, transport.as_ref(), transport_id)? {
+            Some(binding) => {
                 let workload =
                     workload_config::<ScheduledWorkloadConfigV2>(workload.as_ref(), "scheduled")?;
                 let plan = lower_scheduled(run, context, workload, self.tokenizers.as_ref())?;
-                prepare_native_operation(run, context, plan, selection)
+                prepare_native_operation(run, context, plan, binding)
             }
             None => {
                 #[cfg(feature = "dynosim")]
@@ -225,7 +257,7 @@ impl RunnerWorkloadFactory for ScheduledWorkloadFactoryV2 {
                 {
                     let _ = (run, context, workload);
                     anyhow::bail!(
-                        "transport {_transport_id:?} does not support the scheduled workload"
+                        "transport {transport_id:?} does not support the scheduled workload"
                     );
                 }
             }
@@ -275,14 +307,13 @@ impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
         transport_id: &str,
     ) -> Result<()> {
         let workload = workload_config::<GraphWorkloadConfigV2>(workload, "graph")?;
-        match classify_native_transport(transport) {
-            Some(selection) => {
-                match selection {
-                    NativeTransportSelection::Http => validate_online_run(context)?,
-                    NativeTransportSelection::Grpc => {
-                        crate::engine::grpc_execution::validate_grpc_run(run, context)?;
-                    }
-                }
+        match resolve_native_execution(context, transport, transport_id)? {
+            Some(binding) => {
+                // The transport itself decides whether it can drive the graph
+                // workload (dry_run cannot yet); its graph-dispatcher kind is the
+                // gate. Run-level validation is dispatched to the same binding.
+                binding.graph_transport_kind()?;
+                binding.validate_run(run, context)?;
                 ensure!(
                     run.sidecars.live_streaming.is_none(),
                     "protocol-v2 graph execution supports the content-server and GPU/network/server telemetry side-channels but not the live-streaming record extension"
@@ -295,7 +326,6 @@ impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
                 context
                     .graph_inputs()
                     .validate_identity(&workload.dataset)?;
-                let _ = transport_id;
                 Ok(())
             }
             None => {
@@ -305,8 +335,8 @@ impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
                 );
                 #[cfg(not(feature = "dynosim"))]
                 {
-                    let _ = (run, transport_id);
-                    anyhow::bail!("transport does not support the graph workload");
+                    let _ = run;
+                    anyhow::bail!("transport {transport_id:?} does not support the graph workload");
                 }
             }
         }
@@ -318,16 +348,13 @@ impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
         context: &RunnerRunContext,
         transport: Box<dyn ValidatedTransportConfig>,
         workload: Box<dyn ValidatedWorkloadConfig>,
-        _transport_id: &str,
+        transport_id: &str,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
-        match classify_native_transport(transport.as_ref()) {
-            Some(selection) => {
+        match resolve_native_execution(context, transport.as_ref(), transport_id)? {
+            Some(binding) => {
                 let workload =
                     workload_config::<GraphWorkloadConfigV2>(workload.as_ref(), "graph")?;
-                let transport_kind = match selection {
-                    NativeTransportSelection::Http => GraphTransportKind::Http,
-                    NativeTransportSelection::Grpc => GraphTransportKind::Grpc,
-                };
+                let transport_kind = binding.graph_transport_kind()?;
                 let plan = lower_graph(
                     run,
                     context,
@@ -335,7 +362,7 @@ impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
                     self.tokenizers.as_ref(),
                     transport_kind,
                 )?;
-                prepare_native_operation(run, context, plan, selection)
+                prepare_native_operation(run, context, plan, binding)
             }
             None => {
                 #[cfg(feature = "dynosim")]
@@ -349,9 +376,7 @@ impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
                 #[cfg(not(feature = "dynosim"))]
                 {
                     let _ = (run, context, workload);
-                    anyhow::bail!(
-                        "transport {_transport_id:?} does not support the graph workload"
-                    );
+                    anyhow::bail!("transport {transport_id:?} does not support the graph workload");
                 }
             }
         }
@@ -397,15 +422,12 @@ impl RunnerWorkloadFactory for StaticAccuracyWorkloadFactoryV2 {
         &self,
         run: &AuthoredRunSpecV2,
         context: &RunnerRunContext,
-        transport: &dyn ValidatedTransportConfig,
+        _transport: &dyn ValidatedTransportConfig,
         workload: &dyn ValidatedWorkloadConfig,
-        _transport_id: &str,
+        transport_id: &str,
     ) -> Result<()> {
         ensure!(
-            matches!(
-                classify_native_transport(transport),
-                Some(NativeTransportSelection::Http)
-            ),
+            transport_id == "http",
             "static accuracy execution runs only over the http transport"
         );
         validate_online_run(context)?;
@@ -426,15 +448,16 @@ impl RunnerWorkloadFactory for StaticAccuracyWorkloadFactoryV2 {
         context: &RunnerRunContext,
         transport: Box<dyn ValidatedTransportConfig>,
         workload: Box<dyn ValidatedWorkloadConfig>,
-        _transport_id: &str,
+        transport_id: &str,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
         ensure!(
-            matches!(
-                classify_native_transport(transport.as_ref()),
-                Some(NativeTransportSelection::Http)
-            ),
+            transport_id == "http",
             "static accuracy execution runs only over the http transport"
         );
+        let binding = resolve_native_execution(context, transport.as_ref(), transport_id)?
+            .ok_or_else(|| {
+                anyhow::anyhow!("static accuracy execution runs only over the http transport")
+            })?;
         let workload = workload_config::<StaticAccuracyWorkloadConfigV2>(
             workload.as_ref(),
             "static_accuracy",
@@ -446,31 +469,30 @@ impl RunnerWorkloadFactory for StaticAccuracyWorkloadFactoryV2 {
             self.tokenizers.as_ref(),
             self.evaluator_factory.clone(),
         )?;
-        prepare_native_operation(run, context, plan, NativeTransportSelection::Http)
+        prepare_native_operation(run, context, plan, binding)
     }
 }
 
-/// Build the prepared native operation for one lowered plan, resolving the
-/// transport's turn-placement factory and readiness policy by selection.
+/// Build the prepared native operation for one lowered plan, driving the
+/// transport's turn-placement factory, readiness policy, and provenance entirely
+/// through its [`NativeTransportExecution`] binding.
+///
+/// There is no per-transport branch here: the binding is the transport, so
+/// adding a native transport changes nothing in this function.
 fn prepare_native_operation(
     run: &AuthoredRunSpecV2,
     context: &RunnerRunContext,
     plan: NativeRunSpec,
-    selection: NativeTransportSelection,
+    binding: Arc<dyn NativeTransportExecution>,
 ) -> Result<Box<dyn PreparedRunnerOperation>> {
     let report_facts = native_plan_report_facts(&plan)?;
-    let (request_executor, readiness, provenance) = match selection {
-        NativeTransportSelection::Http => (
-            context.execution_factories().http_handle(),
-            Some(prepare_online_readiness(run, context)?),
-            BTreeMap::new(),
-        ),
-        NativeTransportSelection::Grpc => (
-            context.execution_factories().grpc_handle(),
-            None,
-            BTreeMap::from([("transport".to_owned(), "grpc".to_owned())]),
-        ),
+    let request_executor = binding.executor_factory();
+    let readiness = if binding.readiness_enabled() {
+        Some(prepare_online_readiness(run, context)?)
+    } else {
+        None
     };
+    let provenance = binding.provenance();
     Ok(Box::new(PreparedNativeOperation {
         plan,
         request_executor,

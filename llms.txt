@@ -156,9 +156,15 @@ segment store without a second registry or linear dataset intermediate.
 Recorded formats accept `synthesis.max_osl`, `max_context_length`,
 `idle_gap_cap_seconds`, `corpus`, and `allow_dataset_wrap` where applicable;
 Python forwards those authored values without parsing trace payloads. Native gRPC requires
-`transport.type: grpc` with `grpc://` or `grpcs://` URLs; offline/wall-clock
+`transport.type: grpc` with `grpc://` or `grpcs://` URLs, behind the default-on
+`grpc` Cargo feature (a lean HTTP-only build drops it and `tonic`); offline/wall-clock
 in-process Dynamo replay requires `transport.type: dynosim_offline` or
-`transport.type: dynosim_online` and a feature-bearing runner.
+`transport.type: dynosim_online` and a feature-bearing runner. Each native
+transport (`http`/`grpc`/`dry_run`) is resolved from the transport registry
+through its `NativeTransportExecution` binding (executor factory + readiness +
+graph-dispatcher kind), so the scheduled/graph workloads never branch on a
+transport enum — adding a transport is registering a factory, and gating one out
+is not registering it.
 
 Provider-neutral evaluation additionally requires the selected runner
 deployment's wheel-`RECORD`-verified companion roots or generated adjacent

@@ -150,7 +150,7 @@ impl AIPerfRegistryFactory for BuiltinAIPerfRegistryFactory {
             &BuiltinActuatorsExtension,
             #[cfg(feature = "engine")]
             &crate::engine::registry::HttpExtension,
-            #[cfg(feature = "engine")]
+            #[cfg(all(feature = "engine", feature = "grpc"))]
             &crate::engine::registry::GrpcExtension,
             #[cfg(all(feature = "engine", feature = "dynosim"))]
             &crate::engine::registry::DynosimExtension,

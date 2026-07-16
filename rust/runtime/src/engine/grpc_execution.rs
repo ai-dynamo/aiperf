@@ -10,15 +10,58 @@
 //! lowering into the common prepared native plan; execution then flows through
 //! the shared `PreparedTurn`/graph placement over the gRPC dispatcher.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use crate::transport_grpc::GrpcBindingRegistry;
 use crate::transport_http::config::ClientConfig;
 use anyhow::{Context, Result, ensure};
 use url::Url;
 
+use crate::engine::graph_execution::GraphTransportKind;
+use crate::engine::grpc_turn_execution::NativeGrpcExecutionBackendFactory;
 use crate::engine::protocol_v2::AuthoredRunSpecV2;
-use crate::engine::registry::RunnerRunContext;
+use crate::engine::registry::{NativeTransportExecution, RunnerRunContext};
+use crate::engine::turn_execution::RequestExecutorFactory;
+
+/// Native execution binding for the built-in `grpc` transport.
+///
+/// gRPC drives the same `RequestExecutor` seam as HTTP; the binding owns its
+/// own [`NativeGrpcExecutionBackendFactory`] (it is not a named field of the
+/// process execution-factory set), so gRPC is a transport the workloads treat
+/// identically to any other. Readiness polling is skipped (no gRPC server-ready
+/// probe today) and graph nodes dispatch over the Tonic sink.
+#[derive(Debug, Default)]
+pub struct GrpcNativeExecution;
+
+impl GrpcNativeExecution {
+    /// Construct the stateless gRPC execution binding.
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl NativeTransportExecution for GrpcNativeExecution {
+    fn executor_factory(&self) -> Arc<dyn RequestExecutorFactory> {
+        Arc::new(NativeGrpcExecutionBackendFactory::default())
+    }
+
+    fn readiness_enabled(&self) -> bool {
+        false
+    }
+
+    fn graph_transport_kind(&self) -> Result<GraphTransportKind> {
+        Ok(GraphTransportKind::Grpc)
+    }
+
+    fn validate_run(&self, run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> Result<()> {
+        validate_grpc_run(run, context)
+    }
+
+    fn provenance(&self) -> BTreeMap<String, String> {
+        BTreeMap::from([("transport".to_owned(), "grpc".to_owned())])
+    }
+}
 
 /// Validate the gRPC-specific endpoint policy for one authored run.
 ///

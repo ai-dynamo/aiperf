@@ -41,13 +41,16 @@ pub mod control_plane_http;
 pub mod coordinator;
 pub mod dataset_input;
 pub mod distribution_identity;
+pub mod dry_run;
 pub mod execute;
 pub mod execution_factories;
 pub mod gpu_telemetry;
 pub mod graph_execution;
 pub mod graph_input;
 pub mod graph_phase_runtime;
+#[cfg(feature = "grpc")]
 pub mod grpc_execution;
+#[cfg(feature = "grpc")]
 pub mod grpc_turn_execution;
 pub mod heartbeat_lane;
 pub mod live_streaming;

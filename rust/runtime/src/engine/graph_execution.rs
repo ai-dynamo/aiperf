@@ -43,6 +43,7 @@ use crate::metrics_core::{InferenceDimensions, MetricsConfig, Phase};
 use crate::multiturn::InputTokenCounter;
 use crate::rng::{RngRoot, namespace};
 use crate::timing::{BernoulliFixedDelay, SlotPool};
+#[cfg(feature = "grpc")]
 use crate::transport_grpc::GrpcBindingRegistry;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
@@ -54,6 +55,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::engine::execute::DEFAULT_ENDPOINT_PROFILE_ID;
+#[cfg(feature = "grpc")]
 use crate::engine::grpc_turn_execution::grpc_sink_with_endpoints;
 use crate::engine::records::{CapturedHttpExchange, CapturedModelOutput, CapturedRecord};
 use crate::engine::registry::ValidatedEndpointProfileV2;
@@ -67,14 +69,16 @@ use crate::engine::registry::ValidatedEndpointProfileV2;
 /// A future `PreparedTurn` transport (e.g. WebSocket) adds one variant plus one
 /// construction arm and nothing else in the graph runtime changes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum GraphTransportKind {
+pub enum GraphTransportKind {
     /// Clock-injected hyper HTTP/SSE dispatch (`TransportSink`).
     Http,
     /// Clock-injected Tonic gRPC dispatch (`GrpcTransportSink`).
     ///
     /// Production routing selects this arm when the graph workload resolves a
     /// gRPC transport by id/type (`online_execution::lower_graph`), so `grpc +
-    /// graph` dispatches graph nodes over Tonic.
+    /// graph` dispatches graph nodes over Tonic. Gated behind the `grpc` Cargo
+    /// feature alongside the rest of the gRPC transport stack.
+    #[cfg(feature = "grpc")]
     Grpc,
 }
 
@@ -359,7 +363,10 @@ impl RunnerGraphEndpointRuntimeFactory for PreparedRunnerGraphEndpointRuntimeFac
         }
         let table = Rc::new(table);
         // gRPC needs one dense binding table shared across every profile's sink;
-        // HTTP needs no bindings at all, so only build it on the gRPC arm.
+        // HTTP needs no bindings at all, so only build it on the gRPC arm. Gated
+        // with the gRPC stack: without it, HTTP is the only transport kind and no
+        // binding table is ever constructed.
+        #[cfg(feature = "grpc")]
         let bindings = match self.transport_kind {
             GraphTransportKind::Http => None,
             GraphTransportKind::Grpc => Some(GrpcBindingRegistry::builtin()?),
@@ -378,6 +385,7 @@ impl RunnerGraphEndpointRuntimeFactory for PreparedRunnerGraphEndpointRuntimeFac
                         )?
                         .with_prepared_endpoints(table.clone()),
                     ),
+                    #[cfg(feature = "grpc")]
                     GraphTransportKind::Grpc => Rc::new(grpc_sink_with_endpoints(
                         clock.clone(),
                         run_origin_ns,
@@ -1301,6 +1309,7 @@ mod tests {
         assert_eq!(reference.key.index(), 1);
     }
 
+    #[cfg(feature = "grpc")]
     #[test]
     fn prepared_graph_runtime_builds_a_grpc_dispatcher_when_selected() {
         // A gRPC-bindable endpoint (kserve v2 infer) prepares over the gRPC arm:
@@ -1330,6 +1339,7 @@ mod tests {
         assert_eq!(runtime.kind(), GraphTransportKind::Grpc);
     }
 
+    #[cfg(feature = "grpc")]
     #[test]
     fn prepared_graph_grpc_runtime_rejects_endpoints_without_a_grpc_binding() {
         // Negative control proving the gRPC arm genuinely prepares bindings: the
