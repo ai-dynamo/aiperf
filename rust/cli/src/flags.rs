@@ -267,6 +267,95 @@ pub struct ProfileFlags {
     /// Degradation-knee threshold fraction (`--degradation-threshold`).
     #[arg(long = "degradation-threshold")]
     pub degradation_threshold: Option<f64>,
+    /// Paired ISL/OSL shapes for pareto-sweep (`--isl-osl-pairs`, `isl/osl` list).
+    // (declared above via `isl_osl_pairs`)
+    /// Adaptive search style (`--search-style`: smooth_isotonic/monotonic/bo/optuna/grid).
+    #[arg(long = "search-style")]
+    pub search_style: Option<String>,
+    /// Search planner id (`--search-planner`).
+    #[arg(long = "search-planner")]
+    pub search_planner: Option<String>,
+    /// Search objective metric (`--search-metric`).
+    #[arg(long = "search-metric")]
+    pub search_metric: Option<String>,
+    /// Search objective stat (`--search-stat`).
+    #[arg(long = "search-stat")]
+    pub search_stat: Option<String>,
+    /// Search optimization direction (`--search-direction`).
+    #[arg(long = "search-direction")]
+    pub search_direction: Option<String>,
+    /// Search space definition (`--search-space`).
+    #[arg(long = "search-space")]
+    pub search_space: Option<String>,
+    /// Search SLA filters (`--search-sla`).
+    #[arg(long = "search-sla", num_args = 1..)]
+    pub search_sla: Option<Vec<String>>,
+    /// Search SLA tier (`--search-sla-tier`).
+    #[arg(long = "search-sla-tier")]
+    pub search_sla_tier: Option<String>,
+    /// Initial BO sample count (`--search-initial-points`).
+    #[arg(long = "search-initial-points")]
+    pub search_initial_points: Option<i64>,
+    /// Max search iterations (`--search-max-iterations`).
+    #[arg(long = "search-max-iterations")]
+    pub search_max_iterations: Option<i64>,
+    /// Search random seed (`--search-random-seed`).
+    #[arg(long = "search-random-seed")]
+    pub search_random_seed: Option<u64>,
+    /// Percentile pooling mode for search (`--search-percentile-pooling`).
+    #[arg(long = "search-percentile-pooling")]
+    pub search_percentile_pooling: Option<String>,
+    /// Convergence metric (`--convergence-metric`).
+    #[arg(long = "convergence-metric")]
+    pub convergence_metric: Option<String>,
+    /// Convergence mode (`--convergence-mode`).
+    #[arg(long = "convergence-mode")]
+    pub convergence_mode: Option<String>,
+    /// Convergence stat (`--convergence-stat`).
+    #[arg(long = "convergence-stat")]
+    pub convergence_stat: Option<String>,
+    /// Convergence threshold (`--convergence-threshold`).
+    #[arg(long = "convergence-threshold")]
+    pub convergence_threshold: Option<f64>,
+    /// Optuna sampler (`--optuna-sampler`).
+    #[arg(long = "optuna-sampler")]
+    pub optuna_sampler: Option<String>,
+    /// Optuna acquisition function (`--optuna-acquisition`).
+    #[arg(long = "optuna-acquisition")]
+    pub optuna_acquisition: Option<String>,
+    /// Optuna terminator (`--optuna-terminator`).
+    #[arg(long = "optuna-terminator")]
+    pub optuna_terminator: Option<String>,
+    /// BO constraint mode (`--bo-constraint-mode`).
+    #[arg(long = "bo-constraint-mode")]
+    pub bo_constraint_mode: Option<String>,
+    /// Adaptive-scale control variable (`--adaptive-scale-control`).
+    #[arg(long = "adaptive-scale-control")]
+    pub adaptive_scale_control: Option<String>,
+    /// Named scenario variant selector (`--variant` / `--sweep-variant`).
+    #[arg(long = "variant", visible_alias = "sweep-variant")]
+    pub variant: Option<String>,
+    /// TTFT SLA, ms (`--ttft-sla-ms`).
+    #[arg(long = "ttft-sla-ms")]
+    pub ttft_sla_ms: Option<f64>,
+    /// ITL SLA, ms (`--itl-sla-ms`).
+    #[arg(long = "itl-sla-ms")]
+    pub itl_sla_ms: Option<f64>,
+    /// TPOT SLA, ms (`--tpot-sla-ms`).
+    #[arg(long = "tpot-sla-ms")]
+    pub tpot_sla_ms: Option<f64>,
+    /// End-to-end SLA, ms (`--e2e-sla-ms`).
+    #[arg(long = "e2e-sla-ms")]
+    pub e2e_sla_ms: Option<f64>,
+    /// Error-rate SLA fraction (`--error-rate-sla`).
+    #[arg(long = "error-rate-sla")]
+    pub error_rate_sla: Option<f64>,
+    /// SLO attainment fraction (`--slo-attainment-fraction`).
+    #[arg(long = "slo-attainment-fraction")]
+    pub slo_attainment_fraction: Option<f64>,
+    /// Enable OTel live-streaming (`--stream`; requires `--otel-url`).
+    #[arg(long = "stream", default_value_t = false)]
+    pub stream: bool,
 
     /// Trials per variation (`--num-profile-runs`); `>1` repeats each run.
     #[arg(long = "num-profile-runs")]
