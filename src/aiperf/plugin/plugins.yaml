@@ -1080,6 +1080,24 @@ stream_exporter:
       record_types: [server_metrics]
 
 # =============================================================================
+# Analyzers
+# =============================================================================
+# Summarize-time analyzers that join across accumulators via the SummaryContext.
+# =============================================================================
+analyzer:
+  energy_efficiency:
+    class: aiperf.metrics.energy_efficiency_analyzer:EnergyEfficiencyAnalyzer
+    description: |
+      Joins GPU-telemetry energy/power with inference token totals to emit
+      energy-efficiency metrics (joules per token, performance per watt, energy
+      delay product, ...). Skipped when GPU telemetry is not collected.
+    metadata:
+      # Live GPU accumulator (windowed energy/power query) + metrics summary
+      # (token/duration totals). These are AccumulatorType names, not record types.
+      required_accumulators: [gpu_telemetry]
+      required_summaries: [metric_results]
+
+# =============================================================================
 # Artifact Publishers
 # =============================================================================
 # Artifact publishers upload exported benchmark files to remote storage backends.

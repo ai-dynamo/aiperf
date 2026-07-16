@@ -17,7 +17,6 @@ from aiperf.common.enums import PrometheusMetricType, ServerMetricsFormat
 from aiperf.common.exceptions import DataExporterDisabled, PostProcessorDisabled
 from aiperf.common.growable_array import GrowableArray
 from aiperf.common.models import MetricResult
-from aiperf.common.models.error_models import ErrorDetailsCount
 from aiperf.common.models.server_metrics_models import (
     CounterMetricData,
     GaugeMetricData,
@@ -39,6 +38,7 @@ from aiperf.server_metrics.storage import (
 )
 
 if TYPE_CHECKING:
+    from aiperf.common.accumulator_protocols import ExportContext, SummaryContext
     from aiperf.config.resolution.plan import BenchmarkRun
 
 _METRIC_DATA_CLASSES: dict[
@@ -131,34 +131,27 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         ts = self._timestamps_ns.data
         return (ts >= start_ns) & (ts < end_ns)
 
-    async def export_results(
-        self,
-        start_ns: int,
-        end_ns: int,
-        error_summary: list[ErrorDetailsCount] | None = None,
-        *,
-        warmup_start_ns: int | None = None,
-        warmup_end_ns: int | None = None,
-    ) -> ServerMetricsResults | None:
+    async def export_results(self, ctx: ExportContext) -> ServerMetricsResults | None:
         """Export accumulated server metrics as results for final reporting.
 
         Called at the end of profiling to generate the final ServerMetricsResults
         object containing all computed statistics. Applies time filtering to
         exclude warmup periods and computes per-endpoint summaries with stats.
 
-        The time range [start_ns, end_ns] represents the profiling phase only,
-        excluding warmup. Reference points before start_ns are used for counter
-        and histogram delta calculations.
-
-        Args:
-            start_ns: Profiling phase start time in nanoseconds (excludes warmup period)
-            end_ns: Profiling phase end time in nanoseconds (may extend beyond last collection)
-            error_summary: Optional list of error counts from collection failures
+        Reads the profiling window from ``ctx.start_ns/ctx.end_ns`` (excludes
+        warmup; reference points before start_ns drive counter/histogram deltas)
+        and the warmup window from ``ctx.warmup_start_ns/ctx.warmup_end_ns``.
 
         Returns:
             ServerMetricsResults containing endpoint summaries with computed statistics,
             or None if no endpoints were successfully scraped during profiling.
         """
+        start_ns = ctx.start_ns
+        end_ns = ctx.end_ns
+        error_summary = ctx.error_summary
+        warmup_start_ns = ctx.warmup_start_ns
+        warmup_end_ns = ctx.warmup_end_ns
+
         if not self._server_metrics_hierarchy.endpoints:
             return None
 
@@ -393,7 +386,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         except Exception as e:
             self.error(f"Failed to export server metrics to Parquet: {e!r}")
 
-    async def summarize(self) -> list[MetricResult]:
+    async def summarize(self, ctx: SummaryContext | None = None) -> list[MetricResult]:
         """Summarize accumulated metrics into MetricResult list.
 
         Server metrics are exported separately via export_results() rather than

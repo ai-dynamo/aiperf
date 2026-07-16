@@ -130,6 +130,14 @@
         "$ref": "#/$defs/StreamExporterPlugin"
       }
     },
+    "analyzer": {
+      "title": "Analyzer Plugins",
+      "type": "object",
+      "description": "Analyzers run at summarize time and join across accumulators, reading peer\nstate from the SummaryContext to compute cross-accumulator metrics (e.g.\nenergy efficiency joins GPU telemetry to inference tokens). They store no\nrecords and declare the accumulators they require; skipped when any is absent.\nOne-to-many mapping: multiple analyzers loaded simultaneously.",
+      "additionalProperties": {
+        "$ref": "#/$defs/AnalyzerPlugin"
+      }
+    },
     "accuracy_grader": {
       "title": "Accuracy Grader Plugins",
       "type": "object",
@@ -1172,6 +1180,56 @@
       ],
       "title": "Stream Exporter Plugin",
       "description": "Stream exporters write each record to an external sink (e.g. JSONL files) as it\narrives. No summarization dependencies. Finalized after all records are processed.\nOne-to-many mapping: multiple exporters loaded simultaneously."
+    },
+    "AnalyzerPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "description": "Metadata schema for analyzer plugins.\n\nAnalyzers run at summarize time and join across accumulators. They store no\nrecords; instead they declare their dependencies by KIND:\n\n- ``required_accumulators``: needs the LIVE accumulator instance (via\n  ``SummaryContext.get_accumulator``) to run a query not present in the\n  summary \u2014 e.g. energy efficiency calls ``GPUTelemetryAccumulator``'s\n  windowed ``total_energy_joules`` / ``total_power_watts``.\n- ``required_summaries``: needs only the already-computed summary output\n  (via ``SummaryContext.get_output``) \u2014 e.g. energy efficiency reads token\n  and duration totals off the metrics accumulator's summary.\n\nRecordsManager runs an analyzer only when every required accumulator is\nloaded AND every required summary was produced; otherwise it is skipped\n(e.g. energy efficiency is skipped when GPU telemetry is disabled).\n\nReferenced by: categories.yaml analyzer.metadata_class\nUsed in: plugins.yaml analyzer entries",
+          "properties": {
+            "required_accumulators": {
+              "description": "AccumulatorType names whose LIVE instance this analyzer queries via SummaryContext.get_accumulator(). The analyzer is skipped unless all are loaded. Values: 'metric_records', 'gpu_telemetry', 'server_metrics'.",
+              "items": {
+                "type": "string"
+              },
+              "title": "Required Accumulators",
+              "type": "array"
+            },
+            "required_summaries": {
+              "description": "AccumulatorType names whose SUMMARY output this analyzer reads via SummaryContext.get_output(). The analyzer is skipped unless all were produced. Values: 'metric_records', 'gpu_telemetry', 'server_metrics'.",
+              "items": {
+                "type": "string"
+              },
+              "title": "Required Summaries",
+              "type": "array"
+            }
+          },
+          "title": "AnalyzerMetadata",
+          "type": "object"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Analyzer Plugin",
+      "description": "Analyzers run at summarize time and join across accumulators, reading peer\nstate from the SummaryContext to compute cross-accumulator metrics (e.g.\nenergy efficiency joins GPU telemetry to inference tokens). They store no\nrecords and declare the accumulators they require; skipped when any is absent.\nOne-to-many mapping: multiple analyzers loaded simultaneously."
     },
     "AccuracyGraderPlugin": {
       "type": "object",

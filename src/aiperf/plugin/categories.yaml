@@ -170,6 +170,17 @@ stream_exporter:
     arrives. No summarization dependencies. Finalized after all records are processed.
     One-to-many mapping: multiple exporters loaded simultaneously.
 
+analyzer:
+  protocol: aiperf.common.accumulator_protocols:AnalyzerProtocol
+  metadata_class: aiperf.plugin.schema.schemas:AnalyzerMetadata
+  enum: AnalyzerType
+  description: |
+    Analyzers run at summarize time and join across accumulators, reading peer
+    state from the SummaryContext to compute cross-accumulator metrics (e.g.
+    energy efficiency joins GPU telemetry to inference tokens). They store no
+    records and declare the accumulators they require; skipped when any is absent.
+    One-to-many mapping: multiple analyzers loaded simultaneously.
+
 # =============================================================================
 # Accuracy Categories
 # =============================================================================

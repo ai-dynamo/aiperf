@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 from aiperf.common.accumulator_protocols import SummaryContext
@@ -36,6 +37,7 @@ from aiperf.plugin.enums import (
 if TYPE_CHECKING:
     from aiperf.common.accumulator_protocols import (
         AccumulatorProtocol,
+        AnalyzerProtocol,
         StreamExporterProtocol,
     )
     from aiperf.common.models.branch_stats import BranchStats
@@ -45,6 +47,21 @@ if TYPE_CHECKING:
 
 
 _logger = AIPerfLogger(__name__)
+
+
+@dataclass(slots=True)
+class LoadedAnalyzer:
+    """An analyzer plugin instance plus its declared dependencies by kind.
+
+    ``required_accumulators`` names accumulators whose live instance the analyzer
+    queries (``SummaryContext.get_accumulator``); ``required_summaries`` names
+    accumulators whose summary output it reads (``SummaryContext.get_output``).
+    RecordsManager runs the analyzer only when both are satisfied.
+    """
+
+    analyzer: AnalyzerProtocol
+    required_accumulators: list[str] = field(default_factory=list)
+    required_summaries: list[str] = field(default_factory=list)
 
 
 class _LoaderHost(Protocol):
@@ -131,6 +148,60 @@ def load_stream_exporters(
         except Exception as e:  # noqa: BLE001 - one bad exporter must not abort the records manager
             host.error(f"Failed to create stream exporter {entry.name}: {e}")
     return exporters
+
+
+def load_analyzers(host: _LoaderHost) -> list[LoadedAnalyzer]:
+    """Instantiate all enabled ``ANALYZER`` plugins for ``host``.
+
+    Analyzers are stateless summarize-time components (no lifecycle, no record
+    ingestion) that read peer accumulators via the SummaryContext. Each entry is
+    returned as a :class:`LoadedAnalyzer` carrying its declared dependencies by
+    kind — ``required_accumulators`` (live instance) and ``required_summaries``
+    (summary output) — so the caller can skip an analyzer whose dependencies are
+    unavailable. Same disable/error policy as :func:`load_accumulators`.
+    """
+    analyzers: list[LoadedAnalyzer] = []
+    for entry in plugins.iter_entries(PluginType.ANALYZER):
+        try:
+            AnalyzerClass = plugins.get_class(PluginType.ANALYZER, entry.name)
+            analyzer = AnalyzerClass(
+                service_id=host.service_id,
+                run=host.run,
+                pub_client=host.pub_client,
+            )
+            loaded = LoadedAnalyzer(
+                analyzer=analyzer,
+                required_accumulators=list(
+                    entry.metadata.get("required_accumulators", [])
+                ),
+                required_summaries=list(entry.metadata.get("required_summaries", [])),
+            )
+            # Catch metadata typos loudly: a required name that is not a known
+            # AccumulatorType would otherwise silently disable the analyzer at
+            # every run (its dependency never "resolves").
+            known = {str(t) for t in AccumulatorType}
+            unknown = [
+                r
+                for r in (*loaded.required_accumulators, *loaded.required_summaries)
+                if r not in known
+            ]
+            if unknown:
+                host.error(
+                    f"Analyzer {entry.name} declares unknown accumulator dependencies "
+                    f"{unknown} (valid: {sorted(known)}); it will never run. Fix the "
+                    "required_accumulators/required_summaries in plugins.yaml."
+                )
+            analyzers.append(loaded)
+            host.debug(
+                f"Created analyzer: {entry.name}: {analyzer.__class__.__name__} "
+                f"(accumulators={loaded.required_accumulators}, "
+                f"summaries={loaded.required_summaries})"
+            )
+        except (PluginDisabled, PostProcessorDisabled):
+            host.debug(f"Analyzer {entry.name} is disabled and will not be used")
+        except Exception as e:  # noqa: BLE001 - one bad analyzer must not abort the records manager
+            host.error(f"Failed to create analyzer {entry.name}: {e}")
+    return analyzers
 
 
 async def generate_realtime_metrics(

@@ -169,9 +169,8 @@ def _make_manager_mock(
     mgr._bucket_accumulator_summary = (
         RecordsManager._bucket_accumulator_summary.__get__(mgr)
     )
-    mgr._apply_gpu_efficiency_metrics = (
-        RecordsManager._apply_gpu_efficiency_metrics.__get__(mgr)
-    )
+    mgr._analyzers = []
+    mgr._run_analyzers = RecordsManager._run_analyzers.__get__(mgr)
     mgr._finalize_stream_exporters = RecordsManager._finalize_stream_exporters.__get__(
         mgr
     )

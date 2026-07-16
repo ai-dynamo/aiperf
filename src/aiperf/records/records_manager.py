@@ -12,6 +12,7 @@ from aiperf.common.accumulator_protocols import (
     AccumulatorProtocol,
     ExportContext,
     StreamExporterProtocol,
+    SummaryContext,
 )
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.constants import NANOS_PER_SECOND
@@ -57,7 +58,6 @@ from aiperf.common.models import (
     TimesliceResult,
     WorkerProcessingStats,
 )
-from aiperf.common.models.server_metrics_models import TimeRangeFilter
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.config.comm import ZMQDualBindConfig
 from aiperf.credit.messages import (
@@ -85,8 +85,10 @@ from aiperf.records import records_manager_processing
 from aiperf.records.dataset_gate import await_dataset_configured
 from aiperf.records.error_tracker import ErrorTracker
 from aiperf.records.records_manager_processing import (
+    LoadedAnalyzer,
     generate_realtime_metrics,
     load_accumulators,
+    load_analyzers,
     load_stream_exporters,
 )
 from aiperf.records.records_tracker import RecordsTracker
@@ -439,6 +441,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._stream_exporters: dict[StreamExporterType, StreamExporterProtocol] = (
             load_stream_exporters(self)
         )
+        # Summarize-time cross-accumulator analyzers (e.g. energy efficiency),
+        # each carrying its live-instance and summary dependencies.
+        self._analyzers: list[LoadedAnalyzer] = load_analyzers(self)
         self._routing_table = self._build_routing_table()
         self._log_routing_table()
 
@@ -1034,38 +1039,42 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             self._warned_missing_cache_reporting = True
             self.warning(CACHE_REPORTING_HINT)
 
-    def _apply_gpu_efficiency_metrics(
-        self,
-        records_results: list[MetricResult],
-        phase_stats: PhaseRecordsStats,
-        phase: CreditPhase,
-    ) -> None:
-        """Append GPU efficiency metrics to records_results when the phase has a real window.
+    async def _run_analyzers(self, ctx: SummaryContext) -> list[MetricResult]:
+        """Run summarize-time analyzer plugins that join across accumulators.
 
-        No-op if no accumulator is configured. Skips with a warning when the
-        phase has no records (either bound is None) — a two-call time.time_ns()
-        fallback would otherwise yield a zero-width window and power (gauge)
-        would either emit a misleading 0.0W or be silently dropped depending
-        on sample jitter.
+        An analyzer is skipped unless every accumulator it needs a LIVE instance
+        of (``required_accumulators``) is loaded AND every accumulator whose
+        SUMMARY it reads (``required_summaries``) was produced — e.g. the
+        energy-efficiency analyzer queries the live GPU accumulator and reads the
+        metrics summary. One analyzer's failure is logged and does not abort the
+        rest. Returns the flattened MetricResults to merge into the summary.
         """
-        if self._gpu_telemetry_accumulator is None:
-            return
-        if phase_stats.start_ns is None or phase_stats.requests_end_ns is None:
-            self.warning(
-                f"Skipping efficiency metrics for phase {phase}: "
-                f"start_ns={phase_stats.start_ns}, "
-                f"requests_end_ns={phase_stats.requests_end_ns}"
-            )
-            return
-        time_filter = TimeRangeFilter(
-            start_ns=phase_stats.start_ns,
-            end_ns=phase_stats.requests_end_ns,
-        )
-        efficiency_metrics = self._gpu_telemetry_accumulator.compute_efficiency_metrics(
-            metric_results=records_results,
-            time_filter=time_filter,
-        )
-        records_results.extend(efficiency_metrics)
+        if not self._analyzers:
+            return []
+        loaded = {str(acc_type) for acc_type in self._accumulators}
+        summarized = {str(acc_type) for acc_type in ctx.accumulator_outputs}
+        results: list[MetricResult] = []
+        for loaded_analyzer in self._analyzers:
+            analyzer = loaded_analyzer.analyzer
+            name = analyzer.__class__.__name__
+            missing_acc = [
+                r for r in loaded_analyzer.required_accumulators if r not in loaded
+            ]
+            missing_sum = [
+                r for r in loaded_analyzer.required_summaries if r not in summarized
+            ]
+            if missing_acc or missing_sum:
+                self.debug(
+                    lambda n=name, a=missing_acc, s=missing_sum: (
+                        f"Skipping analyzer {n}: missing accumulators {a}, summaries {s}"
+                    )
+                )
+                continue
+            try:
+                results.extend(await analyzer.analyze(ctx))
+            except Exception as e:  # noqa: BLE001 - one analyzer must not abort the summary
+                self.error(f"Analyzer {name} failed: {e!r}")
+        return results
 
     async def _summarize_one_accumulator(
         self,
@@ -1139,16 +1148,32 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
     async def _summarize_metric_record_accumulators(
         self, phase: CreditPhase, cancelled: bool
-    ) -> tuple[list[MetricResult], list[TimesliceResult], list[ErrorDetails]]:
+    ) -> tuple[
+        list[MetricResult], list[TimesliceResult], list[ErrorDetails], SummaryContext
+    ]:
         """Summarize the metric_records accumulators (the byte-exact engine).
 
         Telemetry / server-metrics accumulators are summarized separately via
         the dedicated ``_publish_telemetry_results`` / ``_publish_server_metrics_results``
         side-channels so they are not double-processed here.
+
+        Also returns a populated ``SummaryContext`` — every loaded accumulator
+        instance plus the metric_records summaries keyed by ``AccumulatorType`` —
+        so summarize-time ``analyzer`` plugins can join across accumulators
+        (e.g. energy efficiency joins GPU telemetry to inference tokens).
         """
         records_results: list[MetricResult] = []
         timeslices: list[TimesliceResult] = []
         error_results: list[ErrorDetails] = []
+
+        phase_stats = self._records_tracker.create_stats_for_phase(phase)
+        summary_ctx = SummaryContext(
+            accumulators=dict(self._accumulators),
+            start_ns=phase_stats.start_ns or 0,
+            end_ns=phase_stats.requests_end_ns or 0,
+            phase=phase,
+            cancelled=cancelled,
+        )
 
         # Only the metric_records-typed accumulators feed the summary records.
         acc_items = [
@@ -1157,9 +1182,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             if acc in self._metric_record_accumulators
         ]
         if not acc_items:
-            return records_results, timeslices, error_results
+            return records_results, timeslices, error_results, summary_ctx
 
-        phase_stats = self._records_tracker.create_stats_for_phase(phase)
         ctx = ExportContext(
             start_ns=phase_stats.start_ns,
             end_ns=phase_stats.requests_end_ns,
@@ -1175,12 +1199,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             return_exceptions=False,
         )
         for acc_type, summary in summaries:
+            # Expose each accumulator's summary for cross-accumulator analyzers.
+            summary_ctx.accumulator_outputs[acc_type] = summary
             ts = self._bucket_accumulator_summary(
                 acc_type, summary, records_results, error_results
             )
             if ts:
                 timeslices = ts
-        return records_results, timeslices, error_results
+        return records_results, timeslices, error_results, summary_ctx
 
     def _has_records_for_phase(self, phase: CreditPhase) -> bool:
         phase_trackers = getattr(self._records_tracker, "_phase_trackers", {})
@@ -1200,6 +1226,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             records_results,
             _,
             error_results,
+            _summary_ctx,
         ) = await self._summarize_metric_record_accumulators(
             CreditPhase.WARMUP,
             self._records_tracker.was_phase_cancelled(CreditPhase.WARMUP),
@@ -1318,6 +1345,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             records_results,
             timeslices,
             error_results,
+            summary_ctx,
         ) = await self._summarize_metric_record_accumulators(phase, cancelled)
 
         warmup_records_results = await self._summarize_warmup_metric_records()
@@ -1325,11 +1353,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         await self._finalize_stream_exporters()
 
         phase_stats = self._records_tracker.create_stats_for_phase(phase)
-        # Snapshot count BEFORE extending with efficiency metrics — `completed`
-        # reports the number of request-derived records, not derived aggregates.
+        # Snapshot count BEFORE extending with derived aggregates (efficiency,
+        # analyzers) — `completed` reports request-derived records only.
         records_completed = len(records_results)
 
-        self._apply_gpu_efficiency_metrics(records_results, phase_stats, phase)
+        # Cross-accumulator analyzer plugins (e.g. energy efficiency) run after
+        # all accumulators have summarized, reading peers via the SummaryContext.
+        records_results.extend(await self._run_analyzers(summary_ctx))
 
         result = ProcessRecordsResult(
             results=ProfileResults(
@@ -1387,7 +1417,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self.debug("_process_results completed, returning result")
         return result
 
-    def _process_telemetry_results(self) -> ProcessTelemetryResult:
+    async def _process_telemetry_results(self) -> ProcessTelemetryResult:
         """Process telemetry results by exporting the accumulated telemetry data.
 
         Returns:
@@ -1409,15 +1439,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             )
 
         # Get timing from profiling phase stats
-        # Note: end_ns is not passed to include the final telemetry scrape that
+        # Note: end_ns is left None to include the final telemetry scrape that
         # occurs after PROFILE_COMPLETE but before export_results is called.
         # If start_ns is None (no profiling phase), include all data.
         phase_stats = self._records_tracker.create_stats_for_phase(
             CreditPhase.PROFILING
         )
-        telemetry_export_data = self._gpu_telemetry_accumulator.export_results(
-            start_ns=phase_stats.start_ns,
-            error_summary=error_summary,
+        telemetry_export_data = await self._gpu_telemetry_accumulator.export_results(
+            ExportContext(start_ns=phase_stats.start_ns, error_summary=error_summary)
         )
 
         return ProcessTelemetryResult(
@@ -1431,7 +1460,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         Called at the end of _process_results to keep telemetry separate from
         inference metrics in the results pipeline.
         """
-        telemetry_result = self._process_telemetry_results()
+        telemetry_result = await self._process_telemetry_results()
         await self.publish(
             ProcessTelemetryResultMessage(
                 service_id=self.service_id,
@@ -1471,11 +1500,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         server_metrics_export_data = (
             await self._server_metrics_accumulator.export_results(
-                start_ns=profiling_start_ns,
-                end_ns=profiling_end_ns,
-                error_summary=error_summary,
-                warmup_start_ns=warmup_phase_stats.start_ns,
-                warmup_end_ns=warmup_phase_stats.requests_end_ns,
+                ExportContext(
+                    start_ns=profiling_start_ns,
+                    end_ns=profiling_end_ns,
+                    error_summary=error_summary,
+                    warmup_start_ns=warmup_phase_stats.start_ns,
+                    warmup_end_ns=warmup_phase_stats.requests_end_ns,
+                )
             )
         )
 

@@ -4,6 +4,7 @@
 
 import pytest
 
+from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.enums import PrometheusMetricType
 from aiperf.common.models.error_models import ErrorDetailsCount
 from aiperf.common.models.server_metrics_models import (
@@ -106,8 +107,10 @@ class TestServerMetricsAccumulator:
         processor = ServerMetricsAccumulator(mock_cfg)
 
         result = await processor.export_results(
-            start_ns=1_000_000_000,
-            end_ns=2_000_000_000,
+            ExportContext(
+                start_ns=1_000_000_000,
+                end_ns=2_000_000_000,
+            )
         )
 
         assert result is None
@@ -136,7 +139,9 @@ class TestServerMetricsAccumulator:
 
         start_ns = 1_000_000_000
         end_ns = 2_000_000_000
-        result = await processor.export_results(start_ns=start_ns, end_ns=end_ns)
+        result = await processor.export_results(
+            ExportContext(start_ns=start_ns, end_ns=end_ns)
+        )
 
         assert result is not None
         assert isinstance(result, ServerMetricsResults)
@@ -173,10 +178,12 @@ class TestServerMetricsAccumulator:
             await processor.process_server_metrics_record(record)
 
         result = await processor.export_results(
-            start_ns=2_000_000_000,
-            end_ns=3_000_000_000,
-            warmup_start_ns=1_000_000_000,
-            warmup_end_ns=2_000_000_000,
+            ExportContext(
+                start_ns=2_000_000_000,
+                end_ns=3_000_000_000,
+                warmup_start_ns=1_000_000_000,
+                warmup_end_ns=2_000_000_000,
+            )
         )
 
         assert result is not None
@@ -225,10 +232,12 @@ class TestServerMetricsAccumulator:
             await processor.process_server_metrics_record(record)
 
         result = await processor.export_results(
-            start_ns=2_000_000_000,
-            end_ns=3_000_000_000,
-            warmup_start_ns=1_000_000_000,
-            warmup_end_ns=1_000_000_000,  # degenerate: start == end
+            ExportContext(
+                start_ns=2_000_000_000,
+                end_ns=3_000_000_000,
+                warmup_start_ns=1_000_000_000,
+                warmup_end_ns=1_000_000_000,  # degenerate: start == end
+            )
         )
 
         assert result is not None
@@ -272,8 +281,10 @@ class TestServerMetricsAccumulator:
         # start_ns == end_ns == last_update_ns => export_end_ns collapses to
         # start_ns, a degenerate window for the eager parquet TimeRangeFilter.
         result = await processor.export_results(
-            start_ns=1_000_000_000,
-            end_ns=1_000_000_000,
+            ExportContext(
+                start_ns=1_000_000_000,
+                end_ns=1_000_000_000,
+            )
         )
 
         assert result is not None
@@ -301,9 +312,11 @@ class TestServerMetricsAccumulator:
         ]
 
         result = await processor.export_results(
-            start_ns=1_000_000_000,
-            end_ns=2_000_000_000,
-            error_summary=error_summary,
+            ExportContext(
+                start_ns=1_000_000_000,
+                end_ns=2_000_000_000,
+                error_summary=error_summary,
+            )
         )
 
         assert result is not None
@@ -334,8 +347,10 @@ class TestServerMetricsAccumulator:
         # export_results now constructs per-endpoint TimeFilters internally
         # start_ns and end_ns define the profiling phase bounds
         result = await processor.export_results(
-            start_ns=1_000_000_000,  # Profiling start
-            end_ns=2_000_000_000,  # Profiling end
+            ExportContext(
+                start_ns=1_000_000_000,  # Profiling start
+                end_ns=2_000_000_000,  # Profiling end
+            )
         )
 
         assert result is not None
@@ -367,8 +382,10 @@ class TestServerMetricsAccumulator:
                 await processor.process_server_metrics_record(record)
 
         result = await processor.export_results(
-            start_ns=1_000_000_000,
-            end_ns=2_000_000_000,
+            ExportContext(
+                start_ns=1_000_000_000,
+                end_ns=2_000_000_000,
+            )
         )
 
         assert result is not None
@@ -402,8 +419,10 @@ class TestServerMetricsAccumulator:
             await processor.process_server_metrics_record(record)
 
         result = await processor.export_results(
-            start_ns=1_000_000_000,
-            end_ns=2_000_000_000,
+            ExportContext(
+                start_ns=1_000_000_000,
+                end_ns=2_000_000_000,
+            )
         )
 
         assert result is not None
@@ -435,8 +454,10 @@ class TestServerMetricsAccumulator:
             await processor.process_server_metrics_record(record)
 
         result = await processor.export_results(
-            start_ns=1_000_000_000,
-            end_ns=6_000_000_000,
+            ExportContext(
+                start_ns=1_000_000_000,
+                end_ns=6_000_000_000,
+            )
         )
 
         assert result is not None
@@ -486,8 +507,10 @@ class TestServerMetricsAccumulator:
             await processor.process_server_metrics_record(record)
 
         result = await processor.export_results(
-            start_ns=1_000_000_000,
-            end_ns=10_000_000_000,
+            ExportContext(
+                start_ns=1_000_000_000,
+                end_ns=10_000_000_000,
+            )
         )
 
         summary = list(result.endpoint_summaries.values())[0]
@@ -532,8 +555,10 @@ class TestSliceDurationConfig:
             await processor.process_server_metrics_record(record)
 
         result = await processor.export_results(
-            start_ns=0,
-            end_ns=9_000_000_000,
+            ExportContext(
+                start_ns=0,
+                end_ns=9_000_000_000,
+            )
         )
 
         assert result is not None

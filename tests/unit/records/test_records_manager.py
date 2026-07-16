@@ -41,6 +41,7 @@ from aiperf.metrics.cache_reporting_hint import CACHE_REPORTING_HINT
 from aiperf.plugin.enums import AccumulatorType, TimingMode
 from aiperf.records.error_tracker import ErrorTracker
 from aiperf.records.records_manager import ErrorTrackingState, RecordsManager
+from aiperf.records.records_manager_processing import LoadedAnalyzer
 from aiperf.records.records_tracker import RecordsTracker
 from aiperf.timing.config import CreditPhaseConfig
 
@@ -604,11 +605,12 @@ class TestRecordsManagerTimingDispatch:
         )
 
 
-class TestRecordsManagerEfficiencyMetricsSnapshot:
-    """Pin the invariant that `completed` counts request-derived records only."""
+class TestRecordsManagerAnalyzerMetrics:
+    """Pin the invariant that `completed` counts request-derived records only,
+    and that analyzer-injected metrics are merged after the snapshot."""
 
     @pytest.mark.asyncio
-    async def test_completed_excludes_efficiency_metrics(self) -> None:
+    async def test_completed_excludes_analyzer_metrics(self) -> None:
         manager = RecordsManager.__new__(RecordsManager)
 
         manager.debug = MagicMock()
@@ -637,19 +639,28 @@ class TestRecordsManagerEfficiencyMetricsSnapshot:
         manager._accumulators = {AccumulatorType.METRIC_RESULTS: metric_accumulator}
         manager._metric_record_accumulators = [metric_accumulator]
         manager._stream_exporters = {}
+        manager._gpu_telemetry_accumulator = None
+        manager._server_metrics_accumulator = None
 
-        efficiency_metrics = [
+        # An analyzer contributes derived aggregates that must NOT inflate
+        # `completed` (which counts request-derived records only).
+        analyzer_metrics = [
             MetricResult(tag="total_gpu_power", header="h", unit="W", avg=200.0),
             MetricResult(tag="total_gpu_energy", header="h", unit="J", avg=1000.0),
             MetricResult(
                 tag="output_tokens_per_joule", header="h", unit="tokens/J", avg=0.002
             ),
         ]
-        accumulator = MagicMock()
-        accumulator.compute_efficiency_metrics = MagicMock(
-            return_value=efficiency_metrics
-        )
-        manager._gpu_telemetry_accumulator = accumulator
+        stub_analyzer = MagicMock()
+        stub_analyzer.analyze = AsyncMock(return_value=analyzer_metrics)
+        manager._analyzers = [
+            LoadedAnalyzer(
+                analyzer=stub_analyzer,
+                required_accumulators=[],
+                required_summaries=[],
+            )
+        ]
+        manager._run_analyzers = RecordsManager._run_analyzers.__get__(manager)
 
         manager._records_tracker = MagicMock()
         manager._records_tracker.create_stats_for_phase.return_value = MagicMock(
@@ -665,7 +676,7 @@ class TestRecordsManagerEfficiencyMetricsSnapshot:
 
         assert result.results.completed == len(request_records)
         assert len(result.results.records) == len(request_records) + len(
-            efficiency_metrics
+            analyzer_metrics
         )
         assert {r.tag for r in result.results.records} == {
             "request_latency",
@@ -674,115 +685,7 @@ class TestRecordsManagerEfficiencyMetricsSnapshot:
             "total_gpu_energy",
             "output_tokens_per_joule",
         }
-
-
-class TestRecordsManagerEfficiencyMetricsDegeneratePhase:
-    """Efficiency metrics need a real record-derived phase window."""
-
-    @pytest.mark.asyncio
-    async def test_none_phase_window_skips_efficiency_metrics_with_warning(
-        self,
-    ) -> None:
-        manager = RecordsManager.__new__(RecordsManager)
-
-        manager.debug = MagicMock()
-        manager.info = MagicMock()
-        manager.warning = MagicMock()
-        manager.error = MagicMock()
-        manager.exception = MagicMock()
-        manager.service_id = "records-manager-test"
-        manager._latest_branch_stats = None
-        manager.publish = AsyncMock()
-
-        manager.run = MagicMock()
-        manager.run.cfg.gpu_telemetry_disabled = True
-        manager.run.cfg.server_metrics_disabled = True
-        manager.run.cfg.network_latency.enabled = False
-
-        request_records = [
-            MetricResult(tag="request_latency", header="h", unit="ms", avg=1.0),
-        ]
-        metric_accumulator = MagicMock()
-        metric_accumulator.summarize = AsyncMock(
-            return_value=AccumulatorMetricsSummary(
-                results={r.tag: r for r in request_records},
-            )
-        )
-        manager._accumulators = {AccumulatorType.METRIC_RESULTS: metric_accumulator}
-        manager._metric_record_accumulators = [metric_accumulator]
-        manager._stream_exporters = {}
-
-        accumulator = MagicMock()
-        accumulator.compute_efficiency_metrics = MagicMock(
-            return_value=[
-                MetricResult(tag="total_gpu_power", header="h", unit="W", avg=0.0)
-            ]
-        )
-        manager._gpu_telemetry_accumulator = accumulator
-
-        manager._records_tracker = MagicMock()
-        manager._records_tracker.create_stats_for_phase.return_value = MagicMock(
-            start_ns=None,
-            requests_end_ns=None,
-            success_records=0,
-            error_records=0,
-        )
-        manager._error_tracker = MagicMock()
-        manager._error_tracker.get_error_summary_for_phase.return_value = []
-
-        result = await manager._process_results(CreditPhase.PROFILING, cancelled=False)
-
-        accumulator.compute_efficiency_metrics.assert_not_called()
-        manager.warning.assert_called_once()
-        warning_msg = manager.warning.call_args[0][0]
-        assert "Skipping efficiency metrics" in warning_msg
-        assert "start_ns=None" in warning_msg
-        assert "requests_end_ns=None" in warning_msg
-        assert {r.tag for r in result.results.records} == {"request_latency"}
-
-    @pytest.mark.asyncio
-    async def test_partial_none_phase_window_also_skips(self) -> None:
-        manager = RecordsManager.__new__(RecordsManager)
-
-        manager.debug = MagicMock()
-        manager.info = MagicMock()
-        manager.warning = MagicMock()
-        manager.error = MagicMock()
-        manager.exception = MagicMock()
-        manager.service_id = "records-manager-test"
-        manager._latest_branch_stats = None
-        manager.publish = AsyncMock()
-
-        manager.run = MagicMock()
-        manager.run.cfg.gpu_telemetry_disabled = True
-        manager.run.cfg.server_metrics_disabled = True
-        manager.run.cfg.network_latency.enabled = False
-
-        metric_accumulator = MagicMock()
-        metric_accumulator.summarize = AsyncMock(
-            return_value=AccumulatorMetricsSummary(results={})
-        )
-        manager._accumulators = {AccumulatorType.METRIC_RESULTS: metric_accumulator}
-        manager._metric_record_accumulators = [metric_accumulator]
-        manager._stream_exporters = {}
-
-        accumulator = MagicMock()
-        manager._gpu_telemetry_accumulator = accumulator
-
-        manager._records_tracker = MagicMock()
-        manager._records_tracker.create_stats_for_phase.return_value = MagicMock(
-            start_ns=1_000_000_000,
-            requests_end_ns=None,
-            success_records=0,
-            error_records=0,
-        )
-        manager._error_tracker = MagicMock()
-        manager._error_tracker.get_error_summary_for_phase.return_value = []
-
-        await manager._process_results(CreditPhase.PROFILING, cancelled=False)
-
-        accumulator.compute_efficiency_metrics.assert_not_called()
-        manager.warning.assert_called_once()
+        stub_analyzer.analyze.assert_awaited_once()
 
 
 class TestMidRunCacheReportingHint:
