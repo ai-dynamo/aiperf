@@ -9,8 +9,8 @@
 //! These exercise the runner's error-absorption path
 //! (`aiperf_runtime::http::absorb_transport_error`, `rust/aiperf/src/http.rs:1062`),
 //! which keys off the transport's status code + `ErrorKind`. The raw-record
-//! `status` / `error` fields come from `aiperf_runtime::runner_protocol::records`
-//! (`raw_record_row`, `rust/aiperf/src/runner_protocol/records.rs:928`):
+//! `status` / `error` fields come from `aiperf_runtime::engine::records`
+//! (`raw_record_row`, `rust/aiperf/src/engine/records.rs:928`):
 //!   * a non-2xx HTTP response -> `status: <code>`, `error: {code, type:
 //!     "HttpError", message}` (`ErrorDetails::http`),
 //!   * a mid-stream `event: error` SSE frame -> `error: {code: 502, type:

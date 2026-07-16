@@ -57,7 +57,8 @@ impl ErrorRng {
     /// actual stream is derived from the canonical `mock.errors` namespace.
     /// When `None`, the derived stream seeds from OS entropy.
     pub fn new(seed: Option<u64>) -> Self {
-        let rng = aiperf_runtime::rng::RngRoot::new(seed).derive(aiperf_runtime::rng::namespace::MOCK_ERRORS);
+        let rng = aiperf_runtime::rng::RngRoot::new(seed)
+            .derive(aiperf_runtime::rng::namespace::MOCK_ERRORS);
         Self { rng }
     }
 

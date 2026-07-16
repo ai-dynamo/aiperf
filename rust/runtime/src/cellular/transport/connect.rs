@@ -13,7 +13,7 @@
 //! shipping).
 //!
 //! The coordinate stays a `tcp://HOST:PORT` string in every shipping deployment so
-//! the HTTP artifact plane (`runner_protocol::artifact_shipping`, which derives its
+//! the HTTP artifact plane (`engine::artifact_shipping`, which derives its
 //! authority by swapping the port on the same coordinate) keeps working.
 
 use std::net::SocketAddr;

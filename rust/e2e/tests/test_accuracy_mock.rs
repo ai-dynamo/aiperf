@@ -350,5 +350,9 @@ async fn accuracy_adversarial_responses_do_not_crash_the_run() {
         r.stderr
     );
     let records = r.artifacts.raw_records();
-    assert_eq!(records.len(), n, "every request should still produce a record");
+    assert_eq!(
+        records.len(),
+        n,
+        "every request should still produce a record"
+    );
 }

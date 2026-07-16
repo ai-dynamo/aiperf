@@ -227,7 +227,10 @@ async fn test_riva_tts_synthesize_online_streaming() {
         let text = chunk.get("text").and_then(|t| t.as_str()).unwrap_or("");
         let value: serde_json::Value = serde_json::from_str(text).expect("TTS chunk is JSON");
         let audio = value.get("audio").and_then(|v| v.as_str()).unwrap_or("");
-        assert!(!audio.is_empty(), "each TTS chunk carries audio; got:\n{text}");
+        assert!(
+            !audio.is_empty(),
+            "each TTS chunk carries audio; got:\n{text}"
+        );
     }
 }
 

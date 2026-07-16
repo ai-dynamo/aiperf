@@ -12,12 +12,12 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use aiperf_mock_server::config::MockServerConfig;
+use aiperf_mock_server::grpc::serve_grpc;
 use aiperf_runtime::transport_grpc::{
     decode_model_infer_response, decode_model_ready_response, decode_model_stream_infer_response,
     encode_model_infer_request, encode_model_ready_request,
 };
-use aiperf_mock_server::config::MockServerConfig;
-use aiperf_mock_server::grpc::serve_grpc;
 use bytes::{Buf, Bytes};
 use futures::StreamExt;
 use http::uri::PathAndQuery;

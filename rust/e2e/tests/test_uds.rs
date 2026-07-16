@@ -13,7 +13,7 @@
 //! end to end: the Python `endpoint.uds_path` field
 //! (`src/aiperf/config/endpoint.py`) is projected by `rust_wire._authored_endpoint`
 //! into the protocol-v2 `EndpointProfileConfigV2.uds_path`
-//! (`rust/aiperf/src/runner_protocol/registry.rs`), which threads it into the
+//! (`rust/aiperf/src/engine/registry.rs`), which threads it into the
 //! `ClientConfig` (forcing HTTP/1.1). The endpoint URL still supplies the
 //! request path + `Host` header, so it stays a normal `http://…` value.
 //!
@@ -97,7 +97,9 @@ fn record_content(record: &Value) -> String {
                     continue;
                 }
                 if let Ok(obj) = serde_json::from_str::<Value>(raw.trim())
-                    && let Some(c) = obj.pointer("/choices/0/delta/content").and_then(Value::as_str)
+                    && let Some(c) = obj
+                        .pointer("/choices/0/delta/content")
+                        .and_then(Value::as_str)
                 {
                     out.push_str(c);
                 }
@@ -139,7 +141,12 @@ async fn uds_chat_via_aiperf_profile_raw_records() {
     );
     for (i, rec) in records.iter().enumerate() {
         let timing = extract_timing(rec);
-        assert_eq!(timing.status, Some(200), "record {i}: status {:?}", timing.status);
+        assert_eq!(
+            timing.status,
+            Some(200),
+            "record {i}: status {:?}",
+            timing.status
+        );
         assert!(
             !record_content(rec).is_empty(),
             "record {i}: streamed content should be non-empty"

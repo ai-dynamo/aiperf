@@ -73,8 +73,7 @@ fn run_file_dataset(
     cells: u32,
     force_http: bool,
 ) -> RunResult {
-    let mut env: Vec<(&str, &str)> =
-        vec![("AIPERF_LOG", "warn,aiperf_cellular_artifact=info")];
+    let mut env: Vec<(&str, &str)> = vec![("AIPERF_LOG", "warn,aiperf_cellular_artifact=info")];
     if force_http {
         env.push(("AIPERF_CELL_ARTIFACT_HTTP_FORCE", "1"));
     }

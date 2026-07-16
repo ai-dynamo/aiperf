@@ -17,8 +17,10 @@ use common::*;
 // `approx` assertions are expressed as range assertions plus round-trip
 // metadata checks against the parsed records instead.
 
-use aiperf_runtime::gpu_telemetry::{DcgmPrometheusDecoder, GpuTelemetryDecoder, GpuTelemetryRecord};
 use aiperf_mock_server::dcgm::{DcgmFaker, lookup_gpu};
+use aiperf_runtime::gpu_telemetry::{
+    DcgmPrometheusDecoder, GpuTelemetryDecoder, GpuTelemetryRecord,
+};
 
 /// GPU config keys the faker recognizes (mirrors Python `GPU_CONFIGS.keys()`).
 /// Every key here has a dedicated parametrized test below.
