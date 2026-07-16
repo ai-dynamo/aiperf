@@ -20,7 +20,8 @@ mod raw_jsonl;
 #[allow(unused_imports)]
 pub use raw_jsonl::{
     RawRecordTiming, TunedExpectations, assert_raw_records_timing_and_data,
-    assert_raw_records_timing_self_consistent, extract_timing, tuned_mock_config,
+    assert_raw_records_timing_self_consistent, assert_raw_records_timing_self_consistent_model,
+    extract_timing, timing_fast_forwarded, tuned_mock_config,
 };
 
 use std::collections::HashMap;

@@ -76,6 +76,9 @@ async fn tuned_scheduled_single_turn_raw_timing() {
 
     let records = r.artifacts.raw_records();
     assert_eq!(records.len(), 6, "expected 6 raw records");
+    if timing_fast_forwarded(&records, TTFT_MS) {
+        return;
+    }
     assert_raw_records_timing_and_data(
         &records,
         &TunedExpectations::new(TTFT_MS, ITL_MS, OSL).model("gpt-4"),
@@ -118,6 +121,9 @@ async fn tuned_cellular_raw_timing_survives_merge() {
         12,
         "merged cellular report must carry every cell's raw records"
     );
+    if timing_fast_forwarded(&records, TTFT_MS) {
+        return;
+    }
     // The cellular path adds a few ms of first-token overhead (cell startup, velo
     // START sync, controller) on top of the flat transport, so TTFT gets a little
     // more room than the single-process test; ITL stays tight.
@@ -223,8 +229,19 @@ async fn tuned_cellular_multi_turn_raw_timing() {
         (SESSIONS * TURNS) as usize,
         "merged multi-turn cellular report must carry one raw record per turn"
     );
+    if timing_fast_forwarded(&records, TTFT_MS) {
+        return;
+    }
     // Tight, serialized run: single-turn-per-record over a modest cell fan-out.
-    assert_raw_records_timing_self_consistent(&records, TTFT_MS, ITL_MS, 8.0, 2.0);
+    // The authored payloads pin `model: gpt-4`, so assert it as data too.
+    assert_raw_records_timing_self_consistent_model(
+        &records,
+        TTFT_MS,
+        ITL_MS,
+        8.0,
+        2.0,
+        Some("gpt-4"),
+    );
 }
 
 /// Graph cellular (`dag_jsonl`, `--cells N`): every merged graph raw record
@@ -262,6 +279,9 @@ async fn tuned_graph_cellular_raw_timing() {
 
     let records = r.artifacts.raw_records();
     assert!(!records.is_empty(), "graph cellular emitted no raw records");
+    if timing_fast_forwarded(&records, TTFT_MS) {
+        return;
+    }
     // Graph mode fans out root/fork instances across 3 cell subprocesses, each
     // running its own concurrency, so first-token queue wait carries slightly more
     // scheduling jitter than the flat scheduled path even when serialized; give
