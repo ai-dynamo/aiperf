@@ -6,8 +6,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from aiperf.common.accumulator_protocols import ExportContext
     from aiperf.common.models import (
-        ErrorDetailsCount,
         MetricResult,
         ServerMetricsRecord,
         ServerMetricsResults,
@@ -24,14 +24,6 @@ class ServerMetricsAccumulatorProtocol(Protocol):
 
     async def summarize(self) -> list[MetricResult]: ...
 
-    async def export_results(
-        self,
-        start_ns: int,
-        end_ns: int,
-        error_summary: list[ErrorDetailsCount] | None = None,
-        *,
-        warmup_start_ns: int | None = None,
-        warmup_end_ns: int | None = None,
-    ) -> ServerMetricsResults | None:
-        """Export accumulated server metrics for a profiling window."""
+    async def export_results(self, ctx: ExportContext) -> ServerMetricsResults | None:
+        """Export accumulated server metrics scoped to ``ctx``."""
         ...

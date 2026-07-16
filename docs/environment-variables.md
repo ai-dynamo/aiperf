@@ -36,6 +36,7 @@ Accuracy benchmark settings. Tunables for the accuracy benchmark loaders. Curren
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
+| `AIPERF_ACCURACY_CANCEL_RESULT_WAIT_SEC` | `5.0` | ≥ 0.0 | Bounded time (seconds) the SystemController waits on the cancel (Ctrl+C) path for the RecordsManager's ProcessAccuracyResultMessage before stopping. The normal completion path blocks on the accuracy shutdown gate indefinitely, but the cancel path must not hang forever, so it waits at most this long for the graded accuracy summary to arrive over pub/sub before proceeding to export. Set to 0 to skip the wait entirely. |
 | `AIPERF_ACCURACY_LCB_RELEASE_TAG` | `'v4_v5'` | — | LiveCodeBench dataset subset (HF config name) passed as the positional ``name`` arg to ``load_dataset("livecodebench/code_generation_lite", name, split="test", trust_remote_code=True)``. Pins which monthly snapshot LCB serves so accuracy numbers are reproducible across runs and branches. Default ``v4_v5`` matches lighteval's base subset; bump (e.g. to ``v6``) when the team rebaselines against a newer snapshot. The loader always passes ``trust_remote_code=True`` so LCB's dataset-loading script can execute on ``datasets`` v4+ (mirrors lighteval's reference opt-in). Consumed by ``aiperf.accuracy.benchmarks.lcb_codegeneration``. |
 
 ## APISERVER

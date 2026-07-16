@@ -414,7 +414,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         self._telemetry_state = ErrorTrackingState()
         self._server_metrics_state = ErrorTrackingState()
-        self._metric_state = ErrorTrackingState()
 
         self._gpu_telemetry_accumulator: GPUTelemetryAccumulatorProtocol | None = None
         self._server_metrics_accumulator: ServerMetricsAccumulatorProtocol | None = None
@@ -439,6 +438,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # each carrying its live-instance and summary dependencies.
         self._analyzers: list[LoadedAnalyzer] = load_analyzers(self)
         self._routing_table = self._build_routing_table()
+        self._warned_unrouted_record_types: set[str] = set()
         self._log_routing_table()
 
         self._metric_record_accumulators = [
@@ -488,7 +488,16 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         handlers = self._routing_table.get(record_type, [])
         if not handlers:
-            self.debug(lambda: f"No handlers registered for record type: {record_type}")
+            # Warn once per unrouted type: records silently vanish here while the
+            # request still counts as a success, so this must not stay debug-only.
+            if record_type not in self._warned_unrouted_record_types:
+                self._warned_unrouted_record_types.add(record_type)
+                self.warning(
+                    f"No handlers registered for record type {record_type!r}; "
+                    "records of this type are being dropped. Check that a producer's "
+                    "record_type matches an accumulator/stream_exporter record_types "
+                    "entry in plugins.yaml."
+                )
             return []
 
         results = await asyncio.gather(
@@ -1471,13 +1480,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         inference results.
 
         Exactly-once contract: this method only runs when accuracy is enabled and
-        the phase is PROFILING, and it ALWAYS publishes exactly one
-        ``ProcessAccuracyResultMessage`` before returning. The SystemController
-        clears ``_should_wait_for_accuracy`` only on receipt of that message, so a
-        missing publish would hang shutdown forever. When there is no accumulator,
-        or ``export_results`` raises, a terminal ``results=None`` summary is
-        published instead; the success path publishes the real summary. Every path
-        publishes once and only once.
+        the phase is PROFILING. It attempts to publish exactly one
+        ``ProcessAccuracyResultMessage``; the SystemController clears
+        ``_should_wait_for_accuracy`` only on receipt of that message. A summary
+        that fails to export still publishes a terminal ``results=None`` message so
+        the gate is released. The publish itself is the only unrecoverable point:
+        if the message bus raises here the gate cannot be released from this side,
+        so we log it at error level (rather than swallowing) to make the cause of
+        any resulting shutdown stall diagnosable.
         """
         summary: AccuracySummary | None = None
         if self._accuracy_accumulator is not None:
@@ -1488,12 +1498,19 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             except Exception as e:  # noqa: BLE001 - must still publish a terminal message
                 self.exception(f"Accuracy summary export failed: {e!r}")
                 summary = None
-        await self.publish(
-            ProcessAccuracyResultMessage(
-                service_id=self.service_id,
-                accuracy_result=ProcessAccuracyResult(results=summary),
+        try:
+            await self.publish(
+                ProcessAccuracyResultMessage(
+                    service_id=self.service_id,
+                    accuracy_result=ProcessAccuracyResult(results=summary),
+                )
             )
-        )
+        except Exception as e:  # noqa: BLE001
+            self.error(
+                "Failed to publish ProcessAccuracyResultMessage; the controller's "
+                f"accuracy shutdown gate may not release: {e!r}"
+            )
+            raise
 
     async def _process_server_metrics_results(self) -> ProcessServerMetricsResult:
         """Process server metrics results by exporting the accumulated server metrics data.

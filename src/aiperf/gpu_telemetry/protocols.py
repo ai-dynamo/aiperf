@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from aiperf.common.models import ErrorDetails, TelemetryRecord
 
 if TYPE_CHECKING:
+    from aiperf.common.accumulator_protocols import ExportContext
     from aiperf.common.models import (
-        ErrorDetailsCount,
         MetricResult,
         TelemetryExportData,
     )
@@ -70,13 +70,8 @@ class GPUTelemetryAccumulatorProtocol(Protocol):
 
     async def summarize(self) -> list[MetricResult]: ...
 
-    def export_results(
-        self,
-        start_ns: int | None = None,
-        end_ns: int | None = None,
-        error_summary: list[ErrorDetailsCount] | None = None,
-    ) -> TelemetryExportData | None:
-        """Export accumulated telemetry data."""
+    async def export_results(self, ctx: ExportContext) -> TelemetryExportData | None:
+        """Export accumulated telemetry data scoped to ``ctx``."""
         ...
 
     def start_realtime_telemetry(self) -> None:

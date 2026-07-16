@@ -1082,7 +1082,7 @@
           "description": "Metadata schema for record producer plugins.\n\nProducers parse a record and emit one typed result on a declared record-type\nchannel. RecordProcessorService groups producer outputs by this declared\n``record_type`` (rather than runtime type-sniffing) and routes each group to\nits dedicated downstream message.\n\nReferenced by: categories.yaml record_processor.metadata_class\nUsed in: plugins.yaml record_processor entries",
           "properties": {
             "record_type": {
-              "description": "The record_type channel this producer emits onto (e.g. 'metric_records', 'accuracy').",
+              "description": "The record_type channel this producer emits onto. Values: 'metric_records', 'accuracy', 'gpu_telemetry', 'server_metrics', 'network_latency', 'credit_phase_stats'.",
               "title": "Record Type",
               "type": "string"
             }
@@ -1255,7 +1255,7 @@
           "description": "Metadata schema for analyzer plugins.\n\nAnalyzers run at summarize time and join across accumulators. They store no\nrecords; instead they declare their dependencies by KIND:\n\n- ``required_accumulators``: needs the LIVE accumulator instance (via\n  ``SummaryContext.get_accumulator``) to run a query not present in the\n  summary \u2014 e.g. energy efficiency calls ``GPUTelemetryAccumulator``'s\n  windowed ``total_energy_joules`` / ``total_power_watts``.\n- ``required_summaries``: needs only the already-computed summary output\n  (via ``SummaryContext.get_output``) \u2014 e.g. energy efficiency reads token\n  and duration totals off the metrics accumulator's summary.\n\nRecordsManager runs an analyzer only when every required accumulator is\nloaded AND every required summary was produced; otherwise it is skipped\n(e.g. energy efficiency is skipped when GPU telemetry is disabled).\n\nReferenced by: categories.yaml analyzer.metadata_class\nUsed in: plugins.yaml analyzer entries",
           "properties": {
             "required_accumulators": {
-              "description": "AccumulatorType names whose LIVE instance this analyzer queries via SummaryContext.get_accumulator(). The analyzer is skipped unless all are loaded. Values: 'metric_records', 'gpu_telemetry', 'server_metrics'.",
+              "description": "AccumulatorType names whose LIVE instance this analyzer queries via SummaryContext.get_accumulator(). The analyzer is skipped unless all are loaded. Values: 'metric_records', 'gpu_telemetry', 'server_metrics', 'accuracy', 'network_latency'.",
               "items": {
                 "type": "string"
               },
@@ -1263,7 +1263,7 @@
               "type": "array"
             },
             "required_summaries": {
-              "description": "AccumulatorType names whose SUMMARY output this analyzer reads via SummaryContext.get_output(). The analyzer is skipped unless all were produced. Values: 'metric_records', 'gpu_telemetry', 'server_metrics'.",
+              "description": "AccumulatorType names whose SUMMARY output this analyzer reads via SummaryContext.get_output(). The analyzer is skipped unless all were produced. Values: 'metric_records', 'gpu_telemetry', 'server_metrics', 'accuracy', 'network_latency'.",
               "items": {
                 "type": "string"
               },

@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from aiperf.accuracy.models import AccuracyRecordsData
+from aiperf.common.enums import CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.mixins import BufferedJSONLWriterMixin
@@ -54,7 +55,13 @@ class AccuracyJSONLWriter(
         self.info(f"Accuracy JSONL export enabled: {self.output_file}")
 
     async def process_record(self, record: AccuracyRecordsData) -> None:
-        """Write a single graded accuracy record to the JSONL buffer."""
+        """Write a single graded accuracy record to the JSONL buffer.
+
+        Warmup grades are skipped so the per-record export stays consistent with
+        the phase-scoped ``AccuracySummary`` (which counts profiling only).
+        """
+        if record.benchmark_phase != CreditPhase.PROFILING:
+            return
         await self.buffered_write(record)
 
     async def finalize(self) -> None:

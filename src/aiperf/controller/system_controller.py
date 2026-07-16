@@ -981,10 +981,44 @@ class SystemController(SignalHandlerMixin, BaseService):
             # Catch ANY exception during cancellation - we must always proceed to stop().
             self.warning(f"Exception during cancel command (proceeding to stop): {e!r}")
 
+        # The normal completion path holds stop() on the accuracy shutdown gate
+        # until RecordsManager publishes ProcessAccuracyResultMessage; the cancel
+        # path bypasses that gate, so wait a bounded time here for the graded
+        # summary to arrive before exporting (otherwise a cancelled accuracy run
+        # can export with accuracy.* rows missing).
+        if (
+            should_call_stop
+            and self._should_wait_for_accuracy
+            and self._accuracy_results is None
+        ):
+            await self._await_accuracy_results_for_cancel()
+
         # Only call stop() if we were the first to trigger shutdown
         if should_call_stop:
             self.debug("Stopping system controller after profiling cancelled")
             await asyncio.shield(self.stop())
+
+    async def _await_accuracy_results_for_cancel(self) -> None:
+        """Bounded poll for the accuracy summary on the cancel (Ctrl+C) path.
+
+        Polls ``_accuracy_results`` up to ``Environment.ACCURACY.CANCEL_RESULT_WAIT_SEC``
+        so a cancelled accuracy run still exports its graded results when the
+        RecordsManager's pub/sub message arrives in time; returns early as soon as
+        it lands, or after the bound elapses.
+        """
+        timeout = Environment.ACCURACY.CANCEL_RESULT_WAIT_SEC
+        interval = 0.05
+        iterations = int(timeout / interval)
+        for _ in range(iterations):
+            if self._accuracy_results is not None:
+                self.debug("Accuracy results arrived during cancel wait")
+                return
+            await asyncio.sleep(interval)
+        if self._accuracy_results is None:
+            self.warning(
+                "Accuracy results did not arrive within "
+                f"{timeout}s of cancellation; export may omit accuracy metrics"
+            )
 
     @on_stop
     async def _stop_system_controller(self) -> None:

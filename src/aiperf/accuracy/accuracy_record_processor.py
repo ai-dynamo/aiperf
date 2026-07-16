@@ -182,10 +182,12 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
     ) -> tuple[str, str | None]:
         """Split the response into visible answer content and reasoning/thinking.
 
-        ``model_output`` is the answer channel (``TextResponseData.text`` or
-        ``ReasoningResponseData.content``); ``model_thinking`` is the concatenated
+        ``model_output`` is the answer channel (``TextResponseData.text``,
+        ``ReasoningResponseData.content``, or ``ToolCallResponseData`` content +
+        ``tool_call_text``); ``model_thinking`` is the concatenated
         ``reasoning_content`` from any ``ReasoningResponseData`` chunks, or None
-        when the model emitted no separate reasoning channel.
+        when the model emitted no separate reasoning channel. The output channel
+        mirrors what grading scores (``get_text()``) so the two never diverge.
         """
         output_parts: list[str] = []
         thinking_parts: list[str] = []
@@ -197,10 +199,14 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
             if reasoning:
                 thinking_parts.append(reasoning)
             content = getattr(data, "content", None)
+            tool_call_text = getattr(data, "tool_call_text", None)
             if content is not None:
                 output_parts.append(content)
-            elif reasoning is None:
-                # Plain text (or tool-call) data with no reasoning channel.
+            if tool_call_text:
+                # Tool-call responses grade on content + tool_call_text; keep both.
+                output_parts.append(tool_call_text)
+            elif content is None and reasoning is None:
+                # Plain text data with no reasoning/tool-call channel.
                 output_parts.append(data.get_text())
         thinking = "".join(thinking_parts) if thinking_parts else None
         return "".join(output_parts), thinking

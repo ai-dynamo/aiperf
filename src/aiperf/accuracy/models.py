@@ -107,9 +107,7 @@ class AccuracyRecordsData(RecordData):
         description="Unique per-request id (X-Request-ID) for tracing this exact "
         "graded response back to the raw records",
     )
-    worker_id: str = Field(
-        description="ID of the record processor that produced this record"
-    )
+    worker_id: str = Field(description="ID of the worker that produced this record")
     benchmark_phase: CreditPhase = Field(
         description="Benchmark phase active when grading completed (warmup vs profiling)"
     )

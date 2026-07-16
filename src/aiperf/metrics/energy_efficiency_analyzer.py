@@ -127,7 +127,11 @@ class EnergyEfficiencyAnalyzer:
         if source is EnergySource.UNAVAILABLE or total_energy_j <= 0:
             return out
 
-        out.append(_result(AverageGpuPowerMetric, avg_power_w))
+        # A degenerate/empty profiling window yields duration_s == 0, so the DCGM
+        # branch cannot derive an average power; emit total energy but skip the
+        # misleading 0 W average (and _per_watt_metrics likewise returns []).
+        if avg_power_w > 0:
+            out.append(_result(AverageGpuPowerMetric, avg_power_w))
         out.append(_result(TotalGpuEnergyMetric, total_energy_j))
         out += self._energy_ratio_metrics(total_energy_j, metric, self._concurrency())
         out += self._per_watt_metrics(avg_power_w, metric)

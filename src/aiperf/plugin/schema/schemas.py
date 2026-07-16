@@ -525,7 +525,9 @@ class RecordProducerMetadata(BaseModel):
     """
 
     record_type: str = Field(
-        description="The record_type channel this producer emits onto (e.g. 'metric_records', 'accuracy').",
+        description="The record_type channel this producer emits onto. Values: "
+        "'metric_records', 'accuracy', 'gpu_telemetry', 'server_metrics', "
+        "'network_latency', 'credit_phase_stats'.",
     )
 
 
@@ -556,7 +558,8 @@ class AnalyzerMetadata(BaseModel):
         description=(
             "AccumulatorType names whose LIVE instance this analyzer queries via "
             "SummaryContext.get_accumulator(). The analyzer is skipped unless all "
-            "are loaded. Values: 'metric_records', 'gpu_telemetry', 'server_metrics'."
+            "are loaded. Values: 'metric_records', 'gpu_telemetry', 'server_metrics', "
+            "'accuracy', 'network_latency'."
         ),
     )
 
@@ -565,7 +568,8 @@ class AnalyzerMetadata(BaseModel):
         description=(
             "AccumulatorType names whose SUMMARY output this analyzer reads via "
             "SummaryContext.get_output(). The analyzer is skipped unless all were "
-            "produced. Values: 'metric_records', 'gpu_telemetry', 'server_metrics'."
+            "produced. Values: 'metric_records', 'gpu_telemetry', 'server_metrics', "
+            "'accuracy', 'network_latency'."
         ),
     )
 

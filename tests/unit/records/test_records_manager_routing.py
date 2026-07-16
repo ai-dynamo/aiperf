@@ -205,8 +205,10 @@ class TestDispatchRecord:
     def _manager(self, routing_table: dict[str, list[Any]]) -> RecordsManager:
         manager = RecordsManager.__new__(RecordsManager)
         manager._routing_table = routing_table
+        manager._warned_unrouted_record_types = set()
         manager.error = MagicMock()
         manager.debug = MagicMock()
+        manager.warning = MagicMock()
         return manager
 
     @pytest.mark.asyncio
@@ -223,14 +225,16 @@ class TestDispatchRecord:
         exp.process_record.assert_awaited_once_with(record)
 
     @pytest.mark.asyncio
-    async def test_dispatch_with_no_handlers_is_noop(self) -> None:
+    async def test_dispatch_with_no_handlers_warns_once(self) -> None:
         manager = self._manager({})
         record = MagicMock(record_type="metric_records")
 
         errors = await manager._dispatch_record(record)
+        # A second unrouted record of the same type must not re-warn.
+        errors += await manager._dispatch_record(record)
 
         assert errors == []
-        manager.debug.assert_called_once()
+        manager.warning.assert_called_once()
         manager.error.assert_not_called()
 
     @pytest.mark.asyncio
