@@ -216,6 +216,55 @@ async fn accuracy_cot_streams_reasoning_separately() {
     }
 }
 
+/// A dedicated `match_key` matches on a stable fragment embedded in a larger
+/// wire prompt (substring mode), proving robust matching for re-templated /
+/// few-shot-wrapped prompts end-to-end.
+#[tokio::test]
+async fn accuracy_match_key_matches_embedded_fragment() {
+    let ds_dir = tempfile::TempDir::new().unwrap();
+    // The `text` (what aiperf sends) is a big blob; the row keys on `q_id_N`.
+    let records: Vec<Value> = (0..6)
+        .map(|i| {
+            json!({
+                "text": format!(
+                    "Here are some worked examples ... now solve this. \
+                     Question [q_id_{i}]: choose A, B, C, or D. Answer:"
+                ),
+                "match_key": format!("q_id_{i}"),
+                "ground_truth": "B",
+                "task": "keyed",
+            })
+        })
+        .collect();
+    let dataset = write_jsonl(ds_dir.path(), "keyed.jsonl", &records);
+
+    let mut cfg = accuracy_cfg(&dataset);
+    cfg.accuracy_correct_rate = 1.0;
+    // Substring is the default, but be explicit about what's under test.
+    cfg.accuracy_match = aiperf_mock_server::accuracy::AccuracyMatch::Substring;
+
+    let h = AIPerfHarness::new_with(cfg).await;
+    let r = h.run(&format!(
+        "--model gpt-4 --url {} --endpoint-type chat --streaming \
+         --input-file {} --custom-dataset-type single_turn \
+         --request-count 6 --concurrency 2 --workers-max 1 \
+         --random-seed 7 --export-level raw --ui simple",
+        h.mock.url,
+        dataset.display(),
+    ));
+    assert!(r.success(), "stderr: {}", r.stderr);
+
+    let records = r.artifacts.raw_records();
+    assert_eq!(records.len(), 6);
+    for rec in &records {
+        assert_eq!(
+            record_content(rec),
+            "The answer is (B)",
+            "match_key fragment should have matched and returned the correct answer"
+        );
+    }
+}
+
 /// The mock's live `/accuracy` tally matches the actual served run: `matched`
 /// equals the raw-record count and `correct` equals the number of records that
 /// carry the correct answer. This is the oracle a user compares against what

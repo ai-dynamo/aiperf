@@ -6,7 +6,7 @@
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 
-use crate::accuracy::AccuracyFormat;
+use crate::accuracy::{AccuracyFormat, AccuracyMatch};
 use crate::prefix_cache::EvictionPolicy;
 
 #[derive(Debug, Clone, Parser, Serialize, Deserialize)]
@@ -447,6 +447,20 @@ pub struct MockServerConfig {
         default_value = "passthrough"
     )]
     pub accuracy_format: AccuracyFormat,
+
+    /// How an incoming request's user text is matched to a dataset row.
+    /// All modes whitespace-normalize; `substring` (default) also matches when a
+    /// row key is contained in the request (few-shot / system-prompt wrapping);
+    /// the `_ci` variants case-fold. A row may carry a dedicated `match_key`
+    /// (aliases `match`/`key`/`id`) — a stable fragment guaranteed to appear in
+    /// the wire prompt — which is matched instead of the full prompt.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_ACCURACY_MATCH",
+        value_enum,
+        default_value = "substring"
+    )]
+    pub accuracy_match: AccuracyMatch,
 
     /// Seeded fraction of matched requests returned with the correct answer
     /// (0.0–1.0). The rest return a plausible wrong answer. The verdict is

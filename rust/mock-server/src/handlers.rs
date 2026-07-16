@@ -109,7 +109,7 @@ impl RequestCtx {
         let mut null_object_chunk = false;
         if let Some(ds) = &state.accuracy {
             if let Some(entry) = ds.lookup(&tokenized.text) {
-                let decision = ds.decide(entry, &tokenized.text);
+                let decision = ds.decide(entry);
                 // Live tally: count this real, prompt-matched response so
                 // `correct / matched` reflects the run's actual accuracy.
                 state.accuracy_live.record(&decision, entry.task.as_deref());

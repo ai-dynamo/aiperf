@@ -79,6 +79,42 @@ impl AccuracyFormat {
     }
 }
 
+/// How an incoming request's user text is matched to a dataset row. All modes
+/// first whitespace-normalize (collapse runs to single spaces, trim); the `_ci`
+/// variants additionally case-fold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+#[clap(rename_all = "snake_case")]
+pub enum AccuracyMatch {
+    /// The request's normalized text must equal a row's key exactly.
+    Exact,
+    /// Case-insensitive `exact`.
+    ExactCi,
+    /// `exact`, then the longest row key contained in the request (default) —
+    /// handles few-shot / system-prompt wrapping around the dataset prompt.
+    #[default]
+    Substring,
+    /// Case-insensitive `substring`.
+    SubstringCi,
+}
+
+impl AccuracyMatch {
+    fn case_insensitive(self) -> bool {
+        matches!(self, Self::ExactCi | Self::SubstringCi)
+    }
+    fn substring(self) -> bool {
+        matches!(self, Self::Substring | Self::SubstringCi)
+    }
+}
+
+/// Whitespace-normalize, then case-fold when `ci`. This is the single key
+/// transform applied to both dataset keys (at load) and request text (at
+/// lookup), so the two are always compared under identical rules.
+fn norm_key(s: &str, ci: bool) -> String {
+    let n = normalize(s);
+    if ci { n.to_lowercase() } else { n }
+}
+
 /// The adversarial response shapes, one per known parser failure mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Adversarial {
@@ -109,8 +145,11 @@ impl Adversarial {
 /// format and multiple-choice option set.
 #[derive(Debug, Clone)]
 pub struct Entry {
-    /// Whitespace-normalized prompt, used as the lookup key.
-    pub prompt_norm: String,
+    /// The normalized (and case-folded, in `_ci` modes) match key — the row's
+    /// `match_key`/`id`/`key` if present, else its prompt. Also the stable
+    /// identity the seeded verdict is derived from, so a row's correct/wrong
+    /// outcome is independent of how the prompt was wrapped on the wire.
+    pub key_norm: String,
     /// The clean gold answer (`B`, `42`, a latex string, …).
     pub gold: String,
     /// Reporting task/subject, if present.
@@ -124,9 +163,10 @@ pub struct Entry {
 /// The parsed dataset plus the seeded-decision knobs from config.
 pub struct AccuracyDataset {
     exact: HashMap<String, Entry>,
-    /// Entries sorted by descending prompt length, for substring fallback when
-    /// a request wraps the dataset prompt (few-shot / system-prompt prefixes).
+    /// Entries sorted by descending key length, for substring matching when a
+    /// request wraps the dataset prompt (few-shot / system-prompt prefixes).
     entries: Vec<Entry>,
+    match_mode: AccuracyMatch,
     default_format: AccuracyFormat,
     correct_rate: f64,
     cot_rate: f64,
@@ -185,6 +225,8 @@ impl AccuracyDataset {
 
     /// Parse the JSONL body directly (used by [`Self::load`] and tests).
     pub fn from_jsonl(body: &str, cfg: &crate::config::MockServerConfig) -> Result<Self, String> {
+        let match_mode = cfg.accuracy_match;
+        let ci = match_mode.case_insensitive();
         let mut exact: HashMap<String, Entry> = HashMap::new();
         for (lineno, line) in body.lines().enumerate() {
             let line = line.trim();
@@ -217,11 +259,17 @@ impl AccuracyDataset {
                 .and_then(Value::as_array)
                 .map(|a| a.iter().filter_map(value_to_string).collect())
                 .unwrap_or_default();
-            let prompt_norm = normalize(&prompt);
+            // A dedicated match key (a stable fragment guaranteed to appear in
+            // the wire prompt) takes precedence over the prompt itself; this is
+            // the robust way to match few-shot-wrapped or re-templated prompts.
+            let match_base = field(obj, &["match_key", "match", "key", "id"])
+                .and_then(value_to_string)
+                .unwrap_or(prompt);
+            let key_norm = norm_key(&match_base, ci);
             exact.insert(
-                prompt_norm.clone(),
+                key_norm.clone(),
                 Entry {
-                    prompt_norm,
+                    key_norm,
                     gold,
                     task,
                     format,
@@ -236,11 +284,12 @@ impl AccuracyDataset {
                 .to_string());
         }
         let mut entries: Vec<Entry> = exact.values().cloned().collect();
-        // Longest prompt first so the most specific substring match wins.
-        entries.sort_by_key(|e| std::cmp::Reverse(e.prompt_norm.len()));
+        // Longest key first so the most specific substring match wins.
+        entries.sort_by_key(|e| std::cmp::Reverse(e.key_norm.len()));
         Ok(Self {
             exact,
             entries,
+            match_mode,
             default_format: cfg.accuracy_format,
             correct_rate: cfg.accuracy_correct_rate.clamp(0.0, 1.0),
             cot_rate: cfg.accuracy_cot_rate.clamp(0.0, 1.0),
@@ -259,26 +308,32 @@ impl AccuracyDataset {
         self.exact.is_empty()
     }
 
-    /// Find the entry whose prompt matches the request's user text: exact
-    /// normalized match first, then the longest entry prompt contained in the
-    /// request (handles few-shot / system-prompt wrapping).
+    /// Find the entry matching the request's user text under the configured
+    /// [`AccuracyMatch`] mode: normalized (optionally case-folded) exact match
+    /// first; in the `substring` modes, fall back to the longest row key
+    /// contained in the request.
     pub fn lookup(&self, request_text: &str) -> Option<&Entry> {
-        let norm = normalize(request_text);
-        if let Some(e) = self.exact.get(&norm) {
+        let nk = norm_key(request_text, self.match_mode.case_insensitive());
+        if let Some(e) = self.exact.get(&nk) {
             return Some(e);
         }
-        self.entries
-            .iter()
-            .find(|e| !e.prompt_norm.is_empty() && norm.contains(&e.prompt_norm))
+        if self.match_mode.substring() {
+            return self
+                .entries
+                .iter()
+                .find(|e| !e.key_norm.is_empty() && nk.contains(&e.key_norm));
+        }
+        None
     }
 
     /// Render the response for a matched request. Deterministic in
-    /// `(random_seed, request_text)` — independent of arrival order — so a
-    /// given prompt always gets the same verdict across a run and across runs.
-    pub fn decide(&self, entry: &Entry, request_text: &str) -> AccuracyDecision {
+    /// `(random_seed, entry.key_norm)` — independent of arrival order AND of how
+    /// the prompt was wrapped on the wire — so a given dataset row always gets
+    /// the same verdict across a run and across runs.
+    pub fn decide(&self, entry: &Entry) -> AccuracyDecision {
         let seed = derive_seed_parts(&[
             self.seed.to_le_bytes().as_slice(),
-            request_text.as_bytes(),
+            entry.key_norm.as_bytes(),
             "mock.accuracy".as_bytes(),
         ]);
         let mut rng = RandomGenerator::from_seed(Some(seed));
@@ -642,6 +697,64 @@ mod tests {
     }
 
     #[test]
+    fn exact_mode_rejects_wrapped_prompt() {
+        let body = r#"{"prompt": "Capital of France?", "answer": "Paris"}"#;
+        let ds = dataset(body, |c| c.accuracy_match = AccuracyMatch::Exact);
+        assert!(ds.lookup("Capital of France?").is_some());
+        // Substring wrapping no longer matches under exact mode.
+        assert!(ds.lookup("You are an expert. Capital of France?").is_none());
+        // Whitespace is still normalized in exact mode.
+        assert!(ds.lookup("  Capital   of   France?  ").is_some());
+    }
+
+    #[test]
+    fn case_insensitive_modes_fold_case() {
+        let body = r#"{"prompt": "Capital of France?", "answer": "Paris"}"#;
+        // Case-sensitive default misses a different-case request.
+        let cs = dataset(body, |_| {});
+        assert!(cs.lookup("CAPITAL OF FRANCE?").is_none());
+        // exact_ci and substring_ci both match.
+        let ci = dataset(body, |c| c.accuracy_match = AccuracyMatch::ExactCi);
+        assert!(ci.lookup("CAPITAL OF FRANCE?").is_some());
+        let sci = dataset(body, |c| c.accuracy_match = AccuracyMatch::SubstringCi);
+        assert!(sci.lookup("Note: CAPITAL OF FRANCE?").is_some());
+    }
+
+    #[test]
+    fn dedicated_match_key_matches_a_stable_fragment() {
+        // The prompt is a big formatted blob; the row keys on a stable marker.
+        let body =
+            r#"{"prompt": "irrelevant", "match_key": "q_id_4217", "answer": "C", "task": "t"}"#;
+        let ds = dataset(body, |c| c.accuracy_match = AccuracyMatch::Substring);
+        let wire = "Few-shot examples...\nQuestion [q_id_4217]: pick one.\nAnswer:";
+        let e = ds.lookup(wire).expect("match on the embedded key");
+        assert_eq!(e.gold, "C");
+        // The verdict is keyed on the stable key, not the wire text.
+        // Default correct_rate is 1.0, default format passthrough → "C".
+        let d = ds.decide(e);
+        assert!(d.correct);
+        assert_eq!(d.content, "C");
+    }
+
+    #[test]
+    fn verdict_is_stable_across_prompt_wrappings() {
+        // Same row reached via two different wrappings yields the same verdict.
+        let body = r#"{"prompt": "the q", "answer": "B"}"#;
+        let ds = dataset(body, |c| {
+            c.accuracy_match = AccuracyMatch::Substring;
+            c.accuracy_format = AccuracyFormat::Mmlu;
+            c.accuracy_correct_rate = 0.5;
+        });
+        let a = ds.decide(ds.lookup("prefix one — the q").unwrap());
+        let b = ds.decide(
+            ds.lookup("a totally different prefix the q suffix")
+                .unwrap(),
+        );
+        assert_eq!(a.content, b.content);
+        assert_eq!(a.correct, b.correct);
+    }
+
+    #[test]
     fn empty_dataset_is_an_error() {
         let c = cfg();
         assert!(AccuracyDataset::from_jsonl("{\"foo\":1}\n", &c).is_err());
@@ -664,7 +777,7 @@ mod tests {
             c.accuracy_correct_rate = 1.0;
         });
         let e = ds.lookup("q").unwrap();
-        let d = ds.decide(e, "q");
+        let d = ds.decide(e);
         assert!(d.correct);
         assert_eq!(d.content, "The answer is (B)");
         assert!(d.reasoning_content.is_none());
@@ -678,7 +791,7 @@ mod tests {
             c.accuracy_correct_rate = 0.0;
         });
         let e = ds.lookup("q").unwrap();
-        let d = ds.decide(e, "q");
+        let d = ds.decide(e);
         assert!(!d.correct);
         assert_ne!(d.content, "The answer is (B)");
         assert!(d.content.starts_with("The answer is ("));
@@ -697,8 +810,8 @@ mod tests {
         let body = r#"{"prompt":"q","answer":"B"}"#;
         let ds = dataset(body, |c| c.accuracy_correct_rate = 0.5);
         let e = ds.lookup("q").unwrap();
-        let a = ds.decide(e, "q");
-        let b = ds.decide(e, "q");
+        let a = ds.decide(e);
+        let b = ds.decide(e);
         assert_eq!(a.content, b.content);
         assert_eq!(a.correct, b.correct);
     }
@@ -718,7 +831,7 @@ mod tests {
         for i in 0..400 {
             let key = format!("q{i}");
             let e = ds.lookup(&key).unwrap();
-            if ds.decide(e, &key).correct {
+            if ds.decide(e).correct {
                 correct += 1;
             }
         }
@@ -736,7 +849,7 @@ mod tests {
             c.accuracy_reasoning_field = true;
         });
         let e = ds.lookup("q").unwrap();
-        let d = ds.decide(e, "q");
+        let d = ds.decide(e);
         assert!(d.cot);
         assert_eq!(d.content, "The answer is (B)");
         let r = d.reasoning_content.expect("reasoning present");
@@ -753,7 +866,7 @@ mod tests {
             c.accuracy_reasoning_field = false;
         });
         let e = ds.lookup("q").unwrap();
-        let d = ds.decide(e, "q");
+        let d = ds.decide(e);
         assert!(d.reasoning_content.is_none());
         assert!(d.content.ends_with("#### 42"));
         assert!(d.content.contains("Therefore"));
@@ -770,7 +883,7 @@ mod tests {
             c.accuracy_reasoning_field = false;
         });
         let e = ds.lookup("q").unwrap();
-        let d = ds.decide(e, "q");
+        let d = ds.decide(e);
         assert_eq!(d.content, "True");
         assert!(d.reasoning_content.is_some());
     }
@@ -788,7 +901,7 @@ mod tests {
                 c.accuracy_adversarial_rate = 1.0;
             });
             let e = ds.lookup(&key).unwrap();
-            let d = ds.decide(e, &key);
+            let d = ds.decide(e);
             assert!(d.adversarial.is_some());
             if d.adversarial == Some(Adversarial::ReasoningOnly) {
                 assert!(d.content.is_empty());
@@ -811,7 +924,7 @@ mod tests {
                 c.accuracy_adversarial_rate = 1.0;
             });
             let e = ds.lookup(&key).unwrap();
-            let d = ds.decide(e, &key);
+            let d = ds.decide(e);
             if d.adversarial == Some(Adversarial::NullObjectChunk) {
                 assert!(d.null_object_chunk);
                 found = true;
@@ -875,6 +988,6 @@ mod tests {
         });
         let e = ds.lookup("q").unwrap();
         assert_eq!(e.format, Some(AccuracyFormat::Gsm8k));
-        assert_eq!(ds.decide(e, "q").content, "#### 42");
+        assert_eq!(ds.decide(e).content, "#### 42");
     }
 }
