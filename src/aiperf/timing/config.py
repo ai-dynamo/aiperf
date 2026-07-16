@@ -11,8 +11,8 @@ from pydantic import ConfigDict, Field, model_validator
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.config.dataset.defaults import InputDefaults
-from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.config.rate_series import RateSeriesConfig
+from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.plugin.enums import (
     ArrivalPattern,
     PhaseType,
