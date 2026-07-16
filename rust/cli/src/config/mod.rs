@@ -157,13 +157,21 @@ fn validate(args: ValidateArgs) -> anyhow::Result<i32> {
 }
 
 /// `aiperf config expand`: preview the sweep variations a config produces.
-fn expand(_args: ExpandArgs) -> anyhow::Result<i32> {
-    // Sweep expansion currently derives from flag comma-lists; a YAML `sweep:`
-    // block preview is a follow-up. For now report the single resolved run.
-    eprintln!(
-        "aiperf: config expand previews sweeps; YAML sweep blocks are not yet \
-         modeled natively (flag comma-lists expand at `aiperf profile` time)."
-    );
+fn expand(args: ExpandArgs) -> anyhow::Result<i32> {
+    let Some(path) = args.config else {
+        anyhow::bail!("config expand requires --config <file>");
+    };
+    let mut base = crate::yaml::read_env_substituted(&path)?;
+    let Some(sweep) = crate::sweep::yaml_sweep::parse(&base)? else {
+        println!("No `sweep:` block — this config resolves to a single run.");
+        return Ok(0);
+    };
+    crate::sweep::yaml_sweep::normalize_benchmark(&mut base);
+    let variations = sweep.expand(&base)?;
+    println!("Sweep expands to {} run(s):", variations.len());
+    for v in &variations {
+        println!("  [{}] {}  (dir: {})", v.index, v.label, v.dir_name);
+    }
     Ok(0)
 }
 
