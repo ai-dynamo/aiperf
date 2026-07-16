@@ -25,8 +25,9 @@ use crate::metrics_core::{
     NativeReport, ReportEndpointProfileIdentity, ReportExtensionIdentity, ReportPairRunFacts,
     ReportRunProvenance,
 };
-use crate::transport_http::config::ClientConfig;
-use crate::transport_http::models::{ConnectionReuseStrategy, HttpVersion};
+use crate::transport::core::ConnectionReuseStrategy;
+use crate::transport::http::config::ClientConfig;
+use crate::transport::http::models::HttpVersion;
 use anyhow::{Result, anyhow, bail, ensure};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -244,9 +245,25 @@ pub trait NativeTransportExecution: Send + Sync {
     /// transport polls a live server; `grpc`/`dry_run` skip it.
     fn readiness_enabled(&self) -> bool;
 
-    /// Graph-dispatcher construction kind, or an error when this transport does
-    /// not (yet) drive the whole-trace graph workload.
-    fn graph_transport_kind(&self) -> Result<crate::engine::graph_execution::GraphTransportKind>;
+    /// Build one graph endpoint profile's dispatcher for this transport, or
+    /// return an error when it does not (yet) drive the whole-trace graph
+    /// workload. The graph runtime dispatches over the returned
+    /// `Rc<dyn Dispatcher>` and never matches on a transport kind — adding a
+    /// transport is implementing this method, nothing else.
+    fn build_graph_dispatcher(
+        &self,
+        clock: std::rc::Rc<dyn crate::clock::Clock>,
+        run_origin_ns: i64,
+        urls: &[String],
+        model: &str,
+        transport_config: crate::transport::http::TransportSinkConfig,
+        endpoints: std::rc::Rc<crate::endpoints::PreparedEndpointTable>,
+    ) -> Result<std::rc::Rc<dyn crate::transport::http::Dispatcher>>;
+
+    /// Human-readable transport label used in graph tracing/diagnostics.
+    fn graph_transport_label(&self) -> &'static str {
+        "unknown"
+    }
 
     /// Transport-specific run-level validation (endpoint URL schemes, server
     /// reachability policy, …), performed after component configs decode.

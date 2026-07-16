@@ -10,10 +10,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use aiperf_runtime::ancillary::AncillaryTimingConfig;
 use aiperf_runtime::clock::{Clock, RealClock};
 use aiperf_runtime::fixed_schedule::FixedScheduleConfig;
-use aiperf_runtime::http::{HttpRequest, TransportSink};
-use aiperf_runtime::transport_http::config::ClientConfig;
-use aiperf_runtime::transport_http::models::{ErrorKind, RequestConfig};
-use aiperf_runtime::transport_http::transport::http_transport::HttpTransport;
+use aiperf_runtime::transport::core::ErrorKind;
+use aiperf_runtime::transport::core::Request;
+use aiperf_runtime::transport::http::TransportSink;
+use aiperf_runtime::transport::http::config::ClientConfig;
+use aiperf_runtime::transport::http::models::RequestConfig;
+use aiperf_runtime::transport::http::transport::http_transport::HttpTransport;
 use axum::{
     Router, body::Bytes, extract::State, http::header, response::IntoResponse, routing::post,
 };
@@ -137,7 +139,7 @@ async fn post_send_disconnect_is_reported_as_a_canceled_terminal() {
             observer.on_arrival(uuid, 0.0, 1, 1);
             let result = sink
                 .dispatch_collect_with_hooks(
-                    HttpRequest {
+                    Request {
                         uuid,
                         input_length: 1,
                         max_output_tokens: 1,

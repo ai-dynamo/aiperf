@@ -12,8 +12,9 @@ use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::rc::Rc;
 
 use crate::clock::Clock;
-use crate::transport_http::models::{RequestConfig, Response};
-use crate::transport_http::transport::http_transport::HttpTransport;
+use crate::transport::core::Response;
+use crate::transport::http::models::RequestConfig;
+use crate::transport::http::transport::http_transport::HttpTransport;
 use async_trait::async_trait;
 use url::Url;
 

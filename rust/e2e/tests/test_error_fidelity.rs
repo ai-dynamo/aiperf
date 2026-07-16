@@ -7,7 +7,7 @@
 //! exactly as the runner classifies it.
 //!
 //! These exercise the runner's error-absorption path
-//! (`aiperf_runtime::http::absorb_transport_error`, `rust/aiperf/src/http.rs:1062`),
+//! (`aiperf_runtime::transport::http::absorb_transport_error`, `rust/aiperf/src/http.rs:1062`),
 //! which keys off the transport's status code + `ErrorKind`. The raw-record
 //! `status` / `error` fields come from `aiperf_runtime::engine::records`
 //! (`raw_record_row`, `rust/aiperf/src/engine/records.rs:928`):
@@ -15,7 +15,7 @@
 //!     "HttpError", message}` (`ErrorDetails::http`),
 //!   * a mid-stream `event: error` SSE frame -> `error: {code: 502, type:
 //!     "SSEResponseError", message}` (`ErrorDetails::sse`,
-//!     `rust/aiperf/src/transport_http/models/error.rs:44`).
+//!     `rust/aiperf/src/transport::http/models/error.rs:44`).
 //!
 //! The mock's configurable status-code menu, Retry-After header, and mid-stream
 //! SSE error live in `rust/mock-server/src/{config,state,handlers}.rs`.

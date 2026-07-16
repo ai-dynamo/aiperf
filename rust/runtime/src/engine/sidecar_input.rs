@@ -138,6 +138,11 @@ pub struct GpuTelemetrySpec {
     /// Config-v2 custom DCGM fields registered for native sidecar reporting.
     #[serde(default)]
     pub custom_metrics: Vec<GpuTelemetryMetricSpec>,
+    /// Optional custom DCGM metrics CSV (`--gpu-telemetry <file>.csv`). When set,
+    /// the native DCGM decoder is extended with the CSV's additional exporter
+    /// fields and the accumulator registers each parsed metric spec.
+    #[serde(default)]
+    pub metrics_file: Option<PathBuf>,
 }
 
 /// Run-level network RTT calibration lowered from Config v2.

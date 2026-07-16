@@ -235,8 +235,12 @@ pub struct Synthetic {
 /// `FileDataset` branch.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FileDataset {
-    /// Native file format id (e.g. `single_turn`, `mooncake_trace`).
-    pub format: String,
+    /// Native file format id (e.g. `single_turn`, `mooncake_trace`). Omitted from
+    /// the wire request when `--custom-dataset-type` was not supplied (so the
+    /// runtime auto-detects the loader structurally), mirroring Python's converter
+    /// which only emits `format` when the user set it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
     /// Sampling order.
     pub sampling: Sampling,
     /// Format-specific loader options (open bag).

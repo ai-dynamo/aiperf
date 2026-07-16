@@ -2113,7 +2113,7 @@ fn sse_done() -> Bytes {
 
 /// A terminal mid-stream SSE error frame: `event: error` with the message as an
 /// SSE comment. The runner's SSE reader
-/// (`aiperf_runtime::transport_http::sse::reader::read_sse`) classifies any frame whose
+/// (`aiperf_runtime::transport::http::sse::reader::read_sse`) classifies any frame whose
 /// `event` field equals `error` as a transport `ErrorKind::Sse` (pseudo-status
 /// 502, type `sse_error`) via `SseMessage::error_message`, aborting the stream
 /// before `[DONE]`. Emitted after a few normal token frames so the record shows

@@ -47,7 +47,7 @@ use crate::timing::{
 
 use crate::adaptive::{AdaptiveControlVariable, AdaptiveRunConfig, build_adaptive};
 use crate::ancillary::{AncillaryTimingConfig, parse_base_urls, url_selector};
-use crate::http::{HttpRequestDispatcher, TransportSink};
+use crate::transport::http::{HttpRequestDispatcher, TransportSink};
 use crate::metrics::{
     NativeMetricsObserver, NativeResponseMetadata, ObserverTee, RequestMetricMetadata,
 };

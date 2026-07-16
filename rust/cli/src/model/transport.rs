@@ -58,18 +58,42 @@ impl Transport {
 /// runtime applies its own defaults for any omitted field.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct DryRunConfig {
-    /// Synthetic time-to-first-token in milliseconds.
+    /// Base time-to-first-token in milliseconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ttft_ms: Option<f64>,
-    /// Synthetic inter-token latency in milliseconds.
+    /// Base inter-token latency in milliseconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub itl_ms: Option<f64>,
-    /// Coefficient of variation for the (future) seeded jitter draw.
+    /// Prefill cost per input token (ms): `TTFT += this · ISL`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub jitter_cv: Option<f64>,
-    /// Root seed for the (future) jitter draw.
+    pub ttft_per_isl_token_ms: Option<f64>,
+    /// Super-linear prefill contention (ms per inflight²).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttft_concurrency_quad_ms: Option<f64>,
+    /// Decode cost per output token (ms): `ITL += this · OSL`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub itl_per_osl_token_ms: Option<f64>,
+    /// Linear decode contention (ms per inflight).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub itl_concurrency_lin_ms: Option<f64>,
+    /// Lognormal TTFT jitter coefficient of variation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttft_jitter_cv: Option<f64>,
+    /// Lognormal ITL jitter coefficient of variation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub itl_jitter_cv: Option<f64>,
+    /// Root seed for the per-request jitter draw.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<u64>,
+    /// Analytic latency curve: `linear` or `aiconfigurator_polynomial`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latency_model: Option<String>,
+    /// KV-cache utilization for the polynomial decode curve.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kv_utilization: Option<f64>,
+    /// Clock driver: `real` (default) or `sim` (deterministic virtual time).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clock: Option<String>,
 }
 
 /// The typed `transport.config` field surface for the DynoSim transports.

@@ -48,9 +48,6 @@ use crate::fixed_schedule::{
     DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload,
 };
 use crate::graph::input::GraphInputBundle;
-use crate::http::{
-    MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor, TransportSinkConfig,
-};
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
 use crate::metrics_core::{
     CATALOG, ExportContext, InferenceDimensions, MetricTag, MetricsAccumulator, MetricsConfig,
@@ -82,6 +79,8 @@ use crate::timing::{
     RampStrategy, RamperConfig, RoundRobinUrlSelector, SlotPool, StopConfig, UrlSelector,
     make_interval_generator,
 };
+use crate::transport::core::{MeasuredContext, MeasuredOutcome};
+use crate::transport::http::{PreparedTurn, RequestExecutor, TransportSinkConfig};
 use crate::user_centric::{UserCentricConfig, UserCentricWorkload};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use async_trait::async_trait;
@@ -93,7 +92,7 @@ use crate::engine::dataset_input::PreparedDatasetInput;
 use crate::engine::execution_factories::ExecutionFactories;
 use crate::engine::gpu_telemetry::GpuTelemetryRun;
 use crate::engine::graph_execution::{
-    GraphTransportKind, PreparedRunnerGraphEndpointRuntimeFactory, GraphBackendFactory,
+    PreparedRunnerGraphEndpointRuntimeFactory, GraphBackendFactory,
     GraphBackendFactoryConfig, GraphEndpointRuntimeFactory,
     GraphPlacementFactory,
 };
@@ -130,7 +129,7 @@ use crate::engine::sidecar_input::{
     PreparedSidecarInputs, SERVER_METRICS_SIDECAR_ID, ServerMetricsSpec,
 };
 use crate::engine::turn_execution::{
-    HttpExecutionBackendConfig, HttpPreparedEndpointTableFactory, RequestExecutorFactory,
+    ExecutionBackendConfig, PreparedEndpointTableFactory, RequestExecutorFactory,
 };
 
 type PhaseRuntimeParts = (
@@ -227,11 +226,12 @@ pub(crate) struct NativeRunSpec {
     /// post-report sink emits populated `bucket_counts`; otherwise that
     /// projection is skipped entirely (no per-record recompute cost).
     pub(crate) native_otel_enabled: bool,
-    /// Resolved transport (`cfg.transport.type`) the graph execution path builds
-    /// its worker-local dispatchers over. Consumed only when `dataset` is
-    /// [`NativeDatasetPlan::Graph`]; the scheduled path resolves its transport
-    /// through the injected `RequestExecutorFactory` instead and ignores this.
-    pub(crate) transport_kind: GraphTransportKind,
+    /// Resolved transport binding (`cfg.transport.type`) the graph execution path
+    /// builds its worker-local dispatchers over (`build_graph_dispatcher`).
+    /// `Some` only when `dataset` is [`NativeDatasetPlan::Graph`]; the scheduled
+    /// path resolves its transport through the injected `RequestExecutorFactory`
+    /// and leaves this `None`.
+    pub(crate) transport: Option<Arc<dyn crate::engine::registry::NativeTransportExecution>>,
 }
 
 /// Protocol-neutral retention of one run's already decoded sidecar inputs.
@@ -363,7 +363,7 @@ impl NativePreparedEndpointTableFactory {
     }
 }
 
-impl HttpPreparedEndpointTableFactory for NativePreparedEndpointTableFactory {
+impl PreparedEndpointTableFactory for NativePreparedEndpointTableFactory {
     fn prepare_worker(&self) -> Result<PreparedEndpointTable> {
         self.prepare_table()
     }
@@ -1441,11 +1441,15 @@ async fn execute_graph_native(
         .collect();
     let endpoint_runtime_factory: Arc<dyn GraphEndpointRuntimeFactory> = {
         let NativeEndpointPlan::Prepared(profiles) = &request.endpoint;
+        let transport = request
+            .transport
+            .clone()
+            .ok_or_else(|| anyhow!("graph execution plan is missing its transport binding"))?;
         Arc::new(PreparedRunnerGraphEndpointRuntimeFactory::new(
             registry.endpoints().clone(),
             profiles.clone(),
             input_token_counter.clone(),
-            request.transport_kind,
+            transport,
         )?)
     };
     let real_clock_anchor = sidecars.real_clock_anchor;
@@ -2231,9 +2235,8 @@ pub(crate) async fn execute_scheduled_shard(
         shared.workers,
     )?;
 
-    let prepared_endpoints: Arc<dyn HttpPreparedEndpointTableFactory> =
-        shared.table_factory.clone();
-    let execution_backend = shared.transport_factory.build(HttpExecutionBackendConfig {
+    let prepared_endpoints: Arc<dyn PreparedEndpointTableFactory> = shared.table_factory.clone();
+    let execution_backend = shared.transport_factory.build(ExecutionBackendConfig {
         // One worker: the sink stays on this thread's reactor, co-located with the
         // scheduler — the old per-request mpsc/oneshot hop is gone.
         workers: 1,
@@ -2627,7 +2630,7 @@ async fn execute_native_inner(
     // retain/sharded arms leave this `None` and fold their retained records post-run.
     let mut folded_otel: Option<OtelRecordAccumulator> = None;
     let (captured, input_sessions, was_cancelled, has_warmup, start_ns) = if !shardable {
-        let execution_backend = transport_factory.build(HttpExecutionBackendConfig {
+        let execution_backend = transport_factory.build(ExecutionBackendConfig {
             workers: request.workers,
             coordinator_clock: clock.clone(),
             real_clock_anchor,
@@ -3349,7 +3352,7 @@ pub(crate) trait NativeConversationSourceFactory {
 type NativeEndpointExecutionParts<'a> = (
     Vec<String>,
     TransportSinkConfig,
-    Option<Arc<dyn HttpPreparedEndpointTableFactory>>,
+    Option<Arc<dyn PreparedEndpointTableFactory>>,
     Box<dyn NativeConversationSourceFactory + 'a>,
 );
 
@@ -3400,6 +3403,158 @@ impl NativeConversationSourceFactory for PreparedNativeConversationSourceFactory
                 .with_input_token_counter(input_token_counter),
         ))
     }
+}
+
+/// Prepare a virtual-clock (`SimClock`) `dry_run` scheduled operation.
+///
+/// This is the sim analogue of `PreparedNativeOperation`: it reuses the shared
+/// plan builder ([`build_native_scheduled_phase_plan_with_source_factory`]) and
+/// the shared phase runner (`run_scheduled_phases_with_aggregate_deferred`) but
+/// drives them under a `SimClock` via `drive_sim` with a
+/// [`crate::engine::dry_run::FakeTurnDispatcher`] that *sleeps on the virtual
+/// clock*. Arrival pacing, duration bounds, ramps, and the analytic
+/// concurrency-contention terms therefore all run in virtual time — instant in
+/// wall-clock and byte-deterministic. It mirrors dynosim's
+/// `PreparedDynosimScheduledOperation` without the Dynamo backend, and, like it,
+/// is aggregate-only (no per-record artifacts).
+/// Prepare a virtual-clock (`SimClock`) dry-run scheduled operation.
+///
+/// This drives the *normal* single-thread native execution
+/// ([`execute_prepared_native_plan_sim`]) under `drive_sim`, so `RunCapture`,
+/// the per-record artifacts, the metrics accumulator, and the report are all
+/// produced by exactly the same code the real-clock path uses — only the clock
+/// and the driver differ. Arrival pacing, duration bounds, and fixed-schedule
+/// timestamps run in virtual time (instant wall-clock, byte-deterministic).
+pub(crate) fn prepare_dry_run_sim_scheduled(
+    plan: NativeRunSpec,
+    request_executor: Arc<dyn RequestExecutorFactory>,
+    context: &crate::engine::registry::RunContext,
+) -> Result<Box<dyn crate::engine::registry::PreparedRunnerOperation>> {
+    Ok(Box::new(PreparedDryRunSimOperation {
+        request: plan,
+        request_executor,
+        factories: context.execution_factories_handle(),
+        registry: context.product_registry_handle(),
+    }))
+}
+
+/// Owned inputs for one virtual-clock dry-run scheduled operation.
+struct PreparedDryRunSimOperation {
+    request: NativeRunSpec,
+    request_executor: Arc<dyn RequestExecutorFactory>,
+    factories: ExecutionFactories,
+    registry: Arc<AIPerfRegistry>,
+}
+
+impl std::fmt::Debug for PreparedDryRunSimOperation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PreparedDryRunSimOperation")
+            .finish_non_exhaustive()
+    }
+}
+
+impl crate::engine::registry::PreparedRunnerOperation for PreparedDryRunSimOperation {
+    fn execute(self: Box<Self>) -> Result<crate::engine::registry::PreparedRunOutcome> {
+        let Self {
+            request,
+            request_executor,
+            factories,
+            registry,
+        } = *self;
+        let native_report =
+            execute_prepared_native_plan_sim(request, request_executor, &factories, &registry)?;
+        Ok(crate::engine::registry::PreparedRunOutcome {
+            native_report,
+            report_facts: crate::metrics_core::ReportPairRunFacts::new(),
+            provenance: std::collections::BTreeMap::from([
+                ("transport".to_string(), "dry_run".to_string()),
+                ("clock".to_string(), "sim".to_string()),
+            ]),
+            report_commit: None,
+        })
+    }
+}
+
+thread_local! {
+    /// Hand-off for the `SimClock` the sim dry-run drives. Set on the running
+    /// thread around the `drive_sim` call so the (`Send + Sync`, thus
+    /// clock-less) [`SimClockSidecarResourceFactory`] can install the very
+    /// instance the pump advances. Cleared immediately after the run.
+    static SIM_DRY_RUN_CLOCK: RefCell<Option<Rc<crate::clock::SimClock>>> =
+        const { RefCell::new(None) };
+}
+
+/// Sidecar factory for the sim dry-run: returns the thread-local `SimClock` and
+/// no telemetry sidecars (a dry run opens no sockets, so GPU/network/server
+/// scraping is already suppressed upstream).
+#[derive(Debug, Clone, Copy, Default)]
+struct SimClockSidecarResourceFactory;
+
+#[async_trait(?Send)]
+impl NativeSidecarResourceFactory for SimClockSidecarResourceFactory {
+    async fn prepare(&self, _run: &NativeRunSpec) -> Result<PreparedNativeSidecarResources> {
+        let clock = SIM_DRY_RUN_CLOCK
+            .with(|slot| slot.borrow().clone())
+            .ok_or_else(|| anyhow!("sim dry-run clock was not installed before execution"))?;
+        Ok(PreparedNativeSidecarResources {
+            real_clock_anchor: RealClockAnchor::now(),
+            clock,
+            content_server: None,
+            gpu_telemetry: None,
+            network_latency: None,
+            server_metrics: None,
+            live_streaming: None,
+            gpu_records_path: None,
+            network_latency_records_path: None,
+            server_metrics_jsonl_path: None,
+            server_metrics_parquet_wire_path: None,
+        })
+    }
+}
+
+/// Run one native scheduled plan on a `SimClock` under `drive_sim`.
+///
+/// Identical to [`execute_prepared_native_plan_uncommitted_selected`] except the
+/// coordinator clock is virtual and the run is pumped by `drive_sim` (the
+/// idle-pump that advances virtual time) instead of `block_on`. The plan is
+/// forced to a single worker so the whole run stays on the one reactor the pump
+/// drives — `workers > 1` would spawn real-clock OS threads the pump cannot
+/// advance. Everything else — `RunCapture`, per-record artifacts, metrics, and
+/// the report — is the ordinary [`prepare_and_execute_native`] path.
+fn execute_prepared_native_plan_sim(
+    mut plan: NativeRunSpec,
+    request_executor: Arc<dyn RequestExecutorFactory>,
+    factories: &ExecutionFactories,
+    registry: &AIPerfRegistry,
+) -> Result<NativeReport> {
+    validate_plan(&plan)?;
+    plan.workers = 1;
+    let clock = Rc::new(crate::clock::SimClock::new());
+    SIM_DRY_RUN_CLOCK.with(|slot| *slot.borrow_mut() = Some(clock.clone()));
+    let slot: Rc<RefCell<Option<Result<NativeReport>>>> = Rc::new(RefCell::new(None));
+    let slot_for_run = slot.clone();
+    let graph_placement = factories.graph_handle();
+    let outcome = crate::graph::runtime::drive_sim(clock, move |_handle| async move {
+        let report = prepare_and_execute_native(
+            plan,
+            request_executor,
+            graph_placement.as_ref(),
+            registry,
+            &SimClockSidecarResourceFactory,
+            None,
+        )
+        .await;
+        *slot_for_run.borrow_mut() = Some(report);
+    });
+    SIM_DRY_RUN_CLOCK.with(|slot| *slot.borrow_mut() = None);
+    ensure!(
+        !outcome.deadlocked,
+        "dry_run sim scheduled run deadlocked (no schedulable virtual-time event)"
+    );
+    slot.borrow_mut()
+        .take()
+        .ok_or_else(|| anyhow!("dry_run sim run produced no report"))?
 }
 
 /// Lower one authored phase into the shared scheduled runtime above the
@@ -3761,9 +3916,13 @@ pub(crate) async fn build_file_dataset(
         load.max_input_tokens = synthesis.max_isl;
         load.max_output_tokens = synthesis.max_osl;
     }
+    // An empty format means `--custom-dataset-type` was not supplied; defer to
+    // structural auto-detection (Python's `_infer_dataset_type`). A non-empty
+    // format is an explicit, honored loader selection.
+    let explicit_format = (!spec.format.is_empty()).then_some(spec.format.as_str());
     registry
         .dataset_formats()
-        .build_dataset(Some(&spec.format), &load, &compose, tokenizer)
+        .build_dataset(explicit_format, &load, &compose, tokenizer)
         .await
         .map_err(Into::into)
 }
@@ -5277,7 +5436,7 @@ impl RunCapture {
         &self,
         uuid: Uuid,
         request_payload: Vec<u8>,
-        record: crate::transport_http::models::RequestRecord,
+        record: crate::transport::core::RequestRecord,
     ) -> Result<()> {
         if !self.raw_enabled {
             return Ok(());

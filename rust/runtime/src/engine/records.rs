@@ -18,9 +18,8 @@ use crate::metrics_core::{
     CATALOG, MetricFlags, MetricType, MetricsAccumulator, MetricsConfig, Phase, RecordIngest,
     ReportError,
 };
-use crate::transport_http::models::{
-    ErrorKind, RequestRecord, Response, SseFieldName, SseMessage, TextResponse,
-};
+use crate::transport::core::{ErrorKind, RequestRecord, Response, TextResponse};
+use crate::transport::http::models::{SseFieldName, SseMessage};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use serde_json::value::RawValue;
@@ -133,7 +132,7 @@ struct ClassifiedRecordError {
 
 /// Classify a captured record's terminal error.
 ///
-/// The exact transport [`ErrorDetails`](crate::transport_http::models::ErrorDetails)
+/// The exact transport [`ErrorDetails`](crate::transport::core::ErrorDetails)
 /// is preferred when raw artifacts retained it, so a real HTTP status and kind
 /// survive. Otherwise the code and stable type are derived from the record's
 /// terminal disposition: post-send cancellation is HTTP 499
@@ -1038,7 +1037,7 @@ fn text_response_value(response: &TextResponse) -> Value {
     })
 }
 
-fn error_value(error: &crate::transport_http::models::ErrorDetails) -> Value {
+fn error_value(error: &crate::transport::core::ErrorDetails) -> Value {
     json!({
         "code": error.code,
         "type": error_kind_type_name(error.kind),

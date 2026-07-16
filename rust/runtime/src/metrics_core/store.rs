@@ -10,7 +10,7 @@
 
 use crate::cellular::sketch::TDigest;
 use crate::metrics_core::catalog::MetricTag;
-use crate::metrics_core::ingest::{HttpTrace, InferenceDimensions, RecordIngest, UsageMetrics};
+use crate::metrics_core::ingest::{InferenceDimensions, RecordIngest, RequestTrace, UsageMetrics};
 use crate::metrics_core::value::MetricValue;
 use crate::metrics_core::window::{ExportContext, Phase};
 use rustc_hash::{FxHashMap, FxHasher};
@@ -1578,7 +1578,7 @@ impl<B: ListMetricBackend> ColumnStore<B> {
         );
     }
 
-    fn populate_http_metrics(&mut self, row: usize, trace: HttpTrace) {
+    fn populate_http_metrics(&mut self, row: usize, trace: RequestTrace) {
         self.set_nonnegative_i64(row, MetricTag::StreamSetupLatency, trace.stream_setup_ns);
         self.set_nonnegative_i64(row, MetricTag::HttpReqBlocked, trace.blocked_ns);
         self.set_nonnegative_i64(row, MetricTag::HttpReqDnsLookup, trace.dns_lookup_ns);

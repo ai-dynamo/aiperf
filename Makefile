@@ -177,12 +177,19 @@ install-native: native-cli #? install the pure-Rust `aiperf` into dist/native-bi
 	@echo "Then: aiperf profile --model M --url 127.0.0.1:8000 --endpoint-type chat --concurrency 1,2,4 --request-count 100"
 
 # CLI_FEATURES selects the unified `aiperf` binary's execution profile, mirroring
-# the Dockerfile's build knob. Default = online-only (no dynosim, parquet only),
-# which builds WITHOUT the sibling dynamo-aiperf-native checkout. For the full
-# execution surface (dynosim + parquet + velo, needs the sibling checkout for
-# offline/online Dynamo replay and cellular):
-#   make bundle-cli CLI_FEATURES="--features full"
-CLI_FEATURES ?= --features parquet
+# the Dockerfile's build knob. Default = `full` (the entire execution surface:
+# dynosim + parquet + velo + grpc) so cellular, graph-cellular, parquet sidecars,
+# and offline/online Dynamo replay all work out of the box — and the e2e suite
+# passes without a per-target feature dance. This REQUIRES the sibling
+# `dynamo-aiperf-native` checkout (for the `dynosim` mocker). If you don't have it,
+# build a sibling-free binary with:
+#   make bundle-cli CLI_FEATURES="--features parquet"      # online + cellular-less, no sibling
+# or a lean HTTP-only binary with `CLI_FEATURES="--no-default-features"`.
+# `search-pyo3` (the scipy/optuna dynamic SLA-search styles) is intentionally NOT
+# in the default: it embeds CPython, which would make the shipped binary non-Python-
+# free. Add it when you need the `bo`/`optuna`/`smooth_isotonic` search styles:
+#   make bundle-cli CLI_FEATURES="--features full,search-pyo3"
+CLI_FEATURES ?= --features full
 bundle-cli: #? build the unified aiperf binary (CLI_FEATURES-selectable) for packaging.
 	cargo build --release -p aiperf-cli $(CLI_FEATURES)
 

@@ -4,7 +4,7 @@
 //!
 //! Graph-IR E2E path with thread-per-core workers (each a `current_thread`
 //! runtime + `LocalSet` running `concurrency` trace lanes); HTTP dispatch runs
-//! on the Rust-native [`crate::transport_http`] client. The multi-turn workload
+//! on the Rust-native [`crate::transport::http`] client. The multi-turn workload
 //! scaffolding (segment pool, [`BenchConfig`], server resolution) is shared with
 //! [`crate::graph::bench`]. Each serial lane keeps one reused connection:
 //!
@@ -46,11 +46,12 @@ use crate::metrics_core::{
     UsageMetrics,
 };
 use crate::timing::{RunState, StopChecker, StopConfig};
-use crate::transport_http::client::connection::{Sender, establish};
-use crate::transport_http::client::http_client::HttpClient;
-use crate::transport_http::config::ClientConfig;
-use crate::transport_http::models::{HttpVersion, SseMessage, TraceData};
-use crate::transport_http::sse::ChatChunk;
+use crate::transport::core::TraceData;
+use crate::transport::http::client::connection::{Sender, establish};
+use crate::transport::http::client::http_client::HttpClient;
+use crate::transport::http::config::ClientConfig;
+use crate::transport::http::models::{HttpVersion, SseMessage};
+use crate::transport::http::sse::ChatChunk;
 use url::Url;
 
 /// Lock-free per-worker measurement accumulator. Each worker thread owns one
@@ -119,7 +120,7 @@ fn percentile(sorted: &[f32], p: f64) -> f64 {
     sorted[idx] as f64
 }
 
-/// A per-lane metered sink over [`crate::transport_http`]. Holds one (usually cloned,
+/// A per-lane metered sink over [`crate::transport::http`]. Holds one (usually cloned,
 /// multiplexed) HTTP/2 sender, reused across the lane's serial requests, and
 /// records TTFT into the shared per-worker accumulator.
 struct TransportMeteredSink {

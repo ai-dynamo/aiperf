@@ -10,12 +10,12 @@ use std::task::{Context, Poll};
 
 use aiperf_runtime::clock::RealClock;
 use aiperf_runtime::endpoints::EndpointId;
-use aiperf_runtime::transport_grpc::riva_proto::streaming_recognize_request::StreamingRequest;
-use aiperf_runtime::transport_grpc::riva_proto::{
+use aiperf_runtime::transport::grpc::riva_proto::streaming_recognize_request::StreamingRequest;
+use aiperf_runtime::transport::grpc::riva_proto::{
     SpeechRecognitionAlternative, StreamingRecognitionResult, StreamingRecognizeRequest,
     StreamingRecognizeResponse,
 };
-use aiperf_runtime::transport_grpc::{
+use aiperf_runtime::transport::grpc::{
     GrpcBindingRegistry, GrpcClientConfig, GrpcRequestConfig, GrpcTransport,
 };
 use base64::Engine;

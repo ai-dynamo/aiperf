@@ -22,7 +22,7 @@ use crate::engine::readiness::{
     NativeHttpReadinessPlanFactory, NativeHttpReadinessTransportFactory,
     OnlineReadinessPlanFactory, ReadinessTransportFactory,
 };
-use crate::engine::turn_execution::{NativeRequestExecutorFactory, RequestExecutorFactory};
+use crate::engine::turn_execution::{HttpExecutionFactory, RequestExecutorFactory};
 
 /// Exact execution-factory universe retained from coordinator construction.
 ///
@@ -137,7 +137,7 @@ impl fmt::Debug for ExecutionFactories {
 /// [`NativeTransportExecution`]: crate::engine::registry::NativeTransportExecution
 pub fn native_execution_factories() -> ExecutionFactories {
     ExecutionFactories::new(
-        Arc::new(NativeRequestExecutorFactory),
+        Arc::new(HttpExecutionFactory),
         Arc::new(NativeRunnerGraphPlacementFactory),
         Arc::new(NativeHttpReadinessPlanFactory),
         Arc::new(NativeHttpReadinessTransportFactory),

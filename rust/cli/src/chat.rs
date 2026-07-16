@@ -7,13 +7,13 @@
 //!
 //! Reuses runner infrastructure rather than re-implementing it: the tiktoken/HF
 //! tokenizer (`aiperf_runtime::dataset::tokenizer`) for client-side token counts, the
-//! canonical SSE reader (`aiperf_runtime::transport_http::sse::read_sse`, the behavioral
+//! canonical SSE reader (`aiperf_runtime::transport::http::sse::read_sse`, the behavioral
 //! port of the same `AsyncSSEStreamReader` Python's `chat` uses — it owns the
 //! multibyte-across-TCP-chunk + JSON-continuation edge cases), and a single
 //! **injected `Clock`** for all timing (the runner's `RealClock`, substitutable
 //! by a `SimClock`) — never `Instant::now`/`SystemTime::now`. Only the
 //! connection itself is a lightweight direct hyper client (the full
-//! `transport_http` client is a Clock-injected, connection-pooled, cancellation-
+//! `transport::http` client is a Clock-injected, connection-pooled, cancellation-
 //! aware *measured-dispatch* engine — overkill for a sequential REPL); no
 //! reqwest, so loopback is never proxied.
 //!
@@ -203,7 +203,7 @@ fn format_stats(
 }
 
 /// Build a tokio-rustls TLS connector with webpki roots (mirrors
-/// `aiperf_runtime::export::otel` / `transport_http`).
+/// `aiperf_runtime::export::otel` / `transport::http`).
 fn tls_connector() -> anyhow::Result<tokio_rustls::TlsConnector> {
     let mut roots = rustls::RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
@@ -321,11 +321,9 @@ async fn stream_turn(
         .filter_map(|frame| async move {
             match frame {
                 Ok(f) => f.into_data().ok().map(Ok),
-                Err(e) => Some(Err(
-                    aiperf_runtime::transport_http::models::ErrorDetails::other(format!(
-                        "read body: {e}"
-                    )),
-                )),
+                Err(e) => Some(Err(aiperf_runtime::transport::core::ErrorDetails::other(
+                    format!("read body: {e}"),
+                ))),
             }
         })
         .boxed_local();
@@ -333,7 +331,7 @@ async fn stream_turn(
     let mut chunks = Vec::new();
     let mut last_usage = None;
     let stdout = std::io::stdout();
-    aiperf_runtime::transport_http::sse::read_sse(body_stream, clock.clone(), |msg| {
+    aiperf_runtime::transport::http::sse::read_sse(body_stream, clock.clone(), |msg| {
         if msg.is_done() {
             return;
         }

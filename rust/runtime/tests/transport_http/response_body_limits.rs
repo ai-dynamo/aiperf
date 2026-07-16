@@ -7,10 +7,10 @@ use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::rc::Rc;
 
-use aiperf_runtime::transport_http::client::http_client::HttpClient;
-use aiperf_runtime::transport_http::config::ClientConfig;
-use aiperf_runtime::transport_http::models::{ErrorKind, Response};
-use aiperf_runtime::transport_http::{Clock, RealClock};
+use aiperf_runtime::transport::core::{ErrorKind, Response};
+use aiperf_runtime::transport::http::client::http_client::HttpClient;
+use aiperf_runtime::transport::http::config::ClientConfig;
+use aiperf_runtime::transport::http::{Clock, RealClock};
 use bytes::Bytes;
 use common::run_local;
 use futures::stream;
@@ -76,7 +76,7 @@ impl Drop for ChunkedServer {
 async fn request(
     server: &ChunkedServer,
     config: ClientConfig,
-) -> aiperf_runtime::transport_http::models::RequestRecord {
+) -> aiperf_runtime::transport::core::RequestRecord {
     let clock: Rc<dyn Clock> = RealClock::new();
     let client = HttpClient::new(clock, config);
     let url = url::Url::parse(&format!("{}/metrics", server.base_url)).unwrap();

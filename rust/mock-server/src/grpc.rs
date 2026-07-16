@@ -4,7 +4,7 @@
 //! KServe Open Inference Protocol (OIP) v2 gRPC target.
 //!
 //! Serves the KServe `GRPCInferenceService` so AIPerf's native gRPC KServe
-//! client (`aiperf_runtime::transport_grpc`) has a mock inference target, mirroring
+//! client (`aiperf_runtime::transport::grpc`) has a mock inference target, mirroring
 //! ai-dynamo's frontend at
 //! `dynamo-aiperf-native/lib/llm/src/grpc/service/kserve.rs` (dispatching tensor
 //! requests to a chat/completion flavor). The five methods AIPerf dials are
@@ -13,7 +13,7 @@
 //!
 //! The wire contract is guaranteed by construction: the request/response
 //! messages are the *same* prost structs the client encodes/decodes
-//! (`aiperf_runtime::transport_grpc::proto`), so there is no second schema to drift.
+//! (`aiperf_runtime::transport::grpc::proto`), so there is no second schema to drift.
 //! There is no build-time `protoc` / `tonic-build`; the service is a
 //! hand-routed `tower` service dispatched by method path (the server mirror of
 //! the client's hand-rolled `RawBytesCodec` + `PathAndQuery`), served over the
@@ -52,9 +52,9 @@ use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
 use tonic::server::Grpc;
 use tonic::{Request, Response, Status};
 
-use aiperf_runtime::transport_grpc::proto::model_infer_request::InferInputTensor;
-use aiperf_runtime::transport_grpc::proto::model_infer_response::InferOutputTensor;
-use aiperf_runtime::transport_grpc::proto::{
+use aiperf_runtime::transport::grpc::proto::model_infer_request::InferInputTensor;
+use aiperf_runtime::transport::grpc::proto::model_infer_response::InferOutputTensor;
+use aiperf_runtime::transport::grpc::proto::{
     InferTensorContents, ModelInferRequest, ModelInferResponse, ModelReadyRequest,
     ModelReadyResponse, ModelStreamInferResponse,
 };
@@ -138,7 +138,7 @@ impl GrpcBehavior {
 }
 
 /// Health messages KServe defines but AIPerf's client never decodes, so they
-/// live here instead of the shared `aiperf_runtime::transport_grpc::proto` (which only
+/// live here instead of the shared `aiperf_runtime::transport::grpc::proto` (which only
 /// carries the messages the client uses).
 #[derive(Clone, PartialEq, ::prost::Message)]
 struct ServerLiveRequest {}
@@ -422,7 +422,7 @@ fn build_infer_response(
 /// An `FP32` embedding output tensor of shape `[1, dim]`, mirroring a Triton
 /// `python`-backend embedder's single `text_embeddings` output. The KServe wire
 /// carries `FP32` as `fp32_contents`, so the client decodes the vector directly
-/// (matching `aiperf_runtime::transport_grpc::codec` typed-contents decode).
+/// (matching `aiperf_runtime::transport::grpc::codec` typed-contents decode).
 fn embedding_output_tensor(name: &str, embedding: &[f32]) -> InferOutputTensor {
     InferOutputTensor {
         name: name.to_string(),
@@ -975,7 +975,7 @@ pub async fn serve_grpc_with_tls(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aiperf_runtime::transport_grpc::proto::InferTensorContents;
+    use aiperf_runtime::transport::grpc::proto::InferTensorContents;
 
     fn fast_state() -> Arc<AppState> {
         let config = crate::config::MockServerConfig {

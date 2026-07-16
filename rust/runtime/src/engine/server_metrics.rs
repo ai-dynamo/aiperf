@@ -25,8 +25,8 @@ use crate::server_metrics::{
     ServerMetricsPhaseBoundary, ServerMetricsRecord, ServerMetricsScrapeMode,
     ServerMetricsScrapeOutcome, ServerMetricsSource, ServerMetricsSummary,
 };
-use crate::transport_http::config::ClientConfig;
-use crate::transport_http::transport::http_transport::HttpTransport;
+use crate::transport::http::config::ClientConfig;
+use crate::transport::http::transport::http_transport::HttpTransport;
 use anyhow::{Context, Result, ensure};
 use serde_json::{Map, Value, json};
 use tokio::sync::Notify;

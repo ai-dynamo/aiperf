@@ -20,9 +20,9 @@ use crate::endpoints::{
     EndpointDescriptor, EndpointResult, ExtractedPayload, ParsedResponse, PreparedEndpoint,
     RequestRecord as EndpointRequestRecord, ResponseData, ServerResponse, Turn, UsageView,
 };
-use crate::metrics_core::HttpTrace;
-use crate::transport_http::models::{ErrorDetails, ErrorKind, RequestRecord};
-use crate::transport_http::transport::endpoint_binding::{
+use crate::metrics_core::RequestTrace;
+use crate::transport::http::models::{ErrorDetails, ErrorKind, RequestRecord};
+use crate::transport::http::transport::endpoint_binding::{
     HttpEndpointBinding, HttpEndpointBindingError, HttpEndpointRequest, HttpEndpointResponseFilter,
     MetadataHttpEndpointBinding, prepare_request,
 };
@@ -35,7 +35,7 @@ use crate::multiturn::TurnDataPolicy;
 use crate::scheduled::{ModelResponseMetadata, TurnResponseObserver};
 
 use super::{
-    HttpCollectedDispatch, HttpDispatchResult, HttpRequest, TransportSink, absorb_transport_error,
+    HttpCollectedDispatch, HttpDispatchResult, Request, TransportSink, absorb_transport_error,
     absorb_wire_response_metadata,
 };
 
@@ -166,7 +166,7 @@ impl TransportSink {
     /// Dispatch through a worker-local prepared endpoint binding.
     pub(super) async fn dispatch_prepared_endpoint_collect_record_with_hooks(
         &self,
-        req: HttpRequest,
+        req: Request,
         endpoint: &dyn PreparedEndpoint,
         model: &str,
         hooks: EndpointDispatchHooks<'_>,
@@ -179,7 +179,7 @@ impl TransportSink {
 
     async fn dispatch_runtime_endpoint_collect_record_with_hooks<A, B>(
         &self,
-        req: HttpRequest,
+        req: Request,
         endpoint: &A,
         binding: &B,
         hooks: EndpointDispatchHooks<'_>,
@@ -194,7 +194,7 @@ impl TransportSink {
             responses,
             data_policy,
         } = hooks;
-        let HttpRequest {
+        let Request {
             uuid,
             input_length,
             max_output_tokens,
@@ -681,11 +681,11 @@ fn absorb_usage(parsed: &ParsedResponse, observed: &mut ObservedUsage) {
         .or(observed.prompt_audio_seconds);
 }
 
-fn http_trace(record: &RequestRecord) -> HttpTrace {
+fn http_trace(record: &RequestRecord) -> RequestTrace {
     let mut http = record
         .trace
         .as_ref()
-        .map_or_else(HttpTrace::default, |trace| HttpTrace {
+        .map_or_else(RequestTrace::default, |trace| RequestTrace {
             blocked_ns: trace.blocked(),
             dns_lookup_ns: trace.dns_lookup(),
             connecting_ns: trace.connecting(),
@@ -698,7 +698,7 @@ fn http_trace(record: &RequestRecord) -> HttpTrace {
             data_received_bytes: Some(trace.response_bytes_total),
             chunks_sent: Some(u64::from(trace.request_chunks_count)),
             chunks_received: Some(u64::from(trace.response_chunks_count)),
-            ..HttpTrace::default()
+            ..RequestTrace::default()
         });
     http.stream_setup_ns = record
         .recv_start_ns
@@ -710,8 +710,8 @@ fn http_trace(record: &RequestRecord) -> HttpTrace {
 mod tests {
     use super::*;
     use crate::endpoints::PreparedEndpoint;
-    use crate::transport_http::models::SseMessage;
-    use crate::transport_http::transport::endpoint_binding::decode_sse_response;
+    use crate::transport::http::models::SseMessage;
+    use crate::transport::http::transport::endpoint_binding::decode_sse_response;
 
     /// Prepare a builtin streaming endpoint by its open ID.
     fn prepared_streaming(endpoint_name: &str) -> Box<dyn PreparedEndpoint> {

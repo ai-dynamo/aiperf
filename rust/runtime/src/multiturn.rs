@@ -251,7 +251,7 @@ pub struct ConversationMetadata {
 ///
 /// This is the dataset-derived analog of the during-run `record_input_payload`
 /// capture: the session id is the authored conversation id and each payload is the
-/// exact canonical body [`crate::transport_http::transport::prepare_request`] would
+/// exact canonical body [`crate::transport::http::transport::prepare_request`] would
 /// retain as `canonical_body()` when the same turn is dispatched, so an
 /// `inputs.json` written from these bytes is byte-identical to the capture-based
 /// output (see [`NativeDatasetConversationSource::materialize_input_payloads`]).

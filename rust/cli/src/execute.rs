@@ -38,9 +38,24 @@ struct TerminalResponse {
     /// Absolute path to the committed `native-v2.json`, present on success.
     #[serde(default)]
     report_path: Option<String>,
-    /// Human-readable failure detail, present on failure.
+    /// Human-readable failure detail, present on failure. Accepted for forward
+    /// compatibility; the runner emits typed `errors` (below), not this scalar.
     #[serde(default)]
     error: Option<String>,
+    /// Typed failure diagnostics emitted by the runner's terminal envelope
+    /// (`RunTerminalV2.errors`). The messages carry the full failure detail
+    /// (readiness timeouts, execution faults) that the parent surfaces to the
+    /// user and exit path.
+    #[serde(default)]
+    errors: Vec<TerminalDiagnostic>,
+}
+
+/// One typed diagnostic from the runner's terminal envelope.
+#[derive(Debug, Deserialize)]
+struct TerminalDiagnostic {
+    /// Human-readable failure message.
+    #[serde(default)]
+    message: String,
 }
 
 /// The runner's terminal outcome, reduced to the fields the CLI acts on plus the
@@ -194,11 +209,27 @@ fn parse_terminal(stdout: &[u8], returncode: i32) -> anyhow::Result<Terminal> {
         response.event
     );
 
+    // Prefer the typed `errors` diagnostics (what the runner actually emits);
+    // fall back to a scalar `error` for forward compatibility. Multiple
+    // diagnostics are joined so no failure detail is dropped.
+    let error = if !response.errors.is_empty() {
+        let joined = response
+            .errors
+            .iter()
+            .map(|d| d.message.as_str())
+            .filter(|m| !m.is_empty())
+            .collect::<Vec<_>>()
+            .join("; ");
+        (!joined.is_empty()).then_some(joined).or(response.error)
+    } else {
+        response.error
+    };
+
     Ok(Terminal {
         success: response.success,
         returncode,
         report_path: response.report_path,
-        error: response.error,
+        error,
     })
 }
 

@@ -40,7 +40,7 @@ pub use catalog::{
 };
 pub use counter::{CounterDelta, boundary_counter_delta};
 pub use derived::{delta_ms, error_adjusted_result, network_adjusted_ms};
-pub use ingest::{HttpTrace, InferenceDimensions, RecordIngest, TokenCounts, UsageMetrics};
+pub use ingest::{InferenceDimensions, RecordIngest, RequestTrace, TokenCounts, UsageMetrics};
 pub use kernel::{DistributionStats, PERCENTILES, linear_distribution, nearest_distribution};
 pub use report::{
     EvaluatorDatasetReportInfo, EvaluatorReportInfo, FiniteReportValue, MetricEntry, MetricSeries,

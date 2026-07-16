@@ -148,7 +148,7 @@ pub trait Dispatchable: Send + Sync {
 /// emitting `obs.on_terminal(..)`.
 ///
 /// `R` is the transport-native request; a sink is implemented once per
-/// transport (e.g. `impl RequestSink<HttpRequest> for TransportSink`).
+/// transport (e.g. `impl RequestSink<Request> for TransportSink`).
 ///
 /// `?Send`: the sink is driven on a single-threaded `LocalSet` (the hyper
 /// transport is `!Send`, holding `Rc<dyn Clock>`), so neither the sink nor its

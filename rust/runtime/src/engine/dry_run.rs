@@ -12,7 +12,7 @@
 //! the entire native scheduled/graph runtime — pacing, [`crate::scheduled`]
 //! admission, phase orchestration, the metrics accumulator, and the whole export
 //! plane — unchanged. Only the leaf that would open a socket is swapped: instead
-//! of [`crate::http::TransportSink`], the run drives [`FakeRequestExecutor`],
+//! of [`crate::transport::http::TransportSink`], the run drives [`FakeRequestExecutor`],
 //! which synthesizes each request's timing analytically and drives the same
 //! [`NativeMetricsObserver`] the real HTTP path drives.
 //!
@@ -27,22 +27,34 @@
 //! given analytic `ttft_ms`/`itl_ms`, the fake dispatch begins at the request's
 //! scheduled arrival and emits `OSL` synthetic output tokens spaced by `itl_ms`
 //! after an initial `ttft_ms`. The exact observer event sequence mirrors
-//! [`crate::http::TransportSink::dispatch_measured`]: `register_metadata` →
+//! [`crate::transport::http::TransportSink::dispatch_measured`]: `register_metadata` →
 //! `on_arrival` → `OSL`× `on_token` → `on_usage` → `on_terminal` →
 //! `record_response`. Downstream, TTFT = `first_token − start = ttft_ms`, ITL =
 //! `itl_ms`, and `request_latency = ttft_ms + (OSL−1)·itl_ms`, all exact under a
 //! zero-jitter model — which is what the end-to-end test asserts.
 //!
+//! # Clock modes (both built)
+//!
+//! - **`clock: sim`** (default) — the SAME native execution
+//!   ([`crate::engine::execute::prepare_dry_run_sim_scheduled`]) driven under a
+//!   `SimClock` via `drive_sim` on a single reactor. Arrival pacing, duration
+//!   bounds, and fixed-schedule timestamps run in virtual time — a 10-minute run
+//!   finishes at ~startup wall-speed and the aggregate report is byte
+//!   deterministic. Because it is the ordinary `prepare_and_execute_native` path
+//!   (only the clock + driver differ), `RunCapture`, per-record artifacts, and
+//!   `inputs.json` all flow through normally.
+//! - **`clock: real`** — [`FakeRequestExecutor`] fabricates instant analytic
+//!   timestamps and reuses the native worker-thread executor; the loadgen
+//!   self-benchmark path (raw dispatch throughput). Arrival pacing /
+//!   fixed-schedule / duration bounds wait in real wall-time.
+//!
 //! # Extension points left open
 //!
-//! - **Clock:** the fabrication computes analytic timestamps directly (no
-//!   sleeping), so it is correct under `RealClock` (loadgen self-benchmark) and,
-//!   once the scheduled loop is driven by `drive_sim`, under `SimClock`
-//!   (deterministic virtual-time CI). The design phases the sim-clock inline
-//!   executor as a follow-up; this module already fabricates clock-agnostically.
-//! - **Jitter:** `jitter_cv` is threaded through [`DryRunParams`] for a future
-//!   seeded per-request jitter draw off [`crate::rng`]; the current default of
-//!   `0.0` keeps the run byte-deterministic.
+//! - **Analytic model:** TTFT/ITL scale with ISL, OSL, and live in-flight
+//!   concurrency plus seeded lognormal jitter, ported byte-for-byte from
+//!   `rust/mock-server/src/latency.rs` (the dynosim/Dynamo-replay perf-model
+//!   shape). With the scaling and jitter knobs at their `0.0` defaults it reduces
+//!   to fixed `ttft_ms`/`itl_ms`, keeping the run byte-deterministic.
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
@@ -60,22 +72,20 @@ use loadgen_core::sink::{ObservedUsage, RequestObserver};
 use uuid::Uuid;
 
 use crate::clock::Clock;
-use crate::engine::graph_execution::GraphTransportKind;
 use crate::engine::protocol_v2::AuthoredRunSpecV2;
 use crate::engine::registry::{
     NativeTransportExecution, ClockKind, RunContext, TransportDescriptor,
     TransportFactory, ValidatedTransportConfig, WorkloadRequirements, strict_decode,
 };
-use crate::engine::turn_execution::{HttpExecutionBackendConfig, RequestExecutorFactory};
+use crate::engine::turn_execution::{ExecutionBackendConfig, RequestExecutorFactory};
 use crate::extensions::AIPerfRegistry;
-use crate::http::{
-    DispatchResult, MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor,
-};
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata};
-use crate::metrics_core::{HttpTrace, InferenceDimensions, MetricsConfig, RecordIngest};
+use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest, RequestTrace};
 use crate::multiturn::TurnToSend;
 use crate::scheduled::{ModelResponseMetadata, TurnDispatchOutcome};
-use crate::transport_http::models::{RequestRecord, Response, TextResponse};
+use crate::transport::core::{DispatchResult, MeasuredContext, MeasuredOutcome};
+use crate::transport::core::{RequestRecord, Response, TextResponse};
+use crate::transport::http::{PreparedTurn, RequestExecutor};
 
 /// Default synthetic time-to-first-token (milliseconds).
 const fn default_ttft_ms() -> f64 {
@@ -87,46 +97,130 @@ const fn default_itl_ms() -> f64 {
     2.0
 }
 
-/// Built-in `dry_run` transport descriptor (real clock, no network).
+/// Default KV-cache utilization fed to the polynomial decode curve.
+const fn default_kv_utilization() -> f64 {
+    0.5
+}
+
+/// Which clock drives the dry run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DryRunClock {
+    /// Real wall clock: reuses the native worker-thread executor, so arrival
+    /// pacing / fixed-schedule timestamps / duration bounds wait in real
+    /// wall-time. The loadgen self-benchmark path (raw dispatch throughput).
+    Real,
+    /// Virtual `SimClock` (the default): the SAME native execution driven under
+    /// `drive_sim` on a single reactor, so rate/duration/fixed-schedule runs
+    /// finish at ~startup wall-speed and the aggregate report is byte
+    /// deterministic. Full artifact set (per-record `profile_export.jsonl`,
+    /// `inputs.json`, …) — it flows through the ordinary `RunCapture` path.
+    #[default]
+    Sim,
+}
+
+/// Which analytic latency curve the fake leaf uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DryRunLatencyModel {
+    /// Closed-form linear model: `base + per_isl·ISL + per_osl·OSL +
+    /// concurrency terms`, ported from `mock-server/src/latency.rs`. The default.
+    #[default]
+    Linear,
+    /// Byte-for-byte port of the Dynamo mocker's default perf model
+    /// (`PerfModel::Polynomial`,
+    /// `dynamo-aiperf-native/lib/mocker/src/common/perf_model.rs:270-315`): TTFT
+    /// from the prefill-token count, ITL from KV-cache utilization. This is the
+    /// self-contained variant of the Dynamo replay analytical model (the
+    /// `Interpolated`/`Aiconfigurator` variants need an NPZ profile or the AIC
+    /// SDK — reachable via the `dynosim` transport, not the lightweight dry run).
+    AiconfiguratorPolynomial,
+}
+
+/// Built-in `dry_run` transport descriptor. The catalog clock is `Sim` (the
+/// default mode); `clock: real` selects the wall-clock self-benchmark path.
 pub static DRY_RUN_TRANSPORT_DESCRIPTOR: TransportDescriptor = TransportDescriptor {
     id: "dry_run",
     description: "Fake execution leaf: analytic-latency synthetic responses, zero network",
-    clock: ClockKind::Real,
+    clock: ClockKind::Sim,
     features: &["dry_run"],
 };
 
 /// Strict validated config owned by the `dry_run` transport.
 ///
+/// The analytic latency model is a byte-for-byte port of the `aiperf-mock-server`
+/// analytic model (`rust/mock-server/src/latency.rs`), the same shape the Dynamo
+/// replay / dynosim perf model uses: per request,
+///
+/// ```text
+/// ttft = (ttft_ms + ttft_per_isl_token_ms·ISL + ttft_concurrency_quad_ms·inflight²) · jitter(ttft_jitter_cv)
+/// itl  = (itl_ms  + itl_per_osl_token_ms·OSL  + itl_concurrency_lin_ms·inflight)    · jitter(itl_jitter_cv)
+/// ```
+///
 /// Every field has a serde default so `{"type":"dry_run"}` alone is valid; the
-/// CLI projects concrete `ttft_ms`/`itl_ms` so a run is fully specified and its
-/// metrics are exactly predictable.
+/// CLI projects concrete values so a run is fully specified. With the scaling and
+/// jitter terms at their `0.0` defaults this reduces to fixed `ttft_ms`/`itl_ms`,
+/// which keeps the metrics exactly predictable.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DryRunTransportConfigV2 {
-    /// Synthetic time-to-first-token in milliseconds (>= 0).
+    /// Base time-to-first-token in milliseconds (>= 0).
     #[serde(default = "default_ttft_ms")]
     pub ttft_ms: f64,
-    /// Synthetic inter-token latency in milliseconds (>= 0).
+    /// Base inter-token latency in milliseconds (>= 0).
     #[serde(default = "default_itl_ms")]
     pub itl_ms: f64,
-    /// Coefficient of variation for a future seeded per-request jitter draw.
-    /// `0.0` (default) keeps the fabricated timing byte-deterministic.
+    /// Prefill cost scaling with prompt length: `TTFT += this · ISL_tokens`.
     #[serde(default)]
-    pub jitter_cv: f64,
-    /// Root seed for the future jitter draw. Unused while `jitter_cv == 0.0`.
+    pub ttft_per_isl_token_ms: f64,
+    /// Super-linear prefill contention: `TTFT += this · inflight²`.
+    #[serde(default)]
+    pub ttft_concurrency_quad_ms: f64,
+    /// Decode cost scaling with output length: `ITL += this · OSL_tokens`.
+    #[serde(default)]
+    pub itl_per_osl_token_ms: f64,
+    /// Linear decode contention: `ITL += this · inflight`.
+    #[serde(default)]
+    pub itl_concurrency_lin_ms: f64,
+    /// Lognormal TTFT jitter (stddev/mean). `0.0` (default) is deterministic.
+    #[serde(default)]
+    pub ttft_jitter_cv: f64,
+    /// Lognormal ITL jitter (stddev/mean). `0.0` (default) is deterministic.
+    #[serde(default)]
+    pub itl_jitter_cv: f64,
+    /// Root seed for the per-request jitter draw. Unused while both CVs are `0.0`.
     #[serde(default)]
     pub seed: u64,
+    /// Which analytic latency curve to use (`linear` default, or
+    /// `aiconfigurator_polynomial` for the Dynamo perf-model port).
+    #[serde(default)]
+    pub latency_model: DryRunLatencyModel,
+    /// KV-cache utilization in `[0, 1]` feeding the polynomial decode curve. Only
+    /// consulted by the `aiconfigurator_polynomial` model.
+    #[serde(default = "default_kv_utilization")]
+    pub kv_utilization: f64,
+    /// Which clock drives the run (`real` default, or `sim` for deterministic
+    /// virtual-time execution via `drive_sim`).
+    #[serde(default)]
+    pub clock: DryRunClock,
 }
 
 impl DryRunTransportConfigV2 {
-    /// Project the validated config into the `Copy` params carried through
-    /// [`crate::engine::online_execution::classify_native_transport`].
+    /// Project the validated config into the `Copy` params carried into the
+    /// [`DryRunNativeExecution`] binding.
     pub fn params(&self) -> DryRunParams {
         DryRunParams {
             ttft_ms: self.ttft_ms,
             itl_ms: self.itl_ms,
-            jitter_cv: self.jitter_cv,
+            ttft_per_isl_token_ms: self.ttft_per_isl_token_ms,
+            ttft_concurrency_quad_ms: self.ttft_concurrency_quad_ms,
+            itl_per_osl_token_ms: self.itl_per_osl_token_ms,
+            itl_concurrency_lin_ms: self.itl_concurrency_lin_ms,
+            ttft_jitter_cv: self.ttft_jitter_cv,
+            itl_jitter_cv: self.itl_jitter_cv,
             seed: self.seed,
+            latency_model: self.latency_model,
+            kv_utilization: self.kv_utilization,
         }
     }
 }
@@ -137,14 +231,128 @@ impl DryRunTransportConfigV2 {
 /// [`FakeRequestExecutorFactory`] to each run without shared state.
 #[derive(Debug, Clone, Copy)]
 pub struct DryRunParams {
-    /// Synthetic time-to-first-token in milliseconds.
+    /// Base time-to-first-token in milliseconds.
     pub ttft_ms: f64,
-    /// Synthetic inter-token latency in milliseconds.
+    /// Base inter-token latency in milliseconds.
     pub itl_ms: f64,
-    /// Reserved coefficient of variation for a future seeded jitter draw.
-    pub jitter_cv: f64,
-    /// Reserved root seed for the future jitter draw.
+    /// Prefill cost per input token (ms).
+    pub ttft_per_isl_token_ms: f64,
+    /// Super-linear prefill contention coefficient (ms per inflight²).
+    pub ttft_concurrency_quad_ms: f64,
+    /// Decode cost per output token (ms).
+    pub itl_per_osl_token_ms: f64,
+    /// Linear decode contention coefficient (ms per inflight).
+    pub itl_concurrency_lin_ms: f64,
+    /// Lognormal TTFT jitter coefficient of variation.
+    pub ttft_jitter_cv: f64,
+    /// Lognormal ITL jitter coefficient of variation.
+    pub itl_jitter_cv: f64,
+    /// Root seed for the per-request jitter draw.
     pub seed: u64,
+    /// Selected analytic latency curve.
+    pub latency_model: DryRunLatencyModel,
+    /// KV-cache utilization for the polynomial decode curve.
+    pub kv_utilization: f64,
+}
+
+impl DryRunParams {
+    /// Compute the effective `(ttft_ns, itl_ns)` for one request from the
+    /// analytic model. `active_inflight` is the live in-flight count feeding the
+    /// concurrency-contention terms; `ordinal` seeds the per-request jitter draw
+    /// so the timing is reproducible across runs (independent of the random UUID).
+    ///
+    /// The `Linear` terms are ported from
+    /// `rust/mock-server/src/latency.rs::LatencySimulator::new`; the
+    /// `AiconfiguratorPolynomial` curves are ported from the Dynamo mocker
+    /// `PerfModel::Polynomial`
+    /// (`dynamo-aiperf-native/lib/mocker/src/common/perf_model.rs:270-315`).
+    fn effective_latencies_ns(
+        &self,
+        isl: usize,
+        osl: usize,
+        active_inflight: usize,
+        ordinal: u64,
+    ) -> (i64, i64) {
+        let active = active_inflight as f64;
+        let (base_ttft_ms, base_itl_ms) = match self.latency_model {
+            DryRunLatencyModel::Linear => (
+                self.ttft_ms
+                    + self.ttft_per_isl_token_ms * isl as f64
+                    + self.ttft_concurrency_quad_ms * active * active,
+                self.itl_ms
+                    + self.itl_per_osl_token_ms * osl as f64
+                    + self.itl_concurrency_lin_ms * active,
+            ),
+            DryRunLatencyModel::AiconfiguratorPolynomial => (
+                // Dynamo's prefill curve takes `batch_size · new_tokens_per_req`.
+                // A dry run has no scheduler, so the live in-flight count stands in
+                // for the batch size and `prefix = 0` (no KV reuse model) →
+                // prefill tokens = inflight · ISL.
+                aic_polynomial_prefill_ms(active * isl as f64),
+                // Dynamo's polynomial decode curve is purely a function of KV
+                // utilization; with no KV manager the configured `kv_utilization`
+                // knob supplies it.
+                aic_polynomial_decode_ms(self.kv_utilization),
+            ),
+        };
+        let ttft_ms = base_ttft_ms
+            * lognormal_jitter(
+                &mut seeded_rng(self.seed, ordinal ^ 0x11),
+                self.ttft_jitter_cv,
+            );
+        let itl_ms = base_itl_ms
+            * lognormal_jitter(
+                &mut seeded_rng(self.seed, ordinal ^ 0x22),
+                self.itl_jitter_cv,
+            );
+        (ms_to_ns(ttft_ms), ms_to_ns(itl_ms))
+    }
+}
+
+/// Dynamo mocker `PerfModel::Polynomial` prefill curve, in milliseconds, for
+/// `prefill_tokens` total new tokens across the batch. Byte-for-byte port of
+/// `dynamo-aiperf-native/lib/mocker/src/common/perf_model.rs:272-273` (with the
+/// same `0.0` floor and the `prefill_tokens == 0 → 0.0` short-circuit at
+/// `perf_model.rs:266`).
+fn aic_polynomial_prefill_ms(prefill_tokens: f64) -> f64 {
+    if prefill_tokens <= 0.0 {
+        return 0.0;
+    }
+    (4.209_989e-7 * prefill_tokens * prefill_tokens + 1.518_344e-2 * prefill_tokens + 1.650_142e1)
+        .max(0.0)
+}
+
+/// Dynamo mocker `PerfModel::Polynomial` decode curve, in milliseconds, for KV
+/// utilization `active_perc` (active KV tokens / total KV tokens). Byte-for-byte
+/// port of `perf_model.rs:315` with the `.max(1.0)` step-collision floor from
+/// `perf_model.rs:330`.
+fn aic_polynomial_decode_ms(active_perc: f64) -> f64 {
+    (-25.74 * active_perc * active_perc + 54.01 * active_perc + 5.74).max(1.0)
+}
+
+/// Milliseconds → non-negative nanoseconds (rounded), matching
+/// `latency.rs::ms_to_ns`.
+fn ms_to_ns(ms: f64) -> i64 {
+    (ms * 1_000_000.0).max(0.0).round() as i64
+}
+
+/// Deterministic per-request RNG seeded from the root seed and a salt, matching
+/// `latency.rs::seeded_rng`.
+fn seeded_rng(seed: u64, salt: u64) -> crate::rng::RandomGenerator {
+    crate::rng::RandomGenerator::from_seed(Some(seed ^ salt.wrapping_mul(0x9E37_79B9_7F4A_7C15)))
+}
+
+/// Mean-preserving lognormal jitter multiplier with coefficient of variation
+/// `cv` (`<= 0.0` → `1.0`). Byte-for-byte port of `latency.rs::lognormal_jitter`.
+fn lognormal_jitter(rng: &mut crate::rng::RandomGenerator, cv: f64) -> f64 {
+    if cv <= 0.0 {
+        return 1.0;
+    }
+    let sigma = (1.0 + cv * cv).ln().sqrt();
+    let u1 = rng.random().max(1e-12);
+    let u2 = rng.random();
+    let z = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
+    (sigma * z - 0.5 * sigma * sigma).exp()
 }
 
 /// Registered strict decoder for the always-built `dry_run` transport.
@@ -163,21 +371,24 @@ impl TransportFactory for DryRunTransportFactoryV2 {
     ) -> Result<Box<dyn crate::engine::registry::ValidatedTransportConfig>> {
         let config =
             strict_decode::<DryRunTransportConfigV2>(authored, "dry_run transport config")?;
-        ensure!(
-            config.ttft_ms >= 0.0 && config.ttft_ms.is_finite(),
-            "dry_run ttft_ms must be a finite non-negative value, got {}",
-            config.ttft_ms
-        );
-        ensure!(
-            config.itl_ms >= 0.0 && config.itl_ms.is_finite(),
-            "dry_run itl_ms must be a finite non-negative value, got {}",
-            config.itl_ms
-        );
-        ensure!(
-            config.jitter_cv >= 0.0 && config.jitter_cv.is_finite(),
-            "dry_run jitter_cv must be a finite non-negative value, got {}",
-            config.jitter_cv
-        );
+        // Every analytic knob must be a finite, non-negative value: a latency, a
+        // per-token/contention coefficient, or a jitter CV — none can be negative
+        // or NaN without producing nonsensical fabricated timing.
+        for (name, value) in [
+            ("ttft_ms", config.ttft_ms),
+            ("itl_ms", config.itl_ms),
+            ("ttft_per_isl_token_ms", config.ttft_per_isl_token_ms),
+            ("ttft_concurrency_quad_ms", config.ttft_concurrency_quad_ms),
+            ("itl_per_osl_token_ms", config.itl_per_osl_token_ms),
+            ("itl_concurrency_lin_ms", config.itl_concurrency_lin_ms),
+            ("ttft_jitter_cv", config.ttft_jitter_cv),
+            ("itl_jitter_cv", config.itl_jitter_cv),
+        ] {
+            ensure!(
+                value >= 0.0 && value.is_finite(),
+                "dry_run {name} must be a finite non-negative value, got {value}"
+            );
+        }
         Ok(Box::new(config))
     }
 
@@ -198,10 +409,10 @@ impl TransportFactory for DryRunTransportFactoryV2 {
 /// Native execution binding for the built-in `dry_run` transport.
 ///
 /// The fake leaf carries its analytic latency params by value and builds its own
-/// [`FakeRequestExecutorFactory`], so `dry_run` needs no process-global
-/// execution factory and no per-transport branch in the workloads — it is a
-/// transport like any other. Readiness is skipped (no server) and the graph
-/// workload is not yet supported (a fake whole-trace `Dispatcher` is a follow-up).
+/// [`FakeRequestExecutorFactory`] (scheduled) and [`FakeDispatcher`] (graph), so
+/// `dry_run` needs no process-global execution factory and no per-transport
+/// branch in the workloads — it is a transport like any other. Readiness is
+/// skipped (no server).
 #[derive(Debug)]
 pub struct DryRunNativeExecution {
     params: DryRunParams,
@@ -216,10 +427,25 @@ impl NativeTransportExecution for DryRunNativeExecution {
         false
     }
 
-    fn graph_transport_kind(&self) -> Result<GraphTransportKind> {
-        anyhow::bail!(
-            "the dry_run transport does not yet support the graph workload; use it with a scheduled (synthetic/file) dataset"
-        )
+    fn build_graph_dispatcher(
+        &self,
+        clock: Rc<dyn Clock>,
+        run_origin_ns: i64,
+        _urls: &[String],
+        model: &str,
+        _transport_config: crate::transport::http::TransportSinkConfig,
+        _endpoints: Rc<crate::endpoints::PreparedEndpointTable>,
+    ) -> Result<Rc<dyn crate::transport::http::Dispatcher>> {
+        Ok(Rc::new(FakeDispatcher::new(FakeFabricator::new(
+            clock,
+            model.to_string(),
+            self.params,
+            run_origin_ns,
+        ))))
+    }
+
+    fn graph_transport_label(&self) -> &'static str {
+        "dry_run"
     }
 
     fn validate_run(&self, _run: &AuthoredRunSpecV2, _context: &RunContext) -> Result<()> {
@@ -236,6 +462,20 @@ impl NativeTransportExecution for DryRunNativeExecution {
 /// Register the always-built `dry_run` transport into a mutable runner registry.
 pub fn register_dry_run_transport(registry: &mut AIPerfRegistry) -> Result<()> {
     registry.register_transport(Arc::new(DryRunTransportFactoryV2))
+}
+
+/// Return the analytic params iff `transport` is a `dry_run` transport requesting
+/// the virtual `SimClock` execution path (`clock: sim`).
+///
+/// The scheduled workload calls this to route a sim dry run to
+/// [`crate::engine::execute::prepare_dry_run_sim_scheduled`] instead of the
+/// real-clock `PreparedNativeOperation`; every other transport (and a
+/// `clock: real` dry run) returns `None` and takes the ordinary native path.
+pub fn sim_params_for(transport: &dyn ValidatedTransportConfig) -> Option<DryRunParams> {
+    ValidatedTransportConfig::as_any(transport)
+        .downcast_ref::<DryRunTransportConfigV2>()
+        .filter(|config| config.clock == DryRunClock::Sim)
+        .map(DryRunTransportConfigV2::params)
 }
 
 /// Execution-placement factory for the fake leaf.
@@ -256,95 +496,81 @@ impl FakeRequestExecutorFactory {
 }
 
 impl RequestExecutorFactory for FakeRequestExecutorFactory {
-    fn build(&self, config: HttpExecutionBackendConfig) -> Result<Rc<dyn RequestExecutor>> {
+    fn build(&self, config: ExecutionBackendConfig) -> Result<Rc<dyn RequestExecutor>> {
         ensure!(
             config.workers > 0,
             "dry_run execution workers must be positive"
         );
         // Fabrication is CPU-only and single-observer: worker count is ignored,
-        // and everything accumulates into one coordinator-reactor observer, so a
-        // dry run has no thread-per-core setup cost.
+        // everything accumulates into one coordinator-reactor observer, so a dry
+        // run has no thread-per-core setup cost.
         Ok(Rc::new(FakeRequestExecutor {
-            clock: config.coordinator_clock,
-            model: config.model,
-            params: self.params,
-            origin_ns: Cell::new(0),
+            core: FakeFabricator::new(config.coordinator_clock, config.model, self.params, 0),
             observer: RefCell::new(None),
         }))
     }
 }
 
-/// Fake [`RequestExecutor`]: synthesizes each request's timing analytically and
-/// drives the same [`NativeMetricsObserver`] the real HTTP path drives.
-struct FakeRequestExecutor {
+/// Shared analytic-fabrication core used by both the scheduled
+/// [`FakeRequestExecutor`] and the graph [`FakeDispatcher`]. It computes each
+/// request's `(ttft, itl)` from the analytic model, emits the fabricated token
+/// stream + usage + terminal on the caller's observer, and builds the
+/// backend-neutral [`DispatchResult`]. The two seams differ only in the observer
+/// callbacks they own around this (arrival / metadata / record_response), so the
+/// timing/token fabrication lives here exactly once.
+struct FakeFabricator {
     clock: Rc<dyn Clock>,
     model: String,
     params: DryRunParams,
     origin_ns: Cell<i64>,
-    observer: RefCell<Option<Rc<NativeMetricsObserver>>>,
+    inflight: Cell<usize>,
+    ordinal: Cell<u64>,
 }
 
-impl FakeRequestExecutor {
-    fn observer(&self) -> Result<Rc<NativeMetricsObserver>> {
-        self.observer.borrow().clone().ok_or_else(|| {
-            anyhow::anyhow!("dry_run measurement was not configured before dispatch")
-        })
-    }
-
-    /// Absolute-ns → relative-to-origin milliseconds, the unit `on_arrival` /
-    /// `on_token` expect.
-    fn rel_ms(&self, absolute_ns: i64) -> f64 {
-        (absolute_ns - self.origin_ns.get()) as f64 / 1_000_000.0
-    }
-}
-
-#[async_trait(?Send)]
-impl RequestExecutor for FakeRequestExecutor {
-    fn set_run_origin(&self, start_ns: i64) -> Result<()> {
-        self.origin_ns.set(start_ns);
-        Ok(())
-    }
-
-    fn supports_response_streaming(&self) -> bool {
-        // The scheduled dispatcher only calls `execute_measured` (non-streaming);
-        // fabricated per-token timing lives in the observer regardless of the
-        // wire streaming flag, so live-frame forwarding is unnecessary.
-        false
-    }
-
-    fn inference_dimensions(&self, _turn: &TurnToSend) -> InferenceDimensions {
-        InferenceDimensions {
-            endpoint_url: None,
-            model: Some(self.model.clone()),
+impl FakeFabricator {
+    fn new(clock: Rc<dyn Clock>, model: String, params: DryRunParams, origin_ns: i64) -> Self {
+        Self {
+            clock,
+            model,
+            params,
+            origin_ns: Cell::new(origin_ns),
+            inflight: Cell::new(0),
+            ordinal: Cell::new(0),
         }
     }
 
-    fn configure_measurement(&self, config: MetricsConfig, origin_ns: i64) -> Result<()> {
+    fn set_origin(&self, origin_ns: i64) {
         self.origin_ns.set(origin_ns);
-        *self.observer.borrow_mut() = Some(Rc::new(NativeMetricsObserver::new(
-            self.clock.clone(),
-            origin_ns,
-            config,
-        )));
-        Ok(())
     }
 
-    async fn execute_measured(
-        &self,
-        turn: PreparedTurn,
-        context: MeasuredContext,
-        on_first_token: &dyn Fn(i64),
-    ) -> Result<MeasuredOutcome> {
-        let observer = self.observer()?;
-        let uuid = turn.request.uuid;
-        let isl = context.input_length as u64;
-        let osl = context.requested_output_length;
+    /// Absolute-ns → relative-to-origin milliseconds (the unit `on_token` wants).
+    fn rel_ms(&self, absolute_ns: i64) -> f64 {
+        (absolute_ns - self.origin_ns.get()) as f64 / 1_000_000.0
+    }
 
-        let ttft_ns = (self.params.ttft_ms * 1_000_000.0).round() as i64;
-        let itl_ns = (self.params.itl_ms * 1_000_000.0).round() as i64;
-        // Dispatch begins at the scheduled arrival: a dry run adds no queueing
-        // delay, so start == arrival and request_latency == ttft + (osl-1)*itl.
-        let start_abs = self.origin_ns.get() + (context.arrival_ms * 1_000_000.0).round() as i64;
+    /// Fabricate one request beginning at `start_abs`: emit the analytic token
+    /// stream, usage, and terminal on `observer`, and return the dispatch result.
+    /// The caller owns `on_arrival` / `register_metadata` / `record_response`.
+    fn fabricate(
+        &self,
+        observer: &dyn RequestObserver,
+        uuid: Uuid,
+        isl: u64,
+        osl: usize,
+        start_abs: i64,
+        request_payload: Bytes,
+        on_first_token: &dyn Fn(i64),
+    ) -> DispatchResult {
+        // The live in-flight count feeds the analytic concurrency terms; the
+        // ordinal seeds the reproducible jitter draw.
+        let active_inflight = self.inflight.get() + 1;
+        self.inflight.set(active_inflight);
+        let ordinal = self.ordinal.get();
+        self.ordinal.set(ordinal + 1);
+        let (ttft_ns, itl_ns) =
+            self.params
+                .effective_latencies_ns(isl as usize, osl, active_inflight, ordinal);
+        self.inflight.set(self.inflight.get() - 1);
         let recv_start_abs = start_abs + ttft_ns;
         let token_abs = |index: usize| start_abs + ttft_ns + (index as i64) * itl_ns;
         let end_abs = if osl > 0 {
@@ -352,10 +578,6 @@ impl RequestExecutor for FakeRequestExecutor {
         } else {
             recv_start_abs
         };
-
-        // Mirror the real observer event sequence (dispatch_measured).
-        observer.register_metadata(uuid, context.metadata.clone());
-        observer.on_arrival(uuid, context.arrival_ms, isl as usize, osl);
         for index in 0..osl {
             let at_ms = self.rel_ms(token_abs(index));
             if index == 0 {
@@ -373,26 +595,7 @@ impl RequestExecutor for FakeRequestExecutor {
             },
         );
         observer.on_terminal(uuid, ReplayTerminalStatus::Completed);
-        observer.record_response(
-            uuid,
-            NativeResponseMetadata {
-                start_ns: Some(start_abs),
-                end_ns: Some(end_abs),
-                prompt_tokens: Some(isl),
-                completion_tokens: Some(osl as u64),
-                http: HttpTrace::default(),
-            },
-        );
-
-        // Build the raw HTTP exchange record consumed by profile_export.jsonl /
-        // raw exporters: one synthetic text chunk per generated token, stamped at
-        // the same absolute perf_ns the observer saw.
         let response_text = synthetic_text(osl);
-        let request_payload = turn
-            .request
-            .request_body_bytes
-            .clone()
-            .unwrap_or_else(Bytes::new);
         let responses = (0..osl)
             .map(|index| {
                 Response::Text(TextResponse {
@@ -412,7 +615,112 @@ impl RequestExecutor for FakeRequestExecutor {
             responses,
             ..RequestRecord::started(start_abs)
         };
+        DispatchResult {
+            outcome: TurnDispatchOutcome {
+                start_ns: start_abs,
+                end_ns: end_abs,
+                terminal: ReplayTerminalStatus::Completed,
+                response_text: response_text.clone(),
+                model_response: ModelResponseMetadata {
+                    content: Some(response_text),
+                    finish_reason: Some("stop".to_string()),
+                    ..ModelResponseMetadata::default()
+                },
+                prompt_tokens: Some(isl),
+                completion_tokens: Some(osl as u64),
+                http: RequestTrace::default(),
+            },
+            request_payload,
+            record,
+        }
+    }
+}
 
+/// Fake [`RequestExecutor`] (scheduled path): drives the shared
+/// [`NativeMetricsObserver`] with fabricated timing.
+struct FakeRequestExecutor {
+    core: FakeFabricator,
+    observer: RefCell<Option<Rc<NativeMetricsObserver>>>,
+}
+
+impl FakeRequestExecutor {
+    fn observer(&self) -> Result<Rc<NativeMetricsObserver>> {
+        self.observer.borrow().clone().ok_or_else(|| {
+            anyhow::anyhow!("dry_run measurement was not configured before dispatch")
+        })
+    }
+}
+
+#[async_trait(?Send)]
+impl RequestExecutor for FakeRequestExecutor {
+    fn set_run_origin(&self, start_ns: i64) -> Result<()> {
+        self.core.set_origin(start_ns);
+        Ok(())
+    }
+
+    fn supports_response_streaming(&self) -> bool {
+        false
+    }
+
+    fn inference_dimensions(&self, _turn: &TurnToSend) -> InferenceDimensions {
+        InferenceDimensions {
+            endpoint_url: None,
+            model: Some(self.core.model.clone()),
+        }
+    }
+
+    fn configure_measurement(&self, config: MetricsConfig, origin_ns: i64) -> Result<()> {
+        self.core.set_origin(origin_ns);
+        *self.observer.borrow_mut() = Some(Rc::new(NativeMetricsObserver::new(
+            self.core.clock.clone(),
+            origin_ns,
+            config,
+        )));
+        Ok(())
+    }
+
+    async fn execute_measured(
+        &self,
+        turn: PreparedTurn,
+        context: MeasuredContext,
+        on_first_token: &dyn Fn(i64),
+    ) -> Result<MeasuredOutcome> {
+        let observer = self.observer()?;
+        let uuid = turn.request.uuid;
+        let isl = context.input_length as u64;
+        let osl = context.requested_output_length;
+        // Dispatch begins at the scheduled arrival: a dry run adds no queueing
+        // delay, so start == arrival and request_latency == ttft + (osl-1)*itl.
+        let start_abs =
+            self.core.origin_ns.get() + (context.arrival_ms * 1_000_000.0).round() as i64;
+        let request_payload = turn
+            .request
+            .request_body_bytes
+            .clone()
+            .unwrap_or_else(Bytes::new);
+        // The scheduled seam owns arrival/metadata/record_response around the
+        // shared fabrication.
+        observer.register_metadata(uuid, context.metadata.clone());
+        observer.on_arrival(uuid, context.arrival_ms, isl as usize, osl);
+        let result = self.core.fabricate(
+            &*observer,
+            uuid,
+            isl,
+            osl,
+            start_abs,
+            request_payload,
+            on_first_token,
+        );
+        observer.record_response(
+            uuid,
+            NativeResponseMetadata {
+                start_ns: Some(result.outcome.start_ns),
+                end_ns: Some(result.outcome.end_ns),
+                prompt_tokens: Some(isl),
+                completion_tokens: Some(osl as u64),
+                http: RequestTrace::default(),
+            },
+        );
         let live_record = context
             .wants_live_record
             .then(|| {
@@ -423,26 +731,8 @@ impl RequestExecutor for FakeRequestExecutor {
                 }
             })
             .flatten();
-
         Ok(MeasuredOutcome {
-            result: DispatchResult {
-                outcome: TurnDispatchOutcome {
-                    start_ns: start_abs,
-                    end_ns: end_abs,
-                    terminal: ReplayTerminalStatus::Completed,
-                    response_text: response_text.clone(),
-                    model_response: ModelResponseMetadata {
-                        content: Some(response_text),
-                        finish_reason: Some("stop".to_string()),
-                        ..ModelResponseMetadata::default()
-                    },
-                    prompt_tokens: Some(isl),
-                    completion_tokens: Some(osl as u64),
-                    http: HttpTrace::default(),
-                },
-                request_payload,
-                record,
-            },
+            result,
             live_record,
         })
     }
@@ -455,6 +745,63 @@ impl RequestExecutor for FakeRequestExecutor {
                 .records),
             None => Ok(Vec::new()),
         }
+    }
+}
+
+/// Fake [`Dispatcher`] (graph path): the same analytic fabrication behind the
+/// object-safe `Dispatcher` seam the graph runtime dispatches over. The graph
+/// runtime owns `on_arrival`; this emits the token/usage/terminal stream and
+/// returns the record, exactly as `TransportSink::dispatch_collect` does.
+struct FakeDispatcher {
+    core: FakeFabricator,
+}
+
+impl FakeDispatcher {
+    fn new(core: FakeFabricator) -> Self {
+        Self { core }
+    }
+}
+
+#[async_trait(?Send)]
+impl crate::transport::http::Dispatcher for FakeDispatcher {
+    async fn dispatch_collect(
+        &self,
+        turn: PreparedTurn,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+    ) -> Result<DispatchResult> {
+        let uuid = turn.request.uuid;
+        let isl = turn.request.input_length as u64;
+        let osl = turn.request.max_output_tokens;
+        let start_abs = self.core.clock.now_ns();
+        let request_payload = turn
+            .request
+            .request_body_bytes
+            .clone()
+            .unwrap_or_else(Bytes::new);
+        Ok(self.core.fabricate(
+            observer,
+            uuid,
+            isl,
+            osl,
+            start_abs,
+            request_payload,
+            on_first_token,
+        ))
+    }
+
+    fn inference_dimensions(
+        &self,
+        _request: &crate::transport::core::Request,
+    ) -> InferenceDimensions {
+        InferenceDimensions {
+            endpoint_url: Some("dry_run://sim".to_string()),
+            model: Some(self.core.model.clone()),
+        }
+    }
+
+    fn supports_response_streaming(&self) -> bool {
+        false
     }
 }
 
@@ -474,14 +821,33 @@ mod tests {
     use super::*;
     use crate::clock::{RealClock, RealClockAnchor};
     use crate::endpoints::{EndpointId, EndpointKey};
-    use crate::http::{HttpRequest, PreparedHttpEndpoint, TransportSinkConfig};
     use crate::multiturn::{PreparedEndpointReference, TurnDataPolicy};
+    use crate::transport::core::Request;
+    use crate::transport::http::{PreparedHttpEndpoint, TransportSinkConfig};
+
+    /// All-zero analytic params (no base latency, no scaling, no jitter) to build
+    /// on with struct-update syntax.
+    fn zero_params() -> DryRunParams {
+        DryRunParams {
+            ttft_ms: 0.0,
+            itl_ms: 0.0,
+            ttft_per_isl_token_ms: 0.0,
+            ttft_concurrency_quad_ms: 0.0,
+            itl_per_osl_token_ms: 0.0,
+            itl_concurrency_lin_ms: 0.0,
+            ttft_jitter_cv: 0.0,
+            itl_jitter_cv: 0.0,
+            seed: 0,
+            latency_model: DryRunLatencyModel::Linear,
+            kv_utilization: 0.5,
+        }
+    }
 
     fn build_executor(params: DryRunParams) -> Rc<dyn RequestExecutor> {
         let anchor = RealClockAnchor::now();
         let clock: Rc<dyn Clock> = RealClock::from_anchor(anchor);
         let executor = FakeRequestExecutorFactory::new(params)
-            .build(HttpExecutionBackendConfig {
+            .build(ExecutionBackendConfig {
                 workers: 1,
                 coordinator_clock: clock.clone(),
                 real_clock_anchor: anchor,
@@ -501,7 +867,7 @@ mod tests {
 
     fn fixture_turn(uuid: Uuid, isl: usize, osl: usize) -> PreparedTurn {
         PreparedTurn {
-            request: HttpRequest {
+            request: Request {
                 uuid,
                 input_length: isl,
                 max_output_tokens: osl,
@@ -545,8 +911,7 @@ mod tests {
         let params = DryRunParams {
             ttft_ms: 10.0,
             itl_ms: 2.0,
-            jitter_cv: 0.0,
-            seed: 0,
+            ..zero_params()
         };
         let ttft_ns = 10_000_000_i64;
         let itl_ns = 2_000_000_i64;
@@ -587,6 +952,80 @@ mod tests {
         assert_eq!(*drained_uuid, uuid);
         assert_eq!(ingest.tokens.output, Some(OSL as u64));
         assert_eq!(ingest.token_arrival_ns.len(), OSL);
+    }
+
+    #[test]
+    fn analytic_model_scales_ttft_with_isl_and_itl_with_osl() {
+        // TTFT = base + per_isl·ISL; ITL = base + per_osl·OSL (inflight == 1 on
+        // the instant single-reactor path, so the concurrency terms contribute a
+        // constant; here they are zero). No jitter → exact.
+        let params = DryRunParams {
+            ttft_ms: 5.0,
+            itl_ms: 1.0,
+            ttft_per_isl_token_ms: 0.1,    // +0.1 ms/input token
+            itl_per_osl_token_ms: 0.01,    // +0.01 ms/output token
+            ttft_concurrency_quad_ms: 3.0, // ·1² == +3 ms (inflight == 1)
+            itl_concurrency_lin_ms: 2.0,   // ·1  == +2 ms (inflight == 1)
+            ..zero_params()
+        };
+        let (ttft_ns, itl_ns) = params.effective_latencies_ns(100, 50, 1, 0);
+        // ttft = (5 + 0.1·100 + 3·1) = 18 ms; itl = (1 + 0.01·50 + 2·1) = 3.5 ms
+        assert_eq!(ttft_ns, 18_000_000);
+        assert_eq!(itl_ns, 3_500_000);
+        // Zero jitter is exactly reproducible.
+        assert_eq!(
+            params.effective_latencies_ns(100, 50, 1, 7),
+            (18_000_000, 3_500_000)
+        );
+    }
+
+    #[test]
+    fn aiconfigurator_polynomial_matches_dynamo_perf_model() {
+        // Exact curve values from the Dynamo mocker PerfModel::Polynomial
+        // (perf_model.rs:272-273, :315). At inflight == 1, prefill tokens == ISL.
+        let params = DryRunParams {
+            latency_model: DryRunLatencyModel::AiconfiguratorPolynomial,
+            kv_utilization: 0.5,
+            ..zero_params()
+        };
+        // prefill(1000) = 4.209989e-7·1000² + 1.518344e-2·1000 + 16.50142
+        //               = 0.4209989 + 15.18344 + 16.50142 = 32.1058589 ms
+        let prefill = aic_polynomial_prefill_ms(1000.0);
+        assert!((prefill - 32.105_858_9).abs() < 1e-6, "prefill = {prefill}");
+        // decode(0.5) = -25.74·0.25 + 54.01·0.5 + 5.74 = 26.31 ms
+        let decode = aic_polynomial_decode_ms(0.5);
+        assert!((decode - 26.31).abs() < 1e-9, "decode = {decode}");
+        // Floor: a tiny utilization must not drop the ITL below 1.0 ms.
+        assert_eq!(aic_polynomial_decode_ms(-1.0), 1.0);
+        // The executor path uses these curves (ISL=1000 → ttft≈32.11ms, ITL≈26.31).
+        let (ttft_ns, itl_ns) = params.effective_latencies_ns(1000, 64, 1, 0);
+        assert_eq!(ttft_ns, ms_to_ns(prefill));
+        assert_eq!(itl_ns, ms_to_ns(decode));
+    }
+
+    #[test]
+    fn analytic_jitter_is_seeded_and_reproducible() {
+        let params = DryRunParams {
+            ttft_ms: 20.0,
+            itl_ms: 4.0,
+            ttft_jitter_cv: 0.2,
+            itl_jitter_cv: 0.2,
+            seed: 42,
+            ..zero_params()
+        };
+        // Same ordinal → identical draw; different ordinals → (almost surely)
+        // different draws, but both reproducible across calls.
+        let a = params.effective_latencies_ns(32, 16, 1, 3);
+        let b = params.effective_latencies_ns(32, 16, 1, 3);
+        let c = params.effective_latencies_ns(32, 16, 1, 4);
+        assert_eq!(a, b, "same seed+ordinal must reproduce the jitter draw");
+        assert_ne!(a, c, "distinct ordinals draw distinct jitter");
+        // Mean-preserving jitter keeps values in a sane band around the base.
+        assert!(
+            a.0 > 5_000_000 && a.0 < 80_000_000,
+            "ttft jitter out of band: {}",
+            a.0
+        );
     }
 
     #[test]

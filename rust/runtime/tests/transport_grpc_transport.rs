@@ -12,12 +12,12 @@ use std::time::Duration;
 
 use aiperf_runtime::clock::RealClock;
 use aiperf_runtime::endpoints::EndpointId;
-use aiperf_runtime::transport_grpc::proto::model_infer_response::InferOutputTensor;
-use aiperf_runtime::transport_grpc::proto::{
+use aiperf_runtime::transport::grpc::proto::model_infer_response::InferOutputTensor;
+use aiperf_runtime::transport::grpc::proto::{
     InferTensorContents, ModelInferRequest, ModelInferResponse, ModelReadyRequest,
     ModelReadyResponse, ModelStreamInferResponse,
 };
-use aiperf_runtime::transport_grpc::{
+use aiperf_runtime::transport::grpc::{
     ConnectionReuseStrategy, GrpcBindingRegistry, GrpcClientConfig, GrpcErrorKind,
     GrpcRequestConfig, GrpcTransport,
 };

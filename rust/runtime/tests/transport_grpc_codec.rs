@@ -6,12 +6,12 @@
 use std::collections::BTreeMap;
 
 use aiperf_runtime::endpoints::EndpointId;
-use aiperf_runtime::transport_grpc::proto::infer_parameter::ParameterChoice;
-use aiperf_runtime::transport_grpc::proto::model_infer_response::InferOutputTensor;
-use aiperf_runtime::transport_grpc::proto::{
+use aiperf_runtime::transport::grpc::proto::infer_parameter::ParameterChoice;
+use aiperf_runtime::transport::grpc::proto::model_infer_response::InferOutputTensor;
+use aiperf_runtime::transport::grpc::proto::{
     InferTensorContents, ModelInferRequest, ModelInferResponse, ModelStreamInferResponse,
 };
-use aiperf_runtime::transport_grpc::{
+use aiperf_runtime::transport::grpc::{
     CodecError, GrpcBindingRegistry, GrpcBindingRegistryBuilder, GrpcEndpointBinding,
     GrpcEndpointBindingFactory, GrpcEndpointBindingRegistryError, decode_model_infer_response,
     decode_model_stream_infer_response, encode_model_infer_request, grpc_status_to_http,

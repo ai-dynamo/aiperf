@@ -27,7 +27,7 @@ use aiperf_runtime::endpoints::{
 use aiperf_runtime::fixed_schedule::{
     DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload,
 };
-use aiperf_runtime::http::TransportSink;
+use aiperf_runtime::transport::http::TransportSink;
 use aiperf_runtime::multiturn::{
     ConversationSource, NativeDatasetConversationSource, PreparedEndpointReference,
 };

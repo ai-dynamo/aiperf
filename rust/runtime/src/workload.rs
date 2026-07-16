@@ -5,7 +5,7 @@
 
 use uuid::Uuid;
 
-use crate::http::HttpRequest;
+use crate::transport::core::Request;
 
 /// A synthetic workload: `num_requests` chat requests of approximately
 /// `input_tokens` prompt length, each asking for `output_tokens` output.
@@ -24,14 +24,14 @@ pub struct SkeletonWorkload {
 }
 
 impl SkeletonWorkload {
-    /// Mint one fresh [`HttpRequest`] with a new correlation id. Stateless, so the
+    /// Mint one fresh [`Request`] with a new correlation id. Stateless, so the
     /// run loop can pull requests on demand and let the stop conditions (not a fixed
     /// list length) decide when to stop.
     ///
     /// The prompt is `input_tokens` whitespace-separated words; tokenizer-exact
     /// input/output lengths are deferred to a later increment.
-    pub fn make_request(&self) -> HttpRequest {
-        HttpRequest {
+    pub fn make_request(&self) -> Request {
+        Request {
             uuid: Uuid::new_v4(),
             input_length: self.input_tokens,
             max_output_tokens: self.output_tokens,

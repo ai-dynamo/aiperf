@@ -132,6 +132,9 @@ pub struct GpuTelemetrySidecar {
     pub records_path: String,
     /// Lowered sources.
     pub sources: Vec<GpuSource>,
+    /// Custom DCGM metrics CSV (`--gpu-telemetry <file>.csv`), when supplied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics_file: Option<String>,
 }
 
 /// The lowered `sidecars.server_metrics` block.
@@ -219,8 +222,9 @@ pub struct Sidecars {
 
 impl GpuTelemetrySidecar {
     /// Build the default DCGM sidecar (the enabled-by-default path); `extra` are
-    /// custom DCGM URLs appended after the defaults (deduped).
-    pub fn default_dcgm(extra: &[String]) -> Self {
+    /// custom DCGM URLs appended after the defaults (deduped). `metrics_file` is
+    /// the optional custom DCGM metrics CSV path (`--gpu-telemetry <file>.csv`).
+    pub fn default_dcgm(extra: &[String], metrics_file: Option<&str>) -> Self {
         let mut urls: Vec<String> = DEFAULT_DCGM_ENDPOINTS
             .iter()
             .map(|e| normalize_metrics_url(e))
@@ -242,6 +246,7 @@ impl GpuTelemetrySidecar {
                     url,
                 })
                 .collect(),
+            metrics_file: metrics_file.map(str::to_string),
         }
     }
 }

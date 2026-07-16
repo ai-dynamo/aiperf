@@ -6,11 +6,11 @@
 //! The mock has always served cleartext. This module adds an optional rustls
 //! frontend so it is a valid target for AIPerf's HTTPS/`grpcs` transports:
 //! the runner's HTTP client
-//! (`aiperf_runtime::transport_http::client::connection::rustls_config`) negotiates
+//! (`aiperf_runtime::transport::http::client::connection::rustls_config`) negotiates
 //! ALPN `h2` then `http/1.1` and, with `endpoint.ssl_verify=false`, installs a
 //! `NoCertificateVerification` verifier — so a self-signed cert is accepted and
 //! the server side only needs to advertise the same two ALPN protocols. The
-//! tonic `grpcs` client (`aiperf_runtime::transport_grpc::transport`) negotiates `h2`.
+//! tonic `grpcs` client (`aiperf_runtime::transport::grpc::transport`) negotiates `h2`.
 //!
 //! Provider selection mirrors the runner: rustls cannot infer a process-global
 //! crypto provider when both `aws-lc-rs` and `ring` are linked (the full runner

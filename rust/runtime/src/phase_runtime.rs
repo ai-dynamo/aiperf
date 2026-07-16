@@ -1075,14 +1075,16 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
         // Build the live-metrics processor over the dedicated realtime observer
         // (both are `Some` together, gated on the profiling phase + enabled
         // realtime block); registered below.
-        let realtime_processor = realtime_live.as_ref().zip(realtime_observer).map(
-            |(live, observer)| {
-                Rc::new(crate::realtime::LiveMetricsProcessor::new(
-                    observer,
-                    live.clone(),
-                )) as Rc<dyn TurnRecordProcessor>
-            },
-        );
+        let realtime_processor =
+            realtime_live
+                .as_ref()
+                .zip(realtime_observer)
+                .map(|(live, observer)| {
+                    Rc::new(crate::realtime::LiveMetricsProcessor::new(
+                        observer,
+                        live.clone(),
+                    )) as Rc<dyn TurnRecordProcessor>
+                });
         let runtime = ScheduledRuntime::new_with_observer(
             self.clock.clone(),
             start_ns,

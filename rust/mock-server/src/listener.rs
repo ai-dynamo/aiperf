@@ -48,7 +48,7 @@ pub fn build_listener(addr: SocketAddr) -> anyhow::Result<tokio::net::TcpListene
 /// `EADDRINUSE`. Only a pre-existing *socket* is removed; a non-socket file at
 /// the path is left in place so the bind fails loudly rather than clobbering an
 /// unrelated file. The runner's UDS transport speaks HTTP/1.1 over this socket
-/// (`transport_http/client/connection.rs` -> `UnixStream::connect` + h1
+/// (`transport::http/client/connection.rs` -> `UnixStream::connect` + h1
 /// handshake), so callers serve the axum router over it with an HTTP/1-capable
 /// connection builder.
 #[cfg(unix)]
@@ -77,7 +77,7 @@ pub fn bind_unix_listener(path: &str) -> anyhow::Result<tokio::net::UnixListener
 /// a background task alongside the TCP frontend, and the e2e suite drives it
 /// directly. One tokio task per accepted connection runs hyper's HTTP/1
 /// handshake: the runner's UDS transport
-/// (`transport_http/client/connection.rs`) negotiates HTTP/1.1 only, so no h2
+/// (`transport::http/client/connection.rs`) negotiates HTTP/1.1 only, so no h2
 /// upgrade is offered. There is no `TCP_NODELAY` / `SO_REUSEPORT` tuning — those
 /// are TCP socket options with no Unix-domain analogue.
 #[cfg(unix)]

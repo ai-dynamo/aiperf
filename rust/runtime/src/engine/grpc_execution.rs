@@ -11,15 +11,15 @@
 //! the shared `PreparedTurn`/graph placement over the gRPC dispatcher.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::transport_grpc::GrpcBindingRegistry;
-use crate::transport_http::config::ClientConfig;
+use crate::transport::grpc::GrpcBindingRegistry;
+use crate::transport::http::config::ClientConfig;
 use anyhow::{Context, Result, ensure};
 use url::Url;
 
-use crate::engine::graph_execution::GraphTransportKind;
-use crate::engine::grpc_turn_execution::NativeGrpcExecutionBackendFactory;
+use crate::engine::grpc_turn_execution::GrpcExecutionFactory;
 use crate::engine::protocol_v2::AuthoredRunSpecV2;
 use crate::engine::registry::{NativeTransportExecution, RunContext};
 use crate::engine::turn_execution::RequestExecutorFactory;
@@ -27,7 +27,7 @@ use crate::engine::turn_execution::RequestExecutorFactory;
 /// Native execution binding for the built-in `grpc` transport.
 ///
 /// gRPC drives the same `RequestExecutor` seam as HTTP; the binding owns its
-/// own [`NativeGrpcExecutionBackendFactory`] (it is not a named field of the
+/// own [`GrpcExecutionFactory`] (it is not a named field of the
 /// process execution-factory set), so gRPC is a transport the workloads treat
 /// identically to any other. Readiness polling is skipped (no gRPC server-ready
 /// probe today) and graph nodes dispatch over the Tonic sink.
@@ -43,15 +43,37 @@ impl GrpcNativeExecution {
 
 impl NativeTransportExecution for GrpcNativeExecution {
     fn executor_factory(&self) -> Arc<dyn RequestExecutorFactory> {
-        Arc::new(NativeGrpcExecutionBackendFactory::default())
+        Arc::new(GrpcExecutionFactory::default())
     }
 
     fn readiness_enabled(&self) -> bool {
         false
     }
 
-    fn graph_transport_kind(&self) -> Result<GraphTransportKind> {
-        Ok(GraphTransportKind::Grpc)
+    fn build_graph_dispatcher(
+        &self,
+        clock: Rc<dyn crate::clock::Clock>,
+        run_origin_ns: i64,
+        urls: &[String],
+        model: &str,
+        transport_config: crate::transport::http::TransportSinkConfig,
+        endpoints: Rc<crate::endpoints::PreparedEndpointTable>,
+    ) -> Result<Rc<dyn crate::transport::http::Dispatcher>> {
+        Ok(Rc::new(
+            crate::engine::grpc_turn_execution::grpc_sink_with_endpoints(
+                clock,
+                run_origin_ns,
+                urls,
+                model.to_string(),
+                transport_config,
+                GrpcBindingRegistry::builtin()?,
+                endpoints,
+            )?,
+        ))
+    }
+
+    fn graph_transport_label(&self) -> &'static str {
+        "grpc"
     }
 
     fn validate_run(&self, run: &AuthoredRunSpecV2, context: &RunContext) -> Result<()> {

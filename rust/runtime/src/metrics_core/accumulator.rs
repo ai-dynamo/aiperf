@@ -1625,7 +1625,7 @@ fn sweep_tag(tag: &str) -> Option<MetricTag> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metrics_core::ingest::{HttpTrace, TokenCounts, UsageMetrics};
+    use crate::metrics_core::ingest::{RequestTrace, TokenCounts, UsageMetrics};
     use crate::metrics_core::window::Phase;
     use std::collections::BTreeSet;
 
@@ -2174,11 +2174,11 @@ mod tests {
     #[test]
     fn http_composites_treat_missing_phases_as_zero_when_trace_data_exists() {
         let mut record = successful_record(1_000_000_000, 1_100_000_000);
-        record.http = HttpTrace {
+        record.http = RequestTrace {
             blocked_ns: Some(10),
             connecting_ns: Some(20),
             waiting_ns: Some(30),
-            ..HttpTrace::default()
+            ..RequestTrace::default()
         };
         let mut accumulator = MetricsAccumulator::new();
         accumulator.process_record(&record);

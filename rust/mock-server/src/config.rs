@@ -33,7 +33,7 @@ pub struct MockServerConfig {
     /// Optional Unix-domain socket path. When set, the server binds a
     /// `UnixListener` at this path and serves the SAME axum router over it as
     /// HTTP/1.1 (the runner's UDS transport is HTTP/1.1-only —
-    /// `transport_http/client/connection.rs` connects a `UnixStream` and
+    /// `transport::http/client/connection.rs` connects a `UnixStream` and
     /// negotiates h1). A stale socket file at the path is unlinked first. The
     /// TCP frontend on `--port` is unchanged and continues to serve in parallel.
     /// Unset (the default) means the server is TCP-only. Not supported together

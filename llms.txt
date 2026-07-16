@@ -162,10 +162,13 @@ Python forwards those authored values without parsing trace payloads. Native gRP
 in-process Dynamo replay requires `transport.type: dynosim_offline` or
 `transport.type: dynosim_online` and a feature-bearing runner. Each native
 transport (`http`/`grpc`/`dry_run`) is resolved from the transport registry
-through its `NativeTransportExecution` binding (executor factory + readiness +
-graph-dispatcher kind), so the scheduled/graph workloads never branch on a
-transport enum — adding a transport is registering a factory, and gating one out
-is not registering it.
+through its `NativeTransportExecution` binding, so the scheduled/graph workloads
+never branch on a transport enum. There is ONE thread-per-core execution backend
+(`turn_execution::ThreadPerCoreExecutor`) generic over a `WorkerSink` (the Rust
+analogue of Python `BaseTransport.send_request`); a transport contributes only an
+`ExecutionSinkBuilder`, never its own worker loop — gRPC has no parallel
+execution path. Adding a transport is writing a sink builder and registering a
+factory; gating one out is not registering it.
 
 Provider-neutral evaluation additionally requires the selected runner
 deployment's wheel-`RECORD`-verified companion roots or generated adjacent

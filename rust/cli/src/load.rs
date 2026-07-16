@@ -142,6 +142,8 @@ pub(crate) struct Inputs {
     pub gpu_telemetry_enabled: bool,
     /// Custom DCGM URLs.
     pub gpu_telemetry_urls: Vec<String>,
+    /// Custom DCGM metrics CSV path (`--gpu-telemetry <file>.csv`).
+    pub gpu_telemetry_metrics_file: Option<String>,
     pub server_metrics_enabled: bool,
     pub server_metrics_formats: Option<Vec<String>>,
     /// Goodput SLO thresholds (metric -> threshold ms).
@@ -295,6 +297,20 @@ pub(crate) fn default_isl() -> Distribution {
 ///
 /// Rejects multi-run (any comma-list sweep axis) since multi-run/orchestration
 /// is deferred.
+/// Map `--export-level` (`summary`/`records`/`raw`, or unset) to the per-record
+/// format list plus the raw-JSONL flag. Shared by the flags path and the
+/// `--config` override so both interpret the flag identically (Python
+/// `_converter_runtime`). `raw` forces `profile_export_raw.jsonl` on.
+pub(crate) fn export_level_formats(level: Option<&str>) -> anyhow::Result<(Vec<String>, bool)> {
+    Ok(match level {
+        None => (vec!["jsonl".to_string()], false),
+        Some("summary") => (Vec::new(), false),
+        Some("records") => (vec!["jsonl".to_string()], false),
+        Some("raw") => (vec!["jsonl".to_string()], true),
+        Some(other) => anyhow::bail!("unknown --export-level {other:?} (summary/records/raw)"),
+    })
+}
+
 pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
     reject_sweep("--concurrency", flags.concurrency.as_deref())?;
     reject_sweep("--request-count", flags.request_count.as_deref())?;
@@ -330,13 +346,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
     // Export level maps to the per-record format list + raw flag (Python
     // `_converter_runtime`): summary => no per-record files; records => JSONL;
     // raw => JSONL + raw JSONL. Unset keeps the default JSONL.
-    let (records_formats, export_raw) = match flags.export_level.as_deref() {
-        None => (vec!["jsonl".to_string()], false),
-        Some("summary") => (Vec::new(), false),
-        Some("records") => (vec!["jsonl".to_string()], false),
-        Some("raw") => (vec!["jsonl".to_string()], true),
-        Some(other) => anyhow::bail!("unknown --export-level {other:?} (summary/records/raw)"),
-    };
+    let (records_formats, export_raw) = export_level_formats(flags.export_level.as_deref())?;
     // Fixed-schedule replays each timestamped entry once, so the request bound is
     // the schedule length (the input file's non-empty line count).
     let (fixed_schedule, request_count) = if flags.fixed_schedule {
@@ -407,7 +417,16 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
             Transport::DryRun(crate::model::transport::DryRunConfig {
                 ttft_ms: flags.dry_run_ttft_ms,
                 itl_ms: flags.dry_run_itl_ms,
-                ..Default::default()
+                ttft_per_isl_token_ms: flags.dry_run_ttft_per_isl_ms,
+                ttft_concurrency_quad_ms: flags.dry_run_ttft_concurrency_quad_ms,
+                itl_per_osl_token_ms: flags.dry_run_itl_per_osl_ms,
+                itl_concurrency_lin_ms: flags.dry_run_itl_concurrency_lin_ms,
+                ttft_jitter_cv: flags.dry_run_ttft_jitter_cv,
+                itl_jitter_cv: flags.dry_run_itl_jitter_cv,
+                seed: flags.dry_run_seed,
+                latency_model: flags.dry_run_latency_model.clone(),
+                kv_utilization: flags.dry_run_kv_utilization,
+                clock: flags.dry_run_clock.clone(),
             })
         } else {
             Transport::Http
@@ -446,7 +465,21 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         prefill_concurrency: flags.prefill_concurrency,
         prefill_ramp: flags.prefill_concurrency_ramp_duration,
         gpu_telemetry_enabled: !flags.no_gpu_telemetry,
-        gpu_telemetry_urls: flags.gpu_telemetry.clone(),
+        // `--gpu-telemetry` accepts a mix of DCGM scrape URLs and (optionally) a
+        // custom-metrics CSV. Python's `_converter_telemetry` classifies any item
+        // ending in `.csv` as the metrics file; everything else is a scrape URL.
+        gpu_telemetry_urls: flags
+            .gpu_telemetry
+            .iter()
+            .filter(|item| !item.to_ascii_lowercase().ends_with(".csv"))
+            .cloned()
+            .collect(),
+        gpu_telemetry_metrics_file: flags
+            .gpu_telemetry
+            .iter()
+            .rev()
+            .find(|item| item.to_ascii_lowercase().ends_with(".csv"))
+            .cloned(),
         server_metrics_enabled: !flags.no_server_metrics,
         server_metrics_formats: (!flags.server_metrics_formats.is_empty())
             .then(|| flags.server_metrics_formats.clone()),
@@ -701,10 +734,17 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         })
     } else if inputs.input_file.is_some() || inputs.inline_records.is_some() {
         Dataset::File(crate::model::dataset::FileDataset {
-            format: inputs
-                .custom_dataset_type
-                .clone()
-                .unwrap_or_else(|| "single_turn".to_string()),
+            // Emit `format` only when the user selected a `--custom-dataset-type`.
+            // Otherwise leave it unset so the runtime auto-detects the loader
+            // structurally (Python's `_explicit_format` → `_infer_dataset_type`).
+            // Inline records have no file to probe, so they keep Python's inline
+            // fallback of the default `single_turn`.
+            format: inputs.custom_dataset_type.clone().or_else(|| {
+                inputs
+                    .inline_records
+                    .is_some()
+                    .then(|| "single_turn".to_string())
+            }),
             sampling: Sampling(inputs.sampling.clone()),
             options: {
                 let mut o = serde_json::Map::new();
@@ -930,7 +970,10 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     };
     let sidecars = crate::model::telemetry::Sidecars {
         gpu_telemetry: gpu_enabled.then(|| {
-            crate::model::telemetry::GpuTelemetrySidecar::default_dcgm(&inputs.gpu_telemetry_urls)
+            crate::model::telemetry::GpuTelemetrySidecar::default_dcgm(
+                &inputs.gpu_telemetry_urls,
+                inputs.gpu_telemetry_metrics_file.as_deref(),
+            )
         }),
         server_metrics: server_enabled.then(|| {
             let mut all_urls = endpoint_urls.clone();
@@ -1022,7 +1065,11 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     // The genai-perf-v1 envelope echoes the config; the runner treats it as an
     // opaque passthrough, so a projection of the native cfg (best-effort vs
     // Python's exclude_unset dump) keeps the aiperf-v1 exports emitting.
-    let input_config = serde_json::to_value(&cfg).unwrap_or(serde_json::Value::Null);
+    let mut input_config = serde_json::to_value(&cfg).unwrap_or(serde_json::Value::Null);
+    // Redact endpoint credentials in the echoed config (Python
+    // `EndpointConfig` field_serializer). The runtime keeps the real
+    // `cfg.endpoint.api_key` for HTTP auth; this only masks the export copy.
+    crate::redact::redact_input_config(&mut input_config);
     let mut export = crate::model::export::Export::build(
         &endpoint_type,
         true,
@@ -1046,6 +1093,25 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     }
     export.mlflow = crate::model::export::MlflowExport::build(&inputs.mlflow, &benchmark_id);
     export.wandb = crate::model::export::WandbExport::build(&inputs.wandb, &benchmark_id);
+    // Server-metrics summary + parquet sinks (rust_wire.py
+    // `_server_metrics_frontend_projection` / `_parquet_frontend_projection`).
+    // Formats come from the populated `cfg.server_metrics` block; `input_config`
+    // is the same cfg projection (cfg.export is still None here, so serializing
+    // cfg is safe).
+    let sm_formats = cfg
+        .server_metrics
+        .as_ref()
+        .map(|s| s.formats.clone())
+        .unwrap_or_default();
+    let sm_input_config = serde_json::to_value(&cfg).unwrap_or(serde_json::Value::Null);
+    export.server_metrics = crate::model::export::ServerMetricsExport::build(
+        &sm_formats,
+        server_enabled,
+        crate::model::export::AIPERF_V1_VERSION,
+        &benchmark_id,
+        sm_input_config,
+    );
+    export.parquet = crate::model::export::ParquetExport::build(&sm_formats, server_enabled);
     cfg.export = Some(export);
 
     Ok(BenchmarkRun {
@@ -1737,8 +1803,32 @@ fn linear_ramp(duration: f64) -> crate::model::phase::Ramp {
     }
 }
 
-/// Count the non-empty lines of a fixed-schedule input file (its entry count).
+/// Count the non-empty lines of a fixed-schedule input (its entry count). A
+/// directory input (e.g. a SageMaker capture dir) is recursed for `*.jsonl` and
+/// the non-empty lines summed across files — the same set the loader reads.
 fn count_schedule_entries(path: &std::path::Path) -> anyhow::Result<u64> {
+    if path.is_dir() {
+        let mut total = 0u64;
+        let mut stack = vec![path.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).map_err(|e| {
+                anyhow::anyhow!("failed to read schedule dir {}: {e}", dir.display())
+            })? {
+                let p = entry
+                    .map_err(|e| anyhow::anyhow!("failed to read schedule dir entry: {e}"))?
+                    .path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.extension().is_some_and(|e| e == "jsonl") {
+                    let text = std::fs::read_to_string(&p).map_err(|e| {
+                        anyhow::anyhow!("failed to read schedule {}: {e}", p.display())
+                    })?;
+                    total += text.lines().filter(|l| !l.trim().is_empty()).count() as u64;
+                }
+            }
+        }
+        return Ok(total);
+    }
     let text = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("failed to read schedule {}: {e}", path.display()))?;
     Ok(text.lines().filter(|l| !l.trim().is_empty()).count() as u64)

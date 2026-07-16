@@ -1318,7 +1318,7 @@ fn cellular_will_use_exact_fold(envelope: &serde_json::Value) -> bool {
 /// - **The online-scheduled executor ships a partition, over HTTP *or* gRPC.** Both
 ///   `http` and `grpc` transports run the SAME `execute_native_inner` scheduled loop —
 ///   the transport differs only in the `RequestExecutorFactory` the coordinator selects
-///   (`NativeRequestExecutorFactory` vs `NativeGrpcExecutionBackendFactory`), while the
+///   (`HttpExecutionFactory` vs `GrpcExecutionFactory`), while the
 ///   cell-issuer injection ([`CellularAutonomousIssuer`]) and the env-gated records sink
 ///   ([`CellRecordsShipper`]) live in that shared loop, above the transport. So gRPC
 ///   ships a partition exactly as HTTP does and is admitted here. The `dynosim`

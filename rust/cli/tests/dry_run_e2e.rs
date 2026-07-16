@@ -72,6 +72,8 @@ fn dry_run_fabricates_exact_per_record_timing_with_zero_network() {
             &(OSL as u64).to_string(),
             "--output-tokens-stddev",
             "0",
+            // Bare --dry-run defaults to the sim clock, which flows through the
+            // normal RunCapture path and emits per-record profile_export.jsonl.
             "--dry-run",
             "--dry-run-ttft-ms",
             &TTFT_MS.to_string(),
@@ -137,5 +139,130 @@ fn dry_run_fabricates_exact_per_record_timing_with_zero_network() {
     assert_eq!(
         summary["request_count"]["avg"].as_f64(),
         Some(REQUESTS as f64)
+    );
+}
+
+/// Run one `--dry-run --dry-run-clock sim` profile into `out`, returning the
+/// child output for assertions.
+fn run_sim_dry_run(out: &std::path::Path, extra: &[&str]) -> std::process::Output {
+    let mut args: Vec<String> = vec![
+        "profile".into(),
+        "--model".into(),
+        "Qwen/Qwen3-0.6B".into(),
+        "--url".into(),
+        "127.0.0.1:9".into(),
+        "--endpoint-type".into(),
+        "chat".into(),
+        "--streaming".into(),
+        "--synthetic-input-tokens-mean".into(),
+        "50".into(),
+        "--synthetic-input-tokens-stddev".into(),
+        "0".into(),
+        "--output-tokens-mean".into(),
+        (OSL as u64).to_string(),
+        "--output-tokens-stddev".into(),
+        "0".into(),
+        "--dry-run".into(),
+        "--dry-run-clock".into(),
+        "sim".into(),
+        "--dry-run-ttft-ms".into(),
+        TTFT_MS.to_string(),
+        "--dry-run-itl-ms".into(),
+        ITL_MS.to_string(),
+        "--artifact-dir".into(),
+        out.to_str().unwrap().into(),
+    ];
+    args.extend(extra.iter().map(|s| s.to_string()));
+    Command::new(aiperf_bin())
+        .args(&args)
+        .output()
+        .expect("spawn aiperf profile --dry-run --dry-run-clock sim")
+}
+
+#[test]
+#[ignore = "needs the Qwen/Qwen3-0.6B tokenizer (Hugging Face); the dry-run transport itself needs no network"]
+fn sim_clock_dry_run_is_deterministic_and_exact() {
+    let a = tempfile::tempdir().expect("tempdir");
+    let b = tempfile::tempdir().expect("tempdir");
+    let seeded = [
+        "--concurrency",
+        "4",
+        "--request-count",
+        "200",
+        "--random-seed",
+        "123",
+    ];
+    let out_a = run_sim_dry_run(a.path(), &seeded);
+    let out_b = run_sim_dry_run(b.path(), &seeded);
+    assert!(
+        out_a.status.success(),
+        "sim run A failed: {}",
+        String::from_utf8_lossy(&out_a.stderr)
+    );
+    assert!(
+        out_b.status.success(),
+        "sim run B failed: {}",
+        String::from_utf8_lossy(&out_b.stderr)
+    );
+
+    // Two seeded virtual-clock runs must be byte-identical.
+    let report_a = std::fs::read(a.path().join("native-v2.json")).expect("report A");
+    let report_b = std::fs::read(b.path().join("native-v2.json")).expect("report B");
+    assert_eq!(
+        report_a, report_b,
+        "seeded sim runs must produce byte-identical native-v2.json"
+    );
+
+    // And the summary values are exact (virtual time is exact).
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(a.path().join("profile_export_aiperf.json")).expect("summary"),
+    )
+    .expect("summary json");
+    assert_eq!(
+        summary["time_to_first_token"]["avg"].as_f64(),
+        Some(TTFT_MS)
+    );
+    assert_eq!(summary["inter_token_latency"]["avg"].as_f64(), Some(ITL_MS));
+    assert_eq!(
+        summary["request_latency"]["avg"].as_f64(),
+        Some(expected_request_latency_ms())
+    );
+    assert_eq!(summary["request_count"]["avg"].as_f64(), Some(200.0));
+}
+
+#[test]
+#[ignore = "needs the Qwen/Qwen3-0.6B tokenizer (Hugging Face); the dry-run transport itself needs no network"]
+fn sim_clock_compresses_a_duration_bounded_run_to_instant() {
+    // A 120-second duration-bounded run must complete in far less than 120s of
+    // wall time under the virtual clock (arrival pacing + duration bound run on
+    // SimClock). Allow generous headroom for tokenizer/dataset startup.
+    let out_dir = tempfile::tempdir().expect("tempdir");
+    let start = std::time::Instant::now();
+    let output = run_sim_dry_run(
+        out_dir.path(),
+        &["--request-rate", "10", "--benchmark-duration", "120"],
+    );
+    let wall = start.elapsed();
+    assert!(
+        output.status.success(),
+        "sim duration run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        wall < std::time::Duration::from_secs(60),
+        "virtual-clock 120s run took {wall:?} of wall time — the SimClock is not governing pacing",
+    );
+    // The run reports ~120s of *virtual* benchmark duration despite finishing fast.
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.path().join("profile_export_aiperf.json"))
+            .expect("summary"),
+    )
+    .expect("summary json");
+    let virtual_duration = summary["benchmark_duration"]["avg"]
+        .as_f64()
+        .expect("benchmark_duration");
+    assert!(
+        (100.0..=130.0).contains(&virtual_duration),
+        "expected ~120s of virtual benchmark_duration, got {virtual_duration}",
     );
 }

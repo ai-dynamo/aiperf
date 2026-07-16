@@ -4,10 +4,10 @@
 
 use std::rc::Rc;
 
-use aiperf_runtime::transport_http::RealClock;
-use aiperf_runtime::transport_http::config::ClientConfig;
-use aiperf_runtime::transport_http::models::RequestConfig;
-use aiperf_runtime::transport_http::transport::http_transport::HttpTransport;
+use aiperf_runtime::transport::http::RealClock;
+use aiperf_runtime::transport::http::config::ClientConfig;
+use aiperf_runtime::transport::http::models::RequestConfig;
+use aiperf_runtime::transport::http::transport::http_transport::HttpTransport;
 
 fn main() {
     let base = std::env::var("BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:8000".to_string());
@@ -17,7 +17,7 @@ fn main() {
         .unwrap();
     let local = tokio::task::LocalSet::new();
     local.block_on(&rt, async {
-        let clock: Rc<dyn aiperf_runtime::transport_http::Clock> = RealClock::new();
+        let clock: Rc<dyn aiperf_runtime::transport::http::Clock> = RealClock::new();
         let t = HttpTransport::new(clock, ClientConfig::default());
         let cfg = RequestConfig::new(format!("{base}/v1/chat/completions"));
         let payload = serde_json::json!({
