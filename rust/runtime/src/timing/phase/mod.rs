@@ -25,6 +25,7 @@ pub use observer::{
     ConsolePhaseObserver, NoopPhaseObserver, PhaseBranchStats, PhaseEvent, PhaseEventKind,
     PhaseObserver, RecordingPhaseObserver,
 };
+pub(crate) use orchestrator::drive_phases;
 pub use orchestrator::{
     ClockPhaseOrchestrator, ClockPhaseRunnerFactory, PhaseOrchestrator, PhaseOrchestratorError,
     PhaseRunnerFactory,

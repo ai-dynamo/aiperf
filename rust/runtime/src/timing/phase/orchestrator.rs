@@ -422,4 +422,135 @@ impl Display for PhaseOrchestratorError {
     }
 }
 
+/// Drive an orchestrator to completion under the standard signal-cancellation
+/// discipline, armed only under a wall clock.
+///
+/// Both the scheduled and graph phase entries call this instead of re-wiring the
+/// run loop, so the SIGINT/SIGTERM → graceful-drain listener cannot be attached
+/// to one path and forgotten on the other. On the first delivered signal the
+/// active phase drains through the cancellation latch and yields
+/// `PhaseStats { was_cancelled: true }`; the listener is aborted when the run
+/// returns.
+pub(crate) async fn drive_phases(
+    orchestrator: ClockPhaseOrchestrator,
+    clock_is_virtual: bool,
+) -> Result<Vec<PhaseStats>, PhaseOrchestratorError> {
+    let signal_guard = spawn_cancel_on_signal(orchestrator.clone(), !clock_is_virtual);
+    let result = orchestrator.run_all().await;
+    drop(signal_guard);
+    result
+}
+
+/// Spawn a `LocalSet` task that cancels the orchestrator on the first
+/// SIGINT/SIGTERM, returning a guard that aborts the listener on drop.
+///
+/// Only `tokio::signal` (async, driven by the runtime's signal driver) is used
+/// so the listener obeys the thread-per-core `!Send` model — no raw OS handler
+/// runs outside the executor. On the first delivered signal the active phase is
+/// cancelled once; later signals are ignored because the task has completed.
+#[cfg(unix)]
+fn spawn_cancel_on_signal(
+    orchestrator: ClockPhaseOrchestrator,
+    enabled: bool,
+) -> SignalCancelGuard {
+    if !enabled {
+        // No signal driver on this runtime (virtual clock): a deterministic
+        // offline run has no wall-clock owner to Ctrl-C, so skip the listener.
+        return SignalCancelGuard { handle: None };
+    }
+    let handle = tokio::task::spawn_local(async move {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut sigint = signal(SignalKind::interrupt()).ok();
+        let mut sigterm = signal(SignalKind::terminate()).ok();
+        match (sigint.as_mut(), sigterm.as_mut()) {
+            (Some(interrupt), Some(terminate)) => {
+                tokio::select! {
+                    _ = interrupt.recv() => {}
+                    _ = terminate.recv() => {}
+                }
+            }
+            (Some(interrupt), None) => {
+                interrupt.recv().await;
+            }
+            (None, Some(terminate)) => {
+                terminate.recv().await;
+            }
+            // Registration failed for both signals: never cancel from here.
+            (None, None) => std::future::pending::<()>().await,
+        }
+        let _ = orchestrator.cancel().await;
+    });
+    SignalCancelGuard {
+        handle: Some(handle),
+    }
+}
+
+/// Windows equivalent: cancel on the first Ctrl+C or Ctrl+Break. tokio's
+/// `ctrl_c`/`ctrl_break` sources are async and runtime-driven, so the listener
+/// stays on the thread-per-core `!Send` model exactly like the unix path.
+#[cfg(windows)]
+fn spawn_cancel_on_signal(
+    orchestrator: ClockPhaseOrchestrator,
+    enabled: bool,
+) -> SignalCancelGuard {
+    if !enabled {
+        return SignalCancelGuard { handle: None };
+    }
+    let handle = tokio::task::spawn_local(async move {
+        use tokio::signal::windows::{ctrl_break, ctrl_c};
+        let mut interrupt = ctrl_c().ok();
+        let mut brk = ctrl_break().ok();
+        match (interrupt.as_mut(), brk.as_mut()) {
+            (Some(interrupt), Some(brk)) => {
+                tokio::select! {
+                    _ = interrupt.recv() => {}
+                    _ = brk.recv() => {}
+                }
+            }
+            (Some(interrupt), None) => {
+                interrupt.recv().await;
+            }
+            (None, Some(brk)) => {
+                brk.recv().await;
+            }
+            // Registration failed for both: never cancel from here.
+            (None, None) => std::future::pending::<()>().await,
+        }
+        let _ = orchestrator.cancel().await;
+    });
+    SignalCancelGuard {
+        handle: Some(handle),
+    }
+}
+
+/// Aborts the background signal listener when the phase run returns. `handle` is
+/// `None` when the listener was skipped (virtual-clock runtime with no signal
+/// driver).
+#[cfg(any(unix, windows))]
+struct SignalCancelGuard {
+    handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+#[cfg(any(unix, windows))]
+impl Drop for SignalCancelGuard {
+    fn drop(&mut self) {
+        if let Some(handle) = &self.handle {
+            handle.abort();
+        }
+    }
+}
+
+/// Other targets carry no signal listener; the product target is Linux.
+#[cfg(not(any(unix, windows)))]
+fn spawn_cancel_on_signal(
+    _orchestrator: ClockPhaseOrchestrator,
+    _enabled: bool,
+) -> SignalCancelGuard {
+    SignalCancelGuard
+}
+
+/// Placeholder guard on platforms without a supported signal source.
+#[cfg(not(any(unix, windows)))]
+struct SignalCancelGuard;
+
 impl Error for PhaseOrchestratorError {}

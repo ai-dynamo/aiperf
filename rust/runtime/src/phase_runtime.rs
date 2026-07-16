@@ -20,8 +20,8 @@ use crate::metrics_core::MetricsConfig;
 use crate::timing::{
     ClockPhaseOrchestrator, ClockPhaseRunnerFactory, LocalPhaseFuture, PhaseBranchStats,
     PhaseConfig, PhaseContext, PhaseExecution, PhaseExecutionError, PhaseExecutionFactory,
-    PhaseKind, PhaseObserver, PhaseOrchestrator, PhaseReturn, PhaseSend, PhaseStats, RampDriver,
-    RampHandle, ReleasedStuckSlots, SlotPool,
+    PhaseKind, PhaseObserver, PhaseReturn, PhaseSend, PhaseStats, RampDriver, RampHandle,
+    ReleasedStuckSlots, SlotPool, drive_phases,
 };
 use anyhow::{Result, anyhow};
 use loadgen_core::collector::ReplayTerminalStatus;
@@ -721,16 +721,14 @@ async fn run_scheduled_phases_inner(
     ));
     let orchestrator = ClockPhaseOrchestrator::new(configs, runner_factory, observer)
         .map_err(|error| anyhow!(error))?;
-    // Trigger run-level cancellation on the first SIGINT/SIGTERM. The signal
-    // future is driven by the runtime's own signal driver (never a raw handler),
-    // so it stays inside the thread-per-core `current_thread` + `LocalSet` model.
-    // The active phase then drains through the existing cancellation latch and
-    // yields `PhaseStats { was_cancelled: true }` while the runner still writes
-    // its partial native report. Subsequent signals are ignored: the task
-    // completes after the first `cancel()`.
-    let signal_guard = spawn_cancel_on_signal(orchestrator.clone(), !clock_is_virtual);
-    let phase_result = orchestrator.run_all().await.map_err(|error| anyhow!(error));
-    drop(signal_guard);
+    // `drive_phases` arms run-level cancellation on the first SIGINT/SIGTERM (only
+    // under a wall clock) and drives the orchestrator to completion. The active
+    // phase then drains through the existing cancellation latch and yields
+    // `PhaseStats { was_cancelled: true }` while the runner still writes its
+    // partial native report.
+    let phase_result = drive_phases(orchestrator, clock_is_virtual)
+        .await
+        .map_err(|error| anyhow!(error));
     let processor_result = execution_factory.wait_record_processors().await;
     let phases = match (phase_result, processor_result) {
         (Ok(phases), Ok(())) => phases,
@@ -750,118 +748,6 @@ async fn run_scheduled_phases_inner(
         reports,
     })
 }
-
-/// Spawn a `LocalSet` task that cancels the orchestrator on the first
-/// SIGINT/SIGTERM, returning a guard that aborts the listener on drop.
-///
-/// Only `tokio::signal` (async, driven by the runtime's signal driver) is used
-/// so the listener obeys the thread-per-core `!Send` model — no raw OS handler
-/// runs outside the executor. On the first delivered signal the active phase is
-/// cancelled once; later signals are ignored because the task has completed.
-#[cfg(unix)]
-fn spawn_cancel_on_signal(
-    orchestrator: ClockPhaseOrchestrator,
-    enabled: bool,
-) -> SignalCancelGuard {
-    if !enabled {
-        // No signal driver on this runtime (virtual clock): a deterministic
-        // offline run has no wall-clock owner to Ctrl-C, so skip the listener.
-        return SignalCancelGuard { handle: None };
-    }
-    let handle = tokio::task::spawn_local(async move {
-        use tokio::signal::unix::{SignalKind, signal};
-        let mut sigint = signal(SignalKind::interrupt()).ok();
-        let mut sigterm = signal(SignalKind::terminate()).ok();
-        match (sigint.as_mut(), sigterm.as_mut()) {
-            (Some(interrupt), Some(terminate)) => {
-                tokio::select! {
-                    _ = interrupt.recv() => {}
-                    _ = terminate.recv() => {}
-                }
-            }
-            (Some(interrupt), None) => {
-                interrupt.recv().await;
-            }
-            (None, Some(terminate)) => {
-                terminate.recv().await;
-            }
-            // Registration failed for both signals: never cancel from here.
-            (None, None) => std::future::pending::<()>().await,
-        }
-        let _ = orchestrator.cancel().await;
-    });
-    SignalCancelGuard {
-        handle: Some(handle),
-    }
-}
-
-/// Windows equivalent: cancel on the first Ctrl+C or Ctrl+Break. tokio's
-/// `ctrl_c`/`ctrl_break` sources are async and runtime-driven, so the listener
-/// stays on the thread-per-core `!Send` model exactly like the unix path.
-#[cfg(windows)]
-fn spawn_cancel_on_signal(
-    orchestrator: ClockPhaseOrchestrator,
-    enabled: bool,
-) -> SignalCancelGuard {
-    if !enabled {
-        return SignalCancelGuard { handle: None };
-    }
-    let handle = tokio::task::spawn_local(async move {
-        use tokio::signal::windows::{ctrl_break, ctrl_c};
-        let mut interrupt = ctrl_c().ok();
-        let mut brk = ctrl_break().ok();
-        match (interrupt.as_mut(), brk.as_mut()) {
-            (Some(interrupt), Some(brk)) => {
-                tokio::select! {
-                    _ = interrupt.recv() => {}
-                    _ = brk.recv() => {}
-                }
-            }
-            (Some(interrupt), None) => {
-                interrupt.recv().await;
-            }
-            (None, Some(brk)) => {
-                brk.recv().await;
-            }
-            // Registration failed for both: never cancel from here.
-            (None, None) => std::future::pending::<()>().await,
-        }
-        let _ = orchestrator.cancel().await;
-    });
-    SignalCancelGuard {
-        handle: Some(handle),
-    }
-}
-
-/// Aborts the background signal listener when the phase run returns. `handle` is
-/// `None` when the listener was skipped (virtual-clock runtime with no signal
-/// driver).
-#[cfg(any(unix, windows))]
-struct SignalCancelGuard {
-    handle: Option<tokio::task::JoinHandle<()>>,
-}
-
-#[cfg(any(unix, windows))]
-impl Drop for SignalCancelGuard {
-    fn drop(&mut self) {
-        if let Some(handle) = &self.handle {
-            handle.abort();
-        }
-    }
-}
-
-/// Other targets carry no signal listener; the product target is Linux.
-#[cfg(not(any(unix, windows)))]
-fn spawn_cancel_on_signal(
-    _orchestrator: ClockPhaseOrchestrator,
-    _enabled: bool,
-) -> SignalCancelGuard {
-    SignalCancelGuard
-}
-
-/// Placeholder guard on platforms without a supported signal source.
-#[cfg(not(any(unix, windows)))]
-struct SignalCancelGuard;
 
 /// The lifecycle marker relayed to a signal-forwarding lifecycle owner.
 ///

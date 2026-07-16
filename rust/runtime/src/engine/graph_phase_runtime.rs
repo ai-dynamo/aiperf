@@ -45,7 +45,7 @@ use crate::rng::{RngRoot, namespace};
 use crate::timing::{
     ClockPhaseOrchestrator, ClockPhaseRunnerFactory, LocalPhaseFuture, NoopPhaseObserver,
     PhaseConfig, PhaseContext, PhaseExecution, PhaseExecutionError, PhaseExecutionFactory,
-    PhaseObserver, PhaseOrchestrator, PhaseReturn, PhaseSend, PhaseStats, RampDriver, SlotPool,
+    PhaseObserver, PhaseReturn, PhaseSend, PhaseStats, RampDriver, SlotPool, drive_phases,
     make_interval_generator,
 };
 use anyhow::{Context, Result, anyhow, bail, ensure};
@@ -58,8 +58,8 @@ use crate::engine::execute::{
     seconds_to_u64_ns,
 };
 use crate::engine::graph_execution::{
-    ChannelRunnerGraphExecutionEventSink, GraphCancellationConfig, ObservedRunnerGraphPlacement,
-    GraphExecutionEvent, GraphExecutionEventSink,
+    ChannelRunnerGraphExecutionEventSink, GraphCancellationConfig, GraphExecutionEvent,
+    GraphExecutionEventSink, ObservedRunnerGraphPlacement,
 };
 use crate::engine::graph_input::TStarWindow;
 use crate::engine::protocol::{AdaptiveControlVariableSpec, PhaseCommonSpec, PhaseSpec};
@@ -2079,6 +2079,10 @@ pub(crate) async fn run_graph_phases(
         warmup_handoff: warmup_handoff.clone(),
     });
     let phase_observer: Rc<dyn PhaseObserver> = Rc::new(NoopPhaseObserver);
+    // The virtual (offline) clock has no signal driver, so the SIGINT/SIGTERM
+    // listener is armed only under a wall clock; capture the axis before the
+    // clock is moved into the runner factory.
+    let clock_is_virtual = clock.is_virtual();
     let runner_factory = Rc::new(ClockPhaseRunnerFactory::new(
         clock,
         phase_observer.clone(),
@@ -2092,8 +2096,9 @@ pub(crate) async fn run_graph_phases(
     // `trajectory_warmup_failed` envelope (the `TrajectoryWarmupFailedError`
     // analogue) so benchmark numbers are never taken from a pool the warmup
     // could not faithfully prime. Mirrors agentx `phase/runner.py:578`
-    // (`report_warmup_failures`) raising before PROFILING.
-    let run_result = orchestrator.run_all().await;
+    // (`report_warmup_failures`) raising before PROFILING. Ctrl-C during the
+    // graph run drains through the same cancellation latch as the scheduled path.
+    let run_result = drive_phases(orchestrator, clock_is_virtual).await;
     let warmup_failures = std::mem::take(&mut *warmup_failed_trace_ids.borrow_mut());
     if !warmup_failures.is_empty() {
         return Err(trajectory_warmup_failed_error(&warmup_failures));

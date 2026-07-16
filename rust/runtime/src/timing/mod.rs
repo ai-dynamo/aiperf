@@ -32,6 +32,7 @@ pub mod user_centric;
 pub use arrival::{FirstArrival, WhenBehind, next_arrival_target};
 pub use cancellation::{BernoulliFixedDelay, CancellationPolicy, CancellationPolicyError, Phase};
 pub use intervals::{ArrivalPattern, IntervalGenerator, make_interval_generator};
+pub(crate) use phase::drive_phases;
 pub use phase::{
     ClockPhaseOrchestrator, ClockPhaseRunner, ClockPhaseRunnerFactory, ConsolePhaseObserver,
     DISABLED_PROGRESS_INTERVAL_NS, GracePeriod, LocalPhaseFuture, NoopPhaseExecution,
