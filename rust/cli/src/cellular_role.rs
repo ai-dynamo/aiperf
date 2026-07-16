@@ -177,7 +177,9 @@ fn project_execute_envelope(
 ) -> anyhow::Result<Vec<u8>> {
     let base = crate::yaml::read_env_substituted(config_path)?;
     let expanded = crate::expand::render_with_context(base)?;
-    let run = crate::yaml::resolve_expanded_value(expanded, artifact_dir)?;
+    // No CLI-flag overrides: the k8s cellular role projects the mounted config
+    // as-is (`ProfileFlags` overrides only apply on the local `aiperf profile` path).
+    let run = crate::yaml::resolve_expanded_value(expanded, artifact_dir, None)?;
     // The tier-T2 aggregator (`aiperf --aggregator`) reads this envelope only for
     // its merge `MetricsConfig`, and the engine's cellular merge helpers address it
     // through `/run/cfg/...` JSON pointers. Unlike the bare-run stdin execute wire,
