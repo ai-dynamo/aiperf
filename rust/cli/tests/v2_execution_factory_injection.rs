@@ -26,9 +26,12 @@ use aiperf::runner_protocol::readiness::{
     NativeHttpReadinessPlanFactory, NativeHttpReadinessTransportFactory, ReadinessTransportFactory,
 };
 use aiperf::runner_protocol::sidecar_input::BuiltinRunnerSidecarInputAdapterResolver;
-use aiperf_runner::{
-    HttpExecutionBackendConfig, NativeRequestExecutorFactory, NativeRunnerGraphPlacementFactory,
-    RequestExecutorFactory, RunnerExecutionFactories, RunnerGraphPlacementFactory,
+use aiperf::runner_protocol::execution_factories::RunnerExecutionFactories;
+use aiperf::runner_protocol::graph_execution::{
+    NativeRunnerGraphPlacementFactory, RunnerGraphPlacementFactory,
+};
+use aiperf::runner_protocol::turn_execution::{
+    HttpExecutionBackendConfig, NativeRequestExecutorFactory, RequestExecutorFactory,
 };
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;

@@ -3,17 +3,18 @@
 
 [workspace]
 resolver = "3"
-# The 16 aiperf-* library crates were absorbed into `rust/aiperf`; only these
-# four real crates remain as workspace members.
+# The 16 aiperf-* library crates were absorbed into `rust/aiperf`. The separate
+# `aiperf-runner` executable was obliterated: `rust/cli` (binary `aiperf`) is now
+# BOTH the front door and the execution engine, re-execing itself (`aiperf
+# --execute`) over the protocol-v2 stdio seam for each run/probe/cell.
 members = [
     "rust/loadgen-core",
     "rust/aiperf",
-    "rust/runner",
     "rust/cli",
     "rust/mock-server",
     "rust/e2e",
     # pyo3 cdylib compiled into the single interned `aiperf` wheel (aiperf._native);
-    # the full-fat aiperf-runner rides along as interned package data.
+    # the unified `aiperf` binary rides along as interned package data.
     "rust/pyext",
 ]
 

@@ -50,17 +50,11 @@ class RustSubprocessExecutor(RunExecutor):
             raise ValueError("pass either installation or binary, not both")
         self.base_dir = Path(base_dir)
         self.installation = installation or RunnerInstallation.resolve(binary)
-        # Retain these read-only aliases for callers that inspect executor
-        # identity while the explicit RunnerInstallation seam rolls out.
+        # Read-only alias for callers that inspect executor identity.
         self.binary = self.installation.binary
-        self.capabilities = self.installation.capabilities
 
     def derive_id(self, plan: BenchmarkPlan, var_idx: int, trial: int) -> str:
         return uuid4().hex
-
-    def preflight_plan(self, plan: BenchmarkPlan) -> None:
-        """Reject fixed-plan endpoint IDs unavailable in this installation."""
-        self.installation.preflight_plan(plan)
 
     async def execute(self, run: BenchmarkRun) -> RunResult:
         """Resolve Config v2 and run the blocking child outside the event loop."""
@@ -133,12 +127,12 @@ class RustSubprocessExecutor(RunExecutor):
         """
         self._resolve_gpu_custom_metrics(run)
         self._apply_scenario_lock(run)
-        authored = self.installation.project_authored_request(
+        # No Python-side preflight: the native binary's execute operation is the
+        # single source of truth and fails closed on an unsupported id.
+        return self.installation.project_authored_request(
             run,
             operation="execute",
         )
-        self.installation.preflight_request(authored)
-        return authored
 
     @staticmethod
     def _resolve_gpu_custom_metrics(run: BenchmarkRun) -> None:

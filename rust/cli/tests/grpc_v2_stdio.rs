@@ -28,7 +28,7 @@ use tonic::server::{NamedService, ServerStreamingService, UnaryService};
 use tonic::{Code, Request, Response, Status};
 
 fn binary() -> &'static str {
-    env!("CARGO_BIN_EXE_aiperf-runner")
+    env!("CARGO_BIN_EXE_aiperf")
 }
 
 fn workspace_root() -> PathBuf {
@@ -59,12 +59,11 @@ fn one_json_line(output: &Output) -> Value {
 }
 
 fn capabilities() -> Value {
-    let output = Command::new(binary())
-        .arg("--capabilities")
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "{output:?}");
-    one_json_line(&output)
+    // Capabilities is an in-process call now — one binary, no subprocess.
+    serde_json::to_value(
+        aiperf_cli::execute_mode::capabilities_catalog().expect("capabilities catalog"),
+    )
+    .expect("catalog to Value")
 }
 
 fn run_child(request: &Value) -> Output {

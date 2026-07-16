@@ -9,12 +9,11 @@ use std::process::{Command, Output, Stdio};
 use serde_json::{Value, json};
 
 fn runner_capabilities() -> Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_aiperf-runner"))
-        .arg("--capabilities")
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "{:?}", output);
-    one_json_line(&output.stdout)
+    // Capabilities is an in-process call now — one binary, no subprocess.
+    serde_json::to_value(
+        aiperf_cli::execute_mode::capabilities_catalog().expect("capabilities catalog"),
+    )
+    .expect("catalog to Value")
 }
 
 fn request(operation: &str) -> Value {
@@ -58,7 +57,8 @@ fn graph_grpc_request(operation: &str) -> Value {
 }
 
 fn run(request: &Value) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_aiperf-runner"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_aiperf"))
+        .arg("--execute")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

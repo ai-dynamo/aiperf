@@ -32,17 +32,16 @@ const TOKENIZER_JSON: &str = r#"{
 }"#;
 
 fn capabilities() -> Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_aiperf-runner"))
-        .arg("--capabilities")
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "{output:?}");
-    serde_json::from_slice(&output.stdout).unwrap()
+    // Capabilities is an in-process call now — one binary, no subprocess.
+    serde_json::to_value(
+        aiperf_cli::execute_mode::capabilities_catalog().expect("capabilities catalog"),
+    )
+    .expect("catalog to Value")
 }
 
 fn run_child(request: Value, environment: &[(&str, &str)]) -> Output {
     let bytes = serde_json::to_vec(&request).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_aiperf-runner"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_aiperf"))
         .envs(environment.iter().copied())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

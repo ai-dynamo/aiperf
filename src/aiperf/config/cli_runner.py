@@ -124,18 +124,9 @@ def _validate_native_plan(plan: BenchmarkPlan, *, config_file: Path) -> None:
         return
     except Exception as error:
         raise ConfigurationError(
-            f"Native runner capability negotiation failed: {error}",
+            f"Native execution binary discovery failed: {error}",
             file_path=config_file,
         ) from error
-
-    catalog = installation.capabilities
-    if not (
-        isinstance(catalog.get("schema_version"), str)
-        and catalog["schema_version"]
-        and isinstance(catalog.get("endpoint"), dict)
-        and isinstance(catalog.get("transport"), dict)
-    ):
-        return
 
     for index, (cfg, variation) in enumerate(
         zip(plan.configs, plan.variations, strict=True)
@@ -160,11 +151,8 @@ def _validate_native_plan(plan: BenchmarkPlan, *, config_file: Path) -> None:
                 run,
                 operation="validate",
             )
-            try:
-                installation.preflight_request(projected)
-            except RuntimeError:
-                # Catalog does not advertise this Config's ids; keep Python-only.
-                continue
+            # No Python-side catalog preflight: the native binary's validate
+            # operation is the single source of truth and fails closed.
             installation.validate_authored_request(
                 projected,
                 benchmark_id=run.benchmark_id,

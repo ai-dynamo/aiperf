@@ -148,7 +148,6 @@ def _execute_multi_benchmark(
     )
     orchestrator = MultiRunOrchestrator(base_dir=base_dir, cell_callback=table_logger)
     executor = RustSubprocessExecutor(base_dir=base_dir)
-    executor.preflight_plan(plan)
     search_planner = _build_search_planner(plan)
     _log_search_planner_active(plan, search_planner, logger)
 

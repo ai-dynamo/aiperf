@@ -1,18 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Drive one `aiperf-runner` child over stdio for a single run.
+//! Drive one execution child (`aiperf --execute`) over stdio for a single run.
 //!
-//! The runner protocol is: write the request JSON to the child's stdin and close
-//! it; the child streams human-readable lifecycle/readiness lines to stderr and
-//! writes exactly one terminal JSON line to stdout. This module forwards the
-//! child's stderr to our stderr live (so readiness/progress is visible while the
-//! run is in flight) and parses the single terminal line.
+//! There is no separate runner binary: the front door re-execs itself in the
+//! internal `--execute` mode ([`crate::execute_mode`]). The protocol is unchanged:
+//! write the request JSON to the child's stdin and close it; the child streams
+//! human-readable lifecycle/readiness lines to stderr and writes exactly one
+//! terminal JSON line to stdout. This module forwards the child's stderr to our
+//! stderr live (so readiness/progress is visible while the run is in flight) and
+//! parses the single terminal line.
 //!
 //! Ported from `src/aiperf/orchestrator/rust_executor.py::_parse_terminal` and
 //! `runner_installation._communicate_forwarding_signals`. Graceful Ctrl+C
 //! cancellation is handled by [`crate::signals`]: `run_once` publishes the child
-//! PID so the forwarder delivers one SIGINT to the runner (which drains + writes
-//! a partial `was_cancelled=true` report) instead of an abrupt kill.
+//! PID so the forwarder delivers one SIGINT to the child (which drains + writes a
+//! partial `was_cancelled=true` report) instead of an abrupt kill.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
@@ -63,16 +65,17 @@ pub struct Terminal {
 /// returns `Ok(Terminal { success: false, .. })` so the caller can render the
 /// runner's own error.
 pub fn run_once(
-    runner: &Path,
+    exec_bin: &Path,
     request_json: &[u8],
     child_pid: &crate::signals::ChildPid,
 ) -> anyhow::Result<Terminal> {
-    let mut child = Command::new(runner)
+    let mut child = Command::new(exec_bin)
+        .arg(crate::execute_mode::EXECUTE_FLAG)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| anyhow::anyhow!("failed to spawn runner {}: {e}", runner.display()))?;
+        .map_err(|e| anyhow::anyhow!("failed to spawn aiperf --execute ({}): {e}", exec_bin.display()))?;
     // Publish the PID so the signal forwarder can deliver a graceful SIGINT.
     child_pid.set(child.id());
 
@@ -95,7 +98,7 @@ pub fn run_once(
         let reader = BufReader::new(stderr);
         for line in reader.lines().map_while(Result::ok) {
             if !line.trim().is_empty() {
-                eprintln!("aiperf-runner: {line}");
+                eprintln!("aiperf-exec: {line}");
             }
         }
     });
@@ -105,11 +108,11 @@ pub fn run_once(
     let mut out = Vec::new();
     stdout
         .read_to_end(&mut out)
-        .map_err(|e| anyhow::anyhow!("failed to read runner stdout: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("failed to read execution child stdout: {e}"))?;
 
     let status = child
         .wait()
-        .map_err(|e| anyhow::anyhow!("failed to wait for runner: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("failed to wait for execution child: {e}"))?;
     child_pid.clear();
     let _ = writer.join();
     let _ = stderr_reader.join();
@@ -126,21 +129,21 @@ fn parse_terminal(stdout: &[u8], returncode: i32) -> anyhow::Result<Terminal> {
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
     anyhow::ensure!(
         lines.len() == 1,
-        "runner must write exactly one terminal JSON line to stdout; received {} non-empty lines (exit {returncode})",
+        "execution child must write exactly one terminal JSON line to stdout; received {} non-empty lines (exit {returncode})",
         lines.len()
     );
 
     let response: TerminalResponse = serde_json::from_str(lines[0])
-        .map_err(|e| anyhow::anyhow!("runner returned invalid terminal JSON: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("execution child returned invalid terminal JSON: {e}"))?;
 
     anyhow::ensure!(
         response.protocol_version == 2,
-        "runner terminal protocol_version {} != 2",
+        "execution terminal protocol_version {} != 2",
         response.protocol_version
     );
     anyhow::ensure!(
         response.event == "run_terminal",
-        "runner terminal event {:?} != run_terminal",
+        "execution terminal event {:?} != run_terminal",
         response.event
     );
 

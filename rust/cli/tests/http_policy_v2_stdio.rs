@@ -122,7 +122,8 @@ fn chat_response() -> Response<Full<Bytes>> {
 }
 
 fn run_child(request: Value) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_aiperf-runner"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_aiperf"))
+        .arg("--execute")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

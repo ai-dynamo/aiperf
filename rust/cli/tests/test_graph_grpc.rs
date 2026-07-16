@@ -47,23 +47,15 @@ use tonic::server::{NamedService, ServerStreamingService, UnaryService};
 use tonic::{Code, Request, Response, Status};
 
 fn binary() -> &'static str {
-    env!("CARGO_BIN_EXE_aiperf-runner")
+    env!("CARGO_BIN_EXE_aiperf")
 }
 
 fn capabilities() -> Value {
-    let output = Command::new(binary())
-        .arg("--capabilities")
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "{output:?}");
-    serde_json::from_slice(
-        output
-            .stdout
-            .split(|byte| *byte == b'\n')
-            .find(|line| !line.is_empty())
-            .unwrap(),
+    // Capabilities is an in-process call now — one binary, no subprocess.
+    serde_json::to_value(
+        aiperf_cli::execute_mode::capabilities_catalog().expect("capabilities catalog"),
     )
-    .unwrap()
+    .expect("catalog to Value")
 }
 
 /// Drive one `aiperf-runner` child over the protocol-v2 stdio surface, returning

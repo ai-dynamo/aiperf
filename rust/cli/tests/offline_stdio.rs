@@ -12,7 +12,7 @@ use std::process::{Command, Output, Stdio};
 use serde_json::{Value, json};
 
 fn binary() -> &'static str {
-    env!("CARGO_BIN_EXE_aiperf-runner")
+    env!("CARGO_BIN_EXE_aiperf")
 }
 
 fn request(operation: &str, artifact_dir: &Path) -> Value {

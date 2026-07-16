@@ -56,12 +56,11 @@ async fn chat(
 }
 
 fn capabilities() -> Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_aiperf-runner"))
-        .arg("--capabilities")
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "{output:?}");
-    serde_json::from_slice(&output.stdout).unwrap()
+    // Capabilities is an in-process call now — one binary, no subprocess.
+    serde_json::to_value(
+        aiperf_cli::execute_mode::capabilities_catalog().expect("capabilities catalog"),
+    )
+    .expect("catalog to Value")
 }
 
 fn benchmark_run(legacy: Value) -> Value {
@@ -95,7 +94,8 @@ fn benchmark_run(legacy: Value) -> Value {
 fn run_child(mut request: Value) -> Output {
     request["run"] = benchmark_run(request["run"].take());
     let bytes = serde_json::to_vec(&request).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_aiperf-runner"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_aiperf"))
+        .arg("--execute")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

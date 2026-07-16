@@ -1,95 +1,102 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Stdio entry point for one orchestrator-authored benchmark run.
+//! The `aiperf` binary's execution modes — one benchmark run over the stdio seam.
+//!
+//! This is the relocated body of the deleted `aiperf-runner` binary. The single
+//! `aiperf` binary is BOTH the front door and the execution engine: for each
+//! run/probe/cell the front door re-execs **itself** (`aiperf --execute`) and the
+//! child enters [`dispatch`] here, preserving the process/SIGINT/panic isolation
+//! boundary the separate runner binary used to provide.
+//!
+//! The protocol is unchanged: read the entire request from stdin, run it through
+//! `RunnerApplication::handle_v2`, and write exactly one JSONL envelope to stdout
+//! (STDOUT is the protocol channel; all diagnostics go to STDERR via the CLI's
+//! `tracing` subscriber). Speaks protocol v2 only; a panic anywhere in
+//! prepare/execute is caught and converted to a typed v2 failure envelope so the
+//! parent sees a clean failure instead of a crashed subprocess.
+//!
+//! Modes (selected by the first argument, set by the re-exec spawn site):
+//! `--execute` (single-process run / controller self-promotion on `cells>1`),
+//! `--capabilities` (print the catalog), `--cell` and `--aggregator` (velo-gated
+//! multi-cell tiers). `current_exe()` is the same `aiperf` binary, so the cellular
+//! launcher's `current_exe() --cell` re-exec resolves back here.
 
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 
+use aiperf::runner_protocol::application::RunnerApplication;
+use aiperf::runner_protocol::distribution_identity::current_distribution_id;
 use aiperf::runner_protocol::protocol_v2::{
     RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2, RunnerEnvelopeV2,
     RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
 };
 use aiperf::runner_protocol::redaction::redact_diagnostic;
-use aiperf_runner::{RunnerApplication, current_distribution_id};
 use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
 
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
-#[cfg(target_os = "linux")]
-#[used]
-#[unsafe(link_section = ".init_array.00100")]
-static AIPERF_MIMALLOC_PREINIT: unsafe extern "C" fn() = configure_mimalloc_before_process_init;
-
-#[cfg(target_os = "linux")]
-unsafe extern "C" fn configure_mimalloc_before_process_init() {
-    // mimalloc's own Linux constructor has priority 101. This priority-100 hook
-    // changes only its uninitialized default before that constructor commits the
-    // initial arena. Leaving the option uninitialized lets mimalloc's own parser
-    // honor canonical, case-insensitive, and legacy environment spellings.
-    // The C shim resolves the experimental enum from the exact header compiled
-    // by libmimalloc-sys instead of duplicating its unstable numeric value.
-    // SAFETY: mimalloc has not run process initialization and no Rust heap
-    // allocation can precede an ELF init-array constructor.
-    unsafe { libmimalloc_sys::mi_option_set_default(aiperf_mi_option_arena_eager_commit(), 0) };
-}
-
+// Declared here (not shared with main.rs's arena-preinit block) so the dynosim
+// purge-delay tweak resolves the option constant against the same exact mimalloc
+// header the linked allocator uses. The symbol is provided by build.rs's C shim.
 unsafe extern "C" {
-    fn aiperf_mi_option_arena_eager_commit() -> libmimalloc_sys::mi_option_t;
     fn aiperf_mi_option_purge_delay() -> libmimalloc_sys::mi_option_t;
 }
 
-/// Install the stderr `tracing` subscriber for the runner's diagnostics.
+/// The internal re-exec flag: `aiperf --execute` reads one protocol-v2 request
+/// from stdin and runs it. Hidden from `--help`; it is a re-exec target, not a
+/// user command.
+pub const EXECUTE_FLAG: &str = "--execute";
+/// `aiperf --cell` runs this process as one cell of a multi-cell run (velo).
+pub const CELL_FLAG: &str = "--cell";
+/// `aiperf --aggregator` runs this process as a tier-T2 merge aggregator (velo).
+pub const AGGREGATOR_FLAG: &str = "--aggregator";
+
+/// Whether `args` (the arguments after argv[0]) select an execution mode. The
+/// front door routes these to [`dispatch`] before ordinary subcommand parsing.
 ///
-/// STDOUT is the stdio protocol channel to the Python orchestrator (JSONL
-/// envelopes via `write_json_line`); the subscriber therefore writes only to
-/// STDERR so it can never corrupt the protocol stream. ANSI is disabled because
-/// Python inherits/pipes STDERR. The default filter is `warn` so the converted
-/// diagnostics (all `warn`/`error` today) stay visible without configuration;
-/// `AIPERF_RUNNER_LOG` overrides it with standard `EnvFilter` syntax.
-fn init_tracing() {
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_ansi(false)
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("AIPERF_RUNNER_LOG")
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
-        )
-        .init();
+/// Capabilities is NOT here: it is an in-process function ([`capabilities_catalog`]),
+/// never a subprocess mode — the front door and execution engine are one binary.
+pub fn is_execution_mode(args: &[String]) -> bool {
+    matches!(
+        args,
+        [flag] if flag == EXECUTE_FLAG || flag == CELL_FLAG || flag == AGGREGATOR_FLAG
+    )
 }
 
-fn main() {
-    init_tracing();
-    let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
-    if arguments.len() == 1 && arguments[0] == "--capabilities" {
-        let application = compose_stock_application();
-        write_json_line(&application.catalog(), 0);
-    }
-    let cell_mode = arguments.len() == 1 && arguments[0] == "--cell";
-    let aggregator_mode = arguments.len() == 1 && arguments[0] == "--aggregator";
-    if !arguments.is_empty() && !cell_mode && !aggregator_mode {
-        tracing::error!("usage: aiperf-runner [--capabilities|--cell|--aggregator]");
-        std::process::exit(2);
-    }
+/// Compose the stock application and return its capabilities catalog.
+///
+/// The catalog is a direct in-process call — there is no `--capabilities`
+/// subprocess/argv mode and no Python preflight. Any Rust caller that needs the
+/// linked distribution's plugins.yaml-shaped inventory calls this.
+pub fn capabilities_catalog()
+-> anyhow::Result<aiperf::runner_protocol::protocol::RunnerCatalog> {
+    let distribution_id = current_distribution_id()
+        .map_err(|error| anyhow::anyhow!("failed to identify aiperf distribution: {error}"))?;
+    let application = RunnerApplication::stock(distribution_id)
+        .map_err(|error| anyhow::anyhow!("failed to compose aiperf distribution: {error:#}"))?;
+    Ok(application.catalog())
+}
 
+/// Enter the requested execution mode and drive one run to its terminal envelope.
+/// Always terminates the process (`-> !`); callers do not return from here.
+pub fn dispatch(args: &[String]) -> ! {
+    let flag = args.first().map(String::as_str).unwrap_or("");
+    let cell_mode = flag == CELL_FLAG;
+    let aggregator_mode = flag == AGGREGATOR_FLAG;
+
+    // A cell child fetches its sliced envelope over velo, not stdin. Every other
+    // mode reads the full request from stdin to EOF.
     let mut input = Vec::new();
-    if let Err(error) = io::stdin().read_to_end(&mut input) {
-        tracing::error!(error = %error, "failed to read runner request from stdin");
-        std::process::exit(2);
+    if !cell_mode {
+        if let Err(error) = io::stdin().read_to_end(&mut input) {
+            tracing::error!(error = %error, "failed to read run request from stdin");
+            std::process::exit(2);
+        }
     }
 
-    // A cell child runs its budget slice single-process, with the autonomous issuer
-    // and per-cell sampler selected from the controller-set environment; it fetches
-    // its sliced envelope over velo (not stdin).
     if cell_mode {
         run_cell();
     }
-
-    // A tier-T2 aggregator collects a subtree of cells' folded stores, merges them,
-    // and ships one merged store up to the controller. It reads the run envelope from
-    // stdin (piped by the controller) for the merge config.
     if aggregator_mode {
         run_aggregator(&input);
     }
@@ -106,9 +113,8 @@ fn main() {
 
     configure_dynosim_process_defaults(&input);
     let application = compose_stock_application();
-    // The runner speaks only protocol v2. run_v2 rejects a non-v2 or malformed
-    // request as a v2 failure envelope (a v1 request fails EnvelopeBootstrapV2
-    // parsing and is reported as an invalid protocol-v2 request).
+    // The execution path speaks only protocol v2. run_v2 rejects a non-v2 or
+    // malformed request as a v2 failure envelope.
     run_v2(&input, &application);
 }
 
@@ -214,7 +220,7 @@ fn run_aggregator(input: &[u8]) -> ! {
 #[cfg(not(feature = "velo"))]
 fn run_aggregator(_input: &[u8]) -> ! {
     tracing::error!(
-        "aiperf-runner was built without the `velo` feature; `--aggregator` (tier-T2 tree merge) requires it"
+        "aiperf was built without the `velo` feature; `--aggregator` (tier-T2 tree merge) requires it"
     );
     std::process::exit(2);
 }
@@ -223,7 +229,7 @@ fn run_aggregator(_input: &[u8]) -> ! {
 #[cfg(not(feature = "velo"))]
 fn run_cell() -> ! {
     tracing::error!(
-        "aiperf-runner was built without the `velo` feature; `--cell` (multi-cell runs) requires it"
+        "aiperf was built without the `velo` feature; `--cell` (multi-cell runs) requires it"
     );
     std::process::exit(2);
 }
@@ -239,7 +245,7 @@ fn run_controller(envelope: &Value) -> ! {
     emit_cellular_failure(
         benchmark_id,
         "velo_feature_required",
-        "aiperf-runner was built without the `velo` feature; multi-cell runs (cells>1) require it"
+        "aiperf was built without the `velo` feature; multi-cell runs (cells>1) require it"
             .to_owned(),
     );
 }
@@ -266,8 +272,8 @@ fn run_controller(envelope: &Value) -> ! {
     // Mirror run_v2's catch_unwind (see `handle_v2`): the controller runs the records
     // merge, native-v2 serialization, and the best-effort export plane inline in
     // run_cellular; a panic in any of them would otherwise unwind past this writer and
-    // abort the controller (exit 101) with no envelope, so Python would see a crashed
-    // subprocess instead of a typed execution failure.
+    // abort the controller (exit 101) with no envelope, so the parent would see a
+    // crashed subprocess instead of a typed execution failure.
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         aiperf::runner_protocol::cellular_controller::run_cellular(
             envelope,
@@ -319,8 +325,8 @@ fn run_controller(envelope: &Value) -> ! {
 }
 
 /// Emit the cellular controller's execution-stage failure envelope, carrying the
-/// error/panic message as a typed diagnostic (so Python surfaces the reason rather
-/// than an empty failure), then exit non-zero.
+/// error/panic message as a typed diagnostic (so the parent surfaces the reason
+/// rather than an empty failure), then exit non-zero.
 fn emit_cellular_failure(benchmark_id: Option<String>, code: &'static str, message: String) -> ! {
     tracing::error!(error = %message, "cellular run failed");
     write_json_line(
@@ -343,7 +349,7 @@ fn compose_stock_application() -> RunnerApplication {
     let distribution_id = match current_distribution_id() {
         Ok(distribution_id) => distribution_id,
         Err(error) => {
-            tracing::error!(error = %error, "failed to identify executing aiperf-runner image");
+            tracing::error!(error = %error, "failed to identify executing aiperf image");
             std::process::exit(2);
         }
     };
@@ -352,7 +358,7 @@ fn compose_stock_application() -> RunnerApplication {
         Err(error) => {
             tracing::error!(
                 error = format!("{error:#}"),
-                "failed to compose executing aiperf-runner image"
+                "failed to compose executing aiperf image"
             );
             std::process::exit(2);
         }
@@ -398,14 +404,14 @@ fn configure_dynosim_process_defaults(input: &[u8]) {
         ("RAYON_NUM_THREADS", rayon_threads.as_str()),
     ] {
         if std::env::var_os(name).is_none() {
-            // SAFETY: this runs on the sole process thread before the runner
-            // constructs a runtime or initializes any native numeric library.
+            // SAFETY: this runs on the sole process thread before the execution
+            // path constructs a runtime or initializes any native numeric library.
             unsafe { std::env::set_var(name, value) };
         }
     }
 
     if std::env::var_os("MIMALLOC_PURGE_DELAY").is_none() {
-        // The runner exits immediately after committing its report, so purging
+        // The process exits immediately after committing its report, so purging
         // temporary sweep pages during the run only adds syscalls and cannot
         // improve a later phase's footprint. The C shim resolves the option
         // against the same exact mimalloc header as the linked allocator.
@@ -458,11 +464,11 @@ fn run_v2(input: &[u8], application: &RunnerApplication) -> ! {
             format!("invalid protocol-v2 request: {error}"),
         ),
     };
-    // The runner's contract is exactly one terminal/validation JSONL line. A
+    // The execution contract is exactly one terminal/validation JSONL line. A
     // panic anywhere in prepare/execute would otherwise unwind past this writer
-    // and abort the child (exit 101) with no envelope, so Python sees a crashed
-    // subprocess instead of a typed failure. Convert a caught panic into the
-    // corresponding v2 failure envelope.
+    // and abort the child (exit 101) with no envelope, so the parent sees a
+    // crashed subprocess instead of a typed failure. Convert a caught panic into
+    // the corresponding v2 failure envelope.
     let operation = bootstrap.operation;
     let benchmark_id = benchmark_id_from_raw(&bootstrap.run);
     let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -486,7 +492,7 @@ fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
     } else if let Some(message) = payload.downcast_ref::<String>() {
         message.clone()
     } else {
-        "runner panicked with a non-string payload".to_owned()
+        "aiperf execution panicked with a non-string payload".to_owned()
     }
 }
 
@@ -499,7 +505,7 @@ fn write_v2_internal_panic(
     benchmark_id: Option<String>,
     message: String,
 ) -> ! {
-    let message = format!("aiperf-runner internal panic: {message}");
+    let message = format!("aiperf internal panic: {message}");
     match operation {
         RunnerOperationV2::Validate => write_json_line(
             &RunValidationV2 {

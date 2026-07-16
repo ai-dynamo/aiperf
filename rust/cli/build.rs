@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Builds the typed bridge to libmimalloc-sys experimental option constants.
+//!
+//! Moved from the deleted `aiperf-runner` crate: the unified `aiperf` binary now
+//! owns the execution hot path and its mimalloc arena-preinit shim.
 
 use std::path::PathBuf;
 

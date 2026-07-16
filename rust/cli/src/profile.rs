@@ -13,7 +13,7 @@ use std::path::Path;
 use crate::model::{Operation, RunnerRequest};
 use crate::sweep::artifact_dir::IterationOrder;
 use crate::sweep::{self, run as sweep_run};
-use crate::{execute, flags::ProfileFlags, load, runner_install, yaml};
+use crate::{exec_bin, execute, flags::ProfileFlags, load, yaml};
 
 /// Eagerly create the artifact dir and remove any prior `native-v2.json` so a
 /// re-run into the same directory doesn't trip the runner's write-once guard
@@ -115,7 +115,7 @@ fn run_single(run: crate::model::BenchmarkRun) -> anyhow::Result<i32> {
     let request = RunnerRequest::new(Operation::Execute, run);
     let payload = serde_json::to_vec(&request)
         .map_err(|e| anyhow::anyhow!("failed to serialize the runner request: {e}"))?;
-    let runner = runner_install::resolve()?;
+    let runner = exec_bin::resolve()?;
     let child_pid = crate::signals::install();
     let terminal = execute::run_once(&runner, &payload, &child_pid)?;
     if terminal.success {
@@ -183,7 +183,7 @@ fn run_search_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
 
     let sweep_id = uuid::Uuid::new_v4().simple().to_string();
     let seed = seed_policy(flags);
-    let runner = runner_install::resolve()?;
+    let runner = exec_bin::resolve()?;
     let child_pid = crate::signals::install();
 
     eprintln!("aiperf: monotonic SLA search (probe + bisection)");
@@ -351,7 +351,7 @@ fn run_isotonic_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
 
     let sweep_id = uuid::Uuid::new_v4().simple().to_string();
     let seed = seed_policy(flags);
-    let runner = runner_install::resolve()?;
+    let runner = exec_bin::resolve()?;
     let child_pid = crate::signals::install();
 
     eprintln!("aiperf: smooth-isotonic SLA search (PAVA+PCHIP, scipy)");
@@ -485,7 +485,7 @@ fn run_bayes_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
 
     let sweep_id = uuid::Uuid::new_v4().simple().to_string();
     let seed = seed_policy(flags);
-    let runner = runner_install::resolve()?;
+    let runner = exec_bin::resolve()?;
     let child_pid = crate::signals::install();
 
     eprintln!("aiperf: optuna BO SLA search");
@@ -742,7 +742,7 @@ pub fn seed_policy(flags: &ProfileFlags) -> sweep_run::SeedPolicy {
 /// the sweep table, and write the aggregate. Shared by the flag-driven sweep,
 /// the multi-run path, and the YAML `sweep:` path.
 fn run_cells(flags: &ProfileFlags, cells: &[sweep_run::Cell]) -> anyhow::Result<i32> {
-    let runner = runner_install::resolve()?;
+    let runner = exec_bin::resolve()?;
     let child_pid = crate::signals::install();
     let cooldown = flags
         .profile_run_cooldown_seconds
