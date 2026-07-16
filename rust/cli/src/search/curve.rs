@@ -121,12 +121,7 @@ fn solve_linear(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
 /// fewer than 2 raw sweep points are available; otherwise (including the
 /// too-few-finite-points and below-floor cases) returns a populated payload.
 pub fn process(sweep_json: &Value, spec: &CurveSpec) -> anyhow::Result<Value> {
-    let points = extract_points(
-        sweep_json,
-        &spec.swept_param,
-        &spec.metric_tag,
-        &spec.stat,
-    )?;
+    let points = extract_points(sweep_json, &spec.swept_param, &spec.metric_tag, &spec.stat)?;
     anyhow::ensure!(
         points.len() >= 2,
         "ttft_curve_fit: need >= 2 sweep points to fit a curve (got {} for {:?}/{:?}); \
@@ -173,8 +168,7 @@ pub fn process(sweep_json: &Value, spec: &CurveSpec) -> anyhow::Result<Value> {
     let xs: Vec<f64> = finite.iter().map(|p| p.0).collect();
     let ys: Vec<f64> = finite.iter().map(|p| p.1).collect();
 
-    let (linear_coeffs, linear_r2) =
-        polyfit_with_r2(&xs, &ys, 1).unwrap_or((vec![0.0, 0.0], 0.0));
+    let (linear_coeffs, linear_r2) = polyfit_with_r2(&xs, &ys, 1).unwrap_or((vec![0.0, 0.0], 0.0));
     let mut fit_form = "linear";
     let mut coefficients = linear_coeffs;
     let mut r_squared = linear_r2;
@@ -187,8 +181,9 @@ pub fn process(sweep_json: &Value, spec: &CurveSpec) -> anyhow::Result<Value> {
             }
         }
     }
-    let below_floor =
-        r_squared.is_nan() || coefficients.iter().any(|c| !c.is_finite()) || r_squared < R2_FLOOR_DEFAULT;
+    let below_floor = r_squared.is_nan()
+        || coefficients.iter().any(|c| !c.is_finite())
+        || r_squared < R2_FLOOR_DEFAULT;
 
     Ok(serde_json::json!({
         "fit_form": fit_form,
@@ -246,9 +241,12 @@ mod tests {
 
     #[test]
     fn quadratic_fallback_on_curved_data() {
-        // Strongly quadratic: linear r^2 below floor, refit quadratic (3 coeffs).
+        // U-shaped parabola y = (ISL-3)^2: the linear fit is flat (slope 0,
+        // r^2 = 0, well below the 0.85 floor), so the quadratic refit wins.
+        // A monotonic y = ISL^2 would NOT work here — its linear r^2 is ~0.96,
+        // above the floor, so the refit branch never runs.
         let out = process(
-            &agg(&[(1, 1.0), (2, 4.0), (3, 9.0), (4, 16.0), (5, 25.0)]),
+            &agg(&[(1, 4.0), (2, 1.0), (3, 0.0), (4, 1.0), (5, 4.0)]),
             &spec(),
         )
         .unwrap();
