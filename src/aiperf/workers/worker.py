@@ -627,13 +627,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         credit_context.output_sequence_length = (
             self._output_sequence_length_for_responses(parsed_responses)
         )
-        credit_context.inter_token_latency_ns = (
-            self._inter_token_latency_ns_for_record(
-                record,
-                content_perf_ns,
-                parsed_responses,
-                credit_context.output_sequence_length,
-            )
+        credit_context.inter_token_latency_ns = self._inter_token_latency_ns_for_record(
+            record,
+            content_perf_ns,
+            parsed_responses,
+            credit_context.output_sequence_length,
         )
         await self._send_inference_result_message(record)
         if record.error is not None:
