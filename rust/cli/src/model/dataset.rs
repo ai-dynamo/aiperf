@@ -127,6 +127,9 @@ pub struct AudioSpec {
 pub struct VideoAudio {
     /// Channel count.
     pub channels: u32,
+    /// Audio codec (`aac`/`libvorbis`/`libopus`; present only when set + audio enabled).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codec: Option<String>,
     /// Bit depth.
     pub depth: u32,
     /// Sample rate, kHz.

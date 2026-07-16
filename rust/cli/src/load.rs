@@ -1382,6 +1382,7 @@ fn build_video_spec(flags: &ProfileFlags) -> Option<VideoSpec> {
     Some(VideoSpec {
         audio: VideoAudio {
             channels: flags.video_audio_num_channels.unwrap_or(0),
+            codec: flags.video_audio_codec.clone(),
             depth: flags.video_audio_depth.unwrap_or(16),
             sample_rate: flags
                 .video_audio_sample_rate

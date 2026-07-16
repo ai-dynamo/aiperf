@@ -432,6 +432,7 @@ struct VideoSection {
 #[derive(Debug, Deserialize)]
 struct VideoAudioSection {
     channels: Option<u32>,
+    codec: Option<String>,
     depth: Option<u32>,
     #[serde(default, alias = "sampleRate")]
     sample_rate: Option<f64>,
@@ -674,6 +675,7 @@ impl Benchmark {
             crate::model::dataset::VideoSpec {
                 audio: crate::model::dataset::VideoAudio {
                     channels: va.and_then(|a| a.channels).unwrap_or(0),
+                    codec: va.and_then(|a| a.codec.clone()),
                     depth: va.and_then(|a| a.depth).unwrap_or(16),
                     sample_rate: va.and_then(|a| a.sample_rate).unwrap_or(44.1),
                 },

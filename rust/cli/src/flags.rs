@@ -642,6 +642,10 @@ pub struct ProfileFlags {
     /// Synthetic video codec (`--video-codec`).
     #[arg(long = "video-codec")]
     pub video_codec: Option<String>,
+
+    /// Synthetic video AUDIO codec (`--video-audio-codec`; aac/libvorbis/libopus).
+    #[arg(long = "video-audio-codec")]
+    pub video_audio_codec: Option<String>,
     /// Synthetic video synthesis pattern (`--video-synth-type`).
     #[arg(long = "video-synth-type")]
     pub video_synth_type: Option<String>,
