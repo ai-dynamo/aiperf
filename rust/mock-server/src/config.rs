@@ -6,6 +6,7 @@
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 
+use crate::accuracy::AccuracyFormat;
 use crate::prefix_cache::EvictionPolicy;
 
 #[derive(Debug, Clone, Parser, Serialize, Deserialize)]
@@ -426,6 +427,58 @@ pub struct MockServerConfig {
 
     #[arg(long, env = "MOCK_SERVER_NO_TOKENIZER", default_value_t = false)]
     pub no_tokenizer: bool,
+
+    /// Path to a JSONL accuracy dataset. Each line is an object with a prompt
+    /// field (`prompt`/`question`/`input`/`text`) and a gold field
+    /// (`ground_truth`/`answer`/`gold`/`target`), plus optional `task`,
+    /// per-row `format`, and `choices`. When set, requests whose user text
+    /// matches a row return the ground-truth answer (formatted for the grader)
+    /// for a seeded fraction of requests; unmatched requests fall through to the
+    /// normal corpus generation.
+    #[arg(long, env = "MOCK_SERVER_ACCURACY_DATASET")]
+    pub accuracy_dataset: Option<String>,
+
+    /// Default grader format used to wrap the gold answer. A per-row `format`
+    /// field overrides this.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_ACCURACY_FORMAT",
+        value_enum,
+        default_value = "passthrough"
+    )]
+    pub accuracy_format: AccuracyFormat,
+
+    /// Seeded fraction of matched requests returned with the correct answer
+    /// (0.0–1.0). The rest return a plausible wrong answer. The verdict is
+    /// deterministic in `(random_seed, prompt)`, independent of arrival order.
+    #[arg(long, env = "MOCK_SERVER_ACCURACY_CORRECT_RATE", default_value_t = 1.0)]
+    pub accuracy_correct_rate: f64,
+
+    /// Seeded fraction of matched requests rendered as chain-of-thought
+    /// (reasoning plus the final answer) rather than a bare answer.
+    #[arg(long, env = "MOCK_SERVER_ACCURACY_COT_RATE", default_value_t = 0.0)]
+    pub accuracy_cot_rate: f64,
+
+    /// Seeded fraction of matched requests rendered as an adversarial,
+    /// parser-choking response shape (leading whitespace, reasoning-only
+    /// content, wrong case, boxed wrap, conflicting answers, unicode, or a
+    /// streaming `object: null` frame).
+    #[arg(
+        long,
+        env = "MOCK_SERVER_ACCURACY_ADVERSARIAL_RATE",
+        default_value_t = 0.0
+    )]
+    pub accuracy_adversarial_rate: f64,
+
+    /// When rendering CoT, place the reasoning in a separate `reasoning_content`
+    /// field (reasoning-model shape) instead of inline before the answer.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_ACCURACY_REASONING_FIELD",
+        default_value_t = true,
+        action = clap::ArgAction::Set,
+    )]
+    pub accuracy_reasoning_field: bool,
 
     /// Comma-separated list of models to advertise on `GET /v1/models`. When
     /// empty (the default) a small list of well-known LLM names is returned.

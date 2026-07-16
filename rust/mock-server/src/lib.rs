@@ -6,6 +6,7 @@
 //! Provides OpenAI-compatible APIs, multi-backend Prometheus metrics simulation,
 //! configurable latency, and deterministic responses for benchmarking.
 
+pub mod accuracy;
 pub mod app;
 pub mod balancer;
 pub mod config;

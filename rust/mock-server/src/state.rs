@@ -35,6 +35,10 @@ pub struct AppState {
     /// `--prefix-cache-hit-rate` override is set. Cached prefix tokens skip
     /// prefill (lower TTFT) and are reported in usage.
     pub prefix_cache: Option<Arc<PrefixCache>>,
+    /// Ground-truth-aware response mode, present when `--accuracy-dataset` is
+    /// set. Requests whose prompt matches a dataset row return the (seeded)
+    /// correct-or-wrong answer formatted for the benchmark grader.
+    pub accuracy: Option<Arc<crate::accuracy::AccuracyDataset>>,
 }
 
 pub struct ErrorRng {
@@ -70,6 +74,17 @@ impl AppState {
             None
         };
         let prefix_cache = PrefixCache::from_config(&config).map(Arc::new);
+        let accuracy = config.accuracy_dataset.as_ref().map(|path| {
+            match crate::accuracy::AccuracyDataset::load(std::path::Path::new(path), &config) {
+                Ok(ds) => {
+                    tracing::info!("Accuracy dataset loaded: {} rows from {}", ds.len(), path);
+                    Arc::new(ds)
+                }
+                // A misconfigured accuracy dataset is a hard startup error: the
+                // whole point of the run is ground-truth-aware responses.
+                Err(e) => panic!("failed to load accuracy dataset: {e}"),
+            }
+        });
         let state = Arc::new(AppState {
             error_rng: Mutex::new(ErrorRng::new(config.random_seed)),
             config: config.clone(),
@@ -80,6 +95,7 @@ impl AppState {
             start_wallclock: std::time::SystemTime::now(),
             scheduler,
             prefix_cache,
+            accuracy,
         });
 
         if config.dcgm_auto_load {

@@ -86,6 +86,9 @@ pub(crate) struct RequestCtx {
     pub(crate) usage: Usage,
     pub(crate) latency_sim: LatencySimulator,
     pub(crate) start: Instant,
+    /// When true (accuracy adversarial `NullObjectChunk`), the streaming path
+    /// emits one `{"object": null}` SSE frame before `[DONE]` (github #1010).
+    pub(crate) null_object_chunk: bool,
 }
 
 impl RequestCtx {
@@ -96,7 +99,28 @@ impl RequestCtx {
         start: Instant,
         state: &AppState,
     ) -> Self {
-        let tokenized = tokenize_request(req_gen);
+        let mut tokenized = tokenize_request(req_gen);
+        // Ground-truth-aware override: when an accuracy dataset is loaded and the
+        // request's user text matches a row, replace the corpus-generated tokens
+        // with the (seeded) correct-or-wrong answer, formatted for the grader,
+        // optionally as CoT or an adversarial parser-choke shape. All endpoints
+        // and both streaming and non-streaming paths serialize
+        // `tokenized.content()`, so this single seam covers every front door.
+        let mut null_object_chunk = false;
+        if let Some(ds) = &state.accuracy
+            && let Some(entry) = ds.lookup(&tokenized.text)
+        {
+            let decision = ds.decide(entry, &tokenized.text);
+            tokenized.tokens = crate::tokens::tokenize(&decision.content);
+            tokenized.reasoning_content_tokens = decision
+                .reasoning_content
+                .as_deref()
+                .map(crate::tokens::tokenize)
+                .unwrap_or_default();
+            tokenized.reasoning_tokens = tokenized.reasoning_content_tokens.len();
+            tokenized.finish_reason = "stop";
+            null_object_chunk = decision.null_object_chunk;
+        }
         let mut usage = tokenized.usage();
         let model = req_gen.model().to_string();
         let request_id = make_request_id(request_id_prefix);
@@ -139,6 +163,7 @@ impl RequestCtx {
             tokenized,
             usage,
             start,
+            null_object_chunk,
         }
     }
 }
@@ -1438,8 +1463,11 @@ fn chat_stream(
         state.recorder.record_llm_inflight_start(&ctx.model);
 
         // Fast-mode short-circuit: ttft==itl==0. Pre-render the entire SSE
-        // body into one Bytes and yield it in a single HTTP frame.
-        if ctx.latency_sim.is_fast() {
+        // body into one Bytes and yield it in a single HTTP frame. The
+        // adversarial null-object frame must land *before* `[DONE]`, which the
+        // pre-rendered body already contains, so skip the short-circuit when it
+        // is requested and run the (still instant) token loop instead.
+        if ctx.latency_sim.is_fast() && !ctx.null_object_chunk {
             let total_tokens = ctx.tokenized.reasoning_content_tokens.len()
                 + ctx.tokenized.tokens.len();
             if total_tokens > 0 {
@@ -1581,6 +1609,16 @@ fn chat_stream(
                 usage: &ctx.usage,
             };
             yield Ok::<Bytes, Infallible>(sse_chunk_ser(&usage_chunk));
+        }
+
+        if ctx.null_object_chunk {
+            // github #1010: a terminal chunk with `object: null` arriving before
+            // `[DONE]`. A robust parser treats it as an end-of-stream marker; a
+            // brittle one raises `Unsupported OpenAI object type: None`. Emitted
+            // as a standalone frame so the run's parser is genuinely exercised.
+            yield Ok::<Bytes, Infallible>(Bytes::from_static(
+                b"data: {\"id\":\"adversarial-null\",\"object\":null,\"created\":0,\"choices\":[]}\n\n",
+            ));
         }
 
         yield Ok::<Bytes, Infallible>(sse_done());
