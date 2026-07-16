@@ -25,10 +25,10 @@ use async_trait::async_trait;
 use tokio::sync::Notify;
 use url::Url;
 
+use crate::transport::core::{ConnectionReuseStrategy, ErrorDetails, TraceData};
 use crate::transport::http::client::connection::{Sender, SocketInfo, establish_with_resolver};
 use crate::transport::http::client::resolver::{CachingDnsResolver, DnsResolver};
 use crate::transport::http::config::ClientConfig;
-use crate::transport::http::models::{ConnectionReuseStrategy, ErrorDetails, TraceData};
 
 fn origin_key(url: &Url) -> String {
     format!(

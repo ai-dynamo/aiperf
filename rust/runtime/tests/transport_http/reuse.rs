@@ -4,11 +4,11 @@ use common::{MockServer, run_local};
 
 use std::rc::Rc;
 
+use aiperf_runtime::transport::core::{ConnectionReuseStrategy, TraceData};
 use aiperf_runtime::transport::http::RealClock;
 use aiperf_runtime::transport::http::client::connection::{Sender, TimedBody};
 use aiperf_runtime::transport::http::client::pool::{ConnectionManager, ConnectionPool};
 use aiperf_runtime::transport::http::config::ClientConfig;
-use aiperf_runtime::transport::http::models::{ConnectionReuseStrategy, TraceData};
 use bytes::Bytes;
 use http_body_util::BodyExt;
 

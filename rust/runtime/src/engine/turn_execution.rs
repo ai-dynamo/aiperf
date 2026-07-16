@@ -23,14 +23,12 @@ use std::thread::JoinHandle;
 
 use crate::clock::{Clock, RealClock, RealClockAnchor};
 use crate::endpoints::{ParsedResponse, PreparedEndpointTable};
-use crate::transport::http::{
-    DispatchResult, MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor, TransportSink,
-    TransportSinkConfig,
-};
 use crate::metrics::NativeMetricsObserver;
 use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest};
 use crate::multiturn::TurnToSend;
 use crate::scheduled::TurnResponseObserver;
+use crate::transport::core::{DispatchResult, MeasuredContext, MeasuredOutcome};
+use crate::transport::http::{PreparedTurn, RequestExecutor, TransportSink, TransportSinkConfig};
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use tokio::sync::{Notify, mpsc, oneshot};
@@ -929,9 +927,10 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use crate::endpoints::{EndpointId, EndpointKey, EndpointRegistry, RawEndpointConfig};
-    use crate::transport::http::{PreparedHttpEndpoint, Request};
     use crate::metrics::RequestMetricMetadata;
     use crate::multiturn::PreparedEndpointReference;
+    use crate::transport::core::Request;
+    use crate::transport::http::PreparedHttpEndpoint;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;

@@ -17,14 +17,15 @@ use url::Url;
 
 use crate::clock::Clock;
 
+use crate::transport::core::{
+    ErrorDetails, ErrorKind, RequestRecord, Response, TextResponse, TraceData,
+};
 use crate::transport::http::client::cancellation::{CancelOutcome, race_cancel_after_send};
 use crate::transport::http::client::connection::{
     SendCompletion, Sender, TimedBody, establish, with_timeout,
 };
 use crate::transport::http::config::ClientConfig;
-use crate::transport::http::models::{
-    ErrorDetails, ErrorKind, RequestRecord, Response, SseMessage, TextResponse, TraceData,
-};
+use crate::transport::http::models::SseMessage;
 use crate::transport::http::sse::{SseMessageHandler, read_sse, read_sse_with_handler};
 
 #[derive(Default)]

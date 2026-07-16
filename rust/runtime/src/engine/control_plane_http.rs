@@ -16,12 +16,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::clock::Clock;
+use crate::transport::core::{ConnectionReuseStrategy, ErrorKind, Response, TraceData};
 use crate::transport::http::config::{
     ClientConfig, PreparedTlsClientConfig, PreparedTlsClientConfigError,
 };
-use crate::transport::http::models::{
-    ConnectionReuseStrategy, ErrorKind, RequestConfig, Response, TraceData,
-};
+use crate::transport::http::models::RequestConfig;
 use crate::transport::http::transport::http_transport::HttpTransport;
 use async_trait::async_trait;
 use bytes::Bytes;

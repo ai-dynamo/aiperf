@@ -48,9 +48,6 @@ use crate::fixed_schedule::{
     DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload,
 };
 use crate::graph::input::GraphInputBundle;
-use crate::transport::http::{
-    MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor, TransportSinkConfig,
-};
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
 use crate::metrics_core::{
     CATALOG, ExportContext, InferenceDimensions, MetricTag, MetricsAccumulator, MetricsConfig,
@@ -82,6 +79,8 @@ use crate::timing::{
     RampStrategy, RamperConfig, RoundRobinUrlSelector, SlotPool, StopConfig, UrlSelector,
     make_interval_generator,
 };
+use crate::transport::core::{MeasuredContext, MeasuredOutcome};
+use crate::transport::http::{PreparedTurn, RequestExecutor, TransportSinkConfig};
 use crate::user_centric::{UserCentricConfig, UserCentricWorkload};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use async_trait::async_trait;
@@ -93,7 +92,7 @@ use crate::engine::dataset_input::PreparedDatasetInput;
 use crate::engine::execution_factories::RunnerExecutionFactories;
 use crate::engine::gpu_telemetry::GpuTelemetryRun;
 use crate::engine::graph_execution::{
-    GraphTransportKind, PreparedRunnerGraphEndpointRuntimeFactory, RunnerGraphBackendFactory,
+    PreparedRunnerGraphEndpointRuntimeFactory, RunnerGraphBackendFactory,
     RunnerGraphBackendFactoryConfig, RunnerGraphEndpointRuntimeFactory,
     RunnerGraphPlacementFactory,
 };
@@ -227,11 +226,12 @@ pub(crate) struct NativeRunSpec {
     /// post-report sink emits populated `bucket_counts`; otherwise that
     /// projection is skipped entirely (no per-record recompute cost).
     pub(crate) native_otel_enabled: bool,
-    /// Resolved transport (`cfg.transport.type`) the graph execution path builds
-    /// its worker-local dispatchers over. Consumed only when `dataset` is
-    /// [`NativeDatasetPlan::Graph`]; the scheduled path resolves its transport
-    /// through the injected `RequestExecutorFactory` instead and ignores this.
-    pub(crate) transport_kind: GraphTransportKind,
+    /// Resolved transport binding (`cfg.transport.type`) the graph execution path
+    /// builds its worker-local dispatchers over (`build_graph_dispatcher`).
+    /// `Some` only when `dataset` is [`NativeDatasetPlan::Graph`]; the scheduled
+    /// path resolves its transport through the injected `RequestExecutorFactory`
+    /// and leaves this `None`.
+    pub(crate) transport: Option<Arc<dyn crate::engine::registry::NativeTransportExecution>>,
 }
 
 /// Protocol-neutral retention of one run's already decoded sidecar inputs.
@@ -1441,11 +1441,15 @@ async fn execute_graph_native(
         .collect();
     let endpoint_runtime_factory: Arc<dyn RunnerGraphEndpointRuntimeFactory> = {
         let NativeEndpointPlan::Prepared(profiles) = &request.endpoint;
+        let transport = request
+            .transport
+            .clone()
+            .ok_or_else(|| anyhow!("graph execution plan is missing its transport binding"))?;
         Arc::new(PreparedRunnerGraphEndpointRuntimeFactory::new(
             registry.endpoints().clone(),
             profiles.clone(),
             input_token_counter.clone(),
-            request.transport_kind,
+            transport,
         )?)
     };
     let real_clock_anchor = sidecars.real_clock_anchor;
@@ -5432,7 +5436,7 @@ impl RunCapture {
         &self,
         uuid: Uuid,
         request_payload: Vec<u8>,
-        record: crate::transport::http::models::RequestRecord,
+        record: crate::transport::core::RequestRecord,
     ) -> Result<()> {
         if !self.raw_enabled {
             return Ok(());

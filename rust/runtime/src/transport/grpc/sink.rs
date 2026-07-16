@@ -23,12 +23,12 @@ use crate::endpoints::{
     RequestRecord as EndpointRequestRecord, ResponseData, ServerResponse, Turn, UsageView,
 };
 use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest, RequestTrace};
+use crate::transport::core::{
+    ErrorDetails, ErrorKind, RequestRecord, Response, TextResponse, TraceData,
+};
 use crate::transport::grpc::{
     ConnectionReuseStrategy as GrpcConnectionReuseStrategy, GrpcBindingRegistry, GrpcClientConfig,
     GrpcErrorKind, GrpcRequestConfig, GrpcRequestRecord, GrpcTransport,
-};
-use crate::transport::http::models::{
-    ErrorDetails, ErrorKind, RequestRecord, Response, TextResponse, TraceData,
 };
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::{
@@ -37,13 +37,11 @@ use loadgen_core::sink::{
 };
 use uuid::Uuid;
 
-use crate::transport::http::{
-    DispatchResult, Dispatcher, MeasuredContext, MeasuredOutcome, PreparedHttpEndpoint,
-    PreparedTurn, Request, RequestExecutor,
-};
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata};
 use crate::multiturn::TurnToSend;
 use crate::scheduled::{ModelResponseMetadata, TurnDispatchOutcome};
+use crate::transport::core::{DispatchResult, MeasuredContext, MeasuredOutcome, Request};
+use crate::transport::http::{Dispatcher, PreparedHttpEndpoint, PreparedTurn, RequestExecutor};
 
 /// Worker-local gRPC scheduled sink policy.
 #[derive(Clone, Debug)]

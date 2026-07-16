@@ -20,8 +20,9 @@ use uuid::Uuid;
 
 use crate::clock::Clock;
 use crate::dataset::{Overrides, build_message_body_from_wire_parts};
+use crate::transport::core::Response;
 use crate::transport::http::config::ClientConfig;
-use crate::transport::http::models::{HttpVersion, RequestConfig, Response};
+use crate::transport::http::models::{HttpVersion, RequestConfig};
 use crate::transport::http::sse::ChatChunk;
 use crate::transport::http::transport::http_transport::HttpTransport;
 use loadgen_core::collector::ReplayTerminalStatus;

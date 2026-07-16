@@ -24,8 +24,9 @@ use crate::endpoints::{
     EndpointId, EndpointRegistry, PreparedReadinessRequest, RawEndpointConfig, ReadinessMethod,
     ReadinessPolicy, ReadinessSuccess,
 };
+use crate::transport::core::{ConnectionReuseStrategy, Response};
 use crate::transport::http::config::ClientConfig;
-use crate::transport::http::models::{ConnectionReuseStrategy, RequestConfig, Response};
+use crate::transport::http::models::RequestConfig;
 use crate::transport::http::transport::http_transport::HttpTransport;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use async_trait::async_trait;

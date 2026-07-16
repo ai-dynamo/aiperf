@@ -4,10 +4,10 @@ use common::{MockServer, run_local};
 
 use std::rc::Rc;
 
+use aiperf_runtime::transport::core::TraceData;
 use aiperf_runtime::transport::http::RealClock;
 use aiperf_runtime::transport::http::client::connection::establish;
 use aiperf_runtime::transport::http::config::ClientConfig;
-use aiperf_runtime::transport::http::models::TraceData;
 
 #[test]
 fn establishes_h1_connection_to_mock_and_records_socket_info() {

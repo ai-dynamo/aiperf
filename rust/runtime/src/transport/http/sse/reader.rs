@@ -16,7 +16,8 @@ use futures::future::poll_fn;
 
 use crate::clock::Clock;
 
-use crate::transport::http::models::{ErrorDetails, SseMessage};
+use crate::transport::core::ErrorDetails;
+use crate::transport::http::models::SseMessage;
 
 /// Backpressured consumer for one decoded SSE message.
 ///

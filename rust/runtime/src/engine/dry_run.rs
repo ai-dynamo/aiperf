@@ -72,7 +72,6 @@ use loadgen_core::sink::{ObservedUsage, RequestObserver};
 use uuid::Uuid;
 
 use crate::clock::Clock;
-use crate::engine::graph_execution::GraphTransportKind;
 use crate::engine::protocol_v2::AuthoredRunSpecV2;
 use crate::engine::registry::{
     NativeTransportExecution, RunnerClockKind, RunnerRunContext, RunnerTransportDescriptor,
@@ -80,14 +79,13 @@ use crate::engine::registry::{
 };
 use crate::engine::turn_execution::{ExecutionBackendConfig, RequestExecutorFactory};
 use crate::extensions::AIPerfRegistry;
-use crate::transport::http::{
-    DispatchResult, MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor,
-};
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata};
 use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest, RequestTrace};
 use crate::multiturn::TurnToSend;
 use crate::scheduled::{ModelResponseMetadata, TurnDispatchOutcome};
-use crate::transport::http::models::{RequestRecord, Response, TextResponse};
+use crate::transport::core::{DispatchResult, MeasuredContext, MeasuredOutcome};
+use crate::transport::core::{RequestRecord, Response, TextResponse};
+use crate::transport::http::{PreparedTurn, RequestExecutor};
 
 /// Default synthetic time-to-first-token (milliseconds).
 const fn default_ttft_ms() -> f64 {
@@ -411,10 +409,10 @@ impl RunnerTransportFactory for DryRunTransportFactoryV2 {
 /// Native execution binding for the built-in `dry_run` transport.
 ///
 /// The fake leaf carries its analytic latency params by value and builds its own
-/// [`FakeRequestExecutorFactory`], so `dry_run` needs no process-global
-/// execution factory and no per-transport branch in the workloads — it is a
-/// transport like any other. Readiness is skipped (no server) and the graph
-/// workload is not yet supported (a fake whole-trace `Dispatcher` is a follow-up).
+/// [`FakeRequestExecutorFactory`] (scheduled) and [`FakeDispatcher`] (graph), so
+/// `dry_run` needs no process-global execution factory and no per-transport
+/// branch in the workloads — it is a transport like any other. Readiness is
+/// skipped (no server).
 #[derive(Debug)]
 pub struct DryRunNativeExecution {
     params: DryRunParams,
@@ -429,10 +427,25 @@ impl NativeTransportExecution for DryRunNativeExecution {
         false
     }
 
-    fn graph_transport_kind(&self) -> Result<GraphTransportKind> {
-        anyhow::bail!(
-            "the dry_run transport does not yet support the graph workload; use it with a scheduled (synthetic/file) dataset"
-        )
+    fn build_graph_dispatcher(
+        &self,
+        clock: Rc<dyn Clock>,
+        run_origin_ns: i64,
+        _urls: &[String],
+        model: &str,
+        _transport_config: crate::transport::http::TransportSinkConfig,
+        _endpoints: Rc<crate::endpoints::PreparedEndpointTable>,
+    ) -> Result<Rc<dyn crate::transport::http::Dispatcher>> {
+        Ok(Rc::new(FakeDispatcher::new(FakeFabricator::new(
+            clock,
+            model.to_string(),
+            self.params,
+            run_origin_ns,
+        ))))
+    }
+
+    fn graph_transport_label(&self) -> &'static str {
+        "dry_run"
     }
 
     fn validate_run(&self, _run: &AuthoredRunSpecV2, _context: &RunnerRunContext) -> Result<()> {
@@ -489,96 +502,67 @@ impl RequestExecutorFactory for FakeRequestExecutorFactory {
             "dry_run execution workers must be positive"
         );
         // Fabrication is CPU-only and single-observer: worker count is ignored,
-        // and everything accumulates into one coordinator-reactor observer, so a
-        // dry run has no thread-per-core setup cost.
+        // everything accumulates into one coordinator-reactor observer, so a dry
+        // run has no thread-per-core setup cost.
         Ok(Rc::new(FakeRequestExecutor {
-            clock: config.coordinator_clock,
-            model: config.model,
-            params: self.params,
-            origin_ns: Cell::new(0),
+            core: FakeFabricator::new(config.coordinator_clock, config.model, self.params, 0),
             observer: RefCell::new(None),
-            inflight: Cell::new(0),
-            ordinal: Cell::new(0),
         }))
     }
 }
 
-/// Fake [`RequestExecutor`]: synthesizes each request's timing analytically and
-/// drives the same [`NativeMetricsObserver`] the real HTTP path drives.
-struct FakeRequestExecutor {
+/// Shared analytic-fabrication core used by both the scheduled
+/// [`FakeRequestExecutor`] and the graph [`FakeDispatcher`]. It computes each
+/// request's `(ttft, itl)` from the analytic model, emits the fabricated token
+/// stream + usage + terminal on the caller's observer, and builds the
+/// backend-neutral [`DispatchResult`]. The two seams differ only in the observer
+/// callbacks they own around this (arrival / metadata / record_response), so the
+/// timing/token fabrication lives here exactly once.
+struct FakeFabricator {
     clock: Rc<dyn Clock>,
     model: String,
     params: DryRunParams,
     origin_ns: Cell<i64>,
-    observer: RefCell<Option<Rc<NativeMetricsObserver>>>,
-    /// Live in-flight request count feeding the analytic concurrency terms.
     inflight: Cell<usize>,
-    /// Monotonic dispatch ordinal (deterministic on the single coordinator
-    /// reactor) used to seed the per-request jitter draw.
     ordinal: Cell<u64>,
 }
 
-impl FakeRequestExecutor {
-    fn observer(&self) -> Result<Rc<NativeMetricsObserver>> {
-        self.observer.borrow().clone().ok_or_else(|| {
-            anyhow::anyhow!("dry_run measurement was not configured before dispatch")
-        })
-    }
-
-    /// Absolute-ns → relative-to-origin milliseconds, the unit `on_arrival` /
-    /// `on_token` expect.
-    fn rel_ms(&self, absolute_ns: i64) -> f64 {
-        (absolute_ns - self.origin_ns.get()) as f64 / 1_000_000.0
-    }
-}
-
-#[async_trait(?Send)]
-impl RequestExecutor for FakeRequestExecutor {
-    fn set_run_origin(&self, start_ns: i64) -> Result<()> {
-        self.origin_ns.set(start_ns);
-        Ok(())
-    }
-
-    fn supports_response_streaming(&self) -> bool {
-        // The scheduled dispatcher only calls `execute_measured` (non-streaming);
-        // fabricated per-token timing lives in the observer regardless of the
-        // wire streaming flag, so live-frame forwarding is unnecessary.
-        false
-    }
-
-    fn inference_dimensions(&self, _turn: &TurnToSend) -> InferenceDimensions {
-        InferenceDimensions {
-            endpoint_url: None,
-            model: Some(self.model.clone()),
+impl FakeFabricator {
+    fn new(clock: Rc<dyn Clock>, model: String, params: DryRunParams, origin_ns: i64) -> Self {
+        Self {
+            clock,
+            model,
+            params,
+            origin_ns: Cell::new(origin_ns),
+            inflight: Cell::new(0),
+            ordinal: Cell::new(0),
         }
     }
 
-    fn configure_measurement(&self, config: MetricsConfig, origin_ns: i64) -> Result<()> {
+    fn set_origin(&self, origin_ns: i64) {
         self.origin_ns.set(origin_ns);
-        *self.observer.borrow_mut() = Some(Rc::new(NativeMetricsObserver::new(
-            self.clock.clone(),
-            origin_ns,
-            config,
-        )));
-        Ok(())
     }
 
-    async fn execute_measured(
-        &self,
-        turn: PreparedTurn,
-        context: MeasuredContext,
-        on_first_token: &dyn Fn(i64),
-    ) -> Result<MeasuredOutcome> {
-        let observer = self.observer()?;
-        let uuid = turn.request.uuid;
-        let isl = context.input_length as u64;
-        let osl = context.requested_output_length;
+    /// Absolute-ns → relative-to-origin milliseconds (the unit `on_token` wants).
+    fn rel_ms(&self, absolute_ns: i64) -> f64 {
+        (absolute_ns - self.origin_ns.get()) as f64 / 1_000_000.0
+    }
 
-        // Enter the analytic contention window: `active_inflight` includes this
-        // request. On the single coordinator reactor with instant fabrication,
-        // requests do not overlap (inflight == 1); the sim-clock path (next
-        // phase) sleeps on the virtual clock so overlap — and the concurrency
-        // terms — become exact. The ordinal seeds the reproducible jitter draw.
+    /// Fabricate one request beginning at `start_abs`: emit the analytic token
+    /// stream, usage, and terminal on `observer`, and return the dispatch result.
+    /// The caller owns `on_arrival` / `register_metadata` / `record_response`.
+    fn fabricate(
+        &self,
+        observer: &dyn RequestObserver,
+        uuid: Uuid,
+        isl: u64,
+        osl: usize,
+        start_abs: i64,
+        request_payload: Bytes,
+        on_first_token: &dyn Fn(i64),
+    ) -> DispatchResult {
+        // The live in-flight count feeds the analytic concurrency terms; the
+        // ordinal seeds the reproducible jitter draw.
         let active_inflight = self.inflight.get() + 1;
         self.inflight.set(active_inflight);
         let ordinal = self.ordinal.get();
@@ -587,9 +571,6 @@ impl RequestExecutor for FakeRequestExecutor {
             self.params
                 .effective_latencies_ns(isl as usize, osl, active_inflight, ordinal);
         self.inflight.set(self.inflight.get() - 1);
-        // Dispatch begins at the scheduled arrival: a dry run adds no queueing
-        // delay, so start == arrival and request_latency == ttft + (osl-1)*itl.
-        let start_abs = self.origin_ns.get() + (context.arrival_ms * 1_000_000.0).round() as i64;
         let recv_start_abs = start_abs + ttft_ns;
         let token_abs = |index: usize| start_abs + ttft_ns + (index as i64) * itl_ns;
         let end_abs = if osl > 0 {
@@ -597,10 +578,6 @@ impl RequestExecutor for FakeRequestExecutor {
         } else {
             recv_start_abs
         };
-
-        // Mirror the real observer event sequence (dispatch_measured).
-        observer.register_metadata(uuid, context.metadata.clone());
-        observer.on_arrival(uuid, context.arrival_ms, isl as usize, osl);
         for index in 0..osl {
             let at_ms = self.rel_ms(token_abs(index));
             if index == 0 {
@@ -618,26 +595,7 @@ impl RequestExecutor for FakeRequestExecutor {
             },
         );
         observer.on_terminal(uuid, ReplayTerminalStatus::Completed);
-        observer.record_response(
-            uuid,
-            NativeResponseMetadata {
-                start_ns: Some(start_abs),
-                end_ns: Some(end_abs),
-                prompt_tokens: Some(isl),
-                completion_tokens: Some(osl as u64),
-                http: RequestTrace::default(),
-            },
-        );
-
-        // Build the raw HTTP exchange record consumed by profile_export.jsonl /
-        // raw exporters: one synthetic text chunk per generated token, stamped at
-        // the same absolute perf_ns the observer saw.
         let response_text = synthetic_text(osl);
-        let request_payload = turn
-            .request
-            .request_body_bytes
-            .clone()
-            .unwrap_or_else(Bytes::new);
         let responses = (0..osl)
             .map(|index| {
                 Response::Text(TextResponse {
@@ -657,7 +615,112 @@ impl RequestExecutor for FakeRequestExecutor {
             responses,
             ..RequestRecord::started(start_abs)
         };
+        DispatchResult {
+            outcome: TurnDispatchOutcome {
+                start_ns: start_abs,
+                end_ns: end_abs,
+                terminal: ReplayTerminalStatus::Completed,
+                response_text: response_text.clone(),
+                model_response: ModelResponseMetadata {
+                    content: Some(response_text),
+                    finish_reason: Some("stop".to_string()),
+                    ..ModelResponseMetadata::default()
+                },
+                prompt_tokens: Some(isl),
+                completion_tokens: Some(osl as u64),
+                http: RequestTrace::default(),
+            },
+            request_payload,
+            record,
+        }
+    }
+}
 
+/// Fake [`RequestExecutor`] (scheduled path): drives the shared
+/// [`NativeMetricsObserver`] with fabricated timing.
+struct FakeRequestExecutor {
+    core: FakeFabricator,
+    observer: RefCell<Option<Rc<NativeMetricsObserver>>>,
+}
+
+impl FakeRequestExecutor {
+    fn observer(&self) -> Result<Rc<NativeMetricsObserver>> {
+        self.observer.borrow().clone().ok_or_else(|| {
+            anyhow::anyhow!("dry_run measurement was not configured before dispatch")
+        })
+    }
+}
+
+#[async_trait(?Send)]
+impl RequestExecutor for FakeRequestExecutor {
+    fn set_run_origin(&self, start_ns: i64) -> Result<()> {
+        self.core.set_origin(start_ns);
+        Ok(())
+    }
+
+    fn supports_response_streaming(&self) -> bool {
+        false
+    }
+
+    fn inference_dimensions(&self, _turn: &TurnToSend) -> InferenceDimensions {
+        InferenceDimensions {
+            endpoint_url: None,
+            model: Some(self.core.model.clone()),
+        }
+    }
+
+    fn configure_measurement(&self, config: MetricsConfig, origin_ns: i64) -> Result<()> {
+        self.core.set_origin(origin_ns);
+        *self.observer.borrow_mut() = Some(Rc::new(NativeMetricsObserver::new(
+            self.core.clock.clone(),
+            origin_ns,
+            config,
+        )));
+        Ok(())
+    }
+
+    async fn execute_measured(
+        &self,
+        turn: PreparedTurn,
+        context: MeasuredContext,
+        on_first_token: &dyn Fn(i64),
+    ) -> Result<MeasuredOutcome> {
+        let observer = self.observer()?;
+        let uuid = turn.request.uuid;
+        let isl = context.input_length as u64;
+        let osl = context.requested_output_length;
+        // Dispatch begins at the scheduled arrival: a dry run adds no queueing
+        // delay, so start == arrival and request_latency == ttft + (osl-1)*itl.
+        let start_abs =
+            self.core.origin_ns.get() + (context.arrival_ms * 1_000_000.0).round() as i64;
+        let request_payload = turn
+            .request
+            .request_body_bytes
+            .clone()
+            .unwrap_or_else(Bytes::new);
+        // The scheduled seam owns arrival/metadata/record_response around the
+        // shared fabrication.
+        observer.register_metadata(uuid, context.metadata.clone());
+        observer.on_arrival(uuid, context.arrival_ms, isl as usize, osl);
+        let result = self.core.fabricate(
+            &*observer,
+            uuid,
+            isl,
+            osl,
+            start_abs,
+            request_payload,
+            on_first_token,
+        );
+        observer.record_response(
+            uuid,
+            NativeResponseMetadata {
+                start_ns: Some(result.outcome.start_ns),
+                end_ns: Some(result.outcome.end_ns),
+                prompt_tokens: Some(isl),
+                completion_tokens: Some(osl as u64),
+                http: RequestTrace::default(),
+            },
+        );
         let live_record = context
             .wants_live_record
             .then(|| {
@@ -668,26 +731,8 @@ impl RequestExecutor for FakeRequestExecutor {
                 }
             })
             .flatten();
-
         Ok(MeasuredOutcome {
-            result: DispatchResult {
-                outcome: TurnDispatchOutcome {
-                    start_ns: start_abs,
-                    end_ns: end_abs,
-                    terminal: ReplayTerminalStatus::Completed,
-                    response_text: response_text.clone(),
-                    model_response: ModelResponseMetadata {
-                        content: Some(response_text),
-                        finish_reason: Some("stop".to_string()),
-                        ..ModelResponseMetadata::default()
-                    },
-                    prompt_tokens: Some(isl),
-                    completion_tokens: Some(osl as u64),
-                    http: RequestTrace::default(),
-                },
-                request_payload,
-                record,
-            },
+            result,
             live_record,
         })
     }
@@ -700,6 +745,63 @@ impl RequestExecutor for FakeRequestExecutor {
                 .records),
             None => Ok(Vec::new()),
         }
+    }
+}
+
+/// Fake [`Dispatcher`] (graph path): the same analytic fabrication behind the
+/// object-safe `Dispatcher` seam the graph runtime dispatches over. The graph
+/// runtime owns `on_arrival`; this emits the token/usage/terminal stream and
+/// returns the record, exactly as `TransportSink::dispatch_collect` does.
+struct FakeDispatcher {
+    core: FakeFabricator,
+}
+
+impl FakeDispatcher {
+    fn new(core: FakeFabricator) -> Self {
+        Self { core }
+    }
+}
+
+#[async_trait(?Send)]
+impl crate::transport::http::Dispatcher for FakeDispatcher {
+    async fn dispatch_collect(
+        &self,
+        turn: PreparedTurn,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+    ) -> Result<DispatchResult> {
+        let uuid = turn.request.uuid;
+        let isl = turn.request.input_length as u64;
+        let osl = turn.request.max_output_tokens;
+        let start_abs = self.core.clock.now_ns();
+        let request_payload = turn
+            .request
+            .request_body_bytes
+            .clone()
+            .unwrap_or_else(Bytes::new);
+        Ok(self.core.fabricate(
+            observer,
+            uuid,
+            isl,
+            osl,
+            start_abs,
+            request_payload,
+            on_first_token,
+        ))
+    }
+
+    fn inference_dimensions(
+        &self,
+        _request: &crate::transport::core::Request,
+    ) -> InferenceDimensions {
+        InferenceDimensions {
+            endpoint_url: Some("dry_run://sim".to_string()),
+            model: Some(self.core.model.clone()),
+        }
+    }
+
+    fn supports_response_streaming(&self) -> bool {
+        false
     }
 }
 
@@ -719,8 +821,9 @@ mod tests {
     use super::*;
     use crate::clock::{RealClock, RealClockAnchor};
     use crate::endpoints::{EndpointId, EndpointKey};
-    use crate::transport::http::{PreparedHttpEndpoint, Request, TransportSinkConfig};
     use crate::multiturn::{PreparedEndpointReference, TurnDataPolicy};
+    use crate::transport::core::Request;
+    use crate::transport::http::{PreparedHttpEndpoint, TransportSinkConfig};
 
     /// All-zero analytic params (no base latency, no scaling, no jitter) to build
     /// on with struct-update syntax.

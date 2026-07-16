@@ -28,11 +28,12 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 
+use aiperf_runtime::transport::core::{RequestRecord, TraceData};
 use aiperf_runtime::transport::http::RealClock;
 use aiperf_runtime::transport::http::client::connection::{Sender, establish};
 use aiperf_runtime::transport::http::client::http_client::HttpClient;
 use aiperf_runtime::transport::http::config::ClientConfig;
-use aiperf_runtime::transport::http::models::{HttpVersion, RequestRecord, TraceData};
+use aiperf_runtime::transport::http::models::HttpVersion;
 
 fn env_usize(key: &str, default: usize) -> usize {
     std::env::var(key)

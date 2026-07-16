@@ -5,9 +5,10 @@ mod common;
 
 use std::rc::Rc;
 
+use aiperf_runtime::transport::core::{ErrorKind, RequestRecord};
 use aiperf_runtime::transport::http::RealClock;
 use aiperf_runtime::transport::http::config::ClientConfig;
-use aiperf_runtime::transport::http::models::{ErrorKind, RequestConfig, RequestRecord};
+use aiperf_runtime::transport::http::models::RequestConfig;
 use aiperf_runtime::transport::http::transport::http_transport::HttpTransport;
 use common::{MockServer, run_local};
 

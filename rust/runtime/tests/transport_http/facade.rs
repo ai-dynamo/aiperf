@@ -3,9 +3,10 @@ mod common;
 use common::{MockServer, run_local};
 use std::rc::Rc;
 
+use aiperf_runtime::transport::core::{ConnectionReuseStrategy, ErrorKind};
 use aiperf_runtime::transport::http::RealClock;
 use aiperf_runtime::transport::http::config::ClientConfig;
-use aiperf_runtime::transport::http::models::{ConnectionReuseStrategy, ErrorKind, RequestConfig};
+use aiperf_runtime::transport::http::models::RequestConfig;
 use aiperf_runtime::transport::http::transport::http_transport::HttpTransport;
 
 fn payload() -> serde_json::Value {

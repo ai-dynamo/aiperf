@@ -10,9 +10,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use aiperf_runtime::ancillary::AncillaryTimingConfig;
 use aiperf_runtime::clock::{Clock, RealClock};
 use aiperf_runtime::fixed_schedule::FixedScheduleConfig;
-use aiperf_runtime::transport::http::{Request, TransportSink};
+use aiperf_runtime::transport::core::ErrorKind;
+use aiperf_runtime::transport::core::Request;
+use aiperf_runtime::transport::http::TransportSink;
 use aiperf_runtime::transport::http::config::ClientConfig;
-use aiperf_runtime::transport::http::models::{ErrorKind, RequestConfig};
+use aiperf_runtime::transport::http::models::RequestConfig;
 use aiperf_runtime::transport::http::transport::http_transport::HttpTransport;
 use axum::{
     Router, body::Bytes, extract::State, http::header, response::IntoResponse, routing::post,

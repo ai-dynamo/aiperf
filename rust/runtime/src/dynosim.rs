@@ -77,7 +77,6 @@ use crate::ancillary::AncillaryTimingConfig;
 use crate::fixed_schedule::{
     DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload,
 };
-use crate::transport::http::{HttpDispatchResult, HttpRequestDispatcher, Request};
 use crate::metrics::{
     NativeMetricsObserver, NativeResponseMetadata, ObserverTee, RequestMetricMetadata,
 };
@@ -93,6 +92,8 @@ use crate::scheduled::{
     SingleTurnDatasetWorkload, TurnDispatchOutcome, TurnDispatcher, TurnRecordProcessor, Workload,
     run_scheduled_workload_with_processors,
 };
+use crate::transport::core::Request;
+use crate::transport::http::{HttpDispatchResult, HttpRequestDispatcher};
 use crate::user_centric::UserCentricConfig;
 use crate::workload::SkeletonWorkload;
 

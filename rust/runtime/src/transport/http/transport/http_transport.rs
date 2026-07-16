@@ -11,6 +11,7 @@ use http::Method;
 
 use crate::clock::Clock;
 
+use crate::transport::core::{ConnectionReuseStrategy, ErrorDetails, RequestRecord, TraceData};
 use crate::transport::http::client::cancellation::{CancelOutcome, race_cancel_after_send};
 use crate::transport::http::client::connection::{SendCompletion, with_timeout};
 use crate::transport::http::client::http_client::{
@@ -18,9 +19,7 @@ use crate::transport::http::client::http_client::{
 };
 use crate::transport::http::client::pool::{ConnectionManager, ConnectionPool};
 use crate::transport::http::config::ClientConfig;
-use crate::transport::http::models::{
-    ConnectionReuseStrategy, ErrorDetails, RequestConfig, RequestRecord, SseMessage, TraceData,
-};
+use crate::transport::http::models::{RequestConfig, SseMessage};
 use crate::transport::http::transport::headers::build_headers;
 use crate::transport::http::transport::url::build_url;
 
@@ -260,7 +259,7 @@ impl HttpTransport {
                     &mut trace,
                 ),
                 || ErrorDetails {
-                    kind: crate::transport::http::models::ErrorKind::Timeout,
+                    kind: crate::transport::core::ErrorKind::Timeout,
                     code: None,
                     message: format!(
                         "connection acquisition timeout after {}ns",
@@ -352,12 +351,12 @@ impl HttpTransport {
         };
 
         if let Err(mut e) = result {
-            if e.kind == crate::transport::http::models::ErrorKind::Timeout
+            if e.kind == crate::transport::core::ErrorKind::Timeout
                 && let Some(total) = total_timeout_ns
             {
                 e.message = format!("request timeout after {total}ns");
             }
-            if e.kind == crate::transport::http::models::ErrorKind::Timeout
+            if e.kind == crate::transport::core::ErrorKind::Timeout
                 && let (ConnectionReuseStrategy::StickyUserSessions, Some(c)) = (reuse, corr)
             {
                 self.connections.release_session(c);
@@ -390,7 +389,7 @@ fn remaining_timeout(deadline_ns: Option<i64>, now_ns: i64) -> Result<Option<i64
     let remaining = deadline_ns.saturating_sub(now_ns);
     if remaining <= 0 {
         return Err(ErrorDetails {
-            kind: crate::transport::http::models::ErrorKind::Timeout,
+            kind: crate::transport::core::ErrorKind::Timeout,
             code: None,
             message: "request deadline elapsed before HTTP dispatch".to_string(),
         });

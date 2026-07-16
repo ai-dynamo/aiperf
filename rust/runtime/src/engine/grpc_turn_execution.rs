@@ -16,18 +16,17 @@ use std::sync::Arc;
 
 use crate::clock::Clock;
 use crate::endpoints::PreparedEndpointTable;
-use crate::transport::grpc::{GrpcTransportSink, GrpcTransportSinkConfig};
-use crate::transport::http::{
-    DispatchResult, MeasuredContext, PreparedTurn, RequestExecutor, TransportSinkConfig,
-};
 use crate::metrics::NativeMetricsObserver;
 use crate::metrics_core::InferenceDimensions;
 use crate::multiturn::TurnToSend;
 use crate::scheduled::TurnResponseObserver;
+use crate::transport::core::ConnectionReuseStrategy;
+use crate::transport::core::{DispatchResult, MeasuredContext};
 use crate::transport::grpc::{
     ConnectionReuseStrategy as GrpcConnectionReuseStrategy, GrpcBindingRegistry, GrpcClientConfig,
 };
-use crate::transport::http::models::ConnectionReuseStrategy;
+use crate::transport::grpc::{GrpcTransportSink, GrpcTransportSinkConfig};
+use crate::transport::http::{PreparedTurn, RequestExecutor, TransportSinkConfig};
 use anyhow::{Result, anyhow, ensure};
 use async_trait::async_trait;
 

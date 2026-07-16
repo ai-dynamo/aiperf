@@ -8,12 +8,11 @@ use std::convert::Infallible;
 use std::rc::Rc;
 use std::time::Duration;
 
+use aiperf_runtime::transport::core::ConnectionReuseStrategy;
 use aiperf_runtime::transport::http::client::connection::LocalExec;
 use aiperf_runtime::transport::http::client::pool::{ConnectionManager, ConnectionPool};
 use aiperf_runtime::transport::http::config::ClientConfig;
-use aiperf_runtime::transport::http::models::{
-    ConnectionReuseStrategy, HttpVersion, RequestConfig,
-};
+use aiperf_runtime::transport::http::models::{HttpVersion, RequestConfig};
 use aiperf_runtime::transport::http::transport::http_transport::HttpTransport;
 use aiperf_runtime::transport::http::{Clock, RealClock, SimClock};
 use bytes::Bytes;
@@ -405,7 +404,7 @@ fn sim_clock_total_timeout_includes_h1_pool_wait() {
         let error = timed_out.error.expect("pool waiter must hit total timeout");
         assert_eq!(
             error.kind,
-            aiperf_runtime::transport::http::models::ErrorKind::Timeout
+            aiperf_runtime::transport::core::ErrorKind::Timeout
         );
         assert_eq!(error.message, "request timeout after 5ns");
         let trace = timed_out.trace.unwrap();

@@ -321,11 +321,9 @@ async fn stream_turn(
         .filter_map(|frame| async move {
             match frame {
                 Ok(f) => f.into_data().ok().map(Ok),
-                Err(e) => Some(Err(
-                    aiperf_runtime::transport::http::models::ErrorDetails::other(format!(
-                        "read body: {e}"
-                    )),
-                )),
+                Err(e) => Some(Err(aiperf_runtime::transport::core::ErrorDetails::other(
+                    format!("read body: {e}"),
+                ))),
             }
         })
         .boxed_local();

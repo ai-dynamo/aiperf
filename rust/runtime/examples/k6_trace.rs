@@ -9,15 +9,16 @@
 
 use std::rc::Rc;
 
+use aiperf_runtime::transport::core::{Response, TraceData};
 use aiperf_runtime::transport::http::RealClock;
 use aiperf_runtime::transport::http::config::ClientConfig;
-use aiperf_runtime::transport::http::models::{RequestConfig, Response, TraceData};
+use aiperf_runtime::transport::http::models::RequestConfig;
 use aiperf_runtime::transport::http::transport::http_transport::HttpTransport;
 
 /// First real-token time (ns from request start): the first SSE chunk carrying a
 /// non-empty content (or reasoning_content) delta — not the first SSE message,
 /// which may be a role-only chunk with no token payload.
-fn first_token_ns(rec: &aiperf_runtime::transport::http::models::RequestRecord) -> Option<i64> {
+fn first_token_ns(rec: &aiperf_runtime::transport::core::RequestRecord) -> Option<i64> {
     for r in &rec.responses {
         let Response::Sse(m) = r else { continue };
         let Some(d) = m.data() else { continue };

@@ -5,10 +5,10 @@ use common::{MockServer, chat_body, run_local};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
+use aiperf_runtime::transport::core::Response;
 use aiperf_runtime::transport::http::RealClock;
 use aiperf_runtime::transport::http::client::http_client::HttpClient;
 use aiperf_runtime::transport::http::config::ClientConfig;
-use aiperf_runtime::transport::http::models::Response;
 use bytes::Bytes;
 
 #[test]

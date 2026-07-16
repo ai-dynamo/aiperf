@@ -5,7 +5,7 @@
 
 use uuid::Uuid;
 
-use crate::transport::http::Request;
+use crate::transport::core::Request;
 
 /// A synthetic workload: `num_requests` chat requests of approximately
 /// `input_tokens` prompt length, each asking for `output_tokens` output.

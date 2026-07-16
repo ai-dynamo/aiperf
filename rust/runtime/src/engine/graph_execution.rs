@@ -34,17 +34,18 @@ use crate::graph::policy::{
 };
 use crate::graph::sink::{GraphDispatchOptions, GraphReply, GraphSink};
 use crate::graph::wire::OpenAiChatMessage;
-use crate::transport::http::{
-    Dispatcher, PreparedEndpointReference, PreparedHttpEndpoint, PreparedTurn, Request,
-    TransportSink, TransportSinkConfig,
-};
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
 use crate::metrics_core::{InferenceDimensions, MetricsConfig, Phase};
 use crate::multiturn::InputTokenCounter;
 use crate::rng::{RngRoot, namespace};
 use crate::timing::{BernoulliFixedDelay, SlotPool};
+use crate::transport::core::Request;
 #[cfg(feature = "grpc")]
 use crate::transport::grpc::GrpcBindingRegistry;
+use crate::transport::http::{
+    Dispatcher, PreparedEndpointReference, PreparedHttpEndpoint, PreparedTurn, TransportSink,
+    TransportSinkConfig,
+};
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -58,29 +59,7 @@ use crate::engine::execute::DEFAULT_ENDPOINT_PROFILE_ID;
 #[cfg(feature = "grpc")]
 use crate::engine::grpc_turn_execution::grpc_sink_with_endpoints;
 use crate::engine::records::{CapturedHttpExchange, CapturedModelOutput, CapturedRecord};
-use crate::engine::registry::ValidatedEndpointProfileV2;
-
-/// Transport that a graph endpoint runtime dispatches its prepared turns over.
-///
-/// Selected from the run's resolved transport (`cfg.transport.type`). Graph
-/// scheduling, body materialization, and metrics are transport-blind; only the
-/// worker-local dispatcher construction in
-/// [`PreparedRunnerGraphEndpointRuntimeFactory::prepare_worker`] branches on it.
-/// A future `PreparedTurn` transport (e.g. WebSocket) adds one variant plus one
-/// construction arm and nothing else in the graph runtime changes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GraphTransportKind {
-    /// Clock-injected hyper HTTP/SSE dispatch (`TransportSink`).
-    Http,
-    /// Clock-injected Tonic gRPC dispatch (`GrpcTransportSink`).
-    ///
-    /// Production routing selects this arm when the graph workload resolves a
-    /// gRPC transport by id/type (`online_execution::lower_graph`), so `grpc +
-    /// graph` dispatches graph nodes over Tonic. Gated behind the `grpc` Cargo
-    /// feature alongside the rest of the gRPC transport stack.
-    #[cfg(feature = "grpc")]
-    Grpc,
-}
+use crate::engine::registry::{NativeTransportExecution, ValidatedEndpointProfileV2};
 
 /// Composition seam for whole-trace graph execution placement.
 ///
@@ -262,9 +241,10 @@ pub(crate) trait RunnerGraphEndpointRuntimeFactory: Send + Sync {
 pub(crate) trait RunnerGraphEndpointRuntime {
     fn materialize(&self, input: GraphEndpointRequest) -> Result<GraphEndpointDispatch>;
 
-    /// Transport the worker-local dispatchers were built over. Used to prove the
-    /// gRPC arm was taken without downcasting the erased `Rc<dyn Dispatcher>`.
-    fn kind(&self) -> GraphTransportKind;
+    /// Human-readable transport label the worker-local dispatchers were built
+    /// over (for tracing/diagnostics), without downcasting the erased
+    /// `Rc<dyn Dispatcher>`.
+    fn transport_label(&self) -> &'static str;
 }
 
 pub(crate) struct GraphEndpointRequest {
@@ -296,17 +276,19 @@ pub(crate) struct PreparedRunnerGraphEndpointRuntimeFactory {
     registry: EndpointRegistry,
     profiles: Arc<Vec<ValidatedEndpointProfileV2>>,
     input_token_counter: Arc<dyn InputTokenCounter>,
-    transport_kind: GraphTransportKind,
+    /// The run's resolved transport binding; it owns the transport-specific
+    /// dispatcher construction (`build_graph_dispatcher`).
+    transport: Arc<dyn NativeTransportExecution>,
 }
 
 impl PreparedRunnerGraphEndpointRuntimeFactory {
     /// Bind one normalized profile plan to the process's frozen registry over
-    /// the run's resolved transport (`transport_kind`).
+    /// the run's resolved transport.
     pub(crate) fn new(
         registry: EndpointRegistry,
         profiles: Arc<Vec<ValidatedEndpointProfileV2>>,
         input_token_counter: Arc<dyn InputTokenCounter>,
-        transport_kind: GraphTransportKind,
+        transport: Arc<dyn NativeTransportExecution>,
     ) -> Result<Self> {
         for profile in profiles.iter() {
             let descriptor = registry.resolve_factory(&profile.endpoint_id)?.descriptor();
@@ -321,7 +303,7 @@ impl PreparedRunnerGraphEndpointRuntimeFactory {
             registry,
             profiles,
             input_token_counter,
-            transport_kind,
+            transport,
         })
     }
 }
@@ -362,42 +344,20 @@ impl RunnerGraphEndpointRuntimeFactory for PreparedRunnerGraphEndpointRuntimeFac
             });
         }
         let table = Rc::new(table);
-        // gRPC needs one dense binding table shared across every profile's sink;
-        // HTTP needs no bindings at all, so only build it on the gRPC arm. Gated
-        // with the gRPC stack: without it, HTTP is the only transport kind and no
-        // binding table is ever constructed.
-        #[cfg(feature = "grpc")]
-        let bindings = match self.transport_kind {
-            GraphTransportKind::Http => None,
-            GraphTransportKind::Grpc => Some(GrpcBindingRegistry::builtin()?),
-        };
+        // The injected dispatcher factory owns all transport-specific
+        // construction (including any gRPC binding table); the graph runtime
+        // stays transport-blind — no `match` on a transport kind here.
         let profiles = staged
             .into_iter()
             .map(|profile| {
-                let transport: Rc<dyn Dispatcher> = match self.transport_kind {
-                    GraphTransportKind::Http => Rc::new(
-                        TransportSink::new_multi_configured(
-                            clock.clone(),
-                            run_origin_ns,
-                            &profile.urls,
-                            model,
-                            profile.transport_config,
-                        )?
-                        .with_prepared_endpoints(table.clone()),
-                    ),
-                    #[cfg(feature = "grpc")]
-                    GraphTransportKind::Grpc => Rc::new(grpc_sink_with_endpoints(
-                        clock.clone(),
-                        run_origin_ns,
-                        &profile.urls,
-                        model.to_string(),
-                        profile.transport_config,
-                        bindings
-                            .clone()
-                            .expect("gRPC bindings prepared for the gRPC transport arm"),
-                        table.clone(),
-                    )?),
-                };
+                let transport = self.transport.build_graph_dispatcher(
+                    clock.clone(),
+                    run_origin_ns,
+                    &profile.urls,
+                    model,
+                    profile.transport_config,
+                    table.clone(),
+                )?;
                 Ok((
                     profile.profile_id,
                     PreparedGraphProfileRuntime {
@@ -418,7 +378,7 @@ impl RunnerGraphEndpointRuntimeFactory for PreparedRunnerGraphEndpointRuntimeFac
             profiles,
             default_profile_id: DEFAULT_ENDPOINT_PROFILE_ID.into(),
             input_token_counter: self.input_token_counter.clone(),
-            transport_kind: self.transport_kind,
+            transport_label: self.transport.graph_transport_label(),
         }))
     }
 }
@@ -447,12 +407,12 @@ struct PreparedRunnerGraphEndpointRuntime {
     profiles: BTreeMap<String, PreparedGraphProfileRuntime>,
     default_profile_id: String,
     input_token_counter: Arc<dyn InputTokenCounter>,
-    transport_kind: GraphTransportKind,
+    transport_label: &'static str,
 }
 
 impl RunnerGraphEndpointRuntime for PreparedRunnerGraphEndpointRuntime {
-    fn kind(&self) -> GraphTransportKind {
-        self.transport_kind
+    fn transport_label(&self) -> &'static str {
+        self.transport_label
     }
 
     fn materialize(&self, input: GraphEndpointRequest) -> Result<GraphEndpointDispatch> {
@@ -691,7 +651,7 @@ impl TracePlacementFactory for RunnerGraphBackendFactory {
             .map_err(|error| GraphPlacementError(error.to_string()))?;
         tracing::debug!(
             worker_id,
-            transport = ?endpoint_runtime.kind(),
+            transport = endpoint_runtime.transport_label(),
             "prepared graph worker endpoint runtime"
         );
 
@@ -1228,7 +1188,7 @@ mod tests {
         RawEndpointConfig, StatelessEndpointFactory,
     };
     use crate::multiturn::AuthoredInputTokenCounter;
-    use crate::transport::http::models::ConnectionReuseStrategy;
+    use crate::transport::core::ConnectionReuseStrategy;
 
     #[derive(Debug)]
     struct PreparedOnlyChatFactory;
@@ -1272,13 +1232,15 @@ mod tests {
                 session_header: None,
             }]),
             Arc::new(AuthoredInputTokenCounter),
-            GraphTransportKind::Http,
+            Arc::new(crate::engine::online_execution::HttpNativeExecution::new(
+                Arc::new(crate::engine::turn_execution::HttpExecutionFactory),
+            )),
         )
         .unwrap();
         let runtime = factory
             .prepare_worker(Rc::new(SimClock::new()), 0, "fixture-model")
             .unwrap();
-        assert_eq!(runtime.kind(), GraphTransportKind::Http);
+        assert_eq!(runtime.transport_label(), "http");
         let dispatch = runtime
             .materialize(GraphEndpointRequest {
                 selector: None,
@@ -1330,13 +1292,13 @@ mod tests {
                 session_header: None,
             }]),
             Arc::new(AuthoredInputTokenCounter),
-            GraphTransportKind::Grpc,
+            Arc::new(crate::engine::grpc_execution::GrpcNativeExecution::new()),
         )
         .unwrap();
         let runtime = factory
             .prepare_worker(Rc::new(SimClock::new()), 0, "fixture-model")
             .unwrap();
-        assert_eq!(runtime.kind(), GraphTransportKind::Grpc);
+        assert_eq!(runtime.transport_label(), "grpc");
     }
 
     #[cfg(feature = "grpc")]
@@ -1359,7 +1321,7 @@ mod tests {
                 session_header: None,
             }]),
             Arc::new(AuthoredInputTokenCounter),
-            GraphTransportKind::Grpc,
+            Arc::new(crate::engine::grpc_execution::GrpcNativeExecution::new()),
         )
         .unwrap();
         let Err(error) = factory.prepare_worker(Rc::new(SimClock::new()), 0, "fixture-model")
@@ -1389,7 +1351,9 @@ mod tests {
                 session_header: None,
             }]),
             Arc::new(AuthoredInputTokenCounter),
-            GraphTransportKind::Http,
+            Arc::new(crate::engine::online_execution::HttpNativeExecution::new(
+                Arc::new(crate::engine::turn_execution::HttpExecutionFactory),
+            )),
         );
 
         let Err(error) = result else {

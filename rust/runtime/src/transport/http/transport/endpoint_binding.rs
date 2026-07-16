@@ -22,10 +22,9 @@ use crate::endpoints::{
 use bytes::Bytes;
 use serde_json::Value;
 
+use crate::transport::core::{ConnectionReuseStrategy, ErrorDetails, RequestRecord, Response};
 use crate::transport::http::client::http_client::SseMessageFilter;
-use crate::transport::http::models::{
-    ConnectionReuseStrategy, ErrorDetails, RequestConfig, RequestRecord, Response, SseMessage,
-};
+use crate::transport::http::models::{RequestConfig, SseMessage};
 use crate::transport::http::transport::body::{
     JsonBodyEncoder, MultipartBodyEncoder, RequestBodyEncoder,
 };
@@ -606,7 +605,7 @@ mod tests {
 
     #[test]
     fn response_decoder_normalizes_text_and_sse() {
-        let text = Response::Text(crate::transport::http::models::TextResponse {
+        let text = Response::Text(crate::transport::core::TextResponse {
             perf_ns: 11,
             content_type: Some("application/json".into()),
             text: "{\"ok\":true}".into(),

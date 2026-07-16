@@ -5,21 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
-
-/// How connections are reused across requests. Port of Python
-/// `ConnectionReuseStrategy`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ConnectionReuseStrategy {
-    /// Shared connection pool (default aiohttp behavior).
-    #[default]
-    Pooled,
-    /// A fresh connection per request, closed after.
-    Never,
-    /// One connection per user session (correlation id), released on final turn.
-    StickyUserSessions,
-}
+use crate::transport::core::ConnectionReuseStrategy;
 
 /// Which HTTP protocol / handshake to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -116,17 +102,5 @@ mod tests {
             ConnectionReuseStrategy::Pooled
         );
         assert_eq!(HttpVersion::default(), HttpVersion::Auto);
-    }
-
-    #[test]
-    fn connection_reuse_strategy_uses_config_v2_wire_values() {
-        assert_eq!(
-            serde_json::from_str::<ConnectionReuseStrategy>("\"sticky-user-sessions\"").unwrap(),
-            ConnectionReuseStrategy::StickyUserSessions
-        );
-        assert_eq!(
-            serde_json::to_string(&ConnectionReuseStrategy::Never).unwrap(),
-            "\"never\""
-        );
     }
 }

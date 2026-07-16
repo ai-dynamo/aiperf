@@ -331,7 +331,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::metrics_core::{Phase, RecordIngest, TokenCounts};
-    use crate::transport::http::models::{RequestRecord, Response, SseMessage};
+    use crate::transport::core::{RequestRecord, Response};
+    use crate::transport::http::models::SseMessage;
     use uuid::Uuid;
 
     use super::*;
