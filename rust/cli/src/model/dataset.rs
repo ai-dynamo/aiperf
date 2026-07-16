@@ -234,6 +234,11 @@ pub struct FileDataset {
     /// Output sequence length distribution (present when authored).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub osl: Option<Distribution>,
+    /// Inline dataset records (present instead of `path` for an in-YAML dataset;
+    /// passed through verbatim, matching Python's `_authored_dataset_v2` which
+    /// emits `records` when `path` is absent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub records: Option<serde_json::Value>,
 }
 
 /// A named public dataset expanded to explicit source coordinates. Ported from

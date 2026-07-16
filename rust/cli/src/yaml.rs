@@ -321,6 +321,8 @@ struct DatasetSection {
     hf_subset: Option<String>,
     /// File-dataset path (trace/replay).
     path: Option<String>,
+    /// Inline file-dataset records authored in the config (instead of `path:`).
+    records: Option<serde_json::Value>,
     /// Native file format id (e.g. `mooncake_trace`, `single_turn`).
     format: Option<String>,
     /// Sampling order (`sequential` default).
@@ -681,12 +683,25 @@ impl Benchmark {
         );
         let hf_subset = dataset.as_ref().and_then(|d| d.hf_subset.clone());
         let is_file = dataset_type == Some("file");
-        let (input_file, custom_dataset_type) = if is_file {
+        let (input_file, inline_records, custom_dataset_type) = if is_file {
             let d = dataset.as_ref().expect("file dataset present");
-            anyhow::ensure!(d.path.is_some(), "dataset.type=file requires a `path:`");
-            (d.path.clone().map(PathBuf::from), d.format.clone())
+            // A file dataset is either path-backed or carries inline `records:`
+            // authored directly in the config (mutually exclusive).
+            anyhow::ensure!(
+                d.path.is_some() || d.records.is_some(),
+                "dataset.type=file requires a `path:` or inline `records:`"
+            );
+            anyhow::ensure!(
+                !(d.path.is_some() && d.records.is_some()),
+                "dataset.type=file cannot set both `path:` and inline `records:`"
+            );
+            (
+                d.path.clone().map(PathBuf::from),
+                d.records.clone(),
+                d.format.clone(),
+            )
         } else {
-            (None, None)
+            (None, None, None)
         };
 
         // The profiling phase comes from `phases:` (flat or list) or the simple
@@ -989,6 +1004,7 @@ impl Benchmark {
             random_seed,
             dataset_random_seed,
             input_file,
+            inline_records,
             custom_dataset_type,
             public_dataset,
             hf_subset,

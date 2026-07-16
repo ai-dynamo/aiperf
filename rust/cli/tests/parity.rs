@@ -305,6 +305,8 @@ const YAML_FIXTURES: &[(&str, &str, &str)] = &[
     // `${ENV:default}` substitution + Jinja2 `variables:` expansion parity.
     ("jinja_vars", "yaml_jinja", "/tmp/aiperf-parity/jinja_vars"),
     ("env_prod", "yaml_envprod", "/tmp/aiperf-parity/env_prod"),
+    // Inline `records:` file dataset (materialized on the wire, not a path).
+    ("inline_ds", "yaml_inline", "/tmp/aiperf-parity/inline_ds"),
 ];
 
 #[test]

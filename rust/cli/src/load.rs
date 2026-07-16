@@ -180,6 +180,9 @@ pub(crate) struct Inputs {
     pub dataset_random_seed: Option<u64>,
     /// File-backed dataset path (mutually exclusive with the synthetic path).
     pub input_file: Option<PathBuf>,
+    /// Inline file-dataset records authored directly in the config (mutually
+    /// exclusive with `input_file`; emitted verbatim as `records` on the wire).
+    pub inline_records: Option<serde_json::Value>,
     /// File dataset format id (`--custom-dataset-type`).
     pub custom_dataset_type: Option<String>,
     /// Named public dataset (mutually exclusive with synthetic/file).
@@ -477,6 +480,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         runtime_workers_min: None,
         runtime_cells: flags.cells.unwrap_or(1),
         input_file: flags.input_file.clone(),
+        inline_records: None,
         custom_dataset_type: flags.custom_dataset_type.clone(),
         public_dataset: flags.public_dataset.clone(),
         hf_subset: flags.hf_subset.clone(),
@@ -587,7 +591,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             entries: inputs.dataset_entries,
             random_seed: inputs.dataset_random_seed,
         })
-    } else if let Some(path) = &inputs.input_file {
+    } else if inputs.input_file.is_some() || inputs.inline_records.is_some() {
         Dataset::File(crate::model::dataset::FileDataset {
             format: inputs
                 .custom_dataset_type
@@ -619,7 +623,10 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 }
                 o
             },
-            path: Some(absolute_path(path)),
+            // Path-backed and inline-records datasets are mutually exclusive
+            // (matching Python's `_authored_dataset_v2`: `records` only when
+            // `path` is absent).
+            path: inputs.input_file.as_ref().map(|p| absolute_path(p)),
             // Fixed-schedule derives the count into the phase's `requests`, not
             // the dataset's `entries`; otherwise the explicit count (if any).
             entries: if inputs.fixed_schedule.is_some() {
@@ -629,6 +636,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             },
             random_seed: inputs.dataset_random_seed,
             osl: inputs.osl.clone(),
+            records: inputs.inline_records.clone(),
         })
     } else {
         Dataset::Synthetic(Synthetic {
