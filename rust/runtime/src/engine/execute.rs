@@ -1407,6 +1407,10 @@ fn validate_graph_request(request: &NativeRunSpec) -> Result<()> {
 struct OnlineGraphPhaseBackendFactory<'a> {
     placement: &'a dyn GraphPlacementFactory,
     worker_count: usize,
+    /// The run's injected clock, handed to the placement so a single-reactor
+    /// (virtual) run drives its backend on the `SimClock` rather than a
+    /// reconstructed `RealClock`.
+    clock: Rc<dyn Clock>,
     real_clock_anchor: RealClockAnchor,
     run_origin_ns: i64,
     model: String,
@@ -1441,7 +1445,9 @@ impl GraphPhaseBackendFactory for OnlineGraphPhaseBackendFactory<'_> {
             cache_bust: self.cache_bust.clone(),
         }));
         let requires_node_records = self.placement.requires_node_records();
-        let placement = self.placement.build(self.worker_count, worker_factory)?;
+        let placement =
+            self.placement
+                .build(self.worker_count, worker_factory, self.clock.clone())?;
         Ok(PreparedGraphPhaseBackend {
             placement,
             requires_node_records,
@@ -1513,6 +1519,7 @@ async fn execute_graph_native(
     let backends = OnlineGraphPhaseBackendFactory {
         placement: graph_placement,
         worker_count: request.workers,
+        clock: clock.clone(),
         real_clock_anchor,
         run_origin_ns: start_ns,
         model: primary_model.clone(),
@@ -2673,14 +2680,14 @@ async fn execute_native_inner(
 
     // `workers == 1` keeps the byte-unchanged single coordinator-reactor path;
     // `runtime.workers` defaults to a CPU-based count (> 1), so the sharded path is
-    // the common case, not an opt-in. A thread-per-core sub-cell can partition only
-    // request-bounded phases (concurrency/poisson/gamma/constant) and cannot host a
-    // single main-thread static-accuracy evaluator; every other shape — trace-driven
-    // `user_centric`/`fixed_schedule` phases, static-accuracy scoring, and always
-    // `workers <= 1` — keeps the established path unchanged (which still fans the
-    // transport across `workers` threads via `ThreadPerCoreRequestExecutor` for
-    // `workers > 1`). So route by shardability rather than fail closed: an
-    // unshardable default-workers run must not regress to an error.
+    // the common case, not an opt-in. A thread-per-core sub-cell now partitions
+    // EVERY scheduled phase shape — request-bounded phases by budget, trace-driven
+    // `user_centric`/`fixed_schedule` phases per conversation — so the only
+    // remaining non-sharded shape is static-accuracy (its `!Send` main-thread
+    // scoring seam), plus always `workers <= 1`. There is no longer a cross-thread
+    // transport hop: the co-located transport factory refuses `workers > 1`, and an
+    // accuracy run is clamped to a single co-located transport worker below. So
+    // route by shardability rather than fail closed.
     // Sketch storage mode streams each record into a bounded accumulator and drops
     // it. The thread-per-core sharded path folds per shard — each sub-cell owns its
     // own sketch accumulator, merged accumulator-to-accumulator at the join — so a
@@ -2691,17 +2698,16 @@ async fn execute_native_inner(
         metrics_config.storage_mode,
         crate::metrics_core::MetricsStorageMode::Sketch { .. }
     );
-    let shardable = request.workers > 1
-        && accuracy.is_none()
-        && request.phases.iter().all(|phase| {
-            matches!(
-                phase,
-                PhaseSpec::Concurrency { .. }
-                    | PhaseSpec::Poisson { .. }
-                    | PhaseSpec::Gamma { .. }
-                    | PhaseSpec::Constant { .. }
-            )
-        });
+    // Every scheduled phase shape is now shardable: rate-based phases partition the
+    // request budget (`slice_phase_for_thread`), and the trace-driven
+    // `user_centric`/`fixed_schedule` phases partition per conversation (each sub-cell
+    // owns a disjoint conversation subset via the injected two-level partition — the
+    // enumeration filter in `NativeDatasetConversationSource` plus the partitioned
+    // sampler). Static-accuracy is the one remaining exclusion: its scoring seam is a
+    // single main-thread `!Send` `AccuracyRecordProcessor` + pinned-Python evaluator
+    // that cannot cross the `Send + Sync` `ShardedShared` spawn boundary, so an
+    // accuracy run keeps the co-located single-worker path.
+    let shardable = request.workers > 1 && accuracy.is_none();
     // Both arms converge on the same `captured` records + phase facts the
     // once-per-cell report tail below folds, so that tail stays written exactly once.
     // The accumulator that tail exports is created once here and populated inside the
@@ -2757,8 +2763,24 @@ async fn execute_native_inner(
     // retain/sharded arms leave this `None` and fold their retained records post-run.
     let mut folded_otel: Option<OtelRecordAccumulator> = None;
     let (captured, input_sessions, was_cancelled, has_warmup, start_ns) = if !shardable {
+        // The `!shardable` branch is reached only for `workers == 1`
+        // (`accuracy.is_none()`) or a static-accuracy run (any `workers`). All
+        // `workers > 1` non-accuracy runs shard above the transport, so this branch's
+        // transport is always co-located on the coordinator reactor — there is no
+        // per-request cross-thread transport hop. A static-accuracy run with
+        // `workers > 1` therefore runs its dispatch single-worker (its `!Send`
+        // scoring seam pins it to the main thread); the grading output is identical
+        // (data-deterministic, post-capture), only parallel transport throughput is
+        // dropped.
+        if accuracy.is_some() && request.workers > 1 {
+            tracing::warn!(
+                workers = request.workers,
+                "static-accuracy runs dispatch on a single co-located transport worker; \
+                 the requested worker count is used only for admission concurrency"
+            );
+        }
         let execution_backend = transport_factory.build(ExecutionBackendConfig {
-            workers: request.workers,
+            workers: 1,
             coordinator_clock: clock.clone(),
             real_clock_anchor,
             base_urls: endpoint_urls.clone(),

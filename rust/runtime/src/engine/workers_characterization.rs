@@ -4,24 +4,25 @@
 //! Phase-1 characterization tests for the `workers > 1` execution paths
 //! (Graham-King verified-port standard).
 //!
-//! [`execute_native_inner`](crate::engine::execute) selects one of two
-//! thread-per-core execution models for a scheduled run:
+//! [`execute_native_inner`](crate::engine::execute) now runs ONE thread-per-core
+//! execution model for a scheduled run:
 //!
-//! - **sharded** ([`crate::engine::sharded_scheduled`]) — chosen when
-//!   `workers > 1 && accuracy.is_none() && every phase is rate-based`
-//!   (Concurrency/Poisson/Gamma/Constant). Each OS thread is a self-contained
-//!   sub-cell over a `1/W` partition; there is no per-request cross-thread hop.
-//! - **single-thread coordinator + [`ThreadPerCoreExecutor`](crate::engine::turn_execution)**
-//!   — chosen for every other shape (`workers <= 1`, trace-driven
-//!   `user_centric`/`fixed_schedule` phases, static-accuracy scoring). For
-//!   `workers > 1` this still fans the transport across `W` worker threads via a
-//!   per-request `mpsc`/`oneshot` hop, but the scheduler/workload/capture stay on
-//!   the coordinator thread.
+//! - **sharded** ([`crate::engine::sharded_scheduled`]) — chosen for every
+//!   `workers > 1 && accuracy.is_none()` run, whatever the phase shape. Each OS
+//!   thread is a self-contained sub-cell with a co-located transport; there is no
+//!   per-request cross-thread hop. Rate-based phases (Concurrency/Poisson/Gamma/
+//!   Constant) partition the request budget; the trace-driven
+//!   `user_centric`/`fixed_schedule` phases partition per conversation (each
+//!   sub-cell owns a disjoint conversation subset via its two-level partition).
+//! - **co-located single worker** — `workers <= 1`, and static-accuracy runs
+//!   (whose `!Send` scoring seam pins dispatch to the main thread, clamped to a
+//!   single co-located transport worker in `execute_native_inner`).
 //!
-//! Phase 2 will make the sharded model cover ALL `workers > 1` cases and delete
-//! `ThreadPerCoreExecutor`. These tests pin the CURRENT captured per-record output
-//! and record counts so that unification can be proven byte-for-byte
-//! data-equivalent.
+//! Phase 2 unified these: the sharded model covers ALL `workers > 1` non-accuracy
+//! shapes and the old cross-thread `ThreadPerCoreExecutor` hop is deleted. These
+//! tests pin the captured per-record output and record counts so that unification
+//! stays data-equivalent (exact multiset parity for rate-based and fixed_schedule,
+//! aggregate parity for open-loop user_centric).
 //!
 //! # Why the assertions are DATA-level, not ns-level
 //!
@@ -613,11 +614,11 @@ mod tests {
 
     // ============================ user_centric ============================
 
-    /// `workers > 1` + user_centric is trace-driven, so it is NOT sharded today: it
-    /// runs the single-thread coordinator + `ThreadPerCoreExecutor` (per-request
-    /// cross-thread hop). Pin the CURRENT captured output and prove `workers == 4`
-    /// is DATA-identical to `workers == 1`. Phase 2 must preserve this when it
-    /// routes user_centric onto the sharded model.
+    /// `workers > 1` + user_centric now shards per conversation (each sub-cell owns
+    /// a disjoint conversation subset and runs `1/W` of the users/rate/budget). Pin
+    /// the captured output and prove `workers == 4` draws from the same turn-shape
+    /// universe and dispatches the same total count as `workers == 1` — the
+    /// aggregate invariants an open-loop workload preserves under sharding.
     #[test]
     fn user_centric_workers_gt_1_thread_per_core_data_matches_single_thread() {
         let registry = AIPerfRegistry::builtin().unwrap();
@@ -661,11 +662,11 @@ mod tests {
 
     // ============================ fixed_schedule ============================
 
-    /// `workers > 1` + fixed_schedule is trace-driven, so it is NOT sharded today:
-    /// single-thread coordinator + `ThreadPerCoreExecutor`. The synthetic dataset
-    /// carries no per-turn timestamps, so every first turn dispatches immediately
-    /// (the schedule's documented fallback). Pin the CURRENT captured output and
-    /// prove `workers == 4` is DATA-identical to `workers == 1`.
+    /// `workers > 1` + fixed_schedule now shards per conversation: each sub-cell
+    /// owns a disjoint conversation subset (its two-level partition) and replays
+    /// that subset's full authored schedule, so the W threads tile the trace
+    /// exactly. Pin the captured output and prove `workers == 4` is DATA-identical
+    /// (exact multiset parity) to `workers == 1`.
     #[test]
     fn fixed_schedule_workers_gt_1_thread_per_core_data_matches_single_thread() {
         let registry = AIPerfRegistry::builtin().unwrap();
@@ -722,7 +723,10 @@ mod tests {
     // `Rc<AccuracyRecordProcessor>` (both `!Send`), and grading runs post-capture at
     // finalize via `grade_accuracy_responses`. Neither the `Rc` processor nor the
     // single Python evaluator can cross the `Send + Sync` `ShardedShared` spawn
-    // boundary into the worker threads. Driving it deterministically would require
+    // boundary into the worker threads, so an accuracy run keeps the co-located
+    // single-worker dispatch path (its transport is clamped to `workers == 1` in
+    // `execute_native_inner`; grading output is identical, only parallel transport
+    // throughput is dropped). Driving it deterministically would require
     // the pinned Python evaluator (lighteval/harness) and its datasets, which a
     // pure-Rust `--lib` test cannot spawn. The dispatch/capture half is already
     // exercised by the concurrency test above (static-accuracy uses the same

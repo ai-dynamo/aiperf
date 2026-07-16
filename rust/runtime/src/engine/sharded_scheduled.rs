@@ -131,10 +131,12 @@ pub(crate) fn two_level_partition(
 /// down: round-robin `owned_positions` for the request budget and the admission
 /// caps (floored to 1 so every thread makes progress when a cap `< W`), and an
 /// even `rate / W` split of the arrival rate (the accepted aggregate-offered-rate
-/// approximation, now at thread granularity). `user_centric`/`fixed_schedule`
-/// phases are returned unchanged: they are trace-driven and rejected upstream for
-/// `workers > 1` (see [`crate::engine::execute`]'s sharded branch), so they never reach a
-/// worker.
+/// approximation, now at thread granularity). `user_centric` slices its request
+/// budget, `users`, `rate`, and `concurrency` the same way (open-loop, aggregate-
+/// equivalent). `fixed_schedule` has no budget/rate to slice — it is partitioned
+/// per conversation instead (the enumeration partition in
+/// [`NativeDatasetConversationSource`](crate::multiturn)), so it is returned
+/// unchanged here.
 pub(crate) fn slice_phase_for_thread(
     phase: &PhaseSpec,
     thread_id: usize,
@@ -185,9 +187,32 @@ pub(crate) fn slice_phase_for_thread(
                 *cap = owned_cap(*cap);
             }
         }
-        // Trace-driven phases are rejected upstream for workers > 1; leave them
-        // untouched rather than mis-slice a schedule the thread will never run.
-        PhaseSpec::UserCentric { .. } | PhaseSpec::FixedSchedule { .. } => {}
+        // user_centric is open-loop: each sub-cell runs `1/W` of the users at
+        // `1/W` of the aggregate rate over its `1/W` slice of the request budget,
+        // drawing from its partition-owned conversation subset (the sampler applies
+        // the same partition on `.next()`). Slicing the budget by `owned_positions`
+        // tiles the total record count exactly; the churn split per turn-shape is
+        // aggregate-equivalent, not per-record identical (the characterization
+        // oracle asserts user_centric at the aggregate level).
+        PhaseSpec::UserCentric {
+            common,
+            rate,
+            users,
+            concurrency,
+        } => {
+            slice_common(common, &owned_budget, &owned_cap);
+            *rate = scaled_rate(*rate);
+            *users = owned_cap(*users);
+            if let Some(cap) = concurrency {
+                *cap = owned_cap(*cap);
+            }
+        }
+        // fixed_schedule has no request budget or rate to slice: it replays one
+        // authored schedule per conversation, and each sub-cell already owns a
+        // disjoint conversation subset (the enumeration partition in
+        // `NativeDatasetConversationSource`), so the W threads' schedules tile the
+        // full trace exactly. Leave the phase untouched.
+        PhaseSpec::FixedSchedule { .. } => {}
     }
     sliced
 }

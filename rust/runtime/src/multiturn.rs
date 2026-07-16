@@ -17,7 +17,7 @@ use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::cellular::partition::ModuloCellPartition;
+use crate::cellular::partition::{CellPartition, ModuloCellPartition};
 use crate::dataset::{
     ConversationSession as NativeConversationSession, Dataset as NativeDataset,
     EndpointRequestMaterializer, Handle, Overrides, Payload, RequestMaterializer, Sampler,
@@ -1246,9 +1246,29 @@ impl NativeDatasetConversationSource {
                 crate::dataset::sampler::PartitionedSampler::for_partition(sampler, Some(partition))
             }
         };
+        // Trace-driven workloads (fixed_schedule, user_centric) enumerate
+        // `conversations()` (this `metadata` list) directly rather than drawing
+        // through the partitioned sampler, so a sharded sub-cell must own only its
+        // partition's slice of the enumerable conversations or every thread would
+        // replay the whole trace (W× duplication). Restrict the enumeration to the
+        // partition-owned authored indices — the same `owns(position)` ownership the
+        // sampler applies to `.next()` over the same authored root order, so the
+        // enumerate-based and sample-based partitions select the identical subset and
+        // the W threads tile the conversation space exactly. `None`/identity (single
+        // process) keeps every conversation (byte-unchanged).
+        let enumeration_partition = match cell_partition {
+            Some(partition) if partition.cell_count() > 1 => Some(partition),
+            _ => None,
+        };
         let metadata = dataset
             .sampleable_metadata()
-            .map(|conversation| {
+            .enumerate()
+            .filter(|(index, _)| {
+                enumeration_partition
+                    .map(|partition| partition.owns(*index as u64))
+                    .unwrap_or(true)
+            })
+            .map(|(_, conversation)| {
                 let authored = dataset
                     .get(&conversation.conversation_id)
                     .expect("metadata is projected from a validated conversation");
