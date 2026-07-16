@@ -18,7 +18,10 @@ class DecodeDurationMetric(BaseRecordMetric[int]):
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
     display_order = 350
-    flags = MetricFlags.STREAMING_TOKENS_ONLY
+    flags = (
+        MetricFlags.STREAMING_TOKENS_ONLY
+        | MetricFlags.PERCENTILE_INCLUDES_FAILED_REQUESTS
+    )
     required_metrics = {
         RequestLatencyMetric.tag,
         TTFTMetric.tag,
