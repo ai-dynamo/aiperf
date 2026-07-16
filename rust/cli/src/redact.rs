@@ -92,9 +92,7 @@ fn redact_url(url: &str) -> String {
         let after_scheme = scheme_end + 3;
         let rest = &url[after_scheme..];
         // Userinfo ends at the first `@` that precedes any `/`, `?`, or `#`.
-        let authority_end = rest
-            .find(['/', '?', '#'])
-            .unwrap_or(rest.len());
+        let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
         if let Some(at) = rest[..authority_end].find('@') {
             let mut out = String::with_capacity(url.len());
             out.push_str(&url[..after_scheme]);
@@ -143,7 +141,10 @@ mod tests {
             !serialized.contains("sk-integration-secret-REDACT-12345"),
             "api key leaked: {serialized}"
         );
-        assert!(!serialized.contains("user:secret"), "userinfo leaked: {serialized}");
+        assert!(
+            !serialized.contains("user:secret"),
+            "userinfo leaked: {serialized}"
+        );
         let endpoint = &cfg["endpoint"];
         assert_eq!(endpoint["api_key"], REDACTED_VALUE);
         assert_eq!(endpoint["headers"]["Authorization"], REDACTED_VALUE);

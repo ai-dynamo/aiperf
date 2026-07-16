@@ -40,9 +40,11 @@
 //!   once the scheduled loop is driven by `drive_sim`, under `SimClock`
 //!   (deterministic virtual-time CI). The design phases the sim-clock inline
 //!   executor as a follow-up; this module already fabricates clock-agnostically.
-//! - **Jitter:** `jitter_cv` is threaded through [`DryRunParams`] for a future
-//!   seeded per-request jitter draw off [`crate::rng`]; the current default of
-//!   `0.0` keeps the run byte-deterministic.
+//! - **Analytic model:** TTFT/ITL scale with ISL, OSL, and live in-flight
+//!   concurrency plus seeded lognormal jitter, ported byte-for-byte from
+//!   `rust/mock-server/src/latency.rs` (the dynosim/Dynamo-replay perf-model
+//!   shape). With the scaling and jitter knobs at their `0.0` defaults it reduces
+//!   to fixed `ttft_ms`/`itl_ms`, keeping the run byte-deterministic.
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
@@ -87,6 +89,29 @@ const fn default_itl_ms() -> f64 {
     2.0
 }
 
+/// Default KV-cache utilization fed to the polynomial decode curve.
+const fn default_kv_utilization() -> f64 {
+    0.5
+}
+
+/// Which analytic latency curve the fake leaf uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DryRunLatencyModel {
+    /// Closed-form linear model: `base + per_isl·ISL + per_osl·OSL +
+    /// concurrency terms`, ported from `mock-server/src/latency.rs`. The default.
+    #[default]
+    Linear,
+    /// Byte-for-byte port of the Dynamo mocker's default perf model
+    /// (`PerfModel::Polynomial`,
+    /// `dynamo-aiperf-native/lib/mocker/src/common/perf_model.rs:270-315`): TTFT
+    /// from the prefill-token count, ITL from KV-cache utilization. This is the
+    /// self-contained variant of the Dynamo replay analytical model (the
+    /// `Interpolated`/`Aiconfigurator` variants need an NPZ profile or the AIC
+    /// SDK — reachable via the `dynosim` transport, not the lightweight dry run).
+    AiconfiguratorPolynomial,
+}
+
 /// Built-in `dry_run` transport descriptor (real clock, no network).
 pub static DRY_RUN_TRANSPORT_DESCRIPTOR: RunnerTransportDescriptor = RunnerTransportDescriptor {
     id: "dry_run",
@@ -97,36 +122,75 @@ pub static DRY_RUN_TRANSPORT_DESCRIPTOR: RunnerTransportDescriptor = RunnerTrans
 
 /// Strict validated config owned by the `dry_run` transport.
 ///
+/// The analytic latency model is a byte-for-byte port of the `aiperf-mock-server`
+/// analytic model (`rust/mock-server/src/latency.rs`), the same shape the Dynamo
+/// replay / dynosim perf model uses: per request,
+///
+/// ```text
+/// ttft = (ttft_ms + ttft_per_isl_token_ms·ISL + ttft_concurrency_quad_ms·inflight²) · jitter(ttft_jitter_cv)
+/// itl  = (itl_ms  + itl_per_osl_token_ms·OSL  + itl_concurrency_lin_ms·inflight)    · jitter(itl_jitter_cv)
+/// ```
+///
 /// Every field has a serde default so `{"type":"dry_run"}` alone is valid; the
-/// CLI projects concrete `ttft_ms`/`itl_ms` so a run is fully specified and its
-/// metrics are exactly predictable.
+/// CLI projects concrete values so a run is fully specified. With the scaling and
+/// jitter terms at their `0.0` defaults this reduces to fixed `ttft_ms`/`itl_ms`,
+/// which keeps the metrics exactly predictable.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DryRunTransportConfigV2 {
-    /// Synthetic time-to-first-token in milliseconds (>= 0).
+    /// Base time-to-first-token in milliseconds (>= 0).
     #[serde(default = "default_ttft_ms")]
     pub ttft_ms: f64,
-    /// Synthetic inter-token latency in milliseconds (>= 0).
+    /// Base inter-token latency in milliseconds (>= 0).
     #[serde(default = "default_itl_ms")]
     pub itl_ms: f64,
-    /// Coefficient of variation for a future seeded per-request jitter draw.
-    /// `0.0` (default) keeps the fabricated timing byte-deterministic.
+    /// Prefill cost scaling with prompt length: `TTFT += this · ISL_tokens`.
     #[serde(default)]
-    pub jitter_cv: f64,
-    /// Root seed for the future jitter draw. Unused while `jitter_cv == 0.0`.
+    pub ttft_per_isl_token_ms: f64,
+    /// Super-linear prefill contention: `TTFT += this · inflight²`.
+    #[serde(default)]
+    pub ttft_concurrency_quad_ms: f64,
+    /// Decode cost scaling with output length: `ITL += this · OSL_tokens`.
+    #[serde(default)]
+    pub itl_per_osl_token_ms: f64,
+    /// Linear decode contention: `ITL += this · inflight`.
+    #[serde(default)]
+    pub itl_concurrency_lin_ms: f64,
+    /// Lognormal TTFT jitter (stddev/mean). `0.0` (default) is deterministic.
+    #[serde(default)]
+    pub ttft_jitter_cv: f64,
+    /// Lognormal ITL jitter (stddev/mean). `0.0` (default) is deterministic.
+    #[serde(default)]
+    pub itl_jitter_cv: f64,
+    /// Root seed for the per-request jitter draw. Unused while both CVs are `0.0`.
     #[serde(default)]
     pub seed: u64,
+    /// Which analytic latency curve to use (`linear` default, or
+    /// `aiconfigurator_polynomial` for the Dynamo perf-model port).
+    #[serde(default)]
+    pub latency_model: DryRunLatencyModel,
+    /// KV-cache utilization in `[0, 1]` feeding the polynomial decode curve. Only
+    /// consulted by the `aiconfigurator_polynomial` model.
+    #[serde(default = "default_kv_utilization")]
+    pub kv_utilization: f64,
 }
 
 impl DryRunTransportConfigV2 {
-    /// Project the validated config into the `Copy` params carried through
-    /// [`crate::engine::online_execution::classify_native_transport`].
+    /// Project the validated config into the `Copy` params carried into the
+    /// [`DryRunNativeExecution`] binding.
     pub fn params(&self) -> DryRunParams {
         DryRunParams {
             ttft_ms: self.ttft_ms,
             itl_ms: self.itl_ms,
-            jitter_cv: self.jitter_cv,
+            ttft_per_isl_token_ms: self.ttft_per_isl_token_ms,
+            ttft_concurrency_quad_ms: self.ttft_concurrency_quad_ms,
+            itl_per_osl_token_ms: self.itl_per_osl_token_ms,
+            itl_concurrency_lin_ms: self.itl_concurrency_lin_ms,
+            ttft_jitter_cv: self.ttft_jitter_cv,
+            itl_jitter_cv: self.itl_jitter_cv,
             seed: self.seed,
+            latency_model: self.latency_model,
+            kv_utilization: self.kv_utilization,
         }
     }
 }
@@ -137,14 +201,128 @@ impl DryRunTransportConfigV2 {
 /// [`FakeRequestExecutorFactory`] to each run without shared state.
 #[derive(Debug, Clone, Copy)]
 pub struct DryRunParams {
-    /// Synthetic time-to-first-token in milliseconds.
+    /// Base time-to-first-token in milliseconds.
     pub ttft_ms: f64,
-    /// Synthetic inter-token latency in milliseconds.
+    /// Base inter-token latency in milliseconds.
     pub itl_ms: f64,
-    /// Reserved coefficient of variation for a future seeded jitter draw.
-    pub jitter_cv: f64,
-    /// Reserved root seed for the future jitter draw.
+    /// Prefill cost per input token (ms).
+    pub ttft_per_isl_token_ms: f64,
+    /// Super-linear prefill contention coefficient (ms per inflight²).
+    pub ttft_concurrency_quad_ms: f64,
+    /// Decode cost per output token (ms).
+    pub itl_per_osl_token_ms: f64,
+    /// Linear decode contention coefficient (ms per inflight).
+    pub itl_concurrency_lin_ms: f64,
+    /// Lognormal TTFT jitter coefficient of variation.
+    pub ttft_jitter_cv: f64,
+    /// Lognormal ITL jitter coefficient of variation.
+    pub itl_jitter_cv: f64,
+    /// Root seed for the per-request jitter draw.
     pub seed: u64,
+    /// Selected analytic latency curve.
+    pub latency_model: DryRunLatencyModel,
+    /// KV-cache utilization for the polynomial decode curve.
+    pub kv_utilization: f64,
+}
+
+impl DryRunParams {
+    /// Compute the effective `(ttft_ns, itl_ns)` for one request from the
+    /// analytic model. `active_inflight` is the live in-flight count feeding the
+    /// concurrency-contention terms; `ordinal` seeds the per-request jitter draw
+    /// so the timing is reproducible across runs (independent of the random UUID).
+    ///
+    /// The `Linear` terms are ported from
+    /// `rust/mock-server/src/latency.rs::LatencySimulator::new`; the
+    /// `AiconfiguratorPolynomial` curves are ported from the Dynamo mocker
+    /// `PerfModel::Polynomial`
+    /// (`dynamo-aiperf-native/lib/mocker/src/common/perf_model.rs:270-315`).
+    fn effective_latencies_ns(
+        &self,
+        isl: usize,
+        osl: usize,
+        active_inflight: usize,
+        ordinal: u64,
+    ) -> (i64, i64) {
+        let active = active_inflight as f64;
+        let (base_ttft_ms, base_itl_ms) = match self.latency_model {
+            DryRunLatencyModel::Linear => (
+                self.ttft_ms
+                    + self.ttft_per_isl_token_ms * isl as f64
+                    + self.ttft_concurrency_quad_ms * active * active,
+                self.itl_ms
+                    + self.itl_per_osl_token_ms * osl as f64
+                    + self.itl_concurrency_lin_ms * active,
+            ),
+            DryRunLatencyModel::AiconfiguratorPolynomial => (
+                // Dynamo's prefill curve takes `batch_size · new_tokens_per_req`.
+                // A dry run has no scheduler, so the live in-flight count stands in
+                // for the batch size and `prefix = 0` (no KV reuse model) →
+                // prefill tokens = inflight · ISL.
+                aic_polynomial_prefill_ms(active * isl as f64),
+                // Dynamo's polynomial decode curve is purely a function of KV
+                // utilization; with no KV manager the configured `kv_utilization`
+                // knob supplies it.
+                aic_polynomial_decode_ms(self.kv_utilization),
+            ),
+        };
+        let ttft_ms = base_ttft_ms
+            * lognormal_jitter(
+                &mut seeded_rng(self.seed, ordinal ^ 0x11),
+                self.ttft_jitter_cv,
+            );
+        let itl_ms = base_itl_ms
+            * lognormal_jitter(
+                &mut seeded_rng(self.seed, ordinal ^ 0x22),
+                self.itl_jitter_cv,
+            );
+        (ms_to_ns(ttft_ms), ms_to_ns(itl_ms))
+    }
+}
+
+/// Dynamo mocker `PerfModel::Polynomial` prefill curve, in milliseconds, for
+/// `prefill_tokens` total new tokens across the batch. Byte-for-byte port of
+/// `dynamo-aiperf-native/lib/mocker/src/common/perf_model.rs:272-273` (with the
+/// same `0.0` floor and the `prefill_tokens == 0 → 0.0` short-circuit at
+/// `perf_model.rs:266`).
+fn aic_polynomial_prefill_ms(prefill_tokens: f64) -> f64 {
+    if prefill_tokens <= 0.0 {
+        return 0.0;
+    }
+    (4.209_989e-7 * prefill_tokens * prefill_tokens + 1.518_344e-2 * prefill_tokens + 1.650_142e1)
+        .max(0.0)
+}
+
+/// Dynamo mocker `PerfModel::Polynomial` decode curve, in milliseconds, for KV
+/// utilization `active_perc` (active KV tokens / total KV tokens). Byte-for-byte
+/// port of `perf_model.rs:315` with the `.max(1.0)` step-collision floor from
+/// `perf_model.rs:330`.
+fn aic_polynomial_decode_ms(active_perc: f64) -> f64 {
+    (-25.74 * active_perc * active_perc + 54.01 * active_perc + 5.74).max(1.0)
+}
+
+/// Milliseconds → non-negative nanoseconds (rounded), matching
+/// `latency.rs::ms_to_ns`.
+fn ms_to_ns(ms: f64) -> i64 {
+    (ms * 1_000_000.0).max(0.0).round() as i64
+}
+
+/// Deterministic per-request RNG seeded from the root seed and a salt, matching
+/// `latency.rs::seeded_rng`.
+fn seeded_rng(seed: u64, salt: u64) -> crate::rng::RandomGenerator {
+    crate::rng::RandomGenerator::from_seed(Some(seed ^ salt.wrapping_mul(0x9E37_79B9_7F4A_7C15)))
+}
+
+/// Mean-preserving lognormal jitter multiplier with coefficient of variation
+/// `cv` (`<= 0.0` → `1.0`). Byte-for-byte port of `latency.rs::lognormal_jitter`.
+fn lognormal_jitter(rng: &mut crate::rng::RandomGenerator, cv: f64) -> f64 {
+    if cv <= 0.0 {
+        return 1.0;
+    }
+    let sigma = (1.0 + cv * cv).ln().sqrt();
+    let u1 = rng.random().max(1e-12);
+    let u2 = rng.random();
+    let z = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
+    (sigma * z - 0.5 * sigma * sigma).exp()
 }
 
 /// Registered strict decoder for the always-built `dry_run` transport.
@@ -163,21 +341,24 @@ impl RunnerTransportFactory for DryRunTransportFactoryV2 {
     ) -> Result<Box<dyn crate::engine::registry::ValidatedTransportConfig>> {
         let config =
             strict_decode::<DryRunTransportConfigV2>(authored, "dry_run transport config")?;
-        ensure!(
-            config.ttft_ms >= 0.0 && config.ttft_ms.is_finite(),
-            "dry_run ttft_ms must be a finite non-negative value, got {}",
-            config.ttft_ms
-        );
-        ensure!(
-            config.itl_ms >= 0.0 && config.itl_ms.is_finite(),
-            "dry_run itl_ms must be a finite non-negative value, got {}",
-            config.itl_ms
-        );
-        ensure!(
-            config.jitter_cv >= 0.0 && config.jitter_cv.is_finite(),
-            "dry_run jitter_cv must be a finite non-negative value, got {}",
-            config.jitter_cv
-        );
+        // Every analytic knob must be a finite, non-negative value: a latency, a
+        // per-token/contention coefficient, or a jitter CV — none can be negative
+        // or NaN without producing nonsensical fabricated timing.
+        for (name, value) in [
+            ("ttft_ms", config.ttft_ms),
+            ("itl_ms", config.itl_ms),
+            ("ttft_per_isl_token_ms", config.ttft_per_isl_token_ms),
+            ("ttft_concurrency_quad_ms", config.ttft_concurrency_quad_ms),
+            ("itl_per_osl_token_ms", config.itl_per_osl_token_ms),
+            ("itl_concurrency_lin_ms", config.itl_concurrency_lin_ms),
+            ("ttft_jitter_cv", config.ttft_jitter_cv),
+            ("itl_jitter_cv", config.itl_jitter_cv),
+        ] {
+            ensure!(
+                value >= 0.0 && value.is_finite(),
+                "dry_run {name} must be a finite non-negative value, got {value}"
+            );
+        }
         Ok(Box::new(config))
     }
 
@@ -270,6 +451,8 @@ impl RequestExecutorFactory for FakeRequestExecutorFactory {
             params: self.params,
             origin_ns: Cell::new(0),
             observer: RefCell::new(None),
+            inflight: Cell::new(0),
+            ordinal: Cell::new(0),
         }))
     }
 }
@@ -282,6 +465,11 @@ struct FakeRequestExecutor {
     params: DryRunParams,
     origin_ns: Cell<i64>,
     observer: RefCell<Option<Rc<NativeMetricsObserver>>>,
+    /// Live in-flight request count feeding the analytic concurrency terms.
+    inflight: Cell<usize>,
+    /// Monotonic dispatch ordinal (deterministic on the single coordinator
+    /// reactor) used to seed the per-request jitter draw.
+    ordinal: Cell<u64>,
 }
 
 impl FakeRequestExecutor {
@@ -340,8 +528,19 @@ impl RequestExecutor for FakeRequestExecutor {
         let isl = context.input_length as u64;
         let osl = context.requested_output_length;
 
-        let ttft_ns = (self.params.ttft_ms * 1_000_000.0).round() as i64;
-        let itl_ns = (self.params.itl_ms * 1_000_000.0).round() as i64;
+        // Enter the analytic contention window: `active_inflight` includes this
+        // request. On the single coordinator reactor with instant fabrication,
+        // requests do not overlap (inflight == 1); the sim-clock path (next
+        // phase) sleeps on the virtual clock so overlap — and the concurrency
+        // terms — become exact. The ordinal seeds the reproducible jitter draw.
+        let active_inflight = self.inflight.get() + 1;
+        self.inflight.set(active_inflight);
+        let ordinal = self.ordinal.get();
+        self.ordinal.set(ordinal + 1);
+        let (ttft_ns, itl_ns) =
+            self.params
+                .effective_latencies_ns(isl as usize, osl, active_inflight, ordinal);
+        self.inflight.set(self.inflight.get() - 1);
         // Dispatch begins at the scheduled arrival: a dry run adds no queueing
         // delay, so start == arrival and request_latency == ttft + (osl-1)*itl.
         let start_abs = self.origin_ns.get() + (context.arrival_ms * 1_000_000.0).round() as i64;
@@ -477,6 +676,24 @@ mod tests {
     use crate::http::{HttpRequest, PreparedHttpEndpoint, TransportSinkConfig};
     use crate::multiturn::{PreparedEndpointReference, TurnDataPolicy};
 
+    /// All-zero analytic params (no base latency, no scaling, no jitter) to build
+    /// on with struct-update syntax.
+    fn zero_params() -> DryRunParams {
+        DryRunParams {
+            ttft_ms: 0.0,
+            itl_ms: 0.0,
+            ttft_per_isl_token_ms: 0.0,
+            ttft_concurrency_quad_ms: 0.0,
+            itl_per_osl_token_ms: 0.0,
+            itl_concurrency_lin_ms: 0.0,
+            ttft_jitter_cv: 0.0,
+            itl_jitter_cv: 0.0,
+            seed: 0,
+            latency_model: DryRunLatencyModel::Linear,
+            kv_utilization: 0.5,
+        }
+    }
+
     fn build_executor(params: DryRunParams) -> Rc<dyn RequestExecutor> {
         let anchor = RealClockAnchor::now();
         let clock: Rc<dyn Clock> = RealClock::from_anchor(anchor);
@@ -545,8 +762,7 @@ mod tests {
         let params = DryRunParams {
             ttft_ms: 10.0,
             itl_ms: 2.0,
-            jitter_cv: 0.0,
-            seed: 0,
+            ..zero_params()
         };
         let ttft_ns = 10_000_000_i64;
         let itl_ns = 2_000_000_i64;
@@ -587,6 +803,80 @@ mod tests {
         assert_eq!(*drained_uuid, uuid);
         assert_eq!(ingest.tokens.output, Some(OSL as u64));
         assert_eq!(ingest.token_arrival_ns.len(), OSL);
+    }
+
+    #[test]
+    fn analytic_model_scales_ttft_with_isl_and_itl_with_osl() {
+        // TTFT = base + per_isl·ISL; ITL = base + per_osl·OSL (inflight == 1 on
+        // the instant single-reactor path, so the concurrency terms contribute a
+        // constant; here they are zero). No jitter → exact.
+        let params = DryRunParams {
+            ttft_ms: 5.0,
+            itl_ms: 1.0,
+            ttft_per_isl_token_ms: 0.1,    // +0.1 ms/input token
+            itl_per_osl_token_ms: 0.01,    // +0.01 ms/output token
+            ttft_concurrency_quad_ms: 3.0, // ·1² == +3 ms (inflight == 1)
+            itl_concurrency_lin_ms: 2.0,   // ·1  == +2 ms (inflight == 1)
+            ..zero_params()
+        };
+        let (ttft_ns, itl_ns) = params.effective_latencies_ns(100, 50, 1, 0);
+        // ttft = (5 + 0.1·100 + 3·1) = 18 ms; itl = (1 + 0.01·50 + 2·1) = 3.5 ms
+        assert_eq!(ttft_ns, 18_000_000);
+        assert_eq!(itl_ns, 3_500_000);
+        // Zero jitter is exactly reproducible.
+        assert_eq!(
+            params.effective_latencies_ns(100, 50, 1, 7),
+            (18_000_000, 3_500_000)
+        );
+    }
+
+    #[test]
+    fn aiconfigurator_polynomial_matches_dynamo_perf_model() {
+        // Exact curve values from the Dynamo mocker PerfModel::Polynomial
+        // (perf_model.rs:272-273, :315). At inflight == 1, prefill tokens == ISL.
+        let params = DryRunParams {
+            latency_model: DryRunLatencyModel::AiconfiguratorPolynomial,
+            kv_utilization: 0.5,
+            ..zero_params()
+        };
+        // prefill(1000) = 4.209989e-7·1000² + 1.518344e-2·1000 + 16.50142
+        //               = 0.4209989 + 15.18344 + 16.50142 = 32.1058589 ms
+        let prefill = aic_polynomial_prefill_ms(1000.0);
+        assert!((prefill - 32.105_858_9).abs() < 1e-6, "prefill = {prefill}");
+        // decode(0.5) = -25.74·0.25 + 54.01·0.5 + 5.74 = 26.31 ms
+        let decode = aic_polynomial_decode_ms(0.5);
+        assert!((decode - 26.31).abs() < 1e-9, "decode = {decode}");
+        // Floor: a tiny utilization must not drop the ITL below 1.0 ms.
+        assert_eq!(aic_polynomial_decode_ms(-1.0), 1.0);
+        // The executor path uses these curves (ISL=1000 → ttft≈32.11ms, ITL≈26.31).
+        let (ttft_ns, itl_ns) = params.effective_latencies_ns(1000, 64, 1, 0);
+        assert_eq!(ttft_ns, ms_to_ns(prefill));
+        assert_eq!(itl_ns, ms_to_ns(decode));
+    }
+
+    #[test]
+    fn analytic_jitter_is_seeded_and_reproducible() {
+        let params = DryRunParams {
+            ttft_ms: 20.0,
+            itl_ms: 4.0,
+            ttft_jitter_cv: 0.2,
+            itl_jitter_cv: 0.2,
+            seed: 42,
+            ..zero_params()
+        };
+        // Same ordinal → identical draw; different ordinals → (almost surely)
+        // different draws, but both reproducible across calls.
+        let a = params.effective_latencies_ns(32, 16, 1, 3);
+        let b = params.effective_latencies_ns(32, 16, 1, 3);
+        let c = params.effective_latencies_ns(32, 16, 1, 4);
+        assert_eq!(a, b, "same seed+ordinal must reproduce the jitter draw");
+        assert_ne!(a, c, "distinct ordinals draw distinct jitter");
+        // Mean-preserving jitter keeps values in a sane band around the base.
+        assert!(
+            a.0 > 5_000_000 && a.0 < 80_000_000,
+            "ttft jitter out of band: {}",
+            a.0
+        );
     }
 
     #[test]

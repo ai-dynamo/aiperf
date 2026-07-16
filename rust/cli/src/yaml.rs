@@ -344,8 +344,9 @@ impl<'de> Deserialize<'de> for ModelsSection {
             where
                 A: serde::de::SeqAccess<'de>,
             {
-                let items =
-                    Vec::<ModelItem>::deserialize(serde::de::value::SeqAccessDeserializer::new(seq))?;
+                let items = Vec::<ModelItem>::deserialize(
+                    serde::de::value::SeqAccessDeserializer::new(seq),
+                )?;
                 Ok(ModelsSection {
                     items,
                     strategy: None,
@@ -391,7 +392,9 @@ impl<'de> Deserialize<'de> for ModelItem {
                 f.write_str("a model-name string or a `{name, ...}` mapping")
             }
             fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<ModelItem, E> {
-                Ok(ModelItem { name: v.to_string() })
+                Ok(ModelItem {
+                    name: v.to_string(),
+                })
             }
             fn visit_map<A>(self, map: A) -> Result<ModelItem, A::Error>
             where

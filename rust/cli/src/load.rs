@@ -407,7 +407,15 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
             Transport::DryRun(crate::model::transport::DryRunConfig {
                 ttft_ms: flags.dry_run_ttft_ms,
                 itl_ms: flags.dry_run_itl_ms,
-                ..Default::default()
+                ttft_per_isl_token_ms: flags.dry_run_ttft_per_isl_ms,
+                ttft_concurrency_quad_ms: flags.dry_run_ttft_concurrency_quad_ms,
+                itl_per_osl_token_ms: flags.dry_run_itl_per_osl_ms,
+                itl_concurrency_lin_ms: flags.dry_run_itl_concurrency_lin_ms,
+                ttft_jitter_cv: flags.dry_run_ttft_jitter_cv,
+                itl_jitter_cv: flags.dry_run_itl_jitter_cv,
+                seed: flags.dry_run_seed,
+                latency_model: flags.dry_run_latency_model.clone(),
+                kv_utilization: flags.dry_run_kv_utilization,
             })
         } else {
             Transport::Http

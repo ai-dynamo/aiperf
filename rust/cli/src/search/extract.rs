@@ -115,7 +115,8 @@ pub fn extract_2d_points(
         let Some(params) = row.get("parameters") else {
             continue;
         };
-        let Some(cv) = param_value(params, concurrency_param, c_leaf).and_then(Value::as_f64) else {
+        let Some(cv) = param_value(params, concurrency_param, c_leaf).and_then(Value::as_f64)
+        else {
             continue;
         };
         let Some(ov) = param_value(params, osl_param, o_leaf).and_then(Value::as_f64) else {

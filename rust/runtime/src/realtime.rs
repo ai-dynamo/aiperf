@@ -147,7 +147,10 @@ impl TurnRecordProcessor for LiveMetricsProcessor {
                 http: outcome.http,
             },
         );
-        if let Some(record) = self.observer.drain_terminal_record(credit.turn.uuid, ordinal) {
+        if let Some(record) = self
+            .observer
+            .drain_terminal_record(credit.turn.uuid, ordinal)
+        {
             self.live.ingest(&record);
         }
         Ok(())

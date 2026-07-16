@@ -775,7 +775,15 @@ pub struct ProfileFlags {
     pub fixed_schedule: bool,
 
     /// Auto-normalize fixed-schedule timestamps (`--fixed-schedule-auto-offset`).
-    #[arg(long = "fixed-schedule-auto-offset")]
+    /// Accepts a bare flag (`--fixed-schedule-auto-offset` ⇒ `Some(true)`) or an
+    /// explicit value; absent ⇒ `None` (derive from start/end offsets). Matches
+    /// Python's store-true `--fixed-schedule-auto-offset` while preserving the
+    /// None-means-derive behavior at `load.rs`.
+    #[arg(
+        long = "fixed-schedule-auto-offset",
+        num_args = 0..=1,
+        default_missing_value = "true"
+    )]
     pub fixed_schedule_auto_offset: Option<bool>,
 
     /// Fixed-schedule start offset (`--fixed-schedule-start-offset`).
@@ -988,6 +996,39 @@ pub struct ProfileFlags {
     /// (`--dry-run-itl-ms`). Omitted → the runtime default.
     #[arg(long = "dry-run-itl-ms")]
     pub dry_run_itl_ms: Option<f64>,
+    /// Analytic prefill cost per input token, ms: `TTFT += this·ISL`
+    /// (`--dry-run-ttft-per-isl-ms`).
+    #[arg(long = "dry-run-ttft-per-isl-ms")]
+    pub dry_run_ttft_per_isl_ms: Option<f64>,
+    /// Analytic super-linear prefill contention, ms per inflight²
+    /// (`--dry-run-ttft-concurrency-quad-ms`).
+    #[arg(long = "dry-run-ttft-concurrency-quad-ms")]
+    pub dry_run_ttft_concurrency_quad_ms: Option<f64>,
+    /// Analytic decode cost per output token, ms: `ITL += this·OSL`
+    /// (`--dry-run-itl-per-osl-ms`).
+    #[arg(long = "dry-run-itl-per-osl-ms")]
+    pub dry_run_itl_per_osl_ms: Option<f64>,
+    /// Analytic linear decode contention, ms per inflight
+    /// (`--dry-run-itl-concurrency-lin-ms`).
+    #[arg(long = "dry-run-itl-concurrency-lin-ms")]
+    pub dry_run_itl_concurrency_lin_ms: Option<f64>,
+    /// Lognormal TTFT jitter coefficient of variation (`--dry-run-ttft-jitter-cv`).
+    #[arg(long = "dry-run-ttft-jitter-cv")]
+    pub dry_run_ttft_jitter_cv: Option<f64>,
+    /// Lognormal ITL jitter coefficient of variation (`--dry-run-itl-jitter-cv`).
+    #[arg(long = "dry-run-itl-jitter-cv")]
+    pub dry_run_itl_jitter_cv: Option<f64>,
+    /// Root seed for the `--dry-run` per-request jitter draw (`--dry-run-seed`).
+    #[arg(long = "dry-run-seed")]
+    pub dry_run_seed: Option<u64>,
+    /// Analytic latency curve (`--dry-run-latency-model`): `linear` (default) or
+    /// `aiconfigurator_polynomial` (Dynamo mocker perf-model port).
+    #[arg(long = "dry-run-latency-model")]
+    pub dry_run_latency_model: Option<String>,
+    /// KV-cache utilization in `[0,1]` for the polynomial decode curve
+    /// (`--dry-run-kv-utilization`).
+    #[arg(long = "dry-run-kv-utilization")]
+    pub dry_run_kv_utilization: Option<f64>,
 }
 
 impl ProfileFlags {
