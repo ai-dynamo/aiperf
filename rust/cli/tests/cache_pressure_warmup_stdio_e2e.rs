@@ -72,7 +72,7 @@ fn benchmark_run(legacy: Value) -> Value {
 
 fn run_child(mut request: Value) -> Output {
     request["run"] = benchmark_run(request["run"].take());
-    let bytes = serde_json::to_vec(&request).unwrap();
+    let bytes = serde_json::to_vec(&request["run"]).unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_aiperf"))
         .arg("--execute")
         .stdin(Stdio::piped())

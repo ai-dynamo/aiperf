@@ -5,8 +5,8 @@
 //! The native type is both the domain object and the wire request. This suite
 //! asserts two things per golden:
 //!
-//! 1. The unchanged `aiperf` input type (`RunnerEnvelopeV2`) accepts the
-//!    golden bytes — structural validity against the real consumer.
+//! 1. The `aiperf` stdin wire type (`BenchmarkRunWireV2`, the bare run) accepts
+//!    the golden's `run` object — structural validity against the real consumer.
 //! 2. Each already-ported `cfg` section round-trips byte-exact: deserializing
 //!    the golden through the native `BenchmarkRun` (which drops not-yet-ported
 //!    keys) and re-serializing reproduces that section's subtree exactly.
@@ -17,7 +17,7 @@
 use aiperf_cli::flags::ProfileFlags;
 use aiperf_cli::load;
 use aiperf_cli::model::BenchmarkRun;
-use aiperf_runtime::engine::protocol_v2::RunnerEnvelopeV2;
+use aiperf_runtime::engine::protocol_v2::BenchmarkRunWireV2;
 
 /// `cfg` sections the native type currently models; asserted for byte-exact
 /// round-trip. Extend as each section is ported.
@@ -164,10 +164,9 @@ fn assert_matches_golden(fixture: &str, built: &serde_json::Value, golden: &serd
         &golden["run"]["cfg"]["export"],
     );
 
-    let envelope = serde_json::json!({
-        "protocol_version": 2, "operation": "execute", "run": built,
-    });
-    let _: RunnerEnvelopeV2 = serde_json::from_value(envelope)
+    // The stdin wire is now the bare run object (no `{protocol_version, operation}`
+    // wrapper): the built run must deserialize directly as the real consumer type.
+    let _: BenchmarkRunWireV2 = serde_json::from_value(built.clone())
         .unwrap_or_else(|e| panic!("[{fixture}] invalid runner input: {e}"));
 }
 
@@ -245,10 +244,13 @@ fn assert_export_static(fixture: &str, built: &serde_json::Value, golden: &serde
 
 #[test]
 fn goldens_are_valid_runner_input() {
+    // The golden files retain the historical `{operation, protocol_version, run}`
+    // shape (Python-generated reference data), but the stdin wire is now the bare
+    // `run` object — so validate the `run` subtree against the real consumer type.
     for fixture in FIXTURES {
         let golden = load_golden(fixture);
-        let _: RunnerEnvelopeV2 = serde_json::from_value(golden)
-            .unwrap_or_else(|e| panic!("[{fixture}] golden is not valid RunnerEnvelopeV2: {e}"));
+        let _: BenchmarkRunWireV2 = serde_json::from_value(golden["run"].clone())
+            .unwrap_or_else(|e| panic!("[{fixture}] golden run is not valid BenchmarkRunWireV2: {e}"));
     }
 }
 

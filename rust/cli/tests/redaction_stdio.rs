@@ -40,7 +40,7 @@ fn run(input: &Value) -> Output {
         .stdin
         .take()
         .unwrap()
-        .write_all(serde_json::to_string(input).unwrap().as_bytes())
+        .write_all(serde_json::to_string(&input["run"]).unwrap().as_bytes())
         .unwrap();
     child.wait_with_output().unwrap()
 }

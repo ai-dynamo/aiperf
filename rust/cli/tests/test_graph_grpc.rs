@@ -72,7 +72,7 @@ fn run_child(request: &Value) -> Output {
         .stdin
         .take()
         .unwrap()
-        .write_all(serde_json::to_string(request).unwrap().as_bytes())
+        .write_all(serde_json::to_string(&request["run"]).unwrap().as_bytes())
         .unwrap();
     child.wait_with_output().unwrap()
 }

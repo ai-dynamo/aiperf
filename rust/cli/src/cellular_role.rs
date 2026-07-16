@@ -178,8 +178,12 @@ fn project_execute_envelope(
     let base = crate::yaml::read_env_substituted(config_path)?;
     let expanded = crate::expand::render_with_context(base)?;
     let run = crate::yaml::resolve_expanded_value(expanded, artifact_dir)?;
-    let request = crate::model::RunnerRequest::new(crate::model::Operation::Execute, run);
-    serde_json::to_vec(&request)
+    // The tier-T2 aggregator (`aiperf --aggregator`) reads this envelope only for
+    // its merge `MetricsConfig`, and the engine's cellular merge helpers address it
+    // through `/run/cfg/...` JSON pointers. Unlike the bare-run stdin execute wire,
+    // this cellular-engine envelope keeps the `{"run": …}` wrapper so those pointer
+    // reads resolve unchanged.
+    serde_json::to_vec(&serde_json::json!({ "run": run }))
         .map_err(|e| anyhow::anyhow!("failed to serialize the cellular execute envelope: {e}"))
 }
 

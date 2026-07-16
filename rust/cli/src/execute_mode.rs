@@ -16,11 +16,17 @@
 //! prepare/execute is caught and converted to a typed v2 failure envelope so the
 //! parent sees a clean failure instead of a crashed subprocess.
 //!
+//! The stdin payload is a bare protocol-v2 `BenchmarkRun`; the requested
+//! operation is selected by the re-exec MODE (argv), not a wire field. The child
+//! reconstructs the internal `RunnerEnvelopeV2` (fixed protocol version + the
+//! mode's operation) before the unchanged `handle_v2`.
+//!
 //! Modes (selected by the first argument, set by the re-exec spawn site):
 //! `--execute` (single-process run / controller self-promotion on `cells>1`),
-//! `--capabilities` (print the catalog), `--cell` and `--aggregator` (velo-gated
-//! multi-cell tiers). `current_exe()` is the same `aiperf` binary, so the cellular
-//! launcher's `current_exe() --cell` re-exec resolves back here.
+//! `--validate` (side-effect-free validate of the same bare run), `--cell` and
+//! `--aggregator` (velo-gated multi-cell tiers). Capabilities is an in-process
+//! function, not a mode. `current_exe()` is the same `aiperf` binary, so the
+//! cellular launcher's `current_exe() --cell` re-exec resolves back here.
 
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
@@ -29,12 +35,11 @@ use aiperf_runtime::engine::application::RunnerApplication;
 use aiperf_runtime::engine::cellular_kind::CellularRunKind;
 use aiperf_runtime::engine::distribution_identity::current_distribution_id;
 use aiperf_runtime::engine::protocol_v2::{
-    RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2, RunnerEnvelopeV2,
-    RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
+    BenchmarkRunWireV2, RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2,
+    RunnerEnvelopeV2, RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
 };
 use aiperf_runtime::engine::redaction::redact_diagnostic;
-use serde::Deserialize;
-use serde_json::{Value, value::RawValue};
+use serde_json::Value;
 
 // Declared here (not shared with main.rs's arena-preinit block) so the dynosim
 // purge-delay tweak resolves the option constant against the same exact mimalloc
@@ -43,10 +48,16 @@ unsafe extern "C" {
     fn aiperf_mi_option_purge_delay() -> libmimalloc_sys::mi_option_t;
 }
 
-/// The internal re-exec flag: `aiperf --execute` reads one protocol-v2 request
-/// from stdin and runs it. Hidden from `--help`; it is a re-exec target, not a
-/// user command.
+/// The internal re-exec flag: `aiperf --execute` reads one bare protocol-v2
+/// `BenchmarkRun` from stdin and executes it. Hidden from `--help`; it is a
+/// re-exec target, not a user command. The operation (execute) comes from the
+/// mode/argv, not the wire — the wire no longer carries a `{protocol_version,
+/// operation}` wrapper.
 pub const EXECUTE_FLAG: &str = "--execute";
+/// The internal re-exec flag: `aiperf --validate` reads the same bare
+/// `BenchmarkRun` from stdin but runs it as a side-effect-free `validate`
+/// operation. The operation is selected by this mode, not a wire field.
+pub const VALIDATE_FLAG: &str = "--validate";
 /// `aiperf --cell` runs this process as one cell of a multi-cell run (velo).
 pub const CELL_FLAG: &str = "--cell";
 /// `aiperf --aggregator` runs this process as a tier-T2 merge aggregator (velo).
@@ -60,7 +71,10 @@ pub const AGGREGATOR_FLAG: &str = "--aggregator";
 pub fn is_execution_mode(args: &[String]) -> bool {
     matches!(
         args,
-        [flag] if flag == EXECUTE_FLAG || flag == CELL_FLAG || flag == AGGREGATOR_FLAG
+        [flag] if flag == EXECUTE_FLAG
+            || flag == VALIDATE_FLAG
+            || flag == CELL_FLAG
+            || flag == AGGREGATOR_FLAG
     )
 }
 
@@ -83,6 +97,15 @@ pub fn dispatch(args: &[String]) -> ! {
     let flag = args.first().map(String::as_str).unwrap_or("");
     let cell_mode = flag == CELL_FLAG;
     let aggregator_mode = flag == AGGREGATOR_FLAG;
+    let validate_mode = flag == VALIDATE_FLAG;
+    // The operation is selected by the re-exec MODE (argv), not a wire field: the
+    // stdin payload is a bare `BenchmarkRun`. `--validate` requests the
+    // side-effect-free validate operation; every other stdin mode executes.
+    let operation = if validate_mode {
+        RunnerOperationV2::Validate
+    } else {
+        RunnerOperationV2::Execute
+    };
 
     // A cell child fetches its sliced envelope over velo, not stdin. Every other
     // mode reads the full request from stdin to EOF.
@@ -102,20 +125,25 @@ pub fn dispatch(args: &[String]) -> ! {
     }
 
     // A non-cell execute request asking for more than one cell becomes the
-    // controller: it drives the cells over velo and merges their records.
-    if std::env::var(aiperf_runtime::cellular::partition::CELL_ID_ENV).is_err()
-        && let Ok(envelope) = serde_json::from_slice::<Value>(&input)
-        && envelope.pointer("/operation").and_then(Value::as_str) == Some("execute")
-        && aiperf_runtime::engine::cell_launcher::cell_count_from_envelope(&envelope) > 1
+    // controller: it drives the cells over velo and merges their records. The
+    // controller and the cellular-engine merge helpers address the envelope
+    // through `/run/...` pointers, so the bare-run stdin payload is re-wrapped
+    // into `{"run": …}` here (validate never spawns cells).
+    if !validate_mode
+        && std::env::var(aiperf_runtime::cellular::partition::CELL_ID_ENV).is_err()
+        && let Ok(run_value) = serde_json::from_slice::<Value>(&input)
     {
-        run_controller(&envelope);
+        let wrapped = serde_json::json!({ "run": run_value });
+        if aiperf_runtime::engine::cell_launcher::cell_count_from_envelope(&wrapped) > 1 {
+            run_controller(&wrapped);
+        }
     }
 
     configure_dynosim_process_defaults(&input);
     let application = compose_stock_application();
-    // The execution path speaks only protocol v2. run_v2 rejects a non-v2 or
-    // malformed request as a v2 failure envelope.
-    run_v2(&input, &application);
+    // The execution path speaks only protocol v2. run_v2 rejects a malformed
+    // bare-run request as a v2 failure envelope.
+    run_v2(&input, operation, &application);
 }
 
 /// Runs this process as one cell of a multi-cell run. The launcher has already set
@@ -175,9 +203,27 @@ fn run_cell() -> ! {
                 std::process::exit(2);
             }
         };
-    configure_dynosim_process_defaults(&envelope_bytes);
+    // The controller ships this cell its sliced envelope in the wrapped
+    // `{"run": …}` form the cellular-engine helpers address by `/run/...`
+    // pointer. `run_v2` and `configure_dynosim_process_defaults` consume the bare
+    // `BenchmarkRun`, so unwrap `/run` here before entering the shared path.
+    let run_bytes = run_object_bytes(&envelope_bytes);
+    configure_dynosim_process_defaults(&run_bytes);
     let application = compose_stock_application();
-    run_v2(&envelope_bytes, &application);
+    run_v2(&run_bytes, RunnerOperationV2::Execute, &application);
+}
+
+/// Extract the bare `BenchmarkRun` object from a wrapped `{"run": …}` cellular
+/// envelope, returning its serialized bytes. Falls back to the input unchanged
+/// when it is not a wrapped object (so `run_v2` reports a typed protocol error).
+fn run_object_bytes(envelope: &[u8]) -> Vec<u8> {
+    match serde_json::from_slice::<Value>(envelope) {
+        Ok(value) => match value.get("run") {
+            Some(run) => serde_json::to_vec(run).unwrap_or_else(|_| envelope.to_vec()),
+            None => envelope.to_vec(),
+        },
+        Err(_) => envelope.to_vec(),
+    }
 }
 
 /// Runs this process as a tier-T2 aggregator: bind at the controller-assigned fixed
@@ -378,7 +424,7 @@ fn configure_dynosim_process_defaults(input: &[u8]) {
     };
     if !matches!(
         envelope
-            .pointer("/run/cfg/transport/type")
+            .pointer("/cfg/transport/type")
             .and_then(Value::as_str),
         Some("dynosim_offline" | "dynosim_online")
     ) {
@@ -428,56 +474,36 @@ fn configure_dynosim_process_defaults(input: &[u8]) {
     }
 }
 
-#[derive(Deserialize)]
-struct EnvelopeBootstrapV2 {
-    protocol_version: u32,
-    operation: RunnerOperationV2,
-    run: Box<RawValue>,
-}
-
-fn run_v2(input: &[u8], application: &RunnerApplication) -> ! {
+/// Drive one bare-run request to its terminal/validation envelope.
+///
+/// The stdin payload is a bare [`BenchmarkRunWireV2`]; the `operation` is
+/// selected by the re-exec mode (`--execute` vs `--validate`), not carried on the
+/// wire. The internal [`RunnerEnvelopeV2`] is reconstructed here with the fixed
+/// [`RUNNER_PROTOCOL_V2`] so the unchanged `handle_v2`/coordinator seam is
+/// preserved. A malformed bare run is reported as a typed v2 protocol failure.
+fn run_v2(input: &[u8], operation: RunnerOperationV2, application: &RunnerApplication) -> ! {
     let distribution_id = application.distribution_id().to_owned();
-    let bootstrap = match serde_json::from_slice::<EnvelopeBootstrapV2>(input) {
-        Ok(bootstrap) => bootstrap,
-        Err(error) => {
-            write_v2_protocol_failure(
-                operation_hint(input),
-                distribution_id,
-                benchmark_id_hint(input),
-                "invalid_request",
-                format!("invalid protocol-v2 request: {error}"),
-            );
-        }
-    };
-    if bootstrap.protocol_version != RUNNER_PROTOCOL_V2 {
-        write_v2_protocol_failure(
-            Some(bootstrap.operation),
-            distribution_id,
-            benchmark_id_from_raw(&bootstrap.run),
-            "unsupported_protocol",
-            format!(
-                "runner protocol {} is unsupported; expected {RUNNER_PROTOCOL_V2}",
-                bootstrap.protocol_version
-            ),
-        );
-    }
-    let envelope = match serde_json::from_slice::<RunnerEnvelopeV2>(input) {
-        Ok(envelope) => envelope,
+    let run = match serde_json::from_slice::<BenchmarkRunWireV2>(input) {
+        Ok(run) => run,
         Err(error) => write_v2_protocol_failure(
-            Some(bootstrap.operation),
+            Some(operation),
             distribution_id,
-            benchmark_id_from_raw(&bootstrap.run),
+            benchmark_id_hint(input),
             "invalid_request",
             format!("invalid protocol-v2 request: {error}"),
         ),
+    };
+    let envelope = RunnerEnvelopeV2 {
+        protocol_version: RUNNER_PROTOCOL_V2,
+        operation,
+        run,
     };
     // The execution contract is exactly one terminal/validation JSONL line. A
     // panic anywhere in prepare/execute would otherwise unwind past this writer
     // and abort the child (exit 101) with no envelope, so the parent sees a
     // crashed subprocess instead of a typed failure. Convert a caught panic into
     // the corresponding v2 failure envelope.
-    let operation = bootstrap.operation;
-    let benchmark_id = benchmark_id_from_raw(&bootstrap.run);
+    let benchmark_id = benchmark_id_hint(input);
     let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         application.handle_v2(envelope)
     })) {
@@ -537,25 +563,10 @@ fn write_v2_internal_panic(
     }
 }
 
-fn operation_hint(input: &[u8]) -> Option<RunnerOperationV2> {
-    let value: Value = serde_json::from_slice(input).ok()?;
-    match value.get("operation")?.as_str()? {
-        "validate" => Some(RunnerOperationV2::Validate),
-        "execute" => Some(RunnerOperationV2::Execute),
-        _ => None,
-    }
-}
-
+/// Best-effort `benchmark_id` from a bare-run stdin payload for failure
+/// envelopes, tolerating malformed JSON (returns `None`).
 fn benchmark_id_hint(input: &[u8]) -> Option<String> {
     let value: Value = serde_json::from_slice(input).ok()?;
-    value
-        .pointer("/run/benchmark_id")?
-        .as_str()
-        .map(str::to_owned)
-}
-
-fn benchmark_id_from_raw(run: &RawValue) -> Option<String> {
-    let value: Value = serde_json::from_str(run.get()).ok()?;
     value.pointer("/benchmark_id")?.as_str().map(str::to_owned)
 }
 

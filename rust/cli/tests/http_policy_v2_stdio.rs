@@ -133,7 +133,7 @@ fn run_child(request: Value) -> Output {
         .stdin
         .take()
         .unwrap()
-        .write_all(&serde_json::to_vec(&request).unwrap())
+        .write_all(&serde_json::to_vec(&request["run"]).unwrap())
         .unwrap();
     child.wait_with_output().unwrap()
 }

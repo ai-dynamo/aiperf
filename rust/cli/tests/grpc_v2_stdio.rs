@@ -67,8 +67,14 @@ fn capabilities() -> Value {
 }
 
 fn run_child(request: &Value) -> Output {
+    // The stdin wire is the bare `run`; the operation is selected by the re-exec
+    // MODE (`--execute` / `--validate`), not a wire field.
+    let flag = match request["operation"].as_str() {
+        Some("validate") => "--validate",
+        _ => "--execute",
+    };
     let mut child = Command::new(binary())
-        .arg("--execute")
+        .arg(flag)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -78,7 +84,7 @@ fn run_child(request: &Value) -> Output {
         .stdin
         .take()
         .unwrap()
-        .write_all(serde_json::to_string(request).unwrap().as_bytes())
+        .write_all(serde_json::to_string(&request["run"]).unwrap().as_bytes())
         .unwrap();
     child.wait_with_output().unwrap()
 }

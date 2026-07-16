@@ -45,41 +45,6 @@ pub mod transport;
 pub use config::BenchmarkConfig;
 pub use resolved::Resolved;
 
-/// Requested runner operation. Wire spelling matches `RunnerOperationV2`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Operation {
-    /// Side-effect-free structural + static validation.
-    Validate,
-    /// Validate, prepare, execute, and commit the report.
-    Execute,
-}
-
-/// The protocol-v2 envelope: exactly what is written to the runner's stdin.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RunnerRequest {
-    /// Wire protocol discriminator (always `2`).
-    pub protocol_version: u32,
-    /// Requested operation.
-    pub operation: Operation,
-    /// The native benchmark run.
-    pub run: BenchmarkRun,
-}
-
-impl RunnerRequest {
-    /// The protocol version this CLI speaks.
-    pub const PROTOCOL_V2: u32 = 2;
-
-    /// Wrap one run in an execute/validate envelope.
-    pub fn new(operation: Operation, run: BenchmarkRun) -> Self {
-        Self {
-            protocol_version: Self::PROTOCOL_V2,
-            operation,
-            run,
-        }
-    }
-}
-
 /// One fully-typed native benchmark run (domain object == wire request body).
 ///
 /// Mirrors the runner-consumed shape of `BenchmarkRunWireV2`, fully typed. Open
@@ -122,14 +87,6 @@ pub struct BenchmarkRun {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn operation_serializes_snake_case() {
-        assert_eq!(
-            serde_json::to_value(Operation::Execute).unwrap(),
-            serde_json::json!("execute")
-        );
-    }
 
     #[test]
     fn none_optionals_emit_null_not_absent() {

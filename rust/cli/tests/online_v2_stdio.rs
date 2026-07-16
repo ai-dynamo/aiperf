@@ -40,7 +40,7 @@ fn capabilities() -> Value {
 }
 
 fn run_child(request: Value, environment: &[(&str, &str)]) -> Output {
-    let bytes = serde_json::to_vec(&request).unwrap();
+    let bytes = serde_json::to_vec(&request["run"]).unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_aiperf"))
         .arg("--execute")
         .envs(environment.iter().copied())

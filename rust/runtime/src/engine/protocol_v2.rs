@@ -105,7 +105,13 @@ pub enum RunnerOperationV2 {
     Execute,
 }
 
-/// One strict protocol-v2 stdin envelope.
+/// One strict protocol-v2 execution envelope.
+///
+/// This is no longer the stdin wire type: the stdin payload is the bare
+/// [`BenchmarkRunWireV2`], and the re-exec child reconstructs this envelope
+/// in-process (fixed [`RUNNER_PROTOCOL_V2`], operation from the `--execute` /
+/// `--validate` mode) before handing it to the unchanged coordinator. The
+/// `Deserialize` derive is retained for tests and out-of-band tooling.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunnerEnvelopeV2 {
