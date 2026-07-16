@@ -363,3 +363,93 @@ async fn test_cellular_exact_fold_matches_retain() {
         );
     }
 }
+
+/// Tier T1 (bounded-memory horizontal scale): a `--cells N` run with SKETCH metric
+/// storage (`AIPERF_METRICS_SKETCH=1`) reproduces the single-cell sketch run's EXACT
+/// aggregates. Each cell folds its records into a per-`(phase, tag)` t-digest store
+/// that retains no rows and ships that folded store (`CellMessage::StorePartition`,
+/// the same wire form exact-fold uses); the controller merges the sketches
+/// associatively (`merge_store_partitions` → `append_store` → t-digest merge). Counts,
+/// sums, and extrema stay exact across the merge (exact Welford aggregates + anchored
+/// min/max), so `request_count` and the INTEGER ISL/OSL `avg`/`min`/`max` match the
+/// single-cell run exactly. Percentiles are t-digest-approximate (a merged digest
+/// differs slightly from a single-ingestion digest) and are intentionally NOT compared
+/// for equality — the exact-aggregate contract is what tier T1 guarantees.
+///
+/// This proves the whole path from `aiperf profile --cells N --sketch`: Python projects
+/// `metrics.sketch` + `runtime.cells`, each cell folds-and-drops into a bounded sketch
+/// (never retaining its record stream), ships the bounded store, and the controller
+/// merges O(cells) sketches into one report — the change that unblocked sketch cellular.
+#[tokio::test]
+async fn test_cellular_sketch_matches_single_cell() {
+    let args = |cells: u32, url: &str| {
+        format!(
+            "--model {DEFAULT_MODEL} --url {url} --endpoint-type chat \
+             --request-count 60 --concurrency 6 --cells {cells} --random-seed 42 \
+             --synthetic-input-tokens-mean 256 --synthetic-input-tokens-stddev 64 \
+             --output-tokens-mean 8 --output-tokens-stddev 0 --ui simple"
+        )
+    };
+    let sketch_env = [("AIPERF_METRICS_SKETCH", "1")];
+
+    let h1 = AIPerfHarness::new().await;
+    let baseline = h1.run_env(&args(1, &h1.mock.url), &sketch_env);
+    assert!(
+        baseline.success(),
+        "1-cell sketch run failed: {}",
+        baseline.stderr
+    );
+
+    let h3 = AIPerfHarness::new().await;
+    let cellular = h3.run_env(&args(3, &h3.mock.url), &sketch_env);
+    assert!(
+        cellular.success(),
+        "3-cell sketch run failed: {}",
+        cellular.stderr
+    );
+
+    // Topology guard: the 3-cell run went through the controller; the baseline did not
+    // — otherwise the merge is never exercised and the parity check is vacuous.
+    assert!(
+        cellular
+            .artifacts
+            .find_file("**/cellular-heartbeat.json")
+            .is_some(),
+        "3-cell sketch run must go through the controller (cellular-heartbeat.json sidecar)"
+    );
+    assert!(
+        baseline
+            .artifacts
+            .find_file("**/cellular-heartbeat.json")
+            .is_none(),
+        "1-cell baseline must be single-process (no cellular sidecar)"
+    );
+
+    // The record total survives fold-and-clear + ship + merge (the store carries it;
+    // a sketch store's row count is 0).
+    assert_eq!(
+        baseline.artifacts.request_count() as u32,
+        cellular.artifacts.request_count() as u32,
+        "request_count must be exact across the cellular sketch merge"
+    );
+
+    // Exact aggregates: the INTEGER ISL/OSL avg/min/max are order-independent, so a
+    // merged sketch reproduces the single-cell sketch exactly (percentiles are not).
+    let base = baseline.artifacts.json();
+    let cell = cellular.artifacts.json();
+    for metric in DETERMINISTIC_METRICS {
+        for field in ["avg", "min", "max"] {
+            let b = &base[metric][field];
+            let c = &cell[metric][field];
+            assert!(
+                !b.is_null(),
+                "1-cell sketch report missing {metric}.{field}"
+            );
+            assert_eq!(
+                b, c,
+                "cellular sketch {metric}.{field} diverged from the single-cell sketch: \
+                 base={b}  cell={c}"
+            );
+        }
+    }
+}

@@ -167,8 +167,13 @@ memory O(#tags×#phases×~compression/2 centroids), **O(1) in record count**. `R
 folds each finalized record and drops it (retaining only errored records). Percentiles approximate;
 counts/sums/rates exact. Per‑record artifacts (records/raw/outputs JSONL, per‑record OTLP, timeslices,
 inference series, sweep curves) unavailable — dropped in `rust_wire`, fail‑closed in `validate_plan`.
-**Cellular + sketch is explicitly blocked today** (`execute.rs`: `ensure!(!sketch_mode)` on the cell
-ship path) — the documented future seam is "ship the merged sketch as a cell partition" (§5.2).
+**Cellular + sketch is now BUILT** (2026-07-15): the cell ship path ships the folded sketch store as
+`CellMessage::StorePartition` (the same wire form exact-fold uses) and the controller merges the
+per-cell t-digests associatively (`merge_store_partitions` → `ColumnStore::append_store`) — an
+O(cells × sketch) cross-cell merge, tier T1 of
+`2026-07-15-cellular-horizontal-scale-k6-parity-design.md`. Per-worker fold-and-drop already bounds
+per-cell RSS on both the single-thread and sharded paths (`ShardRecords::Folded`), and the record
+total travels with the store (`ColumnStore::ingested_count`, since a sketch store retains no rows).
 
 ### 1.9 Kubernetes launch — built on `rust-operator` (zero discovery)
 

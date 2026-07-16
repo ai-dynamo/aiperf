@@ -462,7 +462,10 @@ pub fn run_cellular(
         } else {
             kind.merge(metrics_config, partitions)?
         };
-        let record_count = merged.record_count();
+        // `ingested_count()` — not `record_count()` — so a merged SKETCH store (which
+        // retains no rows, `record_count() == 0`) reports its true total; identical to
+        // `record_count()` for the retain/exact-fold merges.
+        let record_count = merged.ingested_count() as usize;
         let summary =
             merged.export_results(&ExportContext::phase(crate::metrics_core::Phase::Profiling));
         // Assemble the report so its metric data matches a 1-cell run: the profiling

@@ -101,6 +101,14 @@ stay exact in every tier** (§2).
 Each step: what, which barrier/tier it serves, built-vs-new, the compromise, effort, dependency.
 
 ### Step 1 — Unblock sketch-cellular: ship the merged sketch as a `StorePartition` (→ T1)
+> **BUILT — 2026-07-15.** The `ensure!(!sketch_mode)` cell-ship guard is removed; the sketch branch
+> ships the folded store via `ship_store` exactly like exact-fold. A monotonic
+> `ColumnStore::ingested_total` (serialized, summed on `append_store`, exposed as `ingested_count()`)
+> carries the true record total through ship+merge since a sketch store retains no rows; the
+> controller's outcome count reads it. Unit-tested by
+> `cellular::shard::tests::sketch_store_partitions_merge_matches_single_sketch_and_carry_the_count`;
+> e2e by `test_cellular_sketch_matches_single_cell`.
+
 **What.** Remove the `ensure!(!sketch_mode)` cell guard; wire the per-`(phase,tag)` `TagSketch` store
 into the existing `CellMessage::StorePartition` ship; the controller already merges stores by append
 (`merge_store_partitions`) and t-digest merge is associative/deterministic.
@@ -115,6 +123,14 @@ exist). **Dependency.** None. **Built today:** `metrics_core::{store,accumulator
 `cellular::sketch::TDigest`, `merge_store_partitions`. **New:** the cell-side sketch→StorePartition ship.
 
 ### Step 2 — Streaming per-worker finalize: fold-and-drop per record (→ T1, per-cell memory)
+> **ALREADY BUILT (verified 2026-07-15).** The prior exact-fold/sketch work already fold-and-drops
+> per-worker on BOTH paths: `folds_records() = metrics_only(sketch) || exact_fold` gates it; the
+> single-thread path folds via `fold_record` at completion and skips the end-of-run drain, and the
+> thread-per-core sharded path returns `ShardRecords::Folded { accumulator, errored }` (each shard
+> folds into its own bounded accumulator, retaining only errored records). So per-cell peak RSS is
+> O(shards × sketch + concurrency), not O(records). No new code was needed — Step 1's unblock is what
+> made tier T1 reachable, because Step 2 was already in place.
+
 **What.** Fold each record into the worker-local accumulator **at completion** and drop it (retain only
 errored records for grouping), keyed by phase — extending the existing `RunCapture::finish_fold_into`
 from finalize-time to per-record-streaming.

@@ -738,6 +738,14 @@ pub struct ColumnStore<B: ListMetricBackend = RaggedSeries> {
     // sketch and clearing the rows so memory stays O(1) in the record count.
     #[serde(default)]
     sketch: Option<SketchColumns>,
+    // Monotonic count of every record ever ingested, unaffected by [`Self::clear_rows`]
+    // (which resets `occupied_count` after each sketch harvest) and summed on
+    // [`Self::append_store`]. It is the true record total on the sketch path, where the
+    // store retains no rows; on exact/exact-fold stores it equals `occupied_count`. It
+    // travels with the serialized store so a cellular controller's merged sketch store
+    // reports the real record count, not 0. `#[serde(default)]` keeps wire compatibility.
+    #[serde(default)]
+    ingested_total: u64,
 }
 
 impl<B: ListMetricBackend> Default for ColumnStore<B> {
@@ -768,6 +776,7 @@ impl<B: ListMetricBackend> Default for ColumnStore<B> {
             ragged: (0..MetricTag::COUNT).map(|_| None).collect(),
             ragged_present: Vec::new(),
             sketch: None,
+            ingested_total: 0,
         }
     }
 }
@@ -913,6 +922,9 @@ impl<B: ListMetricBackend> ColumnStore<B> {
             "request slot {row} was already populated"
         );
         self.occupied_count += 1;
+        // Monotonic total surviving `clear_rows` (sketch mode's per-record fold-and-clear).
+        // Every ingest path (`push_record_*`, `insert_record_at*`) funnels through here.
+        self.ingested_total += 1;
         self.populate_dimensions(row, record);
         self.populate_raw_metrics(row, record, token_arrivals_ns);
         for (tag, value) in &record.metric_overrides {
@@ -925,6 +937,9 @@ impl<B: ListMetricBackend> ColumnStore<B> {
     /// Categorical codes are re-interned in append order, numeric absence remains
     /// index-aligned, and list-valued record indices are shifted exactly once.
     pub fn append_store(&mut self, other: &Self) {
+        // Carry the true record total across the merge (it is the only surviving count
+        // on the sketch path, where both stores retain no rows).
+        self.ingested_total = self.ingested_total.saturating_add(other.ingested_total);
         // Sketch partitions merge associatively; a sketch-mode store retains no
         // rows, so this is the whole merge on that path.
         if let (Some(sketch), Some(other_sketch)) = (self.sketch.as_mut(), other.sketch.as_ref()) {
@@ -1075,6 +1090,15 @@ impl<B: ListMetricBackend> ColumnStore<B> {
     /// Returns the number of populated request slots.
     pub fn record_count(&self) -> usize {
         self.occupied_count
+    }
+
+    /// Returns the monotonic total of every record ever ingested. Unlike
+    /// [`Self::record_count`] this survives [`Self::clear_rows`] (sketch mode's
+    /// per-record fold-and-clear) and is summed across [`Self::append_store`], so it is
+    /// the true record total even when the store retains no rows. Equals
+    /// [`Self::record_count`] for exact/exact-fold stores.
+    pub fn ingested_count(&self) -> u64 {
+        self.ingested_total
     }
 
     /// Returns true when no request slot has been populated.
