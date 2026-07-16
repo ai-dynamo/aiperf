@@ -32,7 +32,10 @@ def _readiness_auth_headers(cfg: EndpointConfig) -> dict[str, str]:
     if str(cfg.type) == "messages":
         headers.setdefault("anthropic-version", _ANTHROPIC_VERSION)
         if cfg.api_key:
-            headers.setdefault("x-api-key", cfg.api_key)
+            # Hard-assign so --api-key overrides any preconfigured x-api-key,
+            # matching MessagesEndpoint.get_endpoint_headers(); otherwise
+            # preflight would probe a different key than real requests use.
+            headers["x-api-key"] = cfg.api_key
     elif cfg.api_key:
         headers["Authorization"] = f"Bearer {cfg.api_key}"
     return headers

@@ -203,7 +203,7 @@ class TimingMiddleware:
 
 
 _INFERENCE_PATHS: frozenset[str] = frozenset(
-    {"/v1/chat/completions", "/v1/completions", "/v1/embeddings"}
+    {"/v1/chat/completions", "/v1/completions", "/v1/embeddings", "/v1/messages"}
 )
 _AUTH_PROTECTED_PATHS: frozenset[str] = frozenset(
     {
@@ -220,6 +220,7 @@ _AUTH_PROTECTED_PATHS: frozenset[str] = frozenset(
         "/v1/images/edits",
         "/v1/images/generations",
         "/v1/infer",
+        "/v1/messages",
         "/v1/ranking",
         "/v1/responses",
         "/v1/videos",

@@ -24,6 +24,25 @@ def test_messages_headers_use_x_api_key_and_version() -> None:
     assert "Authorization" not in headers
 
 
+def test_messages_api_key_overrides_preconfigured_x_api_key() -> None:
+    """--api-key must override a preconfigured x-api-key on the probe.
+
+    MessagesEndpoint.get_endpoint_headers() hard-assigns x-api-key from
+    api_key, so real requests use the CLI key. Readiness must probe the same
+    key, otherwise preflight validates a different credential than the run.
+    """
+    headers = _readiness_auth_headers(
+        EndpointConfig(
+            type="messages",
+            urls=["http://server"],
+            api_key="sk-ant-cli",
+            headers={"x-api-key": "sk-ant-preconfigured"},
+        )
+    )
+
+    assert headers["x-api-key"] == "sk-ant-cli"
+
+
 def test_messages_headers_set_version_without_api_key() -> None:
     """anthropic-version is required even when no api_key is configured."""
     headers = _readiness_auth_headers(
