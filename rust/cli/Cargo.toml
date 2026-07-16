@@ -24,6 +24,8 @@ serde_json.workspace = true
 serde_yaml = "0.9"
 uuid = { version = "1", features = ["v4"] }
 tracing.workspace = true
+regex.workspace = true
+minijinja = { version = "2.21", features = ["json"] }
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["signal"] }

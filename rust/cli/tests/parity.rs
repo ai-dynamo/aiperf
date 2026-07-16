@@ -302,6 +302,9 @@ const YAML_FIXTURES: &[(&str, &str, &str)] = &[
     ("yaml_warmup", "yaml_warmup", "/tmp/aiperf-parity/yaml_warmup"),
     ("yaml_camel", "yaml_camel", "/tmp/aiperf-parity/yaml_camel"),
     ("yaml_records", "yaml_records", "/tmp/aiperf-parity/yaml_records"),
+    // `${ENV:default}` substitution + Jinja2 `variables:` expansion parity.
+    ("jinja_vars", "yaml_jinja", "/tmp/aiperf-parity/jinja_vars"),
+    ("env_prod", "yaml_envprod", "/tmp/aiperf-parity/env_prod"),
 ];
 
 #[test]

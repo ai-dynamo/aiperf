@@ -30,6 +30,9 @@ pub struct Distribution {
     /// Standard deviation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stddev: Option<f64>,
+    /// Median (selects a log-normal distribution when paired with `mean`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub median: Option<f64>,
     /// Lower bound.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min: Option<f64>,

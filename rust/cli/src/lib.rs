@@ -16,6 +16,7 @@ pub mod config;
 pub mod delegate;
 pub mod dispatch;
 pub mod execute;
+pub mod expand;
 pub mod flags;
 pub mod load;
 pub mod model;

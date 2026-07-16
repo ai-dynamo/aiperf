@@ -42,8 +42,13 @@ pub(crate) fn resolve_str(
     text: &str,
     artifact_dir: Option<PathBuf>,
 ) -> anyhow::Result<crate::model::BenchmarkRun> {
-    let file: ConfigFile =
-        serde_yaml::from_str(text).map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))?;
+    // Parse to a generic value, apply `${ENV}` + Jinja2 expansion (matching
+    // Python's loader pipeline), then deserialize the expanded tree.
+    let raw: serde_json::Value = serde_yaml::from_str(text)
+        .map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))?;
+    let expanded = crate::expand::expand_config(raw)?;
+    let file: ConfigFile = serde_json::from_value(expanded)
+        .map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))?;
     let random_seed = file.random_seed;
     let inputs = file.benchmark.into_inputs(artifact_dir, random_seed)?;
     load::build(inputs)
@@ -78,6 +83,8 @@ enum NumOrDist {
 struct DistFields {
     mean: Option<f64>,
     stddev: Option<f64>,
+    /// Median selects a log-normal distribution (paired with `mean`).
+    median: Option<f64>,
     min: Option<f64>,
     max: Option<f64>,
 }
@@ -437,6 +444,9 @@ enum Phases {
 
 #[derive(Debug, Deserialize)]
 struct PhaseSection {
+    /// Phase name (`warmup`/`profiling`); used to route an explicit
+    /// `phases:` list into the run's warmup vs profiling axes.
+    name: Option<String>,
     /// Arrival pattern (`concurrency`/`poisson`/`gamma`/`constant`/
     /// `user_centric`/`fixed_schedule`).
     #[serde(rename = "type")]
@@ -681,22 +691,36 @@ impl Benchmark {
 
         // The profiling phase comes from `phases:` (flat or list) or the simple
         // `profiling:` block; the two forms are mutually exclusive (as in Config).
-        let phase = match (self.phases, self.profiling) {
+        // An explicit `phases:` list routes by name: the `warmup`-named entry
+        // becomes the run's warmup axes, everything else is the profiling phase.
+        let (phase, list_warmup) = match (self.phases, self.profiling) {
             (Some(_), Some(_)) => {
                 anyhow::bail!("'phases' cannot be combined with 'warmup'/'profiling'")
             }
-            (Some(Phases::One(p)), None) => p,
-            (Some(Phases::Many(mut v)), None) => v
-                .drain(..)
-                .next()
-                .ok_or_else(|| anyhow::anyhow!("phases must have at least one entry"))?,
-            (None, Some(p)) => p,
+            (Some(Phases::One(p)), None) => (p, None),
+            (Some(Phases::Many(v)), None) => {
+                let mut warmup = None;
+                let mut profiling = None;
+                for p in v {
+                    if p.name.as_deref() == Some("warmup") {
+                        warmup = Some(p);
+                    } else {
+                        // Last non-warmup entry wins (a single profiling phase).
+                        profiling = Some(p);
+                    }
+                }
+                let profiling = profiling
+                    .ok_or_else(|| anyhow::anyhow!("phases must include a non-warmup phase"))?;
+                (profiling, warmup)
+            }
+            (None, Some(p)) => (p, None),
             (None, None) => anyhow::bail!("a phase is required (set `phases` or `profiling`)"),
         };
 
-        // A leading `warmup:` block (simple-config form) becomes the run's warmup
-        // axes, excluded from results and run before profiling.
-        let warmup = self.warmup.map(|w| Warmup {
+        // A leading `warmup:` block (simple-config form) OR a `warmup`-named entry
+        // in the `phases:` list becomes the run's warmup axes, excluded from
+        // results and run before profiling.
+        let warmup = self.warmup.or(list_warmup).map(|w| Warmup {
             concurrency: w.concurrency,
             rate: w.rate,
             requests: w.requests,
@@ -1105,15 +1129,34 @@ fn build_adaptive_yaml(
     })
 }
 
-/// Build a [`Distribution`] from a parametric YAML dist block (`{mean,stddev,…}`).
+/// Build a [`Distribution`] from a parametric YAML dist block (`{mean,stddev,…}`),
+/// applying the config discriminator's normal-distribution default.
 fn dist_from(d: &DistFields) -> Distribution {
-    Distribution {
+    normalize_dist(Distribution {
         mean: d.mean,
         stddev: d.stddev,
+        median: d.median,
         min: d.min,
         max: d.max,
         ..Default::default()
+    })
+}
+
+/// Apply the config's distribution discriminator defaults. A bare `{mean}` (no
+/// `stddev`/`median`/`peaks`) is a `NormalDistribution` whose `stddev` defaults
+/// to `0.0` — the wire therefore carries `stddev: 0.0`, matching Python's
+/// `NormalDistribution` (`src/aiperf/config/distributions.py`). A `median`
+/// (log-normal) or `peaks` (multimodal) shape takes no `stddev` default.
+fn normalize_dist(mut d: Distribution) -> Distribution {
+    if d.mean.is_some()
+        && d.stddev.is_none()
+        && d.median.is_none()
+        && d.peaks.is_none()
+        && d.value.is_none()
+    {
+        d.stddev = Some(0.0);
     }
+    d
 }
 
 /// Clone a `StringOrVec` into a `Vec<String>` without consuming it.
@@ -1131,13 +1174,7 @@ fn clone_num_or_dist(n: &NumOrDist) -> Distribution {
             value: Some(*value),
             ..Default::default()
         },
-        NumOrDist::Dist(d) => Distribution {
-            mean: d.mean,
-            stddev: d.stddev,
-            min: d.min,
-            max: d.max,
-            ..Default::default()
-        },
+        NumOrDist::Dist(d) => dist_from(d),
     }
 }
 
