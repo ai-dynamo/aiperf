@@ -156,12 +156,7 @@ pub fn parse_custom_metrics(text: &str) -> LoadedCustomMetrics {
             continue;
         }
 
-        let mut display_name = help_msg
-            .split('(')
-            .next()
-            .unwrap_or("")
-            .trim()
-            .to_string();
+        let mut display_name = help_msg.split('(').next().unwrap_or("").trim().to_string();
         if display_name.is_empty() {
             display_name = internal_name.replace('_', " ");
         }
@@ -268,9 +263,7 @@ fn capitalize(word: &str) -> String {
     let mut chars = word.chars();
     match chars.next() {
         None => String::new(),
-        Some(first) => {
-            first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
-        }
+        Some(first) => first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase(),
     }
 }
 
@@ -290,7 +283,11 @@ mod tests {
 
         // MEM_COPY_UTIL is a built-in (maps to mem_utilization) -> deduped.
         assert_eq!(loaded.specs.len(), 3);
-        assert!(!loaded.decoder_fields.contains_key("DCGM_FI_DEV_MEM_COPY_UTIL"));
+        assert!(
+            !loaded
+                .decoder_fields
+                .contains_key("DCGM_FI_DEV_MEM_COPY_UTIL")
+        );
 
         let by_name: BTreeMap<&str, &RuntimeGpuMetricSpec> =
             loaded.specs.iter().map(|s| (s.name.as_str(), s)).collect();
@@ -336,8 +333,8 @@ mod tests {
 
     #[test]
     fn missing_file_is_an_error() {
-        let error = load_custom_dcgm_metrics(Path::new("/nonexistent/custom_metrics.csv"))
-            .unwrap_err();
+        let error =
+            load_custom_dcgm_metrics(Path::new("/nonexistent/custom_metrics.csv")).unwrap_err();
         assert!(matches!(error, CustomMetricsError::Read { .. }));
     }
 
@@ -359,6 +356,9 @@ mod tests {
     fn title_case_keeps_acronyms_upper() {
         assert_eq!(title_case_metric_name("gpu power usage"), "GPU Power Usage");
         assert_eq!(title_case_metric_name("xid errors"), "XID Errors");
-        assert_eq!(title_case_metric_name("sm clock frequency"), "SM Clock Frequency");
+        assert_eq!(
+            title_case_metric_name("sm clock frequency"),
+            "SM Clock Frequency"
+        );
     }
 }

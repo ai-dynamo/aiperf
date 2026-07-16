@@ -1,0 +1,5 @@
+# Runtime sidecars — Cursor writes these beside the canvas source at edit time.
+*.canvas.data.json
+*.canvas.status.json
+node_modules/
+tsconfig.json

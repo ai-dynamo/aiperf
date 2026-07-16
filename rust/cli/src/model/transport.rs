@@ -32,6 +32,9 @@ pub enum Transport {
     DynosimOffline(DynosimConfig),
     /// Online wall-clock Dynamo replay (fields flat on the transport).
     DynosimOnline(DynosimConfig),
+    /// Lightweight fake execution leaf: analytic-latency synthetic responses,
+    /// zero network (fields flat on the transport).
+    DryRun(DryRunConfig),
 }
 
 impl Transport {
@@ -42,6 +45,31 @@ impl Transport {
             Transport::DynosimOffline(_) | Transport::DynosimOnline(_)
         )
     }
+
+    /// Whether this is the no-server fake `dry_run` transport.
+    pub fn is_dry_run(&self) -> bool {
+        matches!(self, Transport::DryRun(_))
+    }
+}
+
+/// The typed `dry_run` transport surface (analytic latency knobs, flat on the
+/// transport). Mirrors `aiperf_runtime::engine::dry_run::DryRunTransportConfigV2`.
+/// Fields are `Option` so only author-set knobs serialize (`exclude_unset`); the
+/// runtime applies its own defaults for any omitted field.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct DryRunConfig {
+    /// Synthetic time-to-first-token in milliseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttft_ms: Option<f64>,
+    /// Synthetic inter-token latency in milliseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub itl_ms: Option<f64>,
+    /// Coefficient of variation for the (future) seeded jitter draw.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jitter_cv: Option<f64>,
+    /// Root seed for the (future) jitter draw.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
 }
 
 /// The typed `transport.config` field surface for the DynoSim transports.

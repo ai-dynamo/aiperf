@@ -22,10 +22,10 @@ pub use accumulator::{
     GpuMergeError, GpuMetricRegistrationError, GpuPhaseBoundary, GpuTelemetryAccumulator,
     GpuTelemetrySummary,
 };
+pub use collector::GpuTelemetryCollector;
 pub use custom_metrics::{
     CustomDcgmField, CustomMetricsError, LoadedCustomMetrics, load_custom_dcgm_metrics,
 };
-pub use collector::GpuTelemetryCollector;
 pub use fields::{
     AMD_METRICS, DCGM_METRICS, GpuMetricKind, GpuMetricSpec, RuntimeGpuMetricSpec, amd_metric_spec,
     dcgm_metric_spec, metric_spec,

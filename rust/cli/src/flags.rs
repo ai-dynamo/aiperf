@@ -973,6 +973,21 @@ pub struct ProfileFlags {
     /// YAML configuration file (`--config` / `-f`).
     #[arg(long = "config", short = 'f')]
     pub config_file: Option<PathBuf>,
+
+    /// Dry run: swap the real transport for a fake execution leaf that
+    /// fabricates every response from an analytic latency model with zero
+    /// network. Exercises the full scheduling/metrics/export pipeline without an
+    /// inference server (`--dry-run`). Sets `transport.type: dry_run`.
+    #[arg(long = "dry-run", default_value_t = false)]
+    pub dry_run: bool,
+    /// Synthetic time-to-first-token in milliseconds for `--dry-run`
+    /// (`--dry-run-ttft-ms`). Omitted → the runtime default.
+    #[arg(long = "dry-run-ttft-ms")]
+    pub dry_run_ttft_ms: Option<f64>,
+    /// Synthetic inter-token latency in milliseconds for `--dry-run`
+    /// (`--dry-run-itl-ms`). Omitted → the runtime default.
+    #[arg(long = "dry-run-itl-ms")]
+    pub dry_run_itl_ms: Option<f64>,
 }
 
 impl ProfileFlags {
