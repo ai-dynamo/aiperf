@@ -318,6 +318,7 @@ mod tests {
             images: None,
             audio: None,
             video: None,
+            rankings: None,
             sampling: Sampling("sequential".into()),
             turns: None,
             turn_delay_ratio: 1.0,
