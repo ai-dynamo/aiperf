@@ -191,8 +191,10 @@ class RecordsTracker:
 
     def _latest_tracker_for_phase(
         self, phase: CreditPhase
-    ) -> CreditPhaseRecordsTracker:
-        return self._get_phase_tracker(phase, self._latest_phase_index.get(phase))
+    ) -> CreditPhaseRecordsTracker | None:
+        if phase not in self._latest_phase_index:
+            return None
+        return self._get_phase_tracker(phase, self._latest_phase_index[phase])
 
     def create_overall_worker_stats(self) -> dict[str, WorkerProcessingStats]:
         """Create a new dictionary of WorkerProcessingStats objects for ALL phases."""
@@ -213,16 +215,21 @@ class RecordsTracker:
         When ``phase_index`` is omitted, this preserves the legacy behavior by
         returning the latest tracker for that phase kind.
         """
-        phase_tracker = (
-            self._latest_tracker_for_phase(phase)
-            if phase_index is None
-            else self._get_phase_tracker(phase, phase_index)
-        )
-        return phase_tracker.create_stats()
+        if phase_index is None:
+            phase_tracker = self._latest_tracker_for_phase(phase)
+            if phase_tracker is None:
+                return CreditPhaseRecordsTracker(phase).create_stats()
+            return phase_tracker.create_stats()
+        return self._get_phase_tracker(phase, phase_index).create_stats()
 
     def create_aggregate_stats_for_phase(self, phase: CreditPhase) -> PhaseRecordsStats:
         """Create stats spanning all concrete instances of ``phase``."""
-        stats = [
+        concrete_stats = [
+            tracker.create_stats()
+            for (tracker_phase, phase_index), tracker in self._phase_trackers.items()
+            if tracker_phase == phase and phase_index is not None
+        ]
+        stats = concrete_stats or [
             tracker.create_stats()
             for (tracker_phase, _), tracker in self._phase_trackers.items()
             if tracker_phase == phase
@@ -318,7 +325,12 @@ class RecordsTracker:
             phase_tracker = self._get_phase_tracker(phase, phase_index)
             return phase_tracker.check_and_set_all_records_received()
 
-        phase_trackers = [
+        concrete_phase_trackers = [
+            tracker
+            for (tracker_phase, phase_index), tracker in self._phase_trackers.items()
+            if tracker_phase == phase and phase_index is not None
+        ]
+        phase_trackers = concrete_phase_trackers or [
             tracker
             for (tracker_phase, _), tracker in self._phase_trackers.items()
             if tracker_phase == phase

@@ -232,6 +232,37 @@ class TestRecordsManagerRace:
         assert storm_stats.phase_name == "storm"
         assert storm_stats.profiling_index == 1
 
+    def test_early_phase_only_stats_read_does_not_block_named_phase_completion(self):
+        rt = RecordsTracker()
+
+        early_stats = rt.create_stats_for_phase(CreditPhase.PROFILING)
+
+        assert early_stats.phase == CreditPhase.PROFILING
+        assert early_stats.total_records == 0
+        assert rt._phase_trackers == {}
+
+        for phase_index, phase_name in ((0, "low"), (1, "recovery")):
+            rt.update_phase_info(
+                CreditPhaseStats(
+                    phase=CreditPhase.PROFILING,
+                    phase_index=phase_index,
+                    profiling_index=phase_index,
+                    phase_name=phase_name,
+                    phase_kind="profiling",
+                    final_requests_completed=1,
+                    start_ns=1000 + phase_index,
+                    requests_end_ns=2000 + phase_index,
+                )
+            )
+            rt._get_phase_tracker(
+                CreditPhase.PROFILING, phase_index=phase_index
+            ).increment_success_records()
+
+        assert rt.check_and_set_all_records_received_for_phase(CreditPhase.PROFILING)
+        aggregate = rt.create_aggregate_stats_for_phase(CreditPhase.PROFILING)
+        assert aggregate.final_requests_completed == 2
+        assert aggregate.success_records == 2
+
 
 @pytest.mark.asyncio
 class TestStickyRouterWorkerRace:
