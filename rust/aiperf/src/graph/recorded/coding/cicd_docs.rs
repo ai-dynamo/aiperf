@@ -8,27 +8,36 @@ use super::vocab::*;
 use crate::graph::recorded::RecordedTraceError;
 
 /// `_gen_cicd_output`: a five-step CI pipeline transcript for a random toolchain.
-pub(super) fn cicd_output(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
+///
+/// `lang` selects the toolchain (`lang_toolchain[language]`); Python still
+/// eagerly evaluates the `r.choice(list(lang_toolchain.values()))` default, so
+/// the selecting draw fires regardless of `lang`.
+pub(super) fn cicd_output(
+    r: &mut TemplateRenderer,
+    lang: Option<usize>,
+) -> Result<String, RecordedTraceError> {
     let mod_ = r.pick(MODULES)?;
     let n_pass = r.number(20, 200)?;
     let n_fail = r.number(0, 5)?;
     let n_skip = r.number(0, 10)?;
     let n_pkgs = r.number(50, 300)?;
-    let install_time = r.number(5, 100)? as f64 / 10.0;
+    let install_time = r.uniform(0.5, 10.0);
     let n_lint_files = r.number(10, 100)?;
     let n_type_mods = r.number(100, 500)?;
-    let coverage = r.number(700, 990)? as f64 / 10.0;
+    let coverage = r.uniform(70.0, 99.0);
     let ver = format!(
         "{}.{}.{}",
         r.number(1, 9)?,
         r.number(0, 99)?,
         r.number(0, 99)?
     );
-    let artifact_size = r.number(1, 500)? as f64 / 10.0;
+    let artifact_size = r.uniform(0.1, 50.0);
     let status = if n_fail == 0 { "PASSED" } else { "FAILED" };
     let elapsed = r.number(30, 600)?;
 
-    let (install_step, lint_step, typecheck_step, test_step, build_step) = match r.index(4)? {
+    let toolchain_draw = r.index(4)?;
+    let sel = lang.unwrap_or(toolchain_draw);
+    let (install_step, lint_step, typecheck_step, test_step, build_step) = match sel {
         0 => (
             format!(
                 "pip install -r requirements.txt\n  Resolved {n_pkgs} packages in {install_time:.1}s"
@@ -92,16 +101,29 @@ Pipeline {status} in {elapsed}s
     ))
 }
 
-/// `_gen_config_file`: dispatch across the config-file kinds (yaml/toml/dockerfile/makefile).
-pub(super) fn config_file(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
+/// `_gen_config_file`: dispatch across the config-file kinds. The candidate kind
+/// list depends on `lang` (`_lang_to_kinds`), so the `choice` index range and
+/// mapping change with language; `None` uses the full 4-kind list.
+pub(super) fn config_file(
+    r: &mut TemplateRenderer,
+    lang: Option<usize>,
+) -> Result<String, RecordedTraceError> {
     let mod_ = r.pick(MODULES)?;
     let v = r.sample(VARS, 3)?;
     let (v1, v2, v3) = (v[0], v[1], v[2]);
 
-    match r.index(4)? {
-        0 => config_yaml(r, mod_, v1, v2, v3),
-        1 => config_toml(r, mod_, v1, v2, v3),
-        2 => config_dockerfile(r, mod_, v1, v2),
+    let choices: &[&str] = match lang {
+        Some(0) => &["yaml", "toml", "dockerfile"],
+        Some(1) => &["yaml", "makefile"],
+        Some(2) => &["toml"],
+        Some(3) => &["yaml", "dockerfile"],
+        _ => &["yaml", "toml", "dockerfile", "makefile"],
+    };
+    let kind = choices[r.index(choices.len())?];
+    match kind {
+        "yaml" => config_yaml(r, mod_, v1, v2, v3),
+        "toml" => config_toml(r, mod_, v1, v2, v3),
+        "dockerfile" => config_dockerfile(r, mod_, v1, v2, lang),
         _ => config_makefile(mod_),
     }
 }
@@ -190,14 +212,44 @@ fn config_dockerfile(
     mod_: &str,
     v1: &str,
     v2: &str,
+    lang: Option<usize>,
 ) -> Result<String, RecordedTraceError> {
     let env1_val = r.number(1, 100)?;
     let env2_val = r.pick(MODULES)?;
     let port = r.number(3000, 9999)?;
-    let py_ver = r.number(10, 13)?;
-    let base_image = format!("python:3.{py_ver}-slim");
-    let install_cmd = "COPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt";
-    let run_cmd = format!(r#"CMD ["python", "-m", "{mod_}"]"#);
+    // `docker_lang = language or "python"`: None falls through to python.
+    let (base_image, install_cmd, run_cmd) = match lang {
+        Some(1) => {
+            let go_ver = format!("1.{}", r.number(21, 23)?);
+            (
+                format!("golang:{go_ver}-alpine"),
+                "COPY go.mod go.sum ./\nRUN go mod download".to_string(),
+                format!(r#"CMD ["./bin/{mod_}"]"#),
+            )
+        }
+        Some(2) => (
+            "rust:1-slim".to_string(),
+            "COPY Cargo.toml Cargo.lock ./\nRUN cargo fetch".to_string(),
+            format!(r#"CMD ["./target/release/{mod_}"]"#),
+        ),
+        Some(3) => {
+            let node_ver = r.number(18, 22)?;
+            (
+                format!("node:{node_ver}-alpine"),
+                "COPY package.json package-lock.json ./\nRUN npm ci".to_string(),
+                format!(r#"CMD ["node", "dist/{mod_}/index.js"]"#),
+            )
+        }
+        _ => {
+            let py_ver = r.number(10, 13)?;
+            (
+                format!("python:3.{py_ver}-slim"),
+                "COPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt"
+                    .to_string(),
+                format!(r#"CMD ["python", "-m", "{mod_}"]"#),
+            )
+        }
+    };
     let v1_upper = v1.to_uppercase();
     let v2_upper = v2.to_uppercase();
     Ok(format!(
@@ -250,90 +302,104 @@ pub(super) fn markdown_doc(r: &mut TemplateRenderer) -> Result<String, RecordedT
     let v1 = r.pick(VARS)?;
     let err = r.pick(ERRORS)?;
 
-    let (fence, code, param_type, return_type) = match r.index(4)? {
-        0 => {
-            let param_type = r
-                .pick(&[
-                    "str", "int", "float", "bool", "dict", "list", "Any", "Optional",
-                ])?
-                .to_string();
-            let return_type = r
-                .pick(&["str", "int", "bool", "dict", "list", "None", "Any"])?
-                .to_string();
-            let code = format!(
+    // Python builds the ENTIRE `lang_examples` dict (python/go/rust/typescript)
+    // before selecting one, so every language's `param_type`/`return_type` choice
+    // is drawn, in order, and only then is the example selected.
+    let py_param = r
+        .pick(&[
+            "str", "int", "float", "bool", "dict", "list", "Any", "Optional",
+        ])?
+        .to_string();
+    let py_return = r
+        .pick(&["str", "int", "bool", "dict", "list", "None", "Any"])?
+        .to_string();
+    let go_param = r
+        .pick(&[
+            "string",
+            "int",
+            "int64",
+            "bool",
+            "[]byte",
+            "error",
+            "context.Context",
+        ])?
+        .to_string();
+    let go_return = match r.index(5)? {
+        0 => "string".to_string(),
+        1 => "int".to_string(),
+        2 => "bool".to_string(),
+        3 => "error".to_string(),
+        _ => format!("*{cls}"),
+    };
+    let rust_param = r
+        .pick(&[
+            "&str",
+            "String",
+            "i64",
+            "bool",
+            "Vec<u8>",
+            "&[u8]",
+            "Option<String>",
+        ])?
+        .to_string();
+    let rust_return = r
+        .pick(&[
+            "Result<()>",
+            "Result<String>",
+            "bool",
+            "Option<String>",
+            "&str",
+        ])?
+        .to_string();
+    let ts_param = r
+        .pick(&[
+            "string",
+            "number",
+            "boolean",
+            "Record<string, unknown>",
+            "unknown[]",
+        ])?
+        .to_string();
+    let ts_return = r
+        .pick(&["string", "number", "boolean", "void", "Promise<void>"])?
+        .to_string();
+    let m1_title = TemplateRenderer::title_case(m1);
+    let examples: [(&str, String, String, String); 4] = [
+        (
+            "python",
+            format!(
                 "from {mod_} import {cls}\n\ninstance = {cls}({v1}=\"value\")\nresult = await instance.{m1}()"
-            );
-            ("python", code, param_type, return_type)
-        }
-        1 => {
-            let param_type = r
-                .pick(&[
-                    "string",
-                    "int",
-                    "int64",
-                    "bool",
-                    "[]byte",
-                    "error",
-                    "context.Context",
-                ])?
-                .to_string();
-            let m1_title = TemplateRenderer::title_case(m1);
-            let return_type = match r.index(5)? {
-                0 => "string".to_string(),
-                1 => "int".to_string(),
-                2 => "bool".to_string(),
-                3 => "error".to_string(),
-                _ => format!("*{cls}"),
-            };
-            let code = format!(
+            ),
+            py_param,
+            py_return,
+        ),
+        (
+            "go",
+            format!(
                 "import \"{mod_}\"\n\nc := {mod_}.New{cls}(\"{v1}\")\nerr := c.{m1_title}(ctx)"
-            );
-            ("go", code, param_type, return_type)
-        }
-        2 => {
-            let param_type = r
-                .pick(&[
-                    "&str",
-                    "String",
-                    "i64",
-                    "bool",
-                    "Vec<u8>",
-                    "&[u8]",
-                    "Option<String>",
-                ])?
-                .to_string();
-            let return_type = r
-                .pick(&[
-                    "Result<()>",
-                    "Result<String>",
-                    "bool",
-                    "Option<String>",
-                    "&str",
-                ])?
-                .to_string();
-            let code = format!(
-                "use {mod_}::{cls};\n\nlet mut c = {cls}::new(\"{v1}\");\nc.{m1}().await?;"
-            );
-            ("rust", code, param_type, return_type)
-        }
-        _ => {
-            let param_type = r
-                .pick(&[
-                    "string",
-                    "number",
-                    "boolean",
-                    "Record<string, unknown>",
-                    "unknown[]",
-                ])?
-                .to_string();
-            let return_type = r
-                .pick(&["string", "number", "boolean", "void", "Promise<void>"])?
-                .to_string();
-            let code = format!(
+            ),
+            go_param,
+            go_return,
+        ),
+        (
+            "rust",
+            format!("use {mod_}::{cls};\n\nlet mut c = {cls}::new(\"{v1}\");\nc.{m1}().await?;"),
+            rust_param,
+            rust_return,
+        ),
+        (
+            "typescript",
+            format!(
                 "import {{ {cls} }} from './{mod_}';\n\nconst c = new {cls}({{ {v1}: 'value' }});\nawait c.{m1}();"
-            );
-            ("typescript", code, param_type, return_type)
-        }
+            ),
+            ts_param,
+            ts_return,
+        ),
+    ];
+    let sel = r.index(4)?;
+    let (fence, code, param_type, return_type) = {
+        let e = &examples[sel];
+        (e.0, e.1.clone(), e.2.clone(), e.3.clone())
     };
 
     let v = r.sample(VARS, 2)?;
@@ -433,7 +499,7 @@ fn test_output_pytest(
         ));
     }
     let n_fail = methods.len() - n_pass;
-    let dur = r.number(50, 3000)? as f64 / 100.0;
+    let dur = r.uniform(0.5, 30.0);
     lines.push(format!("\n{}", "=".repeat(70)));
     lines.push(format!("{n_pass} passed, {n_fail} failed in {dur:.2}s"));
     Ok(lines.join("\n") + "\n")
@@ -451,12 +517,12 @@ fn test_output_go(
             3 => "FAIL",
             _ => "ok",
         };
-        let dur = r.number(1, 2000)? as f64 / 1000.0;
+        let dur = r.uniform(0.001, 2.0);
         let m_title = TemplateRenderer::title_case(m);
         lines.push(format!("--- {status}: Test{m_title} ({dur:.3}s)"));
     }
     let pkg = r.pick(MODULES)?;
-    let total_dur = r.number(100, 5000)? as f64 / 1000.0;
+    let total_dur = r.uniform(0.1, 5.0);
     lines.push(format!("{status}  \t{mod_}/{pkg}\t{total_dur:.3}s"));
     Ok(lines.join("\n") + "\n")
 }
@@ -473,7 +539,7 @@ fn test_output_cargo(
         r.number(1, 99)?,
         r.number(0, 9)?
     )];
-    let finished = r.number(100, 3000)? as f64 / 100.0;
+    let finished = r.uniform(1.0, 30.0);
     lines.push(format!("    Finished test target(s) in {finished:.2}s"));
     lines.push("     Running unittests src/lib.rs\n".to_string());
     let mut n_pass = 0usize;

@@ -8,12 +8,26 @@ use super::vocab::*;
 use crate::graph::recorded::RecordedTraceError;
 
 /// `_gen_error_traceback`: dispatch across the per-language traceback variants.
-pub(super) fn error_traceback(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
+///
+/// When `lang` is `Some`, the traceback kind is fixed by the language
+/// (`lang_to_kind`, where typescript maps to the `node` kind) with NO random
+/// draw; `None` (the pool path) draws `choice(["python","go","rust","node"])`.
+pub(super) fn error_traceback(
+    r: &mut TemplateRenderer,
+    lang: Option<usize>,
+) -> Result<String, RecordedTraceError> {
     let err = r.pick(ERRORS)?;
     let cls = r.pick(CLASSES)?;
     let ms = r.sample(METHODS, 4)?;
-    let kind = r.index(4)?;
-    let fs = r.sample(FILES, 4)?;
+    // python=0, go=1, rust=2, node=3; typescript(lang 3) -> node kind.
+    let kind = match lang {
+        Some(0) => 0,
+        Some(1) => 1,
+        Some(2) => 2,
+        Some(3) => 3,
+        _ => r.index(4)?,
+    };
+    let fs = r.sample(file_pool(lang), 4)?;
     let (m1, m2, m3, m4) = (ms[0], ms[1], ms[2], ms[3]);
     let (f1, f2, f3, f4) = (fs[0], fs[1], fs[2], fs[3]);
     match kind {
@@ -422,8 +436,15 @@ fn diff_hunks_typescript(c: &DiffCtx) -> (String, String, String) {
 }
 
 /// `_gen_git_diff`: a commit diff assembled from per-language hunk builders.
-pub(super) fn git_diff(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
-    let fs = r.sample(FILES, 3)?;
+///
+/// The hunk language is chosen by the `lang` parameter (Python's `language`
+/// argument selects `lang_hunks[language]`), NOT by a random draw — `None`
+/// (the pool path) resolves to the python hunks.
+pub(super) fn git_diff(
+    r: &mut TemplateRenderer,
+    lang: Option<usize>,
+) -> Result<String, RecordedTraceError> {
+    let fs = r.sample(file_pool(lang), 3)?;
     let (f1, f2, f3) = (fs[0], fs[1], fs[2]);
     let ms = r.sample(METHODS, 3)?;
     let (m1, m2, m3) = (ms[0], ms[1], ms[2]);
@@ -454,11 +475,11 @@ pub(super) fn git_diff(r: &mut TemplateRenderer) -> Result<String, RecordedTrace
         hunk_old,
         hunk_new,
     };
-    let (hunk1, hunk2, hunk3) = match r.index(4)? {
-        0 => diff_hunks_python(&ctx),
-        1 => diff_hunks_go(&ctx),
-        2 => diff_hunks_rust(&ctx),
-        _ => diff_hunks_typescript(&ctx),
+    let (hunk1, hunk2, hunk3) = match lang {
+        Some(1) => diff_hunks_go(&ctx),
+        Some(2) => diff_hunks_rust(&ctx),
+        Some(3) => diff_hunks_typescript(&ctx),
+        _ => diff_hunks_python(&ctx),
     };
 
     let i1 = r.number(1_000_000, 9_999_999)?;

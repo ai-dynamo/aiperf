@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Tool-use and bash-output template renderers.
+//!
+//! Every generator here takes a `lang: Option<usize>` language selector
+//! (`Some(0..=3)` = python/go/rust/typescript, `None` = the pool path). The pool
+//! (`_gen_tool_use_block`/`_gen_bash_output`) passes `None`; the multi-turn
+//! conversation renderers pass the conversation's chosen language, so the
+//! language-specific code branches AND file pools must be reproduced exactly.
 
 use super::templates::TemplateRenderer;
 use super::vocab::*;
@@ -10,10 +16,10 @@ use crate::graph::recorded::RecordedTraceError;
 /// `_gen_tool_use_block`: dispatch across the read/edit/search/bash tool variants.
 pub(super) fn tool_use_block(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     match r.index(4)? {
-        0 => tool_read(r),
-        1 => tool_edit(r),
-        2 => tool_search(r),
-        _ => tool_bash(r),
+        0 => tool_read(r, None),
+        1 => tool_edit(r, None),
+        2 => tool_search(r, None),
+        _ => tool_bash(r, None),
     }
 }
 
@@ -26,8 +32,11 @@ pub(super) fn bash_output(r: &mut TemplateRenderer) -> Result<String, RecordedTr
     }
 }
 
-pub(super) fn tool_read(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
-    let f = r.pick(FILES)?;
+pub(super) fn tool_read(
+    r: &mut TemplateRenderer,
+    lang: Option<usize>,
+) -> Result<String, RecordedTraceError> {
+    let f = r.choose(file_pool(lang))?;
     let start_line = r.number(1, 200)?;
     let cls = r.pick(CLASSES)?;
     let m = r.sample(METHODS, 2)?;
@@ -37,16 +46,50 @@ pub(super) fn tool_read(r: &mut TemplateRenderer) -> Result<String, RecordedTrac
     let mod_ = r.pick(MODULES)?;
     let err = r.pick(ERRORS)?;
 
-    let code_lines = [
-        format!("def {m1}(self, {v1}):"),
-        format!("self._{v1} = {v1}"),
-        format!("{v2} = {mod_}.{m2}({v1})"),
-        format!("if {v1} is None:"),
-        format!("    raise ValueError(\"{err}\")"),
-        format!("return {v2}"),
-        format!("logger.debug(f\"{cls}.{m1}: {{{{{v1}}}}}\")"),
-        String::new(),
-    ];
+    let m1t = TemplateRenderer::title_case(m1);
+    let m2t = TemplateRenderer::title_case(m2);
+    let code_lines: [String; 8] = match lang {
+        Some(1) => [
+            format!("func (s *{cls}) {m1t}(ctx context.Context) error {{"),
+            format!("s.{v1} = {v1}"),
+            format!("{v2}, err := s.{m2t}(ctx)"),
+            "if err != nil {".to_string(),
+            format!("return fmt.Errorf(\"{err}: %w\", err)"),
+            "}".to_string(),
+            "return nil".to_string(),
+            String::new(),
+        ],
+        Some(2) => [
+            format!("pub async fn {m1}(&mut self) -> Result<()> {{"),
+            format!("let {v1} = self.{v2}.clone();"),
+            format!("let {v2} = self.{m2}(&{v1}).await?;"),
+            format!("if {v2}.is_empty() {{"),
+            format!("anyhow::bail!(\"{err}\");"),
+            "}".to_string(),
+            "Ok(())".to_string(),
+            String::new(),
+        ],
+        Some(3) => [
+            format!("async {m1}({v1}: string): Promise<void> {{"),
+            format!("this.{v1} = {v1};"),
+            format!("const {v2} = await this.{m2}({v1});"),
+            format!("if (!{v2}) {{"),
+            format!("  throw new Error('{err}');"),
+            "}".to_string(),
+            format!("console.log(`{cls}.{m1}: ${{{{{v2}}}}}`);"),
+            String::new(),
+        ],
+        _ => [
+            format!("def {m1}(self, {v1}):"),
+            format!("self._{v1} = {v1}"),
+            format!("{v2} = {mod_}.{m2}({v1})"),
+            format!("if {v1} is None:"),
+            format!("    raise ValueError(\"{err}\")"),
+            format!("return {v2}"),
+            format!("logger.debug(f\"{cls}.{m1}: {{{{{v1}}}}}\")"),
+            String::new(),
+        ],
+    };
 
     let span = r.number(15, 30)?;
     let mut lines: Vec<String> = Vec::new();
@@ -69,19 +112,46 @@ pub(super) fn tool_read(r: &mut TemplateRenderer) -> Result<String, RecordedTrac
     ))
 }
 
-pub(super) fn tool_edit(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
-    let f = r.pick(FILES)?;
+pub(super) fn tool_edit(
+    r: &mut TemplateRenderer,
+    lang: Option<usize>,
+) -> Result<String, RecordedTraceError> {
+    let f = r.choose(file_pool(lang))?;
     let m = r.sample(METHODS, 2)?;
     let (m1, m2) = (m[0], m[1]);
     let v = r.sample(VARS, 2)?;
     let (v1, v2) = (v[0], v[1]);
     let cls = r.pick(CLASSES)?;
     let err = r.pick(ERRORS)?;
+    let m1t = TemplateRenderer::title_case(m1);
+    let m2t = TemplateRenderer::title_case(m2);
 
-    let old_str = format!("    def {m1}(self, {v1}):\n        return self._{m2}({v1})");
-    let new_str = format!(
-        "    async def {m1}(self, {v1}: str) -> dict:\n        try:\n            {v2} = await self._{m2}({v1})\n            if {v2} is None:\n                raise ValueError(\"{err}\")\n            return {{{{\"status\": \"ok\", \"data\": {v2}}}}}\n        except Exception as exc:\n            logger.error(\"{cls}.{m1} failed: %s\", exc)\n            raise"
-    );
+    let (old_str, new_str) = match lang {
+        Some(1) => (
+            format!("func (s *{cls}) {m1t}() error {{{{\n    return nil\n}}}}"),
+            format!(
+                "func (s *{cls}) {m1t}(ctx context.Context) error {{{{\n    {v2}, err := s.{m2t}(ctx)\n    if err != nil {{{{\n        return fmt.Errorf(\"{err}: %w\", err)\n    }}}}\n    s.{v1} = {v2}\n    return nil\n}}}}"
+            ),
+        ),
+        Some(2) => (
+            format!("fn {m1}(&self) -> Result<()> {{{{\n    Ok(())\n}}}}"),
+            format!(
+                "async fn {m1}(&mut self) -> Result<()> {{{{\n    let {v2} = self.{m2}().await?;\n    anyhow::ensure!(!{v2}.is_empty(), \"{err}\");\n    self.{v1} = {v2};\n    Ok(())\n}}}}"
+            ),
+        ),
+        Some(3) => (
+            format!("{m1}({v1}: string) {{{{\n    return this.{m2}({v1});\n}}}}"),
+            format!(
+                "async {m1}({v1}: string): Promise<Record<string, unknown>> {{{{\n    const {v2} = await this.{m2}({v1});\n    if (!{v2}) throw new Error('{err}');\n    return {{ status: 'ok', data: {v2} }};\n}}}}"
+            ),
+        ),
+        _ => (
+            format!("    def {m1}(self, {v1}):\n        return self._{m2}({v1})"),
+            format!(
+                "    async def {m1}(self, {v1}: str) -> dict:\n        try:\n            {v2} = await self._{m2}({v1})\n            if {v2} is None:\n                raise ValueError(\"{err}\")\n            return {{{{\"status\": \"ok\", \"data\": {v2}}}}}\n        except Exception as exc:\n            logger.error(\"{cls}.{m1} failed: %s\", exc)\n            raise"
+            ),
+        ),
+    };
 
     Ok(format!(
         r#"<tool_name>edit</tool_name>
@@ -95,36 +165,45 @@ The file {f} has been updated successfully.
     ))
 }
 
-pub(super) fn tool_search(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
+pub(super) fn tool_search(
+    r: &mut TemplateRenderer,
+    lang: Option<usize>,
+) -> Result<String, RecordedTraceError> {
+    let pool = file_pool(lang);
     // Python builds the ENTIRE `lang_patterns` dict literal (python/go/rust/ts)
-    // before selecting the language=None ("python") list, so all 16 embedded
-    // `choice(...)` draws must fire even though only the python patterns are used.
-    let p_cls = r.pick(CLASSES)?;
-    let p_def = r.pick(METHODS)?;
-    let p_imp = r.pick(MODULES)?;
-    let p_adef = r.pick(METHODS)?;
-    // go list (discarded output, live draws)
-    let _ = r.pick(METHODS)?;
-    let _ = r.pick(CLASSES)?;
-    let _ = r.pick(GO_PACKAGES)?;
-    let _ = r.pick(CLASSES)?;
-    // rust list
-    let _ = r.pick(METHODS)?;
-    let _ = r.pick(CLASSES)?;
-    let _ = r.pick(RUST_CRATES)?;
-    let _ = r.pick(CLASSES)?;
-    // typescript list
-    let _ = r.pick(CLASSES)?;
-    let _ = r.pick(METHODS)?;
-    let _ = r.pick(CLASSES)?;
-    let _ = r.pick(CLASSES)?;
-
-    let patterns = [
-        format!("class {p_cls}"),
-        format!("def {p_def}"),
-        format!("import {p_imp}"),
-        format!("async def {p_adef}"),
+    // before selecting one language's list, so all 16 embedded `choice(...)`
+    // draws fire; only the chosen language's 4 patterns are then used.
+    let py = [
+        format!("class {}", r.pick(CLASSES)?),
+        format!("def {}", r.pick(METHODS)?),
+        format!("import {}", r.pick(MODULES)?),
+        format!("async def {}", r.pick(METHODS)?),
     ];
+    let go = [
+        format!("func {}", TemplateRenderer::title_case(r.pick(METHODS)?)),
+        format!("type {} struct", r.pick(CLASSES)?),
+        format!("\"{}\"", r.pick(GO_PACKAGES)?),
+        format!("func New{}", r.pick(CLASSES)?),
+    ];
+    let rust = [
+        format!("fn {}", r.pick(METHODS)?),
+        format!("pub struct {}", r.pick(CLASSES)?),
+        format!("use {}", r.pick(RUST_CRATES)?),
+        format!("impl {}", r.pick(CLASSES)?),
+    ];
+    let ts = [
+        format!("class {}", r.pick(CLASSES)?),
+        format!("export function {}", r.pick(METHODS)?),
+        format!("import {{ {} }}", r.pick(CLASSES)?),
+        format!("interface {}", r.pick(CLASSES)?),
+    ];
+    let patterns = match lang {
+        Some(1) => go,
+        Some(2) => rust,
+        Some(3) => ts,
+        _ => py,
+    };
+
     // pattern = choice([*patterns, choice(_ERROR_MESSAGES)]): the error choice is
     // evaluated (drawn) while building the 5-element list, then choice indexes it.
     let err_pat = r.pick(ERRORS)?;
@@ -137,8 +216,8 @@ pub(super) fn tool_search(r: &mut TemplateRenderer) -> Result<String, RecordedTr
     ];
     let pattern = candidates[r.index(candidates.len())?].to_string();
 
-    let n = r.number(3, 6)?.min(FILES.len() as i64) as usize;
-    let files = r.sample(FILES, n)?;
+    let n = r.number(3, 6)?.min(pool.len() as i64) as usize;
+    let files = r.sample(pool, n)?;
     let mut matches: Vec<String> = Vec::new();
     for f in &files {
         let line_num = r.number(1, 400)?;
@@ -157,22 +236,54 @@ pub(super) fn tool_search(r: &mut TemplateRenderer) -> Result<String, RecordedTr
     ))
 }
 
-pub(super) fn tool_bash(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
+pub(super) fn tool_bash(
+    r: &mut TemplateRenderer,
+    lang: Option<usize>,
+) -> Result<String, RecordedTraceError> {
     let mod_ = r.pick(MODULES)?;
     let cls = r.pick(CLASSES)?;
     let methods = r.sample(METHODS, 4)?;
     let n_pass = r.number(10, 80)?;
     let n_fail = r.number(0, 3)?;
     let dur = r.uniform(0.5, 30.0);
-    let cmd = r.pick(COMMANDS)?;
+    // `lang_cmds.get(language, r.choice(_CLI_COMMANDS))`: the default is always
+    // evaluated (drawn), even when the language key is present.
+    let fallback_cmd = r.pick(COMMANDS)?;
+    let cmd = match lang {
+        Some(0) => "pytest -xvs tests/",
+        Some(1) => "go test -v ./...",
+        Some(2) => "cargo test",
+        Some(3) => "npx vitest run",
+        _ => fallback_cmd,
+    };
+    let cls_lower = cls.to_lowercase();
 
     let mut test_lines: Vec<String> = Vec::new();
     for m in &methods {
         let passed = r.random() > 0.2;
-        let status = if passed { "PASSED" } else { "FAILED" };
-        test_lines.push(format!(
-            "tests/test_{mod_}.py::Test{cls}::test_{m} {status}"
-        ));
+        match lang {
+            Some(1) => {
+                let status = if passed { "ok" } else { "FAIL" };
+                let t = r.uniform(0.001, 2.0);
+                let mt = TemplateRenderer::title_case(m);
+                test_lines.push(format!("--- {status}: Test{mt} ({t:.3}s)"));
+            }
+            Some(2) => {
+                let status = if passed { "ok" } else { "FAILED" };
+                test_lines.push(format!("test {mod_}::{cls_lower}::test_{m} ... {status}"));
+            }
+            Some(3) => {
+                let mark = if passed { "\u{2713}" } else { "\u{2717}" };
+                let ms = r.number(1, 500)?;
+                test_lines.push(format!("  {mark} {cls} > {m} ({ms} ms)"));
+            }
+            _ => {
+                let status = if passed { "PASSED" } else { "FAILED" };
+                test_lines.push(format!(
+                    "tests/test_{mod_}.py::Test{cls}::test_{m} {status}"
+                ));
+            }
+        }
     }
     let test_output = test_lines.join("\n");
 

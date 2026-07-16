@@ -115,63 +115,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore]
-    fn dump_corpus_for_parity() {
-        // Temporary parity harness: build the scale-1.0 blocks (pre- and
-        // post-shuffle) for root seed 42 and write them beside the Python
-        // reference dumps for byte diffing. Run with `--ignored`.
-        let template_seed = PythonRandomGenerator::derive_child_seed(
-            42,
-            namespace::DATASET_CODING_CONTENT_TEMPLATE,
-        );
-        let mut renderer = TemplateRenderer::new(template_seed);
-        let names: &[(TemplateKind, &str)] = &[
-            (TemplateKind::Python, "_gen_python_code"),
-            (TemplateKind::Go, "_gen_go_code"),
-            (TemplateKind::Rust, "_gen_rust_code"),
-            (TemplateKind::TypeScript, "_gen_typescript_code"),
-            (TemplateKind::MlTraining, "_gen_ml_training_code"),
-            (TemplateKind::MlInference, "_gen_ml_inference_code"),
-            (TemplateKind::MlConfig, "_gen_ml_config"),
-            (TemplateKind::BashOutput, "_gen_bash_output"),
-            (TemplateKind::MlTrainingLog, "_gen_ml_training_log"),
-            (TemplateKind::JsonResponse, "_gen_json_response"),
-            (TemplateKind::ErrorTraceback, "_gen_error_traceback"),
-            (TemplateKind::CudaError, "_gen_cuda_error"),
-            (TemplateKind::Sql, "_gen_sql_query"),
-            (TemplateKind::UserPrompt, "_gen_user_prompt"),
-            (TemplateKind::ToolUse, "_gen_tool_use_block"),
-            (TemplateKind::Conversation, "_gen_coding_conversation"),
-            (TemplateKind::GitDiff, "_gen_git_diff"),
-            (TemplateKind::Cicd, "_gen_cicd_output"),
-            (TemplateKind::Config, "_gen_config_file"),
-            (TemplateKind::Markdown, "_gen_markdown_doc"),
-            (TemplateKind::TestOutput, "_gen_test_output"),
-        ];
-        let mut blocks: Vec<String> = Vec::new();
-        let mut first_per: Vec<(String, String)> = Vec::new();
-        for &(kind, name) in names {
-            let count = TOOL_POOL_BLOCK_COUNTS
-                .iter()
-                .find(|&&(k, _)| std::mem::discriminant(&k) == std::mem::discriminant(&kind))
-                .map(|&(_, c)| c)
-                .unwrap();
-            let start = blocks.len();
-            for ordinal in 0..count {
-                blocks.push(renderer.render(kind, ordinal).expect("render"));
-            }
-            first_per.push((name.to_string(), blocks[start].clone()));
-        }
-        let _ = first_per;
-        std::fs::write(
-            "/tmp/rust_blocks.json",
-            serde_json::to_string(&blocks).unwrap(),
-        )
-        .unwrap();
-        eprintln!("dumped {} blocks", blocks.len());
-    }
-
-    #[test]
     fn coding_corpus_is_seeded_and_reproducible() {
         // Reproducibility and seed-sensitivity are scale-independent, so exercise
         // them at a small fractional scale (~65k tokens) instead of rebuilding the
