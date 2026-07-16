@@ -318,16 +318,95 @@ struct RuntimeSection {
     cells: Option<u32>,
 }
 
-#[derive(Debug, Deserialize)]
+/// The `models:` block. Accepts either the full mapping form
+/// (`{items: [...], strategy: ...}`) or the shorthand sequence of model names /
+/// item maps (`models: [gpt-4]` or `models: [{name: gpt-4}]`), matching Python's
+/// normalization of a bare list to items with the default strategy.
+#[derive(Debug)]
 struct ModelsSection {
     items: Vec<ModelItem>,
     /// Model-selection strategy (`round_robin`/`random`/`weighted`).
     strategy: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+impl<'de> Deserialize<'de> for ModelsSection {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = ModelsSection;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a `models` mapping or a sequence of model names")
+            }
+            fn visit_seq<A>(self, seq: A) -> Result<ModelsSection, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let items =
+                    Vec::<ModelItem>::deserialize(serde::de::value::SeqAccessDeserializer::new(seq))?;
+                Ok(ModelsSection {
+                    items,
+                    strategy: None,
+                })
+            }
+            fn visit_map<A>(self, map: A) -> Result<ModelsSection, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                #[derive(Deserialize)]
+                struct Full {
+                    items: Vec<ModelItem>,
+                    #[serde(default)]
+                    strategy: Option<String>,
+                }
+                let full = Full::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
+                Ok(ModelsSection {
+                    items: full.items,
+                    strategy: full.strategy,
+                })
+            }
+        }
+        deserializer.deserialize_any(V)
+    }
+}
+
+/// One selectable model. Accepts a bare model-name string (`gpt-4`) or a
+/// `{name: gpt-4, ...}` mapping.
+#[derive(Debug)]
 struct ModelItem {
     name: String,
+}
+
+impl<'de> Deserialize<'de> for ModelItem {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = ModelItem;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a model-name string or a `{name, ...}` mapping")
+            }
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<ModelItem, E> {
+                Ok(ModelItem { name: v.to_string() })
+            }
+            fn visit_map<A>(self, map: A) -> Result<ModelItem, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                #[derive(Deserialize)]
+                struct Full {
+                    name: String,
+                }
+                let full = Full::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
+                Ok(ModelItem { name: full.name })
+            }
+        }
+        deserializer.deserialize_any(V)
+    }
 }
 
 #[derive(Debug, Deserialize)]
