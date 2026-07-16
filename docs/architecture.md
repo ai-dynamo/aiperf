@@ -199,6 +199,18 @@ The Timing Manager uses a **credit-based flow control system** to control when r
 - Scales to large numbers of workers without bottlenecks
 - Efficient message routing minimizes overhead
 
+### Phase baseline handshake
+
+Before each phase issues its first credit, TimingManager invokes a synchronous gate
+on SystemController. SystemController's `BaselineCoordinator` broadcasts a
+`PhaseBaselineRequestMessage` to all services that advertised
+`ServiceCapability.BASELINE_COLLECTOR` and waits for acks (with a configurable
+timeout). The gate releases when all collectors ack or the timeout fires. A
+symmetric END gate fires after credits drain. This guarantees telemetry and
+server-metrics scrapes capture clean pre/post-phase reference points without
+requiring TimingManager to know about any specific collector. Failed acks count
+as acks (logged), so a dead collector cannot block the phase.
+
 ### Data Flow & Messaging
 
 This section describes the end-to-end message flow during a benchmark run, showing how data moves between components through the ZMQ message bus.

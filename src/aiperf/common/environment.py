@@ -9,6 +9,7 @@ All settings can be configured via environment variables with the AIPERF_ prefix
 Structure:
     Environment.ACCURACY.*       - Accuracy benchmark settings
     Environment.API_SERVER.*     - API server settings
+    Environment.BASELINE.*       - Phase baseline handshake
     Environment.COMPRESSION.*    - Compression settings for streaming file transfers
     Environment.DATASET.*        - Dataset management
     Environment.DEV.*            - Development and debugging settings
@@ -134,6 +135,34 @@ class _APIServerSettings(BaseSettings):
         description="Seconds the API listener stays open after a benchmark terminates "
         "so polling clients can observe the final status before the server shuts down. "
         "Set to 0 to skip the grace window and shut down immediately.",
+    )
+
+
+class _BaselineSettings(BaseSettings):
+    """Phase baseline handshake settings.
+
+    Controls the gate that blocks TimingManager between phases until
+    registered baseline collectors finish their point-in-time scrape.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="AIPERF_BASELINE_")
+
+    GATE_TIMEOUT_S: float = Field(
+        default=5.0,
+        gt=0.0,
+        description=(
+            "Per-gate timeout (seconds). If registered baseline collectors do not "
+            "all ack within this window, the gate releases with a warning and the "
+            "phase proceeds without waiting for stragglers."
+        ),
+    )
+    GATE_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Master switch for the phase baseline handshake. When False, "
+            "PhaseGateClient short-circuits to no-op and PhaseRunner does not "
+            "wait between phases. Useful for replay/debug runs."
+        ),
     )
 
 
@@ -688,6 +717,12 @@ class _RecordSettings(BaseSettings):
         le=100000.0,
         default=300.0,
         description="Timeout in seconds for processing record results",
+    )
+    CREDITS_COMPLETE_FALLBACK_TIMEOUT: float = Field(
+        ge=0.0,
+        le=300.0,
+        default=10.0,
+        description="Maximum seconds RecordsManager waits for CreditsComplete after all profiling records are ready before finalizing defensively",
     )
     STRIP_PAYLOAD_BYTES: bool | None = Field(
         default=None,
@@ -1461,6 +1496,10 @@ class _Environment(BaseSettings):
     API_SERVER: _APIServerSettings = Field(
         default_factory=_APIServerSettings,
         description="API server settings",
+    )
+    BASELINE: _BaselineSettings = Field(
+        default_factory=_BaselineSettings,
+        description="Phase baseline handshake settings",
     )
     CHAT: _ChatSettings = Field(
         default_factory=_ChatSettings,

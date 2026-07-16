@@ -316,3 +316,27 @@ class ConnectionProbeMessage(TargetedServiceMessage):
     """Message containing a connection probe from a service. This is used to probe the connection to the service."""
 
     message_type: MessageTypeT = MessageType.CONNECTION_PROBE
+
+
+class PhaseStartGateCommand(CommandMessage):
+    """PhaseRunner -> SystemController: hold before issuing first credit of a phase."""
+
+    command: CommandTypeT = CommandType.PHASE_START_GATE
+
+    phase_id: str = Field(..., description="UUID of the phase being gated.")
+    phase_name: str = Field(..., description="Phase name for diagnostics.")
+
+
+class PhaseEndGateCommand(CommandMessage):
+    """PhaseRunner -> SystemController: hold after credits drain, before next phase."""
+
+    command: CommandTypeT = CommandType.PHASE_END_GATE
+
+    phase_id: str = Field(..., description="UUID of the phase being gated.")
+    phase_name: str = Field(..., description="Phase name for diagnostics.")
+
+
+class PhaseGateGrantedResponse(CommandSuccessResponse):
+    """Response from BaselineCoordinator releasing a phase gate."""
+
+    phase_id: str = Field(..., description="Phase ID matching the gate command.")

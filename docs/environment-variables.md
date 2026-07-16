@@ -51,6 +51,15 @@ API server settings. Controls the host and port of the API server.
 | `AIPERF_API_SERVER_SHUTDOWN_TIMEOUT` | `5.0` | ≥ 1.0, ≤ 300.0 | Timeout in seconds for graceful API server shutdown before force-cancelling |
 | `AIPERF_API_SERVER_POST_COMPLETE_GRACE` | `5.0` | ≥ 0.0, ≤ 300.0 | Seconds the API listener stays open after a benchmark terminates so polling clients can observe the final status before the server shuts down. Set to 0 to skip the grace window and shut down immediately. |
 
+## BASELINE
+
+Phase baseline handshake settings. Controls the gate that blocks TimingManager between phases until registered baseline collectors finish their point-in-time scrape.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_BASELINE_GATE_TIMEOUT_S` | `5.0` | > 0.0 | Per-gate timeout (seconds). If registered baseline collectors do not all ack within this window, the gate releases with a warning and the phase proceeds without waiting for stragglers. |
+| `AIPERF_BASELINE_GATE_ENABLED` | `True` | — | Master switch for the phase baseline handshake. When False, PhaseGateClient short-circuits to no-op and PhaseRunner does not wait between phases. Useful for replay/debug runs. |
+
 ## CHAT
 
 Settings for the interactive ``aiperf chat`` command.
@@ -195,6 +204,7 @@ Record processing and export configuration. Controls batch sizes, processor scal
 | `AIPERF_RECORD_PROCESSOR_SCALE_FACTOR` | `4` | ≥ 1, ≤ 100 | Scale factor for number of record processors to spawn based on worker count. Formula: 1 record processor for every X workers |
 | `AIPERF_RECORD_PROGRESS_REPORT_INTERVAL` | `2.0` | ≥ 0.1, ≤ 600.0 | Interval in seconds between records progress report messages |
 | `AIPERF_RECORD_PROCESS_RECORDS_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for processing record results |
+| `AIPERF_RECORD_CREDITS_COMPLETE_FALLBACK_TIMEOUT` | `10.0` | ≥ 0.0, ≤ 300.0 | Maximum seconds RecordsManager waits for CreditsComplete after all profiling records are ready before finalizing defensively |
 | `AIPERF_RECORD_STRIP_PAYLOAD_BYTES` | `None` | — | Tri-state control for omitting canonical request payload bytes from RecordContext after a request is sent, which substantially reduces record-pipeline memory for very large prompts. None (default) auto-detects: bytes are stripped only when no downstream record consumer needs them (client-side input tokenization disabled, no synthetic image/audio/video inputs, and raw payload export off). True forces stripping even when a consumer wants the bytes, disabling client-side input tokenization, media counting from request bodies, and raw request payload export. False always retains them. Auto-detection does not see media embedded in custom dataset payloads under server-token-count mode; set False explicitly for that case. |
 
 ## SEARCHPLANNER

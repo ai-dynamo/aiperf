@@ -9,6 +9,7 @@ Owns the LoopScheduler and all per-phase components (lifecycle, progress, stop_c
 from __future__ import annotations
 
 import asyncio
+import uuid
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -21,6 +22,7 @@ from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, TimingMode
 from aiperf.timing.branch_orchestrator import BranchOrchestrator
 from aiperf.timing.phase.lifecycle import PhaseLifecycle
+from aiperf.timing.phase.phase_gate import PhaseGateClient
 from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
 from aiperf.timing.phase.stop_conditions import StopConditionChecker
 from aiperf.timing.ramping import Ramper, RamperConfig, RampType
@@ -81,6 +83,7 @@ class PhaseRunner(TaskManagerMixin):
         callback_handler: CreditCallbackHandler,
         url_selection_strategy: URLSelectionStrategyProtocol | None = None,
         branch_orchestrator: BranchOrchestrator | None = None,
+        phase_gate: PhaseGateClient | None = None,
         **kwargs,
     ) -> None:
         """Initialize phase runner.
@@ -99,6 +102,8 @@ class PhaseRunner(TaskManagerMixin):
                 ``_is_phase_complete`` consults ``has_pending_branch_work`` so
                 completion blocks while DAG children are still in flight, even
                 after ``--request-count`` is reached.
+            phase_gate: Optional PhaseGateClient that issues START/END handshake
+                commands to the SystemController. None disables gating entirely.
         """
         super().__init__(**kwargs)
         self._config = config
@@ -122,6 +127,8 @@ class PhaseRunner(TaskManagerMixin):
         self._cancellation_policy = cancellation_policy
         self._callback_handler = callback_handler
         self._on_phase_complete: Callable[[], None] | None = None
+        self._phase_gate = phase_gate
+        self._pending_after_phase: tuple[str, str] | None = None
 
         # Per-phase components - order matters
         self._scheduler = LoopScheduler()
@@ -268,14 +275,70 @@ class PhaseRunner(TaskManagerMixin):
     def _on_return_wait_complete(self, task: asyncio.Task) -> None:
         """Handle completion of background return wait task (seamless mode).
 
-        Called when _return_wait_task finishes. Cancels progress reporting and
-        notifies the orchestrator via on_phase_complete callback.
+        Called when _return_wait_task finishes. Cancels progress reporting,
+        schedules the END gate, and notifies the orchestrator via
+        on_phase_complete callback.
         """
         if self._progress_task:
             self._progress_task.cancel()
 
+        if self._pending_after_phase is not None:
+            phase_id, phase_name = self._pending_after_phase
+            self._pending_after_phase = None
+            self.execute_async(self._gate_after_phase(phase_id, phase_name))
+
         if self._on_phase_complete:
             self._on_phase_complete()
+
+    async def _gate_after_phase(self, phase_id: str, phase_name: str) -> None:
+        """Run the END gate, swallowing exceptions so they cannot crash the phase."""
+        if self._phase_gate is None:
+            return
+        try:
+            await self._phase_gate.after_phase(phase_id, phase_name)
+        except Exception as e:  # END gate failures must not crash the run
+            self.warning(f"after_phase gate raised for '{phase_name}': {e!r}")
+
+    async def _gate_before_phase(self, phase_id: str, phase_name: str) -> None:
+        """Run the START gate. Exceptions propagate (a failed START aborts the phase)."""
+        if self._phase_gate is None:
+            return
+        await self._phase_gate.before_phase(phase_id, phase_name)
+
+    def _finalize_cancelled_phase(
+        self, phase_id: str, phase_name: str
+    ) -> CreditPhaseStats:
+        """Mark complete + return stats for the cancelled-early-return path.
+
+        Note: callers must still `await self._gate_after_phase(...)` separately,
+        because this is sync (returns the stats; doesn't await the END gate).
+        """
+        if not self._lifecycle.is_complete:
+            self._lifecycle.mark_complete(grace_period_triggered=True)
+            self._progress.freeze_completed_counts()
+        self._progress.all_credits_returned_event.set()
+        return self._progress.create_stats(self._lifecycle)
+
+    async def _dispatch_phase_completion(
+        self, phase_id: str, phase_name: str, is_final_phase: bool
+    ) -> None:
+        """Dispatch end-of-phase return-wait: seamless background vs synchronous.
+
+        Seamless non-final phases spawn a background return-wait task and defer the
+        END gate to `_on_return_wait_complete`. All other phases wait synchronously,
+        cancel the progress task, and fire the END gate inline.
+        """
+        if self._config.seamless and not is_final_phase:
+            self._return_wait_task = self.execute_async(
+                self._wait_for_returning_complete()
+            )
+            self._return_wait_task.add_done_callback(self._on_return_wait_complete)
+            # END gate is fired by _on_return_wait_complete via execute_async
+            self._pending_after_phase = (phase_id, phase_name)
+        else:
+            await self._wait_for_returning_complete()
+            self._progress_task.cancel()
+            await self._gate_after_phase(phase_id, phase_name)
 
     async def run(
         self,
@@ -356,6 +419,9 @@ class PhaseRunner(TaskManagerMixin):
         returning-complete pipeline. The exception path (publishing partial
         lifecycle state) lives in the caller's ``except``.
         """
+        phase_id = uuid.uuid4().hex
+        phase_name = self._config.phase
+
         self._concurrency_manager.configure_for_phase(
             self._config.phase,
             self._config.concurrency,
@@ -372,6 +438,8 @@ class PhaseRunner(TaskManagerMixin):
         )
 
         self._create_rampers(strategy)
+
+        await self._gate_before_phase(phase_id, phase_name)
 
         self._lifecycle.start()
         stats = self._progress.create_stats(self._lifecycle)
@@ -397,22 +465,11 @@ class PhaseRunner(TaskManagerMixin):
         await self._wait_for_sending_complete()
 
         if self._was_cancelled:
-            if not self._lifecycle.is_complete:
-                self._lifecycle.mark_complete(grace_period_triggered=True)
-                self._progress.freeze_completed_counts()
-            self._progress.all_credits_returned_event.set()
-            return self._progress.create_stats(self._lifecycle)
+            stats = self._finalize_cancelled_phase(phase_id, phase_name)
+            await self._gate_after_phase(phase_id, phase_name)
+            return stats
 
-        # Seamless mode: phase flows into next without waiting for returns.
-        # Progress task continues in background until phase complete.
-        if self._config.seamless and not is_final_phase:
-            self._return_wait_task = self.execute_async(
-                self._wait_for_returning_complete()
-            )
-            self._return_wait_task.add_done_callback(self._on_return_wait_complete)
-        else:
-            await self._wait_for_returning_complete()
-            self._progress_task.cancel()
+        await self._dispatch_phase_completion(phase_id, phase_name, is_final_phase)
 
         for ramper in self._rampers:
             ramper.stop()

@@ -17,10 +17,12 @@ from aiperf.cli_utils import (
 )
 from aiperf.common.base_service import BaseService
 from aiperf.common.enums import (
+    BaselineKind,
     CommandResponseStatus,
     CommandType,
     LifecycleState,
     MessageType,
+    ServiceCapability,
     ServiceRegistrationStatus,
     parse_result_producer_capability,
 )
@@ -34,6 +36,10 @@ from aiperf.common.messages import (
     CommandResponse,
     CommandSuccessResponse,
     HeartbeatMessage,
+    PhaseBaselineAckMessage,
+    PhaseEndGateCommand,
+    PhaseGateGrantedResponse,
+    PhaseStartGateCommand,
     ProcessAccuracyResultMessage,
     ProcessAllResultsMessage,
     ProcessRecordsResultMessage,
@@ -61,6 +67,7 @@ from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.server_metrics_models import ServerMetricsResults
 from aiperf.common.types import ServiceTypeT
 from aiperf.config.artifacts import OutputDefaults
+from aiperf.controller.baseline_coordinator import BaselineCoordinator
 from aiperf.controller.controller_utils import print_exit_errors
 from aiperf.controller.protocols import ServiceManagerProtocol
 from aiperf.controller.proxy_manager import ProxyManager
@@ -183,6 +190,10 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._telemetry_endpoints_reachable: list[str] = []
         self._server_metrics_endpoints_configured: list[str] = []
         self._server_metrics_endpoints_reachable: list[str] = []
+        self._baseline_coordinator = BaselineCoordinator(
+            publish=self.publish,
+            gate_timeout_s=Environment.BASELINE.GATE_TIMEOUT_S,
+        )
         self.debug("System Controller created")
 
     def _should_warn_osl_without_ignore_eos(self) -> bool:
@@ -396,6 +407,9 @@ class SystemController(SignalHandlerMixin, BaseService):
             self.service_manager.service_map[message.service_type] = []
         self.service_manager.service_map[message.service_type].append(service_info)
 
+        if ServiceCapability.BASELINE_COLLECTOR in message.capabilities:
+            self._baseline_coordinator.register(message.service_id)
+
         # Join every result domain this service advertises into the shutdown
         # barrier. A telemetry/server-metrics producer may later report it is
         # disabled via its status message, which unregisters the domain again.
@@ -409,6 +423,38 @@ class SystemController(SignalHandlerMixin, BaseService):
         except (TypeError, ValueError):
             type_name = message.service_type
         self.info(lambda: f"Registered {type_name} (id: '{message.service_id}')")
+
+    @on_command(CommandType.PHASE_START_GATE)
+    async def _on_phase_start_gate(
+        self, message: PhaseStartGateCommand
+    ) -> PhaseGateGrantedResponse:
+        await self._baseline_coordinator.gate_phase(
+            message.phase_id, message.phase_name, BaselineKind.START
+        )
+        return PhaseGateGrantedResponse(
+            command_id=message.command_id,
+            service_id=self.service_id,
+            command=message.command,
+            phase_id=message.phase_id,
+        )
+
+    @on_command(CommandType.PHASE_END_GATE)
+    async def _on_phase_end_gate(
+        self, message: PhaseEndGateCommand
+    ) -> PhaseGateGrantedResponse:
+        await self._baseline_coordinator.gate_phase(
+            message.phase_id, message.phase_name, BaselineKind.END
+        )
+        return PhaseGateGrantedResponse(
+            command_id=message.command_id,
+            service_id=self.service_id,
+            command=message.command,
+            phase_id=message.phase_id,
+        )
+
+    @on_message(MessageType.PHASE_BASELINE_ACK)
+    async def _on_phase_baseline_ack(self, message: PhaseBaselineAckMessage) -> None:
+        self._baseline_coordinator.handle_ack(message)
 
     @on_message(MessageType.HEARTBEAT)
     async def _process_heartbeat_message(self, message: HeartbeatMessage) -> None:

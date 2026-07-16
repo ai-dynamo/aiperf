@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -758,8 +757,8 @@ class TestProfileStartCommand:
             assert hasattr(manager, "_shutdown_task")
 
     @pytest.mark.asyncio
-    async def test_start_no_redundant_reachability_check_or_initialize(self):
-        """Test that collectors are started without re-checking reachability or re-initializing."""
+    async def test_start_initializes_and_starts_without_reachability_recheck(self):
+        """Collectors are initialized + started at PROFILE_START, without re-checking reachability."""
         manager = self._create_test_manager()
         manager.publish = AsyncMock()
 
@@ -772,9 +771,9 @@ class TestProfileStartCommand:
         )
         await manager._on_start_profiling(start_msg)
 
-        # Verify start() was called without re-checking reachability or re-initializing
+        # Verify initialize() + start() were called without re-checking reachability.
         mock_collector.is_url_reachable.assert_not_called()
-        mock_collector.initialize.assert_not_called()
+        mock_collector.initialize.assert_called_once()
         mock_collector.start.assert_called_once()
 
 
@@ -962,13 +961,14 @@ class TestPynvmlCollectorIntegration:
         assert PYNVML_SOURCE_IDENTIFIER in call_args.endpoints_configured
         assert PYNVML_SOURCE_IDENTIFIER in call_args.endpoints_reachable
 
-        # Should have collector registered and baseline-scraped before profiling.
+        # Should have collector registered. Init + baseline scrape now happen at
+        # PROFILE_START / the phase baseline gate, not during configure.
         assert PYNVML_SOURCE_IDENTIFIER in manager._collectors
         assert (
             manager._collector_id_to_url["pynvml_collector"] == PYNVML_SOURCE_IDENTIFIER
         )
-        mock_collector.initialize.assert_awaited_once()
-        mock_collector.collect_and_process_metrics.assert_awaited_once()
+        mock_collector.initialize.assert_not_called()
+        mock_collector.collect_and_process_metrics.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_configure_pynvml_collector_no_gpus_found(self):
@@ -1086,58 +1086,6 @@ class TestGenericLocalCollectorIntegration:
         manager.info = MagicMock()
         return manager
 
-    @pytest.mark.asyncio
-    async def test_configure_runtime_local_collector_captures_baseline(
-        self,
-    ) -> None:
-        fake_name = "fake_baseline_gpu"
-        fake_enum_member = "FAKE_BASELINE_GPU"
-        source_identifier = "fake-baseline://localhost"
-
-        class FakeBaselineCollector:
-            pass
-
-        GPUTelemetryCollectorType.register(fake_enum_member, fake_name)
-        try:
-            with mock_plugin(
-                "gpu_telemetry_collector",
-                fake_name,
-                FakeBaselineCollector,
-                metadata={
-                    "is_local": True,
-                    "import_module": "json",
-                    "install_hint": "fake collector not installed",
-                },
-            ):
-                manager = self._create_test_manager(
-                    GPUTelemetryCollectorType(fake_name)
-                )
-                manager.publish = AsyncMock()
-                manager.info = MagicMock()
-
-                mock_collector = AsyncMock()
-                mock_collector.endpoint_url = source_identifier
-                mock_collector.is_url_reachable = AsyncMock(return_value=True)
-                mock_collector.initialize = AsyncMock()
-                mock_collector.collect_and_process_metrics = AsyncMock()
-
-                MockCollectorClass = MagicMock(return_value=mock_collector)
-                with patch(
-                    "aiperf.plugin.plugins.get_class",
-                    return_value=MockCollectorClass,
-                ):
-                    await manager._profile_configure_command(
-                        ProfileConfigureCommand(
-                            command_id="test", service_id="system_controller", config={}
-                        )
-                    )
-
-                mock_collector.initialize.assert_awaited_once()
-                mock_collector.collect_and_process_metrics.assert_awaited_once()
-        finally:
-            GPUTelemetryCollectorType.deregister(fake_enum_member)
-
-    @pytest.mark.asyncio
     async def test_configure_runtime_local_collector_from_plugin_metadata(self) -> None:
         fake_name = "fake_local_gpu"
         fake_enum_member = "FAKE_LOCAL_GPU"
@@ -1244,94 +1192,11 @@ class TestAmdsmiCollectorIntegration:
             manager._collector_id_to_url["amdsmi_collector"] == AMDSMI_SOURCE_IDENTIFIER
         )
 
-        # Baseline scrape: configure must call initialize() + one
-        # collect_and_process_metrics() so counter deltas
-        # (amd_energy_consumption, amd_ecc_uncorrectable) are computed
-        # against a pre-profile reference, not the first in-window sample.
-        mock_collector.initialize.assert_awaited_once()
-        mock_collector.collect_and_process_metrics.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_configure_amdsmi_collector_continues_when_baseline_scrape_fails(
-        self,
-    ):
-        # If only the baseline scrape raises (transient sensor read error
-        # after a successful init), the collector is still usable — keep
-        # it enabled and just lose the reference sample. The periodic
-        # collection loop still runs; counter deltas degrade to the
-        # first-in-window-sample fallback for the first interval.
-        manager = self._create_test_manager()
-        manager.publish = AsyncMock()
-
-        mock_collector = AsyncMock()
-        mock_collector.endpoint_url = AMDSMI_SOURCE_IDENTIFIER
-        mock_collector.is_url_reachable = AsyncMock(return_value=True)
-        mock_collector.initialize = AsyncMock()  # init succeeds
-        mock_collector.collect_and_process_metrics = AsyncMock(
-            side_effect=RuntimeError("transient sensor read error")
-        )
-
-        MockCollectorClass = MagicMock(return_value=mock_collector)
-        with patch(
-            "aiperf.plugin.plugins.get_class",
-            return_value=MockCollectorClass,
-        ):
-            configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller", config={}
-            )
-            await manager._profile_configure_command(configure_msg)
-
-        manager.publish.assert_called_once()
-        call_args = manager.publish.call_args[0][0]
-        assert isinstance(call_args, TelemetryStatusMessage)
-        assert call_args.enabled is True
-        assert AMDSMI_SOURCE_IDENTIFIER in manager._collectors
-        manager.warning.assert_called()
-
-    @pytest.mark.asyncio
-    async def test_configure_amdsmi_collector_disables_when_init_fails(self):
-        # AIPerfLifecycleMixin re-raises hook failures as
-        # ``asyncio.CancelledError`` (see test_amdsmi_collector.py
-        # ``test_init_failure_propagates_via_lifecycle``). The baseline path
-        # must catch that — letting it propagate would cancel the entire
-        # PROFILE_CONFIGURE flow rather than gracefully disabling telemetry.
-        # On init failure the collector is unusable, so it must be removed
-        # from ``_collectors`` and disabled status reported.
-        manager = self._create_test_manager()
-        manager.publish = AsyncMock()
-
-        mock_collector = AsyncMock()
-        mock_collector.endpoint_url = AMDSMI_SOURCE_IDENTIFIER
-        mock_collector.is_url_reachable = AsyncMock(return_value=True)
-        mock_collector.initialize = AsyncMock(
-            side_effect=asyncio.CancelledError(
-                "Failed to initialize amdsmi: driver gone"
-            )
-        )
-
-        MockCollectorClass = MagicMock(return_value=mock_collector)
-        with patch(
-            "aiperf.plugin.plugins.get_class",
-            return_value=MockCollectorClass,
-        ):
-            configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller", config={}
-            )
-            # Must NOT propagate CancelledError out of configure.
-            await manager._profile_configure_command(configure_msg)
-
-        manager.publish.assert_called_once()
-        call_args = manager.publish.call_args[0][0]
-        assert isinstance(call_args, TelemetryStatusMessage)
-        assert call_args.enabled is False
-        assert "amdsmi://localhost initialization failed" in call_args.reason
-        assert AMDSMI_SOURCE_IDENTIFIER not in manager._collectors
-        assert "amdsmi_collector" not in manager._collector_id_to_url
-        # collect_and_process_metrics must NOT be invoked when init failed.
+        # Configure only registers the collector; init + the baseline scrape now
+        # happen at PROFILE_START / the phase baseline gate.
+        mock_collector.initialize.assert_not_called()
         mock_collector.collect_and_process_metrics.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_configure_amdsmi_collector_no_gpus_found(self):
         manager = self._create_test_manager()
         manager.publish = AsyncMock()
 

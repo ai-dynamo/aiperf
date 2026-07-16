@@ -9,8 +9,10 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.enums import (
+    BaselineKind,
     CommAddress,
     CommandType,
+    ServiceCapability,
     make_result_producer_capability,
 )
 from aiperf.common.environment import Environment
@@ -22,6 +24,7 @@ from aiperf.common.messages import (
     TelemetryRecordsMessage,
     TelemetryStatusMessage,
 )
+from aiperf.common.mixins.baseline_collector_mixin import BaselineCollectorMixin
 from aiperf.common.models import ErrorDetails, TelemetryRecord
 from aiperf.common.protocols import PushClientProtocol
 from aiperf.gpu_telemetry.protocols import GPUTelemetryCollectorProtocol
@@ -41,7 +44,7 @@ class _CollectorCandidate:
     kwargs: dict[str, Any]
 
 
-class GPUTelemetryManager(BaseComponentService):
+class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
     """Coordinates multiple TelemetryDataCollector instances for GPU telemetry collection.
 
     The GPUTelemetryManager coordinates multiple TelemetryDataCollector instances
@@ -61,6 +64,7 @@ class GPUTelemetryManager(BaseComponentService):
     """
 
     extra_capabilities: ClassVar[tuple[str, ...]] = (
+        ServiceCapability.BASELINE_COLLECTOR,
         make_result_producer_capability("telemetry"),
     )
 
@@ -254,13 +258,6 @@ class GPUTelemetryManager(BaseComponentService):
                 self._collectors[source_identifier] = collector
                 self._collector_id_to_url[candidate.collector_id] = source_identifier
                 self.debug(f"GPU Telemetry: {source_identifier} is reachable")
-                baseline_failure_reason = await self._capture_collector_baseline(
-                    collector,
-                    candidate.collector_id,
-                    source_identifier,
-                )
-                if baseline_failure_reason is not None:
-                    failure_reason = baseline_failure_reason
             except RuntimeError as e:
                 failure_reason = str(e)
                 self.error(f"GPU Telemetry: {e}")
@@ -270,34 +267,6 @@ class GPUTelemetryManager(BaseComponentService):
                     f"GPU Telemetry: Failed to configure {collector_name} collector: {e}"
                 )
         return configured_sources, failure_reason
-
-    async def _capture_collector_baseline(
-        self,
-        collector: GPUTelemetryCollectorProtocol,
-        collector_id: str,
-        source_identifier: str,
-    ) -> str | None:
-        self.info(f"GPU Telemetry: Capturing baseline metrics from {source_identifier}")
-        try:
-            await collector.initialize()
-        except (Exception, asyncio.CancelledError) as e:
-            self.warning(
-                f"GPU Telemetry: Failed to initialize {source_identifier} during "
-                f"baseline capture, disabling collector: {e!r}"
-            )
-            self._collectors.pop(source_identifier, None)
-            self._collector_id_to_url.pop(collector_id, None)
-            return f"{source_identifier} initialization failed: {e}"
-
-        try:
-            await collector.collect_and_process_metrics()
-            self.debug(f"GPU Telemetry: Captured baseline from {source_identifier}")
-        except Exception as e:  # baseline scrape best-effort
-            self.warning(
-                f"GPU Telemetry: Failed to capture baseline from {source_identifier} "
-                f"(collector remains enabled): {e}"
-            )
-        return None
 
     async def _send_configure_status(
         self, configured_sources: list[str], failure_reason: str | None
@@ -356,6 +325,7 @@ class GPUTelemetryManager(BaseComponentService):
         started_count = 0
         for source_url, collector in self._collectors.items():
             try:
+                await collector.initialize()
                 await collector.start()
                 started_count += 1
             except Exception as e:  # fault-tolerant telemetry
@@ -386,33 +356,52 @@ class GPUTelemetryManager(BaseComponentService):
         """
         await self._stop_all_collectors()
 
+    async def collect_baseline(
+        self, kind: BaselineKind, phase_id: str, phase_name: str
+    ) -> None:
+        if phase_name != "profiling":
+            return
+        if not self._collectors:
+            return
+
+        self.info(
+            f"GPU Telemetry: Capturing {kind} baseline for phase '{phase_name}'..."
+        )
+        await self._collect_once(label=str(kind))
+
+    async def _collect_once(self, label: str) -> None:
+        failures: list[str] = []
+
+        async def collect(
+            source_url: str, collector: GPUTelemetryCollectorProtocol
+        ) -> None:
+            try:
+                await collector.collect_and_process_metrics()
+                self.debug(
+                    lambda url=source_url: f"GPU Telemetry: Captured {label} state from {url}"
+                )
+            except Exception as e:  # keep attempting other endpoints
+                failures.append(f"{source_url}: {e}")
+                self.warning(
+                    f"GPU Telemetry: Failed to capture {label} state from {source_url}: {e}"
+                )
+
+        await asyncio.gather(
+            *(
+                collect(source_url, collector)
+                for source_url, collector in list(self._collectors.items())
+            )
+        )
+        if failures:
+            raise RuntimeError("; ".join(failures))
+
     @on_command(CommandType.PROFILE_COMPLETE)
     async def _handle_profile_complete_command(
         self, message: ProfileCompleteCommand
     ) -> None:
-        """Trigger final scrape when profiling completes.
-
-        Ensures GPU telemetry captures final state for accurate counter deltas.
-        This final scrape provides the end-point values needed for metrics like
-        energy_consumption which are computed as (final - baseline).
-
-        Args:
-            message: Profile complete command from SystemController
-        """
         if not self._collectors:
-            self.debug("GPU Telemetry: Already stopped, skipping final scrape")
+            self.debug("GPU Telemetry: Already stopped, skipping completion")
             return
-
-        self.info("GPU Telemetry: Profiling complete, capturing final metrics...")
-
-        for dcgm_url, collector in list(self._collectors.items()):
-            try:
-                await collector.collect_and_process_metrics()
-                self.debug(f"GPU Telemetry: Captured final state from {dcgm_url}")
-            except Exception as e:
-                self.warning(
-                    f"GPU Telemetry: Failed to capture final state from {dcgm_url}: {e}"
-                )
 
         await self._stop_all_collectors()
 

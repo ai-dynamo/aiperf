@@ -59,6 +59,7 @@ def _records_manager_for_dispatch(dispatch_result: list) -> MagicMock:
     mgr._error_tracker = MagicMock()
     mgr._complete_credit_phases = set()
     mgr._dispatch_record = AsyncMock(return_value=dispatch_result)
+    mgr._maybe_handle_all_records_received = AsyncMock()
     mgr._on_records = RecordsManager._on_records.__get__(mgr)
     return mgr
 

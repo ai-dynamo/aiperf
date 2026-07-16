@@ -292,15 +292,24 @@ def _create_manager_for_timing_dispatch() -> RecordsManager:
     manager._records_tracker = MagicMock()
     manager._error_tracker = MagicMock()
     manager._complete_credit_phases = set()
+    manager._credits_complete_received = False
+    manager._credits_complete_fallback_task = None
     manager._phase_branch_stats = {}
     manager._latest_branch_stats = None
     manager._dispatch_record = AsyncMock(return_value=[])
     manager.info = MagicMock()
     manager.notice = MagicMock()
+    manager.warning = MagicMock()
     manager.debug = MagicMock()
     manager.trace = MagicMock()
     manager.is_enabled_for = MagicMock(return_value=False)
     manager._handle_all_records_received = AsyncMock()
+
+    def _fake_execute_async(coro):
+        coro.close()  # never actually run the fallback timer in unit tests
+        return MagicMock()
+
+    manager.execute_async = MagicMock(side_effect=_fake_execute_async)
     return manager
 
 
@@ -423,7 +432,15 @@ class TestRecordsManagerTimingDispatch:
             )
         )
 
-        manager._records_tracker.check_and_set_all_records_received_for_phase.assert_called_once_with(
+        # Records + phase complete, but CreditsComplete has not arrived: profiling
+        # finalization is deferred (so the end-of-phase baseline scrape can land).
+        manager._handle_all_records_received.assert_not_awaited()
+
+        await manager._on_credits_complete(
+            CreditsCompleteMessage(service_id="timing-manager")
+        )
+
+        manager._records_tracker.check_and_set_all_records_received_for_phase.assert_called_with(
             CreditPhase.PROFILING
         )
         manager._handle_all_records_received.assert_awaited_once_with(
@@ -502,6 +519,13 @@ class TestRecordsManagerTimingDispatch:
         manager._records_tracker.check_and_set_all_records_received_for_phase.return_value = True
 
         await manager._on_records(_metric_records_message())
+
+        # Records arrived but CreditsComplete has not: finalization still deferred.
+        manager._handle_all_records_received.assert_not_awaited()
+
+        await manager._on_credits_complete(
+            CreditsCompleteMessage(service_id="timing-manager")
+        )
 
         manager._records_tracker.check_and_set_all_records_received_for_phase.assert_called_once_with(
             CreditPhase.PROFILING
@@ -583,6 +607,13 @@ class TestRecordsManagerTimingDispatch:
         release_timing_dispatch.set()
         await phase_complete_task
 
+        # Still awaiting CreditsComplete before finalizing profiling.
+        manager._handle_all_records_received.assert_not_awaited()
+
+        await manager._on_credits_complete(
+            CreditsCompleteMessage(service_id="timing-manager")
+        )
+
         manager._handle_all_records_received.assert_awaited_once_with(
             CreditPhase.PROFILING
         )
@@ -597,11 +628,23 @@ class TestRecordsManagerTimingDispatch:
         )
         manager._complete_credit_phases = {CreditPhase.PROFILING}
         manager._records_tracker.check_and_set_all_records_received_for_phase.return_value = True
+        manager._records_tracker.create_stats_for_phase.return_value = MagicMock(
+            total_records=1,
+            final_requests_completed=1,
+        )
 
         await manager._on_records(_metric_records_message())
 
+        # The record is still counted (barrier converges) even though a handler
+        # raised; finalization waits for CreditsComplete.
         manager._records_tracker.update_from_request.assert_called_once()
-        manager._records_tracker.check_and_set_all_records_received_for_phase.assert_called_once_with(
+        manager._handle_all_records_received.assert_not_awaited()
+
+        await manager._on_credits_complete(
+            CreditsCompleteMessage(service_id="timing-manager")
+        )
+
+        manager._records_tracker.check_and_set_all_records_received_for_phase.assert_called_with(
             CreditPhase.PROFILING
         )
         manager._handle_all_records_received.assert_awaited_once_with(

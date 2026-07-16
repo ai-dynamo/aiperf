@@ -24,6 +24,7 @@ from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 from aiperf.timing.concurrency import ConcurrencyManager
 from aiperf.timing.conversation_source import ConversationSource
+from aiperf.timing.phase.phase_gate import PhaseGateClient
 from aiperf.timing.phase.runner import PhaseRunner
 from aiperf.timing.request_cancellation import RequestCancellationSimulator
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
@@ -86,6 +87,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         phase_publisher: PhasePublisher,
         credit_router: CreditRouterProtocol,
         dataset_metadata: DatasetMetadata,
+        phase_gate: PhaseGateClient | None = None,
         **kwargs,
     ) -> None:
         """Initialize timing strategy and orchestration components.
@@ -95,12 +97,15 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             phase_publisher: Publishes phase events to message bus
             credit_router: Routes credits to workers
             dataset_metadata: Dataset for conversation sampling
+            phase_gate: Optional PhaseGateClient forwarded to each PhaseRunner
+                so START/END handshake commands can be issued. None disables gating.
         """
         super().__init__(**kwargs)
         self._config = config
         self._phase_publisher = phase_publisher
         self._credit_router = credit_router
         self._dataset_metadata = dataset_metadata
+        self._phase_gate = phase_gate
 
         # Create dataset sampler
         SamplerClass = plugins.get_class(
@@ -208,6 +213,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 cancellation_policy=self._cancellation_policy,
                 callback_handler=self._callback_handler,
                 url_selection_strategy=self._url_sampler,
+                phase_gate=self._phase_gate,
             )
 
             # For seamless non-final phases, set callback to remove from active runners

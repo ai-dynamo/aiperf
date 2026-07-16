@@ -32,6 +32,7 @@ class Message(AIPerfBaseModel):
 
     request_ns: int | None = Field(
         default=None,
+        ge=0,
         description="Timestamp of the request",
     )
 
@@ -75,6 +76,7 @@ class RequiresRequestNSMixin(Message):
 
     request_ns: int = Field(  # type: ignore[assignment]
         default_factory=time.time_ns,
+        ge=0,
         description="Timestamp of the request in nanoseconds",
     )
 

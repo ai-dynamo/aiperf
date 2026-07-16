@@ -419,6 +419,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # warmup vs profiling separation.
         self._phase_branch_stats: dict[CreditPhase, BranchStats] = {}
         self._complete_credit_phases: set[CreditPhase] = set()
+        self._credits_complete_received = False
+        self._credits_complete_fallback_task: asyncio.Task[None] | None = None
 
         self._telemetry_state = ErrorTrackingState()
         self._server_metrics_state = ErrorTrackingState()
@@ -597,13 +599,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 phase, ErrorDetails.from_exception(error)
             )
 
-        if (
-            phase in self._complete_credit_phases
-            and self._records_tracker.check_and_set_all_records_received_for_phase(
-                phase
-            )
-        ):
-            await self._handle_all_records_received(phase)
+        await self._maybe_handle_all_records_received(phase)
 
     @on_pull_message(MessageType.TELEMETRY_RECORDS)
     async def _on_telemetry_records(self, message: TelemetryRecordsMessage) -> None:
@@ -644,6 +640,59 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 ] += 1
         elif message.error:
             self._network_latency_state.error_counts[message.error] += 1
+
+    async def _maybe_handle_all_records_received(self, phase: CreditPhase) -> None:
+        """Finalize a phase once its credits are complete AND all records arrived.
+
+        Phase baseline gates can delay the CreditsComplete signal past the last
+        record, so a profiling phase whose records all arrive first schedules a
+        bounded fallback rather than finalizing prematurely.
+        """
+        if phase not in self._complete_credit_phases:
+            return
+        if phase == CreditPhase.PROFILING and not self._credits_complete_received:
+            self._maybe_schedule_credits_complete_fallback(phase)
+            return
+        if self._records_tracker.check_and_set_all_records_received_for_phase(phase):
+            self._cancel_credits_complete_fallback()
+            await self._handle_all_records_received(phase)
+
+    def _maybe_schedule_credits_complete_fallback(self, phase: CreditPhase) -> None:
+        """Arm a one-shot timer to finalize if CreditsComplete never arrives."""
+        if self._credits_complete_fallback_task is not None:
+            return
+        phase_stats = self._records_tracker.create_stats_for_phase(phase)
+        if phase_stats.final_requests_completed is None:
+            return
+        if phase_stats.total_records < phase_stats.final_requests_completed:
+            return
+        timeout = Environment.RECORD.CREDITS_COMPLETE_FALLBACK_TIMEOUT
+        self.warning(
+            f"All profiling records arrived before CreditsComplete; waiting up to {timeout:.1f}s before finalizing defensively"
+        )
+        self._credits_complete_fallback_task = self.execute_async(
+            self._finalize_without_credits_complete_after_timeout(phase)
+        )
+
+    def _cancel_credits_complete_fallback(self) -> None:
+        """Cancel the pending credits-complete fallback timer, if any."""
+        if self._credits_complete_fallback_task is None:
+            return
+        self._credits_complete_fallback_task.cancel()
+        self._credits_complete_fallback_task = None
+
+    async def _finalize_without_credits_complete_after_timeout(
+        self, phase: CreditPhase
+    ) -> None:
+        """Finalize the phase if CreditsComplete still hasn't arrived after the wait."""
+        await asyncio.sleep(Environment.RECORD.CREDITS_COMPLETE_FALLBACK_TIMEOUT)
+        if self._credits_complete_received:
+            return
+        self.warning(
+            "CreditsComplete was not received after all profiling records arrived; finalizing records defensively"
+        )
+        if self._records_tracker.check_and_set_all_records_received_for_phase(phase):
+            await self._handle_all_records_received(phase)
 
     async def _handle_all_records_received(self, phase: CreditPhase) -> None:
         """Handle the case where all records have been received."""
@@ -787,10 +836,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         # This check is to prevent a race condition where the records manager processes
         # all records before the timing manager has sent the final completed count.
-        if self._records_tracker.check_and_set_all_records_received_for_phase(
-            message.stats.phase
-        ):
-            await self._handle_all_records_received(message.stats.phase)
+        await self._maybe_handle_all_records_received(message.stats.phase)
 
     def _snapshot_branch_stats(self, phase: CreditPhase) -> BranchStats | None:
         """Return the orchestrator-published BranchStats for ``phase``.
@@ -807,13 +853,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self.info(
             "All credits complete, please wait for the results to be processed..."
         )
-        if (
-            CreditPhase.PROFILING in self._complete_credit_phases
-            and self._records_tracker.check_and_set_all_records_received_for_phase(
-                CreditPhase.PROFILING
-            )
-        ):
-            await self._handle_all_records_received(CreditPhase.PROFILING)
+        self._credits_complete_received = True
+        self._cancel_credits_complete_fallback()
+        await self._maybe_handle_all_records_received(CreditPhase.PROFILING)
 
     @background_task(
         interval=Environment.RECORD.PROGRESS_REPORT_INTERVAL, immediate=False

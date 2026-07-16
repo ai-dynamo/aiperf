@@ -8,10 +8,12 @@ from typing import TYPE_CHECKING, ClassVar
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.enums import (
+    BaselineKind,
     CommAddress,
     CommandType,
     CreditPhase,
     MessageType,
+    ServiceCapability,
     make_result_producer_capability,
 )
 from aiperf.common.environment import Environment
@@ -25,6 +27,7 @@ from aiperf.common.messages import (
     ServerMetricsStatusMessage,
 )
 from aiperf.common.metric_utils import normalize_metrics_endpoint_url
+from aiperf.common.mixins.baseline_collector_mixin import BaselineCollectorMixin
 from aiperf.common.models import ErrorDetails, ServerMetricsRecord
 from aiperf.common.protocols import PushClientProtocol
 from aiperf.common.redact import redact_url
@@ -38,7 +41,7 @@ if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
 
-class ServerMetricsManager(BaseComponentService):
+class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
     """Coordinates multiple ServerMetricsDataCollector instances for server metrics collection.
 
     The ServerMetricsManager coordinates multiple ServerMetricsDataCollector instances
@@ -58,6 +61,7 @@ class ServerMetricsManager(BaseComponentService):
     """
 
     extra_capabilities: ClassVar[tuple[str, ...]] = (
+        ServiceCapability.BASELINE_COLLECTOR,
         make_result_producer_capability("server_metrics"),
     )
 
@@ -146,6 +150,7 @@ class ServerMetricsManager(BaseComponentService):
             try:
                 is_reachable = await collector.is_url_reachable()
                 if is_reachable:
+                    await collector.initialize()
                     self._collectors[endpoint_url] = collector
                     self.debug(
                         lambda url=endpoint_url: f"Server Metrics: Prometheus endpoint {url} is reachable"
@@ -170,20 +175,6 @@ class ServerMetricsManager(BaseComponentService):
                 endpoints_reachable=[],
             )
             return
-
-        # Capture baseline metrics before profiling starts
-        self.info("Server Metrics: Capturing baseline metrics...")
-        for endpoint_url, collector in self._collectors.items():
-            try:
-                await collector.initialize()
-                await collector.collect_and_process_metrics()
-                self.debug(
-                    lambda url=endpoint_url: f"Server Metrics: Captured baseline from {url}"
-                )
-            except Exception as e:
-                self.warning(
-                    f"Server Metrics: Failed to capture baseline from {endpoint_url}: {e}"
-                )
 
         await self._send_server_metrics_status(
             enabled=True,
@@ -292,48 +283,53 @@ class ServerMetricsManager(BaseComponentService):
         ):
             self._active_phase = None
 
+    async def collect_baseline(
+        self, kind: BaselineKind, phase_id: str, phase_name: str
+    ) -> None:
+        if phase_name != "profiling":
+            return
+        if not self._collectors:
+            return
+
+        self.info(
+            f"Server Metrics: Capturing {kind} baseline for phase '{phase_name}'..."
+        )
+        await self._collect_once(label=str(kind))
+
+    async def _collect_once(self, label: str) -> None:
+        failures: list[str] = []
+
+        async def collect(
+            endpoint_url: str, collector: ServerMetricsDataCollector
+        ) -> None:
+            try:
+                await collector.collect_and_process_metrics()
+                self.debug(
+                    lambda url=endpoint_url: f"Server Metrics: Captured {label} state from {url}"
+                )
+            except Exception as e:  # keep attempting other endpoints
+                failures.append(f"{endpoint_url}: {e}")
+                self.warning(
+                    f"Server Metrics: Failed to capture {label} state from {endpoint_url}: {e}"
+                )
+
+        await asyncio.gather(
+            *(
+                collect(endpoint_url, collector)
+                for endpoint_url, collector in list(self._collectors.items())
+            )
+        )
+        if failures:
+            raise RuntimeError("; ".join(failures))
+
     @on_command(CommandType.PROFILE_COMPLETE)
     async def _handle_profile_complete_command(
         self, message: ProfileCompleteCommand
     ) -> None:
-        """Trigger final scrape when profiling completes.
-
-        Performs one final metrics collection from all endpoints to capture
-        the end state immediately after profiling finishes. This ensures we
-        have metrics that cover the entire profiling period, including any
-        counter/histogram changes that occurred during the final seconds.
-
-        Critical for accurate delta calculations on counters and histograms,
-        where missing the final state would undercount the actual activity.
-
-        Idempotent: Can be called multiple times safely (e.g., if multiple
-        RecordsManager instances send the command). Subsequent calls are no-ops.
-
-        Args:
-            message: Profile complete command from RecordsManager signaling that
-                    all client request records have been processed
-        """
-        # Idempotent check - skip if already stopped or no collectors
         if not self._collectors:
-            self.debug("Server Metrics: Already stopped, skipping final scrape")
+            self.debug("Server Metrics: Already stopped, skipping completion")
             return
 
-        self.info("Server Metrics: Profiling complete, capturing final metrics...")
-        self._active_phase = CreditPhase.PROFILING
-
-        # Trigger final scrape from all collectors
-        for endpoint_url, collector in list(self._collectors.items()):
-            try:
-                await collector.collect_and_process_metrics()
-                self.debug(
-                    lambda url=endpoint_url: f"Server Metrics: Captured final state from {url}"
-                )
-            except Exception as e:
-                self.warning(
-                    f"Server Metrics: Failed to capture final state from {endpoint_url}: {e}"
-                )
-
-        # Stop all collectors after final scrape
         await self._stop_all_collectors()
 
     @on_command(CommandType.PROFILE_CANCEL)

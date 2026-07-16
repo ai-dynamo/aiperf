@@ -155,6 +155,34 @@ service:
 **Config types:**
 - `CLIConfig`: unified CLI input DTO carrying both benchmark params (endpoints, loadgen) and service-runtime knobs (ZMQ ports, logging level)
 
+## Baseline Collector Pattern
+
+To take a clean reading at phase boundaries, mix in `BaselineCollectorMixin`:
+
+```python
+from aiperf.common.base_component_service import BaseComponentService
+from aiperf.common.enums import BaselineKind
+from aiperf.common.mixins.baseline_collector_mixin import BaselineCollectorMixin
+
+
+class MyMonitor(BaselineCollectorMixin, BaseComponentService):
+    """Captures a system snapshot before profiling and after credits drain."""
+
+    async def collect_baseline(
+        self, kind: BaselineKind, phase_id: str, phase_name: str
+    ) -> None:
+        if phase_name != "profiling":
+            return
+        snapshot = await self._take_snapshot()
+        self._snapshots.append((kind, phase_id, snapshot))
+```
+
+The mixin auto-advertises `ServiceCapability.BASELINE_COLLECTOR` via its
+`extra_capabilities` ClassVar, which SystemController's `BaselineCoordinator`
+keys off to fan out gate requests. Per-collector exceptions are caught and
+surfaced via the ack message's `success=False` field rather than blocking the
+gate.
+
 ## Model Pattern
 
 Use `AIPerfBaseModel` for data, `BaseConfig` for configuration:

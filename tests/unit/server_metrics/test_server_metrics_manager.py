@@ -639,12 +639,13 @@ class TestProfileCompleteAndCancel:
     """Test profile completion and cancellation scenarios."""
 
     @pytest.mark.asyncio
-    async def test_profile_complete_triggers_final_scrape(
+    async def test_profile_complete_stops_collectors(
         self,
         cli_config: CLIConfig,
         cfg_with_endpoint: CLIConfig,
     ):
-        """Test that profile complete triggers final metrics scrape."""
+        """Profile complete stops collectors. The end-of-phase scrape now happens
+        via the phase baseline gate (collect_baseline), not here."""
         from aiperf.common.messages import ProfileCompleteCommand
 
         manager = ServerMetricsManager(
@@ -660,9 +661,8 @@ class TestProfileCompleteAndCancel:
             )
         )
 
-        # Should call final scrape
-        mock_collector.collect_and_process_metrics.assert_called_once()
-        # Should stop collector after final scrape
+        # No final scrape here anymore; just stops.
+        mock_collector.collect_and_process_metrics.assert_not_called()
         mock_collector.stop.assert_called_once()
 
     @pytest.mark.asyncio
