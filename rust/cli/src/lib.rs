@@ -36,6 +36,7 @@ pub mod pyfit;
 pub mod pyopt;
 pub mod render;
 pub mod search;
+pub mod search_history;
 pub mod signals;
 pub mod speed_bench;
 pub mod sweep;

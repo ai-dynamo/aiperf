@@ -8,9 +8,10 @@
 //! outcome. A single run is a degenerate one-cell sweep. A YAML `--config` with a
 //! `sweep:` block expands to a native sweep; otherwise it is one run.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::model::{Operation, RunnerRequest};
+use crate::search_history::{HistoryConfig, IterationRecord};
 use crate::sweep::artifact_dir::IterationOrder;
 use crate::sweep::{self, run as sweep_run};
 use crate::{exec_bin, execute, flags::ProfileFlags, load, yaml};
@@ -85,6 +86,15 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         && matches!(flags.search_style.as_deref(), Some("bo") | Some("optuna"))
     {
         return run_bayes_loop(&flags);
+    }
+
+    // `max-goodput-under-slo` maximizes goodput under a
+    // `good_request_fraction >= --slo-attainment-fraction` outcome constraint via
+    // the same optuna BO seam; per-request TTFT/TPOT/E2E SLOs are installed as
+    // config `slos` so the runtime computes goodput / good_request_fraction.
+    #[cfg(feature = "search-pyo3")]
+    if flags.search_recipe.as_deref() == Some("max-goodput-under-slo") {
+        return run_goodput_loop(&flags);
     }
 
     // A grid `--search-recipe` expands its search space into a static grid sweep
@@ -221,7 +231,54 @@ fn run_recipe_sweep(
 ) -> anyhow::Result<i32> {
     let sweep_id = uuid::Uuid::new_v4().simple().to_string();
     let cells = plan_recipe_cells(flags, &recipe, &sweep_id)?;
-    run_cells(flags, &cells, true, IterationOrder::Repeated)
+    // The sweep base dir is the parent common to every per-cell dir.
+    let base = flags.artifact_dir.clone().or_else(|| {
+        cells
+            .first()
+            .and_then(|c| c.run.artifact_dir.parent().map(Path::to_path_buf))
+    });
+    let code = run_cells(flags, &cells, true, IterationOrder::Repeated)?;
+
+    // Optional post-process (e.g. the SLA-breach knee): runs after the sweep
+    // aggregate lands so it can read the per-combination metrics back off disk.
+    if let (Some(spec), Some(base)) = (recipe.post_process.as_ref(), base.as_ref())
+        && let Err(e) = write_sla_breach(base, spec)
+    {
+        tracing::warn!("failed to write sla_breach.json: {e}");
+    }
+    Ok(code)
+}
+
+/// Locate the sweep-aggregate directory under `base` (single-trial
+/// `<base>/sweep_aggregate`, or REPEATED multi-trial `<base>/aggregate/sweep_aggregate`).
+fn find_sweep_aggregate_dir(base: &Path) -> Option<PathBuf> {
+    for cand in [
+        base.join("sweep_aggregate"),
+        base.join("aggregate").join("sweep_aggregate"),
+    ] {
+        if cand.join("profile_export_aiperf_sweep.json").exists() {
+            return Some(cand);
+        }
+    }
+    None
+}
+
+/// Run the `sla_breach_knee` handler over the sweep aggregate and write
+/// `sla_breach.json` beside it (GAP 2A/2B).
+fn write_sla_breach(base: &Path, spec: &crate::search::SlaBreachSpec) -> anyhow::Result<()> {
+    let dir = find_sweep_aggregate_dir(base).ok_or_else(|| {
+        anyhow::anyhow!(
+            "no sweep_aggregate/profile_export_aiperf_sweep.json under {}",
+            base.display()
+        )
+    })?;
+    let bytes = std::fs::read(dir.join("profile_export_aiperf_sweep.json"))?;
+    let sweep_json: serde_json::Value = serde_json::from_slice(&bytes)?;
+    let breach = crate::search::sla_breach::process(&sweep_json, &spec.swept_param, &spec.filters);
+    let out_path = dir.join("sla_breach.json");
+    std::fs::write(&out_path, serde_json::to_string_pretty(&breach)?)?;
+    tracing::info!("SLA-breach knee written to: {}", out_path.display());
+    Ok(())
 }
 
 /// Drive the dynamic monotonic SLA-saturation search (`max-concurrency-under-sla
@@ -234,7 +291,9 @@ fn run_recipe_sweep(
 fn run_search_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
     let spec = crate::search::MonotonicSpec::from_flags(flags)?;
     let filters = spec.sla_filters.clone();
+    let (lo, hi, max_iterations) = (spec.lo, spec.hi, spec.max_iterations);
     let mut planner = crate::search::MonotonicPlanner::new(spec);
+    let mut records: Vec<IterationRecord> = Vec::new();
 
     // Resolve the base run once with concurrency neutralized (the planner owns
     // the swept concurrency); mirrors `plan_recipe_cells`.
@@ -287,15 +346,26 @@ fn run_search_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
         let payload = serde_json::to_vec(&request)?;
         let terminal = execute::run_once(&runner, &payload, &child_pid)?;
 
-        // Per-iteration feasibility: a successful run whose every SLA filter is
-        // satisfied is feasible; a failed run (or any unmeasurable/breached
-        // filter) is infeasible (mirrors `iteration_feasibility`).
-        let feasible = terminal.success
-            && terminal
-                .report_path
-                .as_deref()
-                .map(|p| report_feasible(p, &filters))
-                .unwrap_or(false);
+        // Read the report once: per-iteration feasibility (every SLA filter
+        // satisfied) and the objective value recorded for search_history.json.
+        let report = terminal
+            .success
+            .then(|| terminal.report_path.as_deref())
+            .flatten()
+            .and_then(|p| std::fs::read(p).ok())
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok());
+        let feasible = report
+            .as_ref()
+            .map(|r| {
+                filters
+                    .iter()
+                    .all(|f| f.satisfied_by(report_metric(r, &f.metric_tag, &f.stat)))
+            })
+            .unwrap_or(false);
+        let objective = report
+            .as_ref()
+            .and_then(|r| report_metric(r, "output_token_throughput", "avg"))
+            .filter(|v| v.is_finite());
         if !terminal.success {
             any_failure = true;
             eprintln!(
@@ -308,7 +378,15 @@ fn run_search_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
                 if feasible { "FEASIBLE" } else { "infeasible" }
             );
         }
+        let warned_before = planner.non_monotonic_warning;
         planner.tell(feasible);
+        records.push(IterationRecord {
+            iteration_idx: iter,
+            concurrency: value,
+            objective,
+            feasible,
+            non_monotonic_warning: planner.non_monotonic_warning && !warned_before,
+        });
     }
 
     let reason = planner.convergence_reason().unwrap_or("converged");
@@ -329,6 +407,27 @@ fn run_search_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
         },
     );
     write_search_boundary(&base_artifact_dir, &planner, reason)?;
+    let config = HistoryConfig {
+        planner: "monotonic_sla".into(),
+        objective_metric: "output_token_throughput".into(),
+        objective_stat: "avg".into(),
+        direction: "MAXIMIZE".into(),
+        max_iterations,
+        n_initial_points: 1,
+        sla_filters: filters.clone(),
+        lo,
+        hi,
+        kind: "int".into(),
+        swept_dim_path: "phases.profiling.concurrency".into(),
+        random_seed: flags.search_random_seed,
+    };
+    crate::search_history::write_search_history(
+        &base_artifact_dir,
+        &records,
+        &config,
+        Some(reason),
+        Some("max-concurrency-under-sla"),
+    )?;
 
     Ok(if any_failure { 1 } else { 0 })
 }
@@ -351,20 +450,6 @@ fn report_metric(report: &serde_json::Value, tag: &str, stat: &str) -> Option<f6
         "avg" | "min" | "max" | "std" | "count" => stats.get(stat)?.as_f64(),
         p => stats.get("percentiles")?.get(p)?.as_f64(),
     }
-}
-
-/// True iff the report at `report_path` satisfies every SLA filter (a missing /
-/// unreadable report or any breached/unmeasurable filter is infeasible).
-fn report_feasible(report_path: &str, filters: &[crate::search::SlaFilter]) -> bool {
-    let Ok(bytes) = std::fs::read(report_path) else {
-        return false;
-    };
-    let Ok(report) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
-        return false;
-    };
-    filters
-        .iter()
-        .all(|f| f.satisfied_by(report_metric(&report, &f.metric_tag, &f.stat)))
 }
 
 /// Persist the native monotonic-search boundary summary beside the run artifacts.
@@ -398,7 +483,10 @@ fn run_isotonic_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
     use std::collections::HashMap;
 
     let spec = crate::isotonic::IsotonicSpec::from_flags(flags)?;
+    let (lo, hi, max_iterations) = (spec.lo, spec.hi, spec.max_iterations);
+    let filters_for_history = spec.sla_filters.clone();
     let mut planner = crate::isotonic::SmoothIsotonicPlanner::new(spec);
+    let mut records: Vec<IterationRecord> = Vec::new();
     // (filter_key, filter) pairs so the margin map keys match the planner's.
     let filters: Vec<(String, crate::search::SlaFilter)> = planner
         .filters()
@@ -458,6 +546,7 @@ fn run_isotonic_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
         // Per-iteration feasibility + per-filter signed margins from the report.
         let mut feasible = false;
         let mut margins: HashMap<String, f64> = HashMap::new();
+        let mut objective: Option<f64> = None;
         if terminal.success
             && let Some(path) = terminal.report_path.as_deref()
             && let Ok(bytes) = std::fs::read(path)
@@ -466,6 +555,8 @@ fn run_isotonic_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
             feasible = filters
                 .iter()
                 .all(|(_, f)| f.satisfied_by(report_metric(&report, &f.metric_tag, &f.stat)));
+            objective =
+                report_metric(&report, "output_token_throughput", "avg").filter(|v| v.is_finite());
             for (key, f) in &filters {
                 if let Some(obs) = report_metric(&report, &f.metric_tag, &f.stat) {
                     // Signed margin: negative = feasible, increasing in x
@@ -490,7 +581,15 @@ fn run_isotonic_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
                 if feasible { "FEASIBLE" } else { "infeasible" }
             );
         }
+        let warned_before = planner.non_monotonic_warning;
         planner.tell(feasible, margins)?;
+        records.push(IterationRecord {
+            iteration_idx: iter,
+            concurrency: value,
+            objective,
+            feasible,
+            non_monotonic_warning: planner.non_monotonic_warning && !warned_before,
+        });
     }
 
     let reason = planner
@@ -522,6 +621,27 @@ fn run_isotonic_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
         base_artifact_dir.join("search_boundary.json"),
         serde_json::to_vec_pretty(&summary)?,
     )?;
+    let config = HistoryConfig {
+        planner: "smooth_isotonic".into(),
+        objective_metric: "output_token_throughput".into(),
+        objective_stat: "avg".into(),
+        direction: "MAXIMIZE".into(),
+        max_iterations,
+        n_initial_points: 1,
+        sla_filters: filters_for_history.clone(),
+        lo,
+        hi,
+        kind: "int".into(),
+        swept_dim_path: "phases.profiling.concurrency".into(),
+        random_seed: flags.search_random_seed,
+    };
+    crate::search_history::write_search_history(
+        &base_artifact_dir,
+        &records,
+        &config,
+        Some(&reason),
+        Some("max-concurrency-under-sla"),
+    )?;
 
     Ok(if any_failure { 1 } else { 0 })
 }
@@ -540,7 +660,14 @@ fn run_bayes_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
 
     let spec = crate::bayes::BayesSpec::from_flags(flags)?;
     let filters = spec.sla_filters.clone();
+    let (lo, hi, max_iterations, n_initial_points) =
+        (spec.lo, spec.hi, spec.max_iterations, spec.n_initial_points);
+    let planner_id = match flags.search_style.as_deref() {
+        Some("optuna") => "optuna",
+        _ => "bayesian",
+    };
     let mut planner = crate::bayes::OptunaPlanner::new(spec)?;
+    let mut records: Vec<IterationRecord> = Vec::new();
 
     let mut base_flags = flags.clone();
     base_flags.concurrency = Some("1".to_string());
@@ -626,6 +753,13 @@ fn run_bayes_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
             );
         }
         planner.tell(objective, &sla_observed, feasible)?;
+        records.push(IterationRecord {
+            iteration_idx: iter,
+            concurrency: value,
+            objective,
+            feasible,
+            non_monotonic_warning: false,
+        });
     }
 
     let reason = planner
@@ -647,6 +781,201 @@ fn run_bayes_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
     std::fs::write(
         base_artifact_dir.join("search_boundary.json"),
         serde_json::to_vec_pretty(&summary)?,
+    )?;
+    let config = HistoryConfig {
+        planner: planner_id.into(),
+        objective_metric: OBJ_METRIC.into(),
+        objective_stat: OBJ_STAT.into(),
+        direction: "MAXIMIZE".into(),
+        max_iterations,
+        n_initial_points,
+        sla_filters: filters.clone(),
+        lo,
+        hi,
+        kind: "int".into(),
+        swept_dim_path: "phases.profiling.concurrency".into(),
+        random_seed: flags.search_random_seed,
+    };
+    crate::search_history::write_search_history(
+        &base_artifact_dir,
+        &records,
+        &config,
+        Some(&reason),
+        Some("max-concurrency-under-sla"),
+    )?;
+
+    Ok(if any_failure { 1 } else { 0 })
+}
+
+/// Drive the `max-goodput-under-slo` recipe (`src/aiperf/search_recipes/_max_goodput_under_slo.py`):
+/// Bayesian-optimize `goodput` over log-uniform concurrency with a
+/// `good_request_fraction >= --slo-attainment-fraction` outcome constraint. The
+/// three TTFT/TPOT/E2E SLO thresholds are installed as config `slos` (via the
+/// `--goodput` projection) so the runtime marks each request good/bad and
+/// computes the `goodput` / `good_request_fraction` metrics. Requires
+/// `search-pyo3` (real optuna). Emits `search_history.json`.
+#[cfg(feature = "search-pyo3")]
+fn run_goodput_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
+    const OBJ_METRIC: &str = "goodput";
+    const OBJ_STAT: &str = "avg";
+
+    // The goodput formula needs all three per-request SLOs.
+    let ttft = flags.ttft_sla_ms;
+    let tpot = flags.tpot_sla_ms.or(flags.itl_sla_ms);
+    let e2e = flags.e2e_sla_ms;
+    let missing: Vec<&str> = [
+        ("--ttft-sla-ms", ttft),
+        ("--tpot-sla-ms / --itl-sla-ms", tpot),
+        ("--e2e-sla-ms", e2e),
+    ]
+    .iter()
+    .filter(|(_, v)| v.is_none())
+    .map(|(flag, _)| *flag)
+    .collect();
+    anyhow::ensure!(
+        missing.is_empty(),
+        "recipe 'max-goodput-under-slo' requires {}; all three define what \
+         'good' means per request for the goodput formula",
+        missing.join(", ")
+    );
+    let (ttft, tpot, e2e) = (ttft.unwrap(), tpot.unwrap(), e2e.unwrap());
+
+    let spec = crate::bayes::BayesSpec::for_goodput(flags)?;
+    let filters = spec.sla_filters.clone();
+    let (lo, hi, max_iterations, n_initial_points) =
+        (spec.lo, spec.hi, spec.max_iterations, spec.n_initial_points);
+    let mut planner = crate::bayes::OptunaPlanner::new(spec)?;
+    let mut records: Vec<IterationRecord> = Vec::new();
+
+    // Install the per-request SLOs as config `slos` (keyed by native metric tag)
+    // so the runtime computes goodput / good_request_fraction.
+    let mut base_flags = flags.clone();
+    base_flags.concurrency = Some("1".to_string());
+    base_flags.goodput = Some(format!(
+        "time_to_first_token:{ttft} inter_token_latency:{tpot} request_latency:{e2e}"
+    ));
+    let base = load::resolve(&base_flags)?;
+    let base_artifact_dir = base.artifact_dir.clone();
+    crate::logging::set_log_file(&base_artifact_dir);
+
+    let sweep_id = uuid::Uuid::new_v4().simple().to_string();
+    let seed = seed_policy(flags);
+    let runner = exec_bin::resolve()?;
+    let child_pid = crate::signals::install();
+
+    eprintln!("aiperf: optuna BO goodput search (max-goodput-under-slo)");
+    let mut any_failure = false;
+    let mut best_feasible: Option<i64> = None;
+    while let Some(value) = planner.ask()? {
+        let iter = planner.iteration();
+        let label = format!("search_iter_{iter:04}");
+
+        let mut run = base.clone();
+        let mut cfg = serde_json::to_value(&run.cfg)?;
+        crate::search::apply_override(&mut cfg, crate::search::AxisKind::PhaseConcurrency, value);
+        run.cfg = serde_json::from_value(cfg)?;
+        let dir = crate::sweep::artifact_dir::resolve(
+            &base_artifact_dir,
+            true,
+            1,
+            &label,
+            0,
+            IterationOrder::Repeated,
+        );
+        run.sweep_id = Some(sweep_id.clone());
+        run.variation = Some(serde_json::json!({
+            "index": iter,
+            "label": label,
+            "values": { "phases.profiling.concurrency": value },
+        }));
+        run.random_seed = seed.seed(iter as usize);
+        run.trial = 0;
+        run.artifact_dir = dir.clone();
+
+        eprintln!(
+            "aiperf: [iter {iter}] concurrency={value} -> {}",
+            dir.display()
+        );
+        clear_prior_report(&dir);
+        let request = RunnerRequest::new(Operation::Execute, run);
+        let payload = serde_json::to_vec(&request)?;
+        let terminal = execute::run_once(&runner, &payload, &child_pid)?;
+
+        let mut objective: Option<f64> = None;
+        let mut sla_observed: Vec<Option<f64>> = vec![None; filters.len()];
+        let mut feasible = false;
+        if terminal.success
+            && let Some(path) = terminal.report_path.as_deref()
+            && let Ok(bytes) = std::fs::read(path)
+            && let Ok(report) = serde_json::from_slice::<serde_json::Value>(&bytes)
+        {
+            objective = report_metric(&report, OBJ_METRIC, OBJ_STAT).filter(|v| v.is_finite());
+            for (i, f) in filters.iter().enumerate() {
+                sla_observed[i] = report_metric(&report, &f.metric_tag, &f.stat);
+            }
+            feasible = filters
+                .iter()
+                .all(|f| f.satisfied_by(report_metric(&report, &f.metric_tag, &f.stat)));
+        }
+        if !terminal.success {
+            any_failure = true;
+            eprintln!(
+                "aiperf: [iter {iter}] run failed (treated as infeasible): {}",
+                terminal.error.as_deref().unwrap_or("(no detail)")
+            );
+        } else {
+            if feasible && best_feasible.is_none_or(|b| value > b) {
+                best_feasible = Some(value);
+            }
+            eprintln!(
+                "aiperf: [iter {iter}] concurrency={value} goodput={} -> {}",
+                objective
+                    .map(|v| format!("{v:.1}"))
+                    .unwrap_or_else(|| "-".into()),
+                if feasible { "FEASIBLE" } else { "infeasible" }
+            );
+        }
+        planner.tell(objective, &sla_observed, feasible)?;
+        records.push(IterationRecord {
+            iteration_idx: iter,
+            concurrency: value,
+            objective,
+            feasible,
+            non_monotonic_warning: false,
+        });
+    }
+
+    let reason = planner
+        .convergence_reason()
+        .unwrap_or("converged")
+        .to_string();
+    println!(
+        "\naiperf: optuna BO goodput boundary\n  best feasible concurrency: {}\n  convergence: {reason}",
+        best_feasible
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "-".into()),
+    );
+    let _ = std::fs::create_dir_all(&base_artifact_dir);
+    let config = HistoryConfig {
+        planner: "bayesian".into(),
+        objective_metric: OBJ_METRIC.into(),
+        objective_stat: OBJ_STAT.into(),
+        direction: "MAXIMIZE".into(),
+        max_iterations,
+        n_initial_points,
+        sla_filters: filters.clone(),
+        lo,
+        hi,
+        kind: "int".into(),
+        swept_dim_path: "phases.profiling.concurrency".into(),
+        random_seed: flags.search_random_seed,
+    };
+    crate::search_history::write_search_history(
+        &base_artifact_dir,
+        &records,
+        &config,
+        Some(&reason),
+        Some("max-goodput-under-slo"),
     )?;
 
     Ok(if any_failure { 1 } else { 0 })

@@ -106,13 +106,22 @@ impl MockServer {
             .set_nonblocking(true)
             .expect("set listener nonblocking");
 
-        let state: Arc<AppState> = AppState::build(cfg);
-
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
             .build()
             .expect("build mock server runtime");
+
+        // Build the state INSIDE the runtime context: `BatchScheduler::start()`
+        // no-ops when `Handle::try_current()` fails (so sync unit-test builds are
+        // safe), so constructing `AppState` outside the runtime would silently
+        // leave the step-scheduler tick-loop unstarted and hang every
+        // scheduler-enabled run in warmup. `runtime.enter()` gives this thread a
+        // runtime handle for the duration of `AppState::build`.
+        let state: Arc<AppState> = {
+            let _guard = runtime.enter();
+            AppState::build(cfg)
+        };
 
         // Optional KServe gRPC listener on its own port, sharing the same state.
         let (grpc_url, grpc_port) = if with_grpc {

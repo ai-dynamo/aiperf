@@ -91,6 +91,51 @@ impl BayesSpec {
             sla_filters,
         })
     }
+
+    /// Resolve from the CLI flags for `max-goodput-under-slo`. Mirrors
+    /// `MaxGoodputUnderSLO.expand` (`src/aiperf/search_recipes/_max_goodput_under_slo.py:112-189`):
+    /// Bayesian-optimize `goodput` over log-uniform concurrency `[1, 1000]` with a
+    /// single `good_request_fraction >= --slo-attainment-fraction` outcome
+    /// constraint (default 0.95). The per-request TTFT/TPOT/E2E SLOs are installed
+    /// separately as config `slos` by the run loop.
+    pub fn for_goodput(flags: &crate::flags::ProfileFlags) -> anyhow::Result<Self> {
+        let lo = flags.concurrency_min.unwrap_or(1);
+        let hi = flags.concurrency_max.unwrap_or(1000);
+        anyhow::ensure!(lo >= 1, "concurrency lower bound must be >= 1 (got {lo})");
+        anyhow::ensure!(
+            hi > lo,
+            "concurrency upper bound ({hi}) must be > lower ({lo})"
+        );
+        let attainment = flags.slo_attainment_fraction.unwrap_or(0.95);
+        anyhow::ensure!(
+            attainment > 0.0 && attainment <= 1.0,
+            "--slo-attainment-fraction must be in (0, 1] (got {attainment})"
+        );
+        let sla_filters = vec![SlaFilter {
+            metric_tag: "good_request_fraction".into(),
+            stat: "avg".into(),
+            op: SlaOp::Ge,
+            threshold: attainment,
+        }];
+        let sampler = flags
+            .optuna_sampler
+            .clone()
+            .unwrap_or_else(|| "botorch".to_string());
+        Ok(Self {
+            lo,
+            hi,
+            log: true,
+            max_iterations: flags.search_max_iterations.unwrap_or(30),
+            n_initial_points: flags.search_initial_points.unwrap_or(5),
+            plateau_window: 8,
+            plateau_threshold: 0.01,
+            improvement_patience: 10,
+            sampler,
+            seed: flags.search_random_seed,
+            direction: Direction::Maximize,
+            sla_filters,
+        })
+    }
 }
 
 struct HistoryEntry {

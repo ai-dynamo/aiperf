@@ -25,6 +25,8 @@ use serde_json::Value;
 
 use crate::flags::ProfileFlags;
 
+pub mod sla_breach;
+
 /// How a recipe axis value maps onto the built `cfg`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AxisKind {
@@ -48,6 +50,18 @@ pub struct RecipeAxis {
 /// An expanded grid recipe: its ordered per-variation cells.
 pub struct RecipeSweep {
     pub variations: Vec<RecipeVariation>,
+    /// Optional post-process step to run after the sweep aggregate is written
+    /// (e.g. the SLA-breach knee for `max-concurrency-under-sla --search-style grid`).
+    pub post_process: Option<SlaBreachSpec>,
+}
+
+/// Post-process spec for the `sla_breach_knee` handler: the swept dotted path and
+/// the SLA filters to evaluate over each swept-value's per-combination metrics.
+pub struct SlaBreachSpec {
+    /// Dotted path swept on the axis (e.g. `phases.profiling.concurrency`).
+    pub swept_param: String,
+    /// SLA filters echoed from the recipe.
+    pub filters: Vec<SlaFilter>,
 }
 
 /// One expanded recipe variation.
@@ -104,8 +118,10 @@ pub fn expand_recipe(flags: &ProfileFlags) -> anyhow::Result<Option<RecipeSweep>
     if recipe == "pareto-sweep" {
         return Ok(Some(RecipeSweep {
             variations: expand_pareto(flags)?,
+            post_process: None,
         }));
     }
+    let mut post_process: Option<SlaBreachSpec> = None;
     let axes = match recipe {
         "concurrency-ramp" => vec![RecipeAxis {
             path: "phases.profiling.concurrency",
@@ -173,6 +189,12 @@ pub fn expand_recipe(flags: &ProfileFlags) -> anyhow::Result<Option<RecipeSweep>
                  --search-style grid (static sweep) or --search-style monotonic \
                  (pure-Rust probe+bisection), or rebuild with --features search-pyo3"
             );
+            // After the sweep aggregate is written, locate the SLA-feasibility
+            // boundary along the swept concurrency (`sla_breach.json`).
+            post_process = Some(SlaBreachSpec {
+                swept_param: "phases.profiling.concurrency".to_string(),
+                filters: build_sla_filters(flags),
+            });
             vec![RecipeAxis {
                 path: "phases.profiling.concurrency",
                 seg: "concurrency",
@@ -193,6 +215,7 @@ pub fn expand_recipe(flags: &ProfileFlags) -> anyhow::Result<Option<RecipeSweep>
     };
     Ok(Some(RecipeSweep {
         variations: expand_axes(&axes),
+        post_process,
     }))
 }
 
@@ -384,6 +407,27 @@ impl SlaFilter {
             SlaOp::Gt => v > self.threshold,
             SlaOp::Ge => v >= self.threshold,
         }
+    }
+
+    /// Serialize this filter to its `{metric_tag, stat, op, threshold}` dict
+    /// (Python `sweep_sla_filter.sla_filter_to_dict` over an `SLAFilter`).
+    pub fn to_dict(&self) -> Value {
+        serde_json::json!({
+            "metric_tag": self.metric_tag,
+            "stat": self.stat,
+            "op": op_str(self.op),
+            "threshold": self.threshold,
+        })
+    }
+}
+
+/// The literal string for an [`SlaOp`] (`"lt"`/`"le"`/`"gt"`/`"ge"`).
+pub fn op_str(op: SlaOp) -> &'static str {
+    match op {
+        SlaOp::Lt => "lt",
+        SlaOp::Le => "le",
+        SlaOp::Gt => "gt",
+        SlaOp::Ge => "ge",
     }
 }
 
