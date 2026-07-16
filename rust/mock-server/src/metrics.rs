@@ -419,6 +419,9 @@ impl MetricRecorder {
             0.0
         };
         self.metrics.vllm.KV_CACHE_USAGE.set(usage);
+        // Host-side KV cache trails device usage; a fixed fraction keeps it
+        // deterministic and bounded to [0, 1] for the runner's cpu-cache row.
+        self.metrics.vllm.CPU_CACHE_USAGE.set(usage * 0.5);
         self.metrics.sglang.TOKEN_USAGE.set(usage);
         self.metrics.sglang.CACHE_HIT_RATE.set(0.3);
         self.metrics
@@ -524,6 +527,16 @@ impl MetricRecorder {
             .vllm
             .PREFIX_CACHE_HITS
             .inc_by((p as f64 * 0.3) as u64);
+        // External (host/remote) prefix cache: queried the same prompt, a smaller
+        // fraction served externally. Feeds the runner external hit-rate derivation.
+        self.metrics.vllm.EXTERNAL_PREFIX_CACHE_QUERIES.inc_by(p);
+        self.metrics
+            .vllm
+            .EXTERNAL_PREFIX_CACHE_HITS
+            .inc_by((p as f64 * 0.15) as u64);
+        // Cumulative preemption counter: one deterministic bump per completed
+        // request so a phase-boundary delta is always nonzero.
+        self.metrics.vllm.NUM_PREEMPTIONS.inc();
 
         self.metrics
             .sglang
@@ -537,6 +550,15 @@ impl MetricRecorder {
                 .set(c as f64 / latency_secs);
         }
         self.metrics.sglang.NUM_USED_TOKENS.add(t as i64);
+        // SGLang cumulative token/retraction counters mirroring the vLLM view so
+        // the runner's SGLang-fallback atlas rows resolve to nonzero deltas.
+        self.metrics.sglang.PROMPT_TOKENS.inc_by(p);
+        self.metrics.sglang.GENERATION_TOKENS.inc_by(c);
+        self.metrics
+            .sglang
+            .CACHED_TOKENS
+            .inc_by((p as f64 * 0.3) as u64);
+        self.metrics.sglang.NUM_RETRACTED_REQS.inc();
 
         self.metrics
             .trtllm

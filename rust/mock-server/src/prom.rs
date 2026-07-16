@@ -282,6 +282,9 @@ pub struct VllmMetrics {
     pub NUM_PREEMPTIONS: IntCounter,
     pub PREFIX_CACHE_HITS: IntCounter,
     pub PREFIX_CACHE_QUERIES: IntCounter,
+    pub EXTERNAL_PREFIX_CACHE_HITS: IntCounter,
+    pub EXTERNAL_PREFIX_CACHE_QUERIES: IntCounter,
+    pub CPU_CACHE_USAGE: Gauge,
     pub ITERATION_TOKENS_TOTAL: Histogram,
 }
 
@@ -379,6 +382,21 @@ impl VllmMetrics {
                 "Prefix cache queries, in terms of number of queried tokens.",
             ))
             .unwrap(),
+            EXTERNAL_PREFIX_CACHE_HITS: IntCounter::with_opts(Opts::new(
+                "vllm:external_prefix_cache_hits",
+                "External prefix cache hits, in terms of number of cached tokens.",
+            ))
+            .unwrap(),
+            EXTERNAL_PREFIX_CACHE_QUERIES: IntCounter::with_opts(Opts::new(
+                "vllm:external_prefix_cache_queries",
+                "External prefix cache queries, in terms of number of queried tokens.",
+            ))
+            .unwrap(),
+            CPU_CACHE_USAGE: Gauge::with_opts(Opts::new(
+                "vllm:cpu_cache_usage_perc",
+                "CPU KV-cache usage. 1 means 100 percent usage.",
+            ))
+            .unwrap(),
             ITERATION_TOKENS_TOTAL: Histogram::with_opts(
                 HistogramOpts::new(
                     "vllm:iteration_tokens_total",
@@ -429,6 +447,15 @@ impl VllmMetrics {
             .register(Box::new(m.PREFIX_CACHE_QUERIES.clone()))
             .unwrap();
         m.registry
+            .register(Box::new(m.EXTERNAL_PREFIX_CACHE_HITS.clone()))
+            .unwrap();
+        m.registry
+            .register(Box::new(m.EXTERNAL_PREFIX_CACHE_QUERIES.clone()))
+            .unwrap();
+        m.registry
+            .register(Box::new(m.CPU_CACHE_USAGE.clone()))
+            .unwrap();
+        m.registry
             .register(Box::new(m.ITERATION_TOKENS_TOTAL.clone()))
             .unwrap();
         m
@@ -444,6 +471,10 @@ pub struct SglangMetrics {
     pub CACHE_HIT_RATE: Gauge,
     pub NUM_USED_TOKENS: IntGauge,
     pub TOKEN_USAGE: Gauge,
+    pub CACHED_TOKENS: IntCounter,
+    pub PROMPT_TOKENS: IntCounter,
+    pub GENERATION_TOKENS: IntCounter,
+    pub NUM_RETRACTED_REQS: IntCounter,
     pub QUEUE_TIME_SECONDS: Histogram,
     pub E2E_REQUEST_LATENCY_SECONDS: Histogram,
     pub TIME_TO_FIRST_TOKEN_SECONDS: Histogram,
@@ -490,6 +521,26 @@ impl SglangMetrics {
             .unwrap(),
             TOKEN_USAGE: Gauge::with_opts(Opts::new("sglang:token_usage", "The token usage."))
                 .unwrap(),
+            CACHED_TOKENS: IntCounter::with_opts(Opts::new(
+                "sglang:cached_tokens",
+                "The number of cached prefix tokens (prefix cache hits).",
+            ))
+            .unwrap(),
+            PROMPT_TOKENS: IntCounter::with_opts(Opts::new(
+                "sglang:prompt_tokens",
+                "The number of prompt (prefill) tokens processed.",
+            ))
+            .unwrap(),
+            GENERATION_TOKENS: IntCounter::with_opts(Opts::new(
+                "sglang:generation_tokens",
+                "The number of generation tokens processed.",
+            ))
+            .unwrap(),
+            NUM_RETRACTED_REQS: IntCounter::with_opts(Opts::new(
+                "sglang:num_retracted_reqs",
+                "The number of retracted (preempted) requests.",
+            ))
+            .unwrap(),
             QUEUE_TIME_SECONDS: Histogram::with_opts(
                 HistogramOpts::new(
                     "sglang:queue_time_seconds",
@@ -533,6 +584,18 @@ impl SglangMetrics {
             .unwrap();
         m.registry
             .register(Box::new(m.TOKEN_USAGE.clone()))
+            .unwrap();
+        m.registry
+            .register(Box::new(m.CACHED_TOKENS.clone()))
+            .unwrap();
+        m.registry
+            .register(Box::new(m.PROMPT_TOKENS.clone()))
+            .unwrap();
+        m.registry
+            .register(Box::new(m.GENERATION_TOKENS.clone()))
+            .unwrap();
+        m.registry
+            .register(Box::new(m.NUM_RETRACTED_REQS.clone()))
             .unwrap();
         m.registry
             .register(Box::new(m.QUEUE_TIME_SECONDS.clone()))

@@ -127,6 +127,9 @@ struct FakeGpuState {
     sm_clk: f64,
     mem_clk: f64,
     mem_copy: f64,
+    enc_util: f64,
+    dec_util: f64,
+    sm_active: f64,
     energy: f64,
     power_viol: f64,
     thermal_viol: f64,
@@ -170,6 +173,9 @@ impl FakeGpuState {
             sm_clk: 0.0,
             mem_clk: 0.0,
             mem_copy: 0.0,
+            enc_util: 0.0,
+            dec_util: 0.0,
+            sm_active: 0.0,
             energy: 0.0,
             power_viol: 0.0,
             thermal_viol: 0.0,
@@ -217,6 +223,11 @@ impl FakeGpuState {
         );
         self.mem_free = self.mem_total - self.mem_used;
         self.mem_copy = self.noise(load * 50.0, 0.05, 100.0);
+        // Video encode/decode engines: modest load-driven utilization (percent).
+        self.enc_util = self.noise(load * 40.0, 0.05, 100.0);
+        self.dec_util = self.noise(load * 30.0, 0.05, 100.0);
+        // SM activity is a DCGM profiling ratio in [0, 1]; the runner scales it x100.
+        self.sm_active = self.noise(0.05 + load * 0.90, 0.02, 1.0);
 
         self.energy += self.power * 1000.0; // 1 tick = 1 s
         if self.rng.random() < 0.0001 {
@@ -294,7 +305,7 @@ impl DcgmFaker {
         }
 
         let mut out = String::new();
-        let mappings: [(&str, &str, &str); 15] = [
+        let mappings: [(&str, &str, &str); 18] = [
             ("DCGM_FI_DEV_GPU_UTIL", "GPU utilization (in %).", "util"),
             ("DCGM_FI_DEV_POWER_USAGE", "Power draw (in W).", "power"),
             (
@@ -339,6 +350,21 @@ impl DcgmFaker {
                 "mem_copy",
             ),
             (
+                "DCGM_FI_DEV_ENC_UTIL",
+                "Encoder utilization (in %).",
+                "enc_util",
+            ),
+            (
+                "DCGM_FI_DEV_DEC_UTIL",
+                "Decoder utilization (in %).",
+                "dec_util",
+            ),
+            (
+                "DCGM_FI_PROF_SM_ACTIVE",
+                "Ratio of cycles an SM has at least one warp assigned (0..1).",
+                "sm_active",
+            ),
+            (
                 "DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION",
                 "Total energy consumption since boot (in mJ).",
                 "energy",
@@ -372,6 +398,9 @@ impl DcgmFaker {
                     "sm_clk" => gpu.sm_clk,
                     "mem_clk" => gpu.mem_clk,
                     "mem_copy" => gpu.mem_copy,
+                    "enc_util" => gpu.enc_util,
+                    "dec_util" => gpu.dec_util,
+                    "sm_active" => gpu.sm_active,
                     "energy" => gpu.energy,
                     "xid" => gpu.xid as f64,
                     "power_viol" => gpu.power_viol,
@@ -451,6 +480,10 @@ mod tests {
         assert!(out.contains("DCGM_FI_DEV_POWER_USAGE"));
         assert!(out.contains("DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION"));
         assert!(out.contains("DCGM_FI_DEV_XID_ERRORS"));
+        // Encode/decode/SM-activity fills consumed by the runner GPU telemetry decoder.
+        assert!(out.contains("DCGM_FI_DEV_ENC_UTIL"));
+        assert!(out.contains("DCGM_FI_DEV_DEC_UTIL"));
+        assert!(out.contains("DCGM_FI_PROF_SM_ACTIVE"));
         assert!(out.contains("NVIDIA H200"));
         assert!(out.contains("modelName=\"NVIDIA H200\""));
         assert!(out.contains("gpu=\"0\""));
@@ -484,6 +517,14 @@ mod tests {
         let util_idle: f64 = extract_metric(&idle, "DCGM_FI_DEV_GPU_UTIL").unwrap();
         let util_busy: f64 = extract_metric(&busy, "DCGM_FI_DEV_GPU_UTIL").unwrap();
         assert!(util_idle < util_busy, "idle={util_idle} busy={util_busy}");
+        // SM_ACTIVE is a 0..1 ratio the runner scales x100.
+        let sm_busy: f64 = extract_metric(&busy, "DCGM_FI_PROF_SM_ACTIVE").unwrap();
+        assert!(
+            (0.0..=1.0).contains(&sm_busy),
+            "sm_active out of [0,1]: {sm_busy}"
+        );
+        let sm_idle: f64 = extract_metric(&idle, "DCGM_FI_PROF_SM_ACTIVE").unwrap();
+        assert!(sm_idle < sm_busy, "idle={sm_idle} busy={sm_busy}");
     }
 
     fn extract_metric(text: &str, name: &str) -> Option<f64> {
