@@ -191,6 +191,8 @@ pub(crate) struct Inputs {
     pub trajectory_start_max_ratio: f64,
     /// Relax cross-field validation (`--unsafe-override`; `cfg.unsafe_override`).
     pub unsafe_override: bool,
+    /// Agentic cache-warmup duration, seconds (auto-creates a warmup phase).
+    pub agentic_cache_warmup_duration: Option<f64>,
     /// File dataset format id (`--custom-dataset-type`).
     pub custom_dataset_type: Option<String>,
     /// Named public dataset (mutually exclusive with synthetic/file).
@@ -513,6 +515,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         trajectory_start_min_ratio: flags.trajectory_start_min_ratio.unwrap_or(0.0),
         trajectory_start_max_ratio: flags.trajectory_start_max_ratio.unwrap_or(0.0),
         unsafe_override: flags.unsafe_override,
+        agentic_cache_warmup_duration: flags.agentic_cache_warmup_duration,
         artifact_dir: flags
             .artifact_dir
             .clone()
@@ -774,6 +777,16 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         wp.common.concurrency_ramp = warmup.concurrency_ramp.map(linear_ramp);
         wp.common.rate_ramp = warmup.rate_ramp.map(linear_ramp);
         wp.common.prefill_ramp = warmup.prefill_ramp.map(linear_ramp);
+        wp.common.agentic_cache_warmup_duration = inputs.agentic_cache_warmup_duration;
+        phases.push(wp);
+    } else if let Some(dur) = inputs.agentic_cache_warmup_duration {
+        // `--agentic-cache-warmup-duration` with no explicit warmup auto-creates a
+        // minimal concurrency-1 warmup phase carrying the duration (Python
+        // `_authored_phases`); nothing else on it.
+        let mut wp = build_phase(
+            "warmup", true, 1, None, None, None, None, None, None, None, None,
+        );
+        wp.common.agentic_cache_warmup_duration = Some(dur);
         phases.push(wp);
     }
     phases.push(profiling);

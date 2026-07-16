@@ -109,6 +109,11 @@ pub struct ProfileFlags {
     #[arg(long = "unsafe-override", default_value_t = false)]
     pub unsafe_override: bool,
 
+    /// Agentic cache-warmup duration, seconds (`--agentic-cache-warmup-duration`);
+    /// auto-creates a minimal warmup phase carrying it.
+    #[arg(long = "agentic-cache-warmup-duration")]
+    pub agentic_cache_warmup_duration: Option<f64>,
+
     /// Trials per variation (`--num-profile-runs`); `>1` repeats each run.
     #[arg(long = "num-profile-runs")]
     pub num_profile_runs: Option<u32>,

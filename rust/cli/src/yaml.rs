@@ -1059,6 +1059,7 @@ impl Benchmark {
             trajectory_start_min_ratio: self.trajectory_start_min_ratio.unwrap_or(0.0),
             trajectory_start_max_ratio: self.trajectory_start_max_ratio.unwrap_or(0.0),
             unsafe_override: self.unsafe_override.unwrap_or(false),
+            agentic_cache_warmup_duration: None,
             artifact_dir: artifact_dir
                 .or_else(|| config_artifact_dir.map(PathBuf::from))
                 .unwrap_or_else(|| PathBuf::from("artifacts")),
