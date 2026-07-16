@@ -569,8 +569,12 @@ class AnalyzerMetadata(BaseModel):
         description=(
             "AccumulatorType names whose SUMMARY output this analyzer reads via "
             "SummaryContext.get_output(). The analyzer is skipped unless all were "
-            "produced. Values: 'metric_records', 'gpu_telemetry', 'server_metrics', "
-            "'accuracy', 'network_latency'."
+            "produced. NOTE: only the 'metric_results' summary is currently "
+            "registered into SummaryContext.accumulator_outputs; side-channel "
+            "accumulators (gpu_telemetry, server_metrics, accuracy, network_latency) "
+            "summarize separately and are NOT available here -- depend on their LIVE "
+            "instance via required_accumulators instead. Declaring one of those in "
+            "required_summaries silently skips the analyzer every run."
         ),
     )
 

@@ -238,6 +238,19 @@ class TestDispatchRecord:
         manager.error.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_dispatch_unrouted_control_plane_does_not_warn(self) -> None:
+        # Control-plane records (e.g. credit_phase_stats) are consumed elsewhere
+        # and only OPTIONALLY streamed, so an absent handler is expected -- passing
+        # warn_if_unrouted=False must suppress the misleading "records dropped" warning.
+        manager = self._manager({})
+        record = MagicMock(record_type="credit_phase_stats")
+
+        errors = await manager._dispatch_record(record, warn_if_unrouted=False)
+
+        assert errors == []
+        manager.warning.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_dispatch_missing_record_type_returns_error(self) -> None:
         manager = self._manager({})
         record = object()
@@ -263,6 +276,25 @@ class TestDispatchRecord:
         assert isinstance(errors[0], RuntimeError)
         manager.error.assert_called_once()
         assert "boom" in manager.error.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_dispatch_best_effort_handler_exception_not_counted(self) -> None:
+        # A best-effort handler (streaming telemetry like OTel/MLflow) that raises
+        # must be logged but NOT counted -- a downed collector is not an inference
+        # failure and must not pollute the benchmark's phase error summary.
+        best_effort = StubStreamExporter()
+        best_effort.is_best_effort = True
+        best_effort.process_record.side_effect = RuntimeError("collector down")
+        strict = StubStreamExporter()
+        strict.process_record.side_effect = ValueError("real failure")
+        manager = self._manager({"metric_records": [best_effort, strict]})
+
+        errors = await manager._dispatch_record(MagicMock(record_type="metric_records"))
+
+        # Only the strict handler's failure is returned; both are logged.
+        assert len(errors) == 1
+        assert isinstance(errors[0], ValueError)
+        assert manager.error.call_count == 2
 
     @pytest.mark.asyncio
     async def test_dispatch_multiple_handler_exceptions(self) -> None:

@@ -12,7 +12,6 @@ categories.
 from __future__ import annotations
 
 import asyncio
-import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -20,13 +19,7 @@ from aiperf.common.accumulator_protocols import SummaryContext
 from aiperf.common.enums import CreditPhase, MetricConsoleGroup, MetricFlags
 from aiperf.common.exceptions import PluginDisabled, PostProcessorDisabled
 from aiperf.common.logging import AIPerfLogger
-from aiperf.common.models import (
-    ErrorDetails,
-    MetricResult,
-    ProcessRecordsResult,
-    ProfileResults,
-    TimesliceResult,
-)
+from aiperf.common.models import MetricResult
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     AccumulatorType,
@@ -40,10 +33,7 @@ if TYPE_CHECKING:
         AnalyzerProtocol,
         StreamExporterProtocol,
     )
-    from aiperf.common.models.branch_stats import BranchStats
     from aiperf.config.resolution.plan import BenchmarkRun
-    from aiperf.records.error_tracker import ErrorTracker
-    from aiperf.records.records_tracker import RecordsTracker
 
 
 _logger = AIPerfLogger(__name__)
@@ -275,39 +265,3 @@ def filter_display_metrics(raw_metrics: list[MetricResult]) -> list[MetricResult
             pass
         display_metrics.append(m)
     return display_metrics
-
-
-def build_process_records_result(
-    *,
-    records_results: list[MetricResult],
-    warmup_records_results: list[MetricResult] | None = None,
-    timeslices: list[TimesliceResult],
-    error_results: list[ErrorDetails],
-    tracker: RecordsTracker,
-    error_tracker: ErrorTracker,
-    cancelled: bool,
-    branch_stats: BranchStats | None = None,
-) -> ProcessRecordsResult:
-    """Assemble the final ``ProcessRecordsResult`` from accumulator output.
-
-    Single-phase ``CreditPhase.PROFILING`` model — ``RecordsTracker`` does
-    not expose a multi-phase ``get_results_phases`` /
-    ``get_results_time_window`` API.
-    """
-    phase_stats = tracker.create_stats_for_phase(CreditPhase.PROFILING)
-    return ProcessRecordsResult(
-        results=ProfileResults(
-            records=records_results,
-            warmup_records=warmup_records_results or None,
-            timeslices=timeslices or None,
-            completed=len(records_results),
-            start_ns=phase_stats.start_ns or time.time_ns(),
-            end_ns=phase_stats.requests_end_ns or time.time_ns(),
-            error_summary=error_tracker.get_error_summary_for_phase(
-                CreditPhase.PROFILING
-            ),
-            was_cancelled=cancelled,
-            branch_stats=branch_stats,
-        ),
-        errors=error_results,
-    )

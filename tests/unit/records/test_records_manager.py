@@ -345,7 +345,7 @@ class TestRecordsManagerTimingDispatch:
         await manager._on_credit_phase_start(message)
 
         manager._records_tracker.update_phase_info.assert_called_once_with(stats)
-        manager._dispatch_record.assert_awaited_once_with(stats)
+        manager._dispatch_record.assert_awaited_once_with(stats, warn_if_unrouted=False)
 
     @pytest.mark.asyncio
     async def test_on_credit_phase_progress_dispatches_timing_snapshot(self) -> None:
@@ -357,7 +357,7 @@ class TestRecordsManagerTimingDispatch:
         )
 
         manager._records_tracker.update_phase_info.assert_called_once_with(stats)
-        manager._dispatch_record.assert_awaited_once_with(stats)
+        manager._dispatch_record.assert_awaited_once_with(stats, warn_if_unrouted=False)
 
     @pytest.mark.asyncio
     async def test_on_credit_phase_sending_complete_dispatches_timing_snapshot(
@@ -376,7 +376,7 @@ class TestRecordsManagerTimingDispatch:
         )
 
         manager._records_tracker.update_phase_info.assert_called_once_with(stats)
-        manager._dispatch_record.assert_awaited_once_with(stats)
+        manager._dispatch_record.assert_awaited_once_with(stats, warn_if_unrouted=False)
 
     @pytest.mark.asyncio
     async def test_on_credit_phase_complete_dispatches_timing_snapshot(self) -> None:
@@ -395,7 +395,7 @@ class TestRecordsManagerTimingDispatch:
         )
 
         manager._records_tracker.update_phase_info.assert_called_once_with(stats)
-        manager._dispatch_record.assert_awaited_once_with(stats)
+        manager._dispatch_record.assert_awaited_once_with(stats, warn_if_unrouted=False)
 
     @pytest.mark.asyncio
     async def test_on_metric_records_records_complete_before_phase_complete_defers_finalization(
@@ -558,7 +558,7 @@ class TestRecordsManagerTimingDispatch:
         timing_dispatch_started = asyncio.Event()
         release_timing_dispatch = asyncio.Event()
 
-        async def _block_timing_dispatch(record) -> list[BaseException]:
+        async def _block_timing_dispatch(record, **_kwargs) -> list[BaseException]:
             if isinstance(record, CreditPhaseStats):
                 timing_dispatch_started.set()
                 await release_timing_dispatch.wait()

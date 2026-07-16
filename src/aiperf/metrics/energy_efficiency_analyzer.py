@@ -57,7 +57,14 @@ class EnergySource(str, enum.Enum):
 
 
 def _result(metric_cls: type, value: float) -> MetricResult:
-    """Build the injected MetricResult for an energy metric class."""
+    """Build the injected MetricResult for an energy metric class.
+
+    ``value`` is emitted in ``metric_cls.unit`` verbatim: analyzer output bypasses
+    ``MetricsAccumulator._convert_display_units``, so any ``display_unit`` on one of
+    these classes would be silently ignored. Keep ``display_unit == unit`` (i.e.
+    don't declare a ``display_unit``) on the power_efficiency_metrics classes, or
+    route this through unit conversion first.
+    """
     return MetricResult(
         tag=metric_cls.tag,
         header=metric_cls.header,
@@ -121,6 +128,15 @@ class EnergyEfficiencyAnalyzer:
             if ctx.end_ns > ctx.start_ns
             else 0.0
         )
+        # An unbounded (full-range) window leaves start==end==0 -> duration_s==0,
+        # which would drop average power and every per-watt metric while total
+        # energy still emits (a half-populated family). Recover a real duration
+        # from the observed telemetry scrape span so the whole family stays
+        # consistent. A genuinely empty accumulator still yields 0.0.
+        if duration_s <= 0.0:
+            span = gpu.scrape_span_ns()
+            if span is not None and span[1] > span[0]:
+                duration_s = (span[1] - span[0]) / NANOS_PER_SECOND
         energy = gpu.total_energy_joules(start_ns, end_ns)
         power = gpu.total_power_watts(start_ns, end_ns)
         total_energy_j, avg_power_w, source = self._resolve_energy(

@@ -292,7 +292,7 @@ class TestExtractOutputAndThinking:
     """`_extract_output_and_thinking` splits answer content from reasoning."""
 
     @staticmethod
-    def _record(datas: list) -> "object":
+    def _record(data_list: list) -> "object":
         from aiperf.common.models.record_models import (
             ParsedResponse,
             ParsedResponseRecord,
@@ -300,7 +300,7 @@ class TestExtractOutputAndThinking:
 
         record = MagicMock(spec=ParsedResponseRecord)
         record.content_responses = [
-            ParsedResponse(perf_ns=i, data=d) for i, d in enumerate(datas)
+            ParsedResponse(perf_ns=i, data=d) for i, d in enumerate(data_list)
         ]
         return record
 

@@ -30,7 +30,9 @@ class RecordObserverContext:
     """The metric record metadata for this record."""
 
     produced: dict[str, list[Any]]
-    """Producer outputs keyed by declared record_type.
+    """Producer outputs keyed by declared record_type. Read-only by contract:
+    the wire payload is snapshotted before observers run, so mutating this cannot
+    change what RecordsManager ingests.
 
     e.g. ``{"metric_records": [MetricRecordDict], "accuracy": [AccuracyRecordsData]}``.
     """

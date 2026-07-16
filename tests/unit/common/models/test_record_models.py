@@ -141,6 +141,46 @@ class TestProfileResults:
             }
 
 
+class TestRecordDataStrictRouting:
+    """RecordData routes by record_type and raises on an unregistered value.
+
+    ``strict_routing=True`` replaces AutoRoutedModel's base-class fallback: the
+    base RecordData has no standalone shape, so an unknown record_type must fail
+    loudly instead of degrading to a bare instance with every typed field dropped.
+    """
+
+    def test_unknown_record_type_raises(self) -> None:
+        from aiperf.common.models.record_models import RecordData
+
+        with pytest.raises(ValueError, match="Unknown record_type 'does_not_exist'"):
+            RecordData.from_json({"record_type": "does_not_exist"})
+
+    def test_registered_record_type_routes_to_subclass(self) -> None:
+        # Importing the module registers the subclass via __init_subclass__.
+        from aiperf.accuracy.models import AccuracyRecordsData
+        from aiperf.common.enums import CreditPhase
+        from aiperf.common.models.record_models import RecordData
+
+        original = AccuracyRecordsData(
+            session_num=0,
+            worker_id="w1",
+            benchmark_phase=CreditPhase.PROFILING,
+            timestamp_ns=1_000,
+            grader_name="multiple_choice",
+            passed=True,
+            confidence=1.0,
+            expected="A",
+            actual="A",
+            explanation="ok",
+        )
+
+        routed = RecordData.from_json(original.model_dump())
+
+        assert isinstance(routed, AccuracyRecordsData)
+        assert routed.expected == "A"
+        assert routed.grader_name == "multiple_choice"
+
+
 class TestSSEMessageDataclass:
     """Test that SSEMessage dataclass works correctly."""
 

@@ -138,6 +138,9 @@ class RecordData(AIPerfBaseModel):
     """
 
     discriminator_field: ClassVar[str] = "record_type"
+    # The base RecordData has no standalone shape (typed fields live on subclasses),
+    # so an unregistered record_type must raise rather than silently degrade.
+    strict_routing: ClassVar[bool] = True
 
     record_type: str = Field(
         description="Discriminator: the record_type channel this record routes on.",

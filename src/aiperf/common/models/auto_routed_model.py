@@ -50,6 +50,11 @@ class AutoRoutedModel(BaseModel):
 
     discriminator_field: ClassVar[str | None] = None
     _model_lookup_table: ClassVar[dict[Any, type[Self]]] = {}
+    # When True, an unregistered discriminator value raises instead of falling
+    # back to ``cls.model_validate`` on the base. Set on hierarchies whose base has
+    # no meaningful standalone shape (e.g. RecordData), so a record whose type
+    # isn't registered fails loudly rather than silently dropping its typed fields.
+    strict_routing: ClassVar[bool] = False
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -106,9 +111,18 @@ class AutoRoutedModel(BaseModel):
                 # Recurse for nested routing, otherwise validate
                 return target_class.from_json(data)
 
+            if cls.strict_routing:
+                # No standalone base shape: an unregistered type almost always
+                # means the producing module wasn't imported (registration happens
+                # via __init_subclass__), so fail loudly instead of degrading.
+                raise ValueError(
+                    f"Unknown {cls_discriminator} {discriminator_value!r}: no "
+                    f"{cls.__name__} subclass is registered for it. Ensure the "
+                    "producing module is imported so it registers via "
+                    "__init_subclass__."
+                )
+
         # An unregistered discriminator falls back to the base class by design:
         # the command hierarchy routes generic commands (no dedicated subclass) to
-        # the base CommandMessage/CommandSuccessResponse. Record subclasses with
-        # required fields rely on their model being imported so it registers via
-        # __init_subclass__ (see RecordData) rather than on this fallback.
+        # the base CommandMessage/CommandSuccessResponse.
         return cls.model_validate(data)

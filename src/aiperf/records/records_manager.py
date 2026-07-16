@@ -484,8 +484,18 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 table.setdefault(record_type, []).append(handler)
         return table
 
-    async def _dispatch_record(self, record: Any) -> list[BaseException]:
-        """Dispatch one typed record to all handlers registered for its record_type."""
+    async def _dispatch_record(
+        self, record: Any, *, warn_if_unrouted: bool = True
+    ) -> list[BaseException]:
+        """Dispatch one typed record to all handlers registered for its record_type.
+
+        ``warn_if_unrouted`` gates the "no handlers" warning: leave it True for
+        data-plane records (which would be silently lost), but set it False for
+        control-plane records that are already consumed elsewhere and only
+        OPTIONALLY streamed (e.g. ``credit_phase_stats``, whose stats are applied
+        via ``update_phase_info`` before dispatch and only routed to the
+        default-absent OTel streamer) -- otherwise every non-OTel run warns falsely.
+        """
         record_type = getattr(record, "record_type", None)
         if record_type is None:
             error = TypeError(f"Record {type(record).__name__} has no record_type")
@@ -496,7 +506,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         if not handlers:
             # Warn once per unrouted type: records silently vanish here while the
             # request still counts as a success, so this must not stay debug-only.
-            if record_type not in self._warned_unrouted_record_types:
+            if (
+                warn_if_unrouted
+                and record_type not in self._warned_unrouted_record_types
+            ):
                 self._warned_unrouted_record_types.add(record_type)
                 self.warning(
                     f"No handlers registered for record type {record_type!r}; "
@@ -523,6 +536,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                     f"Handler {handler.__class__.__name__} failed for "
                     f"{record_type}: {result!r}"
                 )
+                # Best-effort handlers (streaming telemetry like OTel/MLflow) must
+                # never pollute the benchmark's phase error count -- a downed
+                # collector is not an inference failure. Log and drop, honoring the
+                # handler's ``is_best_effort`` marker.
+                if getattr(handler, "is_best_effort", False):
+                    continue
                 errors.append(result)
         return errors
 
@@ -705,7 +724,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     ) -> None:
         """Handle a credit phase start message in order to track the total number of expected requests."""
         self._records_tracker.update_phase_info(phase_start_msg.stats)
-        await self._dispatch_record(phase_start_msg.stats)
+        await self._dispatch_record(phase_start_msg.stats, warn_if_unrouted=False)
         self.info(f"Credit phase start: {phase_start_msg.config.phase}")
 
     @on_message(MessageType.CREDIT_PHASE_PROGRESS)
@@ -714,7 +733,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     ) -> None:
         """Handle a credit phase progress message to track and stream live timing snapshots."""
         self._records_tracker.update_phase_info(message.stats)
-        await self._dispatch_record(message.stats)
+        await self._dispatch_record(message.stats, warn_if_unrouted=False)
 
     @on_message(MessageType.CREDIT_PHASE_SENDING_COMPLETE)
     async def _on_credit_phase_sending_complete(
@@ -726,7 +745,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 f"Sent {message.stats.final_requests_sent:,} requests. Waiting for all to complete..."
             )
         self._records_tracker.update_phase_info(message.stats)
-        await self._dispatch_record(message.stats)
+        await self._dispatch_record(message.stats, warn_if_unrouted=False)
 
     @on_message(MessageType.CREDIT_PHASE_COMPLETE)
     async def _on_credit_phase_complete(
@@ -734,7 +753,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     ) -> None:
         """Handle a credit phase complete message in order to track the end time, and check if all records have been received."""
         self._records_tracker.update_phase_info(message.stats)
-        await self._dispatch_record(message.stats)
+        await self._dispatch_record(message.stats, warn_if_unrouted=False)
         self._complete_credit_phases.add(message.stats.phase)
         # Capture per-phase BranchStats for any phase that publishes them.
         if message.branch_stats is not None:
@@ -1508,9 +1527,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         ``_should_wait_for_accuracy`` only on receipt of that message. A summary
         that fails to export still publishes a terminal ``results=None`` message so
         the gate is released. The publish itself is the only unrecoverable point:
-        if the message bus raises here the gate cannot be released from this side,
-        so we log it at error level (rather than swallowing) to make the cause of
-        any resulting shutdown stall diagnosable.
+        if the message bus raises here the gate cannot be released from this side.
+        We log it at error level and return rather than re-raising -- propagating
+        would skip the subsequent ``ProcessAllResultsMessage`` publish, and the
+        caller already logs it. (Note: only the CANCEL path has a bounded wait on
+        this gate; on normal completion an unreleased gate stalls shutdown, so this
+        error log is the primary diagnostic for that case.)
         """
         summary: AccuracySummary | None = None
         if self._accuracy_accumulator is not None:
@@ -1533,7 +1555,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 "Failed to publish ProcessAccuracyResultMessage; the controller's "
                 f"accuracy shutdown gate may not release: {e!r}"
             )
-            raise
 
     async def _process_server_metrics_results(self) -> ProcessServerMetricsResult:
         """Process server metrics results by exporting the accumulated server metrics data.

@@ -327,6 +327,11 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 continue
             by_type.setdefault(record_type, []).append(result)
 
+        # Snapshot the wire payload BEFORE observers run: ``produced`` is read-only
+        # by contract, but a misbehaving observer that mutated ``by_type`` must not
+        # be able to change what RecordsManager ingests.
+        all_records = [record for records in by_type.values() for record in records]
+
         # Stage 2 - observers: view the produced results + the record and act.
         # Must run BEFORE _free_record_data so they can read the full parsed
         # record via ctx.record.
@@ -355,7 +360,10 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         # to keep the RecordsManager completion barrier in lockstep with the
         # credit. The metric producer already put trace_data inside its
         # MetricRecordsData, so trace_data is not carried on the envelope.
-        all_records = [record for records in by_type.values() for record in records]
+        # The push is atomic (whole message serialized, then one NOBLOCK frame
+        # send): a failure delivers nothing, so it propagates to the outer handler
+        # which forwards exactly one error record -- no partial send, no
+        # double-count, and the completion barrier stays in lockstep.
         await self.records_push_client.push(
             RecordsMessage(
                 service_id=self.service_id,

@@ -104,6 +104,21 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         ts = self._timestamps_ns.data
         return (ts >= start_ns) & (ts < end_ns)
 
+    def scrape_span_ns(self) -> tuple[int, int] | None:
+        """Return ``(first_ns, last_ns)`` of collected scrapes, or None if empty.
+
+        Analyzer support: lets a caller recover the actual observed telemetry
+        window when it holds an unbounded (full-range) summary window and needs a
+        real duration (e.g. to derive average power without a bounded phase).
+        """
+        if len(self._timestamps_ns) == 0:
+            return None
+        ts = self._timestamps_ns.data
+        # min/max rather than [0]/[-1]: scrapes are appended in collection order,
+        # which is normally monotonic but not guaranteed (retries/out-of-order
+        # arrival), so don't assume the ends are the extremes.
+        return int(ts.min()), int(ts.max())
+
     def start_realtime_telemetry(self) -> None:
         """Start the realtime telemetry background task.
 
