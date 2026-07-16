@@ -35,6 +35,85 @@ use std::sync::Arc;
 
 use crate::extensions::DuplicateName;
 use crate::metrics_core::NativeReport;
+use crate::metrics_core::report::MetricSeries;
+
+/// Classification of a metric's series for summary selection, mirroring Python
+/// `native_report._summary_series`.
+///
+/// The exporters disagree only on how they *react* to the degenerate cases: the
+/// genai-perf and console tables skip the metric (best-effort), while the
+/// timeslice exporter treats an empty or ambiguous metric as a hard error. This
+/// classifier owns the shared selection rule; each caller maps the outcome to
+/// its own policy (and error text).
+pub(crate) enum SummarySeries<'a> {
+    /// The metric carried no series at all.
+    Empty,
+    /// The selected summary series: the sole series, or the unique unlabeled
+    /// aggregate among several labeled series.
+    Selected(&'a MetricSeries),
+    /// Several series, none unlabeled — there is no aggregate to summarize.
+    NoAggregate,
+    /// Several series with more than one unlabeled aggregate — ambiguous.
+    Ambiguous,
+}
+
+/// Build a CSV writer with CRLF line terminators, matching the Python exporters'
+/// `\r\n`-terminated output. Every native CSV emitter (genai-perf, timeslice,
+/// server-metrics, accuracy) shares this one builder over its own sink.
+pub(crate) fn crlf_csv_writer<W: std::io::Write>(writer: W) -> csv::Writer<W> {
+    csv::WriterBuilder::new()
+        .terminator(csv::Terminator::CRLF)
+        .from_writer(writer)
+}
+
+/// Ports `aiperf/exporters/utils.py::normalize_endpoint_display`: drop the URL
+/// scheme, keep the `netloc` plus a `/metrics`-trimmed path, discarding any query
+/// or fragment (as `urlparse`'s netloc/path split does).
+///
+/// Shared by the genai-perf telemetry summary and the server-metrics exporter so
+/// both render the same endpoint keys. Netloc (host, port, any userinfo) is
+/// preserved verbatim, so `http://127.0.0.1:9400/dcgm1/metrics` becomes
+/// `127.0.0.1:9400/dcgm1`.
+pub(crate) fn normalize_endpoint_display(url: &str) -> String {
+    let after_scheme = match url.find("://") {
+        Some(index) => &url[index + 3..],
+        None => url,
+    };
+    let netloc_end = after_scheme
+        .find(['/', '?', '#'])
+        .unwrap_or(after_scheme.len());
+    let netloc = &after_scheme[..netloc_end];
+    let rest = &after_scheme[netloc_end..];
+    let path_end = rest.find(['?', '#']).unwrap_or(rest.len());
+    let path = &rest[..path_end];
+    let path = if path.starts_with('/') { path } else { "" };
+    let path = path.strip_suffix("/metrics").unwrap_or(path);
+    let mut display = netloc.to_string();
+    if !path.is_empty() {
+        display.push_str(path);
+    }
+    display
+}
+
+/// Select a metric's summary series (`native_report._summary_series`): the sole
+/// series, or the single unlabeled aggregate when several labeled series exist.
+pub(crate) fn summary_series(series: &[MetricSeries]) -> SummarySeries<'_> {
+    match series {
+        [] => SummarySeries::Empty,
+        [single] => SummarySeries::Selected(single),
+        many => {
+            let mut unlabeled = many.iter().filter(|series| series.labels.is_none());
+            let first = unlabeled.next();
+            if unlabeled.next().is_some() {
+                return SummarySeries::Ambiguous;
+            }
+            match first {
+                Some(series) => SummarySeries::Selected(series),
+                None => SummarySeries::NoAggregate,
+            }
+        }
+    }
+}
 
 pub mod accuracy_csv;
 pub mod console_txt;
@@ -49,6 +128,10 @@ pub mod otel;
 /// `cfg.export.parquet` block still decodes (it is simply inert).
 #[cfg(feature = "parquet")]
 pub mod parquet;
+/// Shared Arrow column builders and Parquet writer properties for the two
+/// Parquet sinks. Gated behind the `parquet` feature alongside its consumers.
+#[cfg(feature = "parquet")]
+pub(crate) mod parquet_util;
 /// Wide, per-request Parquet sidecar to `profile_export.jsonl`. Gated behind the
 /// `parquet` feature (links `arrow` + `parquet`): a lite build drops it and the
 /// runner skips the artifact with a warning. Unlike the sinks in [`registry`],

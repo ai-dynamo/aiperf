@@ -67,7 +67,7 @@ use std::path::{Component, Path};
 use anyhow::{Context, bail, ensure};
 use serde_json::{Map, Value};
 
-use crate::export::{ExportConfig, Exporter};
+use crate::export::{ExportConfig, Exporter, crlf_csv_writer};
 use crate::metrics_core::report::{MetricSeries, NativeReport, ReportStats, ReportValue};
 
 /// Canonical percentile field order shared by the JSON `JsonMetricResult`
@@ -271,16 +271,14 @@ fn summary_series<'a>(
     tag: &str,
     series: &'a [MetricSeries],
 ) -> anyhow::Result<Option<&'a MetricSeries>> {
-    match series {
-        [] => bail!("metric {tag:?} must contain at least one series"),
-        [single] => Ok(Some(single)),
-        many => {
-            let mut unlabeled = many.iter().filter(|series| series.labels.is_none());
-            let first = unlabeled.next();
-            if unlabeled.next().is_some() {
-                bail!("metric {tag:?} contains multiple unlabeled aggregate series");
-            }
-            Ok(first)
+    match crate::export::summary_series(series) {
+        crate::export::SummarySeries::Empty => {
+            bail!("metric {tag:?} must contain at least one series")
+        }
+        crate::export::SummarySeries::Selected(series) => Ok(Some(series)),
+        crate::export::SummarySeries::NoAggregate => Ok(None),
+        crate::export::SummarySeries::Ambiguous => {
+            bail!("metric {tag:?} contains multiple unlabeled aggregate series")
         }
     }
 }
@@ -430,9 +428,7 @@ fn number_value(value: f64) -> Value {
 /// Serialize the regrouped slices to the tidy/long CSV, matching the Python
 /// `csv.writer` output: CRLF terminators, minimal quoting, `.2f` values.
 fn render_csv(slices: &[SliceGroup]) -> anyhow::Result<String> {
-    let mut writer = csv::WriterBuilder::new()
-        .terminator(csv::Terminator::CRLF)
-        .from_writer(Vec::new());
+    let mut writer = crlf_csv_writer(Vec::new());
 
     writer
         .write_record([

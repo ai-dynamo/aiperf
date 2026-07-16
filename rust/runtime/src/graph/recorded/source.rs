@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use crate::dataset::{DatasetSource, LoadConfig, load_raw_rows};
 use flate2::read::MultiGzDecoder;
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 use serde_json::value::RawValue;
 
@@ -172,13 +173,18 @@ fn parse_json_lines_raw(
     bytes: &[u8],
     label: &str,
 ) -> Result<Vec<Box<RawValue>>, RecordedTraceError> {
-    parse_json_lines_from_raw(Cursor::new(bytes), label)
+    parse_json_lines_from(Cursor::new(bytes), label)
 }
 
-fn parse_json_lines_from(
+/// JSONL line reader deserializing each non-blank line into `T`.
+///
+/// The aiperf-trace path uses `T = Value` (hashes fit in `u64`); the Dynamo
+/// schema uses `T = Box<RawValue>` to capture each record as untouched raw JSON
+/// text so wide `input_sequence_hashes` survive before any `f64` coercion.
+fn parse_json_lines_from<T: DeserializeOwned>(
     mut reader: impl BufRead,
     label: &str,
-) -> Result<Vec<Value>, RecordedTraceError> {
+) -> Result<Vec<T>, RecordedTraceError> {
     let mut values = Vec::new();
     let mut buffer = Vec::new();
     let mut index = 0_usize;
@@ -200,44 +206,7 @@ fn parse_json_lines_from(
         if line.is_empty() {
             continue;
         }
-        let value: Value = serde_json::from_str(line).map_err(|error| {
-            RecordedTraceError(format!("{label}: invalid JSON line {index}: {error}"))
-        })?;
-        values.push(value);
-    }
-    Ok(values)
-}
-
-/// JSONL line reader that captures each record as untouched raw JSON text so the
-/// Dynamo schema can extract wide `input_sequence_hashes` before any `f64`
-/// coercion. Mirrors [`parse_json_lines_from`], which stays on [`Value`] for the
-/// aiperf-trace path whose hashes fit in `u64`.
-fn parse_json_lines_from_raw(
-    mut reader: impl BufRead,
-    label: &str,
-) -> Result<Vec<Box<RawValue>>, RecordedTraceError> {
-    let mut values = Vec::new();
-    let mut buffer = Vec::new();
-    let mut index = 0_usize;
-    loop {
-        buffer.clear();
-        let read = reader.read_until(b'\n', &mut buffer).map_err(|error| {
-            RecordedTraceError(format!(
-                "{label}: truncated, corrupt, or unreadable JSONL stream: {error}"
-            ))
-        })?;
-        if read == 0 {
-            break;
-        }
-        index += 1;
-        let line = std::str::from_utf8(&buffer).map_err(|error| {
-            RecordedTraceError(format!("{label}: not valid UTF-8 JSONL: {error}"))
-        })?;
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let value: Box<RawValue> = serde_json::from_str(line).map_err(|error| {
+        let value: T = serde_json::from_str(line).map_err(|error| {
             RecordedTraceError(format!("{label}: invalid JSON line {index}: {error}"))
         })?;
         values.push(value);
@@ -253,9 +222,9 @@ fn read_json_lines_raw(path: &Path) -> Result<Vec<Box<RawValue>>, RecordedTraceE
         .and_then(|value| value.to_str())
         .is_some_and(|value| value.eq_ignore_ascii_case("gz"))
     {
-        return parse_json_lines_from_raw(BufReader::new(MultiGzDecoder::new(file)), &label);
+        return parse_json_lines_from(BufReader::new(MultiGzDecoder::new(file)), &label);
     }
-    parse_json_lines_from_raw(BufReader::new(file), &label)
+    parse_json_lines_from(BufReader::new(file), &label)
 }
 
 /// The ordered `.json` files the WEKA / `aiperf.trace.v1` directory loaders read

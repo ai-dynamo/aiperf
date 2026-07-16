@@ -43,7 +43,7 @@
 use std::fs::File;
 use std::path::Path;
 
-use crate::export::{ExportConfig, Exporter};
+use crate::export::{ExportConfig, Exporter, crlf_csv_writer};
 use crate::metrics_core::{AccuracyRollup, NativeReport};
 
 /// Fixed output file name, joined onto the run's artifact directory. A constant
@@ -90,9 +90,7 @@ impl Exporter for AccuracyCsvExporter {
         std::fs::create_dir_all(artifact_dir)?;
         let path = artifact_dir.join(ACCURACY_CSV_FILE);
         let file = File::create(&path)?;
-        let mut writer = csv::WriterBuilder::new()
-            .terminator(csv::Terminator::CRLF)
-            .from_writer(file);
+        let mut writer = crlf_csv_writer(file);
 
         writer.write_record(["task", "correct", "total", "unparsed", "accuracy"])?;
         write_row(&mut writer, "OVERALL", &summary.overall)?;

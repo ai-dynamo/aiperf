@@ -31,7 +31,7 @@ use tokio::sync::Notify;
 
 use crate::failure::OnFailure;
 use crate::fixed_schedule::milliseconds_to_ns;
-use crate::multiturn::{ConversationSource, TurnResponse, TurnToSend};
+use crate::multiturn::{ConversationSource, TurnToSend};
 use crate::scheduled::{ScheduledRuntime, Workload};
 use crate::scheduler::LocalTaskScheduler;
 use loadgen_core::collector::ReplayTerminalStatus;
@@ -495,15 +495,10 @@ fn issue_rate_turn(
                     return;
                 }
 
-                let next_turn = match conversations.borrow().next_turn(
-                    &credit,
-                    TurnResponse {
-                        text: outcome.response_text,
-                        assistant_message: outcome.model_response.assistant_message,
-                        completion_tokens: outcome.completion_tokens,
-                        terminal: outcome.terminal,
-                    },
-                ) {
+                let next_turn = match conversations
+                    .borrow()
+                    .next_turn(&credit, outcome.to_turn_response())
+                {
                     Ok(Some(turn)) => turn,
                     Ok(None) => {
                         state_for_completion.release_session(&correlation_id);

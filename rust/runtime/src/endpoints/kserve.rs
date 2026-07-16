@@ -15,7 +15,9 @@ use serde_json::{Map, Number, Value, json};
 
 use crate::body_plan::BodyPlan;
 use crate::endpoints::config::{EffectiveEndpointConfig, EndpointConfig, RawEndpointConfig};
-use crate::endpoints::endpoints::{ChatEndpoint, CompletionsEndpoint, EmbeddingsEndpoint};
+use crate::endpoints::endpoints::{
+    ChatEndpoint, CompletionsEndpoint, EmbeddingsEndpoint, bearer_headers, joined_text, turn_texts,
+};
 use crate::endpoints::metadata::{EndpointDescriptor, EndpointType, Modality};
 use crate::endpoints::models::{
     EndpointError, EndpointResult, ExtractedPayload, ImageDataItem, ImageResponseData,
@@ -954,14 +956,6 @@ fn take_selector(
     }
 }
 
-fn bearer_headers(config: &RawEndpointConfig) -> BTreeMap<String, String> {
-    let mut headers = config.headers.clone();
-    if let Some(api_key) = &config.api_key {
-        headers.insert("Authorization".to_string(), format!("Bearer {api_key}"));
-    }
-    headers
-}
-
 fn readiness_request(path: String, headers: BTreeMap<String, String>) -> ReadinessPolicy {
     ReadinessPolicy::Request(PreparedReadinessRequest {
         method: ReadinessMethod::Get,
@@ -987,19 +981,6 @@ fn exactly_one_turn<'a>(
         return Err(EndpointError::InvalidRequest(message.to_string()));
     }
     Ok(&request.turns()[0])
-}
-
-fn turn_texts(turn: &Turn) -> Vec<String> {
-    turn.texts
-        .iter()
-        .flat_map(|text| text.contents.iter())
-        .filter(|content| !content.is_empty())
-        .cloned()
-        .collect()
-}
-
-fn joined_text(turn: &Turn) -> String {
-    turn_texts(turn).join(" ")
 }
 
 fn tensor(name: &str, datatype: &str, data: Vec<Value>) -> Value {

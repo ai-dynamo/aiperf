@@ -20,7 +20,7 @@ use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use tokio::sync::Notify;
 
-use crate::multiturn::{ConversationSource, SampledSession, TurnResponse, TurnToSend};
+use crate::multiturn::{ConversationSource, SampledSession, TurnToSend};
 use crate::scheduled::{ScheduledRuntime, UserControlSnapshot, Workload};
 use crate::scheduler::LocalTaskScheduler;
 
@@ -609,15 +609,7 @@ async fn issue_user_turn(
 
                 let next_turn = {
                     let source = source_for_completion.borrow();
-                    match source.next_turn(
-                        &credit,
-                        TurnResponse {
-                            text: outcome.response_text,
-                            assistant_message: outcome.model_response.assistant_message,
-                            completion_tokens: outcome.completion_tokens,
-                            terminal: outcome.terminal,
-                        },
-                    ) {
+                    match source.next_turn(&credit, outcome.to_turn_response()) {
                         Ok(Some(turn)) => turn,
                         Ok(None) => {
                             pool_for_completion.retire(&correlation_id);

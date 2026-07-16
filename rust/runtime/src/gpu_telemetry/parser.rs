@@ -13,6 +13,7 @@ use crate::gpu_telemetry::custom_metrics::CustomDcgmField;
 use crate::gpu_telemetry::fields::dcgm_metric_spec;
 use crate::gpu_telemetry::model::{GpuMetadata, GpuScrape, GpuTelemetryRecord};
 use crate::gpu_telemetry::source::GpuTelemetryError;
+use crate::server_metrics::prom_text::{parse_metric_and_labels, sample_value_split};
 
 /// Extension seam for turning one metrics payload into normalized GPU records.
 pub trait GpuTelemetryDecoder {
@@ -161,7 +162,13 @@ fn parse_sample(line: &str) -> Result<Option<ParsedSample>, String> {
     let value = value_text
         .parse::<f64>()
         .map_err(|error| format!("invalid sample value {value_text:?}: {error}"))?;
-    let (name, labels) = parse_metric_and_labels(metric)?;
+    let (name, labels) = parse_metric_and_labels(metric, |label| {
+        if label.is_empty() {
+            Err("label name is empty".to_string())
+        } else {
+            Ok(())
+        }
+    })?;
     if name.is_empty() {
         return Ok(None);
     }
@@ -170,91 +177,6 @@ fn parse_sample(line: &str) -> Result<Option<ParsedSample>, String> {
         labels,
         value,
     }))
-}
-
-fn sample_value_split(line: &str) -> Option<usize> {
-    let mut in_quotes = false;
-    let mut escaped = false;
-    let mut brace_depth = 0_u32;
-    for (index, byte) in line.bytes().enumerate() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        match byte {
-            b'\\' if in_quotes => escaped = true,
-            b'"' => in_quotes = !in_quotes,
-            b'{' if !in_quotes => brace_depth += 1,
-            b'}' if !in_quotes => brace_depth = brace_depth.saturating_sub(1),
-            b' ' | b'\t' if !in_quotes && brace_depth == 0 => return Some(index),
-            _ => {}
-        }
-    }
-    None
-}
-
-fn parse_metric_and_labels(metric: &str) -> Result<(String, BTreeMap<String, String>), String> {
-    let Some(open) = metric.find('{') else {
-        return Ok((metric.to_string(), BTreeMap::new()));
-    };
-    if !metric.ends_with('}') {
-        return Err("unterminated label set".to_string());
-    }
-    let name = metric[..open].to_string();
-    let labels = parse_labels(&metric[open + 1..metric.len() - 1])?;
-    Ok((name, labels))
-}
-
-fn parse_labels(mut input: &str) -> Result<BTreeMap<String, String>, String> {
-    let mut labels = BTreeMap::new();
-    while !input.trim_start().is_empty() {
-        input = input.trim_start();
-        let equals = input
-            .find('=')
-            .ok_or_else(|| "label has no '='".to_string())?;
-        let name = input[..equals].trim();
-        if name.is_empty() {
-            return Err("label name is empty".to_string());
-        }
-        input = input[equals + 1..].trim_start();
-        let Some(rest) = input.strip_prefix('"') else {
-            return Err(format!("label {name:?} has an unquoted value"));
-        };
-        let (value, consumed) = parse_quoted_label(rest)?;
-        labels.insert(name.to_string(), value);
-        input = rest[consumed..].trim_start();
-        if input.is_empty() {
-            break;
-        }
-        let Some(rest) = input.strip_prefix(',') else {
-            return Err("labels must be comma-separated".to_string());
-        };
-        input = rest;
-    }
-    Ok(labels)
-}
-
-fn parse_quoted_label(input: &str) -> Result<(String, usize), String> {
-    let mut output = String::new();
-    let mut escaped = false;
-    for (index, character) in input.char_indices() {
-        if escaped {
-            output.push(match character {
-                'n' => '\n',
-                '\\' => '\\',
-                '"' => '"',
-                other => other,
-            });
-            escaped = false;
-            continue;
-        }
-        match character {
-            '\\' => escaped = true,
-            '"' => return Ok((output, index + character.len_utf8())),
-            other => output.push(other),
-        }
-    }
-    Err("unterminated quoted label".to_string())
 }
 
 #[cfg(test)]

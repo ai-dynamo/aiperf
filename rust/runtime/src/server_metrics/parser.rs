@@ -14,6 +14,7 @@ use std::fmt::{Display, Formatter, Result as FmtResult};
 use crate::server_metrics::model::{
     HistogramValue, MetricFamily, MetricSample, PrometheusMetricType,
 };
+use crate::server_metrics::prom_text::{parse_metric_and_labels, sample_value_split};
 
 /// Malformed exposition input with a one-based line location.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -387,7 +388,7 @@ fn parse_sample(line: &str) -> Result<ParsedSample, String> {
         .next()
         .ok_or_else(|| "sample has no value".to_string())?;
     let value = parse_prometheus_float(value_text)?;
-    let (name, labels) = parse_metric_and_labels(metric)?;
+    let (name, labels) = parse_metric_and_labels(metric, validate_label_name)?;
     validate_metric_name(&name)?;
     Ok(ParsedSample {
         name,
@@ -420,66 +421,6 @@ fn validate_metric_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn sample_value_split(line: &str) -> Option<usize> {
-    let mut in_quotes = false;
-    let mut escaped = false;
-    let mut brace_depth = 0_u32;
-    for (index, byte) in line.bytes().enumerate() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        match byte {
-            b'\\' if in_quotes => escaped = true,
-            b'"' => in_quotes = !in_quotes,
-            b'{' if !in_quotes => brace_depth += 1,
-            b'}' if !in_quotes => brace_depth = brace_depth.saturating_sub(1),
-            b' ' | b'\t' if !in_quotes && brace_depth == 0 => return Some(index),
-            _ => {}
-        }
-    }
-    None
-}
-
-fn parse_metric_and_labels(metric: &str) -> Result<(String, BTreeMap<String, String>), String> {
-    let Some(open) = metric.find('{') else {
-        return Ok((metric.to_string(), BTreeMap::new()));
-    };
-    if !metric.ends_with('}') {
-        return Err("unterminated label set".to_string());
-    }
-    Ok((
-        metric[..open].to_string(),
-        parse_labels(&metric[open + 1..metric.len() - 1])?,
-    ))
-}
-
-fn parse_labels(mut input: &str) -> Result<BTreeMap<String, String>, String> {
-    let mut labels = BTreeMap::new();
-    while !input.trim_start().is_empty() {
-        input = input.trim_start();
-        let equals = input
-            .find('=')
-            .ok_or_else(|| "label has no '='".to_string())?;
-        let name = input[..equals].trim();
-        validate_label_name(name)?;
-        input = input[equals + 1..].trim_start();
-        let rest = input
-            .strip_prefix('"')
-            .ok_or_else(|| format!("label {name:?} has an unquoted value"))?;
-        let (value, consumed) = parse_quoted_label(rest)?;
-        labels.insert(name.to_string(), value);
-        input = rest[consumed..].trim_start();
-        if input.is_empty() {
-            break;
-        }
-        input = input
-            .strip_prefix(',')
-            .ok_or_else(|| "labels must be comma-separated".to_string())?;
-    }
-    Ok(labels)
-}
-
 fn validate_label_name(name: &str) -> Result<(), String> {
     let mut bytes = name.bytes();
     let Some(first) = bytes.next() else {
@@ -491,29 +432,6 @@ fn validate_label_name(name: &str) -> Result<(), String> {
         return Err(format!("invalid label name {name:?}"));
     }
     Ok(())
-}
-
-fn parse_quoted_label(input: &str) -> Result<(String, usize), String> {
-    let mut output = String::new();
-    let mut escaped = false;
-    for (index, character) in input.char_indices() {
-        if escaped {
-            output.push(match character {
-                'n' => '\n',
-                '\\' => '\\',
-                '"' => '"',
-                other => other,
-            });
-            escaped = false;
-            continue;
-        }
-        match character {
-            '\\' => escaped = true,
-            '"' => return Ok((output, index + character.len_utf8())),
-            other => output.push(other),
-        }
-    }
-    Err("unterminated quoted label".to_string())
 }
 
 fn unescape_help(input: &str) -> String {

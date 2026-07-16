@@ -37,7 +37,7 @@ use uuid::Uuid;
 use crate::metrics::{
     NativeMetricsObserver, NativeResponseMetadata, ObserverTee, RequestMetricMetadata,
 };
-use crate::multiturn::{ConversationSource, CreditCounter, IssuedCredit, TurnToSend};
+use crate::multiturn::{ConversationSource, CreditCounter, IssuedCredit, TurnResponse, TurnToSend};
 use crate::scheduler::{ClockTaskScheduler, LocalTaskScheduler};
 
 /// Boxed `!Send` completion future returned by a workload callback.
@@ -143,6 +143,22 @@ pub struct TurnDispatchOutcome {
     pub completion_tokens: Option<u64>,
     /// Fine-grained transport metrics, when the backend supplies them.
     pub http: RequestTrace,
+}
+
+impl TurnDispatchOutcome {
+    /// Project the fields a continuation request needs into a [`TurnResponse`].
+    ///
+    /// Request-rate, user-centric, and fixed-schedule completion hooks all build
+    /// the same continuation response from this outcome; this keeps that shape in
+    /// one place.
+    pub(crate) fn to_turn_response(&self) -> TurnResponse {
+        TurnResponse {
+            text: self.response_text.clone(),
+            assistant_message: self.model_response.assistant_message.clone(),
+            completion_tokens: self.completion_tokens,
+            terminal: self.terminal,
+        }
+    }
 }
 
 /// Transport/backend seam consumed by scheduled multi-turn workloads.

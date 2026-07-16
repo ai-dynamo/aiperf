@@ -23,7 +23,7 @@ pub mod window;
 
 pub use actuator::{
     ControlActuator, ControlSnapshot, PrefillConcurrencyActuator, RequestRateActuator,
-    SessionConcurrencyActuator, UserTarget, UsersActuator,
+    SessionConcurrencyActuator, SlotPoolActuator, UserTarget, UsersActuator,
 };
 pub use artifacts::{
     ADAPTIVE_SCHEMA_VERSION, AdaptiveArtifactSink, AdaptiveCandidate, AdaptiveEvent,

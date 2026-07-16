@@ -1555,6 +1555,21 @@ pub(crate) fn turn_texts(turn: &Turn) -> Vec<String> {
         .collect()
 }
 
+pub(crate) fn joined_text(turn: &Turn) -> String {
+    turn_texts(turn).join(" ")
+}
+
+/// Clone an endpoint's configured headers, adding a bearer `Authorization`
+/// header when an API key is present. Shared by every dialect that prepares
+/// from a [`RawEndpointConfig`] (KServe, Riva, vLLM-generate, DynoSim).
+pub(crate) fn bearer_headers(config: &RawEndpointConfig) -> BTreeMap<String, String> {
+    let mut headers = config.headers.clone();
+    if let Some(api_key) = &config.api_key {
+        headers.insert("Authorization".to_string(), format!("Bearer {api_key}"));
+    }
+    headers
+}
+
 pub(crate) fn parse_embeddings_response(
     response: &ServerResponse,
     strict_invalid_data: bool,

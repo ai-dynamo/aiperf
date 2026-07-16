@@ -16,7 +16,7 @@ use anyhow::{Result, bail};
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use crate::multiturn::{ConversationSource, TurnResponse, TurnToSend};
+use crate::multiturn::{ConversationSource, TurnToSend};
 use crate::scheduled::{ScheduledRuntime, Workload};
 use crate::scheduler::LocalTaskScheduler;
 
@@ -268,18 +268,7 @@ fn schedule_fixed_turn(
                                     return;
                                 }
                             };
-                            let next = match source.next_turn(
-                                &credit,
-                                TurnResponse {
-                                    text: outcome.response_text.clone(),
-                                    assistant_message: outcome
-                                        .model_response
-                                        .assistant_message
-                                        .clone(),
-                                    completion_tokens: outcome.completion_tokens,
-                                    terminal: outcome.terminal,
-                                },
-                            ) {
+                            let next = match source.next_turn(&credit, outcome.to_turn_response()) {
                                 Ok(Some(turn)) => turn,
                                 Ok(None) => return,
                                 Err(error) => {

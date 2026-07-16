@@ -42,7 +42,7 @@ use std::path::Path;
 
 use serde_json::{Map, Value};
 
-use crate::export::{ExportConfig, Exporter};
+use crate::export::{ExportConfig, Exporter, crlf_csv_writer, normalize_endpoint_display};
 use crate::metrics_core::{
     MetricEntry, MetricSeries, NativeReport, ReportServerMetricsEndpointInfo,
     ReportServerMetricsMetadata, ReportStats, ReportTimeslice, ReportValue, Unit,
@@ -873,18 +873,14 @@ fn build_csv(report: &NativeReport, policy: &ServerMetricsExportConfig) -> Strin
 
 /// Serializes one type section to CSV bytes (CRLF-terminated rows).
 fn render_section(kind: &str, metrics: &[CsvMetricInfo<'_>]) -> Vec<u8> {
-    let mut writer = csv::WriterBuilder::new()
-        .terminator(csv::Terminator::CRLF)
-        .from_writer(Vec::new());
+    let mut writer = crlf_csv_writer(Vec::new());
     write_section(&mut writer, kind, metrics);
     writer.into_inner().expect("csv writer flush")
 }
 
 /// Serializes the transposed info section to CSV bytes.
 fn render_info_section(metrics: &[CsvMetricInfo<'_>]) -> Vec<u8> {
-    let mut writer = csv::WriterBuilder::new()
-        .terminator(csv::Terminator::CRLF)
-        .from_writer(Vec::new());
+    let mut writer = crlf_csv_writer(Vec::new());
     write_info_section(&mut writer, metrics);
     writer.into_inner().expect("csv writer flush")
 }
@@ -1088,27 +1084,4 @@ fn vertical_sort_key(
         metric.endpoint.clone(),
         labels_repr,
     )
-}
-
-/// Ports `aiperf/exporters/utils.py::normalize_endpoint_display`: drop the URL
-/// scheme, keep `netloc` plus a `/metrics`-trimmed path.
-fn normalize_endpoint_display(url: &str) -> String {
-    let after_scheme = match url.find("://") {
-        Some(index) => &url[index + 3..],
-        None => url,
-    };
-    let netloc_end = after_scheme
-        .find(['/', '?', '#'])
-        .unwrap_or(after_scheme.len());
-    let netloc = &after_scheme[..netloc_end];
-    let rest = &after_scheme[netloc_end..];
-    let path_end = rest.find(['?', '#']).unwrap_or(rest.len());
-    let path = &rest[..path_end];
-    let path = if path.starts_with('/') { path } else { "" };
-    let path = path.strip_suffix("/metrics").unwrap_or(path);
-    let mut display = netloc.to_string();
-    if !path.is_empty() {
-        display.push_str(path);
-    }
-    display
 }

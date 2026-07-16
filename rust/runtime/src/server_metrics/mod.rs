@@ -14,6 +14,7 @@ pub mod atlas;
 pub mod histogram;
 pub mod model;
 pub mod parser;
+pub(crate) mod prom_text;
 pub mod source;
 pub mod units;
 

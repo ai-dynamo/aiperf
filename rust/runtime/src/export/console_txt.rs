@@ -759,21 +759,12 @@ fn group_title(group: MetricConsoleGroup, base: &str) -> String {
 
 /// Select the summary series for a metric (Python `native_report._summary_series`):
 /// the sole series when there is one, otherwise the unique unlabeled aggregate
-/// series among many, or `None` when a multi-series metric has no aggregate.
+/// series among many, or `None` when a multi-series metric has no aggregate (or a
+/// malformed second aggregate, which Python raises on — the table drops it here).
 fn summary_series(entry: &MetricEntry) -> Option<&MetricSeries> {
-    match entry.series.as_slice() {
-        [] => None,
-        [single] => Some(single),
-        many => {
-            let mut aggregate = many.iter().filter(|series| series.labels.is_none());
-            let first = aggregate.next();
-            // A second unlabeled aggregate is a malformed report in Python; here
-            // the primary table simply drops the metric rather than aborting.
-            if aggregate.next().is_some() {
-                return None;
-            }
-            first
-        }
+    match crate::export::summary_series(&entry.series) {
+        crate::export::SummarySeries::Selected(series) => Some(series),
+        _ => None,
     }
 }
 

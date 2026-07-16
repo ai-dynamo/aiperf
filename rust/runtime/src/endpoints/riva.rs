@@ -15,6 +15,7 @@ use serde_json::{Map, Value, json};
 
 use crate::body_plan::BodyPlan;
 use crate::endpoints::config::{EffectiveEndpointConfig, RawEndpointConfig};
+use crate::endpoints::endpoints::{bearer_headers, joined_text, turn_texts};
 use crate::endpoints::metadata::{EndpointDescriptor, Modality};
 use crate::endpoints::models::{
     AudioResponseData, EndpointError, EndpointResult, ExtractedPayload, ParsedResponse,
@@ -240,10 +241,7 @@ impl PreparedRivaEndpoint {
         config: EffectiveEndpointConfig,
         behavior: Box<dyn RivaPreparedBehavior>,
     ) -> Self {
-        let mut headers = config.as_raw().headers.clone();
-        if let Some(api_key) = &config.as_raw().api_key {
-            headers.insert("Authorization".to_string(), format!("Bearer {api_key}"));
-        }
+        let headers = bearer_headers(config.as_raw());
         Self {
             descriptor,
             config,
@@ -722,19 +720,6 @@ fn first_turn<'a>(request: &'a PreparedRequest<'_>, message: &str) -> EndpointRe
         .turns()
         .first()
         .ok_or_else(|| EndpointError::InvalidRequest(message.to_string()))
-}
-
-fn turn_texts(turn: &Turn) -> Vec<String> {
-    turn.texts
-        .iter()
-        .flat_map(|text| text.contents.iter())
-        .filter(|content| !content.is_empty())
-        .cloned()
-        .collect()
-}
-
-fn joined_text(turn: &Turn) -> String {
-    turn_texts(turn).join(" ")
 }
 
 fn decode_audio_content(content: &str) -> Vec<u8> {

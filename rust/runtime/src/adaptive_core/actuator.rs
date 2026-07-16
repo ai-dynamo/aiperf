@@ -89,33 +89,47 @@ fn clamp_integer(value: f64, minimum: usize, maximum: usize) -> Result<usize, Ad
     Ok(value.clamp(minimum as f64, maximum as f64).trunc() as usize)
 }
 
-/// Session-concurrency adapter over a debt-draining [`SlotPool`].
-pub struct SessionConcurrencyActuator {
+/// Integer-valued concurrency adapter over a debt-draining [`SlotPool`].
+///
+/// The session- and prefill-concurrency control variables share identical
+/// clamp/set/snapshot behavior; they differ only in the control-variable label
+/// they expose (and validate their bounds under). That label is carried in
+/// `variable` so the [`SessionConcurrencyActuator`]/[`PrefillConcurrencyActuator`]
+/// constructors are thin wrappers over this one implementation.
+pub struct SlotPoolActuator {
     pool: Rc<SlotPool>,
     minimum: usize,
     maximum: usize,
+    variable: &'static str,
 }
 
-impl SessionConcurrencyActuator {
-    /// Build a session-concurrency actuator with validated integer bounds.
-    pub fn new(pool: Rc<SlotPool>, minimum: usize, maximum: usize) -> Result<Self, AdaptiveError> {
-        validate_integer_bounds(minimum, maximum, "concurrency")?;
+impl SlotPoolActuator {
+    /// Build a slot-pool actuator for the named control `variable` with
+    /// validated integer bounds.
+    pub fn new(
+        variable: &'static str,
+        pool: Rc<SlotPool>,
+        minimum: usize,
+        maximum: usize,
+    ) -> Result<Self, AdaptiveError> {
+        validate_integer_bounds(minimum, maximum, variable)?;
         Ok(Self {
             pool,
             minimum,
             maximum,
+            variable,
         })
     }
 
-    /// The controlled session slot pool.
+    /// The controlled slot pool.
     pub fn pool(&self) -> &Rc<SlotPool> {
         &self.pool
     }
 }
 
-impl ControlActuator for SessionConcurrencyActuator {
+impl ControlActuator for SlotPoolActuator {
     fn variable(&self) -> &'static str {
-        "concurrency"
+        self.variable
     }
 
     fn minimum(&self) -> f64 {
@@ -138,58 +152,34 @@ impl ControlActuator for SessionConcurrencyActuator {
 
     fn snapshot(&self) -> ControlSnapshot {
         ControlSnapshot::scalar(self.current())
+    }
+}
+
+/// Session-concurrency adapter over a debt-draining [`SlotPool`].
+pub struct SessionConcurrencyActuator;
+
+impl SessionConcurrencyActuator {
+    /// Build a session-concurrency actuator with validated integer bounds.
+    pub fn new(
+        pool: Rc<SlotPool>,
+        minimum: usize,
+        maximum: usize,
+    ) -> Result<SlotPoolActuator, AdaptiveError> {
+        SlotPoolActuator::new("concurrency", pool, minimum, maximum)
     }
 }
 
 /// Prefill-concurrency adapter over a debt-draining [`SlotPool`].
-pub struct PrefillConcurrencyActuator {
-    pool: Rc<SlotPool>,
-    minimum: usize,
-    maximum: usize,
-}
+pub struct PrefillConcurrencyActuator;
 
 impl PrefillConcurrencyActuator {
     /// Build a prefill-concurrency actuator with validated integer bounds.
-    pub fn new(pool: Rc<SlotPool>, minimum: usize, maximum: usize) -> Result<Self, AdaptiveError> {
-        validate_integer_bounds(minimum, maximum, "prefill_concurrency")?;
-        Ok(Self {
-            pool,
-            minimum,
-            maximum,
-        })
-    }
-
-    /// The controlled prefill slot pool.
-    pub fn pool(&self) -> &Rc<SlotPool> {
-        &self.pool
-    }
-}
-
-impl ControlActuator for PrefillConcurrencyActuator {
-    fn variable(&self) -> &'static str {
-        "prefill_concurrency"
-    }
-
-    fn minimum(&self) -> f64 {
-        self.minimum as f64
-    }
-
-    fn maximum(&self) -> f64 {
-        self.maximum as f64
-    }
-
-    fn current(&self) -> f64 {
-        self.pool.current_limit() as f64
-    }
-
-    fn set(&self, value: f64) -> Result<f64, AdaptiveError> {
-        let value = clamp_integer(value, self.minimum, self.maximum)?;
-        self.pool.set_limit(value);
-        Ok(value as f64)
-    }
-
-    fn snapshot(&self) -> ControlSnapshot {
-        ControlSnapshot::scalar(self.current())
+    pub fn new(
+        pool: Rc<SlotPool>,
+        minimum: usize,
+        maximum: usize,
+    ) -> Result<SlotPoolActuator, AdaptiveError> {
+        SlotPoolActuator::new("prefill_concurrency", pool, minimum, maximum)
     }
 }
 

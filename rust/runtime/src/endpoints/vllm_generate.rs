@@ -14,6 +14,7 @@ use serde_json::{Map, Value, json};
 
 use crate::body_plan::BodyPlan;
 use crate::endpoints::config::{EffectiveEndpointConfig, RawEndpointConfig};
+use crate::endpoints::endpoints::bearer_headers;
 use crate::endpoints::metadata::{EndpointDescriptor, Modality};
 use crate::endpoints::models::{
     EndpointError, EndpointResult, ExtractedPayload, ParsedResponse, RequestRecord, ResponseData,
@@ -73,10 +74,7 @@ impl EndpointFactory for VllmGenerateFactory {
         &self,
         config: EffectiveEndpointConfig,
     ) -> EndpointResult<Box<dyn PreparedEndpoint>> {
-        let mut headers = config.as_raw().headers.clone();
-        if let Some(api_key) = &config.as_raw().api_key {
-            headers.insert("Authorization".into(), format!("Bearer {api_key}"));
-        }
+        let headers = bearer_headers(config.as_raw());
         // The endpoint `extra`/`sampling_params` split depends only on immutable
         // config, so validate and lift it once here instead of on every dispatch.
         let mut endpoint_extra = config.as_raw().extra.clone().unwrap_or_default();

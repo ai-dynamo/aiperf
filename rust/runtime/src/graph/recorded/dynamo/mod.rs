@@ -20,7 +20,7 @@ use super::content::CorpusContentSynthesizer;
 use super::source::load_dynamo_documents;
 use super::trie::{RecordedRequest, graph_plan, lower_recorded_graph};
 use super::{RecordedTraceError, RecordedTraceInputConfig};
-use schema::{EventType, RequestMetrics, TraceRecord, parse_record};
+use schema::{EventType, ReplayMetrics, RequestMetrics, TraceRecord, parse_record};
 
 const DEFAULT_VIRTUAL_BLOCK_SIZE: usize = 16;
 
@@ -345,16 +345,14 @@ fn request_peak_context(request: Option<&RequestMetrics>) -> usize {
     )
 }
 
-fn resolve_block_size(
-    chains: &BTreeMap<String, SessionChain>,
+/// Collapse a stream of replay records to their single shared block size, or
+/// `fallback` when none carry one. A capture that mixes block sizes is rejected.
+fn unique_block_size<'a>(
+    replays: impl Iterator<Item = &'a ReplayMetrics>,
+    fallback: usize,
 ) -> Result<usize, RecordedTraceError> {
     let mut found = None;
-    for replay in chains
-        .values()
-        .flat_map(|chain| &chain.records)
-        .filter_map(|record| record.request.as_ref())
-        .filter_map(|request| request.replay.as_ref())
-    {
+    for replay in replays {
         if found.is_some_and(|value| value != replay.block_size) {
             return Err(RecordedTraceError(format!(
                 "Dynamo capture mixes replay block sizes {} and {}",
@@ -364,7 +362,20 @@ fn resolve_block_size(
         }
         found = Some(replay.block_size);
     }
-    Ok(found.unwrap_or(DEFAULT_VIRTUAL_BLOCK_SIZE))
+    Ok(found.unwrap_or(fallback))
+}
+
+fn resolve_block_size(
+    chains: &BTreeMap<String, SessionChain>,
+) -> Result<usize, RecordedTraceError> {
+    unique_block_size(
+        chains
+            .values()
+            .flat_map(|chain| &chain.records)
+            .filter_map(|record| record.request.as_ref())
+            .filter_map(|request| request.replay.as_ref()),
+        DEFAULT_VIRTUAL_BLOCK_SIZE,
+    )
 }
 
 #[derive(Debug)]
@@ -579,23 +590,14 @@ fn tree_block_size(
     session_ids: &[String],
     fallback: usize,
 ) -> Result<usize, RecordedTraceError> {
-    let mut found = None;
-    for replay in session_ids
-        .iter()
-        .flat_map(|session| &chains[session].records)
-        .filter_map(|record| record.request.as_ref())
-        .filter_map(|request| request.replay.as_ref())
-    {
-        if found.is_some_and(|value| value != replay.block_size) {
-            return Err(RecordedTraceError(format!(
-                "Dynamo capture mixes replay block sizes {} and {}",
-                found.unwrap(),
-                replay.block_size
-            )));
-        }
-        found = Some(replay.block_size);
-    }
-    Ok(found.unwrap_or(fallback))
+    unique_block_size(
+        session_ids
+            .iter()
+            .flat_map(|session| &chains[session].records)
+            .filter_map(|record| record.request.as_ref())
+            .filter_map(|request| request.replay.as_ref()),
+        fallback,
+    )
 }
 
 fn validate_replay_alignment(

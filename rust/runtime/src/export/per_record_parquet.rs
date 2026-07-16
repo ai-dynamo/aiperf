@@ -42,13 +42,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use arrow::array::{ArrayRef, BooleanArray, Float64Array, Int64Array, StringArray};
+use arrow::array::{ArrayRef, BooleanArray, Int64Array};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::ArrowWriter;
-use parquet::basic::Compression;
-use parquet::file::metadata::KeyValue;
-use parquet::file::properties::WriterProperties;
+
+use crate::export::parquet_util::{float_column, string_column, writer_properties};
 
 // The per-record metric column set is shared with the records CSV writer and is
 // derived from the catalog, so it lives (ungated) in `metrics_core`. Re-exported
@@ -303,40 +302,14 @@ fn build_record_batch(
         .context("assembling per-record parquet record batch")
 }
 
-/// Build a nullable UTF-8 column.
-fn string_column<I: Iterator<Item = Option<String>>>(values: I) -> ArrayRef {
-    Arc::new(StringArray::from_iter(values)) as ArrayRef
-}
-
 /// Build a nullable Int64 column.
 fn int_column<I: Iterator<Item = Option<i64>>>(values: I) -> ArrayRef {
     Arc::new(Int64Array::from_iter(values)) as ArrayRef
 }
 
-/// Build a nullable Float64 column.
-fn float_column<I: Iterator<Item = Option<f64>>>(values: I) -> ArrayRef {
-    Arc::new(Float64Array::from_iter(values)) as ArrayRef
-}
-
 /// Build a nullable Boolean column.
 fn bool_column<I: Iterator<Item = Option<bool>>>(values: I) -> ArrayRef {
     Arc::new(BooleanArray::from_iter(values)) as ArrayRef
-}
-
-/// Snappy compression + file-level key-value metadata mirroring the schema
-/// metadata. Shared by the one-shot [`write_parquet`] and the incremental
-/// [`StreamingPerRecordParquetWriter`] so both files carry identical
-/// `aiperf.units`/`aiperf.schema_version`/`aiperf.version` metadata and codec.
-fn writer_properties(schema: &Arc<Schema>) -> WriterProperties {
-    let kv: Vec<KeyValue> = schema
-        .metadata()
-        .iter()
-        .map(|(key, value)| KeyValue::new(key.clone(), value.clone()))
-        .collect();
-    WriterProperties::builder()
-        .set_compression(Compression::SNAPPY)
-        .set_key_value_metadata(Some(kv))
-        .build()
 }
 
 /// Write the record batch to Parquet with Snappy compression and file-level

@@ -42,13 +42,12 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
-use arrow::array::{ArrayRef, Float64Array, Int64Array, StringArray};
+use arrow::array::{ArrayRef, Int64Array};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::ArrowWriter;
-use parquet::basic::Compression;
-use parquet::file::metadata::KeyValue;
-use parquet::file::properties::WriterProperties;
+
+use crate::export::parquet_util::{float_column, string_column, writer_properties};
 
 use crate::export::{ExportConfig, Exporter};
 use crate::metrics_core::NativeReport;
@@ -916,16 +915,6 @@ fn build_record_batch(
     RecordBatch::try_new(schema.clone(), columns).context("assembling parquet record batch")
 }
 
-/// Build a nullable UTF-8 column.
-fn string_column<I: Iterator<Item = Option<String>>>(values: I) -> ArrayRef {
-    Arc::new(StringArray::from_iter(values)) as ArrayRef
-}
-
-/// Build a nullable float64 column.
-fn float_column<I: Iterator<Item = Option<f64>>>(values: I) -> ArrayRef {
-    Arc::new(Float64Array::from_iter(values)) as ArrayRef
-}
-
 /// Write the record batch to Parquet with Snappy compression (matching the Python
 /// `compression="snappy"`) and file-level key-value metadata mirroring the schema
 /// metadata. Byte-identity with pyarrow is not attempted (see module docs).
@@ -937,15 +926,7 @@ fn write_parquet(path: &Path, schema: Arc<Schema>, batch: &RecordBatch) -> Resul
     let file = File::create(path)
         .with_context(|| format!("creating parquet export {}", path.display()))?;
 
-    let kv: Vec<KeyValue> = schema
-        .metadata()
-        .iter()
-        .map(|(key, value)| KeyValue::new(key.clone(), value.clone()))
-        .collect();
-    let props = WriterProperties::builder()
-        .set_compression(Compression::SNAPPY)
-        .set_key_value_metadata(Some(kv))
-        .build();
+    let props = writer_properties(&schema);
 
     let mut writer = ArrowWriter::try_new(file, schema, Some(props))
         .context("constructing parquet arrow writer")?;

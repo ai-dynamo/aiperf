@@ -53,7 +53,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
-use crate::export::{ExportConfig, Exporter};
+use crate::export::{ExportConfig, Exporter, crlf_csv_writer, normalize_endpoint_display};
 use crate::metrics_core::{MetricEntry, MetricSeries, NativeReport, ReportStats, ReportValue};
 use chrono::{Local, TimeZone};
 use serde_json::{Map, Value};
@@ -246,21 +246,13 @@ fn finite(value: Option<ReportValue>) -> Option<f64> {
 
 /// Select the summary series for a metric (`native_report.py:791-806`
 /// `_summary_series`): the lone series, or the single unlabeled aggregate when
-/// several labeled series exist. `None` skips the metric entirely.
+/// several labeled series exist. Every degenerate case (no series, no aggregate,
+/// or multiple ambiguous aggregates — the last of which Python raises on) skips
+/// the metric entirely rather than aborting the best-effort export.
 fn summary_series(entry: &MetricEntry) -> Option<&MetricSeries> {
-    match entry.series.as_slice() {
-        [] => None,
-        [only] => Some(only),
-        many => {
-            let mut unlabeled = many.iter().filter(|series| series.labels.is_none());
-            let first = unlabeled.next();
-            // Multiple unlabeled aggregates are ambiguous; Python raises. Be
-            // graceful and skip rather than abort the best-effort export.
-            if unlabeled.next().is_some() {
-                return None;
-            }
-            first
-        }
+    match crate::export::summary_series(&entry.series) {
+        crate::export::SummarySeries::Selected(series) => Some(series),
+        _ => None,
     }
 }
 
@@ -550,21 +542,6 @@ fn render_telemetry_data(report: &NativeReport) -> Option<Value> {
     Some(Value::Object(telemetry))
 }
 
-/// Strip the scheme and a trailing `/metrics` path segment from a DCGM URL,
-/// exactly mirroring Python's `normalize_endpoint_display` (`exporters/utils.py:7-23`,
-/// `urlparse` `netloc` + `path.removesuffix("/metrics")`). Netloc (host, port,
-/// any userinfo) is preserved verbatim, so `http://127.0.0.1:9400/dcgm1/metrics`
-/// becomes `127.0.0.1:9400/dcgm1`.
-fn normalize_endpoint_display(url: &str) -> String {
-    let after_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
-    let (netloc, path) = match after_scheme.find('/') {
-        Some(index) => (&after_scheme[..index], &after_scheme[index..]),
-        None => (after_scheme, ""),
-    };
-    let path = path.strip_suffix("/metrics").unwrap_or(path);
-    format!("{netloc}{path}")
-}
-
 /// Format a run-timeline nanosecond timestamp as Python
 /// `datetime.fromtimestamp(ns/1e9).isoformat()` does (`native_report.py:705-709`):
 /// local-timezone ISO-8601 with microsecond precision, dropping the fractional
@@ -767,7 +744,7 @@ fn render_csv(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> anyhow::Res
     let mut out: Vec<u8> = Vec::new();
 
     if !request.is_empty() {
-        let mut writer = crlf_writer();
+        let mut writer = crlf_csv_writer(Vec::new());
         let mut header = Vec::with_capacity(1 + STAT_KEYS.len());
         header.push("Metric".to_owned());
         header.extend(STAT_KEYS.iter().map(|key| (*key).to_owned()));
@@ -789,7 +766,7 @@ fn render_csv(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> anyhow::Res
     }
 
     if !system.is_empty() {
-        let mut writer = crlf_writer();
+        let mut writer = crlf_csv_writer(Vec::new());
         writer.write_record(["Metric", "Value"])?;
         for (_, projected) in &system {
             writer.write_record([
@@ -805,11 +782,5 @@ fn render_csv(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> anyhow::Res
 
 /// A CRLF-terminated CSV writer over an in-memory buffer, matching Python's
 /// default `csv.writer` excel dialect (`\r\n` terminator, minimal quoting).
-fn crlf_writer() -> csv::Writer<Vec<u8>> {
-    csv::WriterBuilder::new()
-        .terminator(csv::Terminator::CRLF)
-        .from_writer(Vec::new())
-}
-
 #[cfg(test)]
 mod tests;
