@@ -905,12 +905,29 @@ pub async fn route(
 
 /// Serve the KServe gRPC service on `addr` until the process exits. Runs its own
 /// accept loop on the shared runtime with `TCP_NODELAY`, sharing `state` (and
-/// thus recorder / prefix-cache / scheduler) with the HTTP frontend. gRPC is
-/// h2c; hyper's auto builder serves the HTTP/2-prior-knowledge preface tonic
-/// clients send.
+/// thus recorder / prefix-cache / scheduler) with the HTTP frontend.
+///
+/// Cleartext (h2c) KServe gRPC listener. Thin wrapper over
+/// [`serve_grpc_with_tls`] with no acceptor; hyper's auto builder serves the
+/// HTTP/2-prior-knowledge preface tonic clients send. Kept as the stable 2-arg
+/// entry point every existing caller (tests, the e2e harness) already uses.
 pub async fn serve_grpc(addr: SocketAddr, state: Arc<AppState>) -> anyhow::Result<()> {
+    serve_grpc_with_tls(addr, state, None).await
+}
+
+/// KServe gRPC listener with optional TLS termination.
+///
+/// When `acceptor` is `None` the transport is h2c (cleartext HTTP/2). When
+/// `Some`, each accepted stream is wrapped in a rustls handshake (ALPN
+/// negotiating `h2`) first, so this is a `grpcs` target for AIPerf's tonic
+/// `grpcs://` client — the same certificate + acceptor the HTTP frontend uses.
+pub async fn serve_grpc_with_tls(
+    addr: SocketAddr,
+    state: Arc<AppState>,
+    acceptor: Option<tokio_rustls::TlsAcceptor>,
+) -> anyhow::Result<()> {
     let listener = build_listener(addr)?;
-    tracing::info!(%addr, "KServe gRPC listening");
+    tracing::info!(%addr, tls = acceptor.is_some(), "KServe gRPC listening");
     loop {
         let (stream, peer) = match listener.accept().await {
             Ok(value) => value,
@@ -921,17 +938,35 @@ pub async fn serve_grpc(addr: SocketAddr, state: Arc<AppState>) -> anyhow::Resul
         };
         let _ = stream.set_nodelay(true);
         let state = state.clone();
+        let acceptor = acceptor.clone();
         tokio::spawn(async move {
-            let io = TokioIo::new(stream);
             let service = hyper::service::service_fn(move |req| {
                 let state = state.clone();
                 async move { route(state, req).await }
             });
-            if let Err(error) = ConnBuilder::new(TokioExecutor::new())
-                .serve_connection(io, service)
-                .await
-            {
-                tracing::debug!(%peer, "grpc connection error: {error}");
+            let builder = ConnBuilder::new(TokioExecutor::new());
+            // The TLS and cleartext arms serve structurally-identical gRPC
+            // connections over different stream types.
+            match acceptor {
+                Some(acceptor) => {
+                    let tls_stream = match acceptor.accept(stream).await {
+                        Ok(s) => s,
+                        Err(error) => {
+                            tracing::debug!(%peer, "grpcs TLS handshake error: {error}");
+                            return;
+                        }
+                    };
+                    let io = TokioIo::new(tls_stream);
+                    if let Err(error) = builder.serve_connection(io, service).await {
+                        tracing::debug!(%peer, "grpc connection error: {error}");
+                    }
+                }
+                None => {
+                    let io = TokioIo::new(stream);
+                    if let Err(error) = builder.serve_connection(io, service).await {
+                        tracing::debug!(%peer, "grpc connection error: {error}");
+                    }
+                }
             }
         });
     }

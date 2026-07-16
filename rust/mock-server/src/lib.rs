@@ -23,6 +23,7 @@ pub mod prom;
 pub mod scheduler;
 pub mod state;
 pub mod throughput;
+pub mod tls;
 pub mod tokens;
 
 pub use app::{AppState, build_router};

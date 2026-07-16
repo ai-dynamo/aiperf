@@ -6,11 +6,8 @@
 use std::net::SocketAddr;
 
 use aiperf_mock_server::listener::{LISTEN_BACKLOG, build_listener};
-use aiperf_mock_server::{MockServerConfig, balancer, build_router};
+use aiperf_mock_server::{MockServerConfig, balancer, build_router, tls};
 use clap::Parser;
-use hyper_util::rt::{TokioExecutor, TokioIo};
-use hyper_util::server::conn::auto::Builder as ConnBuilder;
-use tower::Service;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::filter::LevelFilter;
 
@@ -83,13 +80,31 @@ async fn serve(config: MockServerConfig, worker_threads: usize) -> anyhow::Resul
     let addr = SocketAddr::new(host, config.port);
     let state = aiperf_mock_server::app::build_state(config.clone());
 
+    // Optional TLS/HTTPS termination. Built once and cloned into the gRPC
+    // listener so both frontends share one certificate + ALPN policy.
+    let acceptor = tls::build_acceptor(&config)?;
+    if acceptor.is_some() {
+        let mode = if config.tls_self_signed && config.tls_cert.is_none() {
+            "self-signed"
+        } else {
+            "cert/key"
+        };
+        tracing::info!(%addr, tls = mode, "TLS enabled (ALPN h2 + http/1.1)");
+    }
+
     // Optional KServe OIP v2 gRPC listener on its own port, sharing this run's
-    // AppState (recorder/prefix-cache/scheduler) with the HTTP frontend.
+    // AppState (recorder/prefix-cache/scheduler) with the HTTP frontend. When
+    // TLS is configured the gRPC listener terminates the same certificate as
+    // `grpcs` (ALPN h2).
     if let Some(grpc_port) = config.grpc_port {
         let grpc_addr = SocketAddr::new(host, grpc_port);
         let grpc_state = state.clone();
+        let grpc_acceptor = acceptor.clone();
         tokio::spawn(async move {
-            if let Err(error) = aiperf_mock_server::grpc::serve_grpc(grpc_addr, grpc_state).await {
+            if let Err(error) =
+                aiperf_mock_server::grpc::serve_grpc_with_tls(grpc_addr, grpc_state, grpc_acceptor)
+                    .await
+            {
                 tracing::error!(%grpc_addr, "gRPC server exited: {error}");
             }
         });
@@ -113,59 +128,11 @@ async fn serve(config: MockServerConfig, worker_threads: usize) -> anyhow::Resul
     tracing::info!(%addr, backlog = LISTEN_BACKLOG, "Listening");
     let listener = build_listener(addr)?;
 
-    // Manual accept loop — enables TCP_NODELAY on every accepted socket (axum's
-    // default `serve` leaves it off, which defeated our streaming throughput
-    // because Nagle's algorithm was holding small SSE chunks for ~40 ms). Each
-    // connection gets its own tokio task driving hyper's auto HTTP/1+2
-    // handshake.
-    let make_service = router.into_make_service();
-    // 0 = leave hyper's default; otherwise advertise this h2 stream ceiling so a
-    // single connection can hold very large concurrent-request counts.
-    let max_concurrent_streams = config.max_concurrent_streams;
-    loop {
-        let (stream, peer) = match listener.accept().await {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!("accept error: {e}");
-                continue;
-            }
-        };
-        // Disable Nagle for low-latency streaming.
-        let _ = stream.set_nodelay(true);
-
-        let tower_service = match make_service.clone().call(peer).await {
-            Ok(svc) => svc,
-            Err(e) => {
-                tracing::warn!("make_service error: {e}");
-                continue;
-            }
-        };
-
-        tokio::spawn(async move {
-            let io = TokioIo::new(stream);
-            let hyper_service =
-                hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
-                    tower_service.clone().call(req)
-                });
-            let mut builder = ConnBuilder::new(TokioExecutor::new());
-            if max_concurrent_streams > 0 {
-                builder
-                    .http2()
-                    .max_concurrent_streams(max_concurrent_streams);
-            }
-            if let Err(e) = builder
-                .serve_connection_with_upgrades(io, hyper_service)
-                .await
-            {
-                // A clean keep-alive idle close returns Ok(()); reaching here means
-                // the peer dropped the connection abnormally (broken pipe / reset /
-                // incomplete message) — exactly the client-side "Connection lost"
-                // errors a benchmark counts. Surface it at WARN so it is visible at
-                // the default INFO log level instead of being buried at DEBUG.
-                tracing::warn!(%peer, "connection error: {e}");
-            }
-        });
-    }
+    // Shared accept loop (see `tls::serve_http`): TCP_NODELAY on every socket,
+    // per-connection hyper auto HTTP/1+2 handshake, optional h2
+    // `max_concurrent_streams`, and — when `acceptor` is `Some` — a rustls
+    // handshake wrapping each stream before hyper sees it. Cleartext when None.
+    tls::serve_http(listener, router, acceptor, config.max_concurrent_streams).await
 }
 
 /// Load the effective config. A balancer-spawned child carries its exact config

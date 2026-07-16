@@ -49,6 +49,17 @@ dashmap = "6"
 socket2 = { version = "0.5", features = ["all"] }
 num_cpus = "1"
 libc = "0.2"
+# TLS/HTTPS + grpcs listener stack. rustls (aws-lc-rs provider, selected
+# explicitly to match the runner's HTTP client in
+# `aiperf::transport_http::client::connection`) + tokio-rustls for the accept
+# loop; rustls-pemfile parses `--tls-cert`/`--tls-key` PEM; rcgen mints an
+# in-memory self-signed cert for `--tls-self-signed`. All versions are already
+# resolved transitively in the workspace `Cargo.lock` (rustls 0.23,
+# tokio-rustls 0.26, rustls-pemfile 2, rcgen 0.13 via its default `ring` crypto).
+rustls = "0.23"
+tokio-rustls = "0.26"
+rustls-pemfile = "2"
+rcgen = "0.13"
 
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json", "stream"] }

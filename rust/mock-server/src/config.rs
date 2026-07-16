@@ -42,6 +42,32 @@ pub struct MockServerConfig {
     #[arg(long, env = "MOCK_SERVER_UDS")]
     pub uds: Option<String>,
 
+    /// Path to a PEM certificate chain enabling the HTTPS (and, with
+    /// `--grpc-port`, `grpcs`) frontend. Paired with `--tls-key`; supplying one
+    /// without the other is an error. When set, accepted TCP streams are wrapped
+    /// in a rustls handshake advertising ALPN `h2`+`http/1.1` before hyper sees
+    /// them, so the mock is a target for AIPerf's `https://`/`grpcs://`
+    /// transports. Unset (and `--tls-self-signed` unset) keeps cleartext.
+    #[arg(long, env = "MOCK_SERVER_TLS_CERT")]
+    pub tls_cert: Option<String>,
+
+    /// Path to the PEM private key (PKCS#8, RSA/PKCS#1, or SEC1) matching
+    /// `--tls-cert`.
+    #[arg(long, env = "MOCK_SERVER_TLS_KEY")]
+    pub tls_key: Option<String>,
+
+    /// Serve HTTPS (and `grpcs`) with an in-memory self-signed certificate for
+    /// `127.0.0.1`/`localhost`, generated fresh at startup. Convenient for local
+    /// TLS integration runs where the client disables verification
+    /// (`endpoint.ssl_verify=false`); ignored when `--tls-cert`/`--tls-key` are
+    /// given (an explicit cert wins).
+    #[arg(
+        long,
+        env = "MOCK_SERVER_TLS_SELF_SIGNED",
+        default_value_t = false,
+        action = clap::ArgAction::SetTrue
+    )]
+    pub tls_self_signed: bool,
     /// When set, the KServe gRPC `ModelInfer` handler behaves as a NON-LLM
     /// embedding model (like a Triton `python`-backend embedder): it consumes the
     /// input text tensor and returns a single `FP32` embedding tensor of this
@@ -682,6 +708,12 @@ impl MockServerConfig {
     /// True when any `--usage-*` extended-accounting knob is set, so the usage
     /// augmentation in [`crate::handlers`] can be skipped entirely on the common
     /// path (keeping a normal run's payload byte-identical).
+    /// True when any TLS flag selects an HTTPS frontend (explicit cert/key pair
+    /// or `--tls-self-signed`), so `main::serve` builds an acceptor.
+    pub fn tls_enabled(&self) -> bool {
+        self.tls_self_signed || self.tls_cert.is_some() || self.tls_key.is_some()
+    }
+
     pub fn usage_fields_enabled(&self) -> bool {
         self.usage_cache_write_tokens != 0
             || self.usage_cache_miss_tokens != 0
@@ -772,6 +804,10 @@ mod tests {
         assert_eq!(cfg.host, "127.0.0.1");
         assert_eq!(cfg.grpc_port, None);
         assert_eq!(cfg.uds, None);
+        assert_eq!(cfg.tls_cert, None);
+        assert_eq!(cfg.tls_key, None);
+        assert!(!cfg.tls_self_signed);
+        assert!(!cfg.tls_enabled());
         assert_eq!(cfg.processes, 1);
         assert_eq!(cfg.workers, 0);
         assert_eq!(cfg.ttft, 20.0);
