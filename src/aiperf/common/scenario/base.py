@@ -87,10 +87,8 @@ class ScenarioSpec(AIPerfBaseModel):
             "living at cfg.trajectory_start_min_ratio "
             "(--trajectory-start-min-ratio). apply_trajectory_ratios "
             "AUTO-APPLIES this value onto the run config when the field is "
-            "unset; a user-explicit value differing from this raises "
-            "ScenarioLockError naming --trajectory-start-min-ratio "
-            "(downgradable to a warning via --unsafe-override). None disables "
-            "the check."
+            "unset; a user-explicit value is HONORED (parity with the agentx "
+            "validator). None disables the check."
         ),
     )
     default_trajectory_start_max_ratio: float | None = Field(
@@ -102,10 +100,8 @@ class ScenarioSpec(AIPerfBaseModel):
             "living at cfg.trajectory_start_max_ratio "
             "(--trajectory-start-max-ratio). apply_trajectory_ratios "
             "AUTO-APPLIES this value onto the run config when the field is "
-            "unset; a user-explicit value differing from this raises "
-            "ScenarioLockError naming --trajectory-start-max-ratio "
-            "(downgradable to a warning via --unsafe-override). None disables "
-            "the check."
+            "unset; a user-explicit value is HONORED (parity with the agentx "
+            "validator). None disables the check."
         ),
     )
     trace_idle_gap_cap_seconds: float | None = Field(

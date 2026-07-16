@@ -80,6 +80,33 @@ pub const ZSTD_LEVEL: i32 = 3;
 /// artifact body; the controller streaming-decompresses only when it matches.
 pub const ZSTD_CONTENT_ENCODING: &str = "zstd";
 
+// -- multi-file dataset manifest (Stage G, directory / segmented-prefix) -----------
+
+/// The wire manifest a cross-host cell fetches (`GET /dataset-manifest`) to learn
+/// the exact file set that makes up a directory or segmented-prefix graph trace,
+/// before streaming each one over the same HTTP+zstd plane a single file uses.
+///
+/// The controller derives this from the graph loader's OWN enumeration
+/// (`crate::graph::recorded::enumerate_recorded_trace_files`), so the shipped set
+/// is byte-for-byte the set a 1-cell run reads. The cell reconstructs the files
+/// under a cell-local directory preserving their (flat) relative names, then
+/// rewrites `datasets/0.path` per [`kind`](Self::kind):
+/// - `"file"` / `"prefix"`: `path` = `<dest>/<base_name>` (a single file, or the
+///   re-globbable segmented-prefix stem);
+/// - `"dir"`: `path` = `<dest>` (the reconstructed directory the loader scans).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DatasetManifest {
+    /// Layout kind: `"file"`, `"dir"`, or `"prefix"`.
+    pub kind: String,
+    /// The original trace path's file name — the stem the cell rewrites
+    /// `datasets/0.path` around for the `file`/`prefix` kinds.
+    pub base_name: String,
+    /// The relative (flat) file names to fetch, in the loader's read order. Each
+    /// is a single path component (loaders never recurse), served by
+    /// `GET /dataset/{name}` and re-fetched by the cell in this order.
+    pub files: Vec<String>,
+}
+
 // -- streaming zstd core ----------------------------------------------------------
 
 /// A bounded streaming compressor over one artifact file: each
@@ -282,6 +309,11 @@ struct UploadState {
     /// for a synthetic run (each cell regenerates the dataset from the shared seed)
     /// and for a same-host run (cells read the controller-local path directly).
     datasets: HashMap<String, PathBuf>,
+    /// The multi-file dataset manifest served at `GET /dataset-manifest` (Stage G,
+    /// directory / segmented-prefix traces). `None` for a synthetic / same-host /
+    /// no-dataset run (the route then `404`s); `Some` even for a single file, so a
+    /// cell always learns the layout kind and file set from one place.
+    manifest: Option<DatasetManifest>,
     /// The set of cells that have signaled `/done`, published through a
     /// [`watch`] channel. `watch` is version-tracked, so a `send` that lands
     /// between the barrier's set-size check and its `changed().await` bumps the
@@ -328,10 +360,28 @@ impl ArtifactUploadServer {
         allowed: HashSet<String>,
         datasets: HashMap<String, PathBuf>,
     ) -> Result<Self> {
+        Self::start_with_dataset_plan(bind, temp_root, allowed, datasets, None).await
+    }
+
+    /// Like [`start_with_datasets`](Self::start_with_datasets), plus the multi-file
+    /// [`DatasetManifest`] served at `GET /dataset-manifest`. A directory or
+    /// segmented-prefix graph trace registers every shard in `datasets` (keyed by
+    /// its flat relative name) AND a `manifest` describing the layout kind and file
+    /// set, so a cell can fetch the manifest, then each shard, and reconstruct the
+    /// tree. `None` keeps the manifest route `404` (synthetic / same-host / no
+    /// dataset), unchanged from the pre-manifest server.
+    pub async fn start_with_dataset_plan(
+        bind: SocketAddr,
+        temp_root: PathBuf,
+        allowed: HashSet<String>,
+        datasets: HashMap<String, PathBuf>,
+        manifest: Option<DatasetManifest>,
+    ) -> Result<Self> {
         let state = Arc::new(UploadState {
             temp_root,
             allowed,
             datasets,
+            manifest,
             done: watch::Sender::new(HashSet::new()),
         });
         let app = Router::new()
@@ -340,6 +390,8 @@ impl ArtifactUploadServer {
             // Stage G: stream a registered non-synthetic dataset source to a cell
             // with streaming zstd (the cross-host dataset-ship leg).
             .route("/dataset/{name}", get(serve_dataset))
+            // Stage G (multi-file): the directory / segmented-prefix file set.
+            .route("/dataset-manifest", get(serve_dataset_manifest))
             // The body is streamed frame by frame (bounded); lift the default 2 MB
             // request-body cap so a large records.jsonl upload is not truncated.
             .layer(DefaultBodyLimit::disable())
@@ -582,6 +634,21 @@ async fn serve_dataset(
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
 }
 
+/// `GET /dataset-manifest` — the registered multi-file [`DatasetManifest`] (Stage
+/// G) as JSON, so a cell learns the layout kind and file set before fetching each
+/// shard via `GET /dataset/{name}`. `404` when no manifest is registered (a
+/// synthetic / same-host / no-dataset run).
+async fn serve_dataset_manifest(
+    State(state): State<Arc<UploadState>>,
+) -> Result<axum::Json<DatasetManifest>, (StatusCode, String)> {
+    state.manifest.clone().map(axum::Json).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            "no dataset manifest registered".to_owned(),
+        )
+    })
+}
+
 // -- cell-side HTTP client --------------------------------------------------------
 
 /// Ship one cell's per-record artifact files (+ `inputs.json`) to the controller
@@ -769,6 +836,103 @@ pub async fn fetch_dataset_to_file(authority: &str, name: &str, dest: &Path) -> 
         Ok(Ok(())) => Ok(()),
         Ok(Err(error)) => Err(error).with_context(|| format!("writing dataset {name:?}")),
         Err(join) => bail!("dataset writer task panicked: {join}"),
+    }
+}
+
+/// Fetch the multi-file dataset [`DatasetManifest`] over `GET /dataset-manifest`
+/// (Stage G). The response is a small JSON body (the file NAMES, not their bytes),
+/// so it is collected whole; each named file is then streamed by
+/// [`reconstruct_shipped_dataset`] with the bounded-memory [`fetch_dataset_to_file`].
+pub async fn fetch_dataset_manifest(authority: &str) -> Result<DatasetManifest> {
+    use http_body_util::{BodyExt, Empty};
+
+    let request = hyper::Request::builder()
+        .method("GET")
+        .uri("/dataset-manifest")
+        .header(hyper::header::HOST, authority)
+        .body(Empty::<Bytes>::new())
+        .context("building dataset manifest request")?;
+
+    let stream = tokio::net::TcpStream::connect(authority)
+        .await
+        .with_context(|| format!("connecting to dataset server {authority}"))?;
+    let io = hyper_util::rt::TokioIo::new(stream);
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(io)
+        .await
+        .context("dataset manifest HTTP handshake")?;
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+    let response = sender
+        .send_request(request)
+        .await
+        .context("sending dataset manifest request")?;
+    ensure!(
+        response.status().is_success(),
+        "dataset manifest returned HTTP {}",
+        response.status()
+    );
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .context("reading dataset manifest body")?
+        .to_bytes();
+    serde_json::from_slice(&bytes).context("decoding dataset manifest")
+}
+
+/// Validate a manifest-supplied relative file name: it must be a single, non-empty
+/// `Normal` path component (no `/`, no `..`, no absolute root). The loaders never
+/// recurse, so every shipped name is a flat file name; this fails closed on any
+/// traversal attempt even though the manifest comes from the (trusted) controller —
+/// defense in depth mirroring [`validate_artifact_relpath`].
+fn validate_dataset_relname(name: &str) -> Result<()> {
+    ensure!(!name.is_empty(), "empty dataset file name");
+    let path = Path::new(name);
+    let mut components = path.components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(_)), None) => Ok(()),
+        _ => {
+            bail!("dataset file name {name:?} is not a single flat component (traversal rejected)")
+        }
+    }
+}
+
+/// Reconstruct a shipped directory / segmented-prefix / single-file graph trace
+/// (Stage G) under `dest_dir` and return the local path `datasets/0.path` should
+/// point at.
+///
+/// Fetches every file named in `manifest` (in order) via the bounded-memory
+/// [`fetch_dataset_to_file`], landing each at `dest_dir/<name>` preserving its flat
+/// relative name (each name is path-validated). Each file streams independently, so
+/// peak memory is O(chunk) regardless of the number or size of shards. Returns:
+/// - `"dir"` → `dest_dir` (the loader scans the reconstructed directory);
+/// - `"file"` / `"prefix"` → `dest_dir/base_name` (a single file, or the
+///   re-globbable segmented-prefix stem beside its landed shards).
+pub async fn reconstruct_shipped_dataset(
+    authority: &str,
+    manifest: &DatasetManifest,
+    dest_dir: &Path,
+) -> Result<PathBuf> {
+    std::fs::create_dir_all(dest_dir)
+        .with_context(|| format!("creating cell dataset dir {}", dest_dir.display()))?;
+    for name in &manifest.files {
+        validate_dataset_relname(name)
+            .with_context(|| format!("validating shipped dataset file {name:?}"))?;
+        let dest = dest_dir.join(name);
+        fetch_dataset_to_file(authority, name, &dest)
+            .await
+            .with_context(|| format!("fetching shipped dataset file {name:?}"))?;
+    }
+    match manifest.kind.as_str() {
+        "dir" => Ok(dest_dir.to_path_buf()),
+        "file" | "prefix" => {
+            validate_dataset_relname(&manifest.base_name).with_context(|| {
+                format!("validating dataset base name {:?}", manifest.base_name)
+            })?;
+            Ok(dest_dir.join(&manifest.base_name))
+        }
+        other => bail!("unknown dataset manifest kind {other:?}"),
     }
 }
 
@@ -1132,6 +1296,135 @@ mod tests {
             4000,
         );
 
+        server.shutdown().await;
+    }
+
+    #[test]
+    fn dataset_relname_validation_rejects_traversal() {
+        assert!(validate_dataset_relname("shard-000.jsonl").is_ok());
+        for bad in ["", "../x", "a/b", "/etc/passwd", ".", "sub/deep.json"] {
+            assert!(
+                validate_dataset_relname(bad).is_err(),
+                "must reject {bad:?}"
+            );
+        }
+    }
+
+    /// Stage G multi-file round-trip: the controller registers a DIRECTORY trace
+    /// (its shards + a `dir` manifest); a cell fetches the manifest, reconstructs
+    /// every shard under a cell-local dir preserving names, and gets back a path
+    /// pointing at that dir — byte-identical to the source shards.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn manifest_directory_reconstructs_identical_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("shards");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        // Two shards, each larger than a chunk so both legs stream multi-chunk.
+        let mut datasets = HashMap::new();
+        let mut names = Vec::new();
+        for shard in ["a.json", "b.json"] {
+            let path = src_dir.join(shard);
+            let mut file = std::fs::File::create(&path).unwrap();
+            for row in 0..2000 {
+                writeln!(
+                    file,
+                    "{{\"shard\":\"{shard}\",\"row\":{row},\"pad\":\"{}\"}}",
+                    "z".repeat(40)
+                )
+                .unwrap();
+            }
+            datasets.insert(shard.to_owned(), path);
+            names.push(shard.to_owned());
+        }
+        let manifest = DatasetManifest {
+            kind: "dir".to_owned(),
+            base_name: "shards".to_owned(),
+            files: names.clone(),
+        };
+        let server = ArtifactUploadServer::start_with_dataset_plan(
+            "127.0.0.1:0".parse().unwrap(),
+            dir.path().join("controller-temp"),
+            HashSet::new(),
+            datasets,
+            Some(manifest.clone()),
+        )
+        .await
+        .unwrap();
+        let authority = server.local_addr().to_string();
+
+        // The cell fetches the manifest and reconstructs.
+        let fetched = fetch_dataset_manifest(&authority).await.unwrap();
+        assert_eq!(fetched, manifest, "manifest round-trips over HTTP");
+
+        let cell_dir = dir.path().join("cell").join("dataset");
+        let rewritten = reconstruct_shipped_dataset(&authority, &fetched, &cell_dir)
+            .await
+            .unwrap();
+        assert_eq!(
+            rewritten, cell_dir,
+            "dir kind points path at the reconstructed dir"
+        );
+
+        for shard in &names {
+            assert_eq!(
+                std::fs::read(cell_dir.join(shard)).unwrap(),
+                std::fs::read(src_dir.join(shard)).unwrap(),
+                "shard {shard} landed byte-identical"
+            );
+        }
+        // The reconstructed dir contains exactly the shard set (no strays / .part).
+        let mut landed: Vec<String> = std::fs::read_dir(&cell_dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_str().unwrap().to_owned())
+            .collect();
+        landed.sort();
+        assert_eq!(landed, names, "reconstructed dir == shipped set");
+
+        server.shutdown().await;
+    }
+
+    /// Stage G segmented-prefix round-trip: the `prefix` manifest points the
+    /// rewritten path at `<dest>/<base_name>` (the stem beside its landed shards),
+    /// so the cell's Dynamo loader re-globs them.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn manifest_prefix_points_path_at_stem_beside_shards() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let mut datasets = HashMap::new();
+        let shard_names = ["trace.000000.jsonl.gz", "trace.000001.jsonl.gz"];
+        for shard in shard_names {
+            let path = src_dir.join(shard);
+            std::fs::write(&path, format!("{shard}\n")).unwrap();
+            datasets.insert(shard.to_owned(), path);
+        }
+        let manifest = DatasetManifest {
+            kind: "prefix".to_owned(),
+            base_name: "trace.jsonl.gz".to_owned(),
+            files: shard_names.iter().map(|s| s.to_string()).collect(),
+        };
+        let server = ArtifactUploadServer::start_with_dataset_plan(
+            "127.0.0.1:0".parse().unwrap(),
+            dir.path().join("controller-temp"),
+            HashSet::new(),
+            datasets,
+            Some(manifest.clone()),
+        )
+        .await
+        .unwrap();
+        let authority = server.local_addr().to_string();
+        let cell_dir = dir.path().join("cell").join("dataset");
+        let rewritten = reconstruct_shipped_dataset(&authority, &manifest, &cell_dir)
+            .await
+            .unwrap();
+        assert_eq!(
+            rewritten,
+            cell_dir.join("trace.jsonl.gz"),
+            "prefix kind points path at the stem beside the shards"
+        );
+        for shard in shard_names {
+            assert!(cell_dir.join(shard).is_file(), "shard {shard} landed");
+        }
         server.shutdown().await;
     }
 

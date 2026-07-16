@@ -262,9 +262,10 @@ pub fn ship_http_artifacts_if_enabled(
 /// plus a non-empty `path`, so a single-file GRAPH trace (`dag_jsonl`, or a
 /// single-file `weka_trace`/`dynamo_trace`) ALSO returns its path and rides the same
 /// Stage G serve/download/rewrite plane. (A graph trace whose `path` is a
-/// directory/segmented-prefix cannot ride the single-file plane; the controller fails
-/// that run closed in [`crate::runner_protocol::cellular_controller`] — multi-file
-/// trace shipping is a follow-up.) Reads the canonical single-dataset list at
+/// DIRECTORY or segmented-prefix ships every shard the loader reads over the same
+/// plane via the manifest — see [`crate::runner_protocol::cellular_controller`]'s
+/// `build_dataset_serve_plan` and [`download_cell_dataset_if_needed`].) Reads the
+/// canonical single-dataset list at
 /// `/run/cfg/datasets/0`, matching the controller's own detection so the serve
 /// allowlist and the cell request name can never disagree.
 pub fn cellular_file_dataset_path(envelope: &serde_json::Value) -> Option<std::path::PathBuf> {
@@ -313,10 +314,10 @@ pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<Vec<u8
     let mut envelope: serde_json::Value = serde_json::from_slice(&envelope_bytes)
         .context("parsing cell envelope for dataset download")?;
     let Some(source_path) = cellular_file_dataset_path(&envelope) else {
-        // synthetic / inline-records / public — nothing to ship. A single-file graph
+        // synthetic / inline-records / public — nothing to ship. A `file`/`path` graph
         // trace (dag_jsonl / weka_trace / dynamo_trace) IS shipped (the predicate is
-        // format-blind); only a directory/segmented-prefix graph path is unshippable, and
-        // the controller rejects that run before launching cells.
+        // format-blind), whether its path is a single file, a directory of shards, or a
+        // segmented-prefix — the controller's manifest carries the whole file set.
         return Ok(envelope_bytes);
     };
     let Some(authority) = cell_artifact_authority() else {
@@ -324,34 +325,34 @@ pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<Vec<u8
         // path is directly readable, so leave the envelope pointing at it.
         return Ok(envelope_bytes);
     };
-    let name = source_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .context("cellular file dataset path has no file name")?
-        .to_owned();
+    // The controller cannot know this cell's on-disk layout, so it publishes a
+    // manifest describing the trace file set (single file, directory of shards, or
+    // segmented-prefix). The cell fetches the manifest, streams every file over the
+    // same HTTP+zstd plane, reconstructs the tree under a cell-local dir preserving
+    // the (flat) relative names, and rewrites `datasets/0.path` to the local
+    // file/dir/prefix stem — so the graph loader reads the reconstructed tree.
+    let _ = &source_path; // presence gated the ship; the controller owns the file set
     let dest_dir = cell_dataset_dir();
-    std::fs::create_dir_all(&dest_dir)
-        .with_context(|| format!("creating cell dataset dir {}", dest_dir.display()))?;
-    let dest = dest_dir.join(&name);
-
-    let fetch_name = name.clone();
-    let fetch_dest = dest.clone();
-    std::thread::spawn(move || -> Result<()> {
+    let fetch_authority = authority.clone();
+    let local_path = std::thread::spawn(move || -> Result<std::path::PathBuf> {
+        use crate::runner_protocol::artifact_shipping::{
+            fetch_dataset_manifest, reconstruct_shipped_dataset,
+        };
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
             .build()?;
-        runtime.block_on(
-            crate::runner_protocol::artifact_shipping::fetch_dataset_to_file(
-                &authority,
-                &fetch_name,
-                &fetch_dest,
-            ),
-        )
+        runtime.block_on(async move {
+            let manifest = fetch_dataset_manifest(&fetch_authority)
+                .await
+                .context("cell fetching dataset manifest from controller")?;
+            reconstruct_shipped_dataset(&fetch_authority, &manifest, &dest_dir)
+                .await
+                .context("cell reconstructing shipped dataset from controller")
+        })
     })
     .join()
-    .map_err(|_| anyhow::anyhow!("cell dataset-download thread panicked"))?
-    .with_context(|| format!("cell downloading dataset {name:?} from controller"))?;
+    .map_err(|_| anyhow::anyhow!("cell dataset-download thread panicked"))??;
 
     // Rewrite the cell's envelope to compile from the landed cell-local copy.
     envelope
@@ -360,7 +361,7 @@ pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<Vec<u8
         .context("cell envelope dataset is not an object")?
         .insert(
             "path".to_owned(),
-            serde_json::Value::String(dest.to_string_lossy().into_owned()),
+            serde_json::Value::String(local_path.to_string_lossy().into_owned()),
         );
     serde_json::to_vec(&envelope).context("re-serializing cell envelope after dataset download")
 }
