@@ -197,6 +197,29 @@ Metrics sketch off/on switch: `AIPERF_METRICS_SKETCH=1` / `aiperf profile --sket
 
 Unit tests use in-process axum endpoints. `tests/scheduled_real_mock.rs` retains real wall-clock library coverage; runner product coverage lives in `aiperf-runner/tests/`.
 
+## Feature-complete definition — e2e raw-records verification (MANDATORY)
+
+A feature (new endpoint, metric, transport, dataset shape, cellular/graph capability, streaming/fold path,
+…) is NOT "complete" — never call it done, shipped, or verified — until it has an **end-to-end test that
+verifies the raw per-record JSONL against a properly-tuned mock server**. Unit tests, a smoke run, or a
+summary/count-only assertion do NOT satisfy this bar.
+
+- **Properly-tuned mock (determinism):** drive the canonical Python frontend (`aiperf profile`) against
+  `aiperf-mock-server` configured so every value is exactly predictable — fixed `--ttft` and `--itl`,
+  `--ttft-jitter-cv 0 --itl-jitter-cv 0`, analytic mode (scheduler off), and fixed synthetic ISL/OSL
+  (`--synthetic-input-tokens-stddev 0`, `--output-tokens-stddev 0`, a pinned `--tokenizer`).
+- **Verify TIMING** in `profile_export_raw.jsonl` per record: TTFT (first-token perf_ns − request start),
+  ITL (mean gap between *generated-token* chunks only — EXCLUDE the terminal usage/`[DONE]` chunk, which
+  arrives ~0 ms after the last token and otherwise dilutes ITL), and request_latency
+  (≈ `ttft + (osl−1)·itl`), asserted against the mock's fixed values within a small transport-overhead
+  tolerance (~1–2 ms) — NOT a wide band.
+- **Verify DATA** per record: OSL = count of generated-token chunks equals the requested cap; ISL, model,
+  streaming flag, response content, and status/error fields are present and correct.
+- **Both timing and data**, at the raw-record level. The e2e harness (`rust/e2e/tests/common/`) exposes
+  `raw_records()` (reads `profile_export_raw.jsonl`) for exactly this; use `--export-level raw`.
+
+Use this as the definition of done in briefs, reviews, and before claiming any feature verified.
+
 ## Design specs (`specs/`)
 
 Read for intent; verify against `rust/` for reality. Full index with status and one-liners: [`specs/README.md`](specs/README.md).
