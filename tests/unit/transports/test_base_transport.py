@@ -176,6 +176,33 @@ class TestBaseTransport:
 
         assert headers["X-SMG-Routing-Key"] == "test-correlation-id"
 
+    def test_build_headers_dynamo_session_header_root_has_no_parent(
+        self, transport, request_info, monkeypatch
+    ):
+        """Root session emits X-Dynamo-Session-ID but no parent header."""
+        monkeypatch.setattr(
+            Environment.HTTP, "X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID", True
+        )
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["X-Dynamo-Session-ID"] == "test-correlation-id"
+        assert "X-Dynamo-Parent-Session-ID" not in headers
+
+    def test_build_headers_dynamo_session_header_child_adds_parent(
+        self, transport, request_info, monkeypatch
+    ):
+        """Subagent child also emits X-Dynamo-Parent-Session-ID."""
+        monkeypatch.setattr(
+            Environment.HTTP, "X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID", True
+        )
+        request_info.parent_correlation_id = "parent-correlation-id"
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["X-Dynamo-Session-ID"] == "test-correlation-id"
+        assert headers["X-Dynamo-Parent-Session-ID"] == "parent-correlation-id"
+
     def test_build_headers_transport_headers_override(self, request_info):
         """Test that transport headers can override endpoint headers."""
 
