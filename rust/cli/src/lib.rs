@@ -21,6 +21,8 @@ pub mod flags;
 pub mod load;
 pub mod model;
 pub mod profile;
+#[cfg(feature = "search-pyo3")]
+pub mod pyfit;
 pub mod render;
 pub mod runner_install;
 pub mod search;

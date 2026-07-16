@@ -15,6 +15,14 @@ path = "src/lib.rs"
 name = "aiperf"
 path = "src/main.rs"
 
+[features]
+# Opt-in in-process Python numerical seam for the scipy/optuna-backed dynamic
+# search styles (`--search-style smooth_isotonic|bo|optuna`). OFF by default so
+# the shipped native binary stays Python-free (the pure-Rust `monotonic` style
+# and all non-search runs need no libpython). When ON, the binary links
+# libpython (pyo3 `auto-initialize`) and calls the real scipy/optuna at runtime.
+search-pyo3 = ["dep:pyo3"]
+
 [dependencies]
 aiperf = { path = "../aiperf", default-features = false, features = ["runner-protocol"] }
 anyhow.workspace = true
@@ -26,6 +34,10 @@ uuid = { version = "1", features = ["v4"] }
 tracing.workspace = true
 regex.workspace = true
 minijinja = { version = "2.21", features = ["json"] }
+# Embedding (not extension-module): `auto-initialize` starts a CPython
+# interpreter inside the native binary so the search planners can call the exact
+# scipy/optuna numerical primitives. Optional + feature-gated (see `search-pyo3`).
+pyo3 = { version = "0.23", features = ["auto-initialize"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["signal"] }
