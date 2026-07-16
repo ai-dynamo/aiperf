@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from rich.console import Console
 
+from aiperf.accuracy.models import AccuracySummary
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import (
     ConsoleExporterDisabled,
@@ -38,6 +39,7 @@ class ExporterManager(AIPerfLoggerMixin):
         run: "BenchmarkRun",
         telemetry_results: TelemetryExportData | None,
         server_metrics_results: ServerMetricsResults | None = None,
+        accuracy_results: AccuracySummary | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -49,6 +51,7 @@ class ExporterManager(AIPerfLoggerMixin):
             cfg=run.cfg,
             telemetry_results=telemetry_results,
             server_metrics_results=server_metrics_results,
+            accuracy_results=accuracy_results,
             run=run,
         )
 

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, cast
 from rich.console import Console
 from rich.panel import Panel
 
+from aiperf.accuracy.models import AccuracySummary
 from aiperf.cli_utils import (
     print_developer_mode_warning,
     warn_accuracy_temperature,
@@ -32,6 +33,7 @@ from aiperf.common.messages import (
     CommandResponse,
     CommandSuccessResponse,
     HeartbeatMessage,
+    ProcessAccuracyResultMessage,
     ProcessAllResultsMessage,
     ProcessRecordsResultMessage,
     ProcessServerMetricsResultMessage,
@@ -159,9 +161,15 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._exit_errors: list[ExitErrorInfo] = []
         self._telemetry_results: TelemetryExportData | None = None
         self._server_metrics_results: ServerMetricsResults | None = None
+        self._accuracy_results: AccuracySummary | None = None
         self._profile_results_received = False
         self._should_wait_for_telemetry = False
         self._should_wait_for_server_metrics = False
+        # Accuracy has no manager status message; gate on config directly since
+        # RecordsManager publishes the summary iff accuracy is enabled.
+        self._should_wait_for_accuracy = (
+            self.run.cfg.accuracy is not None and self.run.cfg.accuracy.enabled
+        )
 
         self._shutdown_triggered = False
         self._shutdown_lock = asyncio.Lock()
@@ -709,6 +717,19 @@ class SystemController(SignalHandlerMixin, BaseService):
             self._should_wait_for_server_metrics = False
             await self._check_and_trigger_shutdown()
 
+    @on_message(MessageType.PROCESS_ACCURACY_RESULT)
+    async def _on_process_accuracy_result_message(
+        self, message: ProcessAccuracyResultMessage
+    ) -> None:
+        """Handle an accuracy results message."""
+        try:
+            self._accuracy_results = message.accuracy_result.results
+        except Exception as e:
+            self.exception(f"Error processing accuracy results message: {e!r}")
+        finally:
+            self._should_wait_for_accuracy = False
+            await self._check_and_trigger_shutdown()
+
     def _is_api_service_alive(self) -> bool:
         """Return True iff the API service is registered and its process is live.
 
@@ -761,6 +782,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             f"_check_and_trigger_shutdown: profile_received={self._profile_results_received}, "
             f"wait_telemetry={self._should_wait_for_telemetry}, telemetry_results={self._telemetry_results is not None}, "
             f"wait_server_metrics={self._should_wait_for_server_metrics}, server_metrics_results={self._server_metrics_results is not None}, "
+            f"wait_accuracy={self._should_wait_for_accuracy}, accuracy_results={self._accuracy_results is not None}, "
             f"shutdown_triggered={self._shutdown_triggered}"
         )
         # Check if we should trigger shutdown (with lock protection)
@@ -788,7 +810,15 @@ class SystemController(SignalHandlerMixin, BaseService):
                 or self._server_metrics_results is not None
             )
 
-            if telemetry_ready_for_shutdown and server_metrics_ready_for_shutdown:
+            accuracy_ready_for_shutdown = (
+                not self._should_wait_for_accuracy or self._accuracy_results is not None
+            )
+
+            if (
+                telemetry_ready_for_shutdown
+                and server_metrics_ready_for_shutdown
+                and accuracy_ready_for_shutdown
+            ):
                 self._shutdown_triggered = True
                 should_shutdown = True
                 self.info("All results received, initiating shutdown")
@@ -797,6 +827,8 @@ class SystemController(SignalHandlerMixin, BaseService):
                     self.info("Waiting for telemetry results...")
                 if not server_metrics_ready_for_shutdown:
                     self.info("Waiting for server metrics results...")
+                if not accuracy_ready_for_shutdown:
+                    self.info("Waiting for accuracy results...")
 
         # Call stop() OUTSIDE the lock to prevent deadlock
         if should_shutdown:
@@ -1091,6 +1123,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             run=self.run,
             telemetry_results=self._telemetry_results,
             server_metrics_results=self._server_metrics_results,
+            accuracy_results=self._accuracy_results,
         )
 
         # Export data files (CSV, JSON) with complete dataset including telemetry

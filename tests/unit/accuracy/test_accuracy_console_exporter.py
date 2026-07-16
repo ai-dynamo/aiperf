@@ -8,61 +8,52 @@ import pytest
 from rich.console import Console
 
 from aiperf.accuracy.accuracy_console_exporter import AccuracyConsoleExporter
-from aiperf.common.models import MetricResult
-from aiperf.common.models.record_models import ProfileResults
+from aiperf.accuracy.models import AccuracySummary, TaskAccuracyStats
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
 from tests.unit.conftest import make_benchmark_run
 
 
-def _make_exporter(records: list[MetricResult] | None) -> AccuracyConsoleExporter:
+def _make_exporter(summary: AccuracySummary | None) -> AccuracyConsoleExporter:
     cfg = make_benchmark_run(
         model_names=["test-model"],
         endpoint_type=EndpointType.COMPLETIONS,
         streaming=False,
         accuracy={"benchmark": AccuracyBenchmarkType.MMLU},
     ).cfg
-    results = (
-        ProfileResults(records=records, completed=0, start_ns=0, end_ns=1)
-        if records is not None
-        else None
-    )
     exporter_config = ExporterConfig(
         cfg=cfg,
-        results=results,
+        results=None,
         telemetry_results=None,
+        accuracy_results=summary,
     )
     return AccuracyConsoleExporter(exporter_config=exporter_config)
 
 
-def _make_metric(tag: str, correct: int, total: int, accuracy: float) -> MetricResult:
-    return MetricResult(
-        tag=tag,
-        header=tag,
-        unit="ratio",
-        sum=correct,
-        count=total,
-        current=accuracy,
+def _task(passed: int, total: int, unparsed: int) -> TaskAccuracyStats:
+    return TaskAccuracyStats(
+        total=total,
+        passed=passed,
+        unparsed=unparsed,
+        accuracy_rate=passed / total if total else 0.0,
+        unparsed_rate=unparsed / total if total else 0.0,
     )
 
 
 @pytest.mark.asyncio
 class TestAccuracyConsoleExporterExport:
     async def test_prints_table_with_task_and_overall_rows(self) -> None:
-        exporter = _make_exporter(
-            records=[
-                _make_metric("accuracy.overall", correct=8, total=10, accuracy=0.8),
-                _make_metric("accuracy.task.algebra", correct=3, total=5, accuracy=0.6),
-                _make_metric("accuracy.task.history", correct=5, total=5, accuracy=1.0),
-                _make_metric("accuracy.unparsed", correct=1, total=10, accuracy=0.1),
-                _make_metric(
-                    "accuracy.unparsed.task.algebra", correct=1, total=5, accuracy=0.2
-                ),
-                _make_metric(
-                    "accuracy.unparsed.task.history", correct=0, total=5, accuracy=0.0
-                ),
-            ]
+        summary = AccuracySummary(
+            total_evaluated=10,
+            total_passed=8,
+            accuracy_rate=0.8,
+            overall_unparsed=1,
+            per_task={
+                "algebra": _task(passed=3, total=5, unparsed=1),
+                "history": _task(passed=5, total=5, unparsed=0),
+            },
         )
+        exporter = _make_exporter(summary)
         buf = io.StringIO()
         console = Console(file=buf, highlight=False)
         await exporter.export(console)
@@ -73,35 +64,21 @@ class TestAccuracyConsoleExporterExport:
         assert "OVERALL" in output
         assert "Unparsed" in output
 
-    async def test_no_output_when_results_is_none(self) -> None:
-        exporter = _make_exporter(records=None)
+    async def test_no_output_when_summary_is_none(self) -> None:
+        exporter = _make_exporter(None)
         console = MagicMock()
         await exporter.export(console)
         console.print.assert_not_called()
 
-    async def test_no_output_when_records_is_none(self) -> None:
-        exporter = _make_exporter(records=None)
-        exporter.exporter_config.results = ProfileResults(
-            records=None, completed=0, start_ns=0, end_ns=1
+    async def test_overall_row_omitted_when_no_evaluations(self) -> None:
+        summary = AccuracySummary(
+            total_evaluated=0,
+            total_passed=0,
+            accuracy_rate=0.0,
+            overall_unparsed=0,
+            per_task={"algebra": _task(passed=3, total=5, unparsed=0)},
         )
-        console = MagicMock()
-        await exporter.export(console)
-        console.print.assert_not_called()
-
-    async def test_no_output_when_no_accuracy_metrics(self) -> None:
-        exporter = _make_exporter(
-            records=[_make_metric("throughput", correct=0, total=100, accuracy=0.0)]
-        )
-        console = MagicMock()
-        await exporter.export(console)
-        console.print.assert_not_called()
-
-    async def test_overall_row_omitted_when_no_overall_metric(self) -> None:
-        exporter = _make_exporter(
-            records=[
-                _make_metric("accuracy.task.algebra", correct=3, total=5, accuracy=0.6),
-            ]
-        )
+        exporter = _make_exporter(summary)
         buf = io.StringIO()
         console = Console(file=buf, highlight=False)
         await exporter.export(console)
@@ -111,11 +88,14 @@ class TestAccuracyConsoleExporterExport:
         assert "algebra" in output
 
     async def test_accuracy_formatted_as_percentage(self) -> None:
-        exporter = _make_exporter(
-            records=[
-                _make_metric("accuracy.task.algebra", correct=3, total=5, accuracy=0.6),
-            ]
+        summary = AccuracySummary(
+            total_evaluated=5,
+            total_passed=3,
+            accuracy_rate=0.6,
+            overall_unparsed=0,
+            per_task={"algebra": _task(passed=3, total=5, unparsed=0)},
         )
+        exporter = _make_exporter(summary)
         buf = io.StringIO()
         console = Console(file=buf, highlight=False)
         await exporter.export(console)
@@ -123,28 +103,18 @@ class TestAccuracyConsoleExporterExport:
         assert "60.00%" in buf.getvalue()
 
     async def test_warns_when_all_responses_unparsed(self) -> None:
-        """Smoke-test J regression: when 100% of responses fail to parse,
+        """Smoke-test regression: when 100% of responses fail to parse,
         the exporter must surface a loud diagnostic so users do not
         mistake mock-server / misconfigured-endpoint output for real
         accuracy=0% results."""
-        exporter = _make_exporter(
-            records=[
-                _make_metric("accuracy.overall", correct=0, total=5, accuracy=0.0),
-                _make_metric(
-                    "accuracy.task.abstract_algebra",
-                    correct=0,
-                    total=5,
-                    accuracy=0.0,
-                ),
-                _make_metric("accuracy.unparsed", correct=5, total=5, accuracy=1.0),
-                _make_metric(
-                    "accuracy.unparsed.task.abstract_algebra",
-                    correct=5,
-                    total=5,
-                    accuracy=1.0,
-                ),
-            ]
+        summary = AccuracySummary(
+            total_evaluated=5,
+            total_passed=0,
+            accuracy_rate=0.0,
+            overall_unparsed=5,
+            per_task={"abstract_algebra": _task(passed=0, total=5, unparsed=5)},
         )
+        exporter = _make_exporter(summary)
         buf = io.StringIO()
         console = Console(file=buf, highlight=False)
         await exporter.export(console)
@@ -155,18 +125,16 @@ class TestAccuracyConsoleExporterExport:
         assert "inference server" in output
 
     async def test_no_warning_when_partial_unparsed(self) -> None:
-        """Mixed parsed/unparsed runs are normal — the diagnostic must
+        """Mixed parsed/unparsed runs are normal - the diagnostic must
         only fire on the 100%-unparsed pathology."""
-        exporter = _make_exporter(
-            records=[
-                _make_metric("accuracy.overall", correct=2, total=5, accuracy=0.4),
-                _make_metric("accuracy.task.algebra", correct=2, total=5, accuracy=0.4),
-                _make_metric("accuracy.unparsed", correct=2, total=5, accuracy=0.4),
-                _make_metric(
-                    "accuracy.unparsed.task.algebra", correct=2, total=5, accuracy=0.4
-                ),
-            ]
+        summary = AccuracySummary(
+            total_evaluated=5,
+            total_passed=2,
+            accuracy_rate=0.4,
+            overall_unparsed=2,
+            per_task={"algebra": _task(passed=2, total=5, unparsed=2)},
         )
+        exporter = _make_exporter(summary)
         buf = io.StringIO()
         console = Console(file=buf, highlight=False)
         await exporter.export(console)

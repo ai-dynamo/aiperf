@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from aiperf.accuracy.models import AccuracySummary
 from aiperf.common.models import ProfileResults
 from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.server_metrics_models import ServerMetricsResults
@@ -22,6 +23,7 @@ class ExporterConfig:
     cfg: "BenchmarkConfig"
     telemetry_results: TelemetryExportData | None
     server_metrics_results: ServerMetricsResults | None = None
+    accuracy_results: AccuracySummary | None = None
     run: "BenchmarkRun | None" = None
 
 

@@ -1425,13 +1425,16 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             except Exception as e:
                 self.exception(f"Failed to publish server metrics results: {e!r}")
 
-        if self.run.cfg.accuracy is None or not self.run.cfg.accuracy.enabled:
-            self.debug("Accuracy evaluation is disabled, skipping publish")
-        else:
+        accuracy_enabled = (
+            self.run.cfg.accuracy is not None and self.run.cfg.accuracy.enabled
+        )
+        if accuracy_enabled and phase == CreditPhase.PROFILING:
             try:
                 await self._publish_accuracy_results(phase)
             except Exception as e:
                 self.exception(f"Failed to publish accuracy results: {e!r}")
+        else:
+            self.debug("Accuracy publish skipped (disabled or non-profiling phase)")
 
         # Publish the unified ProcessAllResultsMessage over the populated
         # accumulators. The per-stream result messages above remain the

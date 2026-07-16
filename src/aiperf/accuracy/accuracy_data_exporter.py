@@ -8,26 +8,19 @@ import csv
 from pathlib import Path
 from typing import Any
 
-from aiperf.accuracy.models import (
-    ACCURACY_METRIC_PREFIX,
-    ACCURACY_OVERALL_TAG,
-    ACCURACY_TASK_TAG_PREFIX,
-    ACCURACY_UNPARSED_TAG,
-    ACCURACY_UNPARSED_TASK_TAG_PREFIX,
-)
 from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 
-AccuracyCsvRow = tuple[
-    str, int, int, int, str
-]  # (task, correct, total, unparsed, accuracy)
+_CSV_COLUMNS = ["task", "total", "passed", "unparsed", "accuracy_rate", "unparsed_rate"]
 
 
 class AccuracyDataExporter(AIPerfLoggerMixin):
     """Data exporter for accuracy benchmarking results.
 
-    Exports per-task accuracy summary to CSV for offline analysis.
+    Exports the per-task accuracy summary (plus an OVERALL row) to CSV for
+    offline analysis, sourced from the structured ``AccuracySummary`` delivered
+    on the dedicated accuracy channel.
     """
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs: Any) -> None:
@@ -51,58 +44,23 @@ class AccuracyDataExporter(AIPerfLoggerMixin):
         )
 
     async def export(self) -> None:
-        """Write per-task accuracy summary to CSV at the path from ``get_export_info``.
+        """Write the per-task accuracy summary to CSV at the path from ``get_export_info``.
 
-        Columns: task, correct, total, accuracy (4 decimal places). Rows are
-        emitted for each ``accuracy.task.*`` metric plus a final OVERALL row.
-        Does nothing if no ``accuracy.*`` metrics are present in results.
+        Columns: task, total, passed, unparsed, accuracy_rate, unparsed_rate.
+        One row per task plus a final OVERALL row. Does nothing when no accuracy
+        summary was delivered.
         """
-        results = self.exporter_config.results
-        if results is None or results.records is None:
+        summary = self.exporter_config.accuracy_results
+        if summary is None:
             return
 
-        accuracy_metrics = [
-            r for r in results.records if r.tag.startswith(ACCURACY_METRIC_PREFIX)
-        ]
-        if not accuracy_metrics:
-            return
-
-        unparsed_overall = next(
-            (m for m in accuracy_metrics if m.tag == ACCURACY_UNPARSED_TAG), None
-        )
-        unparsed_by_task: dict[str, int] = {
-            m.tag.removeprefix(ACCURACY_UNPARSED_TASK_TAG_PREFIX): int(m.sum or 0)
-            for m in accuracy_metrics
-            if m.tag.startswith(ACCURACY_UNPARSED_TASK_TAG_PREFIX)
-        }
-
-        rows: list[AccuracyCsvRow] = []
-        for m in accuracy_metrics:
-            if m.tag == ACCURACY_OVERALL_TAG:
-                task_name = "OVERALL"
-                unparsed = int(unparsed_overall.sum or 0) if unparsed_overall else 0
-            elif m.tag.startswith(ACCURACY_TASK_TAG_PREFIX):
-                task_name = m.tag.removeprefix(ACCURACY_TASK_TAG_PREFIX)
-                unparsed = unparsed_by_task.get(task_name, 0)
-            else:
-                continue
-            rows.append(
-                (
-                    task_name,
-                    int(m.sum or 0),
-                    int(m.count or 0),
-                    unparsed,
-                    f"{m.current:.4f}" if m.current is not None else "",
-                )
-            )
-
+        rows = summary.to_csv()
         await asyncio.to_thread(self._write_csv, rows)
         self.info(f"Accuracy results exported to {self._csv_path}")
 
-    def _write_csv(self, rows: list[AccuracyCsvRow]) -> None:
+    def _write_csv(self, rows: list[dict[str, Any]]) -> None:
         self._csv_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self._csv_path, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["task", "correct", "total", "unparsed", "accuracy"])
-            for row in rows:
-                writer.writerow(row)
+            writer = csv.DictWriter(f, fieldnames=_CSV_COLUMNS)
+            writer.writeheader()
+            writer.writerows(rows)
