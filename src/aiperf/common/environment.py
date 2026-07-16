@@ -1402,6 +1402,14 @@ class _WorkerSettings(BaseSettings):
         default=32,
         description="Absolute maximum number of workers to spawn, regardless of CPU count",
     )
+    DEFAULT_WORKERS_PER_POD: int = Field(
+        ge=1,
+        le=10000,
+        default=32,
+        description="Default worker count per pod used by the Kubernetes memory "
+        "estimator and JobSet sizing when runtime.workers_per_pod is unset. "
+        "Sizing-only heuristic; the native cellular path partitions by cells.",
+    )
     STALE_TIME: float = Field(
         ge=0.1,
         le=1000.0,

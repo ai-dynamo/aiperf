@@ -438,6 +438,16 @@ pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
     Ok(reply.envelope)
 }
 
+/// Substitute a cell's round-robin aggregator id into the operator's ship-DNS
+/// template. The template is a concrete `tcp://…svc.cluster.local:PORT` coordinate
+/// with a single `{agg_id}` placeholder (jobset/namespace already resolved by the
+/// operator); the cell fills in `cell_id % agg_count`. Pure so the pod-side ship-target
+/// derivation is unit-testable without a velo runtime.
+pub(crate) fn k8s_agg_ship_coordinate(template: &str, cell_id: u32, agg_count: u32) -> String {
+    let agg_id = cell_id % agg_count.max(1);
+    template.replace("{agg_id}", &agg_id.to_string())
+}
+
 /// Ships a cell's final records-shard partition + heartbeat to the controller over
 /// velo, when this process is a cell (the controller coordinate is set).
 #[cfg(feature = "velo")]
@@ -451,20 +461,41 @@ impl CellRecordsShipper {
     /// Builds a shipper when the controller coordinate and cell partition env vars
     /// are set, else `None` (the ordinary single-process path).
     pub fn from_env() -> Option<Self> {
-        // Ship target: the assigned aggregator (tier-T2 tree topology) when
-        // `AIPERF_CELL_SHIP_ADDR` is set, else the controller directly (flat star).
         // Requires a controller address to exist (i.e. this is a real cell); the ship
         // address alone never activates cellular shipping on a single-process run.
         std::env::var(CELL_CONTROLLER_ADDR_ENV).ok()?;
-        let coordinate = std::env::var(CELL_SHIP_ADDR_ENV)
-            .ok()
-            .filter(|value| !value.is_empty())
-            .or_else(|| std::env::var(CELL_CONTROLLER_ADDR_ENV).ok())?;
-        let cell_id = ModuloCellPartition::from_env()?.cell_id();
+        let partition = ModuloCellPartition::from_env()?;
+        let cell_id = partition.cell_id();
+        let coordinate = Self::ship_target(cell_id, partition.cell_count())?;
         Some(Self {
             cell_id,
             coordinate,
         })
+    }
+
+    /// This cell's terminal ship coordinate, in precedence order:
+    /// 1. `AIPERF_CELL_SHIP_ADDR` (same-host tree — the controller injected each
+    ///    local cell's assigned loopback aggregator coordinate directly);
+    /// 2. the k8s aggregator derived from the operator's DNS template
+    ///    ([`AGG_DNS_TEMPLATE_ENV`]) + this cell's round-robin aggregator
+    ///    (`cell_id % M`) — a JobSet indexed replicatedJob shares one env template, so
+    ///    the per-cell ship target must be computed pod-side from the shared template;
+    /// 3. the controller directly ([`CELL_CONTROLLER_ADDR_ENV`], flat star).
+    fn ship_target(cell_id: u32, cell_count: u32) -> Option<String> {
+        if let Ok(addr) = std::env::var(CELL_SHIP_ADDR_ENV)
+            && !addr.is_empty()
+        {
+            return Some(addr);
+        }
+        if let Ok(template) =
+            std::env::var(crate::runner_protocol::cellular_aggregator::AGG_DNS_TEMPLATE_ENV)
+            && !template.is_empty()
+            && let Some(agg_count) =
+                crate::runner_protocol::cellular_aggregator::aggregator_count(cell_count)
+        {
+            return Some(k8s_agg_ship_coordinate(&template, cell_id, agg_count));
+        }
+        std::env::var(CELL_CONTROLLER_ADDR_ENV).ok()
     }
 
     /// Builds a shipper that sends to an explicit velo `coordinate` under `cell_id`.
@@ -611,6 +642,29 @@ impl CellRecordsShipper {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn k8s_ship_coordinate_round_robins_cells_to_aggregators() {
+        let template = "tcp://js-aggregators-{agg_id}-0.js.ns.svc.cluster.local:9700";
+        // cells 0..6 over M=2 aggregators: even→agg0, odd→agg1 (cell_id % M).
+        assert_eq!(
+            k8s_agg_ship_coordinate(template, 0, 2),
+            "tcp://js-aggregators-0-0.js.ns.svc.cluster.local:9700"
+        );
+        assert_eq!(
+            k8s_agg_ship_coordinate(template, 1, 2),
+            "tcp://js-aggregators-1-0.js.ns.svc.cluster.local:9700"
+        );
+        assert_eq!(
+            k8s_agg_ship_coordinate(template, 4, 2),
+            "tcp://js-aggregators-0-0.js.ns.svc.cluster.local:9700"
+        );
+        // M=3: cell 5 → agg 2.
+        assert_eq!(
+            k8s_agg_ship_coordinate(template, 5, 3),
+            "tcp://js-aggregators-2-0.js.ns.svc.cluster.local:9700"
+        );
+    }
 
     #[test]
     fn detects_only_file_path_datasets_for_ship() {
