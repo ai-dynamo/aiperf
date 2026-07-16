@@ -697,3 +697,25 @@ class ExportFormat(CaseInsensitiveStrEnum):
     JSON = "json"
     JSONL = "jsonl"
     CSV = "csv"
+
+
+class SweepType(CaseInsensitiveStrEnum):
+    """Defines the sweep strategy for parameter exploration."""
+
+    GRID = "grid"
+    """All combinations of variable values (Cartesian product)."""
+
+    ZIP = "zip"
+    """Element-wise pairing of variable values."""
+
+    SCENARIOS = "scenarios"
+    """Hand-picked configurations merged with base."""
+
+    ADAPTIVE_SEARCH = "adaptive_search"
+    """Planner-driven adaptive outer-loop search."""
+
+    SOBOL = "sobol"
+    """Sobol quasi-random sampling over dimensions."""
+
+    LATIN_HYPERCUBE = "latin_hypercube"
+    """Latin hypercube sampling over dimensions."""

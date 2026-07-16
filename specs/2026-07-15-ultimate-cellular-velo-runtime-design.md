@@ -267,6 +267,33 @@ variants — grpc/quic/nixl — would be added when those transports merge, per 
 
 ---
 
+## Implementation status — 2026-07-15 (forward-plane primitives BUILT + tested)
+
+The forward plane's primitives — the ones velo lacks and the spec identifies as the hard
+dependencies — are **built AIPerf-side and unit-tested** (per §3.1's "an AIPerf-side layer over
+velo primitives" option, so no velo-fork round-trip was needed):
+
+| Piece | Module | Status |
+|---|---|---|
+| **SPMC broadcast w/ replay-on-attach** (§3.1, §6.1 — the "one hard dependency") | `cellular::broadcast` | ✅ built + 4 tests (full-order reconstruction for every attach time incl. post-finalize; no gap/dup at the seam across 50 interleaved attach/add; add-after-finalize rejected; slow consumer doesn't stall the producer) |
+| **Monotonic phaser** (§4) | `cellular::phaser` | ✅ built + 5 tests (monotonicity, replay for passed targets, block-then-wake on live advance, cyclic gate-on-≥ with no ABA, await-after-finalize) |
+| **Phaser velo distribution** (§4) | `cellular::transport::phaser_velo` | ✅ built + 1 test (a cell subscribing over two in-process velo instances reaches pre-subscribe generations via replay, then observes live advances) |
+| **Phaser-driven START, integrated + executed** (§4) | `cellular_controller` + `cellular_cell` (`AIPERF_CELL_PHASER_START`) | ✅ **the control plane drives a real run**: the controller binds a `PhaserServer` + `advance(Started)`; cells subscribe + await generation 1. e2e `test_cellular_phaser_start_matches_event_start` — phaser-START reproduces event-START's deterministic metrics EXACTLY (byte-identical request_count/ISL/OSL). Default off; the event START is byte-unchanged. |
+| **Dataset fan-out data plane** (§3) | `cellular::dataset_session` | ✅ built + 3 tests (owned-filter shards tile the dataset with no overlap keyed by request_id; late-attach replays the full owned shard; index is arrival-order-independent) |
+| **Per-request dispatch state machine + DistributionMiss** (§4.5) | `cellular::dispatch_state` | ✅ built + 3 tests (issue-once-then-dedup across InFlight/Done; unknown-is-a-counted-miss; in-flight accounting) |
+
+Already built earlier: the bounded-memory collection (§5) — sketch `StorePartition` cellular ship
+(tier T1) and per-worker fold-and-drop (`ShardRecords::Folded`). The **phaser control plane is now
+integrated + executed end-to-end** (the START row above). The **remaining runner integration** (not
+new primitives) is: the dataset fan-out into the cell's dataset resolution (replacing the Stage-G
+whole-file serve — the `dataset_session` module is ready, wiring pulls it into the cell's dataset
+compile step) and a `ControlledIssuer` workload over `dispatch_state` into the runner's
+`TurnLifecycleObserver::on_issue` + `SlotPool` seams. §6 velo additions (a first-class SPMC anchor,
+RDMA rendezvous) remain velo-owned; the AIPerf-side layer above makes them an optimization, not a
+blocker.
+
+---
+
 ## 3. Forward design — the dataset **data plane** (SPMC add‑only broadcast)
 
 **Goal:** the controller generates a large dataset once and streams it hot‑in‑RAM to all cells (or each

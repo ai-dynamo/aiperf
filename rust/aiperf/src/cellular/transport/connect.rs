@@ -17,6 +17,7 @@
 //! authority by swapping the port on the same coordinate) keeps working.
 
 use std::net::SocketAddr;
+use std::net::ToSocketAddrs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -90,9 +91,20 @@ fn build_tcp_transport(addr: impl std::net::ToSocketAddrs) -> Result<Arc<dyn Tra
 /// or `uds://PATH` (unix, pure-local).
 pub fn parse_endpoint(coordinate: &str) -> Result<Endpoint> {
     if let Some(addr) = coordinate.strip_prefix("tcp://") {
+        // `Endpoint::Tcp` wants a concrete `SocketAddr`, but `SocketAddr::parse`
+        // only accepts a numeric `IP:PORT`. Kubernetes coordinates are DNS names
+        // (the controller pod's headless-service FQDN, e.g.
+        // `<pod>.<svc>.<ns>.svc.cluster.local:9500`), so resolve through
+        // `to_socket_addrs` (getaddrinfo) and take the first address. The
+        // controller pod is up before cells dial it, so a one-shot resolve at
+        // connect time is sufficient; a bare `IP:PORT` resolves trivially.
         let socket: SocketAddr = addr
-            .parse()
-            .with_context(|| format!("parsing tcp endpoint {addr:?}"))?;
+            .to_socket_addrs()
+            .with_context(|| format!("resolving tcp endpoint {addr:?}"))?
+            .next()
+            .ok_or_else(|| {
+                anyhow::anyhow!("tcp endpoint {addr:?} resolved to no addresses")
+            })?;
         return Ok(Endpoint::Tcp(socket));
     }
     if let Some(path) = coordinate.strip_prefix("uds://") {
@@ -139,6 +151,15 @@ mod tests {
         ));
         assert!(parse_endpoint("http://nope").is_err());
         assert!(parse_endpoint("tcp://not-an-addr").is_err());
+        // Kubernetes coordinates are DNS names, not numeric IPs. `localhost`
+        // always resolves, so it stands in for the `<pod>.<svc>.<ns>.svc.
+        // cluster.local:PORT` FQDN the operator sets; a numeric-only parse
+        // (the pre-fix behavior) would reject it and every k8s cell would
+        // crashloop on "parsing tcp endpoint".
+        assert!(matches!(
+            parse_endpoint("tcp://localhost:9500").unwrap(),
+            Endpoint::Tcp(_)
+        ));
         #[cfg(unix)]
         assert!(matches!(
             parse_endpoint("uds:///tmp/controller.sock").unwrap(),
