@@ -281,11 +281,22 @@ def _validate_profiling(prof: dict[str, Any], cli: CLIConfig) -> None:
     if (
         not any(k in prof for k in ("requests", "duration", "sessions"))
         and prof["type"] != PhaseType.FIXED_SCHEDULE
+        and cli.scenario is None
     ):
         # Why: when no bound is given for an unbounded run, default to
         # 10 requests so the run terminates in a reasonable time.
         # Deliberate override of the PhaseConfig default (which would
         # leave it unbounded).
+        #
+        # Skipped when a ``--scenario`` is active: the scenario owns the
+        # benchmark invariants and auto-fills the REAL stop condition (e.g.
+        # the profiling ``duration``) at resolution time. Applying a
+        # 10-*request* default here would defeat that -- and for a
+        # recorded-graph/agentic scenario it is actively wrong: a "request"
+        # is a single turn, one weka trace carries hundreds, and the native
+        # ``CyclingGraphTraceSource`` reads ``requests`` as a whole-trace
+        # static-node budget, so a value below the first trace's node count
+        # admits no trace at all and dispatches nothing.
         prof.setdefault("requests", 10)
     delay_set = "request_cancellation_delay" in cli.model_fields_set
     if cli.request_cancellation_rate:

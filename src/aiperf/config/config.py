@@ -601,6 +601,16 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         """
         if self.workload is not None:
             return self
+        # A named ``--scenario`` owns the benchmark invariants and auto-fills the
+        # phase stop condition (e.g. profiling ``duration``) at resolution time
+        # (``ScenarioResolver`` / ``apply_scenario``), which runs AFTER this
+        # construction-time validator. Requiring a bound here would reject a
+        # valid scenario run whose bound is supplied a step later — the exact gap
+        # the removed ``requests=10`` converter default used to paper over. The
+        # scenario (and the runner's own graph-phase validation) enforce the real
+        # bound; do not double-require a generic one before the scenario has run.
+        if self.scenario is not None:
+            return self
         for phase in self.phases:
             if (
                 phase._stop_condition_required
