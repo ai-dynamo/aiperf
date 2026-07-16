@@ -32,6 +32,7 @@ use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 
 use aiperf_runtime::engine::application::Application;
+#[cfg(feature = "velo")]
 use aiperf_runtime::engine::cellular_kind::CellularRunKind;
 use aiperf_runtime::engine::distribution_identity::current_distribution_id;
 use aiperf_runtime::engine::protocol_v2::{
