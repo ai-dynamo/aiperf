@@ -20,7 +20,6 @@ from aiperf.config import (
 )
 from aiperf.config.flags import CLIConfig
 from aiperf.config.flags.resolver import resolve_config
-from aiperf.orchestrator.runner_installation import RunnerInstallation
 from aiperf.orchestrator.rust_wire import build_authored_run_request
 
 
@@ -137,24 +136,6 @@ def test_custom_endpoint_id_with_template_is_preserved_structurally() -> None:
     assert endpoint.template.body == '{"prompt": "{{ prompt }}"}'
 
 
-def test_template_id_without_template_reaches_runner_preflight() -> None:
-    endpoint = EndpointConfig(
-        urls=["http://localhost:8000"],
-        type="template",
-    )
-    installation = RunnerInstallation(
-        binary=Path("/opt/aiperf-runner"),
-        capabilities={
-            "schema_version": "1.0",
-            "endpoint": {"template": {}},
-            "transport": {"http": {}},
-        },
-    )
-
-    installation.preflight_endpoint(endpoint.type)
-    assert endpoint.template is None
-
-
 def test_dag_jsonl_format_and_rows_pass_to_runner_without_linearization(
     tmp_path: Path,
 ) -> None:
@@ -229,7 +210,9 @@ def test_config_and_cli_construction_do_not_resolve_a_runner(
     def fail_if_called(*_args, **_kwargs):
         raise AssertionError("non-execution config paths must not discover a runner")
 
-    monkeypatch.setattr(RunnerInstallation, "resolve", fail_if_called)
+    monkeypatch.setattr(
+        "aiperf.orchestrator.native_execution.resolve_native_binary", fail_if_called
+    )
 
     endpoint = EndpointConfig(
         urls=["http://localhost:8000"],

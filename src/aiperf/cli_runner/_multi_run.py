@@ -137,8 +137,8 @@ def _execute_multi_benchmark(
         SweepTableLogger,
         _should_emit_sweep_table,
     )
+    from aiperf.orchestrator.native_execution import NativeExecutor
     from aiperf.orchestrator.orchestrator import MultiRunOrchestrator
-    from aiperf.orchestrator.rust_executor import RustSubprocessExecutor
 
     no_flag = plan.no_sweep_table
     table_logger = (
@@ -147,7 +147,7 @@ def _execute_multi_benchmark(
         else None
     )
     orchestrator = MultiRunOrchestrator(base_dir=base_dir, cell_callback=table_logger)
-    executor = RustSubprocessExecutor(base_dir=base_dir)
+    executor = NativeExecutor(base_dir=base_dir)
     search_planner = _build_search_planner(plan)
     _log_search_planner_active(plan, search_planner, logger)
 

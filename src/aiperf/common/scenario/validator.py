@@ -19,8 +19,10 @@ Adaptations for ajc/rust:
   ``run.resolved.dataset_types`` (populated by ``DatasetResolver`` earlier in
   the chain) for a ``weka_trace`` type. ``_apply_timing_mode`` verifies the run
   IS a weka graph workload and raises otherwise.
-* ajc/rust has no ``endpoint.cache_bust`` knob, so
-  ``_apply_require_cache_bust`` is a documented no-op skip.
+* ajc/rust has no ``endpoint.cache_bust`` knob; instead
+  ``_apply_require_cache_bust`` auto-fills the per-run ``cfg.cache_bust_target``
+  from the scenario lock, which ``rust_wire`` projects onto the recorded
+  dataset's synthesis block for the native runner's first-turn marker.
 
 User-explicit vs default is read from ``model_fields_set`` membership on the
 LIVE converted config (the resolver chain mutates ``run`` in place), so
@@ -66,7 +68,7 @@ def _is_weka_workload(run: BenchmarkRun) -> bool:
        resolves to ``CustomDatasetType.WEKA_TRACE``. This is the signal when
        the resolver chain ran.
     2. ``run.cfg.datasets[*].format`` — the direct-pair execute path
-       (``rust_executor``) never runs ``DatasetResolver``, so ``dataset_types``
+       (``native_execution``) never runs ``DatasetResolver``, so ``dataset_types``
        is empty there. Fall back to the explicitly-set ``weka_trace`` format on
        any configured ``FileDataset`` (what ``--custom-dataset-type weka-trace``
        lands on ``run.cfg``). ``format`` defaults to ``single_turn``, so an
@@ -333,16 +335,38 @@ def _apply_require_cache_bust(
     violations: list[ScenarioViolation],
     applied: list[str],
 ) -> None:
-    """Documented no-op skip: ajc/rust has no ``endpoint.cache_bust`` knob.
+    """Auto-fill the recorded-graph cache-bust marker target from the scenario.
 
-    The graph-IR branch auto-filled ``endpoint.cache_bust`` to the required
-    first-turn-prefix target and validated an explicit mismatch. ajc/rust has no
-    such config field (no ``CacheBustTarget`` enum, no worker cache-bust
-    stamping surface), so there is nothing to auto-fill or lock. The
-    ``require_cache_bust`` spec field is retained as a documented marker only;
-    this lock is intentionally skipped rather than inventing a config knob.
+    The native runner materializes a first-turn cache-bust marker
+    (``graph_execution::GraphCacheBust``) gated on ``cfg.cache_bust_target``.
+    Auto-fill that per-run knob from the scenario's ``require_cache_bust`` lock
+    (e.g. ``"first_turn_prefix"``) so the scenario-required marker + its ISL
+    accounting engage. Unset ``require_cache_bust`` leaves the config default
+    (``"none"``) untouched. An explicit user-set target that disagrees with the
+    scenario is a violation (the marker changes wire bytes and ISL, so it is not
+    a soft mismatch).
     """
-    return
+    required = spec.require_cache_bust
+    if required is None:
+        return
+    current = getattr(run.cfg, "cache_bust_target", "none")
+    if current in (None, "none", ""):
+        run.cfg.cache_bust_target = required
+        applied.append("require_cache_bust")
+        return
+    if current != required:
+        violations.append(
+            ScenarioViolation(
+                flag="--cache-bust-target",
+                current_value=current,
+                required_value=required,
+                message=(
+                    f"scenario {spec.name!r} requires cache_bust_target={required!r}"
+                ),
+            )
+        )
+        return
+    applied.append("require_cache_bust")
 
 
 def _apply_duration(

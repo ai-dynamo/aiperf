@@ -180,9 +180,9 @@ def build_container_ports(
 # (each a slice that streams its RecordsShardPartition back).
 #
 # The pods run the PYTHON aiperf frontend subcommands (`aiperf controller` /
-# `aiperf cell`), not the bare native runner: the frontend is the orchestrator
-# (orchestrator/rust_executor.py) -- it reads Config v2, projects it through
-# rust_wire, launches aiperf-runner over stdio, forwards progress, loads the
+# `aiperf cell`), not the bare native binary: the frontend is the orchestrator
+# (orchestrator/native_execution.py) -- it reads Config v2, projects it through
+# rust_wire, launches `aiperf --execute` over stdio, forwards progress, loads the
 # native report, and runs the native export plane. The operator only owns the pod
 # topology, the Config v2 mount, the budget partition (CELL_ID/CELL_COUNT), and
 # the controller address the cells dial.

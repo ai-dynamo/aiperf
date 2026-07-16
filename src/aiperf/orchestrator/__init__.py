@@ -18,7 +18,6 @@ from aiperf.orchestrator.models import (
 from aiperf.orchestrator.orchestrator import (
     MultiRunOrchestrator,
 )
-from aiperf.orchestrator.runner_installation import RunnerInstallation
 from aiperf.orchestrator.strategies import (
     AdaptiveStrategy,
     ExecutionStrategy,
@@ -36,6 +35,5 @@ __all__ = [
     "FixedTrialsStrategy",
     "MultiRunOrchestrator",
     "RunResult",
-    "RunnerInstallation",
     "SweepMode",
 ]

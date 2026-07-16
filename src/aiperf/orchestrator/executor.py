@@ -29,7 +29,7 @@ class RunExecutor(ABC):
         """Execute one benchmark run.
 
         Implementations:
-            - RustSubprocessExecutor: one native timing/HTTP process per run
+            - NativeExecutor: one native timing/HTTP process per run
 
         Args:
             run: Fully-built BenchmarkRun (config + variation + trial + label).

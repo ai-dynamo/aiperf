@@ -12,10 +12,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
-
-if TYPE_CHECKING:
-    from aiperf.config.resolution.plan import BenchmarkPlan
+from typing import Literal
 
 
 def run_init(
@@ -83,12 +80,7 @@ def run_validate(*, config_file: Path) -> None:
     from aiperf.config.loader.errors import ConfigurationError
 
     try:
-        warnings = validate_config_file(
-            config_file,
-            plan_validator=lambda plan: _validate_native_plan(
-                plan, config_file=config_file
-            ),
-        )
+        warnings = validate_config_file(config_file)
     except ConfigurationError as e:
         print(f"Error: {e}", file=sys.stderr)
         raise SystemExit(1) from e
@@ -103,66 +95,6 @@ def run_validate(*, config_file: Path) -> None:
         )
     else:
         print(f"Configuration valid: {config_file}")
-
-
-def _validate_native_plan(plan: BenchmarkPlan, *, config_file: Path) -> None:
-    """Validate executable BenchmarkRun variations against one exact runner image.
-
-    A missing runner or an image without a usable catalog leaves the established
-    Python validation path unchanged. For catalog-backed images, this function
-    constructs only authored ``BenchmarkRun`` wrappers: no resolver,
-    dataset/tokenizer load, artifact creation, readiness probe, or worker start
-    occurs before the runner's side-effect-free ``validate`` operation.
-    """
-    from aiperf.config.loader.errors import ConfigurationError
-    from aiperf.config.resolution.plan import BenchmarkRun
-    from aiperf.orchestrator.runner_installation import RunnerInstallation
-
-    try:
-        installation = RunnerInstallation.resolve()
-    except FileNotFoundError:
-        return
-    except Exception as error:
-        raise ConfigurationError(
-            f"Native execution binary discovery failed: {error}",
-            file_path=config_file,
-        ) from error
-
-    for index, (cfg, variation) in enumerate(
-        zip(plan.configs, plan.variations, strict=True)
-    ):
-        random_seed = (
-            plan.variation_seeds[index] if index < len(plan.variation_seeds) else None
-        )
-        run = BenchmarkRun(
-            benchmark_id=f"config-validate-v{index:04d}",
-            sweep_id=plan.sweep_id,
-            cfg=cfg,
-            variation=variation,
-            trial=0,
-            artifact_dir=cfg.artifacts.dir,
-            label=variation.label,
-            cli_command=None,
-            random_seed=random_seed,
-            variables=dict(plan.variables),
-        )
-        try:
-            projected = installation.project_authored_request(
-                run,
-                operation="validate",
-            )
-            # No Python-side catalog preflight: the native binary's validate
-            # operation is the single source of truth and fails closed.
-            installation.validate_authored_request(
-                projected,
-                benchmark_id=run.benchmark_id,
-            )
-        except Exception as error:
-            raise ConfigurationError(
-                "Native runner validation failed for variation "
-                f"{variation.label!r}: {error}",
-                file_path=config_file,
-            ) from error
 
 
 def run_expand(

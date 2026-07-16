@@ -84,7 +84,7 @@ def _make_plan(
 @pytest.fixture(autouse=True)
 def _no_real_native_process():
     """CLI policy tests inject the native executor instead of spawning it."""
-    with patch("aiperf.orchestrator.rust_executor.RustSubprocessExecutor") as executor:
+    with patch("aiperf.orchestrator.native_execution.NativeExecutor") as executor:
         yield executor
 
 

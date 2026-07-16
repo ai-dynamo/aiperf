@@ -104,15 +104,16 @@ def _run_cell() -> None:
     view, so a cell reports nothing to Kubernetes. The runner inherits this process's
     env, so the operator's CELL_* vars flow straight through.
     """
-    import subprocess
+    from aiperf.orchestrator.native_execution import (
+        resolve_native_binary,
+        run_cell_process,
+    )
 
-    from aiperf.orchestrator.runner_installation import RunnerInstallation
-
-    binary = RunnerInstallation.resolve().binary
-    logger.info("launching cell runner: %s --cell", binary)
-    completed = subprocess.run([str(binary), "--cell"], check=False)  # noqa: S603
-    if completed.returncode != 0:
-        raise RuntimeError(f"cell runner exited with {completed.returncode}")
+    binary = resolve_native_binary()
+    logger.info("launching cell: %s --cell", binary)
+    returncode = run_cell_process(binary)
+    if returncode != 0:
+        raise RuntimeError(f"cell exited with {returncode}")
 
 
 async def _run_controller(run: BenchmarkRun) -> None:
@@ -212,16 +213,16 @@ def _prepare_heartbeat(path: Path) -> None:
 
 
 def _execute(run: BenchmarkRun) -> RunResult:
-    """Launch ``aiperf-runner`` for this run and return its orchestrator result.
+    """Launch the native ``aiperf --execute`` child for this run and return its result.
 
-    Reuses the canonical single-run executor, so rust_wire projection, stderr
+    Reuses the canonical native executor, so rust_wire projection, stderr
     forwarding, terminal parsing, native-report loading, and the native export plane
     are identical to ``aiperf profile`` -- the cellular role only adds the CR
     reporting around it.
     """
-    from aiperf.orchestrator.rust_executor import RustSubprocessExecutor
+    from aiperf.orchestrator.native_execution import NativeExecutor
 
-    return RustSubprocessExecutor(base_dir=run.artifact_dir).execute_sync(run)
+    return NativeExecutor(base_dir=run.artifact_dir).execute_sync(run)
 
 
 def _profiling_request_budget(run: BenchmarkRun) -> int | None:

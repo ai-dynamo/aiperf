@@ -19,7 +19,7 @@ import pytest
 from aiperf.config import AIPerfConfig
 from aiperf.config.loader.plan import build_benchmark_plan
 from aiperf.orchestrator.orchestrator import MultiRunOrchestrator
-from aiperf.orchestrator.rust_executor import RustSubprocessExecutor
+from aiperf.orchestrator.native_execution import NativeExecutor
 
 _SSE = b"".join(
     [
@@ -149,7 +149,7 @@ def _config(
 
 async def _execute(config: AIPerfConfig, root: Path, binary: Path):
     plan = build_benchmark_plan(config)
-    executor = RustSubprocessExecutor(root, binary=binary)
+    executor = NativeExecutor(root, binary=binary)
     results = await MultiRunOrchestrator(root).execute(plan, executor)
     assert results and all(result.success for result in results), [
         result.error for result in results
@@ -452,7 +452,7 @@ async def test_two_parameter_adaptive_search_changes_real_rust_load(
     plan = build_benchmark_plan(config)
     planner = _build_search_planner(plan)
     assert planner is not None
-    executor = RustSubprocessExecutor(tmp_path, binary=runner_binary)
+    executor = NativeExecutor(tmp_path, binary=runner_binary)
 
     results = await MultiRunOrchestrator(tmp_path).execute(
         plan, executor, search_planner=planner

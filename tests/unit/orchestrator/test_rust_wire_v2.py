@@ -281,7 +281,12 @@ def test_network_export_projected_and_python_suppressed_by_default(
 def test_dump_strips_python_only_cfg_sections(tmp_path: Path) -> None:
     run = _run(tmp_path / "artifacts")
     dumped = dump_benchmark_run(run)
-    assert set(dumped["cfg"]["runtime"]) <= {"workers", "workers_max", "workers_min"}
+    assert set(dumped["cfg"]["runtime"]) <= {
+        "workers",
+        "workers_max",
+        "workers_min",
+        "cells",
+    }
     assert dumped["cfg"]["runtime"]["workers"] == 3
 
 

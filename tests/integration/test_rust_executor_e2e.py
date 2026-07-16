@@ -18,9 +18,9 @@ import pytest
 from aiperf.common.models import NetworkLatencySample
 from aiperf.common.models.record_models import MetricRecordInfo, RawRecordInfo
 from aiperf.config import AIPerfConfig, BenchmarkRun
-from aiperf.orchestrator import rust_executor
+from aiperf.orchestrator import native_execution
 from aiperf.orchestrator.jsonl_loader import load_single_metric
-from aiperf.orchestrator.rust_executor import RustSubprocessExecutor
+from aiperf.orchestrator.native_execution import NativeExecutor
 
 _SSE = b"".join(
     [
@@ -81,9 +81,9 @@ _WORDLEVEL_CONFIG = """{
 
 
 def _assert_protocol_v2_only() -> None:
-    assert not hasattr(rust_executor, "validate_v1_selection")
-    assert not hasattr(rust_executor, "build_run_request")
-    assert not hasattr(RustSubprocessExecutor, "_resolve_run")
+    assert not hasattr(native_execution, "validate_v1_selection")
+    assert not hasattr(native_execution, "build_run_request")
+    assert not hasattr(NativeExecutor, "_resolve_run")
 
 
 class _ChatHandler(BaseHTTPRequestHandler):
@@ -342,7 +342,7 @@ def test_config_v2_streams_rust_metrics_live_through_canonical_python_otel(
         result_holder: dict[str, object] = {}
 
         def execute() -> None:
-            result_holder["result"] = RustSubprocessExecutor(
+            result_holder["result"] = NativeExecutor(
                 tmp_path, binary=binary
             ).execute_sync(run)
 
@@ -488,7 +488,7 @@ def test_config_v2_collects_server_metrics_in_rust_across_exact_phase_boundaries
         binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default_binary))
 
         with mock.patch.object(Environment.SERVER_METRICS, "COLLECTION_INTERVAL", 0.01):
-            result = RustSubprocessExecutor(tmp_path, binary=binary).execute_sync(run)
+            result = NativeExecutor(tmp_path, binary=binary).execute_sync(run)
 
         assert result.success, result.error
         assert result.summary_metrics["request_count"].avg == 3.0
@@ -615,7 +615,7 @@ def test_config_v2_joins_rust_gpu_telemetry_into_all_artifacts(
         binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default_binary))
 
         with mock.patch.object(Environment.RUNTIME, "NATIVE_EXPORT", False):
-            result = RustSubprocessExecutor(tmp_path, binary=binary).execute_sync(run)
+            result = NativeExecutor(tmp_path, binary=binary).execute_sync(run)
 
         assert result.success, result.error
         assert result.summary_metrics["request_count"].avg == 4.0
@@ -704,7 +704,7 @@ def test_config_v2_runs_native_tcp_rtt_calibration_and_adjusts_metrics(
         default_binary = Path(__file__).parents[2] / "target/debug/aiperf-runner"
         binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default_binary))
 
-        result = RustSubprocessExecutor(tmp_path, binary=binary).execute_sync(run)
+        result = NativeExecutor(tmp_path, binary=binary).execute_sync(run)
 
         assert result.success, result.error
         assert result.summary_metrics["request_count"].avg == 2.0
@@ -783,7 +783,7 @@ def test_config_v2_fixed_network_rtt_bypasses_probes_and_shifts_metrics(
         default_binary = Path(__file__).parents[2] / "target/debug/aiperf-runner"
         binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default_binary))
 
-        result = RustSubprocessExecutor(tmp_path, binary=binary).execute_sync(run)
+        result = NativeExecutor(tmp_path, binary=binary).execute_sync(run)
 
         assert result.success, result.error
         assert result.summary_metrics["network_rtt"].avg == 5.0
@@ -845,7 +845,7 @@ def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
         )
         default_binary = Path(__file__).parents[2] / "target/debug/aiperf-runner"
         binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default_binary))
-        result = RustSubprocessExecutor(tmp_path, binary=binary).execute_sync(run)
+        result = NativeExecutor(tmp_path, binary=binary).execute_sync(run)
 
         assert result.success, result.error
         assert result.summary_metrics["request_count"].avg == 4.0
@@ -974,7 +974,7 @@ def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
             label="native-file",
             random_seed=12,
         )
-        file_result = RustSubprocessExecutor(
+        file_result = NativeExecutor(
             file_artifacts, binary=binary
         ).execute_sync(file_run)
 
@@ -1027,7 +1027,7 @@ def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
             label="native-template",
             random_seed=14,
         )
-        template_result = RustSubprocessExecutor(
+        template_result = NativeExecutor(
             template_artifacts, binary=binary
         ).execute_sync(template_run)
 
@@ -1097,7 +1097,7 @@ def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
             label="native-multimodal",
             random_seed=13,
         )
-        multimodal_result = RustSubprocessExecutor(
+        multimodal_result = NativeExecutor(
             multimodal_artifacts, binary=binary
         ).execute_sync(multimodal_run)
 
@@ -1146,7 +1146,7 @@ def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
         )
         local_dataset_url = f"http://127.0.0.1:{port}/dataset/sharegpt.json"
         with mock.patch.object(ShareGPTLoader, "url", local_dataset_url):
-            public_result = RustSubprocessExecutor(
+            public_result = NativeExecutor(
                 public_artifacts, binary=binary
             ).execute_sync(public_run)
 
@@ -1209,7 +1209,7 @@ def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
             random_seed=31,
         )
         body_start = len(_ChatHandler.bodies)
-        synthesis_result = RustSubprocessExecutor(
+        synthesis_result = NativeExecutor(
             synthesis_artifacts, binary=binary
         ).execute_sync(synthesis_run)
 
@@ -1287,7 +1287,7 @@ def test_config_v2_controls_native_connection_reuse(tmp_path: Path) -> None:
             )
             start = len(_ConnectionHandler.peer_ports)
 
-            result = RustSubprocessExecutor(artifact_dir, binary=binary).execute_sync(
+            result = NativeExecutor(artifact_dir, binary=binary).execute_sync(
                 run
             )
 
@@ -1361,7 +1361,7 @@ def test_config_v2_enforces_one_native_end_to_end_request_timeout(
         default_binary = Path(__file__).parents[2] / "target/debug/aiperf-runner"
         binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default_binary))
 
-        result = RustSubprocessExecutor(tmp_path, binary=binary).execute_sync(run)
+        result = NativeExecutor(tmp_path, binary=binary).execute_sync(run)
 
         assert not result.success
         assert result.error == "All 1 requests failed"
@@ -1449,7 +1449,7 @@ def test_config_v2_adaptive_phase_controls_the_native_live_issuer(
         )
         default_binary = Path(__file__).parents[2] / "target/debug/aiperf-runner"
         binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default_binary))
-        result = RustSubprocessExecutor(tmp_path, binary=binary).execute_sync(run)
+        result = NativeExecutor(tmp_path, binary=binary).execute_sync(run)
 
         assert result.success, result.error
         assert result.summary_metrics["request_count"].avg > 10

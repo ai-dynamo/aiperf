@@ -142,9 +142,9 @@ class ConfigMapSpec(AIPerfBaseModel):
         The pods run the Python ``aiperf`` frontend subcommands (``aiperf controller``
         / ``aiperf cell``), NOT the bare native runner: the frontend is the
         orchestrator -- it reads this Config v2, projects it through ``rust_wire``,
-        launches ``aiperf-runner`` over stdio, forwards progress, loads the native
+        launches ``aiperf --execute`` over stdio, forwards progress, loads the native
         report, and runs the native export plane (see
-        ``orchestrator/rust_executor.py``). So the ConfigMap carries the same Config
+        ``orchestrator/native_execution.py``). So the ConfigMap carries the same Config
         v2 YAML ``aiperf ... --config`` reads locally -- one file for every pod; the
         controller/cell subcommand plus the CELL_* env differentiate the roles.
 

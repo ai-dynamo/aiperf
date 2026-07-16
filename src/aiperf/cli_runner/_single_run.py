@@ -30,9 +30,9 @@ def _execute_native_run(run: BenchmarkRun) -> RunResult:
     if _RuntimeSettings().ENGINE == "python":
         return _execute_legacy_python_run(run)
 
-    from aiperf.orchestrator.rust_executor import RustSubprocessExecutor
+    from aiperf.orchestrator.native_execution import NativeExecutor
 
-    return RustSubprocessExecutor(base_dir=run.artifact_dir).execute_sync(run)
+    return NativeExecutor(base_dir=run.artifact_dir).execute_sync(run)
 
 
 def _execute_legacy_python_run(run: BenchmarkRun) -> RunResult:
