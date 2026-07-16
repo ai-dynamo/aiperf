@@ -38,6 +38,13 @@ uuid = { version = "1", features = ["v4"] }
 tracing.workspace = true
 regex.workspace = true
 minijinja = { version = "2.21", features = ["json"] }
+# Async streaming HTTP client for the native `chat` subcommand (hyper, matching
+# the runner's transport stack — no reqwest so loopback is never proxied).
+tokio = { workspace = true, features = ["rt", "macros", "io-util", "net", "time"] }
+hyper = { version = "1.10", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
 # Embedding (not extension-module): `auto-initialize` starts a CPython
 # interpreter inside the native binary so the search planners can call the exact
 # scipy/optuna numerical primitives. Optional + feature-gated (see `search-pyo3`).
