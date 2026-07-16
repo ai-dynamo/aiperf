@@ -89,7 +89,13 @@ impl<'a> CorpusContentSynthesizer<'a> {
             // rng.derive("dataset.coding_content.corpus"))`, whose base seed is the
             // sha256-derived corpus child seed — NOT the BLAKE3 RngRoot algebra.
             hash_seed: PythonRandomGenerator::derive_child_seed(root_seed, hash_namespace),
-            sep_token: tokenizer.block_separation_token_id(),
+            // The agentx weka replay's actual per-turn windows carry NO block
+            // separator: each block is a full `block_size`-token window (verified
+            // against the real sent prompt — the reconstruction is byte-exact only
+            // with no sep, whereas a BOS-consuming window is one token short per
+            // block). `sample_block` keeps the sep seam for the tested
+            // `sample_tokens_from_corpus` contract, but the weka path drives it None.
+            sep_token: None,
             blocks: HashMap::new(),
         })
     }
@@ -141,6 +147,18 @@ impl RecordedContentSynthesizer for CorpusContentSynthesizer<'_> {
     }
 
     fn decode(&self, tokens: &[u32]) -> Result<String, RecordedTraceError> {
+        // agentx decodes synthesized token sequences with `skip_special_tokens=True`
+        // (`parallel_decode`), so the per-block separator (BOS/EOS) is consumed as a
+        // window slot but never appears in the sent text. Strip it here to match.
+        if let Some(sep) = self.sep_token
+            && tokens.contains(&sep)
+        {
+            let filtered: Vec<u32> = tokens.iter().copied().filter(|t| *t != sep).collect();
+            return self
+                .tokenizer
+                .decode(&filtered)
+                .map_err(|error| RecordedTraceError(error.to_string()));
+        }
         self.tokenizer
             .decode(tokens)
             .map_err(|error| RecordedTraceError(error.to_string()))
