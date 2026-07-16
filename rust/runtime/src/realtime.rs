@@ -12,14 +12,19 @@
 //! agentx assembles each completed record into per-metric accumulators as it
 //! arrives, so it can percentile TTFT/ITL/latency live. This module does the
 //! same: [`LiveMetricsProcessor`] is a [`TurnRecordProcessor`] the profiling
-//! runtime invokes once per completed request; it snapshots that request's fully
-//! assembled record (terminal status + token arrivals + usage — all present at
-//! completion, see the scheduled dispatch path) and folds it into a persistent
-//! [`MetricsAccumulator`]. The snapshot is non-consuming
-//! ([`NativeMetricsObserver::snapshot_record`]), so the authoritative end-of-run
-//! report is untouched. A [`Clock`]-driven [`realtime_reporter_loop`] summarizes
-//! that accumulator on a fixed interval and logs the block at INFO — reaching the
-//! console and `logs/aiperf.log` like the phase-lifecycle lines.
+//! runtime invokes once per completed request. It owns a *dedicated* retain-mode
+//! [`NativeMetricsObserver`] wired as an ordinary phase delegate (so it receives
+//! the same terminal status + token arrivals + usage callbacks); per completion
+//! it reconciles the authoritative response facts and drains that request's fully
+//! assembled record into a persistent [`MetricsAccumulator`]. The dedicated
+//! observer is separate from the run's authoritative observer, so the end-of-run
+//! report is untouched — and because the run's primary observer commonly runs in
+//! aggregate-only mode (which drops each slot inside `record_response` before the
+//! detached record-processor task runs), a snapshot against *it* would always
+//! miss; the dedicated delegate is what makes the live block observable. A
+//! [`Clock`]-driven [`realtime_reporter_loop`] summarizes that accumulator on a
+//! fixed interval and logs the block at INFO — reaching the console and
+//! `logs/aiperf.log` like the phase-lifecycle lines.
 //!
 //! Because the accumulator holds every completed record (not a degenerate
 //! window), the latency/TTFT/ITL/throughput percentiles are meaningful mid-run;
@@ -33,7 +38,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::clock::Clock;
-use crate::metrics::NativeMetricsObserver;
+use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata};
 use crate::metrics_core::{AccumulatorSummary, MetricsAccumulator, MetricsConfig, RecordIngest};
 use crate::multiturn::IssuedCredit;
 use crate::scheduled::{TurnDispatchOutcome, TurnRecordProcessor};
@@ -88,18 +93,31 @@ impl LiveMetrics {
 
 /// Per-completion record processor feeding [`LiveMetrics`]. Registered on the
 /// profiling phase's scheduled runtime; the runtime calls [`Self::process`] once
-/// per completed request, after `on_terminal`/token callbacks and
-/// `record_response` have all fired for that request — so the snapshot is a
-/// complete record.
+/// per completed request, after `on_terminal`/token callbacks have fired.
+///
+/// # Why a dedicated observer, not the authoritative one
+/// The runner's authoritative `NativeMetricsObserver` commonly runs in
+/// aggregate-only mode, which folds and *drops* each request's slot inside
+/// `record_response` (scheduled dispatch) before this processor's detached task
+/// runs — so a `snapshot_record` against it would always miss. Instead this
+/// processor owns a dedicated retain-mode observer wired as an ordinary phase
+/// delegate: it receives the identical `on_arrival`/token/usage/terminal
+/// callbacks, this processor replicates the scheduled path's authoritative
+/// `record_response` reconciliation from the completion `outcome`, then *drains*
+/// the fully assembled record — removing the slot, so retention stays bounded to
+/// in-flight requests rather than the whole run.
 pub struct LiveMetricsProcessor {
     observer: Rc<NativeMetricsObserver>,
     live: LiveMetrics,
-    /// Monotonic record ordinal for the snapshot's request-index/session fields.
+    /// Monotonic record ordinal for the drained record's request-index/session
+    /// fields.
     ordinal: Cell<u64>,
 }
 
 impl LiveMetricsProcessor {
-    /// Create a processor that folds each completed request into `live`.
+    /// Create a processor that folds each completed request into `live` via its
+    /// dedicated `observer` (a retain-mode delegate, distinct from the run's
+    /// authoritative aggregate-only observer).
     pub fn new(observer: Rc<NativeMetricsObserver>, live: LiveMetrics) -> Self {
         Self {
             observer,
@@ -111,12 +129,25 @@ impl LiveMetricsProcessor {
 
 #[async_trait(?Send)]
 impl TurnRecordProcessor for LiveMetricsProcessor {
-    async fn process(&self, credit: &IssuedCredit, _outcome: &TurnDispatchOutcome) -> Result<()> {
+    async fn process(&self, credit: &IssuedCredit, outcome: &TurnDispatchOutcome) -> Result<()> {
         let ordinal = self.ordinal.get();
         self.ordinal.set(ordinal + 1);
-        // `snapshot_record` clones (never removes) the just-finished request's
-        // fully assembled facts; a `None` (unknown/incomplete uuid) is skipped.
-        if let Some(record) = self.observer.snapshot_record(credit.turn.uuid, ordinal) {
+        // Replicate the scheduled path's authoritative response reconciliation
+        // (scheduled.rs applies the same fields to the primary observer) so the
+        // drained record carries the server-authoritative token counts and
+        // transport timings, then drain it (removing the slot) and fold it in. A
+        // `None` (uuid whose slot never opened or was already drained) is skipped.
+        self.observer.record_response(
+            credit.turn.uuid,
+            NativeResponseMetadata {
+                start_ns: Some(outcome.start_ns),
+                end_ns: Some(outcome.end_ns),
+                prompt_tokens: outcome.prompt_tokens,
+                completion_tokens: outcome.completion_tokens,
+                http: outcome.http,
+            },
+        );
+        if let Some(record) = self.observer.drain_terminal_record(credit.turn.uuid, ordinal) {
             self.live.ingest(&record);
         }
         Ok(())

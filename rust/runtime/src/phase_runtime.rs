@@ -1001,6 +1001,21 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
         let realtime_live = (config.kind == PhaseKind::Profiling
             && crate::realtime::stats_interval_ns().is_some())
         .then(|| crate::realtime::LiveMetrics::new(plan.metrics_config.clone()));
+        // Dedicated retain-mode observer feeding the realtime block. The
+        // authoritative `native_metrics` below commonly runs in aggregate-only
+        // mode, which drops each request slot inside `record_response` before the
+        // detached record-processor task runs — so a snapshot against it would
+        // always miss. This side observer is an ordinary phase delegate (receives
+        // the same callbacks) whose slots the `LiveMetricsProcessor` drains per
+        // completion, so retention stays bounded to in-flight requests. Built only
+        // when the realtime block is enabled (see `realtime_live`).
+        let realtime_observer = realtime_live.as_ref().map(|_| {
+            Rc::new(NativeMetricsObserver::new(
+                self.clock.clone(),
+                start_ns,
+                plan.metrics_config.clone(),
+            ))
+        });
         let collector = Rc::new(CollectorObserver::new(plan.capture_performance_records));
         let native_metrics = Rc::new(if !plan.retain_native_metric_record_dimensions {
             NativeMetricsObserver::new_aggregate_only(
@@ -1019,6 +1034,11 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
         }
         delegates.push(native_metrics.clone());
         delegates.append(&mut plan.additional_observers);
+        // Fan the same request callbacks into the realtime block's dedicated
+        // observer so its per-completion drain sees fully assembled records.
+        if let Some(observer) = realtime_observer.clone() {
+            delegates.push(observer);
+        }
         // The common offline phase has only native metrics. Avoid routing every
         // callback through a fan-out allocation and loop when there is no fan-out.
         let delegate: Rc<dyn RequestObserver> = if delegates.len() == 1 {
@@ -1052,14 +1072,17 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
             } else {
                 (delegate, None, Vec::new())
             };
-        // Build the live-metrics processor (cloning the observer) before
-        // `native_metrics` is moved into the runtime; registered below.
-        let realtime_processor = realtime_live.as_ref().map(|live| {
-            Rc::new(crate::realtime::LiveMetricsProcessor::new(
-                native_metrics.clone(),
-                live.clone(),
-            )) as Rc<dyn TurnRecordProcessor>
-        });
+        // Build the live-metrics processor over the dedicated realtime observer
+        // (both are `Some` together, gated on the profiling phase + enabled
+        // realtime block); registered below.
+        let realtime_processor = realtime_live.as_ref().zip(realtime_observer).map(
+            |(live, observer)| {
+                Rc::new(crate::realtime::LiveMetricsProcessor::new(
+                    observer,
+                    live.clone(),
+                )) as Rc<dyn TurnRecordProcessor>
+            },
+        );
         let runtime = ScheduledRuntime::new_with_observer(
             self.clock.clone(),
             start_ns,
