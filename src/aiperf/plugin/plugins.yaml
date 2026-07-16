@@ -1028,6 +1028,15 @@ accumulator:
     metadata:
       record_types: [metric_records]
 
+  accuracy:
+    class: aiperf.accuracy.accumulator:AccuracyAccumulator
+    description: |
+      Accuracy accumulator that aggregates graded accuracy records on the
+      dedicated accuracy channel and computes overall/per-task pass rates and
+      unparsed counts. Loaded when accuracy evaluation is enabled.
+    metadata:
+      record_types: [accuracy]
+
 # =============================================================================
 # Stream Exporters
 # =============================================================================
@@ -1044,6 +1053,15 @@ stream_exporter:
       export config.
     metadata:
       record_types: [gpu_telemetry]
+
+  accuracy_jsonl_writer:
+    class: aiperf.accuracy.jsonl_writer:AccuracyJSONLWriter
+    description: |
+      Accuracy JSONL writer that exports per-record graded accuracy data
+      (pass/unparsed/confidence/expected/actual/reasoning) to a JSONL file.
+      Enabled when accuracy evaluation is enabled.
+    metadata:
+      record_types: [accuracy]
 
   network_latency_jsonl_writer:
     class: aiperf.network_latency.jsonl_writer:NetworkLatencyJSONLWriter

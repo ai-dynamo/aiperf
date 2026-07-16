@@ -79,11 +79,11 @@ RecordProcessorType = plugins.create_enum(PluginType.RECORD_PROCESSOR, "RecordPr
 
 AccumulatorTypeStr: TypeAlias = str
 AccumulatorType = plugins.create_enum(PluginType.ACCUMULATOR, "AccumulatorType", module=__name__)
-"""Dynamic enum for accumulator. Example: AccumulatorType.ACCURACY_RESULTS, AccumulatorType.METRIC_RESULTS, AccumulatorType.SERVER_METRICS"""
+"""Dynamic enum for accumulator. Example: AccumulatorType.ACCURACY, AccumulatorType.GPU_TELEMETRY, AccumulatorType.SERVER_METRICS"""
 
 StreamExporterTypeStr: TypeAlias = str
 StreamExporterType = plugins.create_enum(PluginType.STREAM_EXPORTER, "StreamExporterType", module=__name__)
-"""Dynamic enum for stream exporter. Example: StreamExporterType.GPU_TELEMETRY_JSONL_WRITER, StreamExporterType.OTEL_METRICS_STREAMER, StreamExporterType.SERVER_METRICS_JSONL_WRITER"""
+"""Dynamic enum for stream exporter. Example: StreamExporterType.ACCURACY_JSONL_WRITER, StreamExporterType.OTEL_METRICS_STREAMER, StreamExporterType.SERVER_METRICS_JSONL_WRITER"""
 
 AnalyzerTypeStr: TypeAlias = str
 AnalyzerType = plugins.create_enum(PluginType.ANALYZER, "AnalyzerType", module=__name__)

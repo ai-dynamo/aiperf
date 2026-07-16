@@ -338,6 +338,13 @@ class ArtifactsConfig(BaseConfig):
         return self.dir / name
 
     @property
+    def accuracy_export_jsonl_file(self) -> Path:
+        """Path for the per-record accuracy JSONL export file."""
+        base = self._base()
+        name = f"{base}_accuracy.jsonl" if base else "accuracy_export.jsonl"
+        return self.dir / name
+
+    @property
     def network_latency_export_jsonl_file(self) -> Path:
         """Path for the per-sample network latency RTT probe JSONL export file."""
         base = self._base()
