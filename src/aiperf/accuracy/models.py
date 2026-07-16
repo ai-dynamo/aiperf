@@ -3,13 +3,34 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import Field
 from typing_extensions import TypedDict
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models.base_models import AIPerfBaseModel
+
+if TYPE_CHECKING:
+    from aiperf.common.models import MetricResult
+
+# Summary/metric tags (the ``accuracy.`` dot namespace) materialized from the
+# dedicated-channel ``AccuracySummary`` and read by the accuracy exporters.
+ACCURACY_OVERALL_TAG = "accuracy.overall"
+ACCURACY_TASK_TAG_PREFIX = "accuracy.task."
+ACCURACY_UNPARSED_TAG = "accuracy.unparsed"
+ACCURACY_UNPARSED_TASK_TAG_PREFIX = "accuracy.unparsed.task."
+ACCURACY_METRIC_PREFIX = "accuracy."
+
+
+def accuracy_task_tag(task: str) -> str:
+    """Build the MetricResult.tag for a per-task accuracy result."""
+    return f"{ACCURACY_TASK_TAG_PREFIX}{task}"
+
+
+def accuracy_unparsed_task_tag(task: str) -> str:
+    """Build the MetricResult.tag for a per-task unparsed-count result."""
+    return f"{ACCURACY_UNPARSED_TASK_TAG_PREFIX}{task}"
 
 
 class AccuracyChatMessage(TypedDict):
@@ -187,6 +208,78 @@ class AccuracySummary(AIPerfBaseModel):
             }
         )
         return rows
+
+    def to_metric_results(self) -> list[MetricResult]:
+        """Legacy ``accuracy.*`` MetricResult representation for byte-identical export.
+
+        Reproduces the legacy ``AccuracyResultsProcessor._build_results`` output
+        field-for-field so every legacy exporter (perf CSV/JSON + the dedicated
+        accuracy CSV/console) renders identical bytes when these results are
+        injected into ``ProfileResults.records``.
+
+        Emitted in this exact order (load-bearing for byte-exact JSON/CSV):
+        overall, tasks sorted, unparsed overall, unparsed tasks sorted.
+        """
+        from aiperf.common.enums import MetricConsoleGroup
+        from aiperf.common.models import MetricResult
+
+        results: list[MetricResult] = []
+
+        if self.total_evaluated > 0:
+            results.append(
+                MetricResult(
+                    tag=ACCURACY_OVERALL_TAG,
+                    header="Accuracy (Overall)",
+                    unit="ratio",
+                    count=self.total_evaluated,
+                    current=self.total_passed / self.total_evaluated,
+                    sum=self.total_passed,
+                    console_group=MetricConsoleGroup.NONE,
+                )
+            )
+
+        for task in sorted(self.per_task):
+            stats = self.per_task[task]
+            results.append(
+                MetricResult(
+                    tag=accuracy_task_tag(task),
+                    header=f"Accuracy ({task})",
+                    unit="ratio",
+                    count=stats.total,
+                    current=stats.passed / stats.total if stats.total else 0.0,
+                    sum=stats.passed,
+                    console_group=MetricConsoleGroup.NONE,
+                )
+            )
+
+        if self.total_evaluated > 0:
+            results.append(
+                MetricResult(
+                    tag=ACCURACY_UNPARSED_TAG,
+                    header="Accuracy Unparsed (Overall)",
+                    unit="ratio",
+                    count=self.total_evaluated,
+                    current=self.overall_unparsed / self.total_evaluated,
+                    sum=self.overall_unparsed,
+                    console_group=MetricConsoleGroup.NONE,
+                )
+            )
+
+        for task in sorted(self.per_task):
+            stats = self.per_task[task]
+            results.append(
+                MetricResult(
+                    tag=accuracy_unparsed_task_tag(task),
+                    header=f"Accuracy Unparsed ({task})",
+                    unit="ratio",
+                    count=stats.total,
+                    current=stats.unparsed / stats.total if stats.total else 0.0,
+                    sum=stats.unparsed,
+                    console_group=MetricConsoleGroup.NONE,
+                )
+            )
+
+        return results
 
 
 class ProcessAccuracyResult(AIPerfBaseModel):

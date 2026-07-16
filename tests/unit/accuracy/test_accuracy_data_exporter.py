@@ -7,92 +7,108 @@ from pathlib import Path
 import pytest
 
 from aiperf.accuracy.accuracy_data_exporter import AccuracyDataExporter
-from aiperf.accuracy.models import AccuracySummary, TaskAccuracyStats
-from aiperf.common.exceptions import DataExporterDisabled
+from aiperf.common.models import MetricResult
+from aiperf.common.models.record_models import ProfileResults
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
 from tests.unit.conftest import make_benchmark_run
 
 
-def _make_cfg(accuracy: dict | None = None):
+def _make_cfg():
     return make_benchmark_run(
         model_names=["test-model"],
         endpoint_type=EndpointType.CHAT,
         streaming=False,
-        accuracy=accuracy,
+        accuracy={"benchmark": AccuracyBenchmarkType.MMLU},
     ).cfg
 
 
-def _make_summary() -> AccuracySummary:
-    return AccuracySummary(
-        total_evaluated=10,
-        total_passed=8,
-        accuracy_rate=0.8,
-        overall_unparsed=1,
-        grader_name="mmlu",
-        per_task={
-            "algebra": TaskAccuracyStats(
-                total=5, passed=3, unparsed=1, accuracy_rate=0.6, unparsed_rate=0.2
-            ),
-            "history": TaskAccuracyStats(
-                total=5, passed=5, unparsed=0, accuracy_rate=1.0, unparsed_rate=0.0
-            ),
-        },
-    )
-
-
-def _make_exporter(
-    tmp_path: Path, summary: AccuracySummary | None
-) -> AccuracyDataExporter:
+def _make_exporter(tmp_path: Path, records: list[MetricResult]) -> AccuracyDataExporter:
     exporter_config = ExporterConfig(
-        cfg=_make_cfg({"benchmark": AccuracyBenchmarkType.MMLU}),
-        results=None,
+        cfg=_make_cfg(),
+        results=ProfileResults(
+            records=records,
+            completed=len(records),
+            start_ns=0,
+            end_ns=1,
+        ),
         telemetry_results=None,
-        accuracy_results=summary,
     )
     exporter = AccuracyDataExporter(exporter_config=exporter_config)
     exporter._csv_path = tmp_path / "accuracy_results.csv"
     return exporter
 
 
+def _make_metric(tag: str, correct: int, total: int, accuracy: float) -> MetricResult:
+    return MetricResult(
+        tag=tag,
+        header=tag,
+        unit="ratio",
+        sum=correct,
+        count=total,
+        current=accuracy,
+    )
+
+
 @pytest.mark.asyncio
 class TestAccuracyDataExporterExport:
-    async def test_export_writes_task_rows_and_overall(self, tmp_path: Path) -> None:
-        exporter = _make_exporter(tmp_path, _make_summary())
+    async def test_export_writes_overall_and_task_rows(self, tmp_path: Path) -> None:
+        records = [
+            _make_metric("accuracy.overall", correct=8, total=10, accuracy=0.8),
+            _make_metric("accuracy.task.algebra", correct=3, total=5, accuracy=0.6),
+            _make_metric("accuracy.task.history", correct=5, total=5, accuracy=1.0),
+            _make_metric("accuracy.unparsed", correct=1, total=10, accuracy=0.1),
+            _make_metric(
+                "accuracy.unparsed.task.algebra", correct=1, total=5, accuracy=0.2
+            ),
+            _make_metric(
+                "accuracy.unparsed.task.history", correct=0, total=5, accuracy=0.0
+            ),
+        ]
+        exporter = _make_exporter(tmp_path, records)
 
         await exporter.export()
 
         rows = list(csv.reader(exporter._csv_path.open()))
-        assert rows[0] == [
-            "task",
-            "total",
-            "passed",
-            "unparsed",
-            "accuracy_rate",
-            "unparsed_rate",
-        ]
-        # Per-task rows are sorted by name.
-        assert rows[1] == ["algebra", "5", "3", "1", "0.6", "0.2"]
-        assert rows[2] == ["history", "5", "5", "0", "1.0", "0.0"]
-        assert rows[3] == ["OVERALL", "10", "8", "1", "0.8", "0.1"]
+        assert rows[0] == ["task", "correct", "total", "unparsed", "accuracy"]
+        assert rows[1] == ["OVERALL", "8", "10", "1", "0.8000"]
+        assert rows[2] == ["algebra", "3", "5", "1", "0.6000"]
+        assert rows[3] == ["history", "5", "5", "0", "1.0000"]
 
-    async def test_export_does_nothing_when_summary_is_none(
+    async def test_export_skips_non_accuracy_metrics(self, tmp_path: Path) -> None:
+        records = [
+            _make_metric("request_latency", correct=0, total=100, accuracy=0.0),
+            _make_metric("accuracy.overall", correct=4, total=10, accuracy=0.4),
+        ]
+        exporter = _make_exporter(tmp_path, records)
+
+        await exporter.export()
+
+        rows = list(csv.reader(exporter._csv_path.open()))
+        assert len(rows) == 2  # header + overall only
+        assert rows[1][0] == "OVERALL"
+
+    async def test_export_does_nothing_when_no_accuracy_metrics(
         self, tmp_path: Path
     ) -> None:
-        exporter = _make_exporter(tmp_path, None)
+        records = [_make_metric("request_latency", correct=0, total=10, accuracy=0.0)]
+        exporter = _make_exporter(tmp_path, records)
 
         await exporter.export()
 
         assert not exporter._csv_path.exists()
 
-    async def test_constructor_raises_when_accuracy_disabled(
+    async def test_export_does_nothing_when_records_is_none(
         self, tmp_path: Path
     ) -> None:
         exporter_config = ExporterConfig(
-            cfg=_make_cfg(None),
-            results=None,
+            cfg=_make_cfg(),
+            results=ProfileResults(records=None, completed=0, start_ns=0, end_ns=1),
             telemetry_results=None,
-            accuracy_results=_make_summary(),
         )
-        with pytest.raises(DataExporterDisabled):
-            AccuracyDataExporter(exporter_config=exporter_config)
+        exporter = AccuracyDataExporter(exporter_config=exporter_config)
+        exporter._csv_path = tmp_path / "accuracy_results.csv"
+
+        await exporter.export()
+
+        assert not exporter._csv_path.exists()

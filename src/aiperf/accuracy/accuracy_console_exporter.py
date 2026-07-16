@@ -5,6 +5,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from aiperf.accuracy.models import (
+    ACCURACY_METRIC_PREFIX,
+    ACCURACY_OVERALL_TAG,
+    ACCURACY_TASK_TAG_PREFIX,
+    ACCURACY_UNPARSED_TAG,
+    ACCURACY_UNPARSED_TASK_TAG_PREFIX,
+)
 from aiperf.common.exceptions import ConsoleExporterDisabled
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.exporters.exporter_config import ExporterConfig
@@ -12,15 +19,11 @@ from aiperf.exporters.exporter_config import ExporterConfig
 if TYPE_CHECKING:
     from rich.console import Console
 
-    from aiperf.accuracy.models import AccuracySummary
-
 
 class AccuracyConsoleExporter(AIPerfLoggerMixin):
     """Console exporter for accuracy benchmarking results.
 
-    Renders a Rich table with per-task accuracy breakdown and overall score,
-    sourced from the structured ``AccuracySummary`` delivered on the dedicated
-    accuracy channel.
+    Renders a Rich table with per-task accuracy breakdown and overall score.
     """
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs: Any) -> None:
@@ -36,14 +39,36 @@ class AccuracyConsoleExporter(AIPerfLoggerMixin):
     async def export(self, console: Console) -> None:
         """Render accuracy results as a Rich table to the given console.
 
-        Prints a per-task breakdown (passed / total / accuracy%) followed by an
-        OVERALL row. Does nothing when no accuracy summary was delivered.
+        Prints a per-task breakdown (correct / total / accuracy%) followed by an
+        OVERALL row. Does nothing if no ``accuracy.*`` metrics are present in
+        ``exporter_config.results``.
         """
         from rich.table import Table
 
-        summary = self.exporter_config.accuracy_results
-        if summary is None:
+        results = self.exporter_config.results
+        if results is None or results.records is None:
             return
+
+        accuracy_metrics = [
+            r for r in results.records if r.tag.startswith(ACCURACY_METRIC_PREFIX)
+        ]
+        if not accuracy_metrics:
+            return
+
+        overall = next(
+            (m for m in accuracy_metrics if m.tag == ACCURACY_OVERALL_TAG), None
+        )
+        task_metrics = [
+            m for m in accuracy_metrics if m.tag.startswith(ACCURACY_TASK_TAG_PREFIX)
+        ]
+        unparsed_overall = next(
+            (m for m in accuracy_metrics if m.tag == ACCURACY_UNPARSED_TAG), None
+        )
+        unparsed_by_task: dict[str, int] = {
+            m.tag.removeprefix(ACCURACY_UNPARSED_TASK_TAG_PREFIX): int(m.sum or 0)
+            for m in accuracy_metrics
+            if m.tag.startswith(ACCURACY_UNPARSED_TASK_TAG_PREFIX)
+        }
 
         table = Table(title="Accuracy Benchmark Results", show_lines=True)
         table.add_column("Task", style="cyan", min_width=30)
@@ -52,44 +77,57 @@ class AccuracyConsoleExporter(AIPerfLoggerMixin):
         table.add_column("Unparsed", justify="right", style="yellow")
         table.add_column("Accuracy", justify="right", style="bold")
 
-        for task_name, stats in sorted(summary.per_task.items()):
+        for m in task_metrics:
+            task_name = m.tag.removeprefix(ACCURACY_TASK_TAG_PREFIX)
+            acc_str = f"{m.current:.2%}" if m.current is not None else "N/A"
+            unparsed_count = str(unparsed_by_task.get(task_name, 0))
             table.add_row(
                 task_name,
-                str(stats.passed),
-                str(stats.total),
-                str(stats.unparsed),
-                f"{stats.accuracy_rate:.2%}",
+                str(m.sum or 0),
+                str(m.count or 0),
+                unparsed_count,
+                acc_str,
             )
 
-        if summary.total_evaluated:
+        if overall:
+            acc_str = f"{overall.current:.2%}" if overall.current is not None else "N/A"
+            overall_unparsed = str(
+                int(unparsed_overall.sum or 0) if unparsed_overall else 0
+            )
             table.add_row(
                 "[bold]OVERALL[/bold]",
-                str(summary.total_passed),
-                str(summary.total_evaluated),
-                str(summary.overall_unparsed),
-                f"[bold green]{summary.accuracy_rate:.2%}[/bold green]",
+                str(overall.sum or 0),
+                str(overall.count or 0),
+                overall_unparsed,
+                f"[bold green]{acc_str}[/bold green]",
                 style="on dark_green",
             )
 
         console.print()
         console.print(table)
 
-        self._maybe_warn_all_unparsed(console, summary)
+        self._maybe_warn_all_unparsed(console, overall, unparsed_overall)
 
     def _maybe_warn_all_unparsed(
         self,
         console: Console,
-        summary: AccuracySummary,
+        overall: Any,
+        unparsed_overall: Any,
     ) -> None:
         """Loud-but-actionable diagnostic for the "accuracy=0 because the server, not the model" case.
 
-        Triggers when every evaluated response reports unparsed output — almost
+        Triggers when every task reports 100% unparsed responses — almost
         always a mock server or misconfigured endpoint, not an accuracy
-        problem. Does not gate on total count so it fires on tiny smoke runs.
+        problem. Does not gate on overall_total so it fires on tiny smoke
+        runs.
         """
         if not (
-            summary.total_evaluated
-            and summary.overall_unparsed >= summary.total_evaluated
+            overall
+            and overall.count
+            and unparsed_overall
+            and unparsed_overall.sum is not None
+            and unparsed_overall.count
+            and int(unparsed_overall.sum) >= int(unparsed_overall.count)
         ):
             return
         # Console-only diagnostic: export() legitimately runs once per target

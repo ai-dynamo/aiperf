@@ -147,6 +147,53 @@ class TestAccuracyShutdownGateEnabled:
         controller.stop.assert_awaited_once()
 
 
+class TestAccuracyResultsInjection:
+    """The dedicated-channel summary is materialized into the profile records
+    exactly once at export time so legacy exporters read ``accuracy.*``."""
+
+    def _controller_with_records(self, benchmark_run, mock_service_manager):
+        from aiperf.common.models.record_models import (
+            ProcessRecordsResult,
+            ProfileResults,
+        )
+
+        controller = _build_controller(
+            benchmark_run, mock_service_manager, accuracy=True
+        )
+        controller._profile_results = ProcessRecordsResult(
+            results=ProfileResults(records=[], completed=0, start_ns=0, end_ns=1),
+        )
+        controller._accuracy_results = _summary()
+        return controller
+
+    def test_injects_accuracy_metric_results_once(
+        self, benchmark_run, mock_service_manager
+    ) -> None:
+        controller = self._controller_with_records(benchmark_run, mock_service_manager)
+
+        controller._inject_accuracy_results_into_records()
+
+        records = controller._profile_results.results.records
+        tags = [r.tag for r in records]
+        assert tags == ["accuracy.overall", "accuracy.unparsed"]
+        assert controller._accuracy_results_injected is True
+
+        # Re-export must not double-append.
+        controller._inject_accuracy_results_into_records()
+        assert [r.tag for r in controller._profile_results.results.records] == tags
+
+    def test_no_injection_when_no_summary(
+        self, benchmark_run, mock_service_manager
+    ) -> None:
+        controller = self._controller_with_records(benchmark_run, mock_service_manager)
+        controller._accuracy_results = None
+
+        controller._inject_accuracy_results_into_records()
+
+        assert controller._profile_results.results.records == []
+        assert controller._accuracy_results_injected is False
+
+
 class TestAccuracyShutdownGateDisabled:
     """Accuracy DISABLED: the accuracy term never blocks shutdown."""
 

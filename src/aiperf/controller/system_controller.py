@@ -162,6 +162,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._telemetry_results: TelemetryExportData | None = None
         self._server_metrics_results: ServerMetricsResults | None = None
         self._accuracy_results: AccuracySummary | None = None
+        self._accuracy_results_injected = False
         self._profile_results_received = False
         self._should_wait_for_telemetry = False
         self._should_wait_for_server_metrics = False
@@ -1068,6 +1069,25 @@ class SystemController(SignalHandlerMixin, BaseService):
         console.print()
         console.file.flush()
 
+    def _inject_accuracy_results_into_records(self) -> None:
+        """Materialize the dedicated-channel accuracy summary into the profile records.
+
+        The accuracy computation/transport lives on its own dedicated channel
+        (``AccuracyAccumulator`` -> ``AccuracySummary``), but legacy exporters
+        (perf CSV/JSON + the accuracy CSV/console) read ``accuracy.*`` MetricResults
+        from ``ProfileResults.records``. Convert the summary to those MetricResults
+        and append them at the END (so JSON key order matches legacy: accuracy.*
+        after all perf metrics). Guarded so a re-export cannot double-append.
+        """
+        if self._accuracy_results is None or self._accuracy_results_injected:
+            return
+        if not self._profile_results or self._profile_results.results.records is None:
+            return
+        self._profile_results.results.records.extend(
+            self._accuracy_results.to_metric_results()
+        )
+        self._accuracy_results_injected = True
+
     async def _print_post_benchmark_info_and_metrics(self) -> None:
         """Print post benchmark info and metrics to the console."""
         if not self._profile_results or not self._profile_results.results.records:
@@ -1117,6 +1137,8 @@ class SystemController(SignalHandlerMixin, BaseService):
         console = Console()
         if console.width < 100:
             console.width = 100
+
+        self._inject_accuracy_results_into_records()
 
         exporter_manager = ExporterManager(
             results=self._profile_results.results,
