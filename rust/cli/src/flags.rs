@@ -94,7 +94,7 @@ pub struct ProfileFlags {
     pub no_sweep_table: bool,
 
     /// Mean turns per session for multi-turn (`--session-turns-mean`).
-    #[arg(long = "session-turns-mean")]
+    #[arg(long = "session-turns-mean", visible_alias = "conversation-turn-mean")]
     pub session_turns_mean: Option<f64>,
 
     /// Stddev of turns per session (`--session-turns-stddev`).
@@ -106,15 +106,15 @@ pub struct ProfileFlags {
     pub num_sessions: Option<String>,
 
     /// Per-session think-time delay ratio (`--session-delay-ratio`).
-    #[arg(long = "session-delay-ratio")]
+    #[arg(long = "session-delay-ratio", visible_alias = "conversation-turn-delay-ratio")]
     pub session_delay_ratio: Option<f64>,
 
     /// Mean inter-turn delay, milliseconds (`--session-turn-delay-mean`).
-    #[arg(long = "session-turn-delay-mean")]
+    #[arg(long = "session-turn-delay-mean", visible_alias = "conversation-turn-delay-mean")]
     pub session_turn_delay_mean: Option<f64>,
 
     /// Stddev of inter-turn delay, milliseconds (`--session-turn-delay-stddev`).
-    #[arg(long = "session-turn-delay-stddev")]
+    #[arg(long = "session-turn-delay-stddev", visible_alias = "conversation-turn-delay-stddev")]
     pub session_turn_delay_stddev: Option<f64>,
 
     /// Per-session affinity header name (`--session-header`).
@@ -193,7 +193,7 @@ pub struct ProfileFlags {
     pub streaming: bool,
 
     /// Prompts per request (`--batch-size`).
-    #[arg(long = "batch-size")]
+    #[arg(long = "batch-size", visible_aliases = ["batch-size-text", "prompt-batch-size"], short = 'b')]
     pub batch_size: Option<u32>,
 
     /// Download video content from responses (`--download-video-content`).
@@ -312,7 +312,7 @@ pub struct ProfileFlags {
     pub request_cancellation_delay: Option<f64>,
 
     /// Maximum requests to send (`--request-count`); comma-list ⇒ sweep.
-    #[arg(long = "request-count")]
+    #[arg(long = "request-count", visible_alias = "num-requests")]
     pub request_count: Option<String>,
 
     /// Maximum benchmark runtime, seconds (`--benchmark-duration`); comma ⇒ sweep.
@@ -336,7 +336,7 @@ pub struct ProfileFlags {
     pub warmup_request_rate: Option<f64>,
 
     /// Artifact output directory (`--artifact-dir`).
-    #[arg(long = "artifact-dir")]
+    #[arg(long = "artifact-dir", visible_alias = "output-artifact-dir")]
     pub artifact_dir: Option<PathBuf>,
 
     /// Pre-configured public dataset to download (`--public-dataset`).
@@ -368,11 +368,11 @@ pub struct ProfileFlags {
     pub user_context_prompt_length: Option<u32>,
 
     /// Number of prefix prompts / pool size (`--num-prefix-prompts`).
-    #[arg(long = "num-prefix-prompts")]
+    #[arg(long = "num-prefix-prompts", visible_alias = "prompt-prefix-pool-size")]
     pub num_prefix_prompts: Option<u32>,
 
     /// Prefix prompt length (`--prefix-prompt-length`).
-    #[arg(long = "prefix-prompt-length")]
+    #[arg(long = "prefix-prompt-length", visible_alias = "prompt-prefix-length")]
     pub prefix_prompt_length: Option<u32>,
 
     /// Cap on inter-turn delay, seconds (`--inter-turn-delay-cap-seconds`).
