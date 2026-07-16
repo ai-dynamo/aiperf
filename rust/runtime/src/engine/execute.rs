@@ -1531,23 +1531,7 @@ async fn execute_graph_native(
     let phase_sidecars = request
         .phases
         .iter()
-        .map(|phase| -> Result<Vec<Rc<dyn ScheduledPhaseSidecar>>> {
-            let mut phase_sidecars: Vec<Rc<dyn ScheduledPhaseSidecar>> = Vec::new();
-            if let Some(server_metrics) = sidecars.server_metrics.as_ref() {
-                phase_sidecars.push(server_metrics.sidecar(metrics_phase(phase)?));
-            }
-            if phase.common().name == "profiling" {
-                if let Some(gpu_telemetry) = sidecars.gpu_telemetry.as_ref() {
-                    phase_sidecars.push(gpu_telemetry.sidecar());
-                }
-                if let Some(network_latency) = sidecars.network_latency.as_ref()
-                    && let Some(sidecar) = network_latency.sidecar()
-                {
-                    phase_sidecars.push(sidecar);
-                }
-            }
-            Ok(phase_sidecars)
-        })
+        .map(|phase| compose_phase_sidecars(phase, sidecars))
         .collect::<Result<Vec<_>>>()?;
     create_run_artifacts(&request)?;
     let phased = run_graph_phases(
@@ -2563,6 +2547,33 @@ pub(crate) async fn execute_scheduled_shard(
     })
 }
 
+/// Compose the phase-scoped side-channel sidecars for one scheduled/graph phase:
+/// server metrics run every phase; GPU telemetry and network-latency calibration
+/// run only during profiling. Shared verbatim by the graph phase-plan builder and
+/// the single-thread scheduled arm of [`execute_native_inner`]. The sharded arm
+/// builds a profiling-only set inline (it has no per-phase loop) and the per-shard
+/// worker never touches a sidecar, so those two paths do not use this helper.
+fn compose_phase_sidecars(
+    phase: &PhaseSpec,
+    sidecars: &PreparedNativeSidecarResources,
+) -> Result<Vec<Rc<dyn ScheduledPhaseSidecar>>> {
+    let mut phase_sidecars: Vec<Rc<dyn ScheduledPhaseSidecar>> = Vec::new();
+    if let Some(server_metrics) = sidecars.server_metrics.as_ref() {
+        phase_sidecars.push(server_metrics.sidecar(metrics_phase(phase)?));
+    }
+    if phase.common().name == "profiling" {
+        if let Some(gpu_telemetry) = sidecars.gpu_telemetry.as_ref() {
+            phase_sidecars.push(gpu_telemetry.sidecar());
+        }
+        if let Some(network_latency) = sidecars.network_latency.as_ref()
+            && let Some(sidecar) = network_latency.sidecar()
+        {
+            phase_sidecars.push(sidecar);
+        }
+    }
+    Ok(phase_sidecars)
+}
+
 async fn execute_native_inner(
     request: NativeRunSpec,
     mut accuracy: Option<&mut PreparedAccuracy>,
@@ -2898,20 +2909,7 @@ async fn execute_native_inner(
                     record_processors.push(processor);
                 }
                 plan = plan.with_record_processors(record_processors);
-                let mut phase_sidecars = Vec::new();
-                if let Some(server_metrics) = sidecars.server_metrics.as_ref() {
-                    phase_sidecars.push(server_metrics.sidecar(metrics_phase(phase)?));
-                }
-                if phase.common().name == "profiling" {
-                    if let Some(gpu_telemetry) = sidecars.gpu_telemetry.as_ref() {
-                        phase_sidecars.push(gpu_telemetry.sidecar());
-                    }
-                    if let Some(network_latency) = sidecars.network_latency.as_ref()
-                        && let Some(sidecar) = network_latency.sidecar()
-                    {
-                        phase_sidecars.push(sidecar);
-                    }
-                }
+                let phase_sidecars = compose_phase_sidecars(phase, sidecars)?;
                 if !phase_sidecars.is_empty() {
                     plan = plan.with_sidecars(phase_sidecars);
                 }
