@@ -380,3 +380,175 @@ class TestRunMultiBenchmark:
 
         with pytest.raises(ValueError, match="Dashboard UI is not supported"):
             _run_multi_benchmark(plan)
+
+
+class TestNativeOnlyGuard:
+    """The local Python frontend rejects native-only configs (SP-B).
+
+    ``python -m aiperf.cli profile`` runs only the pure-Python service mesh
+    (HTTP, single process). Configs requesting a native-only capability must
+    fail fast pointing at the native ``aiperf`` binary, never silently degrade.
+    """
+
+    @patch("aiperf.cli_runner._preflight_fd_limit")
+    @patch("aiperf.cli_runner._preflight_artifact_dir")
+    @patch("aiperf.cli_runner._run_single_benchmark")
+    def test_grpc_transport_rejected(
+        self, mock_single: Mock, _mock_artifact: Mock, _mock_fd: Mock
+    ):
+        from aiperf.cli_runner import run_benchmark
+        from aiperf.config.loader.errors import ConfigurationError
+
+        # A valid gRPC config (grpc:// URLs pass config validation); the guard
+        # rejects it because the Python mesh has no gRPC transport at all.
+        plan = _make_plan(
+            config=_make_config(
+                transport={"type": "grpc"},
+                endpoint={
+                    "urls": ["grpc://localhost:8001"],
+                    "wait_for_model_timeout": 0,
+                },
+            )
+        )
+
+        with pytest.raises(ConfigurationError, match="transport.type='grpc'"):
+            run_benchmark(plan)
+        # Rejected before any dispatch or preflight side effects.
+        mock_single.assert_not_called()
+
+    @pytest.mark.parametrize("transport_type", ["dynosim_offline", "dynosim_online"])
+    @patch("aiperf.cli_runner._preflight_fd_limit")
+    @patch("aiperf.cli_runner._preflight_artifact_dir")
+    @patch("aiperf.cli_runner._run_single_benchmark")
+    def test_dynosim_transport_rejected(
+        self,
+        mock_single: Mock,
+        _mock_artifact: Mock,
+        _mock_fd: Mock,
+        transport_type: str,
+    ):
+        from aiperf.cli_runner import run_benchmark
+        from aiperf.config.loader.errors import ConfigurationError
+
+        plan = _make_plan(config=_make_config(transport={"type": transport_type}))
+
+        with pytest.raises(ConfigurationError, match="not supported by the Python"):
+            run_benchmark(plan)
+        mock_single.assert_not_called()
+
+    @patch("aiperf.cli_runner._preflight_fd_limit")
+    @patch("aiperf.cli_runner._preflight_artifact_dir")
+    @patch("aiperf.cli_runner._run_single_benchmark")
+    def test_multi_cell_rejected(
+        self, mock_single: Mock, _mock_artifact: Mock, _mock_fd: Mock
+    ):
+        from aiperf.cli_runner import run_benchmark
+        from aiperf.config.loader.errors import ConfigurationError
+
+        plan = _make_plan(
+            config=_make_config(runtime={"ui": UIType.SIMPLE, "cells": 4})
+        )
+
+        with pytest.raises(ConfigurationError, match="runtime.cells=4"):
+            run_benchmark(plan)
+        mock_single.assert_not_called()
+
+    @patch("aiperf.cli_runner._preflight_fd_limit")
+    @patch("aiperf.cli_runner._preflight_artifact_dir")
+    @patch("aiperf.cli_runner._run_single_benchmark")
+    def test_explicit_workload_rejected(
+        self, mock_single: Mock, _mock_artifact: Mock, _mock_fd: Mock
+    ):
+        from aiperf.cli_runner import run_benchmark
+        from aiperf.config.loader.errors import ConfigurationError
+
+        plan = _make_plan(config=_make_config(workload={"type": "scheduled"}))
+
+        with pytest.raises(ConfigurationError, match="explicit `workload`"):
+            run_benchmark(plan)
+        mock_single.assert_not_called()
+
+    @patch("aiperf.cli_runner._preflight_fd_limit")
+    @patch("aiperf.cli_runner._preflight_artifact_dir")
+    @patch("aiperf.cli_runner._run_single_benchmark")
+    def test_sketch_metrics_rejected(
+        self, mock_single: Mock, _mock_artifact: Mock, _mock_fd: Mock
+    ):
+        from aiperf.cli_runner import run_benchmark
+        from aiperf.common.environment import Environment
+        from aiperf.config.loader.errors import ConfigurationError
+
+        plan = _make_plan()
+        original = Environment.METRICS.SKETCH
+        Environment.METRICS.SKETCH = True
+        try:
+            with pytest.raises(ConfigurationError, match="--sketch-metrics"):
+                run_benchmark(plan)
+        finally:
+            Environment.METRICS.SKETCH = original
+        mock_single.assert_not_called()
+
+    @patch("aiperf.cli_runner._preflight_fd_limit")
+    @patch("aiperf.cli_runner._preflight_artifact_dir")
+    @patch("aiperf.cli_runner._run_single_benchmark")
+    def test_default_http_config_allowed(
+        self, mock_single: Mock, _mock_artifact: Mock, _mock_fd: Mock
+    ):
+        from aiperf.cli_runner import run_benchmark
+
+        # The default (HTTP, single cell, no explicit workload) passes the guard.
+        run_benchmark(_make_plan())
+
+        mock_single.assert_called_once()
+
+
+class TestLocalPathUsesMesh:
+    """The local execution path runs the pure-Python mesh, not the Rust bridge."""
+
+    def test_single_run_executes_on_service_mesh(self, tmp_path: Path):
+        """``_execute_native_run`` boots the SystemController mesh in-process."""
+        from aiperf.cli_runner import _single_run
+
+        run = _make_run(_make_config(), artifact_dir=tmp_path)
+
+        with patch(
+            "aiperf.common.bootstrap.bootstrap_and_run_service"
+        ) as mock_bootstrap:
+            result = _single_run._execute_native_run(run)
+
+        from aiperf.plugin.enums import ServiceType
+
+        mock_bootstrap.assert_called_once()
+        assert mock_bootstrap.call_args.args[0] == ServiceType.SYSTEM_CONTROLLER
+        assert mock_bootstrap.call_args.kwargs["run"] is run
+        assert result.success is True
+
+    def test_multi_run_executor_is_local_subprocess(self, tmp_path: Path):
+        """The multi-run path wires the mesh subprocess executor, not NativeExecutor."""
+        from aiperf.orchestrator.local_executor import LocalSubprocessExecutor
+
+        captured = {}
+
+        class _Recorder:
+            def __init__(self, **kwargs):
+                pass
+
+            async def execute(self, plan, executor, *, search_planner=None):
+                captured["executor"] = executor
+                return []
+
+        with (
+            patch(
+                "aiperf.orchestrator.orchestrator.MultiRunOrchestrator", _Recorder
+            ),
+            patch("aiperf.cli_runner._multi_run._estimate_and_log_duration") as est,
+        ):
+            est.return_value = tmp_path
+            from aiperf.cli_runner._multi_run import _execute_multi_benchmark
+            from aiperf.common.aiperf_logger import AIPerfLogger
+
+            _execute_multi_benchmark(
+                _make_plan(trials=2), tmp_path, AIPerfLogger(__name__)
+            )
+
+        assert isinstance(captured["executor"], LocalSubprocessExecutor)

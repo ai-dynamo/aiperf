@@ -33,6 +33,55 @@ __all__ = [
     "run_benchmark",
 ]
 
+# Human-facing pointer appended to every native-only rejection message.
+_USE_NATIVE_HINT = (
+    "This configuration is only supported by the native `aiperf` binary. "
+    "Run `aiperf profile ...` directly instead of `python -m aiperf.cli profile ...`."
+)
+
+
+def _reject_native_only_configs(plan: BenchmarkPlan) -> None:
+    """Fail fast if the plan needs a capability the Python service mesh lacks.
+
+    The Python frontend runs only the pure-Python service mesh (HTTP transport,
+    single process). Capabilities that exist solely on the native ``aiperf``
+    binary -- non-HTTP transports (gRPC / dynosim), multi-cell partitioning,
+    explicit native workload selection, and bounded-memory metric sketches --
+    are rejected here with a message pointing at the native binary, rather than
+    silently degrading (e.g. running a ``grpc`` config as HTTP).
+
+    This guard lives on the local ``run_benchmark`` entry, NOT in shared
+    ``BenchmarkConfig`` validation, so the Kubernetes cellular role (which
+    resolves the same config and drives the native binary) is unaffected.
+    """
+    from aiperf.common.environment import Environment
+    from aiperf.config.loader.errors import ConfigurationError
+
+    for config in plan.configs:
+        transport_type = str(config.transport.type)
+        if transport_type != "http":
+            raise ConfigurationError(
+                f"transport.type={transport_type!r} is not supported by the Python "
+                f"engine (HTTP only). {_USE_NATIVE_HINT}"
+            )
+        cells = getattr(config.runtime, "cells", 1) or 1
+        if cells > 1:
+            raise ConfigurationError(
+                f"runtime.cells={cells} (cellular execution) is not supported by the "
+                f"Python engine. {_USE_NATIVE_HINT}"
+            )
+        if config.workload is not None:
+            raise ConfigurationError(
+                "an explicit `workload` selection is not supported by the Python "
+                f"engine. {_USE_NATIVE_HINT}"
+            )
+
+    if Environment.METRICS.SKETCH:
+        raise ConfigurationError(
+            "--sketch-metrics (bounded-memory metric retention) is not supported by "
+            f"the Python engine. {_USE_NATIVE_HINT}"
+        )
+
 
 def run_benchmark(plan: BenchmarkPlan) -> None:
     """Run benchmarks from a BenchmarkPlan.
@@ -48,6 +97,8 @@ def run_benchmark(plan: BenchmarkPlan) -> None:
             "--convergence-metric requires --num-profile-runs > 1. "
             "Set --num-profile-runs to at least 2 to enable adaptive convergence."
         )
+
+    _reject_native_only_configs(plan)
 
     _preflight_artifact_dir(plan)
     _preflight_accuracy_deps(plan)

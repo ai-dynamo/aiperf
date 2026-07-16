@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Single-benchmark execution through one fresh native runner process."""
+"""Single-benchmark execution through the pure-Python service mesh."""
 
 from __future__ import annotations
 
@@ -18,21 +18,14 @@ if TYPE_CHECKING:
 
 
 def _execute_native_run(run: BenchmarkRun) -> RunResult:
-    """Execute one resolved run through the canonical subprocess adapter.
+    """Execute one resolved run on the legacy pure-Python service mesh.
 
-    ``AIPERF_RUNTIME_ENGINE=python`` (``Environment.RUNTIME.ENGINE``) routes
-    execution through the pre-Rust pure-Python service mesh instead of the
-    default ``rust`` runner, so the old hot path can be A/B benchmarked against
-    the Rust core with an identical ``BenchmarkRun``.
+    The Python frontend (``python -m aiperf.cli profile``) never bridges to the
+    native ``aiperf`` binary: it runs entirely in-process on the service mesh
+    (SystemController -> Worker/TimingManager/RecordsManager). The native
+    execution engine is reached only by invoking the ``aiperf`` binary directly.
     """
-    from aiperf.common.environment import _RuntimeSettings
-
-    if _RuntimeSettings().ENGINE == "python":
-        return _execute_legacy_python_run(run)
-
-    from aiperf.orchestrator.native_execution import NativeExecutor
-
-    return NativeExecutor(base_dir=run.artifact_dir).execute_sync(run)
+    return _execute_legacy_python_run(run)
 
 
 def _execute_legacy_python_run(run: BenchmarkRun) -> RunResult:
