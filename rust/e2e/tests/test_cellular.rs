@@ -591,3 +591,65 @@ async fn test_cellular_barrier_free_matches_synchronized() {
         );
     }
 }
+
+/// Ultimate spec §4 (monotonic phaser control plane): `AIPERF_CELL_PHASER_START=1`
+/// routes the run-wide START through the distributed phaser (the controller binds a
+/// `PhaserServer` and advances generation 1 = `Started`; cells subscribe with
+/// `PhaserClient` and await generation 1) instead of the single-shot velo event. START
+/// timing does not affect the dataset-deterministic metrics, so a phaser-START run
+/// reproduces the event-START run's deterministic metrics exactly — proving the
+/// broadcast → phaser → phaser_velo control plane drives a real benchmark end-to-end.
+#[tokio::test]
+async fn test_cellular_phaser_start_matches_event_start() {
+    let args = |url: &str| {
+        format!(
+            "--model {DEFAULT_MODEL} --url {url} --endpoint-type chat \
+             --request-count 40 --concurrency 6 --cells 4 --random-seed 42 \
+             --synthetic-input-tokens-mean 220 --synthetic-input-tokens-stddev 40 \
+             --output-tokens-mean 8 --output-tokens-stddev 0 --ui simple"
+        )
+    };
+    let sketch = ("AIPERF_METRICS_SKETCH", "1");
+
+    // Default: the single-shot velo event drives START.
+    let h_event = AIPerfHarness::new().await;
+    let event = h_event.run_env(&args(&h_event.mock.url), &[sketch]);
+    assert!(event.success(), "event-START run failed: {}", event.stderr);
+
+    // §4: the monotonic phaser drives START.
+    let h_phaser = AIPerfHarness::new().await;
+    let phaser = h_phaser.run_env(
+        &args(&h_phaser.mock.url),
+        &[sketch, ("AIPERF_CELL_PHASER_START", "1")],
+    );
+    assert!(
+        phaser.success(),
+        "phaser-START run failed: {}",
+        phaser.stderr
+    );
+
+    for (label, run) in [("event", &event), ("phaser", &phaser)] {
+        assert!(
+            run.artifacts
+                .find_file("**/cellular-heartbeat.json")
+                .is_some(),
+            "{label} run must go through the controller (cellular-heartbeat.json sidecar)"
+        );
+    }
+    assert_eq!(
+        event.artifacts.request_count() as u32,
+        phaser.artifacts.request_count() as u32,
+        "phaser-START must dispatch the same request count as event-START"
+    );
+    let event_json = event.artifacts.json();
+    let phaser_json = phaser.artifacts.json();
+    for metric in DETERMINISTIC_METRICS {
+        let a = &event_json[metric];
+        let b = &phaser_json[metric];
+        assert!(!a.is_null(), "event report missing metric {metric}");
+        assert_eq!(
+            a, b,
+            "§4 phaser-START {metric} diverged from event-START: event={a}  phaser={b}"
+        );
+    }
+}

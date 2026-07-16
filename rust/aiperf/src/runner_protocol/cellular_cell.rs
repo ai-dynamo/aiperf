@@ -422,19 +422,43 @@ pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
     let controller = connect_controller(&velo, &coordinate)
         .await
         .map_err(|error| anyhow::anyhow!("cell {cell_id} connect controller: {error}"))?;
+    // Ultimate spec §4: opt-in phaser-driven START. Capture the velo + controller peer
+    // before the client consumes them, so the cell can subscribe to the phaser control
+    // plane over the same fetch instance and await generation 1 instead of the event.
+    let phaser_start = matches!(
+        std::env::var("AIPERF_CELL_PHASER_START")
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "on" | "yes"
+    );
+    let phaser_handles = phaser_start.then(|| (velo.clone(), controller.clone()));
     let client = VeloCellClient::connect(velo, controller)
         .map_err(|error| anyhow::anyhow!("cell {cell_id} connect: {error}"))?;
     let reply = client
         .register(cell_id)
         .await
         .map_err(|error| anyhow::anyhow!("cell {cell_id} register: {error}"))?;
-    // Block until the controller triggers the synchronized START — every cell
-    // resumes together once all cells have registered. A poisoned event (the
-    // controller aborted before starting) surfaces here as an error.
-    client
-        .await_start(reply.start_event)
+    // Block until START. Either the phaser reaches generation 1 (§4 control plane) or the
+    // single-shot event triggers — every cell resumes together once the controller has
+    // seen the registrations (or immediately, barrier-free). A poisoned event / finalized
+    // phaser (the controller aborted before starting) surfaces here as an error.
+    if let Some((phaser_velo, phaser_controller)) = phaser_handles {
+        let mut sub = crate::cellular::transport::phaser_velo::PhaserClient::subscribe(
+            phaser_velo,
+            &phaser_controller,
+        )
         .await
-        .map_err(|error| anyhow::anyhow!("cell {cell_id} await start: {error}"))?;
+        .map_err(|error| anyhow::anyhow!("cell {cell_id} phaser subscribe: {error}"))?;
+        sub.await_started()
+            .await
+            .map_err(|error| anyhow::anyhow!("cell {cell_id} phaser await start: {error}"))?;
+    } else {
+        client
+            .await_start(reply.start_event)
+            .await
+            .map_err(|error| anyhow::anyhow!("cell {cell_id} await start: {error}"))?;
+    }
     Ok(reply.envelope)
 }
 

@@ -43,6 +43,15 @@ use crate::runner_protocol::cell_launcher::{CellLaunchContext, select_launcher};
 /// completed-event cache), so each starts on its own registration.
 pub const CELL_BARRIER_FREE_ENV: &str = "AIPERF_CELL_BARRIER_FREE";
 
+/// Env toggle (ultimate spec §4) routing the run-wide START through the monotonic
+/// phaser control plane instead of the single-shot velo event: the controller binds a
+/// `PhaserServer` and `advance`s `Started`; cells subscribe with `PhaserClient` and
+/// await generation 1. Default off (the event-based START). The phaser generalizes
+/// START to every phase transition + dataset-availability signal; this opt-in proves the
+/// distributed phaser drives a real run's START end-to-end without disturbing the
+/// tested event path.
+pub const CELL_PHASER_START_ENV: &str = "AIPERF_CELL_PHASER_START";
+
 /// The outcome of a cellular run: the merged report path plus a live view of the
 /// last heartbeat each cell reported (for diagnostics/logging).
 pub struct CellularRunOutcome {
@@ -223,6 +232,14 @@ pub fn run_cellular(
             .as_str(),
         "1" | "true" | "on" | "yes"
     );
+    // Ultimate spec §4: opt-in phaser-driven START (default off = the event START).
+    let phaser_start = matches!(
+        std::env::var(CELL_PHASER_START_ENV)
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "on" | "yes"
+    );
     // The run's artifact spec, parsed once (the same `AuthoredRunSpecV2` shape the
     // cell's execute path reads), for the Stage E shipping decision and the Stage D
     // concat below.
@@ -388,6 +405,23 @@ pub fn run_cellular(
             .new_event()
             .context("creating cellular start event")?;
         let start_handle = start_event.handle();
+
+        // Ultimate spec §4: when phaser-START is selected, bind the phaser control plane
+        // on the controller velo BEFORE it moves into the transport, so cells can
+        // subscribe. `advance(Started)` below drives the run-wide START through the
+        // monotonic phaser. The server (held for the run) keeps its handlers alive via its
+        // own velo clone independent of the transport.
+        let phaser = phaser_start.then(crate::cellular::phaser::Phaser::new);
+        let _phaser_server = match &phaser {
+            Some(phaser) => Some(
+                crate::cellular::transport::phaser_velo::PhaserServer::bind(
+                    velo.clone(),
+                    phaser.clone(),
+                )
+                .context("binding phaser control plane")?,
+            ),
+            None => None,
+        };
 
         // Each phase's global dispatch base (turns dispatched by prior phases): a
         // cell's sampler restarts each phase, so the cell adds this to its phase-local
@@ -562,6 +596,12 @@ pub fn run_cellular(
         start_event
             .trigger()
             .context("triggering cellular benchmark start")?;
+        // Ultimate spec §4: drive the run-wide START through the monotonic phaser
+        // (generation 1 = Started). Cells that subscribed with `PhaserClient` wake here;
+        // a cell registering after this sees the completed generation via replay.
+        if let Some(phaser) = &phaser {
+            phaser.advance(crate::cellular::phaser::PhaseTransition::Started);
+        }
 
         // Collect exactly one partition per cell (plus the latest heartbeat), with a
         // generous deadline so a cell that never ships (a k8s pod with no child to
