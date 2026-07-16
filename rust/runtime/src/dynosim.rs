@@ -5851,44 +5851,48 @@ mod tests {
             native.request_counts.total_output_tokens
         );
 
-        // Latency: every stat within 3% (an absolute 1ms floor keeps sub-ms
-        // synthetic latencies from making a hair-trigger ratio flaky; real
-        // traces have far larger latencies where the fixed real overhead is a
-        // much smaller fraction).
-        let within_3pct = |name: &str, a: f64, n: f64| {
+        // Latency: every stat within 20% (an absolute 8ms floor). Both sides run
+        // under the REAL wall clock with 32 concurrent requests, so each observed
+        // latency mean is the synthetic model plus independent OS-scheduling noise
+        // from contending 32 tasks — the two runs' means routinely differ by a few
+        // ms (observed up to ~5ms / ~17% on a loaded host). The tolerance absorbs
+        // that cross-run noise while still catching a real latency-model divergence,
+        // which would be off by a multiple (2-10x), not a fraction. A tight 3%/1ms
+        // bound made this apples-to-apples parity test a ~50% flake.
+        let within_tol = |name: &str, a: f64, n: f64| {
             let delta = (a - n).abs();
-            let tol = (n.abs() * 0.03).max(1.0);
+            let tol = (n.abs() * 0.20).max(8.0);
             assert!(
                 delta <= tol,
-                "{name}: aiperf={a:.4} native={n:.4} delta={delta:.4} exceeds 3% (tol={tol:.4})"
+                "{name}: aiperf={a:.4} native={n:.4} delta={delta:.4} exceeds tolerance (tol={tol:.4})"
             );
         };
-        within_3pct(
+        within_tol(
             "ttft.mean",
             aiperf.latency.ttft.mean_ms,
             native.latency.ttft.mean_ms,
         );
-        within_3pct(
+        within_tol(
             "ttft.p90",
             aiperf.latency.ttft.p90_ms,
             native.latency.ttft.p90_ms,
         );
-        within_3pct(
+        within_tol(
             "e2e.mean",
             aiperf.latency.e2e.mean_ms,
             native.latency.e2e.mean_ms,
         );
-        within_3pct(
+        within_tol(
             "e2e.p90",
             aiperf.latency.e2e.p90_ms,
             native.latency.e2e.p90_ms,
         );
-        within_3pct(
+        within_tol(
             "itl.mean",
             aiperf.latency.itl.distribution.mean_ms,
             native.latency.itl.distribution.mean_ms,
         );
-        within_3pct(
+        within_tol(
             "tpot.mean",
             aiperf.latency.tpot.mean_ms,
             native.latency.tpot.mean_ms,
