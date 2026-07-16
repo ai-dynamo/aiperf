@@ -506,11 +506,29 @@ pub async fn verify_dataset_fanout() -> Result<()> {
             .await
             .map_err(|error| anyhow::anyhow!("dataset fan-out build index: {error}"))?;
 
-    // Run the §4.5 dispatch state machine over the owned slice.
+    // Run the §4.5 dispatch state machine over the owned slice, ACTUALLY dispatching
+    // each owned request the controller broadcast: on `Issue`, POST the endpoint-ready
+    // body to its URL (the fan-out is the real dispatch source, not a marker). Count
+    // 2xx as a completed dispatch. Exactly-once + counted misses come from the tracker.
     let mut tracker = DispatchTracker::new();
+    let mut ok_2xx: u64 = 0;
     for id in index.owned_ids() {
         match tracker.on_issue(id, &index) {
-            DispatchDecision::Issue(_) => tracker.on_complete(id),
+            DispatchDecision::Issue(payload) => {
+                let wire: crate::cellular::dispatch_state::WireRequest =
+                    rmp_serde::from_slice(&payload)
+                        .map_err(|error| anyhow::anyhow!("decode WireRequest {id}: {error}"))?;
+                match http_post_json(&wire.url, wire.body).await {
+                    Ok(status) if (200..300).contains(&status) => ok_2xx += 1,
+                    Ok(status) => {
+                        tracing::warn!(request_id = id, status, "controlled-issue non-2xx")
+                    }
+                    Err(error) => {
+                        tracing::warn!(request_id = id, error = %error, "controlled-issue send failed")
+                    }
+                }
+                tracker.on_complete(id);
+            }
             other => tracing::warn!(request_id = id, ?other, "unexpected dispatch decision"),
         }
     }
@@ -520,8 +538,9 @@ pub async fn verify_dataset_fanout() -> Result<()> {
         owned = index.len(),
         issued = tracker.issued(),
         completed = tracker.completed(),
+        dispatched_2xx = ok_2xx,
         misses = tracker.distribution_misses(),
-        "dataset fan-out + dispatch state machine verified over velo"
+        "ControlledIssuer: dispatched this cell's owned shard from the fan-out index"
     );
     anyhow::ensure!(
         tracker.distribution_misses() == 0,
@@ -529,6 +548,45 @@ pub async fn verify_dataset_fanout() -> Result<()> {
         tracker.distribution_misses()
     );
     Ok(())
+}
+
+/// Minimal HTTP/1.1 POST of `body` (as `application/json`) to `url`, returning the
+/// response status code. Off the per-request measurement hot path (this is the
+/// controlled-issue dispatch of a cell's owned shard), so a raw hyper client is
+/// sufficient and no `Clock` is threaded.
+#[cfg(feature = "velo")]
+async fn http_post_json(url: &str, body: Vec<u8>) -> anyhow::Result<u16> {
+    use anyhow::Context;
+    let rest = url
+        .strip_prefix("http://")
+        .context("controlled-issue URL must be http://")?;
+    let (authority, path) = match rest.find('/') {
+        Some(idx) => (&rest[..idx], &rest[idx..]),
+        None => (rest, "/"),
+    };
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) => (host, port.parse::<u16>().unwrap_or(80)),
+        None => (authority, 80),
+    };
+    let stream = tokio::net::TcpStream::connect((host, port))
+        .await
+        .with_context(|| format!("connect {host}:{port}"))?;
+    let io = hyper_util::rt::TokioIo::new(stream);
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(io)
+        .await
+        .context("http1 handshake")?;
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+    let request = hyper::Request::builder()
+        .method(hyper::Method::POST)
+        .uri(path)
+        .header(hyper::header::HOST, authority)
+        .header(hyper::header::CONTENT_TYPE, "application/json")
+        .body(http_body_util::Full::new(bytes::Bytes::from(body)))
+        .context("build request")?;
+    let response = sender.send_request(request).await.context("send request")?;
+    Ok(response.status().as_u16())
 }
 
 /// Substitute a cell's round-robin aggregator id into the operator's ship-DNS

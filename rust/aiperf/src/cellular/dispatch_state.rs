@@ -26,7 +26,21 @@
 
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 use super::dataset_session::DatasetIndex;
+
+/// An endpoint-ready request the `ControlledIssuer` dispatches from the fan-out index:
+/// the target URL and the exact body bytes to POST. The controller builds these once
+/// (from the compiled dataset) and broadcasts them (§3); a cell POSTs each owned one to
+/// the endpoint (§4.5) — so the fan-out is the actual dispatch source, not a marker.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireRequest {
+    /// The endpoint URL to POST to (e.g. `http://host:port/v1/chat/completions`).
+    pub url: String,
+    /// The exact request body bytes (e.g. an OpenAI chat-completions JSON).
+    pub body: Vec<u8>,
+}
 
 /// The dispatch state of one `request_id`. `Unknown` is the implicit default (absent
 /// from the tracker's map); the tracker only records the terminal transitions.

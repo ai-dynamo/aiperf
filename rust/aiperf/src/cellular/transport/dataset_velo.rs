@@ -30,6 +30,28 @@ use crate::cellular::dataset_session::{DatasetChunk, DatasetIndex, DatasetPublis
 /// The opaque dataset payload on the wire (the cell decodes its own request shape).
 pub type WirePayload = Vec<u8>;
 
+/// zstd level for the fan-out wire (matches the artifact-shipping plane's `ZSTD_LEVEL`).
+const ZSTD_LEVEL: i32 = 3;
+
+/// Serialize `value` as MessagePack then zstd-compress it — the fan-out wire form. The
+/// dataset broadcast replays whole chunks to every cell, so compressing the redundant
+/// request bodies (same model/structure, only content differs) is a real win over the
+/// uncompressed rmp the phaser control plane can use (its events are tiny).
+fn zpack<T: Serialize>(value: &T) -> anyhow::Result<Vec<u8>> {
+    let packed = rmp_serde::to_vec(value)
+        .map_err(|error| anyhow::anyhow!("encode dataset wire value: {error}"))?;
+    zstd::encode_all(packed.as_slice(), ZSTD_LEVEL)
+        .map_err(|error| anyhow::anyhow!("zstd-compress dataset wire value: {error}"))
+}
+
+/// Inverse of [`zpack`]: zstd-decompress then MessagePack-decode.
+fn zunpack<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> anyhow::Result<T> {
+    let packed = zstd::decode_all(bytes)
+        .map_err(|error| anyhow::anyhow!("zstd-decompress dataset wire value: {error}"))?;
+    rmp_serde::from_slice(&packed)
+        .map_err(|error| anyhow::anyhow!("decode dataset wire value: {error}"))
+}
+
 /// Handler: a cell subscribes to the dataset broadcast and gets the replay snapshot.
 pub const HANDLER_DATASET_SUBSCRIBE: &str = "aiperf.dataset.subscribe";
 /// Handler: the controller pushes one live dataset chunk to a subscribed cell.
@@ -81,7 +103,7 @@ impl DatasetServer {
                     tokio::spawn(async move {
                         while let Some(event) = live.recv().await {
                             let terminal = matches!(event, BroadcastEvent::Finalized);
-                            let Ok(body) = rmp_serde::to_vec(&event) else {
+                            let Ok(body) = zpack(&event) else {
                                 break;
                             };
                             let sent = match pump_velo.am_send(HANDLER_DATASET_CHUNK) {
@@ -101,9 +123,7 @@ impl DatasetServer {
                     });
 
                     let reply = DatasetSubscribeReply { replay };
-                    let bytes = rmp_serde::to_vec(&reply).map_err(|error| {
-                        anyhow::anyhow!("encode DatasetSubscribeReply: {error}")
-                    })?;
+                    let bytes = zpack(&reply)?;
                     Ok(Some(Bytes::from(bytes)))
                 }
             })
@@ -131,9 +151,7 @@ impl DatasetClient {
             Handler::am_handler_async(HANDLER_DATASET_CHUNK, move |ctx: Context| {
                 let tx = tx.clone();
                 async move {
-                    let event: BroadcastEvent<DatasetChunk<WirePayload>> =
-                        rmp_serde::from_slice(&ctx.payload)
-                            .map_err(|error| anyhow::anyhow!("decode pushed chunk: {error}"))?;
+                    let event: BroadcastEvent<DatasetChunk<WirePayload>> = zunpack(&ctx.payload)?;
                     let _ = tx.send(event);
                     Ok(())
                 }
@@ -159,8 +177,7 @@ impl DatasetClient {
             .send()
             .await
             .map_err(|error| anyhow::anyhow!("dataset subscribe send: {error}"))?;
-        let reply: DatasetSubscribeReply = rmp_serde::from_slice(&reply_bytes)
-            .map_err(|error| anyhow::anyhow!("decode DatasetSubscribeReply: {error}"))?;
+        let reply: DatasetSubscribeReply = zunpack(&reply_bytes)?;
 
         let sub = Subscription {
             replay: reply.replay,

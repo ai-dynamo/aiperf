@@ -457,17 +457,41 @@ pub fn run_cellular(
             )
             .context("binding dataset fan-out plane")?;
             let total = profiling_request_budget(envelope).unwrap_or(0);
+            // Build each request's endpoint-ready body ONCE on the controller (§3: the
+            // dataset is generated once), so a cell POSTs exactly what the controller
+            // published — the fan-out is the real dispatch source. Chat-completions body
+            // against the run's endpoint URL + model.
+            let url = envelope
+                .pointer("/run/cfg/endpoint/urls")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|urls| urls.first())
+                .and_then(serde_json::Value::as_str)
+                .context("dataset fan-out: run cfg has no endpoint url")?;
+            let chat_url = format!("{}/v1/chat/completions", url.trim_end_matches('/'));
+            let model = envelope
+                .pointer("/run/cfg/models/items/0/name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("model");
             const CHUNK: u64 = 16;
             let mut start = 0;
             while start < total {
                 let end = (start + CHUNK).min(total);
                 let requests = (start..end)
-                    .map(|request_id| crate::cellular::dataset_session::DatasetRequest {
-                        request_id,
-                        // The payload the cell would dispatch; a compact marker here (the
-                        // fan-out proves delivery + owned-filter + dispatch, not the
-                        // request body, which the ControlledIssuer follow-on materializes).
-                        payload: request_id.to_le_bytes().to_vec(),
+                    .map(|request_id| {
+                        let body = serde_json::json!({
+                            "model": model,
+                            "messages": [{"role": "user", "content": format!("benchmark request {request_id}")}],
+                            "max_tokens": 8,
+                            "stream": false,
+                        });
+                        let wire = crate::cellular::dispatch_state::WireRequest {
+                            url: chat_url.clone(),
+                            body: serde_json::to_vec(&body).unwrap_or_default(),
+                        };
+                        crate::cellular::dataset_session::DatasetRequest {
+                            request_id,
+                            payload: rmp_serde::to_vec(&wire).unwrap_or_default(),
+                        }
                     })
                     .collect();
                 let chunk_id = publisher.add(requests);
@@ -482,7 +506,8 @@ pub fn run_cellular(
             tracing::info!(
                 total,
                 chunks = publisher.chunk_count(),
-                "dataset fan-out: broadcast the dataset request-ids to the cells"
+                endpoint = %chat_url,
+                "dataset fan-out: broadcast the endpoint-ready request bodies to the cells"
             );
             Some(server)
         } else {
