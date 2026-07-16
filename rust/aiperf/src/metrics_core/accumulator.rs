@@ -468,6 +468,15 @@ impl MetricsAccumulator {
         self.store.record_count()
     }
 
+    /// Total records ever ingested (monotonic; survives sketch mode's fold-and-clear,
+    /// is summed on [`ColumnStore::append_store`], and travels with the shipped store).
+    /// Use this — not [`Self::record_count`] — for a cellular cell's ship counters and
+    /// the merged sketch outcome, since a sketch store retains no rows and reports
+    /// `record_count() == 0`.
+    pub fn ingested_count(&self) -> u64 {
+        self.store.ingested_count()
+    }
+
     /// Prepares absolute request slots without marking any slot occupied.
     pub fn prepare_request_slots(&mut self, rows: usize) {
         self.store.prepare_request_slots(rows);

@@ -51,6 +51,15 @@ pub struct CellLaunchContext {
     /// artifact files there. `None` when HTTP artifact shipping is off or on the
     /// same-host path (Stage D concatenates local writes instead of shipping).
     pub artifact_authority: Option<String>,
+    /// Tier-T2 hierarchical merge: the number of aggregators, or `None` for the flat
+    /// star topology. When `Some(M)`, each cell is injected an
+    /// [`AIPERF_CELL_SHIP_ADDR`](crate::runner_protocol::cellular_cell::CELL_SHIP_ADDR_ENV)
+    /// pointing at its round-robin aggregator (`cell_id % M`) instead of shipping to
+    /// the controller.
+    pub aggregator_count: Option<u32>,
+    /// Base loopback port aggregators bind (`base + agg_id`); only read when
+    /// `aggregator_count` is `Some`.
+    pub aggregator_base_port: u16,
 }
 
 /// A started cell the controller watches for hard failure. For a local subprocess
@@ -120,6 +129,20 @@ impl LocalLauncher {
         }
         if let Some(authority) = &ctx.artifact_authority {
             command.env(CELL_ARTIFACT_ADDR_ENV, authority);
+        }
+        // Tier-T2: ship this cell's terminal store to its round-robin aggregator rather
+        // than the controller. Only the ship target changes — the cell still fetches its
+        // envelope and awaits START from the controller — so the partition is unchanged.
+        if let Some(agg_count) = ctx.aggregator_count {
+            // Round-robin: cell k ships to aggregator `k % M` at `base + (k % M)`.
+            // Inlined (not the velo-gated `cellular_aggregator::ship_coordinate`) so
+            // this file still compiles without the `velo` feature, where
+            // `aggregator_count` is always `None` and this branch never runs.
+            let port = ctx.aggregator_base_port + (cell_id % agg_count) as u16;
+            command.env(
+                crate::runner_protocol::cellular_cell::CELL_SHIP_ADDR_ENV,
+                format!("tcp://127.0.0.1:{port}"),
+            );
         }
         command
     }
@@ -211,6 +234,8 @@ mod tests {
             controller_coordinate: "file:/tmp/controller-peer.rmp".to_owned(),
             phase_ordinal_bases: bases,
             artifact_authority: Some("controller.local:9600".to_owned()),
+            aggregator_count: None,
+            aggregator_base_port: 9700,
         }
     }
 

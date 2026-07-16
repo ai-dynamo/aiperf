@@ -38,6 +38,16 @@ use anyhow::Result;
 /// The cell id and count live in [`crate::cellular::partition`]'s env vars.
 pub const CELL_CONTROLLER_ADDR_ENV: &str = "AIPERF_CELL_CONTROLLER_ADDR";
 
+/// Env var (tier-T2 hierarchical merge) carrying the velo coordinate a cell ships its
+/// terminal partition + heartbeat to, when it is NOT the controller. In the flat
+/// (star) topology this is unset and a cell ships to the controller
+/// ([`CELL_CONTROLLER_ADDR_ENV`]); in the tree topology the controller sets it to the
+/// cell's assigned aggregator (`tcp://HOST:PORT`), so the aggregator merges its
+/// subtree's stores and ships one merged partition up. Only the ship target changes —
+/// the cell still fetches its envelope and awaits START from the controller — so a
+/// cell's partition/issuer/sampler behaviour is byte-identical to the flat topology.
+pub const CELL_SHIP_ADDR_ENV: &str = "AIPERF_CELL_SHIP_ADDR";
+
 /// Env var carrying the per-phase global ordinal bases as JSON (`{name: base}`), so a
 /// cell's issuer recovers each turn's single-cell absolute slot from its phase-local
 /// slot (the cell's sampler restarts each phase; see [`phase_ordinal_bases_from_env`]).
@@ -247,10 +257,16 @@ pub fn ship_http_artifacts_if_enabled(
 
 /// The controller-local absolute path of a `file`-type dataset with a `path`
 /// source (the only non-synthetic dataset a cross-host cell cannot reach), or
-/// `None` for synthetic, inline-`records` `file`, `public` (URL/HF each cell
-/// fetches independently), or graph datasets. Reads the canonical single-dataset
-/// list at `/run/cfg/datasets/0`, matching the controller's own detection so the
-/// serve allowlist and the cell request name can never disagree.
+/// `None` for synthetic, inline-`records` `file`, or `public` (URL/HF each cell
+/// fetches independently). This is FORMAT-BLIND: it keys only on `type == "file"`
+/// plus a non-empty `path`, so a single-file GRAPH trace (`dag_jsonl`, or a
+/// single-file `weka_trace`/`dynamo_trace`) ALSO returns its path and rides the same
+/// Stage G serve/download/rewrite plane. (A graph trace whose `path` is a
+/// directory/segmented-prefix cannot ride the single-file plane; the controller fails
+/// that run closed in [`crate::runner_protocol::cellular_controller`] — multi-file
+/// trace shipping is a follow-up.) Reads the canonical single-dataset list at
+/// `/run/cfg/datasets/0`, matching the controller's own detection so the serve
+/// allowlist and the cell request name can never disagree.
 pub fn cellular_file_dataset_path(envelope: &serde_json::Value) -> Option<std::path::PathBuf> {
     let dataset = envelope.pointer("/run/cfg/datasets/0")?;
     if dataset.get("type").and_then(serde_json::Value::as_str) != Some("file") {
@@ -297,7 +313,11 @@ pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<Vec<u8
     let mut envelope: serde_json::Value = serde_json::from_slice(&envelope_bytes)
         .context("parsing cell envelope for dataset download")?;
     let Some(source_path) = cellular_file_dataset_path(&envelope) else {
-        return Ok(envelope_bytes); // synthetic / records / public / graph — nothing to ship
+        // synthetic / inline-records / public — nothing to ship. A single-file graph
+        // trace (dag_jsonl / weka_trace / dynamo_trace) IS shipped (the predicate is
+        // format-blind); only a directory/segmented-prefix graph path is unshippable, and
+        // the controller rejects that run before launching cells.
+        return Ok(envelope_bytes);
     };
     let Some(authority) = cell_artifact_authority() else {
         // Same-host cell, or shared-FS with shipping disabled: the controller-local
@@ -431,12 +451,31 @@ impl CellRecordsShipper {
     /// Builds a shipper when the controller coordinate and cell partition env vars
     /// are set, else `None` (the ordinary single-process path).
     pub fn from_env() -> Option<Self> {
-        let coordinate = std::env::var(CELL_CONTROLLER_ADDR_ENV).ok()?;
+        // Ship target: the assigned aggregator (tier-T2 tree topology) when
+        // `AIPERF_CELL_SHIP_ADDR` is set, else the controller directly (flat star).
+        // Requires a controller address to exist (i.e. this is a real cell); the ship
+        // address alone never activates cellular shipping on a single-process run.
+        std::env::var(CELL_CONTROLLER_ADDR_ENV).ok()?;
+        let coordinate = std::env::var(CELL_SHIP_ADDR_ENV)
+            .ok()
+            .filter(|value| !value.is_empty())
+            .or_else(|| std::env::var(CELL_CONTROLLER_ADDR_ENV).ok())?;
         let cell_id = ModuloCellPartition::from_env()?.cell_id();
         Some(Self {
             cell_id,
             coordinate,
         })
+    }
+
+    /// Builds a shipper that sends to an explicit velo `coordinate` under `cell_id`.
+    /// Used by a tier-T2 aggregator to ship its one merged store up to the controller
+    /// (the `cell_id` is the aggregator's id, which orders the controller's
+    /// `merge_store_partitions` deterministically).
+    pub fn to_coordinate(cell_id: u32, coordinate: String) -> Self {
+        Self {
+            cell_id,
+            coordinate,
+        }
     }
 
     /// The cell's identifier.
@@ -584,6 +623,22 @@ mod tests {
             cellular_file_dataset_path(&file_path),
             Some(std::path::PathBuf::from("/data/prompts.jsonl"))
         );
+
+        // A single-file GRAPH trace (`dag_jsonl`/`weka_trace`/`dynamo_trace`) is likewise
+        // shipped: the predicate is format-blind (it keys only on `type == "file"` + a
+        // non-empty `path`), so a graph `{type:file, format:dag_jsonl, path}` also returns
+        // the path and rides the SAME Stage G serve/download/rewrite plane. The controller
+        // separately fails closed if that graph path is a directory/segmented-prefix.
+        for graph_format in ["dag_jsonl", "weka_trace", "dynamo_trace"] {
+            let graph = serde_json::json!({"run": {"cfg": {"datasets": [
+                {"type": "file", "format": graph_format, "path": "/traces/graph.jsonl"}
+            ]}}});
+            assert_eq!(
+                cellular_file_dataset_path(&graph),
+                Some(std::path::PathBuf::from("/traces/graph.jsonl")),
+                "single-file graph trace {graph_format} must ship over Stage G"
+            );
+        }
 
         // Everything else yields None (no ship): synthetic regenerates from the seed;
         // an inline-`records` file already rides in the envelope; `public` URL/HF each
