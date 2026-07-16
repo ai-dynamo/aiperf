@@ -37,7 +37,7 @@ _NATIVE_REPORT_NAME = "native-v2.json"
 
 
 class RustSubprocessExecutor(RunExecutor):
-    """Execute each fully planned run through ``aiperf-runner`` over stdio."""
+    """Execute each fully planned run through ``aiperf --execute`` over stdio."""
 
     def __init__(
         self,
@@ -165,9 +165,9 @@ class RustSubprocessExecutor(RunExecutor):
 
 
 def _forward_runner_stderr_line(raw: bytes) -> None:
-    """Re-emit one native-runner stderr line through the aiperf logger, live.
+    """Re-emit one ``aiperf --execute`` child stderr line through the logger, live.
 
-    The runner's stdout is contractually one terminal JSON line, so its
+    The child's stdout is contractually one terminal JSON line, so its
     human-readable readiness/diagnostic trace (including the profiling banner)
     is written to stderr. Forwarding each line as it arrives (redacted) lets the
     trace land in ``logs/aiperf.log`` and on the console in real time, which is
@@ -177,7 +177,7 @@ def _forward_runner_stderr_line(raw: bytes) -> None:
     """
     text = redact_string(raw.decode(errors="replace")).strip()
     if text:
-        logger.info("aiperf-runner: %s", text)
+        logger.info("aiperf-exec: %s", text)
 
 
 def _clear_prior_report(artifact_dir: Path) -> None:
