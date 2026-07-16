@@ -379,6 +379,16 @@ pub(crate) enum NativeDatasetPlan {
     Graph(Box<NativeGraphDatasetPlan>),
 }
 
+impl NativeDatasetPlan {
+    /// Whether this run drives the graph (trace-replay) engine rather than the
+    /// scheduled/linear one. The two are separate execution models over the shared
+    /// `{transport, clock}` seam; this is the one predicate the shared driver glue
+    /// (`execute_native`, the scheduled/graph entry guards) dispatches on.
+    pub(crate) fn is_graph(&self) -> bool {
+        matches!(self, Self::Graph(_))
+    }
+}
+
 /// Process coordinates selected for one static-accuracy evaluator.
 ///
 /// This protocol-neutral value keeps protocol-v2 adapters from projecting
@@ -1248,7 +1258,7 @@ async fn prepare_and_execute_native(
         &dyn ReadinessTransportFactory,
     )>,
 ) -> Result<NativeReport> {
-    if matches!(request.dataset, NativeDatasetPlan::Graph(_)) {
+    if request.dataset.is_graph() {
         validate_graph_request(&request)?;
     }
     let mut accuracy = prepare_static_accuracy(&request).await?;
@@ -1307,7 +1317,7 @@ async fn execute_native(
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AIPerfRegistry,
 ) -> Result<NativeReport> {
-    if matches!(request.dataset, NativeDatasetPlan::Graph(_)) {
+    if request.dataset.is_graph() {
         ensure!(
             accuracy.is_none(),
             "graph execution received prepared static-accuracy state"
@@ -1341,7 +1351,7 @@ fn validate_graph_request(request: &NativeRunSpec) -> Result<()> {
         "authored Graph-IR runs currently require round_robin model selection; other policies need a graph model-selection trait implementation"
     );
     ensure!(
-        matches!(request.dataset, NativeDatasetPlan::Graph(_)),
+        request.dataset.is_graph(),
         "graph execution requires a direct graph input plan"
     );
     validate_graph_phases(&request.phases)
@@ -2443,7 +2453,7 @@ async fn execute_native_inner(
 ) -> Result<NativeReport> {
     let live_sink = sidecars.live_sink();
     let rng_root = RngRoot::new(request.random_seed);
-    if matches!(request.dataset, NativeDatasetPlan::Graph(_)) {
+    if request.dataset.is_graph() {
         bail!("scheduled execution received a direct graph dataset plan");
     }
     let dataset_rng_root = match &request.dataset {
