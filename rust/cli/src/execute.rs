@@ -9,9 +9,10 @@
 //! run is in flight) and parses the single terminal line.
 //!
 //! Ported from `src/aiperf/orchestrator/rust_executor.py::_parse_terminal` and
-//! `runner_installation._communicate_forwarding_signals`. Signal forwarding for
-//! graceful Ctrl+C cancellation is a later task; this module does capture-and-
-//! forward only.
+//! `runner_installation._communicate_forwarding_signals`. Graceful Ctrl+C
+//! cancellation is handled by [`crate::signals`]: `run_once` publishes the child
+//! PID so the forwarder delivers one SIGINT to the runner (which drains + writes
+//! a partial `was_cancelled=true` report) instead of an abrupt kill.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
@@ -61,13 +62,19 @@ pub struct Terminal {
 /// line, malformed JSON, wrong envelope fields). A run that fails *cleanly*
 /// returns `Ok(Terminal { success: false, .. })` so the caller can render the
 /// runner's own error.
-pub fn run_once(runner: &Path, request_json: &[u8]) -> anyhow::Result<Terminal> {
+pub fn run_once(
+    runner: &Path,
+    request_json: &[u8],
+    child_pid: &crate::signals::ChildPid,
+) -> anyhow::Result<Terminal> {
     let mut child = Command::new(runner)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| anyhow::anyhow!("failed to spawn runner {}: {e}", runner.display()))?;
+    // Publish the PID so the signal forwarder can deliver a graceful SIGINT.
+    child_pid.set(child.id());
 
     // Write the request on a dedicated thread and close stdin so the runner can
     // begin. Writing before we drain stdout is safe: the runner reads its whole
@@ -103,6 +110,7 @@ pub fn run_once(runner: &Path, request_json: &[u8]) -> anyhow::Result<Terminal> 
     let status = child
         .wait()
         .map_err(|e| anyhow::anyhow!("failed to wait for runner: {e}"))?;
+    child_pid.clear();
     let _ = writer.join();
     let _ = stderr_reader.join();
 
@@ -173,7 +181,7 @@ mod tests {
         let runner = fake_runner(
             r#"{"protocol_version":2,"event":"run_terminal","benchmark_id":"b1","success":true,"report_path":"/tmp/x/native-v2.json"}"#,
         );
-        let terminal = run_once(runner.as_ref(), b"{}").unwrap();
+        let terminal = run_once(runner.as_ref(), b"{}", &crate::signals::ChildPid::default()).unwrap();
         assert!(terminal.success);
         assert_eq!(
             terminal.report_path.as_deref(),
@@ -185,7 +193,7 @@ mod tests {
     fn rejects_multiple_stdout_lines() {
         // Two genuine stdout lines must violate the one-terminal-line contract.
         let runner = fake_runner_raw("printf 'first\\nsecond\\n'");
-        let err = run_once(runner.as_ref(), b"{}").unwrap_err();
+        let err = run_once(runner.as_ref(), b"{}", &crate::signals::ChildPid::default()).unwrap_err();
         assert!(err.to_string().contains("exactly one terminal JSON line"));
     }
 }

@@ -22,5 +22,6 @@ pub mod model;
 pub mod profile;
 pub mod render;
 pub mod runner_install;
+pub mod signals;
 pub mod sweep;
 pub mod yaml;

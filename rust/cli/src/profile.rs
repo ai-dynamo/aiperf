@@ -47,7 +47,8 @@ fn run_single(run: crate::model::BenchmarkRun) -> anyhow::Result<i32> {
     let payload = serde_json::to_vec(&request)
         .map_err(|e| anyhow::anyhow!("failed to serialize the runner request: {e}"))?;
     let runner = runner_install::resolve()?;
-    let terminal = execute::run_once(&runner, &payload)?;
+    let child_pid = crate::signals::install();
+    let terminal = execute::run_once(&runner, &payload, &child_pid)?;
     if terminal.success {
         if let Some(path) = &terminal.report_path {
             crate::render::print_console_summary(path);
@@ -84,6 +85,7 @@ fn run_sweep(flags: &ProfileFlags, expansion: &sweep::Expansion) -> anyhow::Resu
     )?;
 
     let runner = runner_install::resolve()?;
+    let child_pid = crate::signals::install();
     eprintln!("aiperf: sweep of {} runs", cells.len());
     let mut outcomes = Vec::new();
     for (n, cell) in cells.iter().enumerate() {
@@ -96,7 +98,7 @@ fn run_sweep(flags: &ProfileFlags, expansion: &sweep::Expansion) -> anyhow::Resu
         );
         let request = RunnerRequest::new(Operation::Execute, cell.run.clone());
         let payload = serde_json::to_vec(&request)?;
-        let terminal = execute::run_once(&runner, &payload)?;
+        let terminal = execute::run_once(&runner, &payload, &child_pid)?;
         outcomes.push(sweep::aggregate::CellOutcome {
             label: cell.label.clone(),
             values: cell.run.variation.clone(),
