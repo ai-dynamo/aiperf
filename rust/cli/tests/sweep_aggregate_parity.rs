@@ -11,6 +11,7 @@ use std::path::PathBuf;
 
 use aiperf_cli::flags::ProfileFlags;
 use aiperf_cli::sweep::aggregate::{CellOutcome, finish};
+use aiperf_cli::sweep::artifact_dir::IterationOrder;
 
 fn repo_file(rel: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -68,7 +69,7 @@ fn single_trial_sweep_aggregate_matches_python() {
     ])
     .unwrap();
 
-    finish(&flags, &outcomes).unwrap();
+    finish(&flags, &outcomes, true, IterationOrder::Repeated).unwrap();
 
     let got_json =
         std::fs::read_to_string(base.join("sweep_aggregate/profile_export_aiperf_sweep.json"))
