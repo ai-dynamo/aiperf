@@ -36,11 +36,15 @@
 //! tests), which is the only way to fold proven pacing loops together without
 //! risking their earned-in-blood timing.
 //!
-//! The scheduled `RequestRateWorkload` additionally *eagerly* advances its target
-//! and peeks it for closed-loop backpressure (block-vs-yield on a full slot pool),
-//! so it keeps its own loop and uses this vocabulary only as documentation; the
-//! dynosim and graph loops, which have no such peek, call [`next_arrival_target`]
-//! directly.
+//! Only the graph `IntervalGraphArrival` currently calls [`next_arrival_target`]
+//! directly. The other two loops keep their own inline arithmetic and use this
+//! vocabulary as documentation: the scheduled `RequestRateWorkload` *eagerly*
+//! advances its target and peeks it for closed-loop backpressure (block-vs-yield
+//! on a full slot pool), which the pure helper does not express; the dynosim
+//! paced online/offline driver (`crate::run`) draws the next interval at the tail
+//! of each iteration off a generator it shares with live ramp actuators, so
+//! moving that draw into the helper's start-of-iteration position could shift it
+//! across a concurrent rate change. The arithmetic is byte-identical either way.
 
 /// Where the first arrival (the one with no prior target) is due.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
