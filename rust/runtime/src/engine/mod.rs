@@ -70,3 +70,5 @@ pub mod shard_artifacts;
 pub mod sharded_scheduled;
 pub mod sidecar_input;
 pub mod turn_execution;
+#[cfg(test)]
+mod workers_characterization;
