@@ -50,19 +50,16 @@ use crate::export::per_record_parquet::{
 #[cfg(feature = "parquet")]
 use crate::engine::records::per_record_parquet_row;
 use crate::engine::records::{
-    CapturedRecord, OUTPUTS_PREFIX, outputs_entry_indented, record_csv_header, record_csv_row,
-    write_raw_record_jsonl_row, write_record_jsonl_row,
+    CapturedRecord, OUTPUTS_PREFIX, create_export_writer, outputs_entry_indented,
+    record_csv_header, record_csv_row, write_raw_record_jsonl_row, write_record_jsonl_row,
 };
 
 /// Create (truncating) one export file, creating its parent directory first, exactly
-/// as the batch writers do before their `File::create`.
+/// as the batch writers do before their `File::create`. Delegates to the shared
+/// [`create_export_writer`], keeping the lane's `{what} directory` / `{what}` error
+/// subjects.
 fn create_export_file(path: &Path, what: &str) -> Result<BufWriter<File>> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating {what} directory {}", parent.display()))?;
-    }
-    let file = File::create(path).with_context(|| format!("creating {what} {}", path.display()))?;
-    Ok(BufWriter::new(file))
+    create_export_writer(path, &format!("{what} directory"), what)
 }
 
 /// The lazy CSV sub-writer: it defers `File::create` and the header until the first
@@ -331,8 +328,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::metrics_core::{Phase, RecordIngest, TokenCounts};
-    use crate::transport::core::{RequestRecord, Response};
     use crate::transport::core::SseMessage;
+    use crate::transport::core::{RequestRecord, Response};
     use uuid::Uuid;
 
     use super::*;

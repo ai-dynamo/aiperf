@@ -26,6 +26,26 @@ use serde_json::value::RawValue;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+/// Create (truncating) one export file, creating its parent directory first.
+///
+/// `dir_what` / `file_what` are the `with_context` subjects for the
+/// `create_dir_all` and `File::create` steps; each caller passes its own so the
+/// per-writer error text is unchanged. Shared by the batch writers here and the
+/// streaming [`crate::engine::record_lane`], which repeated this same triad.
+pub(crate) fn create_export_writer(
+    path: &Path,
+    dir_what: &str,
+    file_what: &str,
+) -> Result<BufWriter<File>> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {dir_what} {}", parent.display()))?;
+    }
+    let file =
+        File::create(path).with_context(|| format!("creating {file_what} {}", path.display()))?;
+    Ok(BufWriter::new(file))
+}
+
 /// Identity retained beside a native metric ingestion record.
 pub struct CapturedRecord {
     pub uuid: Uuid,
@@ -300,13 +320,7 @@ pub fn write_records_jsonl(
     config: &MetricsConfig,
     include_trace: bool,
 ) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating record export directory {}", parent.display()))?;
-    }
-    let file = File::create(path)
-        .with_context(|| format!("creating native record export {}", path.display()))?;
-    let mut writer = BufWriter::new(file);
+    let mut writer = create_export_writer(path, "record export directory", "native record export")?;
     for captured in records {
         write_record_jsonl_row(&mut writer, captured, config, include_trace)
             .with_context(|| format!("writing record export {}", path.display()))?;
@@ -632,13 +646,7 @@ pub(crate) fn write_records_csv(
         return Ok(());
     }
 
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating records CSV directory {}", parent.display()))?;
-    }
-    let file = File::create(path)
-        .with_context(|| format!("creating records CSV export {}", path.display()))?;
-    let mut writer = BufWriter::new(file);
+    let mut writer = create_export_writer(path, "records CSV directory", "records CSV export")?;
 
     writer
         .write_all(record_csv_header(include_trace).as_bytes())
@@ -706,13 +714,8 @@ pub(crate) fn write_raw_record_jsonl_row(
 }
 
 pub fn write_raw_records_jsonl(path: &Path, records: &[CapturedRecord]) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating raw record directory {}", parent.display()))?;
-    }
-    let file = File::create(path)
-        .with_context(|| format!("creating native raw record export {}", path.display()))?;
-    let mut writer = BufWriter::new(file);
+    let mut writer =
+        create_export_writer(path, "raw record directory", "native raw record export")?;
     for captured in records {
         write_raw_record_jsonl_row(&mut writer, captured)
             .with_context(|| format!("writing raw record export {}", path.display()))?;
@@ -758,10 +761,6 @@ struct InputsSessionRow<'a> {
 /// compatibility) read multimodal presence directly from
 /// `payloads[].messages[].content[]`.
 pub fn write_inputs_json(path: &Path, sessions: &[InputSession]) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating inputs export directory {}", parent.display()))?;
-    }
     let document = InputsDocument {
         data: sessions
             .iter()
@@ -771,9 +770,7 @@ pub fn write_inputs_json(path: &Path, sessions: &[InputSession]) -> Result<()> {
             })
             .collect(),
     };
-    let file = File::create(path)
-        .with_context(|| format!("creating native inputs export {}", path.display()))?;
-    let mut writer = BufWriter::new(file);
+    let mut writer = create_export_writer(path, "inputs export directory", "native inputs export")?;
     serde_json::to_writer_pretty(&mut writer, &document)
         .with_context(|| format!("serializing inputs export {}", path.display()))?;
     writer
@@ -867,19 +864,14 @@ pub fn write_outputs_json(
     records: &[CapturedRecord],
     config: &MetricsConfig,
 ) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating outputs export directory {}", parent.display()))?;
-    }
     let mut rows = records
         .iter()
         .filter_map(|captured| output_row(captured, config))
         .collect::<Vec<_>>();
     rows.sort_by_key(|row| (row.session_num, row.turn_index));
 
-    let file = File::create(path)
-        .with_context(|| format!("creating native outputs export {}", path.display()))?;
-    let mut writer = BufWriter::new(file);
+    let mut writer =
+        create_export_writer(path, "outputs export directory", "native outputs export")?;
     serde_json::to_writer_pretty(
         &mut writer,
         &OutputsDocument {
