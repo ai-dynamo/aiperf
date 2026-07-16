@@ -551,7 +551,15 @@ impl FakeFabricator {
     /// Fabricate one request beginning at `start_abs`: emit the analytic token
     /// stream, usage, and terminal on `observer`, and return the dispatch result.
     /// The caller owns `on_arrival` / `register_metadata` / `record_response`.
-    fn fabricate(
+    ///
+    /// Under a virtual clock the fabrication *sleeps on the clock* between token
+    /// emissions, so each dispatch consumes its analytic latency in virtual time.
+    /// This is essential for the graph replay: the whole-trace runtime advances
+    /// its timeline off dispatch completions, so an instant dispatch would leave
+    /// the `drive_sim` pump with no scheduled event after the first node and the
+    /// run would quiesce immediately. Under a real clock the timestamps are
+    /// computed instantly (fast self-benchmark; the scheduler owns pacing).
+    async fn fabricate(
         &self,
         observer: &dyn RequestObserver,
         uuid: Uuid,
@@ -570,7 +578,6 @@ impl FakeFabricator {
         let (ttft_ns, itl_ns) =
             self.params
                 .effective_latencies_ns(isl as usize, osl, active_inflight, ordinal);
-        self.inflight.set(self.inflight.get() - 1);
         let recv_start_abs = start_abs + ttft_ns;
         let token_abs = |index: usize| start_abs + ttft_ns + (index as i64) * itl_ns;
         let end_abs = if osl > 0 {
@@ -578,13 +585,30 @@ impl FakeFabricator {
         } else {
             recv_start_abs
         };
+        let virtual_time = self.clock.is_virtual();
         for index in 0..osl {
+            if virtual_time {
+                // Advance virtual time to this token's fabricated arrival.
+                let wait = token_abs(index) - self.clock.now_ns();
+                if wait > 0 {
+                    self.clock.clone().sleep(wait).await;
+                }
+            }
             let at_ms = self.rel_ms(token_abs(index));
             if index == 0 {
                 on_first_token(ttft_ns);
             }
             observer.on_token(uuid, at_ms);
         }
+        if virtual_time {
+            // An empty (osl == 0) or already-past request still consumes its
+            // prefill time so the replay timeline never stalls.
+            let wait = end_abs - self.clock.now_ns();
+            if wait > 0 {
+                self.clock.clone().sleep(wait).await;
+            }
+        }
+        self.inflight.set(self.inflight.get() - 1);
         observer.on_usage(
             uuid,
             ObservedUsage {
@@ -702,15 +726,18 @@ impl RequestExecutor for FakeRequestExecutor {
         // shared fabrication.
         observer.register_metadata(uuid, context.metadata.clone());
         observer.on_arrival(uuid, context.arrival_ms, isl as usize, osl);
-        let result = self.core.fabricate(
-            &*observer,
-            uuid,
-            isl,
-            osl,
-            start_abs,
-            request_payload,
-            on_first_token,
-        );
+        let result = self
+            .core
+            .fabricate(
+                &*observer,
+                uuid,
+                isl,
+                osl,
+                start_abs,
+                request_payload,
+                on_first_token,
+            )
+            .await;
         observer.record_response(
             uuid,
             NativeResponseMetadata {
@@ -779,15 +806,18 @@ impl crate::transport::core::Dispatcher for FakeDispatcher {
             .request_body_bytes
             .clone()
             .unwrap_or_else(Bytes::new);
-        Ok(self.core.fabricate(
-            observer,
-            uuid,
-            isl,
-            osl,
-            start_abs,
-            request_payload,
-            on_first_token,
-        ))
+        Ok(self
+            .core
+            .fabricate(
+                observer,
+                uuid,
+                isl,
+                osl,
+                start_abs,
+                request_payload,
+                on_first_token,
+            )
+            .await)
     }
 
     fn inference_dimensions(
@@ -823,7 +853,7 @@ mod tests {
     use crate::endpoints::{EndpointId, EndpointKey};
     use crate::multiturn::{PreparedEndpointReference, TurnDataPolicy};
     use crate::transport::core::Request;
-    use crate::transport::core::PreparedEndpoint;
+    use crate::transport::core::PreparedEndpointBinding;
     use crate::transport::http::TransportSinkConfig;
 
     /// All-zero analytic params (no base latency, no scaling, no jitter) to build
@@ -885,7 +915,7 @@ mod tests {
                 url_index: None,
             },
             model: "fixture-model".to_string(),
-            endpoint: PreparedEndpoint::Prepared(PreparedEndpointReference {
+            endpoint: PreparedEndpointBinding::Prepared(PreparedEndpointReference {
                 key: EndpointKey::from_index(0),
                 endpoint_id: EndpointId::new("chat").unwrap(),
             }),

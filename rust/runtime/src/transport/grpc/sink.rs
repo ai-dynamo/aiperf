@@ -279,7 +279,7 @@ impl GrpcTransportSink {
             "native gRPC execution requires endpoint-aware protocol-v2 materialization"
         );
         let model = turn.model;
-        let crate::transport::core::PreparedEndpoint::Prepared(reference) = turn.endpoint;
+        let crate::transport::core::PreparedEndpointBinding::Prepared(reference) = turn.endpoint;
         let table = self.prepared_endpoints.as_ref().ok_or_else(|| {
             anyhow::anyhow!("gRPC worker received a prepared endpoint without a prepared table")
         })?;

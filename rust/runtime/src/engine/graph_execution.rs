@@ -39,7 +39,7 @@ use crate::metrics_core::{InferenceDimensions, MetricsConfig, Phase};
 use crate::multiturn::InputTokenCounter;
 use crate::rng::{RngRoot, namespace};
 use crate::timing::{BernoulliFixedDelay, SlotPool};
-use crate::transport::core::{Dispatcher, PreparedEndpoint, PreparedTurn, Request};
+use crate::transport::core::{Dispatcher, PreparedEndpointBinding, PreparedTurn, Request};
 #[cfg(feature = "grpc")]
 use crate::transport::grpc::GrpcBindingRegistry;
 use crate::transport::http::{PreparedEndpointReference, TransportSink, TransportSinkConfig};
@@ -263,7 +263,7 @@ pub(crate) struct GraphEndpointRequest {
 pub(crate) struct GraphEndpointDispatch {
     transport: Rc<dyn Dispatcher>,
     request: Request,
-    endpoint: PreparedEndpoint,
+    endpoint: PreparedEndpointBinding,
     input_tokens: u64,
 }
 
@@ -485,7 +485,7 @@ impl RunnerGraphEndpointRuntime for PreparedRunnerGraphEndpointRuntime {
         Ok(GraphEndpointDispatch {
             transport: profile.transport.clone(),
             request,
-            endpoint: PreparedEndpoint::Prepared(PreparedEndpointReference {
+            endpoint: PreparedEndpointBinding::Prepared(PreparedEndpointReference {
                 key,
                 endpoint_id: profile.endpoint_id.clone(),
             }),
@@ -1263,7 +1263,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(dispatch.input_tokens, 4);
-        let crate::transport::core::PreparedEndpoint::Prepared(reference) = dispatch.endpoint;
+        let crate::transport::core::PreparedEndpointBinding::Prepared(reference) = dispatch.endpoint;
         assert_eq!(reference.endpoint_id.as_str(), "chat");
         assert_eq!(reference.key.index(), 1);
     }

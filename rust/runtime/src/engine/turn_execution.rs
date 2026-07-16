@@ -931,7 +931,7 @@ mod tests {
     use crate::endpoints::{EndpointId, EndpointKey, EndpointRegistry, RawEndpointConfig};
     use crate::metrics::RequestMetricMetadata;
     use crate::multiturn::PreparedEndpointReference;
-    use crate::transport::core::{PreparedEndpoint, Request};
+    use crate::transport::core::{PreparedEndpointBinding, Request};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
@@ -1045,7 +1045,7 @@ mod tests {
                 url_index: None,
             },
             model: "fixture-model".to_string(),
-            endpoint: PreparedEndpoint::Prepared(PreparedEndpointReference {
+            endpoint: PreparedEndpointBinding::Prepared(PreparedEndpointReference {
                 key: EndpointKey::from_index(0),
                 endpoint_id: EndpointId::new("chat").unwrap(),
             }),

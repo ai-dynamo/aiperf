@@ -30,7 +30,7 @@ use crate::transport::http::sse::ChatChunk;
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata};
 use crate::transport::core::{
     ConnectionReuseStrategy, DispatchResult, Dispatcher, ErrorDetails, ErrorKind, MeasuredContext,
-    MeasuredOutcome, PreparedEndpoint, PreparedTurn, Request, RequestExecutor, RequestRecord,
+    MeasuredOutcome, PreparedEndpointBinding, PreparedTurn, Request, RequestExecutor, RequestRecord,
     Response, SseMessage,
 };
 use crate::transport::http::config::ClientConfig;
@@ -1104,7 +1104,7 @@ impl TransportSink {
         }
         let collected = if endpoint_aware {
             match endpoint {
-                PreparedEndpoint::Prepared(reference) => {
+                PreparedEndpointBinding::Prepared(reference) => {
                     let table = self.prepared_endpoints.as_ref().ok_or_else(|| {
                         anyhow::anyhow!(
                             "HTTP worker received prepared endpoint key {} without a prepared table",
