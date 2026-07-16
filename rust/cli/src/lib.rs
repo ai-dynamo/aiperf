@@ -37,5 +37,6 @@ pub mod search;
 pub mod signals;
 pub mod speed_bench;
 pub mod sweep;
+pub mod synthesize;
 pub mod validate;
 pub mod yaml;

@@ -163,6 +163,12 @@ fn validate_mooncake(path: &std::path::Path) -> anyhow::Result<(usize, Vec<Strin
     Ok((line_count, errors))
 }
 
+/// Validate a Mooncake JSONL file, exposed for the `synthesize` command's
+/// post-generation validation step (mirrors `cli.py::_validate_mooncake_or_exit`).
+pub fn validate_mooncake_public(path: &std::path::Path) -> anyhow::Result<(usize, Vec<String>)> {
+    validate_mooncake(path)
+}
+
 /// Run `aiperf validate mooncake-trace --input <path>`.
 pub fn run(args: &[String]) -> anyhow::Result<i32> {
     let mut target: Option<String> = None;

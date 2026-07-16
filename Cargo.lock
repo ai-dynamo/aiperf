@@ -121,17 +121,28 @@ version = "0.0.0"
 dependencies = [
  "aiperf",
  "anyhow",
+ "bytes",
+ "chrono",
  "clap",
+ "futures",
+ "http-body-util",
+ "hyper 1.10.1",
+ "hyper-util",
  "minijinja",
  "nix 0.29.0",
+ "pyo3",
  "regex",
+ "rustls 0.23.41",
  "serde",
  "serde_json",
  "serde_yaml",
  "tempfile",
+ "tokio",
+ "tokio-rustls 0.26.4",
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]

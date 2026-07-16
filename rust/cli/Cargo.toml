@@ -34,6 +34,7 @@ clap = { version = "4", features = ["derive", "string"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml = "0.9"
+chrono = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 tracing.workspace = true
 regex.workspace = true
