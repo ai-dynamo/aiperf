@@ -278,6 +278,15 @@ impl ServerMetricsPhaseSidecar {
     }
 
     async fn collect_continuously(self) {
+        // Take one ordinary cadence scrape immediately, just after the common
+        // phase-start barrier (before the first sleep), mirroring the GPU
+        // telemetry sidecar. The forced baseline in `start_inner` is captured
+        // *before* the phase officially starts, so its timestamp falls just
+        // outside `[phase_start_ns, phase_end_ns]`; without this first in-window
+        // scrape a phase shorter than the collection interval (common in fast
+        // e2e runs) produces no record inside the profiling window, and the
+        // window-filtered Parquet export emits zero rows.
+        self.collect_cadence_once().await;
         loop {
             let sleep = self
                 .state
@@ -292,24 +301,30 @@ impl ServerMetricsPhaseSidecar {
                 () = &mut stopped => return,
                 () = &mut sleep => {}
             }
-            let sources = self.state.active.borrow().clone();
-            for source in sources {
-                match source.scrape(ServerMetricsScrapeMode::Continuous).await {
-                    Ok(ServerMetricsScrapeOutcome::Record(mut record)) => {
-                        record.benchmark_phase = Some(self.phase);
-                        self.state.accumulator.borrow_mut().ingest_record(record);
-                    }
-                    Ok(ServerMetricsScrapeOutcome::Empty) => {}
-                    Ok(ServerMetricsScrapeOutcome::Disabled) => self.remove_source(&source),
-                    Err(error) => {
-                        tracing::warn!(
-                            source = %source.endpoint_url(),
-                            error = %error,
-                            "server metrics cadence scrape failed"
-                        );
-                        if error.is_incompatible() {
-                            self.remove_source(&source);
-                        }
+            self.collect_cadence_once().await;
+        }
+    }
+
+    /// Scrape every active source once at the current Clock instant, ingesting
+    /// each record into the shared accumulator.
+    async fn collect_cadence_once(&self) {
+        let sources = self.state.active.borrow().clone();
+        for source in sources {
+            match source.scrape(ServerMetricsScrapeMode::Continuous).await {
+                Ok(ServerMetricsScrapeOutcome::Record(mut record)) => {
+                    record.benchmark_phase = Some(self.phase);
+                    self.state.accumulator.borrow_mut().ingest_record(record);
+                }
+                Ok(ServerMetricsScrapeOutcome::Empty) => {}
+                Ok(ServerMetricsScrapeOutcome::Disabled) => self.remove_source(&source),
+                Err(error) => {
+                    tracing::warn!(
+                        source = %source.endpoint_url(),
+                        error = %error,
+                        "server metrics cadence scrape failed"
+                    );
+                    if error.is_incompatible() {
+                        self.remove_source(&source);
                     }
                 }
             }
@@ -355,6 +370,23 @@ impl ServerMetricsPhaseSidecar {
         let start_ns = self.phase_start_ns.get();
         let end_ns = self.phase_end_ns.get();
         if let (Some(start_ns), Some(end_ns)) = (start_ns, end_ns) {
+            // Widen the phase window to bracket the boundary scrapes. The forced
+            // baseline scrape is taken just *before* the phase-start barrier and
+            // the final scrape just *after* phase end, so on a phase shorter than
+            // the collection interval (common in fast e2e runs) every scrape lands
+            // outside `[phase_start_ns, phase_end_ns]`. Both the JSON summary
+            // (window-filtered `gauge_series`) and the Parquet sink (which reads
+            // the raw wire records and filters by this reported profiling range)
+            // would then emit nothing. Extending the bounds to the actual scrape
+            // timestamps keeps every phase's scrapes inside its own window.
+            let start_ns = start_records
+                .values()
+                .map(|record| record.timestamp_ns)
+                .fold(start_ns, i64::min);
+            let end_ns = end_records
+                .values()
+                .map(|record| record.timestamp_ns)
+                .fold(end_ns, i64::max);
             self.state
                 .accumulator
                 .borrow_mut()

@@ -269,11 +269,21 @@ impl ServerMetricsAccumulator {
                 (name, SidecarMetric::new(unit, series))
             })
             .collect::<BTreeMap<_, _>>();
+        // An endpoint is "successful" when it produced at least one valid boundary
+        // scrape record (start OR end). A fresh inference server exposes no useful
+        // series before it receives traffic — e.g. the mock's `/metrics` returns
+        // only the (parser-skipped) `_uptime` gauge at phase-start — so requiring a
+        // record at BOTH boundaries would wrongly drop every endpoint whose metric
+        // families are created lazily on first request. Counter/histogram deltas
+        // still require both boundaries and degrade gracefully (the atlas derivation
+        // and delta helpers return nothing when a start record is absent).
         let endpoints_successful: Vec<String> = boundary
             .start_records
             .keys()
-            .filter(|endpoint| boundary.end_records.contains_key(*endpoint))
+            .chain(boundary.end_records.keys())
             .cloned()
+            .collect::<std::collections::BTreeSet<String>>()
+            .into_iter()
             .collect();
         // Derive the atlas metrics once per successful endpoint so every derived
         // series inherits the credential-free `endpoint_url` of the scraped
@@ -758,8 +768,11 @@ fn counter_series(
     duration_seconds: Option<f64>,
     slice_duration_ns: Option<i64>,
 ) -> Option<SidecarSeries> {
-    let start = scalar_value(start)?;
     let end = scalar_value(end)?;
+    // A counter absent from the start boundary scrape appeared during the phase
+    // (server exposition families are created lazily on first request), so its
+    // value at phase start was zero. Only a missing *end* value omits the series.
+    let start = scalar_value(start).unwrap_or(0.0);
     let total = (end - start).max(0.0);
     let rate = duration_seconds.map(|duration| total / duration);
     let timeslices = slice_duration_ns
@@ -786,20 +799,31 @@ fn histogram_series(
     duration_seconds: Option<f64>,
     slice_duration_ns: Option<i64>,
 ) -> Option<SidecarSeries> {
-    let start = histogram_value(start)?;
     let end = histogram_value(end)?;
-    let sum = (end.sum? - start.sum?).max(0.0);
-    let count = (end.count? - start.count?).max(0.0) as u64;
-    let bucket_names = start
-        .buckets
-        .keys()
-        .filter(|name| end.buckets.contains_key(*name))
-        .cloned()
-        .collect::<Vec<_>>();
+    // A histogram absent from the start boundary scrape appeared during the phase
+    // (lazily-created exposition family), so its phase-start baseline is empty
+    // (sum 0, count 0, no bucket counts). Only a missing *end* sum/count omits it.
+    let start = histogram_value(start);
+    let start_sum = start.and_then(|value| value.sum).unwrap_or(0.0);
+    let start_count = start.and_then(|value| value.count).unwrap_or(0.0);
+    let sum = (end.sum? - start_sum).max(0.0);
+    let count = (end.count? - start_count).max(0.0) as u64;
+    let bucket_names = match start {
+        Some(start) => start
+            .buckets
+            .keys()
+            .filter(|name| end.buckets.contains_key(*name))
+            .cloned()
+            .collect::<Vec<_>>(),
+        None => end.buckets.keys().cloned().collect::<Vec<_>>(),
+    };
     let buckets = bucket_names
         .into_iter()
         .map(|name| {
-            let delta = (end.buckets[&name] - start.buckets[&name]).max(0.0) as u64;
+            let start_bucket = start
+                .and_then(|start| start.buckets.get(&name).copied())
+                .unwrap_or(0.0);
+            let delta = (end.buckets[&name] - start_bucket).max(0.0) as u64;
             (name, delta)
         })
         .collect::<BTreeMap<_, _>>();

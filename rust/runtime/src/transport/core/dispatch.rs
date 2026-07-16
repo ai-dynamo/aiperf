@@ -190,7 +190,7 @@ pub struct PreparedTurn {
     /// Effective model selected for this turn.
     pub model: String,
     /// Worker-resolved endpoint binding selected during preparation.
-    pub endpoint: PreparedEndpoint,
+    pub endpoint: PreparedEndpointBinding,
     /// Whether the request came from the endpoint-aware dataset seam.
     pub endpoint_aware: bool,
     /// Content retention/cache/diagnostic policy fixed by materialization.
@@ -217,16 +217,16 @@ impl fmt::Debug for PreparedTurn {
 /// despite the historical `Http` name it carried: grpc, graph, and dry-run
 /// execution all consume it.
 #[derive(Clone)]
-pub enum PreparedEndpoint {
+pub enum PreparedEndpointBinding {
     /// Protocol-v2 worker-local prepared binding.
     Prepared(PreparedEndpointReference),
 }
 
-impl fmt::Debug for PreparedEndpoint {
+impl fmt::Debug for PreparedEndpointBinding {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Prepared(reference) => formatter
-                .debug_tuple("PreparedEndpoint")
+                .debug_tuple("PreparedEndpointBinding")
                 .field(reference)
                 .finish(),
         }
@@ -244,7 +244,7 @@ impl PreparedTurn {
             .clone()
             .unwrap_or_else(|| model.to_string());
         let endpoint = match turn.endpoint {
-            TurnEndpoint::Prepared(reference) => PreparedEndpoint::Prepared(reference),
+            TurnEndpoint::Prepared(reference) => PreparedEndpointBinding::Prepared(reference),
         };
         Self {
             request: Request {

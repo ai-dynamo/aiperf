@@ -16,7 +16,7 @@ path = "src/main.rs"
 path = "src/lib.rs"
 
 [dependencies]
-# The mock server reuses `aiperf_runtime::transport_grpc::{proto,riva_proto,
+# The mock server reuses `aiperf_runtime::transport::grpc::{proto,riva_proto,
 # riva_binding}` for its KServe OIP v2 / Riva gRPC listeners, so it always needs
 # the `grpc` feature even if a future build drops it from the workspace default.
 aiperf-runtime = { workspace = true, features = ["grpc"] }
