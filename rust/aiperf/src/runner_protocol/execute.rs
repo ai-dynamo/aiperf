@@ -3079,20 +3079,26 @@ async fn execute_native_inner(
     // - RETAIN: ship the full captured record `Vec` — each record carries the dense
     //   global dispatch ordinal the autonomous issuer stamped — which the controller
     //   merges in global order into the single authoritative report (byte-exact).
-    // - EXACT-FOLD (Stage C): the cell folded every record into `accumulator` and
-    //   dropped them (`captured` holds only the retained errored records), so there is
-    //   no full record `Vec` — ship the folded EXACT STORE instead. The controller
-    //   appends every cell's store (`merge_store_partitions`) into the merged report
-    //   (within-tolerance summary, the same bar as the in-process sharded merge). The
-    //   counters are exact: `issued` is the accumulator's record count, `errored` is the
-    //   retained errored subset, so `completed = issued - errored`.
-    // Sketch mode ships no partition yet (its bounded t-digest store has no cell→
-    // controller merge path), so it stays fail-closed.
+    // - FOLD-AND-DROP (Stage C exact-fold OR sketch): the cell folded every record into
+    //   `accumulator` and dropped it (`captured` holds only the retained errored
+    //   records), so there is no full record `Vec` — ship the folded STORE instead. The
+    //   controller appends every cell's store (`merge_store_partitions`), which for a
+    //   sketch store merges the per-`(phase, tag)` t-digests associatively (the store
+    //   retains no rows) and for an exact-fold store appends the dense rows — both a
+    //   within-tolerance summary, the same bar as the in-process sharded merge.
+    //   Counters: `errored` is the retained errored subset; `issued` is the folded
+    //   record total. For exact-fold that is the store's `record_count()`, but a sketch
+    //   store clears each row after harvesting (`record_count() == 0`), so the surviving
+    //   `ingested_count()` is the true total. `completed = issued - errored`.
     #[cfg(feature = "velo")]
     if let Some(shipper) = crate::runner_protocol::cellular_cell::CellRecordsShipper::from_env() {
         let epoch_ns: i64 = clock.now_ns().saturating_sub(start_ns);
-        if exact_fold {
-            let issued = accumulator.record_count() as u64;
+        if exact_fold || sketch_mode {
+            let issued = if sketch_mode {
+                accumulator.ingested_count()
+            } else {
+                accumulator.record_count() as u64
+            };
             let errored = captured.len() as u64;
             let counters = crate::cellular::HeartbeatCounters {
                 issued,
@@ -3101,10 +3107,6 @@ async fn execute_native_inner(
             };
             shipper.ship_store(accumulator.column_store().clone(), counters, epoch_ns)?;
         } else {
-            ensure!(
-                !sketch_mode,
-                "sketch metrics mode does not support cellular shipping yet"
-            );
             let records: Vec<RecordIngest> = captured
                 .iter()
                 .map(|record| record.ingest.clone())

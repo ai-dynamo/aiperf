@@ -720,6 +720,88 @@ mod tests {
         assert_eq!(first.record_count(), 20);
     }
 
+    #[test]
+    fn sketch_store_partitions_merge_matches_single_sketch_and_carry_the_count() {
+        use crate::metrics_core::MetricsStorageMode;
+        // Step 1 (tier T1): a sketch cell folds every record into a bounded t-digest
+        // STORE that retains no rows, then ships it (the same `ColumnStorePartition`
+        // wire form exact-fold uses). The controller merges N of them associatively.
+        // Counts/sums/min/max stay exact; percentiles are t-digest-approximate; and the
+        // true record total travels WITH the store — a sketch store's `record_count()`
+        // is 0, so `ingested_count()` is the only surviving total across ship+merge.
+        let sketch_cfg = || MetricsConfig {
+            storage_mode: MetricsStorageMode::Sketch { compression: 100.0 },
+            ..MetricsConfig::default()
+        };
+        let records: Vec<_> = (0..30).map(record).collect();
+
+        // Baseline: a single sketch over every record.
+        let mut single = MetricsAccumulator::with_config(sketch_cfg());
+        for r in &records {
+            single.process_record(r);
+        }
+
+        // Three cells, each folding a disjoint round-robin third into its own sketch,
+        // shipped through the msgpack wire form exactly as a cell ships to the controller.
+        let mut partitions = Vec::new();
+        for cell in 0..3u32 {
+            let mut acc = MetricsAccumulator::with_config(sketch_cfg());
+            for (idx, r) in records.iter().enumerate() {
+                if idx as u32 % 3 == cell {
+                    acc.process_record(r);
+                }
+            }
+            // The store folded-and-cleared every row; only the counter survives.
+            assert_eq!(acc.record_count(), 0, "a sketch store retains no rows");
+            assert_eq!(
+                acc.ingested_count(),
+                10,
+                "per-cell fold count survives the clear"
+            );
+            let bytes = ColumnStorePartition::from_accumulator(cell, &acc)
+                .to_bytes()
+                .expect("encode");
+            partitions.push(ColumnStorePartition::from_bytes(&bytes).expect("decode"));
+        }
+
+        let merged = merge_store_partitions(sketch_cfg(), partitions);
+
+        // The true total survives fold-and-clear + serialize + associative merge, even
+        // though the merged store retains no rows (this is what the controller's outcome
+        // `record_count` now reads via `ingested_count`).
+        assert_eq!(merged.record_count(), 0);
+        assert_eq!(merged.ingested_count(), 30);
+
+        let single_sum = single.summarize();
+        let merged_sum = merged.summarize();
+        assert_eq!(
+            merged_sum.finite_value(MetricTag::RequestCount),
+            single_sum.finite_value(MetricTag::RequestCount),
+            "request count is exact across the sketch merge",
+        );
+        let single_lat = single_sum
+            .result(MetricTag::RequestLatency)
+            .unwrap()
+            .distribution()
+            .unwrap();
+        let merged_lat = merged_sum
+            .result(MetricTag::RequestLatency)
+            .unwrap()
+            .distribution()
+            .unwrap();
+        // Exact: count, min, max (t-digest anchors the extrema exactly).
+        assert_eq!(merged_lat.count, single_lat.count);
+        assert_eq!(merged_lat.min, single_lat.min);
+        assert_eq!(merged_lat.max, single_lat.max);
+        // Within a few ULPs: the sum/avg (reordered Welford combine on the merge).
+        if let (Some(m), Some(s)) = (merged_lat.sum.as_f64(), single_lat.sum.as_f64()) {
+            rel_close_f64(m, s, "sketch merge latency sum");
+        }
+        if let (Some(m), Some(s)) = (merged_lat.avg.as_f64(), single_lat.avg.as_f64()) {
+            rel_close_f64(m, s, "sketch merge latency avg");
+        }
+    }
+
     /// Relative-tolerance float comparison for the Stage-C store-merge parity bar:
     /// sums/means may drift a few ULPs from the reordered f64 summation (`~1e-9`).
     fn rel_close_f64(a: f64, b: f64, context: &str) {

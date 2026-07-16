@@ -29,6 +29,9 @@ pub mod application;
 #[cfg(feature = "velo")]
 pub mod artifact_shipping;
 pub mod cellular_cell;
+// Tier-T2 hierarchical merge: the aggregator role between cells and the controller.
+#[cfg(feature = "velo")]
+pub mod cellular_aggregator;
 // The controller orchestration (cell launch + velo transport + merge) is only
 // reachable with the `velo` feature; `owned_positions` (needed by the non-velo
 // sharded runtime) lives in `cell_launcher` instead.

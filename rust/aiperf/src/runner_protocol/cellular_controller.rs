@@ -36,6 +36,13 @@ use crate::cellular::{CellMessage, ControllerTransport, SpecFor, VeloControllerT
 #[cfg(feature = "velo")]
 use crate::runner_protocol::cell_launcher::{CellLaunchContext, select_launcher};
 
+/// Env toggle (tier T3) for the master-less, barrier-free start: the controller
+/// triggers START immediately instead of gathering all N cell registrations first
+/// (the O(N) fan-in rendezvous). Default off (the tight synchronized start). Cells
+/// registering after the trigger see the completed event instantly (velo's
+/// completed-event cache), so each starts on its own registration.
+pub const CELL_BARRIER_FREE_ENV: &str = "AIPERF_CELL_BARRIER_FREE";
+
 /// The outcome of a cellular run: the merged report path plus a live view of the
 /// last heartbeat each cell reported (for diagnostics/logging).
 pub struct CellularRunOutcome {
@@ -207,6 +214,15 @@ pub fn run_cellular(
     let is_k8s = matches!(
         std::env::var(crate::runner_protocol::cell_launcher::CELL_LAUNCHER_ENV).as_deref(),
         Ok("k8s")
+    );
+    // Tier-T3 master-less start: skip the O(N) register rendezvous (see the start
+    // policy below). Default off (the tight synchronized start).
+    let barrier_free = matches!(
+        std::env::var(CELL_BARRIER_FREE_ENV)
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "on" | "yes"
     );
     // The run's artifact spec, parsed once (the same `AuthoredRunSpecV2` shape the
     // cell's execute path reads), for the Stage E shipping decision and the Stage D
@@ -403,11 +419,49 @@ pub fn run_cellular(
             VeloControllerTransport::bind_controller(velo, spec_for, cell_count, start_handle)
                 .context("binding controller transport")?;
 
+        // Tier-T2 hierarchical merge: insert `M = ceil(cells / fanout)` aggregators
+        // between the cells and the controller (local only — k8s aggregator placement is
+        // the operator's concern, a follow-on). Each cell ships to its round-robin
+        // aggregator; each aggregator merges its subtree and ships ONE store up, so the
+        // controller collects `M` partitions instead of `cells`. Fold-only (sketch /
+        // exact-fold): the retain path keeps the star topology (needs global order).
+        let aggregator_count =
+            crate::runner_protocol::cellular_aggregator::aggregator_count(cell_count);
+        if aggregator_count.is_some() && is_k8s {
+            tracing::warn!(
+                "AIPERF_CELL_AGG_FANOUT is set but k8s aggregator placement is not yet wired; \
+                 falling back to the flat star topology"
+            );
+        }
+        let aggregator_count = if is_k8s { None } else { aggregator_count };
+        let aggregator_base_port =
+            crate::runner_protocol::cellular_aggregator::aggregator_base_port();
+        // The controller collects one partition per aggregator (tree) or per cell (flat).
+        let expected_partitions = aggregator_count.unwrap_or(cell_count);
+        // Spawn the aggregator subprocesses before the cells so they are bound and
+        // collecting by the time cells ship (cell `connect` also retries). Each gets the
+        // run envelope on stdin (for the merge config) and its subtree parameters via env.
+        let mut aggregator_children = if let Some(agg_count) = aggregator_count {
+            spawn_aggregators(
+                envelope,
+                agg_count,
+                cell_count,
+                aggregator_base_port,
+                &cell_coordinate,
+            )
+            .await
+            .context("spawning tier-T2 aggregators")?
+        } else {
+            Vec::new()
+        };
+
         // Launch (local subprocesses) or expect (k8s pods) the cells.
         let launch_ctx = CellLaunchContext {
             cell_count,
             controller_coordinate: cell_coordinate,
             phase_ordinal_bases,
+            aggregator_count,
+            aggregator_base_port,
             // k8s pods derive the artifact authority from their operator-injected
             // `tcp://` controller coordinate + artifact port (the controller cannot
             // know its own routable host), so nothing is injected there. The same-host
@@ -437,19 +491,49 @@ pub fn run_cellular(
                 let _ = failure_tx.send(report).await;
             });
         }
+        // Watch each aggregator (tier T2) for a hard failure the same way, so a dead
+        // aggregator aborts the run rather than hanging the controller's collect on a
+        // subtree partition that will never arrive.
+        for (agg_id, mut child) in aggregator_children.drain(..).enumerate() {
+            let failure_tx = failure_tx.clone();
+            tokio::spawn(async move {
+                if let Ok(status) = child.wait().await
+                    && !status.success()
+                {
+                    let _ = failure_tx
+                        .send(format!("aggregator {agg_id} exited with {status}"))
+                        .await;
+                }
+            });
+        }
         drop(failure_tx);
 
-        // Synchronized start: wait for every cell to register (bounded — cells only
-        // fetch their envelope, no work yet), then trigger the START event so all
-        // cells begin dispatching together. A cell that dies before registering, or a
-        // registration timeout, aborts the run (dropping `start_event` poisons it, so
-        // any already-waiting cell unblocks with an error rather than hanging).
-        tokio::select! {
-            biased;
-            () = transport.await_all_registered() => {}
-            Some(failure) = failure_rx.recv() => bail!("{failure}"),
-            () = tokio::time::sleep(register_timeout()) => {
-                bail!("cells did not all register within the registration timeout")
+        // Start policy. The default is a SYNCHRONIZED start: wait for every cell to
+        // register (bounded — cells only fetch their envelope, no work yet), then
+        // trigger the START event so all cells begin dispatching together. This is a
+        // tight O(N) fan-in rendezvous that fights unbounded horizontal scale.
+        //
+        // Tier T3 (`AIPERF_CELL_BARRIER_FREE=1`) is the master-less alternative k6 uses:
+        // the controller triggers START IMMEDIATELY, without gathering all N
+        // registrations. A cell that registers *after* the trigger sees the completed
+        // event instantly (velo's completed-event cache), so each cell starts as soon
+        // as it has its envelope — no O(N) rendezvous. The tradeoff is looser start
+        // correlation across cells (arrival-epoch jitter), which is aggregate-equivalent
+        // (the same bar as rate/ramp) and does not affect data-deterministic metrics.
+        // A failed cell is still caught by the collect loop's failure watch below.
+        if barrier_free {
+            tracing::info!(
+                "tier-T3 barrier-free start: triggering immediately without the O(N) register \
+                 rendezvous (cells start on their own registration; looser cross-cell start sync)"
+            );
+        } else {
+            tokio::select! {
+                biased;
+                () = transport.await_all_registered() => {}
+                Some(failure) = failure_rx.recv() => bail!("{failure}"),
+                () = tokio::time::sleep(register_timeout()) => {
+                    bail!("cells did not all register within the registration timeout")
+                }
             }
         }
         start_event
@@ -482,7 +566,9 @@ pub fn run_cellular(
         let collected = |records: &[RecordsShardPartition], stores: &[ColumnStorePartition]| {
             records.len() + stores.len()
         };
-        while collected(&partitions, &store_partitions) < cell_count as usize {
+        // In the flat topology this is one partition per cell; under tier-T2 it is one
+        // MERGED partition per aggregator (`expected_partitions == aggregator count`).
+        while collected(&partitions, &store_partitions) < expected_partitions as usize {
             tokio::select! {
                 biased;
                 message = transport.recv() => match message.context("receiving from cell")? {
@@ -494,13 +580,13 @@ pub fn run_cellular(
                         emit_live_progress(live_progress_log.as_deref(), &heartbeats);
                     }
                     None => bail!(
-                        "transport closed with {} of {cell_count} cell partitions",
+                        "transport closed with {} of {expected_partitions} partitions",
                         collected(&partitions, &store_partitions)
                     ),
                 },
                 Some(failure) = failure_rx.recv() => bail!("{failure}"),
                 _ = &mut deadline => bail!(
-                    "cellular run timed out with {} of {cell_count} cell partitions",
+                    "cellular run timed out with {} of {expected_partitions} partitions",
                     collected(&partitions, &store_partitions)
                 ),
             }
@@ -546,7 +632,10 @@ pub fn run_cellular(
         } else {
             kind.merge(metrics_config, partitions)?
         };
-        let record_count = merged.record_count();
+        // `ingested_count()` — not `record_count()` — so a merged SKETCH store (which
+        // retains no rows, `record_count() == 0`) reports its true total; identical to
+        // `record_count()` for the retain/exact-fold merges.
+        let record_count = merged.ingested_count() as usize;
         let summary =
             merged.export_results(&ExportContext::phase(crate::metrics_core::Phase::Profiling));
         // Assemble the report so its metric data matches a 1-cell run: the profiling
@@ -751,7 +840,7 @@ fn controller_bind_and_endpoint(is_k8s: bool, temp_root: &Path) -> Result<(BindS
 /// (`AIPERF_CELL_COLLECT_TIMEOUT_SECS`, default 2 hours). Primarily a k8s backstop —
 /// a local run's per-child exit watcher catches a dead cell far sooner.
 #[cfg(feature = "velo")]
-fn collect_timeout() -> std::time::Duration {
+pub(crate) fn collect_timeout() -> std::time::Duration {
     let secs = std::env::var("AIPERF_CELL_COLLECT_TIMEOUT_SECS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
@@ -1453,7 +1542,61 @@ fn validate_graph_cellular_phases(envelope: &serde_json::Value, cell_count: u32)
 /// report. Mirrors [`crate::runner_protocol::protocol::BenchmarkRunConfigWireV2`]'s
 /// `from_value(cfg.metrics).unwrap_or_default()` so an absent/loose `metrics` block
 /// falls back the same way (`metrics_config` still validates any SLO names present).
-fn cellular_metrics_config(envelope: &serde_json::Value) -> Result<MetricsConfig> {
+/// Spawns the tier-T2 aggregator subprocesses (`aiperf-runner --aggregator`), one per
+/// aggregator, each fed the run envelope on stdin (for the merge `MetricsConfig`) and
+/// its subtree parameters via env: its id, the fixed loopback `tcp://` coordinate it
+/// binds (its cells dial it there), how many cells ship to it, and the controller
+/// coordinate it ships its one merged store up to. Returns the children so the
+/// controller watches them for hard failure. `kill_on_drop` tears them down on any
+/// controller abort.
+async fn spawn_aggregators(
+    envelope: &serde_json::Value,
+    agg_count: u32,
+    cell_count: u32,
+    base_port: u16,
+    controller_coordinate: &str,
+) -> Result<Vec<tokio::process::Child>> {
+    use crate::runner_protocol::cellular_aggregator::{
+        AGG_BIND_ENV, AGG_CHILD_COUNT_ENV, AGG_ID_ENV, children_of,
+    };
+    use crate::runner_protocol::cellular_cell::CELL_CONTROLLER_ADDR_ENV;
+    use std::process::Stdio;
+    use tokio::io::AsyncWriteExt;
+
+    let envelope_bytes =
+        serde_json::to_vec(envelope).context("serializing envelope for aggregators")?;
+    let exe = std::env::current_exe().unwrap_or_else(|_| "aiperf-runner".into());
+    let mut children = Vec::with_capacity(agg_count as usize);
+    for agg_id in 0..agg_count {
+        let child_count = children_of(agg_id, agg_count, cell_count);
+        let mut child = tokio::process::Command::new(&exe)
+            .arg("--aggregator")
+            .env(AGG_ID_ENV, agg_id.to_string())
+            .env(
+                AGG_BIND_ENV,
+                format!("tcp://127.0.0.1:{}", base_port + agg_id as u16),
+            )
+            .env(AGG_CHILD_COUNT_ENV, child_count.to_string())
+            .env(CELL_CONTROLLER_ADDR_ENV, controller_coordinate)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .kill_on_drop(true)
+            .spawn()
+            .with_context(|| format!("spawning aggregator {agg_id}"))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(&envelope_bytes)
+                .await
+                .with_context(|| format!("writing envelope to aggregator {agg_id}"))?;
+            // `stdin` drops here → EOF, so the aggregator's `read_to_end` returns.
+        }
+        children.push(child);
+    }
+    Ok(children)
+}
+
+pub(crate) fn cellular_metrics_config(envelope: &serde_json::Value) -> Result<MetricsConfig> {
     let spec: crate::runner_protocol::protocol::MetricsSpec = envelope
         .pointer("/run/cfg/metrics")
         .cloned()
