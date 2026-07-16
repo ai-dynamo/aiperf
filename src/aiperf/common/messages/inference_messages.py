@@ -1,14 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any, ClassVar
+from typing import Any, Literal
 
 from pydantic import Field, SerializeAsAny, field_validator
 
 from aiperf.common.enums import MessageType, MetricValueTypeT
 from aiperf.common.messages.service_messages import BaseServiceMessage
-from aiperf.common.models import ErrorDetails, RequestRecord
-from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.models import ErrorDetails, RecordData, RequestRecord
 from aiperf.common.models.record_models import MetricRecordMetadata, MetricResult
 from aiperf.common.models.trace_models import BaseTraceData
 from aiperf.common.types import MessageTypeT, MetricTagT
@@ -24,10 +23,10 @@ class InferenceResultsMessage(BaseServiceMessage):
     )
 
 
-class MetricRecordsData(AIPerfBaseModel):
+class MetricRecordsData(RecordData):
     """Incoming data from the record processor service to combine metric records for the profile run."""
 
-    record_type: ClassVar[str] = "metric_records"
+    record_type: Literal["metric_records"] = "metric_records"
 
     metadata: MetricRecordMetadata = Field(
         ..., description="The metadata of the request record."
@@ -65,8 +64,8 @@ class RecordsMessage(BaseServiceMessage):
     One ``RecordsMessage`` is pushed for every inference record (the credit
     lockstep contract). It carries the request metadata plus the flattened list
     of typed records produced for that request. Each record self-identifies via
-    its own ``record_type`` ClassVar, so the records manager dispatches
-    generically without inspecting the message for a record type.
+    its own serialized ``record_type`` discriminator, so the records manager
+    dispatches generically without inspecting the message for a record type.
     """
 
     message_type: MessageTypeT = MessageType.RECORDS
@@ -74,15 +73,32 @@ class RecordsMessage(BaseServiceMessage):
     metadata: MetricRecordMetadata = Field(
         ..., description="The metadata of the request record; drives the lockstep."
     )
-    records: list[SerializeAsAny[Any]] = Field(
+    records: list[SerializeAsAny[RecordData]] = Field(
         default_factory=list,
         description="The typed records produced for this request. Each record "
-        "self-identifies via its own record_type ClassVar.",
+        "self-identifies via its own serialized record_type discriminator, so the "
+        "concrete subclass is reconstructed on the receiving side of the ZMQ boundary.",
     )
     error: ErrorDetails | None = Field(
         default=None,
         description="The request-level error details if the request failed.",
     )
+
+    @field_validator("records", mode="before")
+    @classmethod
+    def route_records(cls, v: Any) -> Any:
+        """Reconstruct each dict record into its concrete RecordData subclass.
+
+        On the wire the records arrive as plain dicts; route each one via
+        ``RecordData.from_json`` (using the serialized ``record_type``
+        discriminator) so the records manager receives concrete typed records,
+        not bare dicts. Already-constructed model instances pass through.
+        """
+        if not isinstance(v, list):
+            return v
+        return [
+            RecordData.from_json(item) if isinstance(item, dict) else item for item in v
+        ]
 
     @property
     def valid(self) -> bool:

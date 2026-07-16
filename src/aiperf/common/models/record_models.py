@@ -7,7 +7,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Annotated, Any, AnyStr, Protocol, runtime_checkable
+from typing import Annotated, Any, AnyStr, ClassVar, Protocol, runtime_checkable
 
 import orjson
 from pydantic import (
@@ -121,6 +121,27 @@ class MetricResult(JsonMetricResult):
         for stat in STAT_KEYS:
             setattr(result, stat, getattr(self, stat, None))
         return result
+
+
+class RecordData(AIPerfBaseModel):
+    """Base for typed records that travel on the generic ``RecordsMessage`` envelope.
+
+    Subclasses declare a SERIALIZED ``record_type`` discriminator (a ``Literal``
+    field, not a ClassVar) so AutoRoutedModel can reconstruct the concrete type
+    on the receiving side of the ZMQ boundary. A ClassVar discriminator would not
+    serialize, so the receiver would see bare dicts and fail to route them. This
+    mirrors the ``BaseTraceData`` / ``trace_type`` discriminated-union pattern.
+
+    ``RecordData.from_json(dict)`` routes to the registered subclass by its
+    ``record_type`` value; ``getattr(instance, "record_type")`` returns the field
+    value, so the records-manager routing table keys off instances unchanged.
+    """
+
+    discriminator_field: ClassVar[str] = "record_type"
+
+    record_type: str = Field(
+        description="Discriminator: the record_type channel this record routes on.",
+    )
 
 
 class MetricValue(AIPerfBaseModel):

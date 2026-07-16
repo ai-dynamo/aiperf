@@ -12,6 +12,12 @@ from aiperf.common.messages.inference_messages import MetricRecordsData
 if TYPE_CHECKING:
     from aiperf.common.models import MetricRecordMetadata, ParsedResponseRecord
 
+# The record_type channel the metric producer declares in plugins.yaml, which is
+# also the key the RecordProcessorService groups its output under in ``produced``.
+# ``record_type`` is now a serialized field, so class access returns FieldInfo --
+# read the Literal default instead of ``MetricRecordsData.record_type``.
+_METRIC_RECORDS_TYPE: str = MetricRecordsData.model_fields["record_type"].default
+
 
 @dataclass(slots=True)
 class RecordObserverContext:
@@ -36,5 +42,5 @@ class RecordObserverContext:
     @property
     def metrics(self) -> MetricRecordsData | None:
         """The first metric-records output, or None when no producer emitted one."""
-        items = self.produced.get(MetricRecordsData.record_type) or []
+        items = self.produced.get(_METRIC_RECORDS_TYPE) or []
         return items[0] if items else None

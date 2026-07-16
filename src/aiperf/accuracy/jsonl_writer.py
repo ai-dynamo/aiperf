@@ -21,11 +21,16 @@ class AccuracyJSONLWriter(
 ):
     """Exports per-record graded accuracy data to JSONL files.
 
-    Streams each ``AccuracyRecordsData`` as it arrives on the dedicated accuracy
-    channel, writing one JSON line per graded response. Each line carries the
-    grade (pass/unparsed/confidence), the expected/actual answers, and the
-    grader's reasoning, enabling per-response post-hoc analysis.
+    Streams each ``AccuracyRecordsData`` as it arrives, writing one JSON line per
+    graded response. Each line carries the grade (pass/unparsed/confidence), the
+    expected/actual answers, and the grader's reasoning, enabling per-response
+    post-hoc analysis.
     """
+
+    # ``record_type`` is a wire-only discriminator (needed to reconstruct the
+    # record across the ZMQ boundary on the generic RecordsMessage) -- exclude it
+    # from accuracy_export.jsonl so the on-disk output is byte-identical.
+    _jsonl_exclude_fields = {"record_type"}
 
     def __init__(
         self,

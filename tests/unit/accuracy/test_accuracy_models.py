@@ -11,10 +11,13 @@ from aiperf.accuracy.models import (
 )
 from aiperf.common.enums import CreditPhase, MessageType
 from aiperf.common.messages import (
+    Message,
+    MetricRecordsData,
     ProcessAccuracyResultMessage,
     RecordsMessage,
 )
 from aiperf.common.models.record_models import MetricRecordMetadata
+from aiperf.common.models.trace_models import AioHttpTraceData
 
 
 def _make_record(**overrides) -> AccuracyRecordsData:
@@ -39,11 +42,12 @@ def _make_record(**overrides) -> AccuracyRecordsData:
 def test_accuracy_record_type_is_classvar_constant() -> None:
     a = _make_record(session_num=1)
     b = _make_record(session_num=2)
-    assert AccuracyRecordsData.record_type == "accuracy"
+    assert AccuracyRecordsData.model_fields["record_type"].default == "accuracy"
     assert a.record_type == "accuracy"
     assert b.record_type == "accuracy"
-    # record_type is a ClassVar, not a constructor field: it must not be dumped.
-    assert "record_type" not in a.model_dump()
+    # record_type is now a SERIALIZED discriminator field (needed for wire
+    # reconstruction on the generic RecordsMessage), so it IS dumped.
+    assert a.model_dump()["record_type"] == "accuracy"
 
 
 def test_accuracy_record_task_defaults_to_none() -> None:
@@ -124,6 +128,63 @@ def test_records_message_serializes_accuracy_records() -> None:
     dumped = message.model_dump()
     assert len(dumped["records"]) == 2
     assert dumped["records"][0]["session_num"] == 1
+    assert dumped["records"][0]["record_type"] == "accuracy"
+
+
+def test_records_message_wire_roundtrip_reconstructs_concrete_types() -> None:
+    """The generic RecordsMessage must survive the ZMQ encode/decode boundary
+    with each heterogeneous record rebuilt as its CONCRETE RecordData subclass.
+
+    This is the regression guard for the serialization bug: a ``list[Any]``
+    would decode the records back into bare dicts (no record_type routing), so
+    the records manager would fail to dispatch them. Serializing via the real
+    ``to_json_bytes`` / ``Message.from_json`` path proves the discriminator
+    reconstruction works.
+    """
+    metadata = MetricRecordMetadata(
+        session_num=7,
+        request_start_ns=1_000,
+        request_end_ns=2_000,
+        worker_id="worker-1",
+        record_processor_id="rp",
+        benchmark_phase=CreditPhase.PROFILING,
+    )
+    trace = AioHttpTraceData(
+        trace_type="aiohttp",
+        reference_time_ns=1_700_000_000_000_000_000,
+        reference_perf_ns=1_000_000_000,
+        request_send_start_perf_ns=1_000_000_000,
+    )
+    metric_record = MetricRecordsData(
+        metadata=metadata,
+        metrics={"request_latency": 250_000_000},
+        trace_data=trace,
+    )
+    accuracy_record = _make_record(session_num=7)
+
+    message = RecordsMessage(
+        service_id="record-processor",
+        metadata=metadata,
+        records=[metric_record, accuracy_record],
+        error=None,
+    )
+
+    decoded = Message.from_json(message.to_json_bytes())
+
+    assert isinstance(decoded, RecordsMessage)
+    assert len(decoded.records) == 2
+
+    round_metric, round_accuracy = decoded.records
+    assert isinstance(round_metric, MetricRecordsData)
+    assert round_metric.record_type == "metric_records"
+    assert round_metric.metrics["request_latency"] == 250_000_000
+    # trace_data must survive with its concrete discriminated subtype intact.
+    assert isinstance(round_metric.trace_data, AioHttpTraceData)
+    assert round_metric.trace_data.trace_type == "aiohttp"
+
+    assert isinstance(round_accuracy, AccuracyRecordsData)
+    assert round_accuracy.record_type == "accuracy"
+    assert round_accuracy.session_num == 7
 
 
 def test_process_accuracy_result_message_carries_summary() -> None:

@@ -3,12 +3,13 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import Field
 from typing_extensions import TypedDict
 
 from aiperf.common.enums import CreditPhase
+from aiperf.common.models import RecordData
 from aiperf.common.models.base_models import AIPerfBaseModel
 
 if TYPE_CHECKING:
@@ -82,15 +83,15 @@ class BenchmarkProblem(AIPerfBaseModel):
     )
 
 
-class AccuracyRecordsData(AIPerfBaseModel):
-    """Per-graded-response record that flows on the dedicated ``accuracy`` channel.
+class AccuracyRecordsData(RecordData):
+    """Per-graded-response record that rides the generic ``RecordsMessage`` envelope.
 
-    Mirrors the record-type pattern used by ``ServerMetricsRecord`` and
-    ``TelemetryRecord``: ``record_type`` is a plain ``ClassVar`` (not a Pydantic
-    field) read by the routing layer via ``getattr(record, "record_type")``.
+    ``record_type`` is a SERIALIZED ``Literal`` discriminator field (not a
+    ClassVar) so AutoRoutedModel reconstructs the concrete type across the ZMQ
+    boundary; the routing layer still reads it via ``getattr(record, "record_type")``.
     """
 
-    record_type: ClassVar[str] = "accuracy"
+    record_type: Literal["accuracy"] = "accuracy"
 
     session_num: int = Field(
         ge=0,
