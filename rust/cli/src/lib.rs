@@ -12,6 +12,7 @@
 //! The library target exists so both the `aiperf` binary and the integration
 //! tests share the same wire DTOs and projection code (see [`wire`]).
 
+pub mod analyze_trace;
 #[cfg(feature = "search-pyo3")]
 pub mod bayes;
 pub mod config;
