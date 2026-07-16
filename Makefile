@@ -150,7 +150,7 @@ coverage: #? run the tests and generate an html coverage report.
 
 install: install-app install-mock-server #? install the project and mock server in editable mode.
 
-install-app: bundle-runner #? install the project in editable mode (with the interned runner).
+install-app: bundle-cli #? install the project in editable mode (with the interned native front door + runner).
 	$(activate_venv) && uv pip install -e ".[dev]"
 
 native-cli: #? build the native Rust `aiperf` binary (aiperf-cli) + the runner.
@@ -170,7 +170,13 @@ bundle-runner: #? build the full-fat aiperf-runner and intern it at src/aiperf/_
 	cp target/release/aiperf-runner src/aiperf/_bin/aiperf-runner
 	chmod +x src/aiperf/_bin/aiperf-runner
 
-wheel: bundle-runner #? build the single interned aiperf wheel (maturin, manylinux) into dist/.
+bundle-cli: bundle-runner #? build the native aiperf-cli front door and intern it beside the runner.
+	cargo build --release -p aiperf-cli
+	mkdir -p src/aiperf/_bin
+	cp target/release/aiperf src/aiperf/_bin/aiperf-native
+	chmod +x src/aiperf/_bin/aiperf-native
+
+wheel: bundle-cli #? build the single interned aiperf wheel (maturin, manylinux) into dist/.
 	$(activate_venv) && uv pip install "maturin[patchelf]" \
 		&& maturin build --release --out dist
 
