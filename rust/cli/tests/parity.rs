@@ -84,6 +84,7 @@ const FIXTURES: &[&str] = &[
     "sketch",
     "image",
     "image_format",
+    "dataset_filter",
     "audio",
     "video",
     "video_audio",

@@ -662,6 +662,15 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 options.insert(k.clone(), v.clone());
             }
         }
+        // exgentic/exgentic_v2 loaders carry a `fixed_schedule` option (Python
+        // `rust_wire`: `options["fixed_schedule"] = any(FixedSchedulePhase ...)`).
+        // A public run is fixed-schedule only when `--fixed-schedule` was set.
+        if matches!(meta.format.as_str(), "exgentic" | "exgentic_v2") {
+            options.insert(
+                "fixed_schedule".to_string(),
+                serde_json::json!(inputs.fixed_schedule.is_some()),
+            );
+        }
         if let Some(max) = crate::model::public_catalog::max_conversations(
             meta,
             Some(inputs.entries),
