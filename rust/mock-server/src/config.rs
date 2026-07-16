@@ -30,6 +30,18 @@ pub struct MockServerConfig {
     #[arg(long, env = "MOCK_SERVER_GRPC_PORT")]
     pub grpc_port: Option<u16>,
 
+    /// Optional Unix-domain socket path. When set, the server binds a
+    /// `UnixListener` at this path and serves the SAME axum router over it as
+    /// HTTP/1.1 (the runner's UDS transport is HTTP/1.1-only —
+    /// `transport_http/client/connection.rs` connects a `UnixStream` and
+    /// negotiates h1). A stale socket file at the path is unlinked first. The
+    /// TCP frontend on `--port` is unchanged and continues to serve in parallel.
+    /// Unset (the default) means the server is TCP-only. Not supported together
+    /// with `--processes > 1` (the L4 balancer is TCP-only): the UDS listener is
+    /// warned-and-skipped in that mode.
+    #[arg(long, env = "MOCK_SERVER_UDS")]
+    pub uds: Option<String>,
+
     /// When set, the KServe gRPC `ModelInfer` handler behaves as a NON-LLM
     /// embedding model (like a Triton `python`-backend embedder): it consumes the
     /// input text tensor and returns a single `FP32` embedding tensor of this
@@ -759,6 +771,7 @@ mod tests {
         assert_eq!(cfg.port, 8000);
         assert_eq!(cfg.host, "127.0.0.1");
         assert_eq!(cfg.grpc_port, None);
+        assert_eq!(cfg.uds, None);
         assert_eq!(cfg.processes, 1);
         assert_eq!(cfg.workers, 0);
         assert_eq!(cfg.ttft, 20.0);
@@ -790,6 +803,12 @@ mod tests {
         assert_eq!(cfg.error_status_codes, vec![500u16]);
         assert_eq!(cfg.error_retry_after, 1);
         assert_eq!(cfg.error_midstream_rate, 0.0);
+    }
+
+    #[test]
+    fn uds_flag_parses() {
+        let cfg = MockServerConfig::parse_from(["aiperf-mock-server", "--uds", "/tmp/mock.sock"]);
+        assert_eq!(cfg.uds.as_deref(), Some("/tmp/mock.sock"));
     }
 
     #[test]

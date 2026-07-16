@@ -35,6 +35,12 @@ fn main() -> anyhow::Result<()> {
                  gRPC is not served in multi-process mode"
             );
         }
+        if config.uds.is_some() {
+            tracing::warn!(
+                "--uds is ignored with --processes > 1 (the balancer is TCP-only); \
+                 the Unix-domain socket listener is not served in multi-process mode"
+            );
+        }
         return balancer::run(config, processes);
     }
 
@@ -90,6 +96,19 @@ async fn serve(config: MockServerConfig, worker_threads: usize) -> anyhow::Resul
     }
 
     let router = build_router(state);
+
+    // Optional Unix-domain socket listener serving the SAME router over HTTP/1.1
+    // (the runner's UDS transport is h1-only). Runs alongside the TCP frontend.
+    if let Some(uds_path) = config.uds.clone() {
+        let uds_router = router.clone();
+        tokio::spawn(async move {
+            if let Err(error) =
+                aiperf_mock_server::listener::serve_router_uds(uds_router, &uds_path).await
+            {
+                tracing::error!(%uds_path, "UDS server exited: {error}");
+            }
+        });
+    }
 
     tracing::info!(%addr, backlog = LISTEN_BACKLOG, "Listening");
     let listener = build_listener(addr)?;
