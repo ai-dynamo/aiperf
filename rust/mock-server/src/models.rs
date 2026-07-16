@@ -138,21 +138,17 @@ impl ResponsesRequest {
 /// `{text}` parts. Non-text parts (images, audio) are skipped.
 fn collect_responses_text(value: &Value, out: &mut Vec<String>) {
     match value {
-        Value::String(s) => {
-            if !s.is_empty() {
-                out.push(s.clone());
-            }
-        }
+        Value::String(s) if !s.is_empty() => out.push(s.clone()),
         Value::Array(items) => {
             for item in items {
                 collect_responses_text(item, out);
             }
         }
         Value::Object(obj) => {
-            if let Some(text) = obj.get("text").and_then(Value::as_str) {
-                if !text.is_empty() {
-                    out.push(text.to_string());
-                }
+            if let Some(text) = obj.get("text").and_then(Value::as_str)
+                && !text.is_empty()
+            {
+                out.push(text.to_string());
             }
             if let Some(content) = obj.get("content") {
                 collect_responses_text(content, out);
