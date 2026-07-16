@@ -6,9 +6,10 @@
 //!
 //! [`CellularRunKind`] is the single seam both sides of the cellular split name:
 //! the controller ([`cellular_controller`](crate::runner_protocol::cellular_controller))
-//! answers the three ways the two paths differ (phase validation, per-phase global
-//! ordinal bases, record merge) through the `impl` block that lives beside those
-//! controller-private helpers, while the cell and the frontend terminal envelope
+//! answers the four ways the two paths differ (phase validation, per-phase global
+//! ordinal bases, record merge, per-cell session-budget slicing) through the `impl`
+//! block that lives beside those controller-private helpers, while the cell and the
+//! frontend terminal envelope
 //! read the pure, controller-independent facts defined here (detection from the
 //! dataset format, the provenance `workload` label, and whether the retain-path
 //! multi-turn backstop applies). Keeping the enum here — rather than private to the
@@ -41,12 +42,13 @@ pub(crate) fn is_graph_dataset(envelope: &Value) -> bool {
 }
 
 /// Which execution path a cellular run drives. The scheduled arrival-paced executor
-/// and the graph trace executor differ in exactly three ways — how the phases are
-/// validated, whether a per-phase global ordinal base applies, and how the cells'
-/// records merge — answered by the `impl` block in
+/// and the graph trace executor differ in exactly four ways — how the phases are
+/// validated, whether a per-phase global ordinal base applies, how the cells'
+/// records merge, and whether the per-cell session budget is sliced — answered by
+/// the `impl` block in
 /// [`cellular_controller`](crate::runner_protocol::cellular_controller). The pure
-/// facts every consumer needs (detection, provenance label, multi-turn backstop)
-/// live here.
+/// facts every consumer needs (detection, provenance label, multi-turn backstop,
+/// session-budget slicing) live here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CellularRunKind {
     /// Synthetic/linear scheduled runs: request-bounded phases, pre-tiled global
@@ -88,6 +90,19 @@ impl CellularRunKind {
     pub(crate) fn enforces_multiturn_retain_backstop(&self) -> bool {
         matches!(self, Self::Scheduled)
     }
+
+    /// Whether the controller slices the per-cell SESSION (conversation) budget for
+    /// this kind.
+    ///
+    /// A scheduled multi-turn run tiles its `sessions` budget across cells — cell `k`
+    /// owns `owned_positions(total, k, C)` conversations, aligned with the
+    /// [`PartitionedSampler`](crate::dataset::sampler::PartitionedSampler)
+    /// per-conversation stride. A graph run gets the whole `sessions` budget WHOLE and
+    /// partitions the trace at runtime (`PartitionedGraphTraceSource` over the session
+    /// space), so slicing the budget here would double-partition.
+    pub(crate) fn slices_session_budget(&self) -> bool {
+        matches!(self, Self::Scheduled)
+    }
 }
 
 #[cfg(test)]
@@ -114,5 +129,7 @@ mod tests {
         assert_eq!(CellularRunKind::Graph.workload_label(), "graph");
         assert!(CellularRunKind::Scheduled.enforces_multiturn_retain_backstop());
         assert!(!CellularRunKind::Graph.enforces_multiturn_retain_backstop());
+        assert!(CellularRunKind::Scheduled.slices_session_budget());
+        assert!(!CellularRunKind::Graph.slices_session_budget());
     }
 }

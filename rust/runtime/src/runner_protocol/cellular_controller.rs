@@ -25,7 +25,7 @@ use crate::metrics_core::{ExportContext, MetricsAccumulator, MetricsConfig, PERC
 use anyhow::{Context, Result, anyhow, bail, ensure};
 
 use crate::runner_protocol::cell_launcher::owned_positions;
-use crate::runner_protocol::cellular_kind::{CellularRunKind, is_graph_dataset};
+use crate::runner_protocol::cellular_kind::CellularRunKind;
 
 // The velo transport + launcher wiring is the only part of the controller that
 // needs the `velo` feature; the validation, budget-slicing, merge, and report
@@ -179,9 +179,10 @@ pub fn run_cellular(
     ensure!(cell_count >= 1, "cell_count must be at least 1");
     validate_cellular_run_shape(envelope)?;
     // The dataset-shape gate above runs before the kind is known; the kind then names
-    // the scheduled-vs-graph run once and owns its three differing behaviours (phase
-    // validation, ordinal bases, record merge). The scheduled path folds the profiling
-    // budget check in — graph phases carry sessions/duration, not a `requests` budget.
+    // the scheduled-vs-graph run once and owns its four differing behaviours (phase
+    // validation, ordinal bases, record merge, session-budget slicing). The scheduled
+    // path folds the profiling budget check in — graph phases carry sessions/duration,
+    // not a `requests` budget.
     let kind = CellularRunKind::detect(envelope);
     kind.validate_phases(envelope, cell_count)?;
     // Same-host (local launcher) cells write their per-record artifacts into
@@ -491,7 +492,7 @@ pub fn run_cellular(
             std::fs::create_dir_all(&cell_dir)
                 .with_context(|| format!("creating cell {cell_id} artifact dir"))?;
             let cell_envelope =
-                build_cell_envelope(envelope, cell_id, cell_count, &cell_dir, injected_seed)?;
+                build_cell_envelope(envelope, kind, cell_id, cell_count, &cell_dir, injected_seed)?;
             specs.push(
                 serde_json::to_vec(&cell_envelope)
                     .with_context(|| format!("serializing cell {cell_id} envelope"))?,
@@ -1012,6 +1013,7 @@ fn register_timeout() -> std::time::Duration {
 /// across phases.)
 fn build_cell_envelope(
     envelope: &serde_json::Value,
+    kind: CellularRunKind,
     cell_id: u32,
     cell_count: u32,
     cell_dir: &Path,
@@ -1056,8 +1058,7 @@ fn build_cell_envelope(
     // over the SESSION space), so its `sessions` budget must reach every cell WHOLE —
     // slicing it here would double-partition. A scheduled run has no such runtime
     // partition, so its `sessions` budget (multi-turn / `--num-conversations`) IS sliced
-    // per cell below. Computed once outside the phase loop.
-    let is_graph = is_graph_dataset(envelope);
+    // per cell below. The `kind` names which — see `CellularRunKind::slices_session_budget`.
     let phases = run
         .get_mut("cfg")
         .and_then(|cfg| cfg.get_mut("phases"))
@@ -1082,7 +1083,7 @@ fn build_cell_envelope(
         // the whole budget and partition the trace themselves).
         //
         // [`PartitionedSampler`]: crate::dataset::sampler::PartitionedSampler
-        if !is_graph
+        if kind.slices_session_budget()
             && let Some(sessions) = phase.get("sessions").and_then(serde_json::Value::as_u64)
         {
             debug_assert_eq!(
@@ -2122,6 +2123,7 @@ fn write_heartbeat_sidecar(report_path: &Path, heartbeat: &MetricsHeartbeat) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runner_protocol::cellular_kind::is_graph_dataset;
 
     #[test]
     fn rejects_non_shipping_run_shapes() {
@@ -2411,7 +2413,15 @@ mod tests {
                 }}});
                 let mut sum = 0u64;
                 for cell_id in 0..count {
-                    let cell = build_cell_envelope(&envelope, cell_id, count, dir, None).unwrap();
+                    let cell = build_cell_envelope(
+                        &envelope,
+                        CellularRunKind::detect(&envelope),
+                        cell_id,
+                        count,
+                        dir,
+                        None,
+                    )
+                    .unwrap();
                     let owned = cell
                         .pointer("/run/cfg/phases/0/sessions")
                         .and_then(serde_json::Value::as_u64)
@@ -2437,7 +2447,15 @@ mod tests {
             "phases": [{"type": "concurrency", "name": "profiling", "sessions": 60, "concurrency": 8}],
         }}});
         for cell_id in 0..4u32 {
-            let cell = build_cell_envelope(&graph, cell_id, 4, dir, None).unwrap();
+            let cell = build_cell_envelope(
+                &graph,
+                CellularRunKind::detect(&graph),
+                cell_id,
+                4,
+                dir,
+                None,
+            )
+            .unwrap();
             assert_eq!(
                 cell.pointer("/run/cfg/phases/0/sessions")
                     .and_then(serde_json::Value::as_u64),
@@ -2668,7 +2686,15 @@ mod tests {
                         {"name": "warmup", "requests": warmup},
                         {"name": "profiling", "requests": profiling},
                     ]}}});
-                    let cell = build_cell_envelope(&envelope, cell_id, count, dir, None).unwrap();
+                    let cell = build_cell_envelope(
+                        &envelope,
+                        CellularRunKind::detect(&envelope),
+                        cell_id,
+                        count,
+                        dir,
+                        None,
+                    )
+                    .unwrap();
                     let phases = cell
                         .pointer("/run/cfg/phases")
                         .and_then(serde_json::Value::as_array)
@@ -2713,7 +2739,15 @@ mod tests {
         let cell_count = 4u32;
         let mut rate_sum = 0.0;
         for cell_id in 0..cell_count {
-            let cell = build_cell_envelope(&envelope, cell_id, cell_count, dir, None).unwrap();
+            let cell = build_cell_envelope(
+                &envelope,
+                CellularRunKind::detect(&envelope),
+                cell_id,
+                cell_count,
+                dir,
+                None,
+            )
+            .unwrap();
             let phase = &cell
                 .pointer("/run/cfg/phases")
                 .and_then(serde_json::Value::as_array)
