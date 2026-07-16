@@ -72,7 +72,8 @@ class AccuracyRecordsData(AIPerfBaseModel):
     record_type: ClassVar[str] = "accuracy"
 
     session_num: int = Field(
-        description="Conversation/session index this response came from, used to map to task"
+        ge=0,
+        description="Conversation/session index this response came from, used to map to task",
     )
     worker_id: str = Field(
         description="ID of the record processor that produced this record"
@@ -81,7 +82,7 @@ class AccuracyRecordsData(AIPerfBaseModel):
         description="Benchmark phase active when grading completed (warmup vs profiling)"
     )
     timestamp_ns: int = Field(
-        description="Nanosecond wall-clock timestamp when grading completed"
+        ge=0, description="Nanosecond wall-clock timestamp when grading completed"
     )
     task: str | None = Field(
         default=None,
@@ -111,16 +112,16 @@ class AccuracyRecordsData(AIPerfBaseModel):
 class TaskAccuracyStats(AIPerfBaseModel):
     """Per-task accuracy rollup."""
 
-    total: int = Field(description="Total responses evaluated for this task")
-    passed: int = Field(description="Number graded correct for this task")
+    total: int = Field(ge=0, description="Total responses evaluated for this task")
+    passed: int = Field(ge=0, description="Number graded correct for this task")
     unparsed: int = Field(
-        description="Number that needed a regex fallback for this task"
+        ge=0, description="Number that needed a regex fallback for this task"
     )
     accuracy_rate: float = Field(
-        description="passed/total for this task, 0.0 when total==0"
+        ge=0, le=1, description="passed/total for this task, 0.0 when total==0"
     )
     unparsed_rate: float = Field(
-        description="unparsed/total for this task, 0.0 when total==0"
+        ge=0, le=1, description="unparsed/total for this task, 0.0 when total==0"
     )
 
 
@@ -128,16 +129,19 @@ class AccuracySummary(AIPerfBaseModel):
     """Accumulator result payload; structured replacement for today's list[MetricResult]."""
 
     total_evaluated: int = Field(
-        description="Total responses evaluated across all tasks"
+        ge=0, description="Total responses evaluated across all tasks"
     )
     total_passed: int = Field(
-        description="Total responses graded correct across all tasks"
+        ge=0, description="Total responses graded correct across all tasks"
     )
     accuracy_rate: float = Field(
-        description="total_passed/total_evaluated, 0.0 when total_evaluated==0"
+        ge=0,
+        le=1,
+        description="total_passed/total_evaluated, 0.0 when total_evaluated==0",
     )
     overall_unparsed: int = Field(
-        description="Total responses that needed a regex fallback across all tasks"
+        ge=0,
+        description="Total responses that needed a regex fallback across all tasks",
     )
     grader_name: str | None = Field(
         default=None, description="Grader that scored these responses, if uniform"

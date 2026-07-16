@@ -39,6 +39,7 @@ AioHttpTraceData.response_receive_start_perf_ns: numeric field has no ge/gt/le/l
 AioHttpTraceData.response_status_code: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 AioHttpTraceData.tcp_connect_end_perf_ns: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 AioHttpTraceData.tcp_connect_start_perf_ns: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
+AccuracyRecordsMessage.request_ns: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 AllRecordsReceivedMessage.request_ns: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 AnalysisStats.total_requests: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 AnalysisStats.unique_prefixes: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
@@ -273,6 +274,7 @@ ProcessingStats.errors: numeric field has no ge/gt/le/lt bound and is not Finite
 ProcessingStats.processed: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 ProcessRecordsCommand.request_ns: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 ProcessRecordsResponse.request_ns: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
+ProcessAccuracyResultMessage.request_ns: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 ProcessRecordsResultMessage.request_ns: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 ProcessServerMetricsResultMessage.request_ns: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 ProcessTelemetryResultMessage.request_ns: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
