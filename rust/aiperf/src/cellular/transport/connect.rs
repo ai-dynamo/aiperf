@@ -102,9 +102,7 @@ pub fn parse_endpoint(coordinate: &str) -> Result<Endpoint> {
             .to_socket_addrs()
             .with_context(|| format!("resolving tcp endpoint {addr:?}"))?
             .next()
-            .ok_or_else(|| {
-                anyhow::anyhow!("tcp endpoint {addr:?} resolved to no addresses")
-            })?;
+            .ok_or_else(|| anyhow::anyhow!("tcp endpoint {addr:?} resolved to no addresses"))?;
         return Ok(Endpoint::Tcp(socket));
     }
     if let Some(path) = coordinate.strip_prefix("uds://") {
