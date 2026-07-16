@@ -209,6 +209,14 @@ pub fn run_cellular(
     let dataset_ship = (is_k8s || force_http)
         && crate::runner_protocol::cellular_cell::http_artifact_shipping_enabled()
         && dataset_source.is_some();
+    // Fail closed BEFORE standing up the serve plane: the single-file Stage G plane
+    // cannot carry a graph trace whose `path` is a directory or segmented-prefix. Reject
+    // such a cross-host run with a clear message rather than shipping a directory as one
+    // file (a corrupt/half transfer). A scheduled `file`/`path` dataset always points at a
+    // single file, so this is inert for it (multi-file shipping is a follow-up).
+    if dataset_ship && let Some(source) = dataset_source.as_ref() {
+        ensure_single_file_trace_shippable(source)?;
+    }
     // The controller's artifact HTTP server carries BOTH per-record uploads (Stage E)
     // and dataset serving (Stage G); stand it up when either is needed.
     let need_artifact_server = http_shipping || dataset_ship;
@@ -536,6 +544,27 @@ pub fn run_cellular(
         // records: scheduled cells pre-tile a global dispatch ordinal (byte-exact global
         // order); graph records carry a LOCAL per-cell request_index (concatenated by
         // cell_id, densely re-numbered). Cells never mix the two kinds in one run.
+        // Multi-turn backstop: a multi-turn run is sound ONLY on the exact-fold concat
+        // merge (cells ship folded StorePartitions). The gate predicts exact-fold from the
+        // envelope, but one cell-side disqualifier — a live-reply multi-turn `inputs.json`
+        // captured during the run — needs the compiled dataset the controller never loads,
+        // so a cell can still fall to retain and ship raw records. Merging those in global
+        // dispatch order would silently reorder / re-sample a multi-turn report, so fail
+        // loud instead. Scheduled-only: a graph run partitions by whole trace and merges by
+        // concatenation regardless of turn count.
+        if matches!(kind, CellularRunKind::Scheduled)
+            && cellular_run_is_multi_turn(envelope)
+            && !partitions.is_empty()
+        {
+            bail!(
+                "multi-turn cellular run received {} raw-record (retain-path) partition(s): \
+                 multi-turn cellular requires the exact-fold merge (every cell must ship a \
+                 folded store). A cell fell to the retain path — most likely a live-reply \
+                 multi-turn inputs.json captured during the run, or AIPERF_RUNTIME_EXACT_FOLD=0. \
+                 Run single-turn, disable inputs.json, or remove the retain-forcing option",
+                partitions.len()
+            );
+        }
         let merged = if !store_partitions.is_empty() {
             ensure!(
                 partitions.is_empty(),
@@ -851,6 +880,12 @@ fn build_cell_envelope(
             runtime.insert("workers".to_owned(), serde_json::Value::from(per_cell));
         }
     }
+    // A graph run's cells partition the trace at runtime (`PartitionedGraphTraceSource`
+    // over the SESSION space), so its `sessions` budget must reach every cell WHOLE —
+    // slicing it here would double-partition. A scheduled run has no such runtime
+    // partition, so its `sessions` budget (multi-turn / `--num-conversations`) IS sliced
+    // per cell below. Computed once outside the phase loop.
+    let is_graph = is_graph_dataset(envelope);
     let phases = run
         .get_mut("cfg")
         .and_then(|cfg| cfg.get_mut("phases"))
@@ -863,6 +898,30 @@ fn build_cell_envelope(
         if let Some(requests) = phase.get("requests").and_then(serde_json::Value::as_u64) {
             let owned = owned_positions(requests, cell_id, cell_count);
             phase.insert("requests".to_owned(), serde_json::Value::from(owned));
+        }
+        // Slice the SESSION (conversation) budget per cell for a scheduled multi-turn run,
+        // aligned with [`PartitionedSampler`]'s per-conversation stride: cell k owns
+        // `owned_positions(total, k, C)` conversations — its share of the first `total`
+        // conversation draws `{k, k+C, ...}`. `owned_positions` tiles EXACTLY (the shares
+        // sum to `total`, proven in `cell_launcher::owned_positions_sum_to_total_and_tile`),
+        // so no cell is handed a short budget: the sampler recycles silently (wraparound),
+        // so an off-by-one budget would resample a conversation instead of stopping — a
+        // silent correctness trap the exact tiling avoids. Graph cells skip this (they get
+        // the whole budget and partition the trace themselves).
+        //
+        // [`PartitionedSampler`]: crate::dataset::sampler::PartitionedSampler
+        if !is_graph
+            && let Some(sessions) = phase.get("sessions").and_then(serde_json::Value::as_u64)
+        {
+            debug_assert_eq!(
+                (0..cell_count)
+                    .map(|k| owned_positions(sessions, k, cell_count))
+                    .sum::<u64>(),
+                sessions,
+                "cellular session budget must tile exactly across cells"
+            );
+            let owned = owned_positions(sessions, cell_id, cell_count);
+            phase.insert("sessions".to_owned(), serde_json::Value::from(owned));
         }
         // Split the global concurrency cap by the same round-robin share as the
         // request budget so the cells' caps sum to the requested aggregate in-flight.
@@ -922,6 +981,160 @@ const CELLULAR_SINGLE_TURN_FILE_FORMATS: [&str; 4] = [
     "hf_instruction_response",
 ];
 
+/// Known MULTI-turn / session-grouping `file`/`public` formats — each compiles rows into
+/// multi-turn conversations (by `session_id` grouping or an explicit turn array) in its
+/// loader, but partitions cleanly by CONVERSATION and merges correctly on the exact-fold
+/// concat path. Admitted to multi-turn cellular ONLY on that path (see
+/// [`validate_cellular_run_shape`]); a format outside BOTH this set and
+/// [`CELLULAR_SINGLE_TURN_FILE_FORMATS`] still fails closed (unknown / unwired shapes).
+const CELLULAR_MULTI_TURN_FILE_FORMATS: [&str; 9] = [
+    "multi_turn",
+    "mooncake_trace",
+    "bailian_trace",
+    "burst_gpt",
+    "sagemaker_data_capture",
+    "inputs_json",
+    "sharegpt",
+    "hf_conversation",
+    "mt_bench",
+];
+
+/// Whether a single dataset value compiles STRICTLY one turn per conversation, so its
+/// sampler draw index equals the issuer's per-turn dispatch ordinal (the invariant the
+/// retain-path global-ordinal merge relies on). A `file`/`public` dataset's turn count is
+/// driven by its FORMAT + `session_id` grouping (NOT the top-level `turns` field), so
+/// those are single-turn only for a whitelisted single-turn format
+/// ([`CELLULAR_SINGLE_TURN_FILE_FORMATS`]); a `synthetic` dataset is single-turn unless
+/// its top-level `turns` says otherwise. A dataset that is NOT single-turn is a MULTI-turn
+/// conversation, admitted to cellular only on the exact-fold merge.
+fn dataset_is_single_turn(dataset: &serde_json::Value) -> bool {
+    match dataset.get("type").and_then(serde_json::Value::as_str) {
+        Some("file" | "public") => dataset
+            .get("format")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|format| CELLULAR_SINGLE_TURN_FILE_FORMATS.contains(&format)),
+        // Synthetic (and any non-file/public shape) is single-turn unless `turns` overrides.
+        _ => dataset.get("turns").is_none_or(|turns| {
+            turns.get("value").and_then(serde_json::Value::as_f64) == Some(1.0)
+        }),
+    }
+}
+
+/// Whether a dataset value targets a graph program (`dag_jsonl`/`weka_trace`/
+/// `dynamo_trace`). Graph datasets partition by whole trace and take their own cellular
+/// path, so the linear multi-turn gate skips them.
+fn is_graph_dataset_value(dataset: &serde_json::Value) -> bool {
+    matches!(
+        dataset.get("format").and_then(serde_json::Value::as_str),
+        Some("dag_jsonl" | "weka_trace" | "dynamo_trace")
+    )
+}
+
+/// Whether a scheduled (non-graph) cellular run dispatches MULTI-turn conversations —
+/// any linear dataset that is not strictly single-turn, or any phase carrying a
+/// `sessions` (`--num-conversations`) budget. Multi-turn continuation runs single-process
+/// per cell ([`crate::request_rate`]); it is sound in cellular ONLY on the exact-fold
+/// concat merge, which the gate ([`validate_cellular_run_shape`]) enforces up front and
+/// the merge-time backstop in [`run_cellular`] re-checks against the cells' shipped kind.
+fn cellular_run_is_multi_turn(envelope: &serde_json::Value) -> bool {
+    let dataset_multi = envelope
+        .pointer("/run/cfg/datasets")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|datasets| {
+            datasets
+                .iter()
+                .any(|dataset| !is_graph_dataset_value(dataset) && !dataset_is_single_turn(dataset))
+        });
+    let session_bounded = envelope
+        .pointer("/run/cfg/phases")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|phases| {
+            phases.iter().any(|phase| {
+                phase
+                    .get("sessions")
+                    .and_then(serde_json::Value::as_u64)
+                    .is_some()
+            })
+        });
+    dataset_multi || session_bounded
+}
+
+/// Whether an envelope carries a phase with an `adaptive_scale` bound (which retains
+/// per-turn records per control window, forcing the retain path).
+fn cellular_has_adaptive_phase(envelope: &serde_json::Value) -> bool {
+    envelope
+        .pointer("/run/cfg/phases")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|phases| {
+            phases.iter().any(|phase| {
+                phase
+                    .get("adaptive_scale")
+                    .is_some_and(|value| !value.is_null())
+            })
+        })
+}
+
+/// Whether a cellular run will merge its cells on the EXACT-FOLD path — each cell folds
+/// its records into a dense-LOCAL exact store and ships a `CellMessage::StorePartition`,
+/// merged order-independently by `merge_store_partitions` — rather than the RETAIN path
+/// (raw records shipped and merged in byte-exact GLOBAL dispatch order by
+/// `merge_records_in_global_order`).
+///
+/// This is the gate for MULTI-turn cellular: a multi-turn conversation dispatches a
+/// variable number of turns, so the per-turn global ordinal the retain merge orders by
+/// diverges from the sampler's per-conversation draw index (the documented single-turn
+/// restriction). The concat merge is order-independent, so multi-turn merges correctly
+/// there and only there.
+///
+/// It mirrors the cell's own `execute::exact_fold` decision from the shared envelope +
+/// process env — every cell runs the identical envelope/env, so the controller can
+/// predict the fold path they all take. It reads only the retain-forcing signals that
+/// are RELIABLE at the controller without loading the dataset: the env force-switch
+/// (`AIPERF_RUNTIME_EXACT_FOLD=0`), the heartbeat lane, sketch storage, an adaptive-scale
+/// phase, and — on a lite build — a requested Parquet sidecar.
+///
+/// The one cell-side disqualifier it deliberately does NOT model is a live-reply
+/// multi-turn `inputs.json` that must be captured DURING the run
+/// (`execute::wants_per_record_artifacts` via `inputs_need_retain`), because deciding it
+/// needs the compiled dataset's per-conversation context mode, which the controller does
+/// not load. That case is caught instead by the merge-time backstop in [`run_cellular`]
+/// (a multi-turn run whose cells shipped retain partitions bails), so a false "exact-fold"
+/// here can never silently corrupt a merge — at worst it defers a clear gate error to an
+/// equally clear merge error.
+fn cellular_will_use_exact_fold(envelope: &serde_json::Value) -> bool {
+    // The env force-switch routes every path to retain for A/B.
+    if !crate::runner_protocol::execute::exact_fold_enabled_by_env() {
+        return false;
+    }
+    // The single-process cellular heartbeat lane keeps a per-record clone the fold drops.
+    if crate::runner_protocol::heartbeat_lane::HeartbeatLane::enabled_by_env() {
+        return false;
+    }
+    // Sketch storage has its own bounded t-digest fold; it ships no StorePartition yet.
+    if cellular_metrics_config(envelope).is_ok_and(|config| {
+        matches!(
+            config.storage_mode,
+            crate::metrics_core::MetricsStorageMode::Sketch { .. }
+        )
+    }) {
+        return false;
+    }
+    // An adaptive-scale phase retains per-turn records per control window.
+    if cellular_has_adaptive_phase(envelope) {
+        return false;
+    }
+    // A Parquet sidecar streams (staying fold-eligible) only under the `parquet` feature;
+    // a lite runner keeps the run on retain to write it from retained records.
+    #[cfg(not(feature = "parquet"))]
+    if envelope
+        .pointer("/run/cfg/artifacts/records_parquet_path")
+        .is_some_and(|value| !value.is_null())
+    {
+        return false;
+    }
+    true
+}
+
 /// Whitelists a cellular run to the shape the cell topology is currently *wired* for:
 /// the shared online-scheduled executor over the `http` transport, on **synthetic,
 /// file, or public single-turn** datasets. There is no bespoke HTTP layer — a cell
@@ -976,6 +1189,10 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
              records-shipping is only threaded through the HTTP path so far"
         );
     }
+    // Multi-turn conversations merge correctly only on the exact-fold concat path;
+    // computed once so the per-dataset gate below can admit them there and reject them on
+    // retain. Single-turn runs never read it (they take the `continue`).
+    let exact_fold = cellular_will_use_exact_fold(envelope);
     let datasets = envelope
         .pointer("/run/cfg/datasets")
         .and_then(serde_json::Value::as_array)
@@ -998,37 +1215,63 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
              `file`/`path` dataset is shipped controller->cell over HTTP+zstd (Stage G) and \
              recompiled per cell; inline `records` and `public` URL/HF each cell resolves itself"
         );
-        // Format whitelist (file/public only): the turn count of a file/public dataset is
-        // compiled by the FORMAT + `session_id` grouping in the loader, NOT the top-level
-        // `turns` field below. Only the formats proven to emit exactly one turn per
-        // conversation preserve the one-draw==one-turn invariant; every other (including
-        // session-grouping trace formats like `mooncake_trace`) is rejected fail-closed.
-        // Synthetic regenerates single-turn conversations from the shared seed and needs
-        // no format check; graph formats already `continue`d above.
+        // A strictly single-turn dataset (whitelisted file/public format + `turns == 1`,
+        // or a synthetic without a `turns` override) keeps the established one-draw==one-turn
+        // shape both merge paths support. This is the common case; everything below is the
+        // multi-turn extension.
+        if dataset_is_single_turn(dataset) {
+            continue;
+        }
+        // MULTI-turn dataset. A multi-turn conversation dispatches a variable number of
+        // turns, so its per-turn dispatch ordinal diverges from the sampler's
+        // per-conversation draw index — which the RETAIN merge orders by. It is sound in
+        // cellular ONLY on the exact-fold concat merge (order-independent store
+        // concatenation), where per-turn order is irrelevant to the merged report. The
+        // per-cell partition unit (conversation, via [`PartitionedSampler`]) now matches
+        // the draw unit, and the session budget is sliced by conversation
+        // (`build_cell_envelope`), so each cell single-passes its owned conversation slice.
+        ensure!(
+            exact_fold,
+            "cellular runs support multi-turn conversations only on the exact-fold merge \
+             path (metrics-only, order-independent store concatenation); this run selected \
+             the RETAIN path (raw records merged in global dispatch order), where a \
+             multi-turn conversation's variable per-turn dispatch ordinal diverges from the \
+             sampler's per-conversation draw index and silently reorders / re-samples the \
+             merged report. Remove the retain-forcing options (sketch metrics, an \
+             adaptive-scale phase, the cellular heartbeat lane, AIPERF_RUNTIME_EXACT_FOLD=0, \
+             or a Parquet sidecar on a lite runner), or run single-turn (turns == 1)"
+        );
+        // A file/public multi-turn dataset must carry a KNOWN multi-turn format so an
+        // unknown / unwired format still fails closed (it may not compile, or may not
+        // partition by conversation). Synthetic multi-turn is format-free (regenerated
+        // from the shared seed), so it skips this check.
         if matches!(kind, Some("file" | "public")) {
             let format = dataset.get("format").and_then(serde_json::Value::as_str);
             ensure!(
-                format.is_some_and(|format| CELLULAR_SINGLE_TURN_FILE_FORMATS.contains(&format)),
-                "cellular file/public datasets support only strictly single-turn formats ({}); got \
-                 format {format:?}. A file/public dataset's turn count is driven by its FORMAT and \
-                 `session_id` grouping, not the top-level `turns` field, so session-grouping / \
-                 multi-turn formats (multi_turn, mooncake_trace, bailian_trace, burst_gpt, \
-                 sagemaker_data_capture, inputs_json, sharegpt, hf_conversation, mt_bench, ...) \
-                 compile multi-turn conversations whose per-turn issuer ordinal diverges from the \
-                 sampler's per-conversation draw index and silently break the merged report. \
-                 Per-conversation cellular partition (like the graph path) is a documented follow-up",
-                CELLULAR_SINGLE_TURN_FILE_FORMATS.join("/")
+                format.is_some_and(|format| CELLULAR_MULTI_TURN_FILE_FORMATS.contains(&format)),
+                "cellular multi-turn file/public datasets support only known multi-turn formats \
+                 ({}); got format {format:?}. An unknown or single-turn-only format cannot be \
+                 admitted as multi-turn",
+                CELLULAR_MULTI_TURN_FILE_FORMATS.join("/")
             );
         }
-        // Single-turn only: `turns` absent defaults to a fixed 1; a fixed `{value: 1}`
-        // is the only other single-turn form. Anything else (a larger value or a
-        // distribution) makes a conversation dispatch multiple turns.
-        let single_turn = dataset.get("turns").is_none_or(|turns| {
-            turns.get("value").and_then(serde_json::Value::as_f64) == Some(1.0)
-        });
+        // Determinism scope: only the sequential/shuffle samplers give a deterministic
+        // single-pass per-cell partition — each cell replays the shared inner draw
+        // sequence and keeps its `position % cell_count == cell_id` stride. Random
+        // sampling WITH REPLACEMENT has no stable single-pass conversation set to
+        // partition, so a multi-turn cellular random run cannot reproduce the 1-cell
+        // instance space. Reject it (sequential/shuffle only). Single-turn random cellular
+        // is unaffected — it takes the `continue` above.
+        let sampling = dataset
+            .get("sampling")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("sequential");
         ensure!(
-            single_turn,
-            "cellular runs support only single-turn conversations (turns == 1); a multi-turn dataset diverges the sampler draw index from the issuer's per-turn ordinal and silently breaks byte parity"
+            !sampling.eq_ignore_ascii_case("random"),
+            "multi-turn cellular runs require a deterministic single-pass sampler \
+             (sequential or shuffle) so each cell owns a fixed conversation slice; got \
+             sampling {sampling:?} (random-with-replacement has no stable per-cell \
+             partition). Use sequential/shuffle sampling, or run single-turn"
         );
     }
     // A run seed is no longer *required*: every cell must compose the SAME dataset
@@ -1042,6 +1285,37 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
     // aggregate-equivalent approximation (see [`warn_cellular_approximations`]), in the
     // same family as rate pacing and cancellation. Hitting a backend pool from N nodes
     // is a first-class multi-node workload, so byte-parity does not gate it.
+    Ok(())
+}
+
+/// Fail closed when a cross-host cellular run's dataset source cannot ride the
+/// single-file Stage G plane.
+///
+/// Stage G serves ONE, name-keyed file (`file_name()` -> one serve-map entry -> one
+/// `fetch_dataset_to_file`), which covers every scheduled `file`/`path` dataset and a
+/// single-file graph trace (`dag_jsonl`, or a `weka_trace`/`dynamo_trace` that is one
+/// file). A graph trace `path`, however, may instead be a DIRECTORY or a
+/// segmented-prefix — multiple shard files under one stem (`graph_input.rs` accepts
+/// "a file, directory, or segmented-prefix path"). The single-file serve/fetch plane
+/// cannot carry those, so rather than silently shipping a directory as one file (a
+/// corrupt/half transfer), reject the run here with a clear message. Multi-file /
+/// manifest trace shipping is a follow-up; a shared volume or inline `records` are the
+/// current cross-host paths for a multi-file trace.
+///
+/// Only called when the run is genuinely cross-host and shipping-enabled
+/// (`dataset_ship`), where the controller holds the source locally, so `is_file()` is a
+/// reliable single-readable-file probe. A non-graph `file`/`path` dataset always points
+/// at a single file, so this is a no-op for it; the check earns its keep on the graph
+/// formats.
+fn ensure_single_file_trace_shippable(source: &Path) -> Result<()> {
+    ensure!(
+        source.is_file(),
+        "cross-host cellular graph runs support only a single-file trace; the trace path \
+         {} is not a single readable file (directory, segmented-prefix, or missing). Ship a \
+         single-file trace, mount a shared volume, or use an inline `records` dataset — \
+         multi-file trace shipping is a follow-up",
+        source.display()
+    );
     Ok(())
 }
 
@@ -1083,6 +1357,10 @@ fn validate_cellular_phase_budgets(envelope: &serde_json::Value, cell_count: u32
         .pointer("/run/cfg/phases")
         .and_then(serde_json::Value::as_array)
         .context("run cfg has no phases array")?;
+    // A `sessions` (multi-turn / --num-conversations) budget merges cleanly only on the
+    // exact-fold concat path (like the multi-turn dataset gate); on retain its per-turn
+    // dispatch ordinal diverges from the sampler's per-conversation draw index.
+    let exact_fold = cellular_will_use_exact_fold(envelope);
     let cells = cell_count as u64;
     for phase in phases {
         let name = phase
@@ -1095,16 +1373,41 @@ fn validate_cellular_phase_budgets(envelope: &serde_json::Value, cell_count: u32
             "cellular runs support only request-bounded phase types ({}); phase {name:?} has type {phase_type:?}, whose dispatch count is trace-driven and would replay the full trace per cell",
             CELLULAR_REQUEST_BOUNDED_PHASE_TYPES.join("/")
         );
+        // Every phase must be bounded by a partitionable budget: a `requests` (turn) budget
+        // — the single-turn shape both merge paths support — OR, on the exact-fold merge, a
+        // `sessions` (conversation) budget for multi-turn continuation. Both tile per cell
+        // via `owned_positions` (`build_cell_envelope`), so each must be >= cell_count or a
+        // cell owns zero (the silently-recycling sampler would then resample instead of
+        // stopping).
         let requests = phase.get("requests").and_then(serde_json::Value::as_u64);
+        let sessions = phase.get("sessions").and_then(serde_json::Value::as_u64);
         ensure!(
-            requests.is_some_and(|r| r >= cells),
-            "cellular runs require every phase to have a `requests` budget >= cell_count ({cell_count}); phase {name:?} has {requests:?}"
+            requests.is_some() || sessions.is_some(),
+            "cellular runs require every phase to carry a `requests` budget (single-turn) or a `sessions` budget (multi-turn, exact-fold only); phase {name:?} has neither"
         );
+        if let Some(requests) = requests {
+            ensure!(
+                requests >= cells,
+                "cellular runs require a `requests` budget >= cell_count ({cell_count}); phase {name:?} has {requests}"
+            );
+        }
+        if let Some(sessions) = sessions {
+            ensure!(
+                exact_fold,
+                "cellular runs support a `sessions` (multi-turn / --num-conversations) budget only on the exact-fold merge path (order-independent store concatenation); phase {name:?} carries `sessions` on the RETAIN path, where a multi-turn conversation's per-turn dispatch ordinal diverges from the sampler's per-conversation draw index. Remove the retain-forcing options, or bound the phase by `requests`"
+            );
+            ensure!(
+                sessions >= cells,
+                "cellular runs require a `sessions` budget >= cell_count ({cell_count}) so each cell owns at least one conversation (a shorter budget makes the silently-recycling sampler resample instead of stopping); phase {name:?} has {sessions}"
+            );
+        }
+        // A `duration`/`adaptive_scale` bound still breaks the merge: a duration bound
+        // needs the ragged-count merge (a graph-mode follow-up) and `adaptive_scale` needs
+        // cross-cell scaling consensus. (`sessions` is now handled above — allowed on
+        // exact-fold, rejected on retain — rather than blanket-rejected here.)
         ensure!(
-            phase.get("duration").is_none()
-                && phase.get("sessions").is_none()
-                && phase.get("adaptive_scale").is_none(),
-            "cellular runs require a fixed per-phase request budget; phase {name:?} carries a `duration`/`sessions`/`adaptive_scale` bound whose actual dispatch count can diverge from `requests` and break the merge"
+            phase.get("duration").is_none() && phase.get("adaptive_scale").is_none(),
+            "cellular runs require a fixed per-phase budget; phase {name:?} carries a `duration`/`adaptive_scale` bound whose actual dispatch count can diverge from the sliced budget and break the merge"
         );
         // Concurrency/prefill/rate ramps are allowed, not rejected. A `RampSpec` is only
         // `{duration, strategy}`: it ramps *to* the phase's `concurrency`/`rate` target,
@@ -1471,16 +1774,26 @@ fn phase_ordinal_bases(envelope: &serde_json::Value) -> Result<BTreeMap<String, 
             .and_then(serde_json::Value::as_str)
             .context("cellular phase has no name")?;
         bases.insert(name.to_owned(), base);
+        // The base accumulates prior phases' TURN counts to stamp the retain-path global
+        // dispatch ordinal. A session-bounded (multi-turn) phase has no fixed turn count
+        // up front and runs exact-fold-only, where the cell uses its own dense-LOCAL fold
+        // ordinal and never reads this base — so a missing `requests` contributes 0 rather
+        // than failing. (A retain-path phase always carries `requests`, so its base stays
+        // exact.)
         let requests = phase
             .get("requests")
             .and_then(serde_json::Value::as_u64)
-            .context("cellular phase has no request budget")?;
+            .unwrap_or(0);
         base += requests;
     }
     Ok(bases)
 }
 
-/// The profiling phase's request budget from the v2 envelope.
+/// The profiling phase's dispatch budget from the v2 envelope — its `requests` (turn)
+/// budget for a single-turn run, or its `sessions` (conversation) budget for a multi-turn
+/// exact-fold run. Used only to prove a bounded profiling phase exists (the caller
+/// discards the value); the per-phase budget/shape checks live in
+/// [`validate_cellular_phase_budgets`].
 fn profiling_request_budget(envelope: &serde_json::Value) -> Result<u64> {
     let phases = envelope
         .pointer("/run/cfg/phases")
@@ -1493,12 +1806,15 @@ fn profiling_request_budget(envelope: &serde_json::Value) -> Result<u64> {
             .map(|name| name == "profiling")
             .unwrap_or(false);
         if is_profiling
-            && let Some(requests) = phase.get("requests").and_then(serde_json::Value::as_u64)
+            && let Some(budget) = phase
+                .get("requests")
+                .or_else(|| phase.get("sessions"))
+                .and_then(serde_json::Value::as_u64)
         {
-            return Ok(requests);
+            return Ok(budget);
         }
     }
-    bail!("cellular runs require a profiling phase with a request budget")
+    bail!("cellular runs require a profiling phase with a `requests` or `sessions` budget")
 }
 
 /// The primary model name from the v2 envelope's model list, for the merged
@@ -1601,18 +1917,11 @@ mod tests {
             // An unknown dataset type is still rejected (only synthetic/file/public wired).
             serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "agentic"}]}}}),
             serde_json::json!({"run": {"random_seed": 42, "cfg": {}}}),
-            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "synthetic", "turns": {"value": 3}}]}}}),
-            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "synthetic", "turns": {"mean": 2.0, "stddev": 1.0}}]}}}),
-            // A multi-turn `file` dataset (explicit turns > 1) is rejected — the
-            // per-conversation partition is a documented follow-up (Stage G non-goal).
-            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "file", "format": "multi_turn", "path": "/data/t.jsonl", "turns": {"value": 3}}]}}}),
-            // A session-grouping trace format is rejected by the FORMAT whitelist even
-            // with NO top-level `turns` override: the file itself compiles multi-turn
-            // conversations (grouped by session_id), which the `turns` guard cannot see.
-            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "file", "format": "mooncake_trace", "path": "/data/t.jsonl"}]}}}),
-            // `multi_turn` with no `turns` override is still rejected by the whitelist.
-            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "file", "format": "multi_turn", "path": "/data/t.jsonl"}]}}}),
-            // A `file` dataset with an unknown/unspecified format fails closed.
+            // Multi-turn synthetic (turns > 1) and the known multi-turn file formats are
+            // now ADMITTED on the exact-fold merge (see `admits_multi_turn_on_exact_fold`);
+            // this list keeps only shapes rejected regardless of turn count.
+            // A `file` dataset with an unknown/unspecified format fails closed — as multi-turn
+            // it is not a known multi-turn format, so it cannot partition by conversation.
             serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "file", "path": "/data/t.jsonl"}]}}}),
             // A bare `public` dataset (no format) fails closed — its default format could
             // be a multi-turn public shape (sharegpt / mt_bench / hf_conversation).
@@ -1659,22 +1968,22 @@ mod tests {
             !is_graph_dataset(&linear),
             "single_turn is not a graph dataset (scheduled partition)"
         );
-        // C1 fix: `mooncake_trace` is a NON-graph, session-grouping trace format that
-        // compiles MULTI-turn conversations. It takes the scheduled partition (not the
-        // graph carve-out) where one-draw-per-turn is load-bearing, so the format
-        // whitelist must REJECT it — restoring the pre-Stage-G safety for the multi-turn
-        // case. (Before this fix it was wrongly admitted: a silent draw/ordinal
-        // divergence regression.)
+        // `mooncake_trace` is a NON-graph, session-grouping trace format that compiles
+        // MULTI-turn conversations. It takes the scheduled partition (not the graph
+        // carve-out). On the exact-fold merge (the unit-test default: no retain-forcing
+        // env) it is now ADMITTED — the concat merge is order-independent, so the per-turn
+        // ordinal that broke the retain merge no longer matters. It stays NOT a graph
+        // dataset (scheduled partition + PartitionedSampler by conversation).
         let multi_turn_trace = serde_json::json!({"run": {"cfg": {
             "datasets": [{"type": "file", "format": "mooncake_trace", "path": "/data/t.jsonl"}],
         }}});
         assert!(
-            validate_cellular_run_shape(&multi_turn_trace).is_err(),
-            "mooncake_trace (session-grouping multi-turn) must be rejected by the format whitelist"
+            validate_cellular_run_shape(&multi_turn_trace).is_ok(),
+            "mooncake_trace (known multi-turn format) must be admitted on the exact-fold merge"
         );
         assert!(
             !is_graph_dataset(&multi_turn_trace),
-            "mooncake_trace is not a graph dataset (would take the scheduled partition)"
+            "mooncake_trace is not a graph dataset (takes the scheduled partition)"
         );
         // is_graph_dataset is false for a synthetic (scheduled) dataset.
         let synthetic = serde_json::json!({"run": {"cfg": {"datasets": [{"type": "synthetic"}]}}});
@@ -1682,6 +1991,219 @@ mod tests {
             !is_graph_dataset(&synthetic),
             "synthetic is not a graph dataset"
         );
+    }
+
+    /// Multi-turn datasets — synthetic (`turns > 1`) and the known multi-turn file/public
+    /// formats — are ADMITTED on the exact-fold merge (the unit-test default env: exact-fold
+    /// on, no sketch/adaptive/heartbeat). The concat merge is order-independent, so a
+    /// multi-turn conversation's variable per-turn ordinal no longer breaks the report.
+    #[test]
+    fn admits_multi_turn_on_exact_fold() {
+        for ok in [
+            // Synthetic multi-turn (fixed and distributional turn counts).
+            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "synthetic", "turns": {"value": 3}}]}}}),
+            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "synthetic", "turns": {"mean": 2.0, "stddev": 1.0}}]}}}),
+            // Known multi-turn file formats (session-grouping / turn-array).
+            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "file", "format": "multi_turn", "path": "/data/t.jsonl"}]}}}),
+            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "file", "format": "mooncake_trace", "path": "/data/t.jsonl"}]}}}),
+            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "file", "format": "inputs_json", "path": "/data/t.jsonl"}]}}}),
+            // Known multi-turn public shape.
+            serde_json::json!({"run": {"cfg": {"datasets": [{"type": "public", "format": "sharegpt"}]}}}),
+        ] {
+            assert!(
+                validate_cellular_run_shape(&ok).is_ok(),
+                "multi-turn should be admitted on exact-fold: {ok}"
+            );
+            assert!(
+                cellular_run_is_multi_turn(&ok),
+                "run should be detected as multi-turn: {ok}"
+            );
+        }
+        // An unknown multi-turn file format still fails closed (not a known multi-turn
+        // format, so it may not compile or partition by conversation).
+        let unknown = serde_json::json!({"run": {"cfg": {"datasets": [{"type": "file", "format": "not_a_real_format", "path": "/data/t.jsonl"}]}}});
+        assert!(
+            validate_cellular_run_shape(&unknown).is_err(),
+            "an unknown multi-turn file format must fail closed"
+        );
+    }
+
+    /// A multi-turn dataset on the RETAIN path (here forced envelope-side by sketch metric
+    /// storage, which folds into a bounded t-digest and ships no exact StorePartition) is
+    /// REJECTED with a clear message: the retain global-ordinal merge diverges for
+    /// multi-turn. Single-turn on the same retain config is unaffected.
+    #[test]
+    fn rejects_multi_turn_on_retain() {
+        let retain_multi = serde_json::json!({"run": {"cfg": {
+            "datasets": [{"type": "synthetic", "turns": {"value": 3}}],
+            "metrics": {"sketch": true},
+        }}});
+        assert!(
+            !cellular_will_use_exact_fold(&retain_multi),
+            "sketch metric storage must force the retain (non-exact-fold) path"
+        );
+        assert!(
+            validate_cellular_run_shape(&retain_multi).is_err(),
+            "multi-turn on the retain path must be rejected"
+        );
+        // Single-turn on the identical retain config is still admitted.
+        let retain_single = serde_json::json!({"run": {"cfg": {
+            "datasets": [{"type": "synthetic"}],
+            "metrics": {"sketch": true},
+        }}});
+        assert!(
+            validate_cellular_run_shape(&retain_single).is_ok(),
+            "single-turn on the retain path is unaffected"
+        );
+    }
+
+    /// Stage G fail-closed: a cross-host cellular graph run whose trace path is a single
+    /// readable file is shippable; a DIRECTORY or a segmented-prefix (no file at the exact
+    /// path) is rejected — the single-file serve/fetch plane cannot carry it, and we must
+    /// not silently ship a directory as one file. (Multi-file trace shipping is a follow-up.)
+    #[test]
+    fn rejects_directory_and_prefix_trace_cross_host() {
+        let tmp = tempfile::TempDir::new().unwrap();
+
+        // A single-file trace (e.g. one-file dag_jsonl / weka_trace) is shippable.
+        let file = tmp.path().join("trace.dag.jsonl");
+        std::fs::write(&file, b"{}\n").unwrap();
+        assert!(
+            ensure_single_file_trace_shippable(&file).is_ok(),
+            "a single readable trace file must be shippable over Stage G"
+        );
+
+        // A DIRECTORY trace path (weka_trace/dynamo_trace shard dir) fails closed.
+        let dir = tmp.path().join("shards");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("part-0.jsonl"), b"{}\n").unwrap();
+        let dir_err = ensure_single_file_trace_shippable(&dir)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            dir_err.contains("single-file trace"),
+            "directory trace path must be rejected with the single-file message; got {dir_err}"
+        );
+
+        // A segmented-PREFIX path — no file exists at the exact stem, only `stem.N`
+        // shards beside it — also fails closed (not a single readable file).
+        let prefix = tmp.path().join("segmented");
+        std::fs::write(tmp.path().join("segmented.0"), b"{}\n").unwrap();
+        std::fs::write(tmp.path().join("segmented.1"), b"{}\n").unwrap();
+        assert!(
+            ensure_single_file_trace_shippable(&prefix).is_err(),
+            "a segmented-prefix trace path (no file at the exact path) must be rejected"
+        );
+    }
+
+    /// Multi-turn cellular requires a deterministic single-pass sampler: sequential/shuffle
+    /// are admitted, random-with-replacement is rejected (no stable per-cell conversation
+    /// slice). Single-turn random is unaffected (it never reaches the sampler check).
+    #[test]
+    fn rejects_multi_turn_random_sampler() {
+        let random_multi = serde_json::json!({"run": {"cfg": {
+            "datasets": [{"type": "synthetic", "turns": {"value": 3}, "sampling": "random"}],
+        }}});
+        assert!(
+            validate_cellular_run_shape(&random_multi).is_err(),
+            "multi-turn cellular with a random sampler must be rejected"
+        );
+        for sampling in ["sequential", "shuffle", "SEQUENTIAL"] {
+            let ok = serde_json::json!({"run": {"cfg": {
+                "datasets": [{"type": "synthetic", "turns": {"value": 3}, "sampling": sampling}],
+            }}});
+            assert!(
+                validate_cellular_run_shape(&ok).is_ok(),
+                "multi-turn cellular with {sampling:?} sampling must be admitted"
+            );
+        }
+        // Single-turn random is fine — the sampler check only applies to multi-turn.
+        let random_single = serde_json::json!({"run": {"cfg": {
+            "datasets": [{"type": "synthetic", "sampling": "random"}],
+        }}});
+        assert!(
+            validate_cellular_run_shape(&random_single).is_ok(),
+            "single-turn random sampling is unaffected"
+        );
+    }
+
+    /// `build_cell_envelope` slices a scheduled phase's `sessions` (conversation) budget by
+    /// `owned_positions`, and the per-cell shares TILE EXACTLY: they sum to the authored
+    /// total (no remainder dropped that would make the silently-recycling sampler resample),
+    /// and every cell owns >= 1 conversation when `total >= cell_count`.
+    #[test]
+    fn session_budget_tiles_exactly_across_cells() {
+        let dir = Path::new("/tmp/aiperf-cellular-session-tiling-test");
+        for total in [4u64, 7, 12, 60, 101] {
+            for count in 1..=6u32 {
+                let envelope = serde_json::json!({"run": {"cfg": {
+                    "datasets": [{"type": "synthetic", "turns": {"value": 3}}],
+                    "phases": [{"type": "concurrency", "name": "profiling", "sessions": total, "concurrency": 8}],
+                }}});
+                let mut sum = 0u64;
+                for cell_id in 0..count {
+                    let cell = build_cell_envelope(&envelope, cell_id, count, dir, None).unwrap();
+                    let owned = cell
+                        .pointer("/run/cfg/phases/0/sessions")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap();
+                    sum += owned;
+                    if total >= count as u64 {
+                        assert!(
+                            owned >= 1,
+                            "cell {cell_id} owns zero sessions (total {total} count {count})"
+                        );
+                    }
+                }
+                assert_eq!(
+                    sum, total,
+                    "session shares must sum to total (total {total} count {count})"
+                );
+            }
+        }
+        // A GRAPH run's `sessions` budget is NOT sliced here (its cells partition the trace
+        // at runtime) — every cell keeps the whole budget.
+        let graph = serde_json::json!({"run": {"cfg": {
+            "datasets": [{"type": "file", "format": "dag_jsonl"}],
+            "phases": [{"type": "concurrency", "name": "profiling", "sessions": 60, "concurrency": 8}],
+        }}});
+        for cell_id in 0..4u32 {
+            let cell = build_cell_envelope(&graph, cell_id, 4, dir, None).unwrap();
+            assert_eq!(
+                cell.pointer("/run/cfg/phases/0/sessions")
+                    .and_then(serde_json::Value::as_u64),
+                Some(60),
+                "graph cell {cell_id} must keep the whole sessions budget"
+            );
+        }
+    }
+
+    /// `validate_cellular_phase_budgets` accepts a `sessions`-bounded phase on the exact-fold
+    /// merge (multi-turn), rejects `sessions < cell_count` (a cell would own zero), and
+    /// rejects a `sessions` budget on the retain path.
+    #[test]
+    fn phase_budgets_accept_sessions_on_exact_fold() {
+        // Session-bounded profiling phase, exact-fold (default env) → OK.
+        let ok = serde_json::json!({"run": {"cfg": {"phases": [
+            {"type": "concurrency", "name": "profiling", "sessions": 60, "concurrency": 8},
+        ]}}});
+        assert!(validate_cellular_phase_budgets(&ok, 4).is_ok());
+        // sessions < cell_count → rejected (a cell owns zero conversations).
+        let too_few = serde_json::json!({"run": {"cfg": {"phases": [
+            {"type": "concurrency", "name": "profiling", "sessions": 3, "concurrency": 8},
+        ]}}});
+        assert!(validate_cellular_phase_budgets(&too_few, 4).is_err());
+        // A `sessions` budget on the retain path (sketch storage) → rejected.
+        let retain = serde_json::json!({"run": {"cfg": {
+            "metrics": {"sketch": true},
+            "phases": [{"type": "concurrency", "name": "profiling", "sessions": 60, "concurrency": 8}],
+        }}});
+        assert!(validate_cellular_phase_budgets(&retain, 4).is_err());
+        // A phase with neither `requests` nor `sessions` → rejected.
+        let unbounded = serde_json::json!({"run": {"cfg": {"phases": [
+            {"type": "concurrency", "name": "profiling", "concurrency": 8},
+        ]}}});
+        assert!(validate_cellular_phase_budgets(&unbounded, 4).is_err());
     }
 
     #[test]
