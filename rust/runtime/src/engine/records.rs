@@ -279,7 +279,7 @@ const OUTPUT_METRICS: &[&str] = &[
 
 /// Serialize one record row (compact JSON + trailing newline) into `writer`,
 /// exactly as [`write_records_jsonl`] emits each line. Shared by the batch writer
-/// and the streaming [`crate::runner_protocol::record_lane::RecordArtifactLane`] so both are
+/// and the streaming [`crate::engine::record_lane::RecordArtifactLane`] so both are
 /// byte-identical for the same record.
 pub(crate) fn write_record_jsonl_row(
     writer: &mut dyn Write,
@@ -357,7 +357,7 @@ fn phase_str(phase: Phase) -> &'static str {
 /// Map one [`CapturedRecord`] into the crate-neutral wide Parquet row.
 ///
 /// Shared by the batch [`write_records_parquet`] and the streaming
-/// [`crate::runner_protocol::record_lane::RecordArtifactLane`] so both produce the identical wide
+/// [`crate::engine::record_lane::RecordArtifactLane`] so both produce the identical wide
 /// row for the same record.
 #[cfg(feature = "parquet")]
 pub(crate) fn per_record_parquet_row(
@@ -498,7 +498,7 @@ fn csv_opt_u64(value: Option<u64>) -> String {
 /// Build the records CSV header line (no trailing newline): fixed metadata
 /// columns, one column per catalog record-metric (`{Header} ({unit})`), the error
 /// triple, then the optional flat `trace_*` columns. Shared by [`write_records_csv`]
-/// and the streaming [`crate::runner_protocol::record_lane::RecordArtifactLane`] so both emit the
+/// and the streaming [`crate::engine::record_lane::RecordArtifactLane`] so both emit the
 /// exact same header bytes.
 pub(crate) fn record_csv_header(include_trace: bool) -> String {
     use crate::metrics_core::record_metric_columns;
@@ -680,7 +680,7 @@ pub fn record_json_value(
 /// Serialize one raw request/response row (compact JSON + trailing newline) into
 /// `writer`, exactly as [`write_raw_records_jsonl`] emits each line. Shared by the
 /// batch writer and the streaming
-/// [`crate::runner_protocol::record_lane::RecordArtifactLane`] so both are
+/// [`crate::engine::record_lane::RecordArtifactLane`] so both are
 /// byte-identical for the same record. The captured request payload is validated
 /// through [`RawValue`] here (preserving its original bytes verbatim), matching the
 /// batch writer.

@@ -33,7 +33,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
 use uuid::Uuid;
 
-use crate::runner_protocol::turn_execution::{
+use crate::engine::turn_execution::{
     HttpExecutionBackendConfig, HttpPreparedEndpointTableFactory, RequestExecutorFactory,
 };
 

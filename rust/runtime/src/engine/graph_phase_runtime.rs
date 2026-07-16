@@ -52,20 +52,20 @@ use anyhow::{Context, Result, anyhow, bail, ensure};
 use tokio::sync::{Notify, mpsc};
 use uuid::Uuid;
 
-use crate::runner_protocol::execute::{
+use crate::engine::execute::{
     AdaptiveScheduledPhaseController, RampActuatorRngRoots, adaptive_run_config,
     integer_adaptive_bound, metrics_phase, phase_config, phase_seamless_to_next, ramp_strategy,
     seconds_to_u64_ns,
 };
-use crate::runner_protocol::graph_execution::{
+use crate::engine::graph_execution::{
     ChannelRunnerGraphExecutionEventSink, GraphCancellationConfig, ObservedRunnerGraphPlacement,
     RunnerGraphExecutionEvent, RunnerGraphExecutionEventSink,
 };
-use crate::runner_protocol::graph_input::TStarWindow;
-use crate::runner_protocol::protocol::{AdaptiveControlVariableSpec, PhaseCommonSpec, PhaseSpec};
-use crate::runner_protocol::protocol_v2::RunnerFailureStageV2;
-use crate::runner_protocol::records::CapturedRecord;
-use crate::runner_protocol::registry::PreparedRunFailure;
+use crate::engine::graph_input::TStarWindow;
+use crate::engine::protocol::{AdaptiveControlVariableSpec, PhaseCommonSpec, PhaseSpec};
+use crate::engine::protocol_v2::RunnerFailureStageV2;
+use crate::engine::records::CapturedRecord;
+use crate::engine::registry::PreparedRunFailure;
 
 /// Backend-owned inputs for one already lowered Graph-IR phase.
 pub(crate) struct GraphPhaseBackendConfig {
@@ -3200,16 +3200,16 @@ mod tests {
 
     use crate::adaptive_core::{SharedWindowSampler, TumblingWindowSampler};
     use crate::dataset::SegmentPool;
+    use crate::engine::graph_input::GraphSamplingStrategy;
     use crate::graph::errors::TraceError;
     use crate::graph::model::{GraphRecord, GraphTracePlan, TraceRecord};
     use crate::graph::tstar::{legacy_random_seed, legacy_shuffle_seed};
     use crate::graph::workload::{GraphWorkloadReport, TraceAdmissionInfo};
-    use crate::runner_protocol::graph_input::GraphSamplingStrategy;
     use crate::timing::{PhaseReturn, PhaseSend};
     use uuid::Uuid;
 
     use super::*;
-    use crate::runner_protocol::records::CapturedModelOutput;
+    use crate::engine::records::CapturedModelOutput;
 
     fn wrap_policy_input(root_count: usize) -> GraphInputBundle {
         let plans = (0..root_count)

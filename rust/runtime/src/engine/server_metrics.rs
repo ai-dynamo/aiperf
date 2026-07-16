@@ -32,7 +32,7 @@ use serde_json::{Map, Value, json};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
-use crate::runner_protocol::protocol::ServerMetricsSpec;
+use crate::engine::protocol::ServerMetricsSpec;
 
 /// Run-owned server telemetry shared by phase-specific lifecycle adapters.
 pub(crate) struct ServerMetricsRun {

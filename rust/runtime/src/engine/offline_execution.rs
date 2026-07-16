@@ -68,26 +68,24 @@ use loadgen_core::sink::RequestObserver;
 use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
 
-use crate::runner_protocol::dataset_input::{PreparedDatasetInput, RunnerDatasetInputContext};
-use crate::runner_protocol::execute::{
+use crate::engine::dataset_input::{PreparedDatasetInput, RunnerDatasetInputContext};
+use crate::engine::execute::{
     NativeConversationSourceFactory, build_native_scheduled_phase_plan_with_source_factory,
     load_tokenizer, metrics_config, native_scheduled_resources, phase_seamless_to_next,
 };
-use crate::runner_protocol::graph_execution::{
-    RunnerGraphExecutionEvent, RunnerGraphExecutionEventSink,
-};
-use crate::runner_protocol::graph_input::RunnerGraphInputContext;
-use crate::runner_protocol::graph_phase_runtime::{
+use crate::engine::graph_execution::{RunnerGraphExecutionEvent, RunnerGraphExecutionEventSink};
+use crate::engine::graph_input::RunnerGraphInputContext;
+use crate::engine::graph_phase_runtime::{
     GraphPhaseBackendConfig, PreparedGraphPhaseBackend, RunnerGraphPhaseBackendFactory,
     run_graph_phases, validate_graph_phases,
 };
-use crate::runner_protocol::online_execution::{
+use crate::engine::online_execution::{
     OnlineTokenizerSourceResolver, lower_authored_tokenizer, validate_authored_tokenizer,
 };
-use crate::runner_protocol::protocol::{MetricsSpec, ModelSelectionStrategy, PhaseSpec};
-use crate::runner_protocol::protocol_v2::AuthoredRunSpecV2;
-use crate::runner_protocol::records::{CapturedModelOutput, CapturedRecord};
-use crate::runner_protocol::registry::{
+use crate::engine::protocol::{MetricsSpec, ModelSelectionStrategy, PhaseSpec};
+use crate::engine::protocol_v2::AuthoredRunSpecV2;
+use crate::engine::records::{CapturedModelOutput, CapturedRecord};
+use crate::engine::registry::{
     GraphWorkloadConfigV2, PreparedRunOutcome, PreparedRunnerOperation, RunnerClockKind,
     RunnerRunContext, RunnerTransportDescriptor, RunnerTransportFactory, ScheduledWorkloadConfigV2,
     ValidatedTransportConfig, ValidatedWorkloadConfig, WorkloadRequirements,
@@ -1631,7 +1629,7 @@ struct PreparedDynosimGraphOperation {
     artifact_target: PathBuf,
     default_max_tokens: usize,
     allow_dataset_wrap: bool,
-    t_star_window: crate::runner_protocol::graph_input::TStarWindow,
+    t_star_window: crate::engine::graph_input::TStarWindow,
     worker_count: usize,
     phase_count: usize,
 }
@@ -2304,8 +2302,8 @@ pub struct DynosimTraceOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::registry::RunnerTransportFactory;
     use crate::extensions::{AIPerfRegistryFactory, BuiltinAIPerfRegistryFactory};
-    use crate::runner_protocol::registry::RunnerTransportFactory;
 
     fn raw(value: Value) -> Box<RawValue> {
         RawValue::from_string(value.to_string()).unwrap()

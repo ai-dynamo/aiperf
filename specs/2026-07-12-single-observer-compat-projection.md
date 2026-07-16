@@ -25,7 +25,7 @@ So each token pays **two hashmap lookups + two vec pushes**, and each request pa
 |---|---|---|
 | **Library online** (`run.rs` `run_scheduled_online`/`run_request_rate_online_*`/`run_paced_*`, and `accuracy.rs` `run_single_turn_dataset_online`) | Yes — TransportSink-backed dispatcher forwards `observer` | **Yes** |
 | **Offline Dynamo** (`dynosim.rs:2878-2885` `run_trace_offline`, `dynosim.rs:3265-3266` graph sink) | Yes — engine/graph sink forwards `observer` | **Yes** |
-| **Runner product online** (`aiperf-cli` `runner_protocol/execute.rs:3262-3311` `ConfiguredDispatcher`) | **No** | **No** — see below |
+| **Runner product online** (`aiperf-cli` `engine/execute.rs:3262-3311` `ConfiguredDispatcher`) | **No** | **No** — see below |
 
 The runner's product dispatcher deliberately **ignores** the `ScheduledRuntime` observer and feeds its own single `RunCapture` observer instead:
 
@@ -139,7 +139,7 @@ Drop `CollectorObserver` from the delegate list / stop feeding it, then project 
 - `rust/runtime/src/phase_runtime.rs:762-786` — already conditional on `plan.collect_performance_summary`; default it `false` for the online/offline plans (`phase_runtime.rs:324`) and route `finish` through the projection. The single-delegate collapse (`phase_runtime.rs:782-786`) already removes the `ObserverTee` allocation when only native remains.
 - `rust/runtime/src/run.rs:434-441`, `run.rs:897-904`, `run.rs:1151-1158` — three online entry points build the tee; switch to native-only + projection at `run.rs:667` (`performance: collector.finish(wall_ms)` → `project_trace_report(...)`).
 - `rust/runtime/src/dynosim.rs:2878-2885`, `dynosim.rs:3265-3266`, `dynosim.rs:3647-3648`, `dynosim.rs:3791-3792` — offline tees; native-only, and keep `compatibility_report_from_dynamo` (`dynosim.rs:986-1050`) for the SimClock byte gate. The `independently_accumulated` branch (`dynosim.rs:924-932`) already handles an unfed collector.
-- `rust/runtime/src/runner_protocol/execute.rs:3067-3080,3262-3311` — already single-observer for tokens; the win here is removing the idle runtime collector+native allocation and their discarded finalization (or setting `collect_performance_summary=false` on the runner plan at `execute.rs:1963`).
+- `rust/runtime/src/engine/execute.rs:3067-3080,3262-3311` — already single-observer for tokens; the win here is removing the idle runtime collector+native allocation and their discarded finalization (or setting `collect_performance_summary=false` on the runner plan at `execute.rs:1963`).
 - After no caller feeds it: `CollectorObserver` (`rust/loadgen-core/src/observer.rs`) and `ObserverTee` (`rust/runtime/src/metrics.rs:677-736`) lose their online/offline users; `TraceCollector` (`rust/loadgen-core/src/collector.rs`) survives only as the projection **target type** + the Dynamo parity path.
 
 ---

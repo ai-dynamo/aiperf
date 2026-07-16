@@ -96,8 +96,8 @@ backend**.
 | Crate | Role | Depends on |
 |---|---|---|
 | `loadgen-core` | The `{transport}` seam + trace collector. Zero engine/HTTP deps. | — |
-| `aiperf-runtime` | Library-only runtime: clocks, transports, endpoints, datasets, RNG, timing/scheduling, graph engine, metrics, exporters, adaptive, accuracy, side-channel telemetry, cellular, dynosim. 16 former `aiperf-*` crates are now modules. Owns the single unified `AIPerfRegistry`/`AIPerfExtension` seam (`extensions`) and — behind the `runner-protocol` Cargo feature — hosts the v2 layer `runner_protocol` (protocol/registry, execution factories and `*_execution` drivers, `RunnerV2Coordinator`/`RunnerApplication`, cellular controller/cell, control-plane HTTP, GPU/network/server side-channels). **No binary.** | `loadgen-core` (+ optional `dynamo-mocker` under `dynosim`) |
-| `aiperf-cli` | The ONE product binary `aiperf`: BOTH the native entry point (owns `profile`/`config` natively) AND the execution engine. It re-execs ITSELF (`aiperf --execute`, an internal hidden mode) once per run/cell; the execution child is the strict process/stdio/signal harness that composes the v2 layer `aiperf_runtime::runner_protocol` (feature `runner-protocol`). Protocol-v2 only. | `aiperf-runtime` (with `runner-protocol`), `loadgen-core` |
+| `aiperf-runtime` | Library-only runtime: clocks, transports, endpoints, datasets, RNG, timing/scheduling, graph engine, metrics, exporters, adaptive, accuracy, side-channel telemetry, cellular, dynosim. 16 former `aiperf-*` crates are now modules. Owns the single unified `AIPerfRegistry`/`AIPerfExtension` seam (`extensions`) and — behind the `engine` Cargo feature — hosts the v2 layer `engine` (protocol/registry, execution factories and `*_execution` drivers, `RunnerV2Coordinator`/`RunnerApplication`, cellular controller/cell, control-plane HTTP, GPU/network/server side-channels). **No binary.** | `loadgen-core` (+ optional `dynamo-mocker` under `dynosim`) |
+| `aiperf-cli` | The ONE product binary `aiperf`: BOTH the native entry point (owns `profile`/`config` natively) AND the execution engine. It re-execs ITSELF (`aiperf --execute`, an internal hidden mode) once per run/cell; the execution child is the strict process/stdio/signal harness that composes the v2 layer `aiperf_runtime::engine` (feature `engine`). Protocol-v2 only. | `aiperf-runtime` (with `engine`), `loadgen-core` |
 | `aiperf-mock-server` | Standalone online test/benchmark inference target (OpenAI/Anthropic/TGI/…); launched independently, **not** in the execution-engine dep graph. | `aiperf-runtime` (only for `aiperf_runtime::rng`) |
 
 `rust/runtime/src/lib.rs` declares the module universe: `clock`, `transport_http`, `transport_grpc`,
@@ -107,16 +107,16 @@ backend**.
 `scheduler`, `phase_runtime`, `workload`, `request_rate`, `user_centric`, `multiturn`,
 `fixed_schedule`, `body_plan`, `failure`, `report`, `metrics`, `export`, `adaptive`, `accuracy`,
 `ancillary`, the feature-gated `dynosim` and `aic_runtime`, and the feature-gated
-`runner_protocol` (the relocated v2 protocol/registry/execution layer, gated on
-`runner-protocol`; only `aiperf-cli` enables it).
+`engine` (the relocated v2 protocol/registry/execution layer, gated on
+`engine`; only `aiperf-cli` enables it).
 
 > **Note:** §A.5 and the double-dispatch / `RunnerPairFactory` / `supported_pairs` narrative
 > below describe an older shape. Today there is no transport×workload pair layer — any workload
 > runs over any transport, with no compatibility gate — and the v2 layer lives in
-> `aiperf_runtime::runner_protocol` (feature `runner-protocol`) with all category registries
+> `aiperf_runtime::engine` (feature `engine`) with all category registries
 > unified under one `AIPerfRegistry`/`AIPerfExtension` seam (endpoints, loaders, samplers,
 > transports, workloads, exporters, actuators). Ground registry claims in
-> `rust/runtime/src/extensions/mod.rs` and `rust/runtime/src/runner_protocol/`.
+> `rust/runtime/src/extensions/mod.rs` and `rust/runtime/src/engine/`.
 
 ---
 
@@ -276,7 +276,7 @@ transport factories, and `control_plane_http`. `native_execution_factories()` in
 in-process implementations; a custom distribution can swap any of them (e.g. a remote/RPC
 executor) without touching the coordinator.
 
-### B. Input resolution (`aiperf_runtime::runner_protocol`)
+### B. Input resolution (`aiperf_runtime::engine`)
 
 Three resolver traits injected into the coordinator; all do the **sole** strict decode of their
 input and are side-effect-free at validation time.
@@ -294,7 +294,7 @@ input and are side-effect-free at validation time.
   type-erased `PreparedSidecarInputs` store; runtime resource preparation (sockets, subprocess)
   is a separate later seam.
 
-### C. Execution paths (`aiperf_runtime::runner_protocol`)
+### C. Execution paths (`aiperf_runtime::engine`)
 
 `execute.rs` (the ~4.5k-line native driver) lowers a protocol-neutral `NativeRunSpec`
 (`NativeEndpointPlan`, `NativeDatasetPlan::{PreparedLinear, StaticAccuracy, Graph}`,
@@ -560,7 +560,7 @@ A thread-per-core async-dataflow engine for recorded traces / authored DAGs.
   scalar/counter/histogram entries with labeled per-model/endpoint series + timeslices),
   `server_metrics`, `accuracy`, `errors`, and a transient in-memory `otel_per_record` side
   channel (never in committed bytes). All values are finite-or-absent (`ReportValue`).
-- **Persistence** (`rust/runtime/src/report.rs`, invoked from the runner_protocol `coordinator.rs`):
+- **Persistence** (`rust/runtime/src/report.rs`, invoked from the engine `coordinator.rs`):
   `finalize_and_write_native_report_json` joins coordinator provenance + pair facts and does the
   sole atomic `create_new` temp + rename, refusing to overwrite an existing authoritative report.
 - **Export plane** (`export/`): the `Exporter` trait (`name`, `enabled(&ExportConfig)`,
@@ -618,7 +618,7 @@ boundary scrapes bypass dedup → exact reset-clamped counter/histogram deltas.
   (audio stays inline); path-traversal-confined `ServeDir` with per-request lifecycle tracking;
   implements the `SyntheticMediaPublisher` seam.
 
-### P. Cellular multi-process mode (`rust/runtime/src/cellular/`, `rust/runtime/src/runner_protocol/`)
+### P. Cellular multi-process mode (`rust/runtime/src/cellular/`, `rust/runtime/src/engine/`)
 
 `--cells N` (or `runtime.cells: N`) makes the launched `aiperf` a **controller** that spawns N
 `aiperf --cell` children over a budget partition and merges their records into one report.

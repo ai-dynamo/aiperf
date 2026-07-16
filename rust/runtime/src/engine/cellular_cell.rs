@@ -221,12 +221,12 @@ pub fn issuance_authority_for(
 /// async HTTP work runs on a dedicated thread + runtime so it never touches the
 /// caller's (possibly `current_thread`) execute runtime — mirroring
 /// [`CellRecordsShipper::ship`]. The controller waits for every cell's `/done` marker
-/// (posted last by [`crate::runner_protocol::artifact_shipping::ship_cell_artifacts`])
+/// (posted last by [`crate::engine::artifact_shipping::ship_cell_artifacts`])
 /// before running its concat, so this must complete before the process exits.
 #[cfg(feature = "velo")]
 pub fn ship_http_artifacts_if_enabled(
     cell_dir: &std::path::Path,
-    artifacts: &crate::runner_protocol::protocol::ArtifactSpec,
+    artifacts: &crate::engine::protocol::ArtifactSpec,
 ) -> Result<()> {
     let Some(partition) = ModuloCellPartition::from_env() else {
         return Ok(()); // not a cell (single-process path)
@@ -234,7 +234,7 @@ pub fn ship_http_artifacts_if_enabled(
     let Some(authority) = cell_artifact_authority() else {
         return Ok(()); // same-host or shipping disabled
     };
-    let relatives = crate::runner_protocol::artifact_shipping::shippable_relatives(artifacts);
+    let relatives = crate::engine::artifact_shipping::shippable_relatives(artifacts);
     if relatives.is_empty() {
         return Ok(()); // metrics-only run with no files to ship
     }
@@ -245,11 +245,9 @@ pub fn ship_http_artifacts_if_enabled(
             .worker_threads(2)
             .enable_all()
             .build()?;
-        runtime.block_on(
-            crate::runner_protocol::artifact_shipping::ship_cell_artifacts(
-                &authority, cell_id, &cell_dir, &relatives,
-            ),
-        )
+        runtime.block_on(crate::engine::artifact_shipping::ship_cell_artifacts(
+            &authority, cell_id, &cell_dir, &relatives,
+        ))
     })
     .join()
     .map_err(|_| anyhow::anyhow!("cell artifact-shipping thread panicked"))?
@@ -263,7 +261,7 @@ pub fn ship_http_artifacts_if_enabled(
 /// single-file `weka_trace`/`dynamo_trace`) ALSO returns its path and rides the same
 /// Stage G serve/download/rewrite plane. (A graph trace whose `path` is a
 /// DIRECTORY or segmented-prefix ships every shard the loader reads over the same
-/// plane via the manifest — see [`crate::runner_protocol::cellular_controller`]'s
+/// plane via the manifest — see [`crate::engine::cellular_controller`]'s
 /// `build_dataset_serve_plan` and [`download_cell_dataset_if_needed`].) Reads the
 /// canonical single-dataset list at
 /// `/run/cfg/datasets/0`, matching the controller's own detection so the serve
@@ -335,7 +333,7 @@ pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<Vec<u8
     let dest_dir = cell_dataset_dir();
     let fetch_authority = authority.clone();
     let local_path = std::thread::spawn(move || -> Result<std::path::PathBuf> {
-        use crate::runner_protocol::artifact_shipping::{
+        use crate::engine::artifact_shipping::{
             fetch_dataset_manifest, reconstruct_shipped_dataset,
         };
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -463,7 +461,7 @@ pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
     // The velo START barrier has released for every cell together: capture THIS
     // instant as the shared cross-cell timing origin (opt-in), before the cell's
     // per-shard dataset download + run setup skews each cell's local run start.
-    crate::runner_protocol::cell_origin::capture_cell_shared_origin();
+    crate::engine::cell_origin::capture_cell_shared_origin();
     Ok(reply.envelope)
 }
 
@@ -643,10 +641,10 @@ impl CellRecordsShipper {
             return Some(addr);
         }
         if let Ok(template) =
-            std::env::var(crate::runner_protocol::cellular_aggregator::AGG_DNS_TEMPLATE_ENV)
+            std::env::var(crate::engine::cellular_aggregator::AGG_DNS_TEMPLATE_ENV)
             && !template.is_empty()
             && let Some(agg_count) =
-                crate::runner_protocol::cellular_aggregator::aggregator_count(cell_count)
+                crate::engine::cellular_aggregator::aggregator_count(cell_count)
         {
             return Some(k8s_agg_ship_coordinate(&template, cell_id, agg_count));
         }
@@ -692,7 +690,7 @@ impl CellRecordsShipper {
         let mut completed = 0_u64;
         let mut errored = 0_u64;
         for record in &records {
-            crate::runner_protocol::heartbeat_lane::observe_ingest(&mut heartbeat, record);
+            crate::engine::heartbeat_lane::observe_ingest(&mut heartbeat, record);
             if record.errored || record.canceled {
                 errored += 1;
             } else {

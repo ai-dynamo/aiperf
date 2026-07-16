@@ -24,7 +24,7 @@ use anyhow::{Context, Result, ensure};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
-use crate::runner_protocol::protocol::{NetworkLatencyProbeSpec, NetworkLatencySpec};
+use crate::engine::protocol::{NetworkLatencyProbeSpec, NetworkLatencySpec};
 
 /// Run-owned fixed or actively measured RTT calibration.
 pub(crate) struct NetworkLatencyRun {

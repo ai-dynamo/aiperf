@@ -101,7 +101,7 @@ them inline, so it still never matches on transport or workload strings.
 ## 1. Current code truth
 
 `aiperf --execute` (the `aiperf` binary's hidden execution mode; crate `aiperf-cli`, execution layer
-`aiperf_runtime::runner_protocol` under `rust/runtime/src/runner_protocol/`) is the sole strict Rust
+`aiperf_runtime::engine` under `rust/runtime/src/engine/`) is the sole strict Rust
 execution surface on the product path. It
 speaks **protocol v2 only**: it reads one stdin request, composes the stock application, and
 `run_v2` rejects any non-v2 or malformed request as a v2 failure envelope. `--capabilities` is the
@@ -655,7 +655,7 @@ What changed, and why:
 - **No pair object, no compatibility predicate, no pair inventory.** There is no
   `RunnerPairFactory`, no `pairs: BTreeMap<(transport_id, workload_id), …>` map, no
   `register_pair`, no `validate_descriptor_compatibility`, and no `supported_pairs`
-  catalog field. `git grep` for any of these in `rust/runtime/src/runner_protocol` returns nothing.
+  catalog field. `git grep` for any of these in `rust/runtime/src/engine` returns nothing.
 - **Two independent registries, no gate.** The runner now exposes a transport registry
   and a workload registry as **orthogonal axes with no admission gate between them**:
   every workload runs over every transport. `prepare` / `validate_run` moved onto the

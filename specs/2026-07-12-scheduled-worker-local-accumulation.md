@@ -32,7 +32,7 @@ observer.
 > replay loop no longer exist anywhere in `rust/` (see §3.1). The file:line
 > citations below are historical, describing the state the measured seam replaced.
 
-`rust/runtime/src/runner_protocol/turn_execution.rs` (pre-change):
+`rust/runtime/src/engine/turn_execution.rs` (pre-change):
 
 - `BufferedObserver` (lines 164–223): a `RequestObserver` whose `on_admit` /
   `on_token` / `on_classified_token` / `on_usage` / `on_endpoint_metrics` /
@@ -83,13 +83,13 @@ profiling for a request-bound vs token-bound ceiling, run **both** a long-output
 and a short-output/usage-only workload — a single ratio floor at N=4 cannot tell
 them apart.
 
-The gRPC path has an identical twin: `rust/runtime/src/runner_protocol/grpc_turn_execution.rs`
+The gRPC path has an identical twin: `rust/runtime/src/engine/grpc_turn_execution.rs`
 `BufferedObserver` (lines 156–204) and replay loop (lines 376–378).
 
 ### 1.2 Who the single coordinator observer actually is (runner product path)
 
 The runner product path does **not** use the `ScheduledRuntime` observer. In
-`rust/runtime/src/runner_protocol/execute.rs`, `ConfiguredDispatcher::dispatch_turn`
+`rust/runtime/src/engine/execute.rs`, `ConfiguredDispatcher::dispatch_turn`
 (lines 3268–3287) **ignores** the `ScheduledRuntime`-supplied `_observer`
 (line 3271) and feeds the backend `self.capture.observer` instead. The comment
 at lines 3276–3282 is explicit:
@@ -121,7 +121,7 @@ for worker in workers {
 let native_metrics = merged.native.summarize();
 ```
 
-`rust/runtime/src/runner_protocol/graph_execution.rs` builds one `NativeMetricsObserver`
+`rust/runtime/src/engine/graph_execution.rs` builds one `NativeMetricsObserver`
 per graph worker and registers metadata worker-locally
 (`RunnerGraphSink`, lines 787–805). **The scheduled path is the last consumer
 still routing every token through a single coordinator observer.**
@@ -262,7 +262,7 @@ the regression matrix must add a gRPC parity row (currently absent).
 
 ### 3.1 Worker command / reply — the measured seam (built)
 
-`rust/runtime/src/runner_protocol/turn_execution.rs`:
+`rust/runtime/src/engine/turn_execution.rs`:
 
 - **`BufferedObserver` / `ObserverEvent` / `execute_turn(observer)` are DELETED.**
   The buffered replay path described in §1.1 no longer exists anywhere in `rust/`;
@@ -302,7 +302,7 @@ the regression matrix must add a gRPC parity row (currently absent).
 
 ### 3.2 gRPC twin — mirrors the change (built)
 
-`rust/runtime/src/runner_protocol/grpc_turn_execution.rs`: the `GrpcTransportSink` and
+`rust/runtime/src/engine/grpc_turn_execution.rs`: the `GrpcTransportSink` and
 `ThreadPerCoreGrpcExecutionBackend` implement the same measured seam
 (worker-local observer + `drain_records`, `grpc_turn_execution.rs:255/268`),
 exactly as on the HTTP side. Like the HTTP path, the gRPC buffered
@@ -311,7 +311,7 @@ measured seam is the sole path.
 
 ### 3.3 Runner capture — the real product surface
 
-`rust/runtime/src/runner_protocol/execute.rs`:
+`rust/runtime/src/engine/execute.rs`:
 
 - `RunCapture` no longer owns a single measurement `NativeMetricsObserver` for
   the scheduled path. Its responsibilities split:

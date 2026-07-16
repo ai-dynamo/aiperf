@@ -46,7 +46,7 @@ miss in the streaming case.**
 ### 1.1 Topology & lifecycle
 
 One `aiperf` process is the **controller**; N are **cells**; Python sends one protocol‑v2
-`execute` and reads one merged `native-v2.json`. Mode dispatch: `runner_protocol` reads
+`execute` and reads one merged `native-v2.json`. Mode dispatch: `engine` reads
 `/run/cfg/runtime/cells` (`cell_launcher.rs::cell_count_from_envelope`, clamp `[1,1024]`); `>1`
 diverts to `run_controller` → `cellular_controller::run_cellular`; `--cell` → `run_cell`; else the
 ordinary single‑process `run_v2` (`runner/src/main.rs:63-104`). `cells=1` is **byte‑for‑byte
@@ -87,7 +87,7 @@ partition + heartbeat over a **fresh, isolated velo instance on a dedicated thre
 - **S4 `CellPartition` / `ModuloCellPartition`** (`cellular/partition.rs`): round‑robin
   `i % cell_count == cell_id`, disjoint+complete; `owned_positions(total,k,C)=ceil((total-k)/C)`
   (`cell_launcher.rs:182`) is the per‑cell share, reused by the sharded thread‑per‑core runtime.
-- **S5 controller/cell drivers** (`runner_protocol/`): the topology, launch, and merge orchestration.
+- **S5 controller/cell drivers** (`engine/`): the topology, launch, and merge orchestration.
 
 ### 1.3 Transport — velo, connect‑by‑endpoint, zero discovery (§2.1)
 
@@ -124,7 +124,7 @@ event so waiters error rather than hang. Proven by `synchronized_start_releases_
 ### 1.5 Artifact & dataset shipping — Stages B–G (built)
 
 Per‑record **file** artifacts (records/raw/CSV/parquet/outputs/inputs.json) ship on a **separate
-HTTP + streaming‑zstd plane** (`runner_protocol/artifact_shipping.rs`), distinct from the velo
+HTTP + streaming‑zstd plane** (`engine/artifact_shipping.rs`), distinct from the velo
 metrics partition:
 - **Stage D** (same host): cells write into `temp_root/cell-{id}`; controller `concatenate_cell_artifacts`.
 - **Stage E** (cross host): `ArtifactUploadServer` (axum; `POST /cell/{id}/artifact/{*file}`, `/done`;
@@ -583,8 +583,8 @@ are *differences* and so were unaffected — only absolute per-record timestamps
 
 **Built (opt-in behind `AIPERF_CELL_SHARED_ORIGIN`, default off):** the cell now captures a
 `RealClockAnchor` the instant its velo START barrier releases — inside `fetch_cell_envelope`
-(`runner_protocol::cellular_cell`), the shared logical instant every cell reaches together, *before*
-its per-cell setup — via `runner_protocol::cell_origin::capture_cell_shared_origin`. At run start,
+(`engine::cellular_cell`), the shared logical instant every cell reaches together, *before*
+its per-cell setup — via `engine::cell_origin::capture_cell_shared_origin`. At run start,
 `execute` derives its origin from `cell_origin::run_origin_now_ns(&clock)` instead of
 `clock.now_ns()`: when a barrier anchor was captured it returns `clock.now_ns() - barrier.now_ns()`
 (read at one instant so the shared wall-`now` cancels), i.e. the barrier's reading on the execute

@@ -24,8 +24,8 @@ use crate::metrics_core::report::NativeReport;
 use crate::metrics_core::{ExportContext, MetricsAccumulator, MetricsConfig, PERCENTILES};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 
-use crate::runner_protocol::cell_launcher::owned_positions;
-use crate::runner_protocol::cellular_kind::CellularRunKind;
+use crate::engine::cell_launcher::owned_positions;
+use crate::engine::cellular_kind::CellularRunKind;
 
 // The velo transport + launcher wiring is the only part of the controller that
 // needs the `velo` feature; the validation, budget-slicing, merge, and report
@@ -35,7 +35,7 @@ use crate::cellular::transport::connect::{BindSpec, build_velo};
 #[cfg(feature = "velo")]
 use crate::cellular::{CellMessage, ControllerTransport, SpecFor, VeloControllerTransport};
 #[cfg(feature = "velo")]
-use crate::runner_protocol::cell_launcher::{CellLaunchContext, select_launcher};
+use crate::engine::cell_launcher::{CellLaunchContext, select_launcher};
 
 /// Env toggle (tier T3) for the master-less, barrier-free start: the controller
 /// triggers START immediately instead of gathering all N cell registrations first
@@ -124,7 +124,7 @@ impl CellularRunKind {
 /// controller` frontend can tail it and patch a native-v2-level snapshot into the
 /// AIPerfJob `.status` (counters into `.status.phases.profiling`, the metric
 /// percentiles into `.status.snapshot`). A cross-host controller has no single
-/// load-gen process to run the [`crate::runner_protocol::heartbeat_lane`] lane, so
+/// load-gen process to run the [`crate::engine::heartbeat_lane`] lane, so
 /// it emits the running aggregate of every cell's latest heartbeat here instead.
 ///
 /// Emits the FULL native-v2-level snapshot: counters summed and the TTFT/ITL/latency
@@ -152,8 +152,7 @@ fn emit_live_progress(log_path: Option<&Path>, heartbeats: &BTreeMap<u32, Metric
     let Some(merged) = merged else {
         return;
     };
-    let Some(mut line) = crate::runner_protocol::heartbeat_lane::heartbeat_event_line(&merged)
-    else {
+    let Some(mut line) = crate::engine::heartbeat_lane::heartbeat_event_line(&merged) else {
         return;
     };
     line.push(b'\n');
@@ -190,7 +189,7 @@ pub fn run_cellular(
     // the real artifact dir at finalize (Stage D). A cross-host (k8s) pod writes to its
     // own filesystem, so those files stay unreachable by the controller — still dropped.
     let is_k8s = matches!(
-        std::env::var(crate::runner_protocol::cell_launcher::CELL_LAUNCHER_ENV).as_deref(),
+        std::env::var(crate::engine::cell_launcher::CELL_LAUNCHER_ENV).as_deref(),
         Ok("k8s")
     );
     // Tier-T3 master-less start: skip the O(N) register rendezvous (see the start
@@ -224,7 +223,7 @@ pub fn run_cellular(
     // The run's artifact spec, parsed once (the same `AuthoredRunSpecV2` shape the
     // cell's execute path reads), for the Stage E shipping decision and the Stage D
     // concat below.
-    let artifacts: crate::runner_protocol::protocol::ArtifactSpec = envelope
+    let artifacts: crate::engine::protocol::ArtifactSpec = envelope
         .pointer("/run/cfg/artifacts")
         .cloned()
         .and_then(|value| serde_json::from_value(value).ok())
@@ -240,19 +239,18 @@ pub fn run_cellular(
     // cross-host HTTP artifact path over loopback for a SAME-HOST run so a
     // multi-process test can prove the shipping mechanism end-to-end. Off by default,
     // so a normal `--cells N` run keeps the shared-FS Stage D concat unchanged.
-    let force_http = crate::runner_protocol::cellular_cell::artifact_http_force_enabled();
+    let force_http = crate::engine::cellular_cell::artifact_http_force_enabled();
     let http_shipping = (is_k8s || force_http)
-        && crate::runner_protocol::cellular_cell::http_artifact_shipping_enabled()
-        && !crate::runner_protocol::artifact_shipping::shippable_relatives(&artifacts).is_empty();
+        && crate::engine::cellular_cell::http_artifact_shipping_enabled()
+        && !crate::engine::artifact_shipping::shippable_relatives(&artifacts).is_empty();
     // Stage G: a cross-host cell cannot read a controller-local `file`/`path` dataset
     // source, so the controller serves it over the SAME HTTP+zstd plane and the cell
     // recompiles it locally. Only a cross-host (k8s / force) run with a `file`/`path`
     // dataset and HTTP shipping enabled needs the serve; same-host cells read the
     // controller-local path directly, and synthetic/inline-records/public need no serve.
-    let dataset_source =
-        crate::runner_protocol::cellular_cell::cellular_file_dataset_path(envelope);
+    let dataset_source = crate::engine::cellular_cell::cellular_file_dataset_path(envelope);
     let dataset_ship = (is_k8s || force_http)
-        && crate::runner_protocol::cellular_cell::http_artifact_shipping_enabled()
+        && crate::engine::cellular_cell::http_artifact_shipping_enabled()
         && dataset_source.is_some();
     // Compute the Stage G serve plan BEFORE standing up the serve plane so an
     // unreadable/missing/unsupported source fails the run closed here rather than
@@ -345,7 +343,7 @@ pub fn run_cellular(
             // shipping is active, else empty (a dataset-serve-only run accepts no
             // uploads, so every POST is rejected).
             let allowed: std::collections::HashSet<String> = if http_shipping {
-                crate::runner_protocol::artifact_shipping::shippable_relatives(&artifacts)
+                crate::engine::artifact_shipping::shippable_relatives(&artifacts)
                     .into_iter()
                     .collect()
             } else {
@@ -359,7 +357,7 @@ pub fn run_cellular(
                 None => (std::collections::HashMap::new(), None),
             };
             Some(
-                crate::runner_protocol::artifact_shipping::ArtifactUploadServer::start_with_dataset_plan(
+                crate::engine::artifact_shipping::ArtifactUploadServer::start_with_dataset_plan(
                     artifact_bind,
                     landing_root.clone(),
                     allowed,
@@ -526,12 +524,12 @@ pub fn run_cellular(
         //   without that signal fails closed to the flat star (cells would otherwise ship
         //   into a void).
         let requested_aggregator_count =
-            crate::runner_protocol::cellular_aggregator::aggregator_count(cell_count);
+            crate::engine::cellular_aggregator::aggregator_count(cell_count);
         let k8s_aggregators_wired = std::env::var_os(
-            crate::runner_protocol::cellular_aggregator::AGG_DNS_TEMPLATE_ENV,
+            crate::engine::cellular_aggregator::AGG_DNS_TEMPLATE_ENV,
         )
         .is_some();
-        let aggregator_count = crate::runner_protocol::cellular_aggregator::effective_aggregator_count(
+        let aggregator_count = crate::engine::cellular_aggregator::effective_aggregator_count(
             is_k8s,
             k8s_aggregators_wired,
             requested_aggregator_count,
@@ -544,7 +542,7 @@ pub fn run_cellular(
             );
         }
         let aggregator_base_port =
-            crate::runner_protocol::cellular_aggregator::aggregator_base_port();
+            crate::engine::cellular_aggregator::aggregator_base_port();
         // The controller collects one partition per aggregator (tree) or per cell (flat).
         let expected_partitions = aggregator_count.unwrap_or(cell_count);
         // Spawn the aggregator subprocesses (same-host only) before the cells so they are
@@ -880,14 +878,14 @@ pub fn run_cellular(
             // cell produced one, independent of the per-record request set. `artifacts` was
             // parsed once at the top of the run (identically to the cell's execute path).
             if !requested_per_record_artifacts(envelope).is_empty() {
-                crate::runner_protocol::shard_artifacts::concatenate_cell_artifacts(
+                crate::engine::shard_artifacts::concatenate_cell_artifacts(
                     &cell_dirs,
                     artifact_dir,
                     &artifacts,
                 )
                 .context("concatenating per-cell per-record artifacts")?;
             }
-            crate::runner_protocol::shard_artifacts::copy_cell_inputs_json(
+            crate::engine::shard_artifacts::copy_cell_inputs_json(
                 &cell_dirs,
                 artifact_dir,
                 &artifacts,
@@ -916,7 +914,7 @@ pub fn run_cellular(
 /// (control plane) — this carries bulk artifact bytes, not coordination.
 #[cfg(feature = "velo")]
 fn controller_artifact_bind() -> std::net::SocketAddr {
-    use crate::runner_protocol::cellular_cell::DEFAULT_ARTIFACT_PORT;
+    use crate::engine::cellular_cell::DEFAULT_ARTIFACT_PORT;
     std::env::var("AIPERF_CONTROLLER_ARTIFACT_BIND")
         .ok()
         .and_then(|value| value.parse().ok())
@@ -967,7 +965,7 @@ pub(crate) fn collect_timeout() -> std::time::Duration {
 }
 
 /// The deadline for the Stage E artifact-upload barrier ([`ArtifactUploadServer::
-/// wait_for_cells`](crate::runner_protocol::artifact_shipping::ArtifactUploadServer::wait_for_cells)),
+/// wait_for_cells`](crate::engine::artifact_shipping::ArtifactUploadServer::wait_for_cells)),
 /// distinct from [`collect_timeout`]. By the time this barrier runs every cell has
 /// already shipped its velo partition (metrics), so only the per-record artifact
 /// bytes remain in flight — a few minutes is ample, and a much tighter bound than
@@ -1276,11 +1274,11 @@ fn cellular_has_adaptive_phase(envelope: &serde_json::Value) -> bool {
 /// equally clear merge error.
 fn cellular_will_use_exact_fold(envelope: &serde_json::Value) -> bool {
     // The env force-switch routes every path to retain for A/B.
-    if !crate::runner_protocol::execute::exact_fold_enabled_by_env() {
+    if !crate::engine::execute::exact_fold_enabled_by_env() {
         return false;
     }
     // The single-process cellular heartbeat lane keeps a per-record clone the fold drops.
-    if crate::runner_protocol::heartbeat_lane::HeartbeatLane::enabled_by_env() {
+    if crate::engine::heartbeat_lane::HeartbeatLane::enabled_by_env() {
         return false;
     }
     // Sketch storage has its own bounded t-digest fold; it ships no StorePartition yet.
@@ -1471,7 +1469,7 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
 
 /// The Stage G serve plan for a cross-host `file`/`path` dataset source: the exact
 /// file set the controller registers (keyed by flat relative name) plus the
-/// [`DatasetManifest`](crate::runner_protocol::artifact_shipping::DatasetManifest)
+/// [`DatasetManifest`](crate::engine::artifact_shipping::DatasetManifest)
 /// a cell fetches to reconstruct the tree and rewrite `datasets/0.path`.
 ///
 /// A graph trace (`dag_jsonl` / `weka_trace` / `dynamo_trace` / `aiperf_trace`) is
@@ -1493,10 +1491,10 @@ fn build_dataset_serve_plan(
     source: &Path,
 ) -> Result<(
     std::collections::HashMap<String, PathBuf>,
-    crate::runner_protocol::artifact_shipping::DatasetManifest,
+    crate::engine::artifact_shipping::DatasetManifest,
 )> {
+    use crate::engine::artifact_shipping::DatasetManifest;
     use crate::graph::recorded::{RecordedTracePathKind, enumerate_recorded_trace_files};
-    use crate::runner_protocol::artifact_shipping::DatasetManifest;
 
     let file_name = |path: &Path| -> Result<String> {
         Ok(path
@@ -1589,7 +1587,8 @@ const CELLULAR_REQUEST_BOUNDED_PHASE_TYPES: [&str; 4] =
 ///   duration bound needs the ragged-count merge that the graph-mode cellular path
 ///   provides; `adaptive_scale` needs cross-cell scaling consensus — both future work); or
 /// - has a `concurrency`/`prefill_concurrency` cap below `cell_count` — the `.max(1)`
-///   per-cell floor would then over-subscribe the aggregate in-flight to `cell_count`.
+///   per-cell floor would then over-subscribe the aggregate in-flight to `cell_count`
+///   (enforced by [`ensure_cellular_cap_floor`], shared with the graph path).
 ///
 /// Fail closed rather than silently corrupt. The static `concurrency`/
 /// `prefill_concurrency`/`rate` caps at or above `cell_count` ARE sliced per cell (see
@@ -1733,7 +1732,7 @@ fn validate_graph_cellular_phases(envelope: &serde_json::Value, cell_count: u32)
 /// the single-process path does — `cfg.metrics` (SLOs + slice duration) plus
 /// `cfg.endpoint.use_server_token_count`. Passing `MetricsConfig::default()` would
 /// silently drop authored goodput SLOs and timeslice sweep-lines from the merged
-/// report. Mirrors [`crate::runner_protocol::protocol::BenchmarkRunConfigWireV2`]'s
+/// report. Mirrors [`crate::engine::protocol::BenchmarkRunConfigWireV2`]'s
 /// `from_value(cfg.metrics).unwrap_or_default()` so an absent/loose `metrics` block
 /// falls back the same way (`metrics_config` still validates any SLO names present).
 /// Spawns the tier-T2 aggregator subprocesses (`aiperf-runner --aggregator`), one per
@@ -1750,10 +1749,10 @@ async fn spawn_aggregators(
     base_port: u16,
     controller_coordinate: &str,
 ) -> Result<Vec<tokio::process::Child>> {
-    use crate::runner_protocol::cellular_aggregator::{
+    use crate::engine::cellular_aggregator::{
         AGG_BIND_ENV, AGG_CHILD_COUNT_ENV, AGG_ID_ENV, children_of,
     };
-    use crate::runner_protocol::cellular_cell::CELL_CONTROLLER_ADDR_ENV;
+    use crate::engine::cellular_cell::CELL_CONTROLLER_ADDR_ENV;
     use std::process::Stdio;
     use tokio::io::AsyncWriteExt;
 
@@ -1791,7 +1790,7 @@ async fn spawn_aggregators(
 }
 
 pub(crate) fn cellular_metrics_config(envelope: &serde_json::Value) -> Result<MetricsConfig> {
-    let spec: crate::runner_protocol::protocol::MetricsSpec = envelope
+    let spec: crate::engine::protocol::MetricsSpec = envelope
         .pointer("/run/cfg/metrics")
         .cloned()
         .map(|value| serde_json::from_value(value).unwrap_or_default())
@@ -1800,7 +1799,7 @@ pub(crate) fn cellular_metrics_config(envelope: &serde_json::Value) -> Result<Me
         .pointer("/run/cfg/endpoint/use_server_token_count")
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
-    crate::runner_protocol::execute::metrics_config(&spec, use_server_token_count)
+    crate::engine::execute::metrics_config(&spec, use_server_token_count)
 }
 
 /// Warns, once at controller startup, when a cellular run carries side-channel
@@ -2123,7 +2122,7 @@ fn write_heartbeat_sidecar(report_path: &Path, heartbeat: &MetricsHeartbeat) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runner_protocol::cellular_kind::is_graph_dataset;
+    use crate::engine::cellular_kind::is_graph_dataset;
 
     #[test]
     fn rejects_non_shipping_run_shapes() {

@@ -25,7 +25,7 @@ use tokio::process::Child;
 
 use crate::cellular::partition::{CELL_COUNT_ENV, CELL_ID_ENV};
 
-use crate::runner_protocol::cellular_cell::{
+use crate::engine::cellular_cell::{
     CELL_ARTIFACT_ADDR_ENV, CELL_CONTROLLER_ADDR_ENV, CELL_PHASE_ORDINAL_BASES_ENV,
 };
 
@@ -53,7 +53,7 @@ pub struct CellLaunchContext {
     pub artifact_authority: Option<String>,
     /// Tier-T2 hierarchical merge: the number of aggregators, or `None` for the flat
     /// star topology. When `Some(M)`, each cell is injected an
-    /// [`AIPERF_CELL_SHIP_ADDR`](crate::runner_protocol::cellular_cell::CELL_SHIP_ADDR_ENV)
+    /// [`AIPERF_CELL_SHIP_ADDR`](crate::engine::cellular_cell::CELL_SHIP_ADDR_ENV)
     /// pointing at its round-robin aggregator (`cell_id % M`) instead of shipping to
     /// the controller.
     pub aggregator_count: Option<u32>,
@@ -140,7 +140,7 @@ impl LocalLauncher {
             // `aggregator_count` is always `None` and this branch never runs.
             let port = ctx.aggregator_base_port + (cell_id % agg_count) as u16;
             command.env(
-                crate::runner_protocol::cellular_cell::CELL_SHIP_ADDR_ENV,
+                crate::engine::cellular_cell::CELL_SHIP_ADDR_ENV,
                 format!("tcp://127.0.0.1:{port}"),
             );
         }
@@ -199,7 +199,7 @@ pub fn select_launcher() -> Box<dyn CellLauncher> {
 /// summing to `total`.
 ///
 /// Lives here (not the velo-gated controller) so the thread-per-core sharded
-/// scheduled runtime ([`crate::runner_protocol::sharded_scheduled`]) reuses the identical round-robin
+/// scheduled runtime ([`crate::engine::sharded_scheduled`]) reuses the identical round-robin
 /// share **without** the `velo` feature — the two-level `(cell × thread)` partition
 /// tiles only if both levels use this exact `ceil((total-k)/C)` share.
 pub(crate) fn owned_positions(total: u64, cell_id: u32, cell_count: u32) -> u64 {

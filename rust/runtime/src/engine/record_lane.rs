@@ -7,21 +7,21 @@
 //! The exact-fold path (`execute::RunCapture`, task S1) folds each completed
 //! record's metric scalars into the exact accumulator and drops the heavy
 //! per-record data mid-run, so it cannot hold every record until end-of-run for the
-//! legacy batch writers ([`crate::runner_protocol::records::write_records_jsonl`] /
+//! legacy batch writers ([`crate::engine::records::write_records_jsonl`] /
 //! `write_raw_records_jsonl` / `write_records_csv`). This lane holds each enabled
 //! writer open for the whole run and appends one row per record as it completes,
 //! then the fold drops the record — bounding peak memory while still emitting the
 //! artifacts.
 //!
 //! Byte-parity contract: every row is produced by the exact same shared builders the
-//! batch writers use ([`crate::runner_protocol::records::write_record_jsonl_row`],
+//! batch writers use ([`crate::engine::records::write_record_jsonl_row`],
 //! `write_raw_record_jsonl_row`, `record_csv_header`, `record_csv_row`), so a lane
 //! that sees the same record sequence emits byte-identical files. The CSV keeps the
 //! batch writer's **lazy header** (the file and header are created only at the first
 //! non-skipped row) and **skip-empty** rule (a record with no projected metric and no
 //! error contributes no row; an all-skipped run writes no file at all).
 //!
-//! Modeled on [`crate::runner_protocol::heartbeat_lane::HeartbeatLane`]: a held-open `BufWriter` fed
+//! Modeled on [`crate::engine::heartbeat_lane::HeartbeatLane`]: a held-open `BufWriter` fed
 //! one line per event and flushed at the end.
 //!
 //! Ordering note: the batch writers emit `captured` in dispatch (identity) order,
@@ -48,8 +48,8 @@ use crate::export::per_record_parquet::{
 };
 
 #[cfg(feature = "parquet")]
-use crate::runner_protocol::records::per_record_parquet_row;
-use crate::runner_protocol::records::{
+use crate::engine::records::per_record_parquet_row;
+use crate::engine::records::{
     CapturedRecord, OUTPUTS_PREFIX, outputs_entry_indented, record_csv_header, record_csv_row,
     write_raw_record_jsonl_row, write_record_jsonl_row,
 };
@@ -67,7 +67,7 @@ fn create_export_file(path: &Path, what: &str) -> Result<BufWriter<File>> {
 
 /// The lazy CSV sub-writer: it defers `File::create` and the header until the first
 /// non-skipped row, so an all-skipped run leaves no file — matching the batch
-/// [`crate::runner_protocol::records::write_records_csv`].
+/// [`crate::engine::records::write_records_csv`].
 struct CsvLaneWriter {
     path: PathBuf,
     include_trace: bool,
@@ -110,7 +110,7 @@ impl CsvLaneWriter {
 /// The held-open `outputs.json` streaming sub-writer (task S4). It writes the pretty
 /// document prefix eagerly (so an all-warmup / empty run still leaves a valid
 /// `{"schema_version":"1.1","data":[]}`, matching the batch
-/// [`crate::runner_protocol::records::write_outputs_json`]), appends each PROFILING record's pretty
+/// [`crate::engine::records::write_outputs_json`]), appends each PROFILING record's pretty
 /// entry at completion in **completion order**, then closes the array + object on
 /// finish. Non-profiling records are skipped. The response text is dropped by the
 /// fold immediately after this append, so retention stays O(in-flight).
@@ -335,7 +335,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::runner_protocol::records::{
+    use crate::engine::records::{
         CapturedHttpExchange, CapturedModelOutput, write_raw_records_jsonl, write_records_csv,
         write_records_jsonl,
     };
@@ -600,7 +600,7 @@ mod tests {
     /// `(session_num, turn_index)` order) with distinct response/reasoning text, plus a
     /// warmup record that `outputs.json` must exclude.
     fn outputs_records() -> Vec<CapturedRecord> {
-        use crate::runner_protocol::records::CapturedModelOutput;
+        use crate::engine::records::CapturedModelOutput;
 
         let mut record = |session_num: u64,
                           turn_index: u32,
@@ -658,7 +658,7 @@ mod tests {
     /// the streamed prefix/entry-indentation/suffix match `to_writer_pretty` exactly.
     #[test]
     fn outputs_stream_in_sorted_order_matches_batch_bytes() {
-        use crate::runner_protocol::records::write_outputs_json;
+        use crate::engine::records::write_outputs_json;
 
         let config = MetricsConfig::default();
         let mut records = outputs_records();
@@ -684,7 +684,7 @@ mod tests {
     /// version matches.
     #[test]
     fn outputs_stream_is_sorted_set_equal_to_batch() {
-        use crate::runner_protocol::records::write_outputs_json;
+        use crate::engine::records::write_outputs_json;
         use serde_json::Value;
 
         let config = MetricsConfig::default();
@@ -719,7 +719,7 @@ mod tests {
     /// to the batch writer's `{"schema_version":"1.1","data":[]}`.
     #[test]
     fn outputs_stream_empty_matches_batch() {
-        use crate::runner_protocol::records::write_outputs_json;
+        use crate::engine::records::write_outputs_json;
 
         let config = MetricsConfig::default();
         let warmup: Vec<CapturedRecord> = outputs_records()

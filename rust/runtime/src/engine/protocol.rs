@@ -94,9 +94,7 @@ fn transport_url_schemes(id: &str) -> &'static [&'static str] {
     }
 }
 
-pub use crate::runner_protocol::sidecar_input::{
-    LiveStreamingSpec, MLflowStreamingSpec, OTelStreamingSpec,
-};
+pub use crate::engine::sidecar_input::{LiveStreamingSpec, MLflowStreamingSpec, OTelStreamingSpec};
 
 /// Tokenizer source understood by the native dataset composer.
 #[derive(Clone, Debug, Deserialize)]
@@ -173,7 +171,7 @@ pub struct ArtifactSpec {
     pub trace: bool,
 }
 
-pub use crate::runner_protocol::sidecar_input::{
+pub use crate::engine::sidecar_input::{
     GpuTelemetryMetricSpec, GpuTelemetrySourceSpec, GpuTelemetrySpec, GpuTelemetryUnitSpec,
     NetworkLatencyProbeSpec, NetworkLatencySpec, ServerMetricsFormatSpec, ServerMetricsSpec,
 };
@@ -226,7 +224,7 @@ pub struct ModelItemSpec {
     pub weight: Option<f64>,
 }
 
-pub use crate::runner_protocol::dataset_input::*;
+pub use crate::engine::dataset_input::*;
 
 /// Ordered phase variants accepted by the native scheduler.
 #[derive(Clone, Deserialize)]

@@ -32,15 +32,15 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, value::RawValue};
 
-use crate::runner_protocol::dataset_input::RunnerDatasetInputAdapterResolver;
-use crate::runner_protocol::execution_factories::RunnerExecutionFactories;
-use crate::runner_protocol::graph_input::RunnerGraphInputAdapterResolver;
-use crate::runner_protocol::protocol::PhaseSpec;
-use crate::runner_protocol::protocol_v2::{
+use crate::engine::dataset_input::RunnerDatasetInputAdapterResolver;
+use crate::engine::execution_factories::RunnerExecutionFactories;
+use crate::engine::graph_input::RunnerGraphInputAdapterResolver;
+use crate::engine::protocol::PhaseSpec;
+use crate::engine::protocol_v2::{
     AuthoredRunSpecV2, NamedRunnerComponentSpecV2, RunDiagnosticArtifactV2, RunResourceV2,
     RunnerComponentId, RunnerFailureStageV2,
 };
-use crate::runner_protocol::sidecar_input::PreparedSidecarInputs;
+use crate::engine::sidecar_input::PreparedSidecarInputs;
 
 /// Clock family supplied by one prepared transport.
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -641,7 +641,7 @@ impl AIPerfExtension for HttpExtension {
         registry
             .register_transport(Arc::new(OnlineHttpTransportFactoryV2))
             .map_err(extension_rejected)?;
-        crate::runner_protocol::online_execution::register_online_workloads(registry)
+        crate::engine::online_execution::register_online_workloads(registry)
             .map_err(extension_rejected)
     }
 }
@@ -682,7 +682,7 @@ impl AIPerfExtension for DynosimExtension {
     }
 
     fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError> {
-        crate::runner_protocol::offline_execution::register_dynosim_transport(registry)
+        crate::engine::offline_execution::register_dynosim_transport(registry)
             .map_err(extension_rejected)
     }
 }
@@ -1682,10 +1682,10 @@ mod tests {
         let context = RunnerRunContext::new(
             format!("blake3:{}", "a".repeat(64)),
             Arc::new(AIPerfRegistry::builtin().unwrap()),
-            crate::runner_protocol::execution_factories::native_execution_factories(),
-            Arc::new(crate::runner_protocol::graph_input::BuiltinRunnerGraphInputAdapterResolver::new()),
-            Arc::new(crate::runner_protocol::dataset_input::BuiltinRunnerDatasetInputAdapterResolver::new()),
-            Arc::new(crate::runner_protocol::sidecar_input::PreparedSidecarInputs::default()),
+            crate::engine::execution_factories::native_execution_factories(),
+            Arc::new(crate::engine::graph_input::BuiltinRunnerGraphInputAdapterResolver::new()),
+            Arc::new(crate::engine::dataset_input::BuiltinRunnerDatasetInputAdapterResolver::new()),
+            Arc::new(crate::engine::sidecar_input::PreparedSidecarInputs::default()),
             vec![
                 profile("default", "chat"),
                 profile("z-last", "messages"),
@@ -1848,7 +1848,7 @@ mod tests {
 
     #[test]
     fn capabilities_catalog_auto_derives_from_the_registered_component_set() {
-        use crate::runner_protocol::protocol::RunnerCatalog;
+        use crate::engine::protocol::RunnerCatalog;
 
         let registry = crate::extensions::BuiltinAIPerfRegistryFactory
             .build()

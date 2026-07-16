@@ -289,4 +289,4 @@ Even at T3, AIPerf keeps advantages k6 lacks, and the plan must not trade them a
   (external streaming sinks).
 - **AIPerf code**: `rust/runtime/src/cellular/{partition,issuance,shard,sketch}.rs`,
   `rust/runtime/src/metrics_core/{store,accumulator}.rs` (sketch + Welford + `finish_fold_into`),
-  `rust/runtime/src/runner_protocol/cellular_controller.rs` (merge orchestration).
+  `rust/runtime/src/engine/cellular_controller.rs` (merge orchestration).

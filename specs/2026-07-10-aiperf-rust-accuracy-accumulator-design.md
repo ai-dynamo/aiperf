@@ -280,7 +280,7 @@ gone.
 - **Static evaluator-backed accuracy** is defined as the strict protocol-v2
   `http + static_accuracy` pair (`StaticAccuracyWorkloadConfigV2` carries the opaque
   evaluator-authored `accuracy` object; `register_http_static_accuracy_pair` and
-  `NativeStaticAccuracyEvaluatorFactory` are present in `rust/runtime/src/runner_protocol`). But it is **not
+  `NativeStaticAccuracyEvaluatorFactory` are present in `rust/runtime/src/engine`). But it is **not
   registered on the default product wire**: `build_default_registry` registers only the
   http/grpc scheduled and graph pairs (`register_http_pairs`,
   `register_http_scheduled_pair`, `register_grpc_pairs`) plus dynosim behind its feature —

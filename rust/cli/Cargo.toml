@@ -62,7 +62,7 @@ dynamo-parity = ["dynamo-full", "aiperf-runtime/dynamo-parity"]
 full = ["dynosim", "parquet", "velo"]
 
 [dependencies]
-aiperf-runtime = { path = "../runtime", default-features = false, features = ["runner-protocol"] }
+aiperf-runtime = { path = "../runtime", default-features = false, features = ["engine"] }
 anyhow.workspace = true
 clap = { version = "4", features = ["derive", "string"] }
 serde.workspace = true

@@ -45,10 +45,10 @@ The wire field is **optional**; when absent each path applies its historical def
 
 Graph fail-fast is wired at exactly two production points; both become `OnFailure`-selected:
 
-1. **Run-level**, `rust/runtime/src/runner_protocol/graph_phase_runtime.rs:1191` — `.with_run_failure(Rc::new(FailFastRunFailurePolicy::default()))` → select `FailFastRunFailurePolicy` (Abort) vs `ContinueRunFailurePolicy` (Continue).
-2. **Node-level**, `rust/runtime/src/runner_protocol/graph_execution.rs:642` — `local.with_node_failure(Rc::new(AbortTraceNodeFailurePolicy))` → select `AbortTraceNodeFailurePolicy` (Abort) vs `ResilientNodeFailurePolicy` (Continue). Threaded via a new `on_failure: OnFailure` field on `RunnerGraphBackendFactoryConfig` (`graph_execution.rs:470`), fed from `NativeRunSpec` next to `metrics` (`execute.rs:1120`).
+1. **Run-level**, `rust/runtime/src/engine/graph_phase_runtime.rs:1191` — `.with_run_failure(Rc::new(FailFastRunFailurePolicy::default()))` → select `FailFastRunFailurePolicy` (Abort) vs `ContinueRunFailurePolicy` (Continue).
+2. **Node-level**, `rust/runtime/src/engine/graph_execution.rs:642` — `local.with_node_failure(Rc::new(AbortTraceNodeFailurePolicy))` → select `AbortTraceNodeFailurePolicy` (Abort) vs `ResilientNodeFailurePolicy` (Continue). Threaded via a new `on_failure: OnFailure` field on `RunnerGraphBackendFactoryConfig` (`graph_execution.rs:470`), fed from `NativeRunSpec` next to `metrics` (`execute.rs:1120`).
 
-The coordinator `ensure!(phased.workload.failed == 0, …)` at `rust/runtime/src/runner_protocol/execute.rs:1202` stays for `Abort`; under `Continue` the graph run reports failed traces without erroring, so this assertion is relaxed to *only* fire under `Abort` (under `Continue` the failed count is expected and recorded, not an error).
+The coordinator `ensure!(phased.workload.failed == 0, …)` at `rust/runtime/src/engine/execute.rs:1202` stays for `Abort`; under `Continue` the graph run reports failed traces without erroring, so this assertion is relaxed to *only* fire under `Abort` (under `Continue` the failed count is expected and recorded, not an error).
 
 Scheduled resilient/fail-fast is wired in `rust/runtime/src/request_rate.rs`: `RequestRateWorkload` gains an `on_failure: OnFailure` field; the terminal completion hook (`request_rate.rs:442`) latches `state.fail(...)` when `outcome.terminal` is `Failed` (not `Cancelled`) and `on_failure == Abort`. `Continue` leaves the existing resilient path (`scheduled.rs:980-1004`) untouched.
 
@@ -56,7 +56,7 @@ Scheduled resilient/fail-fast is wired in `rust/runtime/src/request_rate.rs`: `R
 
 ### Config surface
 
-- Wire form on `BenchmarkConfigWireV2` (`rust/runtime/src/runner_protocol/protocol_v2.rs:178`): `#[serde(default)] pub failure_policy: Option<String>` beside the `slos`/`goodput` policy siblings. Lowered into the shared workload-config JSON in `BenchmarkRunWireV2::into_authored` (`protocol_v2.rs:275`) so **both** `ScheduledWorkloadConfigV2` and `GraphWorkloadConfigV2` (`registry.rs:838,862`) decode the same `failure_policy: Option<OnFailure>` field.
+- Wire form on `BenchmarkConfigWireV2` (`rust/runtime/src/engine/protocol_v2.rs:178`): `#[serde(default)] pub failure_policy: Option<String>` beside the `slos`/`goodput` policy siblings. Lowered into the shared workload-config JSON in `BenchmarkRunWireV2::into_authored` (`protocol_v2.rs:275`) so **both** `ScheduledWorkloadConfigV2` and `GraphWorkloadConfigV2` (`registry.rs:838,862`) decode the same `failure_policy: Option<OnFailure>` field.
 - `OnFailure` decodes from `"continue"` / `"abort"` (serde rename, lowercase), precedent = `ArrivalPattern` (`timing/intervals.rs:30`) and the optional-policy shape of `CancellationConfig` (`ancillary.rs:29`).
 - Python: `src/aiperf/orchestrator/rust_wire.py::dump_benchmark_run` emits `cfg["failure_policy"]` only when set; `src/aiperf/config/config.py` gains an optional `failure_policy` field. Absent by default → historical behavior.
 

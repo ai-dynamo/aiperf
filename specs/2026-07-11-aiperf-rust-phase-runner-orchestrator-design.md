@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 **Date:** 2026-07-11
 **Author:** Anthony Casagrande (Tech Lead) + Claude
-**Status:** built (`aiperf_runtime::timing::phase`, adapted for graph via `rust/runtime/src/runner_protocol/graph_phase_runtime.rs`) — see the implementation-status sections below for the per-item build state.
+**Status:** built (`aiperf_runtime::timing::phase`, adapted for graph via `rust/runtime/src/engine/graph_phase_runtime.rs`) — see the implementation-status sections below for the per-item build state.
 **Grounding:** end-to-end line-by-line read of the Python phase-driver stack —
 `src/aiperf/timing/phase/runner.py` (786 lines), `src/aiperf/timing/phase_orchestrator.py`,
 `src/aiperf/timing/phase/publisher.py`, `src/aiperf/timing/manager.py`,
@@ -562,7 +562,7 @@ handshake, or credit-router wire type was reintroduced.
 
 ## Graph-IR convergence addendum (2026-07-12)
 
-**Status: built.** `rust/runtime/src/runner_protocol/graph_phase_runtime.rs` is the one
+**Status: built.** `rust/runtime/src/engine/graph_phase_runtime.rs` is the one
 backend-neutral Graph-IR phase adapter. It owns root source/arrival/admission
 composition, `ClockPhaseOrchestrator`, exact node and first-token progress,
 duration/grace/drain/force escalation, seamless handoff, ramps, adaptive

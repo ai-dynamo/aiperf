@@ -33,22 +33,22 @@ use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
 use url::Url;
 
-use crate::runner_protocol::dataset_input::RunnerDatasetInputContext;
-use crate::runner_protocol::execute::{
+use crate::engine::dataset_input::RunnerDatasetInputContext;
+use crate::engine::execute::{
     NativeDatasetPlan, NativeEndpointPlan, NativeGraphDatasetPlan, NativeRunSpec,
     NativeSidecarPlan, NativeStaticAccuracyEvaluatorFactory, NativeStaticAccuracyPlan,
     StaticAccuracyEvaluatorFactory, StaticAccuracyEvaluatorProcessSpec,
     execute_prepared_native_plan_uncommitted_selected, load_tokenizer,
 };
-use crate::runner_protocol::execution_factories::RunnerExecutionFactories;
-use crate::runner_protocol::graph_execution::GraphTransportKind;
-use crate::runner_protocol::graph_input::RunnerGraphInputContext;
-use crate::runner_protocol::protocol::{ArtifactSpec, PhaseSpec, TokenizerSpec};
-use crate::runner_protocol::protocol_v2::AuthoredRunSpecV2;
-use crate::runner_protocol::readiness::{
+use crate::engine::execution_factories::RunnerExecutionFactories;
+use crate::engine::graph_execution::GraphTransportKind;
+use crate::engine::graph_input::RunnerGraphInputContext;
+use crate::engine::protocol::{ArtifactSpec, PhaseSpec, TokenizerSpec};
+use crate::engine::protocol_v2::AuthoredRunSpecV2;
+use crate::engine::readiness::{
     PreparedOnlineReadiness, ReadinessEndpointProfile, ReadinessPlanInput,
 };
-use crate::runner_protocol::registry::{
+use crate::engine::registry::{
     GRAPH_WORKLOAD_DESCRIPTOR, GraphWorkloadConfigV2, OnlineGrpcTransportConfigV2,
     OnlineHttpTransportConfigV2, PreparedRunOutcome, PreparedRunnerOperation, RunnerRunContext,
     RunnerWorkloadDescriptor, RunnerWorkloadFactory, SCHEDULED_WORKLOAD_DESCRIPTOR,
@@ -56,7 +56,7 @@ use crate::runner_protocol::registry::{
     ValidatedTransportConfig, ValidatedWorkloadConfig, WorkloadRequirements,
     inference_workload_requirements, strict_decode, validate_common_workload,
 };
-use crate::runner_protocol::turn_execution::RequestExecutorFactory;
+use crate::engine::turn_execution::RequestExecutorFactory;
 
 /// Native (`http`/`grpc`) transport execution selection, resolved from the
 /// validated transport config type. Non-native transports (e.g. dynosim) return
@@ -85,7 +85,7 @@ fn classify_native_transport(
     }
 }
 
-use crate::runner_protocol::sidecar_input::{CONTENT_SERVER_SIDECAR_ID, ContentServerSpec};
+use crate::engine::sidecar_input::{CONTENT_SERVER_SIDECAR_ID, ContentServerSpec};
 
 /// Register the built-in executable workloads (`scheduled`, `graph`).
 ///
@@ -179,11 +179,11 @@ impl RunnerWorkloadFactory for ScheduledWorkloadFactoryV2 {
         match classify_native_transport(transport) {
             Some(NativeTransportSelection::Http) => validate_online_run(context)?,
             Some(NativeTransportSelection::Grpc) => {
-                crate::runner_protocol::grpc_execution::validate_grpc_run(run, context)?;
+                crate::engine::grpc_execution::validate_grpc_run(run, context)?;
             }
             None => {
                 #[cfg(feature = "dynosim")]
-                return crate::runner_protocol::offline_execution::dynosim_scheduled_validate_run(
+                return crate::engine::offline_execution::dynosim_scheduled_validate_run(
                     run, context, transport, workload,
                 );
                 #[cfg(not(feature = "dynosim"))]
@@ -214,7 +214,7 @@ impl RunnerWorkloadFactory for ScheduledWorkloadFactoryV2 {
             }
             None => {
                 #[cfg(feature = "dynosim")]
-                return crate::runner_protocol::offline_execution::prepare_dynosim_scheduled(
+                return crate::engine::offline_execution::prepare_dynosim_scheduled(
                     run,
                     context,
                     transport,
@@ -280,7 +280,7 @@ impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
                 match selection {
                     NativeTransportSelection::Http => validate_online_run(context)?,
                     NativeTransportSelection::Grpc => {
-                        crate::runner_protocol::grpc_execution::validate_grpc_run(run, context)?;
+                        crate::engine::grpc_execution::validate_grpc_run(run, context)?;
                     }
                 }
                 ensure!(
@@ -300,7 +300,7 @@ impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
             }
             None => {
                 #[cfg(feature = "dynosim")]
-                return crate::runner_protocol::offline_execution::dynosim_graph_validate_run(
+                return crate::engine::offline_execution::dynosim_graph_validate_run(
                     run, context, transport, workload,
                 );
                 #[cfg(not(feature = "dynosim"))]
@@ -339,7 +339,7 @@ impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
             }
             None => {
                 #[cfg(feature = "dynosim")]
-                return crate::runner_protocol::offline_execution::prepare_dynosim_graph(
+                return crate::engine::offline_execution::prepare_dynosim_graph(
                     run,
                     context,
                     transport,

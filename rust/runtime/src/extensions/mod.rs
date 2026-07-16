@@ -27,9 +27,9 @@ use crate::endpoints::{
     Endpoint, EndpointFactory, EndpointId, EndpointRegistry, EndpointRegistryBuilder,
     EndpointRegistryError,
 };
+#[cfg(feature = "engine")]
+use crate::engine::registry::{RunnerTransportFactory, RunnerWorkloadFactory};
 use crate::export::ExporterRegistry;
-#[cfg(feature = "runner-protocol")]
-use crate::runner_protocol::registry::{RunnerTransportFactory, RunnerWorkloadFactory};
 
 /// Error returned while constructing or extending an [`AIPerfRegistry`].
 #[derive(Debug)]
@@ -148,12 +148,12 @@ impl AIPerfRegistryFactory for BuiltinAIPerfRegistryFactory {
             &BuiltinEndpointsExtension,
             &BuiltinExportersExtension,
             &BuiltinActuatorsExtension,
-            #[cfg(feature = "runner-protocol")]
-            &crate::runner_protocol::registry::HttpExtension,
-            #[cfg(feature = "runner-protocol")]
-            &crate::runner_protocol::registry::GrpcExtension,
-            #[cfg(all(feature = "runner-protocol", feature = "dynosim"))]
-            &crate::runner_protocol::registry::DynosimExtension,
+            #[cfg(feature = "engine")]
+            &crate::engine::registry::HttpExtension,
+            #[cfg(feature = "engine")]
+            &crate::engine::registry::GrpcExtension,
+            #[cfg(all(feature = "engine", feature = "dynosim"))]
+            &crate::engine::registry::DynosimExtension,
         ])
     }
 }
@@ -260,12 +260,12 @@ pub struct AIPerfRegistry {
     actuators: ActuatorRegistry,
     /// Name-keyed protocol-v2 transport factories. Selection resolves a transport
     /// by id from this one catalog; there is no separate runner registry.
-    #[cfg(feature = "runner-protocol")]
+    #[cfg(feature = "engine")]
     pub(crate) transports: TransactionalRegistry<Arc<dyn RunnerTransportFactory>>,
     /// Name-keyed protocol-v2 workload factories. Any registered workload runs
     /// over any registered transport; the workload owns transport-specific
     /// preparation resolved by id.
-    #[cfg(feature = "runner-protocol")]
+    #[cfg(feature = "engine")]
     pub(crate) workloads: TransactionalRegistry<Arc<dyn RunnerWorkloadFactory>>,
     extension_names: BTreeSet<String>,
 }
@@ -283,9 +283,9 @@ impl AIPerfRegistry {
             endpoints: EndpointRegistryBuilder::new().freeze(),
             exporters: ExporterRegistry::new(),
             actuators: ActuatorRegistry::new(),
-            #[cfg(feature = "runner-protocol")]
+            #[cfg(feature = "engine")]
             transports: TransactionalRegistry::new(),
-            #[cfg(feature = "runner-protocol")]
+            #[cfg(feature = "engine")]
             workloads: TransactionalRegistry::new(),
             extension_names: BTreeSet::new(),
         }

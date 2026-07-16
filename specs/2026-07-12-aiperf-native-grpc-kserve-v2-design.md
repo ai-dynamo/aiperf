@@ -60,7 +60,7 @@ embedding reshaping, ranking indexes, VLM media, typed image parameters, and
 image decoding. Configuration remains identity-free; endpoint IDs live in the
 registry and prepared references.
 
-It also registers nine additional open, runner-protocol-v2-only Riva factories,
+It also registers nine additional open, engine-v2-only Riva factories,
 again without adding a closed `EndpointType` variant:
 
 - `riva_asr`, with unary `Recognize` and bidirectional `StreamingRecognize`;

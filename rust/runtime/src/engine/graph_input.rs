@@ -35,8 +35,8 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Map, Value, value::RawValue};
 
-use crate::runner_protocol::execute::distribution;
-use crate::runner_protocol::protocol::{
+use crate::engine::execute::distribution;
+use crate::engine::protocol::{
     DistributionSpec, FileDatasetSpec, PublicDatasetSourceSpec, PublicDatasetSpec,
     TraceSynthesisSpec,
 };
@@ -163,7 +163,7 @@ impl GraphSamplingStrategy {
 /// only target the native runner materializes today. `None` (the default) is a
 /// byte-unchanged no-op. Extension seam: a new target adds one variant here, one
 /// `parse` arm, and one marker-placement arm in
-/// [`crate::runner_protocol::graph_execution`] — nothing else changes.
+/// [`crate::engine::graph_execution`] — nothing else changes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CacheBustTarget {
     /// No marker; recorded content is sent verbatim.

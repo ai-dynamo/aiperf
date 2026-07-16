@@ -10,11 +10,11 @@ description = "Rust-native AIPerf load-generation runtime used by the subprocess
 
 [features]
 default = ["parquet", "velo"]
-# Hosts the relocated v2 protocol / registry / execution layer (the ~30k-line
-# runner-protocol modules under `src/runner_protocol/`). Only `aiperf-runner`
-# opts in; `mock-server`/`e2e` and other library consumers build without it, so
-# the gated module and its dependency surface stay out of their builds.
-runner-protocol = []
+# Hosts the v2 protocol / registry / execution layer (the ~30k-line engine
+# modules under `src/engine/`). Only `aiperf-cli` opts in; `mock-server`/`e2e`
+# and other library consumers build without it, so the gated module and its
+# dependency surface stay out of their builds.
+engine = []
 # Server-metrics Parquet export sink + public-dataset `.parquet` reader. Links
 # `arrow` + `parquet` (~2.6 MiB of `.text`, plus zstd/snap). A lite/online-only
 # runner (e.g. a lightweight nightly wheel) builds without it: the exporter is

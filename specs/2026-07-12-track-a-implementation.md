@@ -51,7 +51,7 @@ Sequence: **PR1 → PR2 (A1)**, **PR3 (A3)** and **PR4 (A4)** in parallel after 
 
 The one load-bearing refactor, isolated so it can land and bake before A1.
 
-- **Where:** `rust/runtime/src/runner_protocol/execute.rs:3200-3234` (`RunCapture::finish`; crate `aiperf-runtime`, `runner_protocol` module).
+- **Where:** `rust/runtime/src/engine/execute.rs:3200-3234` (`RunCapture::finish`; crate `aiperf-runtime`, `engine` module).
 - **Change:** replace the positional record↔identity zip (`ingest.correlation_id ==
   identity.uuid`, `:3211-3218`) with a **uuid-keyed join** keyed on the record's
   **true `Uuid`** (built from the dispatch identities; each record resolved by its

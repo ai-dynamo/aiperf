@@ -210,7 +210,7 @@ parser, replay, extraction, and lifecycle behavior described here remain authori
   `kserve_v1_predict`, `kserve_v2_infer`, `kserve_v2_embeddings`, `kserve_v2_rankings`,
   `kserve_v2_vlm`, `kserve_v2_images`. Factories preserve selector extras, tensor shapes and
   datatypes, response fallbacks, embedding reshaping, ranking indexes, VLM media, and typed image
-  parameters. Open-registry and runner-protocol-v2-only; KServe V1 is a dialect identity, not a
+  parameters. Open-registry and engine-v2-only; KServe V1 is a dialect identity, not a
   runner-v1 adapter. The five V2 OIP dialects additionally bind to the native Tonic transport (§0).
 - **vLLM token-native (PR-1113):** `vllm_generate`, a protocol-v2-only factory for non-streaming
   `POST /inference/v1/generate`. Its descriptor publishes `tokenizes_input=false`,

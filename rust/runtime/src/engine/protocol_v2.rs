@@ -20,10 +20,8 @@ use anyhow::{Result, anyhow, ensure};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value, value::RawValue};
 
-use crate::runner_protocol::protocol::{
-    MetricsSpec, ModelSelectionStrategy, ModelsSpec, VariationSpec,
-};
-use crate::runner_protocol::sidecar_input::{
+use crate::engine::protocol::{MetricsSpec, ModelSelectionStrategy, ModelsSpec, VariationSpec};
+use crate::engine::sidecar_input::{
     AuthoredSidecarInput, CONTENT_SERVER_SIDECAR_ID, GPU_TELEMETRY_SIDECAR_ID,
     LIVE_STREAMING_SIDECAR_ID, NETWORK_LATENCY_SIDECAR_ID, SERVER_METRICS_SIDECAR_ID,
 };

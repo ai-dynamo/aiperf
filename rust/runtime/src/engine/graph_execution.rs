@@ -53,10 +53,10 @@ use serde_json::{Map, Value};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::runner_protocol::execute::DEFAULT_ENDPOINT_PROFILE_ID;
-use crate::runner_protocol::grpc_turn_execution::grpc_sink_with_endpoints;
-use crate::runner_protocol::records::{CapturedHttpExchange, CapturedModelOutput, CapturedRecord};
-use crate::runner_protocol::registry::ValidatedEndpointProfileV2;
+use crate::engine::execute::DEFAULT_ENDPOINT_PROFILE_ID;
+use crate::engine::grpc_turn_execution::grpc_sink_with_endpoints;
+use crate::engine::records::{CapturedHttpExchange, CapturedModelOutput, CapturedRecord};
+use crate::engine::registry::ValidatedEndpointProfileV2;
 
 /// Transport that a graph endpoint runtime dispatches its prepared turns over.
 ///
@@ -588,7 +588,7 @@ pub(crate) struct GraphCacheBust {
     /// Per-run benchmark identity digested into the marker.
     pub(crate) benchmark_id: String,
     /// Resolved marker placement target (only `FirstTurnPrefix` mints a marker).
-    pub(crate) target: crate::runner_protocol::graph_input::CacheBustTarget,
+    pub(crate) target: crate::engine::graph_input::CacheBustTarget,
 }
 
 impl GraphCacheBust {
@@ -1251,20 +1251,18 @@ mod tests {
 
         let factory = PreparedRunnerGraphEndpointRuntimeFactory::new(
             registry,
-            Arc::new(vec![
-                crate::runner_protocol::registry::ValidatedEndpointProfileV2 {
-                    profile_id: "default".into(),
-                    endpoint_id: EndpointId::new("chat").unwrap(),
-                    config: RawEndpointConfig {
-                        urls: vec!["http://127.0.0.1:1".into()],
-                        streaming: true,
-                        ..RawEndpointConfig::default()
-                    },
-                    connection_reuse: ConnectionReuseStrategy::Pooled,
-                    client: Default::default(),
-                    session_header: None,
+            Arc::new(vec![crate::engine::registry::ValidatedEndpointProfileV2 {
+                profile_id: "default".into(),
+                endpoint_id: EndpointId::new("chat").unwrap(),
+                config: RawEndpointConfig {
+                    urls: vec!["http://127.0.0.1:1".into()],
+                    streaming: true,
+                    ..RawEndpointConfig::default()
                 },
-            ]),
+                connection_reuse: ConnectionReuseStrategy::Pooled,
+                client: Default::default(),
+                session_header: None,
+            }]),
             Arc::new(AuthoredInputTokenCounter),
             GraphTransportKind::Http,
         )
@@ -1311,19 +1309,17 @@ mod tests {
         // gRPC binding registry. The `kind()` probe confirms it downcast-free.
         let factory = PreparedRunnerGraphEndpointRuntimeFactory::new(
             EndpointRegistry::builtin().unwrap(),
-            Arc::new(vec![
-                crate::runner_protocol::registry::ValidatedEndpointProfileV2 {
-                    profile_id: "default".into(),
-                    endpoint_id: EndpointId::new("kserve_v2_infer").unwrap(),
-                    config: RawEndpointConfig {
-                        urls: vec!["grpc://127.0.0.1:1".into()],
-                        ..RawEndpointConfig::default()
-                    },
-                    connection_reuse: ConnectionReuseStrategy::Pooled,
-                    client: Default::default(),
-                    session_header: None,
+            Arc::new(vec![crate::engine::registry::ValidatedEndpointProfileV2 {
+                profile_id: "default".into(),
+                endpoint_id: EndpointId::new("kserve_v2_infer").unwrap(),
+                config: RawEndpointConfig {
+                    urls: vec!["grpc://127.0.0.1:1".into()],
+                    ..RawEndpointConfig::default()
                 },
-            ]),
+                connection_reuse: ConnectionReuseStrategy::Pooled,
+                client: Default::default(),
+                session_header: None,
+            }]),
             Arc::new(AuthoredInputTokenCounter),
             GraphTransportKind::Grpc,
         )
@@ -1341,19 +1337,17 @@ mod tests {
         // at binding preparation (the HTTP arm would accept it).
         let factory = PreparedRunnerGraphEndpointRuntimeFactory::new(
             EndpointRegistry::builtin().unwrap(),
-            Arc::new(vec![
-                crate::runner_protocol::registry::ValidatedEndpointProfileV2 {
-                    profile_id: "default".into(),
-                    endpoint_id: EndpointId::new("chat").unwrap(),
-                    config: RawEndpointConfig {
-                        urls: vec!["grpc://127.0.0.1:1".into()],
-                        ..RawEndpointConfig::default()
-                    },
-                    connection_reuse: ConnectionReuseStrategy::Pooled,
-                    client: Default::default(),
-                    session_header: None,
+            Arc::new(vec![crate::engine::registry::ValidatedEndpointProfileV2 {
+                profile_id: "default".into(),
+                endpoint_id: EndpointId::new("chat").unwrap(),
+                config: RawEndpointConfig {
+                    urls: vec!["grpc://127.0.0.1:1".into()],
+                    ..RawEndpointConfig::default()
                 },
-            ]),
+                connection_reuse: ConnectionReuseStrategy::Pooled,
+                client: Default::default(),
+                session_header: None,
+            }]),
             Arc::new(AuthoredInputTokenCounter),
             GraphTransportKind::Grpc,
         )
@@ -1373,19 +1367,17 @@ mod tests {
     fn prepared_graph_runtime_rejects_dataset_only_raw_token_requirements() {
         let result = PreparedRunnerGraphEndpointRuntimeFactory::new(
             EndpointRegistry::builtin().unwrap(),
-            Arc::new(vec![
-                crate::runner_protocol::registry::ValidatedEndpointProfileV2 {
-                    profile_id: "default".into(),
-                    endpoint_id: EndpointId::new("vllm_generate").unwrap(),
-                    config: RawEndpointConfig {
-                        urls: vec!["http://127.0.0.1:1".into()],
-                        ..RawEndpointConfig::default()
-                    },
-                    connection_reuse: ConnectionReuseStrategy::Pooled,
-                    client: Default::default(),
-                    session_header: None,
+            Arc::new(vec![crate::engine::registry::ValidatedEndpointProfileV2 {
+                profile_id: "default".into(),
+                endpoint_id: EndpointId::new("vllm_generate").unwrap(),
+                config: RawEndpointConfig {
+                    urls: vec!["http://127.0.0.1:1".into()],
+                    ..RawEndpointConfig::default()
                 },
-            ]),
+                connection_reuse: ConnectionReuseStrategy::Pooled,
+                client: Default::default(),
+                session_header: None,
+            }]),
             Arc::new(AuthoredInputTokenCounter),
             GraphTransportKind::Http,
         );
@@ -1420,7 +1412,7 @@ mod tests {
     fn cache_bust_marker_is_disabled_for_none_target() {
         let cache_bust = GraphCacheBust {
             benchmark_id: "run-1".into(),
-            target: crate::runner_protocol::graph_input::CacheBustTarget::None,
+            target: crate::engine::graph_input::CacheBustTarget::None,
         };
         assert!(cache_bust.marker("trace::abc").is_none());
     }
@@ -1429,7 +1421,7 @@ mod tests {
     fn cache_bust_marker_structure_is_stable_and_instance_unique() {
         let cache_bust = GraphCacheBust {
             benchmark_id: "run-1".into(),
-            target: crate::runner_protocol::graph_input::CacheBustTarget::FirstTurnPrefix,
+            target: crate::engine::graph_input::CacheBustTarget::FirstTurnPrefix,
         };
         let first = cache_bust.marker("trace::inst-a").expect("marker minted");
         let second = cache_bust.marker("trace::inst-b").expect("marker minted");

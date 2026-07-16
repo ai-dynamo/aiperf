@@ -26,8 +26,8 @@ use tokio::process::{Child, ChildStdout, Command};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
-use crate::runner_protocol::execute::{NativeEndpointPlan, NativeRunSpec};
-use crate::runner_protocol::records::{CapturedRecord, record_json_value};
+use crate::engine::execute::{NativeEndpointPlan, NativeRunSpec};
+use crate::engine::records::{CapturedRecord, record_json_value};
 
 const WORKER_CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
 const LIVE_STREAMING_PROTOCOL_VERSION: u32 = 1;
@@ -367,7 +367,7 @@ struct LiveEndpointConfig<'a> {
 
 fn live_endpoint_config(endpoint: &NativeEndpointPlan) -> Result<LiveEndpointConfig<'_>> {
     let NativeEndpointPlan::Prepared(profiles) = endpoint;
-    let profile = crate::runner_protocol::execute::default_prepared_endpoint_profile(profiles)?;
+    let profile = crate::engine::execute::default_prepared_endpoint_profile(profiles)?;
     Ok(LiveEndpointConfig {
         endpoint_id: profile.endpoint_id.as_str(),
         urls: &profile.config.urls,
@@ -503,8 +503,8 @@ struct WorkerConfig<'a> {
     endpoint_urls: &'a [String],
     streaming: bool,
     artifact_dir: &'a Path,
-    otel: &'a crate::runner_protocol::protocol::OTelStreamingSpec,
-    mlflow: &'a crate::runner_protocol::protocol::MLflowStreamingSpec,
+    otel: &'a crate::engine::protocol::OTelStreamingSpec,
+    mlflow: &'a crate::engine::protocol::MLflowStreamingSpec,
 }
 
 #[derive(Serialize)]
@@ -609,7 +609,7 @@ mod tests {
     #[test]
     fn prepared_endpoint_projects_open_identity_without_legacy_conversion() {
         let endpoint = NativeEndpointPlan::Prepared(Arc::new(vec![
-            crate::runner_protocol::registry::ValidatedEndpointProfileV2 {
+            crate::engine::registry::ValidatedEndpointProfileV2 {
                 profile_id: "default".into(),
                 endpoint_id: crate::endpoints::EndpointId::new("extension_chat").unwrap(),
                 config: crate::endpoints::RawEndpointConfig {

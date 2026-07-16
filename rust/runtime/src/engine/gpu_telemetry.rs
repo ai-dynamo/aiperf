@@ -30,9 +30,7 @@ use serde::Serialize;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
-use crate::runner_protocol::protocol::{
-    GpuTelemetrySourceSpec, GpuTelemetrySpec, GpuTelemetryUnitSpec,
-};
+use crate::engine::protocol::{GpuTelemetrySourceSpec, GpuTelemetrySpec, GpuTelemetryUnitSpec};
 
 /// Run-owned GPU telemetry state and its profiling-phase sidecar.
 pub(crate) struct GpuTelemetryRun {

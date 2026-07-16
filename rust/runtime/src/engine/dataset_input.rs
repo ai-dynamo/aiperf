@@ -23,10 +23,10 @@ use async_trait::async_trait;
 use serde::{Deserialize, Deserializer, de::Error as _};
 use serde_json::{Map, Value, value::RawValue};
 
-use crate::runner_protocol::execute::{
+use crate::engine::execute::{
     build_file_dataset, build_public_dataset, build_synthetic_dataset, distribution,
 };
-use crate::runner_protocol::protocol::ModelsSpec;
+use crate::engine::protocol::ModelsSpec;
 
 /// Public dataset configuration resolved from the Python plugin registry.
 ///
@@ -163,7 +163,7 @@ pub struct TraceSynthesisSpec {
     /// Projected by Python `rust_wire._project_trajectory_knobs` from the
     /// resolved `dataset.sampling`. Absent/unknown (the default) keeps the
     /// byte-unchanged sequential cursor draw. Consumed by the graph phase
-    /// runtime's draw sites via [`crate::runner_protocol::graph_input::GraphSamplingStrategy`].
+    /// runtime's draw sites via [`crate::engine::graph_input::GraphSamplingStrategy`].
     #[serde(default)]
     pub dataset_sampling_strategy: Option<String>,
     /// Cache-bust marker target for the recorded-graph first-turn user message.
@@ -173,7 +173,7 @@ pub struct TraceSynthesisSpec {
     /// prepends a per-conversation nonce marker to the first user message so
     /// shared-trace lanes send distinct prefixes AND the scenario-required ISL
     /// accounting matches agentx. Consumed by
-    /// [`crate::runner_protocol::graph_input::CacheBustTarget`].
+    /// [`crate::engine::graph_input::CacheBustTarget`].
     #[serde(default)]
     pub cache_bust_target: Option<String>,
 }

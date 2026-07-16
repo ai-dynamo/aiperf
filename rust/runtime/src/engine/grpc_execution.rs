@@ -17,8 +17,8 @@ use crate::transport_http::config::ClientConfig;
 use anyhow::{Context, Result, ensure};
 use url::Url;
 
-use crate::runner_protocol::protocol_v2::AuthoredRunSpecV2;
-use crate::runner_protocol::registry::RunnerRunContext;
+use crate::engine::protocol_v2::AuthoredRunSpecV2;
+use crate::engine::registry::RunnerRunContext;
 
 /// Validate the gRPC-specific endpoint policy for one authored run.
 ///

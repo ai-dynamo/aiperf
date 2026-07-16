@@ -25,9 +25,9 @@ with the same composed endpoint registry.
 The `aiperf-endpoints`, `aiperf-dataset`, and `aiperf-extensions` crates named throughout this record
 are now modules of the `aiperf-runtime` runtime library (`aiperf_runtime::endpoints`,
 `aiperf_runtime::dataset`, `aiperf_runtime::extensions`); the `aiperf` product binary is the
-`aiperf-cli` crate (`rust/cli`), and the v2 execution layer lives in `aiperf_runtime::runner_protocol`.
+`aiperf-cli` crate (`rust/cli`), and the v2 execution layer lives in `aiperf_runtime::engine`.
 Code truth lives in `rust/runtime/src/endpoints*`, `rust/runtime/src/extensions*`, and
-`rust/runtime/src/runner_protocol/*`.
+`rust/runtime/src/engine/*`.
 
 **Companions:**
 
@@ -98,7 +98,7 @@ Today Python constructs `EndpointType` from Python plugin registrations at impor
   capabilities.
 
 This ordering is already observably wrong. The Rust runner advertises `messages` in
-`rust/runtime/src/runner_protocol/protocol.rs:49-68`, while the Python endpoint block in
+`rust/runtime/src/engine/protocol.rs:49-68`, while the Python endpoint block in
 `src/aiperf/plugin/plugins.yaml:184-421` and its checked-in Config-v2 schema do not contain
 `messages`. A valid endpoint compiled into the selected runner is consequently rejected before
 the selected runner can see it.
@@ -133,8 +133,8 @@ The native implementation also needs consolidation:
 2. The same file stores a separate metadata table selected by that enum.
 3. `rust/runtime/src/dataset/request.rs:97-226` manually registers endpoint names and keeps a
    second enum-indexed map.
-4. `rust/runtime/src/runner_protocol/protocol.rs:49-68` hardcodes the capability list independently.
-5. `rust/runtime/src/runner_protocol/execute.rs:351` constructs `AiperfRegistry::builtin()` inside
+4. `rust/runtime/src/engine/protocol.rs:49-68` hardcodes the capability list independently.
+5. `rust/runtime/src/engine/execute.rs:351` constructs `AiperfRegistry::builtin()` inside
    execution rather than accepting the runner's composed registry.
 
 As a result, the current compile-time endpoint extension proof is not a proof of a new dialect. It

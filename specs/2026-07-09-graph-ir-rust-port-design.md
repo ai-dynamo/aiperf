@@ -290,7 +290,7 @@ rust/runtime/src/graph/           # the pure-logic runtime port (aiperf_runtime:
   recorded/                      # native WEKA + dynamo_trace compilers (aiperf_runtime::graph::recorded)
   # runtime = current_thread tokio + LocalSet drive_sim/drive_real pump
 rust/runtime/src/clock/sim_clock.rs  # shared SimClock = dynosim-style DES event queue (aiperf_runtime::clock)
-rust/runtime/src/runner_protocol/  # aiperf-cli v2 execution layer: sole product entry — strict `graph` workload + resolver
+rust/runtime/src/engine/  # aiperf-cli v2 execution layer: sole product entry — strict `graph` workload + resolver
 tools/gen_fixtures.py            # Python twin-harness fixture generator (parity)
 fixtures/corpus/*.json           # Python-emitted inputs + golden outputs
 ```

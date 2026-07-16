@@ -7,7 +7,7 @@
 //! into one within-tolerance summary, but a run WITH per-record file artifacts still
 //! fell back to the retain path because the shards had nowhere to stream their
 //! records/raw/CSV/parquet/outputs. Stage B closes that: each thread-per-core shard
-//! opens its OWN [`crate::runner_protocol::record_lane::RecordArtifactLane`] writing
+//! opens its OWN [`crate::engine::record_lane::RecordArtifactLane`] writing
 //! to a per-shard temp directory (`<artifact_dir>/.shard-<id>/…`), streams one row
 //! per completed record, and drops it — exactly like the single-thread lane. This
 //! module fuses those per-shard files into the single final artifact at the
@@ -20,7 +20,7 @@
 //! final artifact is compared as a SORTED SET, never byte-for-byte against a specific
 //! dispatch order. A shard's rows are a disjoint subset of the run's records (the
 //! two-level partition tiles `0..total` exactly once — see
-//! [`crate::runner_protocol::sharded_scheduled`]), and each shard builds its rows
+//! [`crate::engine::sharded_scheduled`]), and each shard builds its rows
 //! with the SAME shared row builders the batch writers use, so a byte-append of the
 //! shard files yields the union of rows, which is set-identical to the batch writer
 //! over the union. No cross-shard ordering is needed.
@@ -52,7 +52,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-use crate::runner_protocol::protocol::ArtifactSpec;
+use crate::engine::protocol::ArtifactSpec;
 
 /// The per-shard temp directory under the run's artifact tree. Each shard streams its
 /// artifact lane here; the coordinator concatenates and then removes these.
@@ -309,7 +309,7 @@ fn concat_csv(shard_paths: &[PathBuf], final_path: &Path) -> Result<()> {
 /// final `{schema_version, data:[…]}` document. Set-compared downstream, so the
 /// shard order of the concatenated entries does not matter.
 fn concat_outputs_json(shard_paths: &[PathBuf], final_path: &Path) -> Result<()> {
-    use crate::runner_protocol::records::OUTPUTS_SCHEMA_VERSION;
+    use crate::engine::records::OUTPUTS_SCHEMA_VERSION;
 
     let mut data: Vec<serde_json::Value> = Vec::new();
     for shard in shard_paths {
@@ -351,12 +351,12 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::metrics_core::{MetricsConfig, Phase, RecordIngest, TokenCounts};
-    use crate::runner_protocol::record_lane::RecordArtifactLane;
-    use crate::runner_protocol::records::{
+    use crate::engine::record_lane::RecordArtifactLane;
+    use crate::engine::records::{
         CapturedModelOutput, CapturedRecord, write_outputs_json, write_raw_records_jsonl,
         write_records_csv, write_records_jsonl,
     };
+    use crate::metrics_core::{MetricsConfig, Phase, RecordIngest, TokenCounts};
     use uuid::Uuid;
 
     /// One synthetic captured record. `visible`/`reasoning` populate the outputs
@@ -579,9 +579,7 @@ mod tests {
                 &records
                     .iter()
                     .map(|captured| {
-                        crate::runner_protocol::records::per_record_parquet_row(
-                            captured, &config, false,
-                        )
+                        crate::engine::records::per_record_parquet_row(captured, &config, false)
                     })
                     .collect::<Vec<_>>(),
                 &crate::export::per_record_parquet::record_metric_columns(),
@@ -739,9 +737,7 @@ mod tests {
                 &records
                     .iter()
                     .map(|captured| {
-                        crate::runner_protocol::records::per_record_parquet_row(
-                            captured, &config, false,
-                        )
+                        crate::engine::records::per_record_parquet_row(captured, &config, false)
                     })
                     .collect::<Vec<_>>(),
                 &crate::export::per_record_parquet::record_metric_columns(),

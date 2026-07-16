@@ -5,7 +5,7 @@
 //! synthetic/linear run or a graph program?
 //!
 //! [`CellularRunKind`] is the single seam both sides of the cellular split name:
-//! the controller ([`cellular_controller`](crate::runner_protocol::cellular_controller))
+//! the controller ([`cellular_controller`](crate::engine::cellular_controller))
 //! answers the four ways the two paths differ (phase validation, per-phase global
 //! ordinal bases, record merge, per-cell session-budget slicing) through the `impl`
 //! block that lives beside those controller-private helpers, while the cell and the
@@ -46,7 +46,7 @@ pub(crate) fn is_graph_dataset(envelope: &Value) -> bool {
 /// validated, whether a per-phase global ordinal base applies, how the cells'
 /// records merge, and whether the per-cell session budget is sliced — answered by
 /// the `impl` block in
-/// [`cellular_controller`](crate::runner_protocol::cellular_controller). The pure
+/// [`cellular_controller`](crate::engine::cellular_controller). The pure
 /// facts every consumer needs (detection, provenance label, multi-turn backstop,
 /// session-budget slicing) live here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

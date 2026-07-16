@@ -89,26 +89,24 @@ use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::RequestObserver;
 use uuid::Uuid;
 
-use crate::runner_protocol::dataset_input::PreparedDatasetInput;
-use crate::runner_protocol::execution_factories::RunnerExecutionFactories;
-use crate::runner_protocol::gpu_telemetry::GpuTelemetryRun;
-use crate::runner_protocol::graph_execution::{
+use crate::engine::dataset_input::PreparedDatasetInput;
+use crate::engine::execution_factories::RunnerExecutionFactories;
+use crate::engine::gpu_telemetry::GpuTelemetryRun;
+use crate::engine::graph_execution::{
     GraphTransportKind, PreparedRunnerGraphEndpointRuntimeFactory, RunnerGraphBackendFactory,
     RunnerGraphBackendFactoryConfig, RunnerGraphEndpointRuntimeFactory,
     RunnerGraphPlacementFactory,
 };
-use crate::runner_protocol::graph_phase_runtime::{
+use crate::engine::graph_phase_runtime::{
     GraphPhaseBackendConfig, PreparedGraphPhaseBackend, RunnerGraphPhaseBackendFactory,
     run_graph_phases, validate_graph_phases,
 };
-use crate::runner_protocol::heartbeat_lane::{
+use crate::engine::heartbeat_lane::{
     CompositePhaseObserver, HeartbeatLane, HeartbeatPhaseObserver,
 };
-use crate::runner_protocol::live_streaming::{
-    LiveResultsSink, PythonLiveStreamingRun, live_phase_observer,
-};
-use crate::runner_protocol::network_latency::NetworkLatencyRun;
-use crate::runner_protocol::protocol::{
+use crate::engine::live_streaming::{LiveResultsSink, PythonLiveStreamingRun, live_phase_observer};
+use crate::engine::network_latency::NetworkLatencyRun;
+use crate::engine::protocol::{
     AdaptiveControlVariableSpec, AdaptiveScaleSpec, AdaptiveStepPolicySpec, DistributionSpec,
     FileDatasetSpec, MetricsSpec, ModelSelectionStrategy, ModelsSpec, PhaseSpec,
     PublicDatasetSourceSpec, PublicDatasetSpec, RampSpec, RampStrategySpec,
@@ -117,21 +115,21 @@ use crate::runner_protocol::protocol::{
     SyntheticPrefixPromptsSpec, SyntheticVideoFormatSpec, SyntheticVideoPatternSpec,
     SyntheticVideoSpec,
 };
-use crate::runner_protocol::readiness::{PreparedOnlineReadiness, ReadinessTransportFactory};
-use crate::runner_protocol::record_lane::RecordArtifactLane;
-use crate::runner_protocol::records::{
+use crate::engine::readiness::{PreparedOnlineReadiness, ReadinessTransportFactory};
+use crate::engine::record_lane::RecordArtifactLane;
+use crate::engine::records::{
     CapturedHttpExchange, CapturedModelOutput, CapturedRecord, InputSession, group_record_errors,
     observe_otel_record, write_inputs_json, write_outputs_json, write_raw_records_jsonl,
     write_records_csv, write_records_jsonl,
 };
-use crate::runner_protocol::registry::ValidatedEndpointProfileV2;
-use crate::runner_protocol::server_metrics::ServerMetricsRun;
-use crate::runner_protocol::sidecar_input::{
+use crate::engine::registry::ValidatedEndpointProfileV2;
+use crate::engine::server_metrics::ServerMetricsRun;
+use crate::engine::sidecar_input::{
     CONTENT_SERVER_SIDECAR_ID, ContentServerSpec, GPU_TELEMETRY_SIDECAR_ID, GpuTelemetrySpec,
     LIVE_STREAMING_SIDECAR_ID, LiveStreamingSpec, NETWORK_LATENCY_SIDECAR_ID, NetworkLatencySpec,
     PreparedSidecarInputs, SERVER_METRICS_SIDECAR_ID, ServerMetricsSpec,
 };
-use crate::runner_protocol::turn_execution::{
+use crate::engine::turn_execution::{
     HttpExecutionBackendConfig, HttpPreparedEndpointTableFactory, RequestExecutorFactory,
 };
 
@@ -214,12 +212,12 @@ pub(crate) struct NativeRunSpec {
     pub(crate) models: ModelsSpec,
     pub(crate) endpoint: NativeEndpointPlan,
     pub(crate) dataset: NativeDatasetPlan,
-    pub(crate) tokenizer: crate::runner_protocol::protocol::TokenizerSpec,
+    pub(crate) tokenizer: crate::engine::protocol::TokenizerSpec,
     pub(crate) phases: Vec<PhaseSpec>,
     pub(crate) metrics: MetricsSpec,
-    pub(crate) artifacts: crate::runner_protocol::protocol::ArtifactSpec,
+    pub(crate) artifacts: crate::engine::protocol::ArtifactSpec,
     pub(crate) sidecars: NativeSidecarPlan,
-    pub(crate) user_files: Vec<crate::runner_protocol::protocol_v2::UserFileSpecV2>,
+    pub(crate) user_files: Vec<crate::engine::protocol_v2::UserFileSpecV2>,
     /// Optional configured run-failure behavior. `None` lets each execution
     /// path apply its historical default at the point of use
     /// ([`OnFailure::scheduled_or_default`] / [`OnFailure::graph_or_default`]).
@@ -472,8 +470,8 @@ pub(crate) struct NativeGraphDatasetPlan {
     pub(crate) random_seed: Option<u64>,
     pub(crate) default_output_tokens: usize,
     pub(crate) allow_dataset_wrap: bool,
-    pub(crate) t_star_window: crate::runner_protocol::graph_input::TStarWindow,
-    pub(crate) cache_bust_target: crate::runner_protocol::graph_input::CacheBustTarget,
+    pub(crate) t_star_window: crate::engine::graph_input::TStarWindow,
+    pub(crate) cache_bust_target: crate::engine::graph_input::CacheBustTarget,
 }
 
 /// Execute a protocol-v2 plan through a transport-selected request executor.
@@ -535,7 +533,7 @@ fn execute_prepared_native_plan_uncommitted_with_runtime_factories(
 
 fn materialize_user_files(
     artifact_dir: &Path,
-    files: &[crate::runner_protocol::protocol_v2::UserFileSpecV2],
+    files: &[crate::engine::protocol_v2::UserFileSpecV2],
 ) -> Result<()> {
     if files.is_empty() {
         return Ok(());
@@ -716,10 +714,10 @@ fn validate_plan(request: &NativeRunSpec) -> Result<()> {
         );
         let has_jsonl = spec
             .formats
-            .contains(&crate::runner_protocol::protocol::ServerMetricsFormatSpec::Jsonl);
+            .contains(&crate::engine::protocol::ServerMetricsFormatSpec::Jsonl);
         let has_parquet = spec
             .formats
-            .contains(&crate::runner_protocol::protocol::ServerMetricsFormatSpec::Parquet);
+            .contains(&crate::engine::protocol::ServerMetricsFormatSpec::Parquet);
         ensure!(
             has_jsonl == spec.jsonl_path.is_some(),
             "server metrics jsonl_path must be present exactly when JSONL is selected"
@@ -784,7 +782,7 @@ fn validate_plan(request: &NativeRunSpec) -> Result<()> {
 /// it, so a requested Parquet sidecar still disqualifies exact-fold on a lite build
 /// (the run then falls to the retain path, which warns and skips the artifact).
 fn wants_per_record_artifacts(
-    artifacts: &crate::runner_protocol::protocol::ArtifactSpec,
+    artifacts: &crate::engine::protocol::ArtifactSpec,
     inputs_need_retain: bool,
 ) -> bool {
     // Per-record OTLP folds at completion (S3) and outputs.json streams through the
@@ -1361,7 +1359,7 @@ struct OnlineGraphPhaseBackendFactory<'a> {
     metrics: MetricsConfig,
     raw_enabled: bool,
     on_failure: OnFailure,
-    cache_bust: Option<crate::runner_protocol::graph_execution::GraphCacheBust>,
+    cache_bust: Option<crate::engine::graph_execution::GraphCacheBust>,
 }
 
 impl RunnerGraphPhaseBackendFactory for OnlineGraphPhaseBackendFactory<'_> {
@@ -1442,13 +1440,13 @@ async fn execute_graph_native(
     };
     let real_clock_anchor = sidecars.real_clock_anchor;
     let clock = sidecars.clock.clone();
-    let start_ns = crate::runner_protocol::cell_origin::run_origin_now_ns(&clock);
+    let start_ns = crate::engine::cell_origin::run_origin_now_ns(&clock);
     let rng_root = RngRoot::new(graph_random_seed.or(request.random_seed));
     let on_failure = OnFailure::graph_or_default(request.failure_policy);
     // Scenario-locked first-turn cache-bust: mint per-conversation markers when
     // the run resolved a non-`None` target. `None` keeps replay byte-unchanged.
     let cache_bust = graph.cache_bust_target.is_enabled().then(|| {
-        crate::runner_protocol::graph_execution::GraphCacheBust {
+        crate::engine::graph_execution::GraphCacheBust {
             benchmark_id: request.benchmark_id.clone(),
             target: graph.cache_bust_target,
         }
@@ -1720,7 +1718,7 @@ async fn execute_graph_native(
     //   — `record_count()` is 0 for a sketch store), `errored` the retained errored count,
     //   so `completed = issued - errored`.
     #[cfg(feature = "velo")]
-    if let Some(shipper) = crate::runner_protocol::cellular_cell::CellRecordsShipper::from_env() {
+    if let Some(shipper) = crate::engine::cellular_cell::CellRecordsShipper::from_env() {
         // No `capture`/wall clock is in scope on the graph path, so derive the run span
         // from the records themselves: last observed end minus first observed start,
         // matching the elapsed span the scheduled path passes.
@@ -1856,7 +1854,7 @@ async fn execute_graph_native(
     // server with streaming zstd. A no-op on the same-host launcher (Stage D
     // concatenates the local writes) or the single-process path.
     #[cfg(feature = "velo")]
-    crate::runner_protocol::cellular_cell::ship_http_artifacts_if_enabled(
+    crate::engine::cellular_cell::ship_http_artifacts_if_enabled(
         &request.artifact_dir,
         &request.artifacts,
     )?;
@@ -1877,7 +1875,7 @@ fn write_records_parquet_artifact(
     let path = artifact_path(&request.artifact_dir, parquet_path, "records_parquet_path")?;
     #[cfg(feature = "parquet")]
     {
-        crate::runner_protocol::records::write_records_parquet(
+        crate::engine::records::write_records_parquet(
             &path,
             captured,
             metrics_config,
@@ -2067,7 +2065,7 @@ pub(crate) struct ShardedShared {
     /// When this sharded run selected exact-fold AND any of these is requested, each
     /// worker opens its OWN [`RecordArtifactLane`] to a per-shard temp file derived
     /// from the artifact's file name (see
-    /// [`crate::runner_protocol::shard_artifacts`]); the coordinator concatenates the
+    /// [`crate::engine::shard_artifacts`]); the coordinator concatenates the
     /// per-shard files into the single final artifact at finalize. `None` on the
     /// retain path (the batch writers run over the merged retained records instead).
     pub(crate) records_path: Option<PathBuf>,
@@ -2216,7 +2214,7 @@ pub(crate) async fn execute_scheduled_shard(
     // sampler (which instances it draws) and the issuer (which global ordinals it
     // stamps), so `within*(cells*W) + index == instance` holds and the ordinals
     // tile 0..total.
-    let partition = crate::runner_protocol::sharded_scheduled::two_level_partition(
+    let partition = crate::engine::sharded_scheduled::two_level_partition(
         shared.cell_id,
         shared.cells,
         thread_id,
@@ -2246,7 +2244,7 @@ pub(crate) async fn execute_scheduled_shard(
     let record_lane = if shared.exact_fold {
         let per_shard = |relative: &Option<PathBuf>| -> Option<PathBuf> {
             relative.as_ref().map(|path| {
-                crate::runner_protocol::shard_artifacts::shard_artifact_path(
+                crate::engine::shard_artifacts::shard_artifact_path(
                     &shared.artifact_dir,
                     thread_id,
                     path,
@@ -2291,7 +2289,7 @@ pub(crate) async fn execute_scheduled_shard(
             // a few ULPs). Cellular shipping (Stage C) still keeps those runs on retain via
             // the eligibility gate, so `exact_fold` is `false` there.
             shared.exact_fold,
-            crate::runner_protocol::cellular_cell::issuance_authority_for(partition),
+            crate::engine::cellular_cell::issuance_authority_for(partition),
             shared.phase_ordinal_bases.clone(),
         )
         .with_record_lane(record_lane)
@@ -2311,7 +2309,7 @@ pub(crate) async fn execute_scheduled_shard(
         .phases
         .iter()
         .map(|phase| {
-            crate::runner_protocol::sharded_scheduled::slice_phase_for_thread(
+            crate::engine::sharded_scheduled::slice_phase_for_thread(
                 phase,
                 thread_id,
                 shared.workers,
@@ -2628,7 +2626,7 @@ async fn execute_native_inner(
             transport: transport_config,
             prepared_endpoints,
         })?;
-        let start_ns = crate::runner_protocol::cell_origin::run_origin_now_ns(&clock);
+        let start_ns = crate::engine::cell_origin::run_origin_now_ns(&clock);
         // Env-gated single-process cellular heartbeat lane; the same accumulator/t-digest
         // the controller aggregates across cells in Phase 2. It consumes the per-record
         // live clone, so it forces record capture on even without the Python sink.
@@ -2939,7 +2937,7 @@ async fn execute_native_inner(
                  degraded"
             );
         }
-        let start_ns = crate::runner_protocol::cell_origin::run_origin_now_ns(&clock);
+        let start_ns = crate::engine::cell_origin::run_origin_now_ns(&clock);
         // The two-level grid: this process is cell `cell_id` of `cells`
         // (`AIPERF_CELL_ID`/`_COUNT`, default the lone `(0, 1)`), sub-divided into
         // `workers` thread-per-core sub-cells.
@@ -2949,9 +2947,9 @@ async fn execute_native_inner(
         // A controller child already carries the global phase ordinal bases in the
         // env; a lone process computes them from its (global == local) phase
         // budgets so profiling ordinals never collide with warmup's `[0, W)` block.
-        let env_bases = crate::runner_protocol::cellular_cell::phase_ordinal_bases_from_env();
+        let env_bases = crate::engine::cellular_cell::phase_ordinal_bases_from_env();
         let phase_ordinal_bases = if env_bases.is_empty() {
-            crate::runner_protocol::sharded_scheduled::compute_phase_ordinal_bases(&request.phases)?
+            crate::engine::sharded_scheduled::compute_phase_ordinal_bases(&request.phases)?
         } else {
             env_bases
         };
@@ -3020,7 +3018,7 @@ async fn execute_native_inner(
         {
             profiling_sidecars.push(sidecar);
         }
-        let outcome = crate::runner_protocol::sharded_scheduled::run_sharded_scheduled(
+        let outcome = crate::engine::sharded_scheduled::run_sharded_scheduled(
             shared,
             profiling_sidecars,
             clock.clone(),
@@ -3059,7 +3057,7 @@ async fn execute_native_inner(
         // finalize tail below skips the batch writers under `exact_fold`, so this is the
         // sole writer of those artifacts on the sharded exact-fold path.
         let input_sessions = if exact_fold {
-            crate::runner_protocol::shard_artifacts::concatenate_shard_artifacts(
+            crate::engine::shard_artifacts::concatenate_shard_artifacts(
                 &request.artifact_dir,
                 &request.artifacts,
                 request.workers,
@@ -3109,7 +3107,7 @@ async fn execute_native_inner(
     //   store clears each row after harvesting (`record_count() == 0`), so the surviving
     //   `ingested_count()` is the true total. `completed = issued - errored`.
     #[cfg(feature = "velo")]
-    if let Some(shipper) = crate::runner_protocol::cellular_cell::CellRecordsShipper::from_env() {
+    if let Some(shipper) = crate::engine::cellular_cell::CellRecordsShipper::from_env() {
         let epoch_ns: i64 = clock.now_ns().saturating_sub(start_ns);
         if exact_fold || sketch_mode {
             let issued = if sketch_mode {
@@ -3212,7 +3210,7 @@ async fn execute_native_inner(
     // with streaming zstd. A no-op on the same-host launcher (Stage D concatenates the
     // local writes) or the single-process path.
     #[cfg(feature = "velo")]
-    crate::runner_protocol::cellular_cell::ship_http_artifacts_if_enabled(
+    crate::engine::cellular_cell::ship_http_artifacts_if_enabled(
         &request.artifact_dir,
         &request.artifacts,
     )?;
@@ -4888,7 +4886,7 @@ impl RunCapture {
             wants_live_sink_record,
             wants_adaptive_record,
             exact_fold,
-            crate::runner_protocol::cellular_cell::issuance_authority_from_env(),
+            crate::engine::cellular_cell::issuance_authority_from_env(),
         )
     }
 
@@ -4896,10 +4894,10 @@ impl RunCapture {
     /// issuer instead of the process-environment default. A future single-process
     /// thread-per-core scheduled run builds one `RunCapture` per sub-cell thread,
     /// each with a per-thread issuer (see
-    /// [`issuance_authority_for`](crate::runner_protocol::cellular_cell::issuance_authority_for))
+    /// [`issuance_authority_for`](crate::engine::cellular_cell::issuance_authority_for))
     /// whose `(cell_id, cell_count)` partition the process-global env vars cannot
     /// express. [`Self::new`] delegates here with the env default
-    /// ([`issuance_authority_from_env`](crate::runner_protocol::cellular_cell::issuance_authority_from_env))
+    /// ([`issuance_authority_from_env`](crate::engine::cellular_cell::issuance_authority_from_env))
     /// so every current call site is byte-unchanged. The per-phase ordinal bases
     /// still come from the environment — they carry no partition — matching `new`.
     #[allow(clippy::too_many_arguments)]
@@ -4927,7 +4925,7 @@ impl RunCapture {
             wants_adaptive_record,
             exact_fold,
             issuance,
-            crate::runner_protocol::cellular_cell::phase_ordinal_bases_from_env(),
+            crate::engine::cellular_cell::phase_ordinal_bases_from_env(),
         )
     }
 
@@ -4939,7 +4937,7 @@ impl RunCapture {
     /// threads still need each phase's global base so profiling ordinals do not
     /// collide with warmup's `[0, W)` block. The sharded runtime computes the
     /// bases from the phase `requests` budgets (mirroring
-    /// [`crate::runner_protocol::cellular_controller::phase_ordinal_bases`]) and injects the same
+    /// [`crate::engine::cellular_controller::phase_ordinal_bases`]) and injects the same
     /// map into every thread's capture. A controller child instead reuses the
     /// controller-provided env bases (they are already global and
     /// partition-independent, identical across a cell's threads);
@@ -5885,7 +5883,7 @@ mod tests {
     /// cfg.)
     #[test]
     fn exact_fold_gate_accepts_streamed_artifacts_and_rejects_retained_ones() {
-        use crate::runner_protocol::protocol::ArtifactSpec;
+        use crate::engine::protocol::ArtifactSpec;
 
         let eligible = |artifacts: &ArtifactSpec, inputs_need_retain: bool| {
             exact_fold_eligible(ExactFoldInputs {
@@ -6213,9 +6211,9 @@ mod tests {
     #[test]
     fn user_files_write_exact_pre_rendered_utf8_after_artifact_creation() {
         let artifact_dir = tempfile::tempdir().unwrap();
-        let files = vec![crate::runner_protocol::protocol_v2::UserFileSpecV2 {
+        let files = vec![crate::engine::protocol_v2::UserFileSpecV2 {
             path: "nested/run.json".into(),
-            format: crate::runner_protocol::protocol_v2::UserFileFormatV2::Json,
+            format: crate::engine::protocol_v2::UserFileFormatV2::Json,
             content: "{\n  \"count\": 7\n}".into(),
         }];
 
@@ -6235,9 +6233,9 @@ mod tests {
         let artifact_dir = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
         symlink(outside.path(), artifact_dir.path().join("escape")).unwrap();
-        let files = vec![crate::runner_protocol::protocol_v2::UserFileSpecV2 {
+        let files = vec![crate::engine::protocol_v2::UserFileSpecV2 {
             path: "escape/owned.txt".into(),
-            format: crate::runner_protocol::protocol_v2::UserFileFormatV2::Text,
+            format: crate::engine::protocol_v2::UserFileFormatV2::Text,
             content: "must-not-write".into(),
         }];
 
@@ -7079,7 +7077,7 @@ mod tests {
     /// path — does NOT disqualify.
     #[test]
     fn graph_exact_fold_gate_streams_artifacts_and_rejects_sketch_and_lite_parquet() {
-        use crate::runner_protocol::protocol::ArtifactSpec;
+        use crate::engine::protocol::ArtifactSpec;
 
         // Mirror the production graph caller (`execute_graph_native`): the graph path
         // wires NONE of the retain-forcing per-record consumers, so it feeds the shared
@@ -7356,7 +7354,7 @@ mod tests {
     /// live-reply inputs.json and (lite build) Parquet — still flag it.
     #[test]
     fn wants_per_record_artifacts_streamed_set_is_not_a_disqualifier() {
-        use crate::runner_protocol::protocol::ArtifactSpec;
+        use crate::engine::protocol::ArtifactSpec;
 
         let streamed = ArtifactSpec {
             records_path: Some(PathBuf::from("profile_export.jsonl")),

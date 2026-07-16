@@ -36,7 +36,7 @@ use crate::cellular::{
     CellMessage, ColumnStorePartition, ControllerTransport, HeartbeatCounters, MetricsHeartbeat,
     SpecFor, VeloControllerTransport, merge_store_partitions,
 };
-use crate::runner_protocol::cellular_cell::{CELL_CONTROLLER_ADDR_ENV, CellRecordsShipper};
+use crate::engine::cellular_cell::{CELL_CONTROLLER_ADDR_ENV, CellRecordsShipper};
 
 /// Env var carrying this aggregator's id (`0..M`). Set by the controller on each
 /// spawned `--aggregator` child; also orders the controller's `merge_store_partitions`.
@@ -165,8 +165,7 @@ pub async fn run_aggregator(envelope: &serde_json::Value) -> Result<()> {
     };
     let controller_coordinate =
         std::env::var(CELL_CONTROLLER_ADDR_ENV).context("AIPERF_CELL_CONTROLLER_ADDR not set")?;
-    let metrics_config =
-        crate::runner_protocol::cellular_controller::cellular_metrics_config(envelope)?;
+    let metrics_config = crate::engine::cellular_controller::cellular_metrics_config(envelope)?;
 
     // Bind velo at the fixed loopback port the controller assigned (its cells dial it
     // by that coordinate). An aggregator serves no envelopes and no START, so the
@@ -202,8 +201,7 @@ pub async fn run_aggregator(envelope: &serde_json::Value) -> Result<()> {
         errored: 0,
     };
     let mut heartbeats: BTreeMap<u32, MetricsHeartbeat> = BTreeMap::new();
-    let deadline =
-        tokio::time::sleep(crate::runner_protocol::cellular_controller::collect_timeout());
+    let deadline = tokio::time::sleep(crate::engine::cellular_controller::collect_timeout());
     tokio::pin!(deadline);
     while (store_partitions.len() as u32) < child_count {
         tokio::select! {

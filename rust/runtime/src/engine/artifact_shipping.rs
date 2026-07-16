@@ -8,7 +8,7 @@
 //!
 //! Same-host `--cells N` writes each cell's per-record artifacts into a
 //! controller-local `temp_root/cell-{id}` dir and concatenates them at finalize
-//! ([`crate::runner_protocol::shard_artifacts::concatenate_cell_artifacts`],
+//! ([`crate::engine::shard_artifacts::concatenate_cell_artifacts`],
 //! Stage D). A cross-host (k8s) pod writes to its OWN pod filesystem, unreachable
 //! by the controller, so Stage E originally DROPPED those files (the
 //! "shared-storage-only" product boundary).
@@ -45,7 +45,7 @@
 //! plane carries ONLY the per-record artifact files (records/raw/CSV/parquet/
 //! outputs) and the per-session `inputs.json`. The controller derives the cell→
 //! controller address from the same k8s bootstrap/DNS coordinate the velo
-//! controller already publishes (see [`crate::runner_protocol::cellular_controller`]).
+//! controller already publishes (see [`crate::engine::cellular_controller`]).
 
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Write};
@@ -534,7 +534,7 @@ async fn upload_artifact(
             // count. Emitted on a dedicated `target` so a test can raise just this
             // to `info` (`AIPERF_RUNNER_LOG=warn,aiperf_cellular_artifact=info`)
             // without unmuting the whole runner. See
-            // [`crate::runner_protocol::cellular_cell::CELL_ARTIFACT_HTTP_FORCE_ENV`].
+            // [`crate::engine::cellular_cell::CELL_ARTIFACT_HTTP_FORCE_ENV`].
             tracing::info!(
                 target: "aiperf_cellular_artifact",
                 cell_id,
@@ -943,9 +943,7 @@ pub async fn reconstruct_shipped_dataset(
 /// the per-session `inputs.json`. Both the controller's server allowlist and the
 /// cell's client shipping list come from this single function, so they can never
 /// disagree on which files cross the wire.
-pub fn shippable_relatives(
-    artifacts: &crate::runner_protocol::protocol::ArtifactSpec,
-) -> Vec<String> {
+pub fn shippable_relatives(artifacts: &crate::engine::protocol::ArtifactSpec) -> Vec<String> {
     let mut relatives = Vec::new();
     for path in [
         artifacts.records_path.as_ref(),
@@ -1177,8 +1175,8 @@ mod tests {
     /// the uploaded dirs equals the batch concat over the SOURCE union (set parity).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn in_process_ship_then_concat_matches_batch_over_union() {
-        use crate::runner_protocol::protocol::ArtifactSpec;
-        use crate::runner_protocol::shard_artifacts::concatenate_cell_artifacts;
+        use crate::engine::protocol::ArtifactSpec;
+        use crate::engine::shard_artifacts::concatenate_cell_artifacts;
 
         let root = tempfile::tempdir().unwrap();
         // Two source "cell" dirs (as if each cell wrote to its OWN pod fs).

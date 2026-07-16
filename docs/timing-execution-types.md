@@ -13,7 +13,7 @@ verify before relying on any row; names drift.
 Layers: [1 Clock](#1-clock) · [2 Measurement foundation](#2-measurement--dispatch-foundation-loadgen-core) ·
 [3 Timing policy](#3-timing-policy-aiperf_runtimetiming) · [4 Phase orchestration](#4-phase-orchestration-aiperf_runtimetimingphase) ·
 [5 Scheduled execution](#5-scheduled-execution) · [6 HTTP/gRPC dispatch + measurement](#6-http--grpc-dispatch--native-measurement) ·
-[7 Graph execution plane](#7-graph-execution-plane-aiperf_runtimegraph) · [8 Runner wiring](#8-runner-concrete-wiring-aiperf_runtimerunner_protocol) ·
+[7 Graph execution plane](#7-graph-execution-plane-aiperf_runtimegraph) · [8 Runner wiring](#8-runner-concrete-wiring-aiperf_runtimeengine) ·
 [Addendum: recommended renames](#addendum--recommended-renames)
 
 ## 1. Clock — `aiperf_runtime::clock`
@@ -197,7 +197,7 @@ Layers: [1 Clock](#1-clock) · [2 Measurement foundation](#2-measurement--dispat
 
 **Graph IR data model** (`model.rs` — inputs the executor consumes): `GraphRecord`, `TraceRecord`, `ParsedGraph`, `LlmNode`, `StaticEdge`, `ChannelSpec`, `ChannelRequirement`, `Count`, `PromptItem`, `ChannelType`, `ReducerName`.
 
-## 8. Runner concrete wiring — `aiperf_runtime::runner_protocol`
+## 8. Runner concrete wiring — `aiperf_runtime::engine`
 | Type | Kind | Description |
 |---|---|---|
 | `RunnerExecutionFactories` | struct | The exact execution-factory universe (HTTP + graph + gRPC + readiness). |

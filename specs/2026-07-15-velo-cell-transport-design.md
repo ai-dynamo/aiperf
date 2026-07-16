@@ -68,13 +68,13 @@ unchanged**. Only the *wire*, the *launch mechanism*, and the *registration/barr
   `std::net::TcpStream`) / `TcpControllerTransport` (Tokio listener accepting `expected_cells`
   connections, merging into one channel). **This file gains a velo impl; the TCP impls are
   removed.**
-- **`runtime/src/runner_protocol/cellular_controller.rs`** — `run_cellular(envelope, cell_count, report_path)`:
+- **`runtime/src/engine/cellular_controller.rs`** — `run_cellular(envelope, cell_count, report_path)`:
   binds the transport, spawns `aiperf --cell` subprocesses (`spawn_cell`, stdin-piped
   `CellLaunchSpec`), watches child exits, collects one partition + heartbeats per cell, merges
   in global-ordinal (scheduled) or concatenation (graph) order, writes `native-v2.json`, runs
   the export plane, writes the heartbeat sidecar. **The spawn + stdin-pipe + accept-N-connections
   parts are reworked; the slice/merge/report parts are unchanged.**
-- **`runtime/src/runner_protocol/cellular_cell.rs`** — `CellLaunchSpec` (piped to a cell's stdin), env vars
+- **`runtime/src/engine/cellular_cell.rs`** — `CellLaunchSpec` (piped to a cell's stdin), env vars
   (`AIPERF_CELL_CONTROLLER_ADDR`, `AIPERF_CELL_PHASE_ORDINAL_BASES`), `CellRecordsShipper`
   (connects, ships heartbeat then partition). **The stdin path is replaced by a velo `register`
   fetch; the shipper sends over velo.**

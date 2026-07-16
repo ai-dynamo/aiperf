@@ -234,7 +234,7 @@ swap, not a rewrite.
   their framed streams into one channel). `TcpCellClient` / `TcpControllerTransport`
   are the process impls; a thread-cell would implement the same two traits over an
   in-process channel.
-- **Cell mode** (`aiperf-cli --cell`, `aiperf_runtime::runner_protocol::cellular_cell`): a child runs the
+- **Cell mode** (`aiperf-cli --cell`, `aiperf_runtime::engine::cellular_cell`): a child runs the
   ordinary single-process execute path over its budget slice, made cell-aware purely
   by three controller-set env vars — `AIPERF_CELL_ID` / `AIPERF_CELL_COUNT` (select
   the `CellularAutonomousIssuer`'s partition, so its dense global dispatch ordinals
@@ -242,7 +242,7 @@ swap, not a rewrite.
   trace set) and `AIPERF_CELL_CONTROLLER_ADDR` (the records shipper's target). After
   the run it ships one final `RecordsShardPartition` + its merged heartbeat, never
   writing a report.
-- **Controller** (`aiperf_runtime::runner_protocol::cellular_controller`): a non-cell execute request with
+- **Controller** (`aiperf_runtime::engine::cellular_controller`): a non-cell execute request with
   `cfg.runtime.cells > 1` becomes the controller. It slices each phase's request
   budget and concurrency cap by the `owned_share` round-robin (shares tile `0..total`
   exactly), spawns one `--cell` child per cell (`current_exe`, spec piped to stdin),

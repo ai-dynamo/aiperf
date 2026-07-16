@@ -18,19 +18,19 @@ use crate::report::finalize_and_write_native_report_json;
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 
-use crate::runner_protocol::dataset_input::RunnerDatasetInputAdapterResolver;
-use crate::runner_protocol::execution_factories::RunnerExecutionFactories;
-use crate::runner_protocol::graph_input::RunnerGraphInputAdapterResolver;
-use crate::runner_protocol::protocol::RunnerCatalog;
-use crate::runner_protocol::protocol_v2::{
+use crate::engine::dataset_input::RunnerDatasetInputAdapterResolver;
+use crate::engine::execution_factories::RunnerExecutionFactories;
+use crate::engine::graph_input::RunnerGraphInputAdapterResolver;
+use crate::engine::protocol::RunnerCatalog;
+use crate::engine::protocol_v2::{
     DeferredCheckV2, RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2,
     RunnerEnvelopeV2, RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
 };
-use crate::runner_protocol::redaction::redact_diagnostic;
-use crate::runner_protocol::registry::{
+use crate::engine::redaction::redact_diagnostic;
+use crate::engine::registry::{
     PreparedRunFailure, PreparedRunOutcome, RunnerRunContext, validate_endpoint_profiles_v2,
 };
-use crate::runner_protocol::sidecar_input::RunnerSidecarInputAdapterResolver;
+use crate::engine::sidecar_input::RunnerSidecarInputAdapterResolver;
 
 /// Exactly one typed response emitted for a protocol-v2 request.
 #[derive(Debug, Serialize)]
@@ -558,7 +558,7 @@ fn terminal_failure_with_artifacts(
     stage: RunnerFailureStageV2,
     code: &str,
     message: impl Into<String>,
-    diagnostic_artifacts: Vec<crate::runner_protocol::protocol_v2::RunDiagnosticArtifactV2>,
+    diagnostic_artifacts: Vec<crate::engine::protocol_v2::RunDiagnosticArtifactV2>,
     exit_code: i32,
 ) -> RunnerProcessResultV2 {
     RunnerProcessResultV2 {
@@ -590,8 +590,8 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
-    use crate::runner_protocol::protocol_v2::RunDiagnosticArtifactV2;
-    use crate::runner_protocol::registry::PreparedReportCommit;
+    use crate::engine::protocol_v2::RunDiagnosticArtifactV2;
+    use crate::engine::registry::PreparedReportCommit;
 
     #[derive(Debug)]
     struct TrackingCommit {
