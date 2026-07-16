@@ -24,7 +24,8 @@ use crate::metrics::LLMLatencyInfo;
 use crate::models::{
     ChatCompletionRequest, CohereRerankRequest, CompletionRequest, EmbeddingRequest,
     HFTEIRerankRequest, ImageGenerationRequest, ImageResponseFormat, ImageRetrievalRequest,
-    Message, MessagesRequest, RankingRequest, SolidoRAGRequest, TGIGenerateRequest, Usage,
+    Message, MessagesRequest, RankingRequest, ResponsesRequest, SolidoRAGRequest,
+    TGIGenerateRequest, Usage, VllmGenerateRequest,
 };
 use crate::state::AppState;
 use crate::tokens::{GenRequest, TokenizedText, tokenize_request};
@@ -674,6 +675,330 @@ fn build_completion_response(ctx: &RequestCtx) -> Value {
         }],
         "usage": ctx.usage,
     })
+}
+
+// ============================================================================
+// vLLM / Dynamo token-native Generate (`POST /inference/v1/generate`)
+// ============================================================================
+
+/// Build the usage block for a token-native generate response. Token-native has
+/// no reasoning split, so the completion count is simply the output ID count.
+fn token_native_usage(isl: usize, osl: usize) -> Usage {
+    Usage {
+        prompt_tokens: isl,
+        completion_tokens: osl,
+        total_tokens: isl + osl,
+        completion_tokens_details: None,
+        prompt_tokens_details: None,
+        cache_creation_input_tokens: None,
+        prompt_cache_miss_tokens: None,
+        tool_use_prompt_token_count: None,
+        prompt_audio_seconds: None,
+        cache_read_input_tokens: None,
+    }
+}
+
+/// vLLM/Dynamo token-in / token-out Generate. Consumes the request's raw
+/// `token_ids` as the prompt (ISL = its length), derives the output length from
+/// `sampling_params` with the shared budget logic, and returns integer
+/// `choices[].token_ids` the runner parses into `ResponseData::TokenIds`
+/// (`aiperf::endpoints::vllm_generate`, vllm_generate.rs:259-303). Non-streaming:
+/// the runner's descriptor pins `supports_streaming: false` and always sends
+/// `stream: false`.
+pub async fn vllm_generate(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<VllmGenerateRequest>,
+) -> AppResult<Response> {
+    if let Some(e) = maybe_inject_error(&state) {
+        return Err(e);
+    }
+    let endpoint = "/inference/v1/generate";
+    let start = Instant::now();
+    state.recorder.init_model_config(&req.model);
+
+    let isl = req.token_ids.len();
+    let (out_ids, finish_reason) = crate::tokens::generate_output_token_ids(
+        &req.token_ids,
+        req.sampling_params.max_tokens,
+        req.sampling_params.min_tokens,
+        req.sampling_params.ignore_eos,
+    );
+    let osl = out_ids.len();
+    let usage = token_native_usage(isl, osl);
+    let request_id = req
+        .request_id
+        .clone()
+        .unwrap_or_else(|| make_request_id("gen"));
+
+    let active_inflight = (state.recorder.inflight_count().max(0) as usize) + 1;
+    let latency_sim = LatencySimulator::new(
+        state.clock_anchor,
+        &state.config,
+        isl,
+        osl,
+        active_inflight,
+        state.scheduler.clone(),
+        request_id.clone(),
+        0,
+    );
+
+    state.recorder.record_request_start(endpoint, &req.model);
+    state.recorder.record_llm_inflight_start(&req.model);
+    let (prefill, _decode) = latency_sim.wait_for_tokens(osl).await;
+    let latency = start.elapsed();
+    let info = LLMLatencyInfo {
+        e2e: latency,
+        prefill,
+        decode: latency.saturating_sub(prefill),
+    };
+
+    let body = json!({
+        "id": request_id,
+        "object": "generate",
+        "created": now_secs(),
+        "model": req.model,
+        "choices": [{
+            "index": 0,
+            "token_ids": out_ids,
+            "finish_reason": finish_reason,
+        }],
+        "usage": usage,
+    });
+    let json_body = serde_json::to_vec(&body).map_err(internal_error)?;
+    state
+        .recorder
+        .record_request_bytes(endpoint, isl as u64, json_body.len() as u64);
+    state
+        .recorder
+        .record_llm_success(endpoint, &req.model, latency.as_secs_f64(), &usage, &info);
+    state.recorder.record_llm_inflight_end(&req.model);
+    state.recorder.record_request_end(endpoint);
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json_body))
+        .map_err(internal_error)
+}
+
+// ============================================================================
+// OpenAI Responses API (`POST /v1/responses`)
+// ============================================================================
+
+/// Build a mock `ChatCompletionRequest` carrying the flattened Responses prompt
+/// so the shared tokenize / latency / budget machinery ([`RequestCtx::build`])
+/// applies unchanged — the same delegation `image_generation` / `solido_rag` use.
+fn responses_as_chat(req: &ResponsesRequest) -> ChatCompletionRequest {
+    ChatCompletionRequest {
+        model: req.model.clone(),
+        messages: vec![Message {
+            role: "user".into(),
+            content: Value::String(req.prompt_text()),
+        }],
+        stream: false,
+        stream_options: None,
+        max_tokens: req.max_output_tokens,
+        max_completion_tokens: None,
+        ignore_eos: false,
+        min_tokens: None,
+        reasoning_effort: req.reasoning_effort.clone(),
+        priority: None,
+    }
+}
+
+/// OpenAI Responses API. Recovers the prompt from `input`/`instructions`, runs it
+/// through the shared token/latency model, and emits the Responses wire shape the
+/// runner's `responses` parser consumes: non-streaming `{object:"response",
+/// status:"completed", output:[{type:"message", content:[{type:"output_text",
+/// text}]}], usage}` (endpoints.rs:404-415) or the streaming
+/// `response.created` / `response.output_text.delta` / `response.completed`
+/// event sequence (endpoints.rs:1334-1391).
+pub async fn responses(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ResponsesRequest>,
+) -> AppResult<Response> {
+    if let Some(e) = maybe_inject_error(&state) {
+        return Err(e);
+    }
+    let endpoint = "/v1/responses";
+    let start = Instant::now();
+    state.recorder.init_model_config(&req.model);
+    let mock_chat = responses_as_chat(&req);
+    let req_gen = GenRequest::Chat(&mock_chat);
+    let mut ctx = RequestCtx::build("resp", &req_gen, endpoint, start, &state);
+    ctx.request_id = make_request_id("resp");
+
+    if req.stream {
+        state.recorder.record_streaming_start(endpoint, &ctx.model);
+        Ok(sse_response(responses_stream(
+            state,
+            ctx,
+            endpoint.to_string(),
+        )))
+    } else {
+        state.recorder.record_request_start(endpoint, &ctx.model);
+        state.recorder.record_llm_inflight_start(&ctx.model);
+        let (prefill, _decode) = ctx.latency_sim.wait_for_tokens(ctx.tokenized.count()).await;
+        let latency = start.elapsed();
+        let info = LLMLatencyInfo {
+            e2e: latency,
+            prefill,
+            decode: latency.saturating_sub(prefill),
+        };
+        let body = build_responses_response(&ctx);
+        let json_body = serde_json::to_vec(&body).map_err(internal_error)?;
+        state.recorder.record_request_bytes(
+            endpoint,
+            ctx.tokenized.text.len() as u64,
+            json_body.len() as u64,
+        );
+        state.recorder.record_llm_success(
+            endpoint,
+            &ctx.model,
+            latency.as_secs_f64(),
+            &ctx.usage,
+            &info,
+        );
+        state.recorder.record_llm_inflight_end(&ctx.model);
+        state.recorder.record_request_end(endpoint);
+
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json_body))
+            .map_err(internal_error)
+    }
+}
+
+/// Responses usage block: the API uses `input_tokens`/`output_tokens` (the
+/// runner's `UsageView` maps both to prompt/completion, usage.rs:25-79).
+fn responses_usage(ctx: &RequestCtx) -> Value {
+    json!({
+        "input_tokens": ctx.usage.prompt_tokens,
+        "output_tokens": ctx.usage.completion_tokens,
+        "total_tokens": ctx.usage.total_tokens,
+    })
+}
+
+fn build_responses_response(ctx: &RequestCtx) -> Value {
+    let mut output = Vec::new();
+    if let Some(reasoning) = ctx.tokenized.reasoning_content() {
+        output.push(json!({
+            "type": "reasoning",
+            "summary": [{"type": "summary_text", "text": reasoning}],
+        }));
+    }
+    output.push(json!({
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": ctx.tokenized.content()}],
+    }));
+    json!({
+        "id": ctx.request_id,
+        "object": "response",
+        "status": "completed",
+        "created_at": now_secs(),
+        "model": ctx.model,
+        "output": output,
+        "usage": responses_usage(ctx),
+    })
+}
+
+/// Stream the Responses event sequence with the shared per-token pacing so TTFT /
+/// ITL reproduce the tuned mock. Only `response.output_text.delta` frames carry
+/// generated content (the runner counts those toward OSL); the terminal
+/// `response.completed` carries usage.
+fn responses_stream(
+    state: Arc<AppState>,
+    ctx: RequestCtx,
+    endpoint: String,
+) -> impl Stream<Item = Result<Bytes, Infallible>> {
+    let labeled = state.recorder.labeled(&endpoint, &ctx.model);
+    async_stream::stream! {
+        state.recorder.record_request_start(&endpoint, &ctx.model);
+        state.recorder.record_llm_inflight_start(&ctx.model);
+
+        let created = now_secs();
+        yield Ok::<Bytes, Infallible>(sse_event("response.created", &json!({
+            "type": "response.created",
+            "response": {
+                "id": ctx.request_id,
+                "object": "response",
+                "status": "in_progress",
+                "created_at": created,
+                "model": ctx.model,
+            },
+        })));
+
+        let mut first_emit: Option<Instant> = None;
+        let mut last_emit: Option<Instant> = None;
+        let count = ctx.tokenized.tokens.len();
+
+        if ctx.latency_sim.is_fast() {
+            if count > 0 {
+                state.recorder.record_zero_ttft_and_itls(&labeled, count - 1);
+                state.recorder.record_streamed_tokens_fast(&labeled, count as u64);
+            }
+            for token in &ctx.tokenized.tokens {
+                yield Ok::<Bytes, Infallible>(sse_event("response.output_text.delta", &json!({
+                    "type": "response.output_text.delta",
+                    "delta": token,
+                })));
+            }
+        } else {
+            for (index, token) in ctx.tokenized.tokens.iter().enumerate() {
+                let emit_at = ctx.latency_sim.wait_for_index(index).await;
+                if first_emit.is_none() {
+                    first_emit = Some(emit_at);
+                    state.recorder.record_ttft_fast(
+                        &labeled,
+                        emit_at.duration_since(ctx.start).as_secs_f64(),
+                    );
+                } else if let Some(last) = last_emit {
+                    state.recorder.record_itl_fast(
+                        &labeled,
+                        emit_at.duration_since(last).as_secs_f64(),
+                    );
+                }
+                last_emit = Some(emit_at);
+                state.recorder.record_streamed_token_fast(&labeled);
+                yield Ok::<Bytes, Infallible>(sse_event("response.output_text.delta", &json!({
+                    "type": "response.output_text.delta",
+                    "delta": token,
+                })));
+            }
+        }
+
+        yield Ok::<Bytes, Infallible>(sse_event("response.completed", &json!({
+            "type": "response.completed",
+            "response": {
+                "id": ctx.request_id,
+                "object": "response",
+                "status": "completed",
+                "model": ctx.model,
+                "usage": responses_usage(&ctx),
+            },
+        })));
+
+        let latency = ctx.start.elapsed();
+        let prefill = first_emit
+            .map(|at| at.duration_since(ctx.start))
+            .unwrap_or(std::time::Duration::ZERO);
+        let info = LLMLatencyInfo {
+            e2e: latency,
+            prefill,
+            decode: latency.saturating_sub(prefill),
+        };
+        state.recorder.record_llm_success(
+            &endpoint,
+            &ctx.model,
+            latency.as_secs_f64(),
+            &ctx.usage,
+            &info,
+        );
+        state.recorder.record_llm_inflight_end(&ctx.model);
+        state.recorder.record_request_end(&endpoint);
+    }
 }
 
 // ============================================================================
@@ -1501,6 +1826,15 @@ const MIDSTREAM_TOKENS_BEFORE_ERROR: usize = 3;
 
 fn anthropic_sse_event(event: &str, value: &Value) -> Bytes {
     let data = serde_json::to_string(value).expect("Anthropic event must serialize");
+    Bytes::from(format!("event: {event}\ndata: {data}\n\n"))
+}
+
+/// A named SSE event frame (`event: <name>\ndata: <json>\n\n`) for the OpenAI
+/// Responses streaming shape. The runner's SSE reader keys off the JSON `type`
+/// field, so the `event:` line mirrors real OpenAI output without affecting
+/// parsing.
+fn sse_event(event: &str, value: &Value) -> Bytes {
+    let data = serde_json::to_string(value).expect("SSE event must serialize");
     Bytes::from(format!("event: {event}\ndata: {data}\n\n"))
 }
 

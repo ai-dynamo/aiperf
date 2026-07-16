@@ -497,6 +497,59 @@ fn generate_output_tokens(
     (cycle_tokens(prompt_tokens, num, 0), reason)
 }
 
+/// Deterministically choose the output length and emit integer output token IDs
+/// for the token-native vLLM Generate endpoint.
+///
+/// Reuses the exact same budget/variable-count logic as the text path
+/// ([`calculate_budget`] / [`calculate_variable_token_count`]) keyed on the input
+/// token IDs, so a tuned run with `sampling_params.max_tokens = N` and a
+/// sufficiently long prompt (`0.8 * ISL >= N`) yields exactly `N` output tokens —
+/// the same exact-OSL property the chat/completions e2e paths rely on. `ignore_eos`
+/// fills to `max_tokens`. Output IDs cycle the input IDs (a stable, in-range
+/// sequence); an empty input falls back to a monotonic sequence so the array is
+/// never empty when tokens are requested.
+pub fn generate_output_token_ids(
+    input_token_ids: &[u32],
+    max_tokens: Option<usize>,
+    min_tokens: Option<usize>,
+    ignore_eos: bool,
+) -> (Vec<u32>, &'static str) {
+    let prompt_token_count = input_token_ids.len();
+    // The seed only needs to be a stable function of the input; the text path
+    // hashes token strings, so mirror that with the IDs rendered as strings.
+    let seed_repr: Vec<String> = input_token_ids
+        .iter()
+        .take(5)
+        .map(|id| id.to_string())
+        .collect();
+    let budget = calculate_budget(prompt_token_count, max_tokens, min_tokens);
+    let (count, reason) = if ignore_eos {
+        (budget.max_tokens, "length")
+    } else {
+        let num = calculate_variable_token_count(
+            &seed_repr,
+            prompt_token_count,
+            min_tokens,
+            max_tokens,
+            &budget,
+        );
+        let reason = if num == budget.max_tokens {
+            "length"
+        } else {
+            "stop"
+        };
+        (num, reason)
+    };
+    let out = if input_token_ids.is_empty() {
+        (0..count).map(|i| i as u32).collect()
+    } else {
+        (0..count)
+            .map(|i| input_token_ids[i % input_token_ids.len()])
+            .collect()
+    };
+    (out, reason)
+}
+
 struct ReasoningResult {
     token_count: usize,
     content_tokens: Vec<String>,

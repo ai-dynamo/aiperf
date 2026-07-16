@@ -1168,3 +1168,179 @@ async fn tool_call_disabled_by_default() {
     assert_ne!(body["choices"][0]["finish_reason"], "tool_calls");
     assert!(body["usage"].get("toolUsePromptTokenCount").is_none());
 }
+
+// ============================================================================
+// vLLM / Dynamo token-native Generate + Responses API + /openai/v1 aliases
+// ============================================================================
+
+#[tokio::test]
+async fn vllm_generate_returns_token_ids_and_usage() {
+    // A fast (jitter-free) mock still honors the token-native budget: a long
+    // token prompt (ISL=64) with sampling_params.max_tokens=8 yields exactly 8
+    // output token IDs, and usage carries the input/output counts.
+    let (addr, _h) = spawn_server(fast_cfg()).await;
+    let input: Vec<u32> = (100..164).collect();
+    let resp = client()
+        .post(format!("http://{addr}/inference/v1/generate"))
+        .json(&json!({
+            "model": "gpt-4",
+            "token_ids": input,
+            "sampling_params": {"max_tokens": 8},
+            "stream": false,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    let choice = &body["choices"][0];
+    let out = choice["token_ids"].as_array().expect("token_ids array");
+    assert_eq!(out.len(), 8, "OSL should equal the requested cap");
+    assert!(out.iter().all(|v| v.is_u64()), "token_ids must be integers");
+    assert_eq!(body["usage"]["prompt_tokens"], 64);
+    assert_eq!(body["usage"]["completion_tokens"], 8);
+    assert_eq!(body["model"], "gpt-4");
+}
+
+#[tokio::test]
+async fn vllm_generate_ignore_eos_fills_max_tokens() {
+    let (addr, _h) = spawn_server(fast_cfg()).await;
+    let input: Vec<u32> = (1..5).collect(); // short prompt
+    let resp = client()
+        .post(format!("http://{addr}/inference/v1/generate"))
+        .json(&json!({
+            "model": "gpt-4",
+            "token_ids": input,
+            "sampling_params": {"max_tokens": 20, "ignore_eos": true},
+        }))
+        .send()
+        .await
+        .unwrap();
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(
+        body["choices"][0]["token_ids"].as_array().unwrap().len(),
+        20
+    );
+    assert_eq!(body["choices"][0]["finish_reason"], "length");
+}
+
+#[tokio::test]
+async fn responses_non_streaming_shape() {
+    let (addr, _h) = spawn_server(fast_cfg()).await;
+    let resp = client()
+        .post(format!("http://{addr}/v1/responses"))
+        .json(&json!({
+            "model": "gpt-4",
+            "input": [{"type": "message", "role": "user",
+                       "content": [{"type": "input_text",
+                                    "text": "Hello there general, please describe the weather \
+                                             and the seasons in a fairly long and detailed sentence."}]}],
+            "max_output_tokens": 8,
+            "stream": false,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["object"], "response");
+    assert_eq!(body["status"], "completed");
+    let content = &body["output"][0]["content"][0];
+    assert_eq!(content["type"], "output_text");
+    assert!(
+        content["text"]
+            .as_str()
+            .map(|s| !s.is_empty())
+            .unwrap_or(false)
+    );
+    assert!(body["usage"]["input_tokens"].as_u64().unwrap() > 0);
+    assert_eq!(body["usage"]["output_tokens"], 8);
+}
+
+#[tokio::test]
+async fn responses_streaming_emits_delta_and_completed_events() {
+    let mut cfg = fast_cfg();
+    cfg.fast = false;
+    cfg.ttft = 0.0;
+    cfg.itl = 0.0;
+    cfg = cfg.apply_flags();
+    let (addr, _h) = spawn_server(cfg).await;
+    let resp = client()
+        .post(format!("http://{addr}/v1/responses"))
+        .json(&json!({
+            "model": "gpt-4",
+            "input": "Tell me about the weather in a longish sentence please",
+            "max_output_tokens": 8,
+            "stream": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let text = resp.text().await.unwrap();
+    let deltas = text.matches("response.output_text.delta").count();
+    // The `type` field and the `event:` line both mention the name, so each delta
+    // frame contributes two matches; assert on the JSON `type` occurrences.
+    let type_deltas = text
+        .matches("\"type\":\"response.output_text.delta\"")
+        .count();
+    assert_eq!(type_deltas, 8, "one content delta per output token");
+    assert!(deltas >= type_deltas);
+    assert!(text.contains("\"type\":\"response.created\""));
+    assert!(text.contains("\"type\":\"response.completed\""));
+}
+
+#[tokio::test]
+async fn openai_v1_aliases_dispatch_to_openai_handlers() {
+    let (addr, _h) = spawn_server(fast_cfg()).await;
+
+    let chat: Value = client()
+        .post(format!("http://{addr}/openai/v1/chat/completions"))
+        .json(&json!({"model": "gpt-4", "messages": [{"role": "user", "content": "hi there"}]}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(chat["object"], "chat.completion");
+
+    let comp: Value = client()
+        .post(format!("http://{addr}/openai/v1/completions"))
+        .json(&json!({"model": "gpt-4", "prompt": "once upon a time"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(comp["object"], "text_completion");
+
+    let emb: Value = client()
+        .post(format!("http://{addr}/openai/v1/embeddings"))
+        .json(&json!({"model": "text-embedding-3-small", "input": "hello"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(emb["object"], "list");
+    assert_eq!(emb["data"][0]["object"], "embedding");
+
+    let models: Value = client()
+        .get(format!("http://{addr}/openai/v1/models"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(models["object"], "list");
+    assert!(
+        models["data"]
+            .as_array()
+            .map(|a| !a.is_empty())
+            .unwrap_or(false)
+    );
+}

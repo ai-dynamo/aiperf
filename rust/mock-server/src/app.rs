@@ -25,6 +25,20 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/v1/messages", post(handlers::messages))
         .route("/v1/completions", post(handlers::text_completions))
         .route("/v1/embeddings", post(handlers::embeddings))
+        // OpenAI Responses API
+        .route("/v1/responses", post(handlers::responses))
+        // vLLM / Dynamo token-native Generate (token-in / token-out)
+        .route("/inference/v1/generate", post(handlers::vllm_generate))
+        // KServe OpenAI-compatible `/openai/v1/*` aliases: the runner's KServe
+        // chat/completions/embeddings factories default to these paths. They
+        // dispatch to the identical OpenAI handlers above.
+        .route(
+            "/openai/v1/chat/completions",
+            post(handlers::chat_completions),
+        )
+        .route("/openai/v1/completions", post(handlers::text_completions))
+        .route("/openai/v1/embeddings", post(handlers::embeddings))
+        .route("/openai/v1/models", get(handlers::list_models))
         // Rerank / ranking endpoints
         .route("/v1/ranking", post(handlers::nim_ranking))
         .route("/rerank", post(handlers::hf_tei_rerank))

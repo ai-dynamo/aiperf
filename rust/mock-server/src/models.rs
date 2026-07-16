@@ -69,6 +69,99 @@ impl ChatCompletionRequest {
     }
 }
 
+/// vLLM/Dynamo token-native `sampling_params` block. Only the fields the mock's
+/// deterministic generator reads are decoded; every other vLLM knob is ignored.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct VllmSamplingParams {
+    pub max_tokens: Option<usize>,
+    pub min_tokens: Option<usize>,
+    pub ignore_eos: bool,
+}
+
+/// vLLM/Dynamo token-native Generate request (`POST /inference/v1/generate`).
+///
+/// The AIPerf runner's `vllm_generate` endpoint sends validated raw input
+/// `token_ids` plus a `sampling_params` block (see
+/// `aiperf::endpoints::vllm_generate::format_payload`, vllm_generate.rs:146-162);
+/// the mock consumes the token array as the prompt (ISL = its length) and returns
+/// integer `token_ids` arrays the runner parses back into `ResponseData::TokenIds`
+/// (vllm_generate.rs:259-303). Non-streaming only (`stream: false` always).
+#[derive(Debug, Clone, Deserialize)]
+pub struct VllmGenerateRequest {
+    pub model: String,
+    #[serde(default)]
+    pub token_ids: Vec<u32>,
+    #[serde(default)]
+    pub sampling_params: VllmSamplingParams,
+    #[serde(default)]
+    pub stream: bool,
+    pub request_id: Option<String>,
+}
+
+/// OpenAI Responses API request (`POST /v1/responses`).
+///
+/// The runner's `responses` endpoint authors `{input, model, stream,
+/// instructions?, max_output_tokens?, tools?}` (endpoints.rs:498-533). `input`
+/// is either a bare string or an array of `{type:"message", role, content}`
+/// items whose `content` is a string or a list of typed parts — the mock walks
+/// both shapes to recover the prompt text for its deterministic token generator.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ResponsesRequest {
+    pub model: String,
+    #[serde(default)]
+    pub input: Value,
+    #[serde(default)]
+    pub stream: bool,
+    #[serde(default)]
+    pub instructions: Value,
+    pub max_output_tokens: Option<usize>,
+    pub reasoning_effort: Option<ReasoningEffort>,
+}
+
+impl ResponsesRequest {
+    /// Flatten the request's `instructions` plus `input` into a single prompt
+    /// string, mirroring how the runner's `extract_payload_inputs` collects
+    /// Responses text (endpoints.rs:419-457): a top-level string, an array of
+    /// `{content}` items, and typed `{type, text}` parts all contribute their
+    /// `text`.
+    pub fn prompt_text(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        collect_responses_text(&self.instructions, &mut parts);
+        collect_responses_text(&self.input, &mut parts);
+        parts.join("\n")
+    }
+}
+
+/// Recursively harvest human-readable text out of a Responses `input`/
+/// `instructions` value: bare strings, `{content}` message items, and typed
+/// `{text}` parts. Non-text parts (images, audio) are skipped.
+fn collect_responses_text(value: &Value, out: &mut Vec<String>) {
+    match value {
+        Value::String(s) => {
+            if !s.is_empty() {
+                out.push(s.clone());
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_responses_text(item, out);
+            }
+        }
+        Value::Object(obj) => {
+            if let Some(text) = obj.get("text").and_then(Value::as_str) {
+                if !text.is_empty() {
+                    out.push(text.to_string());
+                }
+            }
+            if let Some(content) = obj.get("content") {
+                collect_responses_text(content, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Anthropic Messages API request accepted by the local mock.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MessagesRequest {
