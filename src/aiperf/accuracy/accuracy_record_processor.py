@@ -186,8 +186,10 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
         ``ReasoningResponseData.content``, or ``ToolCallResponseData`` content +
         ``tool_call_text``); ``model_thinking`` is the concatenated
         ``reasoning_content`` from any ``ReasoningResponseData`` chunks, or None
-        when the model emitted no separate reasoning channel. The output channel
-        mirrors what grading scores (``get_text()``) so the two never diverge.
+        when the model emitted no separate reasoning channel. For reasoning models
+        this deliberately splits the two channels: grading scores the full
+        ``get_text()`` (reasoning + content), while the export keeps ``model_output``
+        to the answer content and routes reasoning to ``model_thinking``.
         """
         output_parts: list[str] = []
         thinking_parts: list[str] = []

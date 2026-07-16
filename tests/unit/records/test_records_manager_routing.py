@@ -278,13 +278,21 @@ class TestDispatchRecord:
         assert manager.error.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_cancelled_error_propagates(self) -> None:
+    async def test_handler_cancelled_error_is_counted_not_reraised(self) -> None:
+        # A handler-level CancelledError (captured by gather's return_exceptions)
+        # means one handler's coroutine was cancelled, not this task. It must be
+        # returned as an error -- not re-raised -- so the caller still advances the
+        # tracker update and the (timeout-less) completion barrier. Genuine task
+        # cancellation makes the gather itself raise and never reaches this code.
         acc = StubAccumulator()
         acc.process_record.side_effect = asyncio.CancelledError
         manager = self._manager({"metric_records": [acc]})
 
-        with pytest.raises(asyncio.CancelledError):
-            await manager._dispatch_record(MagicMock(record_type="metric_records"))
+        errors = await manager._dispatch_record(MagicMock(record_type="metric_records"))
+
+        assert len(errors) == 1
+        assert isinstance(errors[0], asyncio.CancelledError)
+        manager.error.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

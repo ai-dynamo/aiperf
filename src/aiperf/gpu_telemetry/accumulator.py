@@ -187,9 +187,9 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
 
         Async and runs periodically under the dashboard cadence
         (`RuntimeConfig.realtime_metrics_interval`). Emits one MetricResult per GPU per
-        signal. Contrast with `compute_efficiency_metrics` below, which is
-        sync, runs once per profiling phase, and aggregates across GPUs
-        into cross-GPU totals.
+        signal. Cross-GPU energy/power totals for the final summary are derived
+        separately via `total_power_watts` / `total_energy_joules` (consumed by
+        `EnergyEfficiencyAnalyzer`).
 
         Returns:
             List of MetricResult objects, one per GPU per metric type.

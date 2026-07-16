@@ -350,8 +350,8 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         # Ship generically: ONE RecordsMessage per inference record carries the
         # request envelope (metadata + request-level error) plus every produced
         # typed record flattened into one list. Each record self-identifies via
-        # its own record_type ClassVar, so no per-type message class or builder
-        # map is needed. Always pushed (even when no producer emitted a record)
+        # its own serialized record_type field, so no per-type message class or
+        # builder map is needed. Always pushed (even when no producer emitted a record)
         # to keep the RecordsManager completion barrier in lockstep with the
         # credit. The metric producer already put trace_data inside its
         # MetricRecordsData, so trace_data is not carried on the envelope.

@@ -1165,7 +1165,7 @@
           "description": "Metadata schema for record routing in accumulator and stream exporter plugins.\n\nDefines which record types an accumulator or stream exporter accepts. Used by\nRecordsManager to build a routing table: incoming records are dispatched to all\naccumulators and stream exporters whose record_types include the matching type.\nThe role (accumulator vs stream_exporter) is determined by the plugin category.\n\nReferenced by: categories.yaml accumulator.metadata_class, stream_exporter.metadata_class\nUsed in: plugins.yaml accumulator and stream_exporter entries",
           "properties": {
             "record_types": {
-              "description": "Record type identifiers this accumulator or stream exporter accepts for routing. RecordsManager dispatches incoming records to all accumulators and stream exporters whose record_types include the matching type. Values: 'metric_records', 'gpu_telemetry', 'server_metrics'.",
+              "description": "Record type identifiers this accumulator or stream exporter accepts for routing. RecordsManager dispatches incoming records to all accumulators and stream exporters whose record_types include the matching type. Values: 'metric_records', 'gpu_telemetry', 'server_metrics', 'accuracy', 'network_latency', 'credit_phase_stats'.",
               "items": {
                 "type": "string"
               },
@@ -1210,7 +1210,7 @@
           "description": "Metadata schema for record routing in accumulator and stream exporter plugins.\n\nDefines which record types an accumulator or stream exporter accepts. Used by\nRecordsManager to build a routing table: incoming records are dispatched to all\naccumulators and stream exporters whose record_types include the matching type.\nThe role (accumulator vs stream_exporter) is determined by the plugin category.\n\nReferenced by: categories.yaml accumulator.metadata_class, stream_exporter.metadata_class\nUsed in: plugins.yaml accumulator and stream_exporter entries",
           "properties": {
             "record_types": {
-              "description": "Record type identifiers this accumulator or stream exporter accepts for routing. RecordsManager dispatches incoming records to all accumulators and stream exporters whose record_types include the matching type. Values: 'metric_records', 'gpu_telemetry', 'server_metrics'.",
+              "description": "Record type identifiers this accumulator or stream exporter accepts for routing. RecordsManager dispatches incoming records to all accumulators and stream exporters whose record_types include the matching type. Values: 'metric_records', 'gpu_telemetry', 'server_metrics', 'accuracy', 'network_latency', 'credit_phase_stats'.",
               "items": {
                 "type": "string"
               },

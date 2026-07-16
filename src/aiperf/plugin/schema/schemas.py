@@ -507,7 +507,8 @@ class RecordRoutingMetadata(BaseModel):
             "Record type identifiers this accumulator or stream exporter accepts for routing. "
             "RecordsManager dispatches incoming records to all accumulators and stream exporters "
             "whose record_types include the matching type. "
-            "Values: 'metric_records', 'gpu_telemetry', 'server_metrics'."
+            "Values: 'metric_records', 'gpu_telemetry', 'server_metrics', 'accuracy', "
+            "'network_latency', 'credit_phase_stats'."
         ),
     )
 

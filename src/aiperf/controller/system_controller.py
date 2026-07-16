@@ -1001,20 +1001,22 @@ class SystemController(SignalHandlerMixin, BaseService):
     async def _await_accuracy_results_for_cancel(self) -> None:
         """Bounded poll for the accuracy summary on the cancel (Ctrl+C) path.
 
-        Polls ``_accuracy_results`` up to ``Environment.ACCURACY.CANCEL_RESULT_WAIT_SEC``
-        so a cancelled accuracy run still exports its graded results when the
-        RecordsManager's pub/sub message arrives in time; returns early as soon as
-        it lands, or after the bound elapses.
+        Waits up to ``Environment.ACCURACY.CANCEL_RESULT_WAIT_SEC`` for the
+        RecordsManager's pub/sub summary message to land, returning as soon as it
+        does. Gates on ``_should_wait_for_accuracy`` (flipped false when the
+        message arrives) rather than ``_accuracy_results``, since a legitimately
+        empty run publishes ``results=None`` -- polling the results field would
+        never observe that arrival and would burn the full timeout.
         """
         timeout = Environment.ACCURACY.CANCEL_RESULT_WAIT_SEC
         interval = 0.05
         iterations = int(timeout / interval)
         for _ in range(iterations):
-            if self._accuracy_results is not None:
+            if not self._should_wait_for_accuracy:
                 self.debug("Accuracy results arrived during cancel wait")
                 return
             await asyncio.sleep(interval)
-        if self._accuracy_results is None:
+        if self._should_wait_for_accuracy:
             self.warning(
                 "Accuracy results did not arrive within "
                 f"{timeout}s of cancellation; export may omit accuracy metrics"

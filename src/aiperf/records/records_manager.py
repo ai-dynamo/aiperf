@@ -506,8 +506,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         )
         errors: list[BaseException] = []
         for handler, result in zip(handlers, results, strict=True):
-            if isinstance(result, asyncio.CancelledError):
-                raise result
+            # A handler-level CancelledError (captured by return_exceptions) means
+            # one handler's coroutine was cancelled, NOT this task -- genuine task
+            # cancellation makes the gather itself raise and never reaches here. We
+            # must count it like any other handler failure rather than re-raising,
+            # or the caller skips the tracker update + (timeout-less) completion
+            # barrier and the phase never converges.
             if isinstance(result, BaseException):
                 self.error(
                     f"Handler {handler.__class__.__name__} failed for "
@@ -534,8 +538,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """Handle a per-request records envelope generically.
 
         One ``RecordsMessage`` == one inference request. Each contained record
-        self-identifies via its ``record_type`` ClassVar and is dispatched to its
-        registered handlers; the per-request lockstep keys off the message
+        self-identifies via its serialized ``record_type`` field and is dispatched
+        to its registered handlers; the per-request lockstep keys off the message
         envelope (``message.metadata`` / ``message.error``), never off sniffing a
         record type.
         """
@@ -1022,15 +1026,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 # other services' writes on the shared console stream.
                 for line in rendered.splitlines():
                     self.info(line)
-
-    async def _generate_realtime_metrics(self) -> list[MetricResult]:
-        """Generate the real-time metrics for the profile run.
-
-        Sources from the metric_records accumulators (the active summary
-        engine). Tolerates both AccumulatorMetricsSummary (.results dict) and
-        plain list[MetricResult] shapes via the shared helper.
-        """
-        return await generate_realtime_metrics(self._metric_record_accumulators)
 
     async def _run_analyzers(self, ctx: SummaryContext) -> list[MetricResult]:
         """Run summarize-time analyzer plugins that join across accumulators.

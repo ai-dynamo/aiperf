@@ -110,6 +110,12 @@ class EnergyEfficiencyAnalyzer:
 
         start_ns = ctx.start_ns or None
         end_ns = ctx.end_ns or None
+        # DCGM average power = energy / duration. The energy numerator integrates
+        # over [start, end + FINAL_SCRAPE_GRACE_NS) to capture the trailing scrape,
+        # while this denominator is the exact profiling window, so avg power is
+        # biased slightly high (~grace/duration; negligible past a few seconds, up
+        # to a few percent on very short runs). Exact alignment would require the
+        # accumulator to expose the actual first/last scrape timestamps.
         duration_s = (
             (ctx.end_ns - ctx.start_ns) / NANOS_PER_SECOND
             if ctx.end_ns > ctx.start_ns
