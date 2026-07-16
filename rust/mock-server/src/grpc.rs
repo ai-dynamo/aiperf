@@ -27,10 +27,11 @@
 //! the prompt and an optional `max_tokens` (INT32) tensor caps output; the reply
 //! is a `text_output` (BYTES) tensor.
 //!
-//! Extensibility: routing is by method path, so a second gRPC dialect (e.g.
-//! Riva) is an added `(path -> handler)` arm plus its prost messages, reusing
-//! the same lower-to-[`ChatCompletionRequest`] → generate → tensor seam. Only
-//! KServe is served today; the structure does not hardcode it as the only one.
+//! Extensibility: routing is by method path, so a second gRPC dialect is an
+//! added `(path -> handler)` arm plus its prost messages. The NVIDIA Riva
+//! ASR/TTS/NLP dialect is served this way by the sibling [`crate::grpc_riva`]
+//! module (dispatched here before the KServe match), reusing this module's
+//! [`ProstCodec`] and h2c stack; KServe is no longer the only dialect served.
 
 use std::convert::Infallible;
 use std::marker::PhantomData;
@@ -166,7 +167,10 @@ type InferStream = Pin<Box<dyn Stream<Item = Result<ModelStreamInferResponse, St
 
 /// A tonic [`Codec`] that decodes `D` and encodes `E` via `prost`. Generic over
 /// the two message types because each RPC has a distinct request/response pair.
-struct ProstCodec<D, E>(PhantomData<(D, E)>);
+///
+/// `pub(crate)` so the sibling Riva service module ([`crate::grpc_riva`]) reuses
+/// the exact same prost codec rather than declaring a second one.
+pub(crate) struct ProstCodec<D, E>(PhantomData<(D, E)>);
 
 impl<D, E> Default for ProstCodec<D, E> {
     fn default() -> Self {
@@ -193,7 +197,7 @@ where
     }
 }
 
-struct ProstEncoder<E>(PhantomData<E>);
+pub(crate) struct ProstEncoder<E>(PhantomData<E>);
 
 impl<E: prost::Message> Encoder for ProstEncoder<E> {
     type Item = E;
@@ -205,7 +209,7 @@ impl<E: prost::Message> Encoder for ProstEncoder<E> {
     }
 }
 
-struct ProstDecoder<D>(PhantomData<D>);
+pub(crate) struct ProstDecoder<D>(PhantomData<D>);
 
 impl<D: prost::Message + Default> Decoder for ProstDecoder<D> {
     type Item = D;
@@ -840,7 +844,15 @@ pub async fn route(
     state: Arc<AppState>,
     req: http::Request<hyper::body::Incoming>,
 ) -> Result<http::Response<Body>, Infallible> {
-    let response = match req.uri().path() {
+    // The NVIDIA Riva ASR/TTS/NLP dialect is served by the sibling module over
+    // the same h2c stack and prost codec. Its method paths are disjoint from
+    // KServe's (`/nvidia.riva.*` vs `/inference.*`), so a single ownership check
+    // routes each request to exactly one dialect before the KServe match.
+    let path = req.uri().path().to_string();
+    if crate::grpc_riva::is_riva_path(&path) {
+        return Ok(crate::grpc_riva::route_riva(&path, state, req).await);
+    }
+    let response = match path.as_str() {
         MODEL_INFER => {
             let service = tower::service_fn(move |r: Request<ModelInferRequest>| {
                 let state = state.clone();
