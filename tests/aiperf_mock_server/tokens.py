@@ -2,12 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 import logging
 import time
+import zlib
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from aiperf_mock_server.models import (
+    AnthropicMessagesRequest,
     ChatCompletionRequest,
     CohereRerankRequest,
     CompletionRequest,
@@ -273,12 +275,20 @@ def _calculate_budget(
 
 
 def _generate_reasoning_tokens(
-    request: ChatCompletionRequest | CompletionRequest | TGIGenerateRequest,
+    request: ChatCompletionRequest
+    | CompletionRequest
+    | TGIGenerateRequest
+    | AnthropicMessagesRequest,
     prompt_tokens: list[str],
     prompt_token_count: int,
     max_tokens: int | None,
 ) -> _ReasoningResult:
     """Generate reasoning tokens if model supports it, managing budget."""
+    if isinstance(request, AnthropicMessagesRequest):
+        return _generate_anthropic_thinking_tokens(
+            request, prompt_tokens, prompt_token_count, max_tokens
+        )
+
     # Only chat completions support reasoning (per OpenAI API spec)
     if not isinstance(request, ChatCompletionRequest):
         return _ReasoningResult(
@@ -316,6 +326,38 @@ def _generate_reasoning_tokens(
     )
 
 
+def _generate_anthropic_thinking_tokens(
+    request: AnthropicMessagesRequest,
+    prompt_tokens: list[str],
+    prompt_token_count: int,
+    max_tokens: int | None,
+) -> _ReasoningResult:
+    """Generate thinking tokens for an Anthropic Messages request.
+
+    Anthropic thinking is opt-in per request via the ``thinking`` param
+    (``{"type": "enabled", "budget_tokens": N}``) — not by model name like
+    the OpenAI reasoning path. ``budget_tokens`` caps thinking output, and
+    the real API requires it to be strictly less than ``max_tokens``, so at
+    least one token is always reserved for the text block that follows.
+    """
+    thinking = request.thinking if isinstance(request.thinking, dict) else {}
+    budget_tokens = thinking.get("budget_tokens")
+    if not isinstance(budget_tokens, int) or budget_tokens <= 0:
+        return _ReasoningResult(
+            token_count=0, content_tokens=[], remaining_budget=max_tokens
+        )
+
+    total_budget = (
+        max_tokens if max_tokens is not None else max(prompt_token_count * 2, 16)
+    )
+    actual_thinking_tokens = min(budget_tokens, max(total_budget - 1, 0))
+    return _ReasoningResult(
+        token_count=actual_thinking_tokens,
+        content_tokens=_cycle_tokens_reversed(prompt_tokens, actual_thinking_tokens),
+        remaining_budget=total_budget - actual_thinking_tokens,
+    )
+
+
 def _extract_request_content(request: RequestT) -> tuple[str, int | None]:
     """Extract text and max_tokens from request."""
     if isinstance(request, ChatCompletionRequest):
@@ -331,6 +373,9 @@ def _extract_request_content(request: RequestT) -> tuple[str, int | None]:
         return text, None
     elif isinstance(request, ImageGenerationRequest):
         return request.prompt, None
+    elif isinstance(request, AnthropicMessagesRequest):
+        text = _extract_chat_messages(request.messages)
+        return text, request.max_output_tokens
     elif isinstance(request, SolidoRAGRequest):
         return " ".join(request.query), None
     else:
@@ -431,11 +476,18 @@ def _calculate_variable_token_count(
 
 
 def _generate_seed(prompt_tokens: list[str]) -> int:
-    """Generate deterministic seed from prompt tokens."""
+    """Generate a deterministic seed from prompt tokens.
+
+    Uses crc32 rather than ``hash()``: string hashing is salted per-process
+    via PYTHONHASHSEED, so ``hash()`` made mock-server output lengths vary
+    across CI jobs. When the salted seed landed exactly on the max_tokens
+    budget (~1/1000 jobs), tests asserting ``finish_reason == "stop"`` flaked
+    with ``"length"``. crc32 is stable across processes and platforms.
+    """
     if not prompt_tokens:
         return 0
     sample = prompt_tokens[:5]
-    return hash(tuple(sample)) % 1000
+    return zlib.crc32("\x1f".join(sample).encode()) % 1000
 
 
 def _cycle_tokens(

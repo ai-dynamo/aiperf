@@ -1,18 +1,24 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.enums import CommandType
+from aiperf.common.enums import CommandType, CreditPhase
 from aiperf.common.messages import ProfileConfigureCommand, ProfileStartCommand
 from aiperf.common.messages.server_metrics_messages import ServerMetricsRecordMessage
-from aiperf.common.models import ErrorDetails
+from aiperf.common.models import CreditPhaseStats, ErrorDetails
 from aiperf.common.models.server_metrics_models import ServerMetricsRecord
 from aiperf.config.flags.cli_config import CLIConfig
-from aiperf.plugin.enums import EndpointType
+from aiperf.credit.messages import (
+    CreditPhaseCompleteMessage,
+    CreditPhaseStartMessage,
+)
+from aiperf.plugin.enums import EndpointType, TimingMode
 from aiperf.server_metrics.manager import ServerMetricsManager
+from aiperf.timing.config import CreditPhaseConfig
 from tests.unit.conftest import make_run_from_cli
 
 
@@ -353,6 +359,31 @@ class TestManagerCallbackFunctionality:
         assert call_args.record == test_record
 
     @pytest.mark.asyncio
+    async def test_record_callback_tags_active_phase(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ):
+        """Test that server metric records are tagged with the active phase."""
+        manager = ServerMetricsManager(
+            run=make_run_from_cli(cfg_with_endpoint),
+        )
+        manager._active_phase = CreditPhase.WARMUP
+        manager.records_push_client.push = AsyncMock()
+
+        test_record = ServerMetricsRecord(
+            endpoint_url="http://localhost:8081/metrics",
+            timestamp_ns=1_000_000_000,
+            endpoint_latency_ns=5_000_000,
+            metrics={},
+        )
+
+        await manager._on_server_metrics_records([test_record], "test_collector")
+
+        call_args = manager.records_push_client.push.call_args[0][0]
+        assert call_args.record is not None
+        assert call_args.record.benchmark_phase == CreditPhase.WARMUP
+
+    @pytest.mark.asyncio
     async def test_error_callback_logs_error(
         self,
         cli_config: CLIConfig,
@@ -392,6 +423,78 @@ class TestManagerCallbackFunctionality:
         ]
 
         await manager._on_server_metrics_records(test_records, "test_collector")
+
+
+class TestPhaseTransitionRace:
+    """Phase-tagging transitions must be compare-and-set: message handlers run
+    as independent tasks, so CREDIT_PHASE_START(PROFILING) can interleave with
+    the awaited warmup-final scrapes inside _on_credit_phase_complete."""
+
+    @pytest.mark.asyncio
+    async def test_profiling_start_during_warmup_final_scrape_survives(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ):
+        manager = ServerMetricsManager(
+            run=make_run_from_cli(cfg_with_endpoint),
+        )
+        manager._active_phase = CreditPhase.WARMUP
+
+        scrape_started = asyncio.Event()
+        release_scrape = asyncio.Event()
+
+        async def slow_scrape():
+            scrape_started.set()
+            await release_scrape.wait()
+
+        mock_collector = MagicMock()
+        mock_collector.collect_and_process_metrics = AsyncMock(side_effect=slow_scrape)
+        manager._collectors = {"http://localhost:8000/metrics": mock_collector}
+
+        complete_task = asyncio.create_task(
+            manager._on_credit_phase_complete(
+                CreditPhaseCompleteMessage(
+                    service_id="timing-manager",
+                    stats=CreditPhaseStats(phase=CreditPhase.WARMUP),
+                )
+            )
+        )
+        await scrape_started.wait()
+        # Profiling starts while the warmup-final scrape is still awaited.
+        await manager._on_credit_phase_start(
+            CreditPhaseStartMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(phase=CreditPhase.PROFILING),
+                config=CreditPhaseConfig(
+                    phase=CreditPhase.PROFILING,
+                    timing_mode=TimingMode.REQUEST_RATE,
+                ),
+            )
+        )
+        release_scrape.set()
+        await complete_task
+
+        assert manager._active_phase == CreditPhase.PROFILING
+
+    @pytest.mark.asyncio
+    async def test_warmup_complete_without_race_clears_phase(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ):
+        manager = ServerMetricsManager(
+            run=make_run_from_cli(cfg_with_endpoint),
+        )
+        manager._active_phase = CreditPhase.WARMUP
+        manager._collectors = {"http://localhost:8000/metrics": AsyncMock()}
+
+        await manager._on_credit_phase_complete(
+            CreditPhaseCompleteMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(phase=CreditPhase.WARMUP),
+            )
+        )
+
+        assert manager._active_phase is None
 
 
 class TestDisabledServerMetrics:

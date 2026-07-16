@@ -136,6 +136,10 @@ class ServerToolUsage(BaseModel):
 
 Streaming chunks use `MessageDeltaUsage`, which carries the same fields as `Usage` for cache and tokens (a non-streaming chunk + `MessageDeltaUsage` contain the same shape for our purposes).
 
+**Native endpoint:** AIPerf benchmarks the Messages API directly via `--endpoint-type messages` (`/v1/messages`, [`src/aiperf/endpoints/anthropic_messages.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/endpoints/anthropic_messages.py)). The shared system prompt is emitted in the top-level `system` field (not as a `system`-role message), `max_tokens` is always sent (the API requires it; absent turns fall back to a 1024 default), and streaming splits usage across `message_start` (`input_tokens`) and `message_delta` (`output_tokens`) — the endpoint folds the `message_start` fields into the final usage so docs-canonical servers that omit input fields from `message_delta` do not lose them. The usage-field parsing below is shared by this endpoint and by any chat-shaped server that happens to report Anthropic-style fields.
+
+**Disjoint input accounting:** unlike OpenAI-family vendors (whose prompt field is the total, with cached tokens a subset of it), Anthropic's `input_tokens` counts ONLY the uncached remainder — the true prompt total is `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`. AIPerf's `Usage.prompt_tokens` re-totalizes this shape (gated on the Anthropic/Bedrock cache key names) so `usage_prompt_tokens`, cache-read percentages, and `--use-server-token-count` ISL mean the same thing across vendors; the raw uncached remainder stays available via `Usage.prompt_uncached_tokens` (for these vendors it is the cache-miss count).
+
 **Modelled:** `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`.
 
 **Not modelled (preserved on dict):**

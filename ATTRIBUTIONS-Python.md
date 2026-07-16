@@ -226,7 +226,7 @@ Apache License
   - `repository`: https://github.com/Tinche/aiofiles
 
 
-## aiohappyeyeballs (2.6.1)
+## aiohappyeyeballs (2.7.1)
 
 ### Licenses
 License: `PSF-2.0`
@@ -801,6 +801,35 @@ Apache License
   - `Homepage`: https://github.com/aio-libs/aiosignal
 
 
+## alembic (1.18.5)
+
+### Licenses
+License: `MIT`
+
+  - `LICENSE`:
+```
+Copyright 2009-2026 Michael Bayer.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+
 ## annotated-doc (0.0.4)
 
 ### Licenses
@@ -875,7 +904,7 @@ SOFTWARE.
   - `Source`: https://github.com/annotated-types/annotated-types
 
 
-## anyio (4.13.0)
+## anyio (4.14.1)
 
 ### Licenses
 License: `MIT`
@@ -1016,7 +1045,7 @@ THE SOFTWARE.
   - `Homepage`: https://github.com/google/brotli
 
 
-## certifi (2026.2.25)
+## certifi (2026.6.17)
 
 ### Licenses
 License: `MPL-2.0`
@@ -1050,7 +1079,7 @@ one at http://mozilla.org/MPL/2.0/.
   - `Source`: https://github.com/certifi/python-certifi
 
 
-## cffi (2.0.0)
+## cffi (2.1.0)
 
 ### Licenses
 License: `MIT`
@@ -1091,7 +1120,7 @@ documentation is licensed as follows:
   - `Source Code`: https://github.com/python-cffi/cffi
 
 
-## charset-normalizer (3.4.7)
+## charset-normalizer (3.4.9)
 
 ### Licenses
 License: `MIT`
@@ -1128,7 +1157,7 @@ SOFTWARE.
   - `Issue tracker`: https://github.com/jawah/charset_normalizer/issues
 
 
-## choreographer (1.2.1)
+## choreographer (1.3.0)
 
 ### Licenses
 License: `# MIT License`
@@ -1166,7 +1195,7 @@ OTHER DEALINGS IN THE SOFTWARE.
   - `Repository`: https://github.com/plotly/choreographer
 
 
-## click (8.3.1)
+## click (8.2.1)
 
 ### Licenses
 License: `BSD-3-Clause`
@@ -1209,6 +1238,36 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Documentation`: https://click.palletsprojects.com/
   - `Donate`: https://palletsprojects.com/donate
   - `Source`: https://github.com/pallets/click/
+
+
+## colorlog (6.10.1)
+
+### Licenses
+License: `MIT`
+
+  - `LICENSE`:
+```
+The MIT License (MIT)
+
+Copyright (c) 2012-2021 Sam Clements <sam@borntyping.co.uk>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
 
 
 ## contourpy (1.3.3)
@@ -1256,6 +1315,43 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Repository`: https://github.com/contourpy/contourpy
 
 
+## crick (0.0.8)
+
+### Licenses
+License: `BSD-3-Clause`
+
+  - `LICENSE`:
+```
+Copyright (c) 2016, Jim Crist-Harif. 2023, Dask Developers.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+  may be used to endorse or promote products derived from this software
+  without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+
 ## cycler (0.12.1)
 
 ### Licenses
@@ -1296,7 +1392,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.```
   - `repository`: https://github.com/matplotlib/cycler
 
 
-## cyclopts (4.10.1)
+## cyclopts (4.20.0)
 
 ### Licenses
 License: `Apache-2.0`
@@ -1765,7 +1861,7 @@ limitations under the License.
   - `Source`: https://github.com/dbc-team/dash-bootstrap-components/
 
 
-## datasets (4.8.4)
+## datasets (5.0.0)
 
 ### Licenses
 License: `Apache 2.0`
@@ -2033,7 +2129,7 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Source Code`: https://github.com/uqfoundation/dill
 
 
-## docstring-parser (0.17.0)
+## docstring-parser (0.18.0)
 
 ### Licenses
 License: `MIT`
@@ -2069,176 +2165,7 @@ SOFTWARE.
   - `repository`: https://github.com/rr-/docstring_parser
 
 
-## docutils (0.22.4)
-
-### Licenses
-License: `BSD License`
-
-  - `licenses/COPYING.rst`:
-```
-.. include:: docs/header0.rst
-
-==================
- Copying Docutils
-==================
-
-:Author: David Goodger
-:Contact: goodger@python.org
-:Date: $Date: 2024-11-10 00:36:49 +0100 (So, 10. Nov 2024) $
-:Web site: https://docutils.sourceforge.io/
-:Copyright: This document has been placed in the public domain.
-
-Most of the files included in this project have been placed in the
-public domain, and therefore have no license requirements and no
-restrictions on copying or usage; see the `Public Domain Dedication`_
-below.  There are exceptions_, listed below.
-Files in the Sandbox_ are not distributed with Docutils releases and
-may have different license terms.
-
-
-Public Domain Dedication
-========================
-
-The persons who have associated their work with this project (the
-"Dedicator": David Goodger and the many contributors to the Docutils
-project) hereby dedicate the entire copyright, less the exceptions_
-listed below, in the work of authorship known as "Docutils" identified
-below (the "Work") to the public domain.
-
-The primary repository for the Work is the Internet World Wide Web
-site <https://docutils.sourceforge.io/>.  The Work consists of the
-files within the "docutils" module of the Docutils project Subversion
-repository (http://svn.code.sf.net/p/docutils/code/),
-whose Internet web interface is located at
-<https://sourceforge.net/p/docutils/code>.  Files dedicated to the
-public domain may be identified by the inclusion, near the beginning
-of each file, of a declaration of the form::
-
-    Copyright: This document/module/DTD/stylesheet/file/etc. has been
-               placed in the public domain.
-
-Dedicator makes this dedication for the benefit of the public at large
-and to the detriment of Dedicator's heirs and successors.  Dedicator
-intends this dedication to be an overt act of relinquishment in
-perpetuity of all present and future rights under copyright law,
-whether vested or contingent, in the Work.  Dedicator understands that
-such relinquishment of all rights includes the relinquishment of all
-rights to enforce (by lawsuit or otherwise) those copyrights in the
-Work.
-
-Dedicator recognizes that, once placed in the public domain, the Work
-may be freely reproduced, distributed, transmitted, used, modified,
-built upon, or otherwise exploited by anyone for any purpose,
-commercial or non-commercial, and in any way, including by methods
-that have not yet been invented or conceived.
-
-(This dedication is derived from the text of the `Creative Commons
-Public Domain Dedication`. [#]_)
-
-.. [#] Creative Commons has `retired this legal tool`__ and does not
-   recommend that it be applied to works: This tool is based on United
-   States law and may not be applicable outside the US. For dedicating new
-   works to the public domain, Creative Commons recommend the replacement
-   Public Domain Dedication CC0_ (CC zero, "No Rights Reserved"). So does
-   the Free Software Foundation in its license-list_.
-
-   __  http://creativecommons.org/retiredlicenses
-   .. _CC0: http://creativecommons.org/about/cc0
-
-Exceptions
-==========
-
-The exceptions to the `Public Domain Dedication`_ above are:
-
-* docutils/utils/smartquotes.py
-
-  Copyright © 2011 Günter Milde,
-  based on `SmartyPants`_ © 2003 John Gruber
-  (released under a "revised" `BSD 3-Clause License`_ included in the file)
-  and smartypants.py © 2004, 2007 Chad Miller.
-  Released under the terms of the `BSD 2-Clause License`_
-  (`local copy <licenses/BSD-2-Clause.rst>`__).
-
-  .. _SmartyPants: http://daringfireball.net/projects/smartypants/
-
-* docutils/utils/math/latex2mathml.py
-
-  Copyright © Jens Jørgen Mortensen, Günter Milde.
-  Released under the terms of the `BSD 2-Clause License`_
-  (`local copy <licenses/BSD-2-Clause.rst>`__).
-
-* | docutils/utils/math/math2html.py,
-  | docutils/writers/html5_polyglot/math.css
-
-  Copyright © 2009,2010 Alex Fernández; 2021 Günter Milde
-
-  These files were part of eLyXer_, released under the `GNU
-  General Public License`_ version 3 or later. The author relicensed
-  them for Docutils under the terms of the `BSD 2-Clause License`_
-  (`local copy <licenses/BSD-2-Clause.rst>`__).
-
-  .. _eLyXer: https://github.com/alexfernandez/elyxer
-
-* | docutils/__main__.py,
-  | docutils/parsers/commonmark_wrapper.py,
-  | docutils/parsers/recommonmark_wrapper.py,
-  | docutils/utils/error_reporting.py,
-  | docutils/utils/math/__init__.py,
-  | docutils/utils/math/latex2mathml.py,
-  | docutils/utils/math/tex2mathml_extern.py,
-  | docutils/utils/punctuation_chars.py,
-  | docutils/utils/smartquotes.py,
-  | docutils/writers/html5_polyglot/__init__.py,
-  | docutils/writers/html5_polyglot/\*.css,
-  | docutils/writers/latex2e/docutils.sty,
-  | docutils/writers/xetex/__init__.py,
-  | test/test_parsers/test_recommonmark/\*.py,
-  | test/test_parsers/test_rst/test_directives/test__init__.py,
-  | test/test_parsers/test_rst/test_directives/test_code_parsing.py,
-  | test/test_parsers/test_rst/test_line_length_limit_default.py,
-  | test/test_parsers/test_rst/test_line_length_limit.py,
-  | test/test_writers/test_latex2e_misc.py,
-  | test/transforms/test_smartquotes.py,
-  | tools/docutils-cli.py,
-  | tools/rst2html5.py
-
-  Copyright © Günter Milde.
-  Released under the terms of the `BSD 2-Clause License`_
-  (`local copy <licenses/BSD-2-Clause.rst>`__).
-
-* tools/editors/emacs/rst.el
-
-  copyright by Free Software Foundation, Inc.,
-  released under the `GNU General Public License`_ version 3 or later
-  (`local copy`__).
-
-  __ licenses/gpl-3-0.rst
-
-All used licenses are OSI-approved_ and GPL-compatible_.
-
-Plaintext versions of all the linked-to licenses are provided in the
-licenses_ directory.
-
-.. _sandbox: https://docutils.sourceforge.io/sandbox/README.html
-.. _licenses: licenses/
-.. _GNU General Public License: https://www.gnu.org/copyleft/gpl.html
-.. _BSD 2-Clause License: http://opensource.org/licenses/BSD-2-Clause
-.. _BSD 3-Clause License: https://opensource.org/licenses/BSD-3-Clause
-.. _OSI-approved: http://opensource.org/licenses/
-.. _license-list:
-.. _GPL-compatible: https://www.gnu.org/licenses/license-list.html
-```
-
-### URLs
-  - `Changelog`: https://docutils.sourceforge.io/HISTORY.html
-  - `Code`: https://sourceforge.net/p/docutils/code/
-  - `Documentation`: https://docutils.sourceforge.io/docs/
-  - `Download`: https://pypi.org/project/docutils/
-  - `Homepage`: https://docutils.sourceforge.io
-  - `Issue tracker`: https://sourceforge.net/p/docutils/bugs/
-
-
-## fastapi (0.135.3)
+## fastapi (0.139.0)
 
 ### Licenses
 License: `MIT`
@@ -2491,7 +2418,7 @@ License: `Apache Software License`
   - `Homepage`: https://github.com/kkroening/ffmpeg-python
 
 
-## filelock (3.25.2)
+## filelock (3.29.6)
 
 ### Licenses
 License: `MIT`
@@ -2573,7 +2500,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Source`: https://github.com/pallets/flask/
 
 
-## fonttools (4.62.1)
+## fonttools (4.63.0)
 
 ### Licenses
 License: `MIT`
@@ -3222,7 +3149,7 @@ Apache License
   - `Homepage`: https://github.com/aio-libs/frozenlist
 
 
-## fsspec (2026.2.0)
+## fsspec (2025.9.0)
 
 ### Licenses
 License: `BSD-3-Clause`
@@ -3299,6 +3226,46 @@ THE SOFTWARE.
   - `Source`: https://github.com/PythonCharmers/python-future
 
 
+## greenlet (3.5.3)
+
+### Licenses
+License: `MIT AND PSF-2.0`
+
+  - `LICENSE`:
+```
+The following files are derived from Stackless Python and are subject to the
+same license as Stackless Python:
+
+	src/greenlet/slp_platformselect.h
+	files in src/greenlet/platform/ directory
+
+See LICENSE.PSF and http://www.stackless.com/ for details.
+
+Unless otherwise noted, the files in greenlet have been released under the
+following MIT license:
+
+Copyright (c) Armin Rigo, Christian Tismer and contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+
 ## h11 (0.16.0)
 
 ### Licenses
@@ -3334,7 +3301,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
   - `Homepage`: https://github.com/python-hyper/h11
 
 
-## hf-xet (1.4.3)
+## hf-xet (1.5.1)
 
 ### Licenses
 License: `Apache Software License`
@@ -3593,7 +3560,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Source`: https://github.com/encode/httpcore
 
 
-## httptools (0.7.1)
+## httptools (0.8.0)
 
 ### Licenses
 License: `MIT`
@@ -3655,7 +3622,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
   - `Source`: https://github.com/encode/httpx
 
 
-## huggingface-hub (1.8.0)
+## huggingface-hub (1.16.1)
 
 ### Licenses
 License: `Apache-2.0`
@@ -3869,7 +3836,7 @@ License: `Apache-2.0`
   - `Homepage`: https://github.com/huggingface/huggingface_hub
 
 
-## idna (3.11)
+## idna (3.18)
 
 ### Licenses
 License: `BSD-3-Clause`
@@ -4376,7 +4343,36 @@ SOFTWARE.
   - `Repository`: https://github.com/geopozo/logistro
 
 
-## markdown-it-py (4.0.0)
+## mako (1.3.12)
+
+### Licenses
+License: `MIT`
+
+  - `LICENSE`:
+```
+Copyright 2006-2025 the Mako authors and contributors <see AUTHORS file>.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+
+## markdown-it-py (4.2.0)
 
 ### Licenses
 License: `MIT License`
@@ -4482,7 +4478,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Source`: https://github.com/pallets/markupsafe/
 
 
-## matplotlib (3.10.8)
+## matplotlib (3.11.0)
 
 ### Licenses
 License: `Python Software Foundation License`
@@ -5290,7 +5286,7 @@ License:
   - `Source Code`: https://github.com/matplotlib/matplotlib
 
 
-## mdit-py-plugins (0.5.0)
+## mdit-py-plugins (0.6.1)
 
 ### Licenses
 License: `MIT License`
@@ -5516,7 +5512,7 @@ IN THE SOFTWARE.
   - `Homepage`: https://github.com/executablebooks/mdurl
 
 
-## msgspec (0.20.0)
+## msgspec (0.21.1)
 
 ### Licenses
 License: `BSD-3-Clause`
@@ -5680,7 +5676,7 @@ SUCH DAMAGE.
   - `Source Code`: https://github.com/uqfoundation/multiprocess
 
 
-## narwhals (2.18.1)
+## narwhals (2.23.0)
 
 ### Licenses
 License: `MIT License`
@@ -5755,7 +5751,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Homepage`: https://github.com/erdewit/nest_asyncio
 
 
-## numpy (2.4.4)
+## numpy (2.5.1)
 
 ### Licenses
 License: `BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0`
@@ -5896,7 +5892,7 @@ the component code.
   - `tracker`: https://github.com/numpy/numpy/issues
 
 
-## nvidia-ml-py (13.595.45)
+## nvidia-ml-py (13.610.43)
 
 ### Licenses
 License: `BSD`
@@ -5905,7 +5901,38 @@ License: `BSD`
   - `Homepage`: https://forums.developer.nvidia.com
 
 
-## orjson (3.11.8)
+## optuna (4.9.0)
+
+### Licenses
+License: `MIT`
+
+  - `LICENSE`:
+```
+MIT License
+
+Copyright (c) 2018 Preferred Networks, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+
+## orjson (3.11.9)
 
 ### Licenses
 License: `MPL-2.0 AND (Apache-2.0 OR MIT)`
@@ -6525,7 +6552,7 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
   - `source`: https://github.com/ijl/orjson
 
 
-## packaging (26.0)
+## packaging (26.2)
 
 ### Licenses
 License: `Apache-2.0 OR BSD-2-Clause`
@@ -8014,7 +8041,7 @@ third-party archives.
   - `repository`: https://github.com/pandas-dev/pandas
 
 
-## pillow (12.1.1)
+## pillow (12.2.0)
 
 ### Licenses
 License: `MIT-CMU`
@@ -9556,7 +9583,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Source`: https://github.com/python-pillow/Pillow
 
 
-## platformdirs (4.9.4)
+## platformdirs (4.10.0)
 
 ### Licenses
 License: `MIT`
@@ -9878,7 +9905,7 @@ License: `Apache-2.0 AND BSD-2-Clause`
   - `Homepage`: https://github.com/prometheus/client_python
 
 
-## propcache (0.4.1)
+## propcache (0.5.2)
 
 ### Licenses
 License: `Apache-2.0`
@@ -10102,6 +10129,48 @@ License: `Apache-2.0`
   - `Homepage`: https://github.com/aio-libs/propcache
 
 
+## protobuf (7.35.1)
+
+### Licenses
+License: `BSD-3-Clause`
+
+  - `LICENSE`:
+```
+Copyright 2008 Google Inc.  All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+    * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+    * Neither the name of Google Inc. nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Code generated by the Protocol Buffer compiler is owned by the owner
+of the input file used when generating it.  This code is not
+standalone and requires a support library to be linked with it.  This
+support library is itself covered by the above license.
+```
+
+
 ## psutil (7.0.0)
 
 ### Licenses
@@ -10144,7 +10213,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Homepage`: https://github.com/giampaolo/psutil
 
 
-## pyarrow (23.0.1)
+## pyarrow (24.0.0)
 
 ### Licenses
 License: `Apache-2.0`
@@ -12531,7 +12600,7 @@ OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Homepage`: https://github.com/eliben/pycparser
 
 
-## pydantic (2.12.5)
+## pydantic (2.13.4)
 
 ### Licenses
 License: `MIT`
@@ -12569,7 +12638,7 @@ SOFTWARE.
   - `Source`: https://github.com/pydantic/pydantic
 
 
-## pydantic-core (2.41.5)
+## pydantic-core (2.46.4)
 
 ### Licenses
 License: `MIT`
@@ -12605,7 +12674,7 @@ SOFTWARE.
   - `Source`: https://github.com/pydantic/pydantic-core
 
 
-## pydantic-settings (2.13.1)
+## pydantic-settings (2.14.2)
 
 ### Licenses
 License: `MIT`
@@ -12720,7 +12789,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
   - `Source`: https://github.com/pyparsing/pyparsing.git
 
 
-## pytest (9.0.2)
+## pytest (9.1.1)
 
 ### Licenses
 License: `MIT`
@@ -12903,7 +12972,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Source`: https://github.com/theskumar/python-dotenv
 
 
-## pytz (2026.1.post1)
+## pytz (2026.2)
 
 ### Licenses
 License: `MIT`
@@ -13626,7 +13695,7 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
   - `Tracker`: https://github.com/zeromq/pyzmq/issues
 
 
-## regex (2026.3.32)
+## regex (2026.6.28)
 
 ### Licenses
 License: `Apache-2.0 AND CNRI-Python`
@@ -13847,7 +13916,7 @@ All additions and alterations are licensed under the Apache 2.0 License.
   - `Homepage`: https://github.com/mrabarnett/mrab-regex
 
 
-## requests (2.33.1)
+## requests (2.34.2)
 
 ### Licenses
 License: `Apache-2.0`
@@ -14271,7 +14340,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
   - `Homepage`: https://github.com/Textualize/rich
 
 
-## rich-rst (1.3.2)
+## rich-rst (2.1.0)
 
 ### Licenses
 License: `MIT`
@@ -14368,7 +14437,7 @@ License: `MIT`
   - `Tracker`: https://sourceforge.net/p/ruamel-yaml-clib/tickets/
 
 
-## safetensors (0.7.0)
+## safetensors (0.8.0)
 
 ### Licenses
 License: `Apache Software License`
@@ -14583,7 +14652,7 @@ License: `Apache Software License`
   - `Source`: https://github.com/huggingface/safetensors
 
 
-## scipy (1.17.1)
+## scipy (1.18.0)
 
 ### Licenses
 License: `BSD License`
@@ -14822,6 +14891,217 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Source`: https://github.com/mwaskom/seaborn
 
 
+## sentencepiece (0.2.1)
+
+### Licenses
+License: `Apache-2.0`
+
+  - `LICENSE`:
+```
+Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for describing the origin of the Work and
+      reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Support. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or support.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright [yyyy] [name of copyright owner]
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+   implied. See the License for the specific language governing permissions and
+   limitations under the License.
+```
+
+
 ## setproctitle (1.3.7)
 
 ### Licenses
@@ -14889,7 +15169,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
   - `Homepage`: https://github.com/sarugaku/shellingham
 
 
-## simplejson (3.20.2)
+## simplejson (4.1.1)
 
 ### Licenses
 License: `MIT License`
@@ -15054,7 +15334,36 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Homepage`: https://github.com/bastibe/python-soundfile
 
 
-## starlette (1.0.0)
+## sqlalchemy (2.0.51)
+
+### Licenses
+License: `MIT`
+
+  - `LICENSE`:
+```
+Copyright 2005-2026 SQLAlchemy authors and contributors <see AUTHORS file>.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+
+## starlette (1.3.1)
 
 ### Licenses
 License: `BSD-3-Clause`
@@ -15098,7 +15407,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Source`: https://github.com/Kludex/starlette
 
 
-## starlette-compress (1.7.0)
+## starlette-compress (1.7.1)
 
 ### Licenses
 License: `0BSD`
@@ -15145,6 +15454,37 @@ SOFTWARE.
   - `Repository`: https://github.com/Textualize/textual
 
 
+## tiktoken (0.13.0)
+
+### Licenses
+License: `MIT`
+
+  - `LICENSE`:
+```
+MIT License
+
+Copyright (c) 2022 OpenAI, Shantanu Jain
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+
 ## tokenizers (0.22.2)
 
 ### Licenses
@@ -15155,7 +15495,7 @@ License: `Apache Software License`
   - `Source`: https://github.com/huggingface/tokenizers
 
 
-## tqdm (4.67.3)
+## tqdm (4.68.4)
 
 ### Licenses
 License: `MPL-2.0 AND MIT`
@@ -15220,7 +15560,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
   - `wiki`: https://github.com/tqdm/tqdm/wiki
 
 
-## transformers (5.5.0)
+## transformers (5.13.0)
 
 ### Licenses
 License: `Apache 2.0 License`
@@ -15436,7 +15776,7 @@ Copyright 2018- The Hugging Face team. All rights reserved.
   - `Homepage`: https://github.com/huggingface/transformers
 
 
-## typer (0.24.1)
+## typer (0.26.8)
 
 ### Licenses
 License: `MIT`
@@ -15474,7 +15814,7 @@ THE SOFTWARE.
   - `Repository`: https://github.com/fastapi/typer
 
 
-## typing-extensions (4.15.0)
+## typing-extensions (4.16.0)
 
 ### Licenses
 License: `PSF-2.0`
@@ -15808,7 +16148,7 @@ SOFTWARE.
   - `Source`: https://github.com/pydantic/typing-inspection
 
 
-## tzdata (2025.3)
+## tzdata (2026.2)
 
 ### Licenses
 License: `Apache-2.0`
@@ -16103,7 +16443,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
   - `Homepage`: https://github.com/tsutsu3/uc.micro-py
 
 
-## urllib3 (2.6.3)
+## urllib3 (2.7.0)
 
 ### Licenses
 License: `MIT`
@@ -16140,7 +16480,7 @@ SOFTWARE.
   - `Issue tracker`: https://github.com/urllib3/urllib3/issues
 
 
-## uvicorn (0.42.0)
+## uvicorn (0.50.2)
 
 ### Licenses
 License: `BSD-3-Clause`
@@ -16183,7 +16523,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Source`: https://github.com/Kludex/uvicorn
 
 
-## uvloop (0.21.0)
+## uvloop (0.22.1)
 
 ### Licenses
 License: `MIT License`
@@ -16424,7 +16764,7 @@ THE SOFTWARE.
   - `github`: https://github.com/MagicStack/uvloop
 
 
-## watchfiles (1.1.1)
+## watchfiles (1.2.0)
 
 ### Licenses
 License: `MIT`
@@ -16548,7 +16888,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Source`: https://github.com/pallets/werkzeug/
 
 
-## xxhash (3.6.0)
+## xxhash (3.8.1)
 
 ### Licenses
 License: `BSD`
@@ -16583,7 +16923,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Homepage`: https://github.com/ifduyue/python-xxhash
 
 
-## yarl (1.23.0)
+## yarl (1.24.2)
 
 ### Licenses
 License: `Apache-2.0`
@@ -16807,7 +17147,7 @@ License: `Apache-2.0`
   - `Homepage`: https://github.com/aio-libs/yarl
 
 
-## zipp (3.23.0)
+## zipp (4.1.0)
 
 ### Licenses
 License: `MIT`

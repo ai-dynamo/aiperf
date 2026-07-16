@@ -451,7 +451,7 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
             # Fall back to GET if HEAD is not supported
             async with session.get(self._endpoint_url) as response:
                 return response.status == 200
-        except (aiohttp.ClientError, asyncio.TimeoutError):
+        except (TimeoutError, aiohttp.ClientError):
             return False
 
     @background_task(immediate=True, interval=lambda self: self.collection_interval)

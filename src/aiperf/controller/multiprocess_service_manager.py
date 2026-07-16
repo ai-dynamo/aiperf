@@ -200,7 +200,7 @@ class MultiProcessServiceManager(BaseServiceManager):
 
         try:
             await asyncio.wait_for(_wait_for_registration(), timeout=timeout_seconds)
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             # Log which services didn't register in time
             registered_types_set = set(
                 service_info.service_type

@@ -192,7 +192,8 @@ class TestUsageRealVendorFixtures:
                 "openai_gpt4o_with_caching", 2006, 300, 2306, id="openai_gpt4o_caching"
             ),
             param("openai_o1_reasoning", 50, 1500, 1550, id="openai_o1_reasoning"),
-            param("anthropic_claude_with_caching", 100, 50, None, id="anthropic_cached"),
+            # Disjoint accounting: prompt = input(100) + creation(1024) + read(200).
+            param("anthropic_claude_with_caching", 1324, 50, None, id="anthropic_cached"),
             param("anthropic_claude_no_caching", 100, 50, None, id="anthropic_basic"),
             param("deepseek_v3_chat", 1600, 100, 1700, id="deepseek_v3"),
             param("gemini_2_flash_basic", 10, 20, 30, id="gemini_flash"),
@@ -200,7 +201,8 @@ class TestUsageRealVendorFixtures:
             param("gemini_with_tools", 100, 50, 180, id="gemini_tools"),
             param("bedrock_converse_basic", 100, 50, 150, id="bedrock_basic"),
             param(
-                "bedrock_converse_with_caching", 100, 50, 1174, id="bedrock_caching"
+                # Disjoint accounting: prompt = input(100) + write(1024) + read(200).
+                "bedrock_converse_with_caching", 1324, 50, 1174, id="bedrock_caching"
             ),
             param("cohere_command_r_chat", 105, 52, None, id="cohere_command_r"),
             param("cohere_v2_chat", 105, 52, None, id="cohere_v2"),
@@ -1287,10 +1289,15 @@ class TestRealJSONRoundTrip:
         usage = Usage(decoded)
         # The full original dict is preserved
         assert dict(usage)  # not None or empty
-        # And token counts (where present) match
+        # And token counts (where present) match. Disjoint-accounting
+        # vendors (Anthropic/Bedrock cache keys present) re-totalize, so the
+        # raw field is exposed via prompt_uncached_tokens instead.
         for top_level_key in ("prompt_tokens", "input_tokens"):
             if top_level_key in original:
-                assert usage.prompt_tokens == original[top_level_key]
+                if any(k in original for k in Usage.DISJOINT_CACHE_KEYS):
+                    assert usage.prompt_uncached_tokens == original[top_level_key]
+                else:
+                    assert usage.prompt_tokens == original[top_level_key]
                 break
 
     def test_unicode_keys_pass_through(self):
@@ -1717,3 +1724,92 @@ class TestRecordResponsesShapeEdges:
         ]
         record = _record_with_response_usages(*chunks)
         assert record.final_usage["prompt_tokens"] == 3
+
+
+class TestDisjointInputAccounting:
+    """Anthropic/Bedrock report input_tokens as the UNCACHED remainder only;
+    the true prompt total is input + cache_read + cache_creation. Subset
+    vendors (OpenAI/DeepSeek/Gemini/Cohere) already report the total, with
+    cached tokens as a subset. `prompt_tokens` must mean the same thing —
+    "tokens the server processed as input" — for every vendor."""
+
+    def test_anthropic_totalizes_input_plus_cache(self):
+        usage = Usage(
+            {
+                "input_tokens": 984,
+                "cache_read_input_tokens": 100_000,
+                "cache_creation_input_tokens": 2_000,
+                "output_tokens": 50,
+            }
+        )
+        assert usage.prompt_tokens == 102_984
+        assert usage.prompt_uncached_tokens == 984
+        assert usage.prompt_cache_read_tokens == 100_000
+        assert usage.prompt_cache_write_tokens == 2_000
+
+    def test_anthropic_without_cache_keys_is_unchanged(self):
+        usage = Usage({"input_tokens": 25, "output_tokens": 15})
+        assert usage.prompt_tokens == 25
+        assert usage.prompt_uncached_tokens is None
+
+    def test_anthropic_zero_cache_counts_add_nothing(self):
+        usage = Usage(
+            {
+                "input_tokens": 25,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "output_tokens": 15,
+            }
+        )
+        assert usage.prompt_tokens == 25
+        assert usage.prompt_uncached_tokens == 25
+
+    def test_bedrock_camelcase_totalizes(self):
+        usage = Usage(
+            {
+                "inputTokens": 10,
+                "cacheReadInputTokens": 90,
+                "cacheWriteInputTokens": 5,
+                "outputTokens": 3,
+            }
+        )
+        assert usage.prompt_tokens == 105
+        assert usage.prompt_uncached_tokens == 10
+
+    def test_message_delta_output_only_shape_unaffected(self):
+        # Docs-canonical streaming message_delta usage: no input-side keys.
+        usage = Usage({"output_tokens": 15})
+        assert usage.prompt_tokens is None
+        assert usage.prompt_uncached_tokens is None
+        assert usage.completion_tokens == 15
+
+    def test_cohere_input_tokens_with_cohere_cache_key_not_totalized(self):
+        # Cohere shares the input_tokens key name but reports subset
+        # accounting via its own cached_tokens key, which is NOT one of the
+        # disjoint vendor cache keys — no re-totalization.
+        usage = Usage({"input_tokens": 500, "cached_tokens": 100})
+        assert usage.prompt_tokens == 500
+        assert usage.prompt_uncached_tokens is None
+
+    def test_openai_name_wins_over_disjoint_totalization(self):
+        # If a server reports the OpenAI total alongside Anthropic-style
+        # cache keys, the OpenAI name already IS the total: no adjustment.
+        usage = Usage(
+            {
+                "prompt_tokens": 100,
+                "input_tokens": 10,
+                "cache_read_input_tokens": 90,
+            }
+        )
+        assert usage.prompt_tokens == 100
+        assert usage.prompt_uncached_tokens is None
+
+    def test_non_int_cache_values_are_ignored(self):
+        usage = Usage(
+            {
+                "input_tokens": 25,
+                "cache_read_input_tokens": None,
+                "cache_creation_input_tokens": 7,
+            }
+        )
+        assert usage.prompt_tokens == 32

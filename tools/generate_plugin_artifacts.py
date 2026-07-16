@@ -125,7 +125,7 @@ def load_yaml(path: Path, name: str) -> dict[str, Any]:
     if not path.exists():
         raise YAMLLoadError(f"{name} not found", {"path": str(path)})
     try:
-        data = yaml.safe_load(path.read_text())
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as e:
         raise YAMLLoadError(f"Failed to parse {name}", {"error": str(e)}) from e
     if not isinstance(data, dict):
@@ -256,7 +256,7 @@ def generate_schemas(check: bool = False) -> int:
             + "\n"
         )
         path = SCHEMA_DIR / filename
-        existing = path.read_text() if path.exists() else None
+        existing = path.read_text(encoding="utf-8") if path.exists() else None
         if existing != content:
             changed += 1
             if check:
@@ -566,7 +566,7 @@ def generate_enums(check: bool = False) -> int:
 
     def check_or_write(path: Path, content: str) -> bool:
         """Compare content and optionally write. Returns True if changed."""
-        existing = path.read_text() if path.exists() else None
+        existing = path.read_text(encoding="utf-8") if path.exists() else None
         if existing == content:
             print_up_to_date(f"{path.name} is up-to-date")
             return False
@@ -601,7 +601,7 @@ def generate_overloads(check: bool = False) -> int:
     if not PLUGINS_PY.exists():
         raise OverloadGenerationError("plugins.py not found", {"path": str(PLUGINS_PY)})
 
-    content = PLUGINS_PY.read_text()
+    content = PLUGINS_PY.read_text(encoding="utf-8")
 
     # Generate imports
     imports: dict[str, list[str]] = defaultdict(list)
@@ -671,7 +671,7 @@ def generate_overloads(check: bool = False) -> int:
         print_out_of_date("Overloads are out of date!")
         return -1
 
-    PLUGINS_PY.write_text(updated)
+    PLUGINS_PY.write_text(updated, encoding="utf-8")
     print_updated(PLUGINS_PY)
     return 1
 
