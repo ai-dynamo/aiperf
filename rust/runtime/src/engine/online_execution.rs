@@ -50,9 +50,9 @@ use crate::engine::readiness::{
 };
 use crate::engine::registry::{
     GRAPH_WORKLOAD_DESCRIPTOR, GraphWorkloadConfigV2, NativeTransportExecution, PreparedRunOutcome,
-    PreparedRunnerOperation, RunContext, WorkloadDescriptor, WorkloadFactory,
-    SCHEDULED_WORKLOAD_DESCRIPTOR, STATIC_ACCURACY_WORKLOAD_DESCRIPTOR, ScheduledWorkloadConfigV2,
-    StaticAccuracyWorkloadConfigV2, ValidatedTransportConfig, ValidatedWorkloadConfig,
+    PreparedRunnerOperation, RunContext, SCHEDULED_WORKLOAD_DESCRIPTOR,
+    STATIC_ACCURACY_WORKLOAD_DESCRIPTOR, ScheduledWorkloadConfigV2, StaticAccuracyWorkloadConfigV2,
+    ValidatedTransportConfig, ValidatedWorkloadConfig, WorkloadDescriptor, WorkloadFactory,
     WorkloadRequirements, inference_workload_requirements, strict_decode, validate_common_workload,
 };
 use crate::engine::turn_execution::RequestExecutorFactory;
@@ -141,6 +141,35 @@ fn resolve_native_execution(
 }
 
 use crate::engine::sidecar_input::{CONTENT_SERVER_SIDECAR_ID, ContentServerSpec};
+
+/// Dispatch a workload run onto the dynosim virtual-clock transport, or fail
+/// closed when the runtime is built without the `dynosim` feature.
+///
+/// The `None` arm of every native scheduled/graph validate/prepare match hits
+/// the identical cfg-gated shape: forward to the offline module when the feature
+/// is compiled in (the dynosim functions do not exist otherwise, so the call
+/// must stay under `#[cfg(feature = "dynosim")]`), and otherwise `bail!` that the
+/// transport does not support the workload. Centralizing the gate and the bail
+/// message keeps that trap in one place; the genuinely workload-specific `Some`
+/// arms stay inline. `$unused` reproduces the original per-arm `let _ = …` so
+/// argument liveness is unchanged under the Python-free build.
+macro_rules! dynosim_or_unsupported {
+    ($transport_id:expr, $workload:literal, $dispatch:expr, $unused:expr $(,)?) => {{
+        #[cfg(feature = "dynosim")]
+        {
+            return $dispatch;
+        }
+        #[cfg(not(feature = "dynosim"))]
+        {
+            let _ = $unused;
+            anyhow::bail!(
+                "transport {:?} does not support the {} workload",
+                $transport_id,
+                $workload,
+            );
+        }
+    }};
+}
 
 /// Register the built-in executable workloads (`scheduled`, `graph`).
 ///
@@ -233,19 +262,14 @@ impl WorkloadFactory for ScheduledWorkloadFactoryV2 {
         let workload = workload_config::<ScheduledWorkloadConfigV2>(workload, "scheduled")?;
         match resolve_native_execution(context, transport, transport_id)? {
             Some(binding) => binding.validate_run(run, context)?,
-            None => {
-                #[cfg(feature = "dynosim")]
-                return crate::engine::offline_execution::dynosim_scheduled_validate_run(
+            None => dynosim_or_unsupported!(
+                transport_id,
+                "scheduled",
+                crate::engine::offline_execution::dynosim_scheduled_validate_run(
                     run, context, transport, workload,
-                );
-                #[cfg(not(feature = "dynosim"))]
-                {
-                    let _ = run;
-                    anyhow::bail!(
-                        "transport {transport_id:?} does not support the scheduled workload"
-                    );
-                }
-            }
+                ),
+                run,
+            ),
         }
         validate_authored_tokenizer(&workload.tokenizer)
     }
@@ -263,36 +287,20 @@ impl WorkloadFactory for ScheduledWorkloadFactoryV2 {
                 let workload =
                     workload_config::<ScheduledWorkloadConfigV2>(workload.as_ref(), "scheduled")?;
                 let plan = lower_scheduled(run, context, workload, self.tokenizers.as_ref())?;
-                // A `dry_run` transport with `clock: sim` runs the deterministic
-                // virtual-time path: the SAME native execution driven under
-                // `drive_sim` on a `SimClock`, so `RunCapture`/per-record/report
-                // all flow through the normal path — only the clock differs.
-                if crate::engine::dry_run::sim_params_for(transport.as_ref()).is_some() {
-                    return crate::engine::execute::prepare_dry_run_sim_scheduled(
-                        plan,
-                        binding.executor_factory(),
-                        context,
-                    );
-                }
                 prepare_native_operation(run, context, plan, binding)
             }
-            None => {
-                #[cfg(feature = "dynosim")]
-                return crate::engine::offline_execution::prepare_dynosim_scheduled(
+            None => dynosim_or_unsupported!(
+                transport_id,
+                "scheduled",
+                crate::engine::offline_execution::prepare_dynosim_scheduled(
                     run,
                     context,
                     transport,
                     workload,
                     self.tokenizers.clone(),
-                );
-                #[cfg(not(feature = "dynosim"))]
-                {
-                    let _ = (run, context, workload);
-                    anyhow::bail!(
-                        "transport {transport_id:?} does not support the scheduled workload"
-                    );
-                }
-            }
+                ),
+                (run, context, workload),
+            ),
         }
     }
 }
@@ -359,17 +367,14 @@ impl WorkloadFactory for GraphWorkloadFactoryV2 {
                     .validate_identity(&workload.dataset)?;
                 Ok(())
             }
-            None => {
-                #[cfg(feature = "dynosim")]
-                return crate::engine::offline_execution::dynosim_graph_validate_run(
+            None => dynosim_or_unsupported!(
+                transport_id,
+                "graph",
+                crate::engine::offline_execution::dynosim_graph_validate_run(
                     run, context, transport, workload,
-                );
-                #[cfg(not(feature = "dynosim"))]
-                {
-                    let _ = run;
-                    anyhow::bail!("transport {transport_id:?} does not support the graph workload");
-                }
-            }
+                ),
+                run,
+            ),
         }
     }
 
@@ -392,34 +397,20 @@ impl WorkloadFactory for GraphWorkloadFactoryV2 {
                     self.tokenizers.as_ref(),
                     binding.clone(),
                 )?;
-                // A `dry_run` transport with `clock: sim` runs the graph replay in
-                // virtual time (SimClock + drive_sim), so a 30-minute agentic
-                // trace finishes at ~startup wall-speed — the same normal
-                // execution, only the clock differs.
-                if crate::engine::dry_run::sim_params_for(transport.as_ref()).is_some() {
-                    return crate::engine::execute::prepare_dry_run_sim_scheduled(
-                        plan,
-                        binding.executor_factory(),
-                        context,
-                    );
-                }
                 prepare_native_operation(run, context, plan, binding)
             }
-            None => {
-                #[cfg(feature = "dynosim")]
-                return crate::engine::offline_execution::prepare_dynosim_graph(
+            None => dynosim_or_unsupported!(
+                transport_id,
+                "graph",
+                crate::engine::offline_execution::prepare_dynosim_graph(
                     run,
                     context,
                     transport,
                     workload,
                     self.tokenizers.clone(),
-                );
-                #[cfg(not(feature = "dynosim"))]
-                {
-                    let _ = (run, context, workload);
-                    anyhow::bail!("transport {transport_id:?} does not support the graph workload");
-                }
-            }
+                ),
+                (run, context, workload),
+            ),
         }
     }
 }
@@ -523,9 +514,13 @@ impl WorkloadFactory for StaticAccuracyWorkloadFactoryV2 {
 fn prepare_native_operation(
     run: &AuthoredRunSpecV2,
     context: &RunContext,
-    plan: NativeRunSpec,
+    mut plan: NativeRunSpec,
     binding: Arc<dyn NativeTransportExecution>,
 ) -> Result<Box<dyn PreparedRunnerOperation>> {
+    // Stamp the resolved transport binding onto the plan so the single native
+    // driver layer can read `uses_virtual_clock()` to pick the clock/driver.
+    // (Graph lowering already sets it; setting it here makes scheduled uniform.)
+    plan.transport = Some(binding.clone());
     let report_facts = native_plan_report_facts(&plan)?;
     let request_executor = binding.executor_factory();
     let readiness = if binding.readiness_enabled() {
