@@ -174,6 +174,10 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         self._shutdown_triggered = False
         self._shutdown_lock = asyncio.Lock()
+        # Bounds the normal-completion wait on the side-channel result gates
+        # (telemetry / server metrics / accuracy) so a result message that is
+        # never published can't hang shutdown. Armed once profile results arrive.
+        self._result_watchdog_task: asyncio.Task | None = None
         self._api_enabled = False
         self._telemetry_endpoints_configured: list[str] = []
         self._telemetry_endpoints_reachable: list[str] = []
@@ -641,6 +645,8 @@ class SystemController(SignalHandlerMixin, BaseService):
             )
 
         self._profile_results_received = True
+        # Arm the watchdog now that we're waiting on the side-channel gates.
+        self._arm_result_watchdog()
         # Coordinate with telemetry results before shutdown
         await self._check_and_trigger_shutdown()
 
@@ -765,6 +771,48 @@ class SystemController(SignalHandlerMixin, BaseService):
             for rec in mp_info
         )
 
+    def _arm_result_watchdog(self) -> None:
+        """Start the side-channel result watchdog exactly once.
+
+        The normal-completion shutdown gate is event-driven: it only re-checks
+        readiness when a side-channel result message arrives. If one is never
+        published (e.g. RecordsManager's accuracy/telemetry/server-metrics publish
+        raises), the corresponding gate never clears and shutdown hangs forever.
+        This bounds that wait.
+        """
+        if self._result_watchdog_task is not None or self._shutdown_triggered:
+            return
+        self._result_watchdog_task = asyncio.create_task(self._result_watchdog())
+
+    async def _result_watchdog(self) -> None:
+        """Force-clear still-pending side-channel gates after a bounded wait."""
+        timeout = Environment.SERVICE.SIDE_CHANNEL_RESULT_WAIT_SEC
+        await asyncio.sleep(timeout)
+        if self._shutdown_triggered:
+            return
+        pending = []
+        if self._should_wait_for_telemetry and self._telemetry_results is None:
+            pending.append("telemetry")
+        if (
+            self._should_wait_for_server_metrics
+            and self._server_metrics_results is None
+        ):
+            pending.append("server metrics")
+        if self._should_wait_for_accuracy and self._accuracy_results is None:
+            pending.append("accuracy")
+        if not pending:
+            return
+        self.warning(
+            f"Side-channel results did not arrive within {timeout}s of the profile "
+            f"results: {', '.join(pending)}. Proceeding to export without them "
+            "(their result message was likely never published)."
+        )
+        # Release only the gates that timed out; ones that arrived keep their data.
+        self._should_wait_for_telemetry = False
+        self._should_wait_for_server_metrics = False
+        self._should_wait_for_accuracy = False
+        await self._check_and_trigger_shutdown()
+
     async def _check_and_trigger_shutdown(self) -> None:
         """Check if all required results are received and trigger unified export + shutdown.
 
@@ -822,6 +870,9 @@ class SystemController(SignalHandlerMixin, BaseService):
             ):
                 self._shutdown_triggered = True
                 should_shutdown = True
+                # The gates are satisfied; the watchdog is no longer needed.
+                if self._result_watchdog_task is not None:
+                    self._result_watchdog_task.cancel()
                 self.info("All results received, initiating shutdown")
             else:
                 if not telemetry_ready_for_shutdown:
