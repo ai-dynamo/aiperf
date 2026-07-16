@@ -70,6 +70,9 @@ pub async fn compile_weka_trace_input(
     let mut plans = Vec::with_capacity(parsed.len());
     for trace in parsed {
         let requests = flatten_trace(&trace, config.max_osl)?;
+        // agentx's `HashIdRandomGenerator` scopes each hash_id by the trace's `id`
+        // (verified against real replay output), so a `local` WEKA scope maps to
+        // `trace.id`. (`_compute_file_hash` is NOT the effective scope here.)
         let hash_scope = (!trace.global_hash_scope).then_some(trace.id.as_str());
         let graph = lower_recorded_graph(
             requests,

@@ -313,6 +313,13 @@ def _project_trajectory_knobs(synthesis: dict[str, Any], run: BenchmarkRun) -> N
         getattr(run.cfg, "trajectory_start_max_ratio", 0.0) or 0.0
     )
     synthesis["t_star_random_seed"] = int(run.random_seed or 0)
+    # Recorded-graph cache-bust marker target (auto-filled from the scenario's
+    # ``require_cache_bust`` lock). The native runner reads it off the synthesis
+    # block (``TraceSynthesisSpec.cache_bust_target`` -> ``CacheBustTarget``) and
+    # prepends a first-turn marker when non-``"none"``. ``getattr`` guards
+    # configs predating the field.
+    cache_bust_target = getattr(run.cfg, "cache_bust_target", "none") or "none"
+    synthesis["cache_bust_target"] = str(cache_bust_target)
 
 
 def _authored_tokenizer_v2(cfg: Any) -> dict[str, Any]:

@@ -89,15 +89,6 @@ struct Geometry {
     missing_full_tokens: usize,
 }
 
-fn geometry(previous: &TrieNode, current: &TrieNode, block_size: usize) -> Geometry {
-    geometry_from_hashes(
-        &previous.request.hash_ids,
-        &current.request.hash_ids,
-        current.request.input_tokens,
-        block_size,
-    )
-}
-
 fn geometry_from_hashes(
     previous: &[crate::graph::recorded::BlockHash],
     current: &[crate::graph::recorded::BlockHash],
@@ -119,52 +110,235 @@ fn geometry_from_hashes(
     }
 }
 
-pub(super) fn compute_assistant_caps(
-    nodes: &[TrieNode],
+/// One role-tagged segment of the sequential reconstruction buffer.
+///
+/// Mirrors `weka_synth_buf.RoleSegment` reduced to what per-block tag emission
+/// needs: the role and the segment's block count. The synth-tail token overhang
+/// the Python `RoleSegment` also tracks is irrelevant to the block-level tag
+/// snapshot (it lives past `block_count` and the WEKA/Dynamo tail is emitted
+/// outside the trie), so it is intentionally dropped here.
+#[derive(Clone, Copy)]
+struct PlanSegment {
+    role: Role,
+    block_count: usize,
+}
+
+fn segment_block_total(segments: &[PlanSegment]) -> usize {
+    segments.iter().map(|segment| segment.block_count).sum()
+}
+
+/// Truncate the segment buffer in place so its cumulative block count == `target`.
+///
+/// Block-level equivalent of `weka_synth_buf.truncate_synth_buf_at_block`: every
+/// segment is block-aligned, so keeping the first `target` blocks either drops
+/// whole trailing segments (boundary/at-start cuts) or slices the straddling
+/// segment down to its kept blocks (mid-segment cut). Segment role and the start
+/// boundary of every surviving segment are preserved, which is what freezes a
+/// block's `(role, starts_message)` across every later turn that inherits it.
+fn truncate_segments(segments: &mut Vec<PlanSegment>, target: usize) {
+    if target == 0 {
+        segments.clear();
+        return;
+    }
+    let mut cursor = 0_usize;
+    let mut kept = Vec::with_capacity(segments.len());
+    for segment in segments.iter() {
+        if cursor >= target {
+            break;
+        }
+        let take = segment.block_count.min(target - cursor);
+        kept.push(PlanSegment {
+            role: segment.role,
+            block_count: take,
+        });
+        cursor += take;
+    }
+    *segments = kept;
+}
+
+/// Per-chain Pass-1 assistant block caps (port of
+/// `weka_synth_buf.compute_asst_block_caps`).
+///
+/// `turns` is one `(hash_ids, input_tokens)` pair per turn of a single chain, in
+/// turn order. `caps[k]` bounds the assistant block count turn `k` may attribute
+/// so a future block-aligned pull-back truncates onto a user block. Pure and
+/// role-independent, so it is stable on first emission and never relabeled —
+/// preserving cross-turn KV-cache reuse.
+fn chain_assistant_caps(
+    turns: &[(&[crate::graph::recorded::BlockHash], usize)],
     block_size: usize,
-) -> HashMap<usize, usize> {
-    let mut caps = HashMap::<usize, usize>::new();
-    let mut tiles = vec![Vec::<usize>::new(); nodes.len()];
-    let mut effective = vec![0_usize; nodes.len()];
-    for (index, node) in nodes.iter().enumerate() {
-        let Some(parent_index) = node.content_parent else {
-            let geo = geometry_from_hashes(
-                &[],
-                &node.request.hash_ids,
-                node.request.input_tokens,
-                block_size,
-            );
-            tiles[index] = vec![index; geo.covered];
+) -> Vec<Option<usize>> {
+    let bs = block_size;
+    let count = turns.len();
+    let mut caps = vec![None; count];
+    if count == 0 {
+        return caps;
+    }
+    let mut tile: Vec<usize> = Vec::new();
+    let mut effective = vec![0_usize; count];
+    for turn in 0..count {
+        let (hashes, input_tokens) = turns[turn];
+        let previous = if turn > 0 { turns[turn - 1].0 } else { &[][..] };
+        let geo = geometry_from_hashes(previous, hashes, input_tokens, bs);
+        if turn == 0 {
+            effective[0] = 0;
+            tile = vec![0; geo.covered];
             continue;
-        };
-        let parent_tiles = &tiles[parent_index];
-        let geo = geometry(&nodes[parent_index], node, block_size);
-        let inherited = geo.lcp.min(parent_tiles.len()).min(geo.covered);
-        effective[index] = inherited;
-        let new_count = geo.covered.saturating_sub(inherited);
-        if new_count == 0 && geo.missing_full_tokens == 0 && inherited >= 1 {
-            let owner = parent_tiles[inherited - 1];
-            if nodes[owner].content_parent.is_some() {
-                let bound = (inherited - 1).saturating_sub(effective[owner]);
-                caps.entry(owner)
-                    .and_modify(|current| *current = (*current).min(bound))
-                    .or_insert(bound);
+        }
+        let eff_lcp = geo.lcp.min(tile.len());
+        effective[turn] = eff_lcp;
+        let new_count = geo.covered.saturating_sub(eff_lcp);
+        let synth_tail = input_tokens % bs + geo.missing_full_tokens;
+        if new_count == 0 && synth_tail == 0 {
+            let target = eff_lcp;
+            if target >= 1 {
+                let owner = tile[target - 1];
+                // Turn-0 owners carry no assistant to cap.
+                if owner != 0
+                    && let Some(bound) = (target - 1).checked_sub(effective[owner])
+                {
+                    caps[owner] =
+                        Some(caps[owner].map_or(bound, |current: usize| current.min(bound)));
+                }
             }
         }
-        let mut node_tiles = parent_tiles[..inherited].to_vec();
-        node_tiles.extend(std::iter::repeat_n(index, new_count));
-        tiles[index] = node_tiles;
+        tile.truncate(eff_lcp);
+        tile.extend(std::iter::repeat_n(turn, new_count));
     }
     caps
+}
+
+/// Plan the heuristic `(role, starts_message)` tags for one chain by replaying
+/// `weka_synth_buf.ConversationReconstructor` sequentially over its turns.
+///
+/// This is the load-bearing parity fix: the role/message-boundary structure is
+/// derived from the **immediately preceding turn of the same chain**, NOT the
+/// LCP-trie `content_parent` (which is chosen for content dedup and may point at
+/// an earlier turn on a pull-back). On a pull-back turn the two disagree: the
+/// trie parent's larger recorded output would size a longer assistant run,
+/// mislabeling the blocks agentx hands back to the trailing user. Planning per
+/// chain against turn `k-1` reproduces agentx's exact per-block roles and its
+/// segment boundaries (including two adjacent same-role messages), which the
+/// server's chat template + cross-boundary BPE weight into the ISL.
+fn plan_chain_tags(
+    chain_indices: &[usize],
+    nodes: &[TrieNode],
+    block_size: usize,
+    all_tags: &mut [Vec<BlockTag>],
+    inherited_by_node: &mut [usize],
+) {
+    let bs = block_size;
+    let turns: Vec<(&[crate::graph::recorded::BlockHash], usize)> = chain_indices
+        .iter()
+        .map(|&index| {
+            (
+                nodes[index].request.hash_ids.as_slice(),
+                nodes[index].request.input_tokens,
+            )
+        })
+        .collect();
+    let caps = chain_assistant_caps(&turns, bs);
+    let mut segments: Vec<PlanSegment> = Vec::new();
+    for (turn, &node_index) in chain_indices.iter().enumerate() {
+        let node = &nodes[node_index];
+        let input_tokens = node.request.input_tokens;
+        let hashes = node.request.hash_ids.as_slice();
+        let covered = hashes.len().min(input_tokens / bs);
+        if turn == 0 {
+            segments.clear();
+            // Turn 0: a merged tool+system prefix (`weka_synth_buf.init_turn_0`)
+            // becomes one `system` segment of `ceil((tool+system)/bs)` blocks
+            // (clamped to covered); the remainder is the user segment. The WEKA
+            // adapter does not yet plumb per-trace tool/system token counts, so
+            // they are zero here (0/0 captures are all-user, as in agentx), and
+            // this collapses to a single user segment. Plumbing the trace's
+            // tool/system counts is the follow-up that generalizes the merge.
+            let tool_system_tokens = 0_usize;
+            let prefix_blocks = if tool_system_tokens > 0 {
+                tool_system_tokens.div_ceil(bs).min(covered)
+            } else {
+                0
+            };
+            if prefix_blocks > 0 {
+                segments.push(PlanSegment {
+                    role: Role::System,
+                    block_count: prefix_blocks,
+                });
+            }
+            let user_blocks = covered - prefix_blocks;
+            if user_blocks > 0 || segments.is_empty() {
+                segments.push(PlanSegment {
+                    role: Role::User,
+                    block_count: user_blocks,
+                });
+            }
+            inherited_by_node[node_index] = 0;
+        } else {
+            let previous = &nodes[chain_indices[turn - 1]];
+            let geo = geometry_from_hashes(&previous.request.hash_ids, hashes, input_tokens, bs);
+            let synth_tail = input_tokens % bs + geo.missing_full_tokens;
+            let eff_lcp = geo.lcp.min(covered).min(segment_block_total(&segments));
+            truncate_segments(&mut segments, eff_lcp);
+            inherited_by_node[node_index] = eff_lcp;
+            let new_count = covered.saturating_sub(eff_lcp);
+            let previous_output = previous.request.output_tokens;
+            let mut assistant = if previous_output > 0 {
+                previous_output.div_ceil(bs)
+            } else {
+                0
+            };
+            // Context-loss rule: if the truncation removed every user segment the
+            // conversation resumes at a user turn, so the whole new region is user.
+            if !segments.iter().any(|segment| segment.role == Role::User) {
+                assistant = 0;
+            }
+            assistant = assistant.min(new_count);
+            if let Some(Some(cap)) = caps.get(turn) {
+                assistant = assistant.min(*cap);
+            }
+            // Trailing-user invariant: only hand the final new block back to the
+            // user when there is no synth tail to seed a trailing user segment
+            // (`synth_tail == 0`). This is the guard the trie planner was missing.
+            if synth_tail == 0 && assistant == new_count && assistant > 0 {
+                assistant -= 1;
+            }
+            if assistant > 0 {
+                segments.push(PlanSegment {
+                    role: Role::Assistant,
+                    block_count: assistant,
+                });
+            }
+            let user_blocks = new_count - assistant;
+            if user_blocks * bs + synth_tail > 0 {
+                segments.push(PlanSegment {
+                    role: Role::User,
+                    block_count: user_blocks,
+                });
+            }
+        }
+        let mut tags = Vec::with_capacity(covered);
+        for segment in &segments {
+            for block in 0..segment.block_count {
+                tags.push(BlockTag {
+                    role: segment.role,
+                    starts_message: block == 0,
+                });
+            }
+        }
+        all_tags[node_index] = tags;
+    }
 }
 
 pub(super) fn assign_block_tags(
     nodes: &[TrieNode],
     block_size: usize,
-    caps: &HashMap<usize, usize>,
 ) -> Result<(Vec<Vec<BlockTag>>, Vec<usize>), RecordedTraceError> {
     let mut all_tags: Vec<Vec<BlockTag>> = vec![Vec::new(); nodes.len()];
     let mut inherited_by_node = vec![0_usize; nodes.len()];
+    // Chains whose blocks are planned by the sequential reconstructor. Grouped in
+    // flatten order, which is turn order within each chain.
+    let mut heuristic_chains: Vec<(String, Vec<usize>)> = Vec::new();
+    let mut chain_slot: HashMap<&str, usize> = HashMap::new();
     for (index, node) in nodes.iter().enumerate() {
         // Ground-truth path: the `aiperf_trace` adapter supplies exact per-block
         // `(role, starts_message)` tags from real message boundaries, so we skip
@@ -195,59 +369,21 @@ pub(super) fn assign_block_tags(
             all_tags[index] = explicit.clone();
             continue;
         }
-        let (parent_hashes, parent_output, parent_tags) = match node.content_parent {
-            Some(parent) => (
-                nodes[parent].request.hash_ids.as_slice(),
-                nodes[parent].request.output_tokens,
-                all_tags[parent].as_slice(),
-            ),
-            None => (&[][..], 0, &[][..]),
-        };
-        let geo = geometry_from_hashes(
-            parent_hashes,
-            &node.request.hash_ids,
-            node.request.input_tokens,
+        let chain = node.request.chain_id.as_str();
+        let slot = *chain_slot.entry(chain).or_insert_with(|| {
+            heuristic_chains.push((node.request.chain_id.clone(), Vec::new()));
+            heuristic_chains.len() - 1
+        });
+        heuristic_chains[slot].1.push(index);
+    }
+    for (_chain_id, chain_indices) in &heuristic_chains {
+        plan_chain_tags(
+            chain_indices,
+            nodes,
             block_size,
+            &mut all_tags,
+            &mut inherited_by_node,
         );
-        let inherited = geo.lcp.min(parent_tags.len()).min(geo.covered);
-        inherited_by_node[index] = inherited;
-        let parent_has_user = parent_tags[..inherited]
-            .iter()
-            .any(|tag| tag.role == Role::User);
-        let new_count = geo.covered.saturating_sub(inherited);
-        let mut assistant = if parent_has_user && parent_output > 0 {
-            parent_output.div_ceil(block_size).min(new_count)
-        } else {
-            0
-        };
-        if let Some(cap) = caps.get(&index) {
-            assistant = assistant.min(*cap);
-        }
-        if assistant == new_count && assistant > 0 {
-            assistant -= 1;
-        }
-        let mut tags = parent_tags[..inherited].to_vec();
-        for offset in 0..new_count {
-            let role = if offset < assistant {
-                Role::Assistant
-            } else {
-                Role::User
-            };
-            tags.push(BlockTag {
-                role,
-                starts_message: offset == 0
-                    || (offset > 0 && tags.last().is_some_and(|previous| previous.role != role)),
-            });
-        }
-        if tags.len() != geo.covered {
-            return Err(RecordedTraceError(format!(
-                "node {:?}: frozen tag count {} differs from covered block count {}",
-                node.request.node_id,
-                tags.len(),
-                geo.covered
-            )));
-        }
-        all_tags[index] = tags;
     }
     Ok((all_tags, inherited_by_node))
 }
@@ -436,8 +572,7 @@ mod parity_tests {
         let mut child = node("child", 1, &[1, 2, 3, 4], 64, 1);
         child.content_parent = Some(0);
         let nodes = vec![parent, child];
-        let caps = compute_assistant_caps(&nodes, 16);
-        let (tags, inherited) = assign_block_tags(&nodes, 16, &caps).unwrap();
+        let (tags, inherited) = assign_block_tags(&nodes, 16).unwrap();
         assert_eq!(inherited, [0, 2]);
         assert_eq!(tags[0].len(), 2);
         assert!(tags[0].iter().all(|tag| tag.role == Role::User));
@@ -567,8 +702,7 @@ mod tests {
             node("child", 1, &[1, 2, 3], 6, 1),
         ];
         nodes[1].content_parent = Some(0);
-        let caps = compute_assistant_caps(&nodes, 2);
-        let (tags, inherited) = assign_block_tags(&nodes, 2, &caps).unwrap();
+        let (tags, inherited) = assign_block_tags(&nodes, 2).unwrap();
         assert_eq!(inherited[1], 1);
         assert_eq!(tags[1][1].role, Role::Assistant);
         assert_eq!(tags[1][2].role, Role::User);
@@ -583,8 +717,7 @@ mod tests {
             node("child", 1, &[1, 2, 3, 4, 5], 10, 1),
         ];
         nodes[1].content_parent = Some(0);
-        let caps = compute_assistant_caps(&nodes, 2);
-        let (tags, inherited) = assign_block_tags(&nodes, 2, &caps).unwrap();
+        let (tags, inherited) = assign_block_tags(&nodes, 2).unwrap();
         assert_eq!(tags[0].len(), 2);
         assert_eq!(inherited[1], 2);
         assert_eq!(tags[1].len(), 5);
