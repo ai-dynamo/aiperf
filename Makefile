@@ -36,6 +36,14 @@
 
 SHELL := /bin/bash
 
+# Default the make-driven workflow to the native Rust execution path. These are
+# already the code defaults (src/aiperf/common/environment.py); exporting them
+# here makes every make-invoked `aiperf` run use the Rust front door + hot path
+# unless the caller overrides them. Set AIPERF_NATIVE=0 / AIPERF_RUNTIME_ENGINE=python
+# to fall back to the legacy pure-Python frontend and service mesh.
+export AIPERF_NATIVE ?= 1
+export AIPERF_RUNTIME_ENGINE ?= rust
+
 PROJECT_NAME ?= AIPerf
 
 # The path to the virtual environment
@@ -154,7 +162,8 @@ install-app: bundle-cli #? install the project in editable mode (with the intern
 	$(activate_venv) && uv pip install -e ".[dev]"
 
 native-cli: #? build the native Rust `aiperf` binary (aiperf-cli) + the runner.
-	cargo build --release -p aiperf-cli -p aiperf-runner
+	cargo build --release -p aiperf-cli
+	cargo build --release -p aiperf-runner $(RUNNER_FEATURES)
 
 install-native: native-cli #? install the pure-Rust `aiperf` + runner side-by-side into dist/native-bin (no Python on the profile/config path).
 	mkdir -p dist/native-bin
@@ -165,11 +174,12 @@ install-native: native-cli #? install the pure-Rust `aiperf` + runner side-by-si
 	@echo "Then: aiperf profile --model M --url 127.0.0.1:8000 --endpoint-type chat --concurrency 1,2,4 --request-count 100"
 
 # RUNNER_FEATURES selects the runner profile, mirroring the Dockerfile's
-# AIPERF_RUNNER_PROFILE knob. Default (empty) = full-fat crate defaults
-# (dynosim + parquet), which needs the sibling dynamo-aiperf-native checkout.
-# Online-only (no dynosim, no sibling):
-#   make bundle-runner RUNNER_FEATURES="--no-default-features --features parquet"
-RUNNER_FEATURES ?=
+# AIPERF_RUNNER_PROFILE knob. Default = online-only (no dynosim, parquet only),
+# which builds the native Rust path WITHOUT the sibling dynamo-aiperf-native
+# checkout. For the full-fat crate defaults (dynosim + parquet, needs the
+# sibling checkout for offline/online Dynamo replay):
+#   make bundle-runner RUNNER_FEATURES=""
+RUNNER_FEATURES ?= --no-default-features --features parquet
 bundle-runner: #? build the aiperf-runner (RUNNER_FEATURES-selectable) and intern it at src/aiperf/_bin/ for packaging.
 	cargo build --release -p aiperf-runner $(RUNNER_FEATURES)
 	mkdir -p src/aiperf/_bin
