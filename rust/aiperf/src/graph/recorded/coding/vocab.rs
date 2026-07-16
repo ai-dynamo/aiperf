@@ -7,6 +7,30 @@
 //! modules, classes, methods, file paths, routes, error messages, language
 //! imports, and ML/CUDA content.
 
+/// `_file_pool(language)`: language-specific file lists for the per-language
+/// conversation renderers, or `_FILE_PATHS` (`FILES`) when `lang` is `None`
+/// (the pool path) or an unknown index. `Some(0..=3)` = python/go/rust/typescript.
+pub(super) fn file_pool(lang: Option<usize>) -> &'static [&'static str] {
+    match lang {
+        Some(0) => PYTHON_FILE_PATHS,
+        Some(1) => GO_FILE_PATHS,
+        Some(2) => RUST_FILE_PATHS,
+        Some(3) => TS_FILE_PATHS,
+        _ => FILES,
+    }
+}
+
+/// Map a `_LANGUAGES` name (`"python"`/`"go"`/`"rust"`/`"typescript"`) to its
+/// index, the language selector threaded into the per-language sub-generators.
+pub(super) fn lang_index(name: &str) -> usize {
+    match name {
+        "go" => 1,
+        "rust" => 2,
+        "typescript" => 3,
+        _ => 0,
+    }
+}
+
 pub(super) const MODULES: &[&str] = &[
     "auth",
     "cache",

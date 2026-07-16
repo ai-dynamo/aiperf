@@ -16,7 +16,7 @@ use super::prompts_conv::{
     FOLLOWUP_QUESTIONS, LANGUAGES, conv_bridge, conv_ids,
 };
 use super::templates::TemplateRenderer;
-use super::vocab::TABLES;
+use super::vocab::{TABLES, lang_index};
 use super::{cicd_docs, errors_diff, json_blocks, sql, tool, tool_long};
 use crate::graph::recorded::RecordedTraceError;
 
@@ -28,25 +28,25 @@ const DIGITS: &[&str] = &["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
 /// `_gen_conv_migration`: multi-file migration — search usages, update each file,
 /// run tests.
 pub(super) fn conv_migration(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
-    let _lang = r.pick(LANGUAGES)?;
+    let lang = Some(lang_index(r.pick(LANGUAGES)?));
     let ids = conv_ids(r)?;
     let cls = ids.cls;
     let method = ids.method;
     let module = ids.module;
 
-    let search_verbose = tool_long::tool_search_verbose(r)?;
+    let search_verbose = tool_long::tool_search_verbose(r, lang)?;
     let b1 = conv_bridge(r, BRIDGE_ANALYZE, &ids)?;
-    let read_long = tool_long::tool_read_long(r)?;
+    let read_long = tool_long::tool_read_long(r, lang)?;
     let b2 = conv_bridge(r, BRIDGE_ANALYZE, &ids)?;
-    let read1 = tool::tool_read(r)?;
+    let read1 = tool::tool_read(r, lang)?;
     let b3 = conv_bridge(r, BRIDGE_ANALYZE, &ids)?;
-    let read2 = tool::tool_read(r)?;
-    let edit1 = tool::tool_edit(r)?;
-    let edit2 = tool::tool_edit(r)?;
-    let edit3 = tool::tool_edit(r)?;
-    let edit4 = tool::tool_edit(r)?;
+    let read2 = tool::tool_read(r, lang)?;
+    let edit1 = tool::tool_edit(r, lang)?;
+    let edit2 = tool::tool_edit(r, lang)?;
+    let edit3 = tool::tool_edit(r, lang)?;
+    let edit4 = tool::tool_edit(r, lang)?;
     let b4 = conv_bridge(r, BRIDGE_TEST, &ids)?;
-    let bash_verbose = tool_long::tool_bash_verbose(r)?;
+    let bash_verbose = tool_long::tool_bash_verbose(r, lang)?;
     let b5 = conv_bridge(r, FOLLOWUP_QUESTIONS, &ids)?;
     let b6 = conv_bridge(r, BRIDGE_EXPLAIN, &ids)?;
     let b7 = conv_bridge(r, BRIDGE_SUMMARY, &ids)?;
@@ -80,11 +80,11 @@ pub(super) fn conv_migration(r: &mut TemplateRenderer) -> Result<String, Recorde
 /// `_gen_conv_deploy`: deployment troubleshooting — inspect pod, config, logs,
 /// fix, verify.
 pub(super) fn conv_deploy(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
-    let _lang = r.pick(LANGUAGES)?;
+    let lang = Some(lang_index(r.pick(LANGUAGES)?));
     let ids = conv_ids(r)?;
     let module = ids.module;
 
-    let config_block = cicd_docs::config_file(r)?;
+    let config_block = cicd_docs::config_file(r, lang)?;
     let json_resp = json_blocks::render(r)?;
 
     let b_deploy1 = conv_bridge(r, BRIDGE_DEPLOY, &ids)?;
@@ -96,10 +96,10 @@ pub(super) fn conv_deploy(r: &mut TemplateRenderer) -> Result<String, RecordedTr
     let d2 = r.pick(DIGITS)?;
     let n2 = r.number(1000, 9999)?;
     let b_deploy2 = conv_bridge(r, BRIDGE_DEPLOY, &ids)?;
-    let et = errors_diff::error_traceback(r)?;
+    let et = errors_diff::error_traceback(r, lang)?;
     let b_fix = conv_bridge(r, BRIDGE_FIX, &ids)?;
-    let edit1 = tool::tool_edit(r)?;
-    let edit2 = tool::tool_edit(r)?;
+    let edit1 = tool::tool_edit(r, lang)?;
+    let edit2 = tool::tool_edit(r, lang)?;
     let b_test = conv_bridge(r, BRIDGE_TEST, &ids)?;
     let b_summary = conv_bridge(r, BRIDGE_SUMMARY, &ids)?;
 
@@ -188,23 +188,23 @@ Let me verify the health check is passing now.
 
 /// `_gen_conv_security`: vulnerability investigation — find, analyze, fix, test.
 pub(super) fn conv_security(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
-    let _lang = r.pick(LANGUAGES)?;
+    let lang = Some(lang_index(r.pick(LANGUAGES)?));
     let ids = conv_ids(r)?;
     let module = ids.module;
     let method = ids.method;
     let var = ids.var;
 
     let b1 = conv_bridge(r, BRIDGE_SECURITY, &ids)?;
-    let read_long = tool_long::tool_read_long(r)?;
+    let read_long = tool_long::tool_read_long(r, lang)?;
     let b2 = conv_bridge(r, BRIDGE_ANALYZE, &ids)?;
-    let search_verbose = tool_long::tool_search_verbose(r)?;
+    let search_verbose = tool_long::tool_search_verbose(r, lang)?;
     let b3 = conv_bridge(r, BRIDGE_ARCHITECTURE_TRADEOFF, &ids)?;
     let b4 = conv_bridge(r, BRIDGE_SECURITY, &ids)?;
-    let edit1 = tool::tool_edit(r)?;
+    let edit1 = tool::tool_edit(r, lang)?;
     let b5 = conv_bridge(r, BRIDGE_WRITE_TEST, &ids)?;
-    let edit2 = tool::tool_edit(r)?;
+    let edit2 = tool::tool_edit(r, lang)?;
     let b6 = conv_bridge(r, BRIDGE_TEST, &ids)?;
-    let bash_verbose = tool_long::tool_bash_verbose(r)?;
+    let bash_verbose = tool_long::tool_bash_verbose(r, lang)?;
     let b7 = conv_bridge(r, BRIDGE_SUMMARY, &ids)?;
 
     let turns = [
@@ -226,23 +226,23 @@ pub(super) fn conv_security(r: &mut TemplateRenderer) -> Result<String, Recorded
 /// `_gen_conv_distributed`: distributed-systems debugging — inconsistency,
 /// analyze replication, fix consensus.
 pub(super) fn conv_distributed(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
-    let _lang = r.pick(LANGUAGES)?;
+    let lang = Some(lang_index(r.pick(LANGUAGES)?));
     let ids = conv_ids(r)?;
     let module = ids.module;
     let var = ids.var;
     let cls = ids.cls;
     let method = ids.method;
 
-    let config_block = cicd_docs::config_file(r)?;
+    let config_block = cicd_docs::config_file(r, lang)?;
 
     let b1 = conv_bridge(r, BRIDGE_DISTRIBUTED, &ids)?;
     let b2 = conv_bridge(r, BRIDGE_ANALYZE, &ids)?;
-    let search_verbose = tool_long::tool_search_verbose(r)?;
+    let search_verbose = tool_long::tool_search_verbose(r, lang)?;
     let b3 = conv_bridge(r, BRIDGE_ARCHITECTURE_TRADEOFF, &ids)?;
     let b4 = conv_bridge(r, BRIDGE_DISTRIBUTED, &ids)?;
-    let edit = tool::tool_edit(r)?;
+    let edit = tool::tool_edit(r, lang)?;
     let b5 = conv_bridge(r, BRIDGE_TEST, &ids)?;
-    let bash_verbose = tool_long::tool_bash_verbose(r)?;
+    let bash_verbose = tool_long::tool_bash_verbose(r, lang)?;
     let b6 = conv_bridge(r, FOLLOWUP_QUESTIONS, &ids)?;
     let b7 = conv_bridge(r, BRIDGE_DISTRIBUTED, &ids)?;
     let b8 = conv_bridge(r, BRIDGE_SUMMARY, &ids)?;
@@ -276,22 +276,22 @@ pub(super) fn conv_distributed(r: &mut TemplateRenderer) -> Result<String, Recor
 /// `_gen_conv_observability`: observability gap — add tracing, metrics,
 /// structured logging.
 pub(super) fn conv_observability(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
-    let _lang = r.pick(LANGUAGES)?;
+    let lang = Some(lang_index(r.pick(LANGUAGES)?));
     let ids = conv_ids(r)?;
     let module = ids.module;
     let cls = ids.cls;
     let method = ids.method;
 
-    let config_block = cicd_docs::config_file(r)?;
+    let config_block = cicd_docs::config_file(r, lang)?;
 
     let b1 = conv_bridge(r, BRIDGE_ANALYZE, &ids)?;
-    let read_long = tool_long::tool_read_long(r)?;
+    let read_long = tool_long::tool_read_long(r, lang)?;
     let b2 = conv_bridge(r, BRIDGE_OBSERVABILITY, &ids)?;
-    let search_verbose = tool_long::tool_search_verbose(r)?;
+    let search_verbose = tool_long::tool_search_verbose(r, lang)?;
     let b3 = conv_bridge(r, BRIDGE_OBSERVABILITY, &ids)?;
-    let edit1 = tool::tool_edit(r)?;
+    let edit1 = tool::tool_edit(r, lang)?;
     let b4 = conv_bridge(r, BRIDGE_OBSERVABILITY, &ids)?;
-    let edit2 = tool::tool_edit(r)?;
+    let edit2 = tool::tool_edit(r, lang)?;
     let b5 = conv_bridge(r, BRIDGE_TEST, &ids)?;
     let json_resp = json_blocks::render(r)?;
     let b6 = conv_bridge(r, BRIDGE_SUMMARY, &ids)?;
@@ -333,7 +333,7 @@ Let me also add the telemetry configuration.
 /// `_gen_conv_db_optimize`: database optimization — EXPLAIN, read ORM code, add
 /// index, benchmark.
 pub(super) fn conv_db_optimize(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
-    let _lang = r.pick(LANGUAGES)?;
+    let lang = Some(lang_index(r.pick(LANGUAGES)?));
     let ids = conv_ids(r)?;
     let table = r.pick(TABLES)?;
     let sql_block = sql::query(r)?;
@@ -341,12 +341,12 @@ pub(super) fn conv_db_optimize(r: &mut TemplateRenderer) -> Result<String, Recor
     let var = ids.var;
 
     let b1 = conv_bridge(r, BRIDGE_DATA_ARCHITECTURE, &ids)?;
-    let read_long = tool_long::tool_read_long(r)?;
+    let read_long = tool_long::tool_read_long(r, lang)?;
     let b2 = conv_bridge(r, BRIDGE_ARCHITECTURE_TRADEOFF, &ids)?;
     let b3 = conv_bridge(r, BRIDGE_DATA_ARCHITECTURE, &ids)?;
-    let edit = tool::tool_edit(r)?;
+    let edit = tool::tool_edit(r, lang)?;
     let b4 = conv_bridge(r, BRIDGE_TEST, &ids)?;
-    let bash_verbose = tool_long::tool_bash_verbose(r)?;
+    let bash_verbose = tool_long::tool_bash_verbose(r, lang)?;
     let b5 = conv_bridge(r, BRIDGE_ARCHITECTURE_TRADEOFF, &ids)?;
     let b6 = conv_bridge(r, BRIDGE_SUMMARY, &ids)?;
 
@@ -380,27 +380,27 @@ Let me run EXPLAIN ANALYZE to see the query plan.
 pub(super) fn conv_architecture_review(
     r: &mut TemplateRenderer,
 ) -> Result<String, RecordedTraceError> {
-    let _lang = r.pick(LANGUAGES)?;
+    let lang = Some(lang_index(r.pick(LANGUAGES)?));
     let ids = conv_ids(r)?;
     let module = ids.module;
     let cls = ids.cls;
 
     let b1 = conv_bridge(r, BRIDGE_ANALYZE, &ids)?;
-    let read_long1 = tool_long::tool_read_long(r)?;
+    let read_long1 = tool_long::tool_read_long(r, lang)?;
     let b2 = conv_bridge(r, BRIDGE_ANALYZE, &ids)?;
-    let read_long2 = tool_long::tool_read_long(r)?;
+    let read_long2 = tool_long::tool_read_long(r, lang)?;
     let b3 = conv_bridge(r, BRIDGE_ANALYZE, &ids)?;
-    let search_verbose = tool_long::tool_search_verbose(r)?;
+    let search_verbose = tool_long::tool_search_verbose(r, lang)?;
     let b4 = conv_bridge(r, BRIDGE_ARCHITECTURE_TRADEOFF, &ids)?;
     let b5 = conv_bridge(r, BRIDGE_ARCHITECTURE_TRADEOFF, &ids)?;
     let b6 = conv_bridge(r, BRIDGE_REFACTOR, &ids)?;
-    let edit1 = tool::tool_edit(r)?;
+    let edit1 = tool::tool_edit(r, lang)?;
     let b7 = conv_bridge(r, BRIDGE_ARCHITECTURE_TRADEOFF, &ids)?;
     let b8 = conv_bridge(r, BRIDGE_PERF, &ids)?;
     let b9 = conv_bridge(r, BRIDGE_FIX, &ids)?;
-    let edit2 = tool::tool_edit(r)?;
+    let edit2 = tool::tool_edit(r, lang)?;
     let b10 = conv_bridge(r, BRIDGE_TEST, &ids)?;
-    let bash_verbose = tool_long::tool_bash_verbose(r)?;
+    let bash_verbose = tool_long::tool_bash_verbose(r, lang)?;
     let b11 = conv_bridge(r, BRIDGE_SUMMARY, &ids)?;
 
     let turns = vec![
@@ -430,25 +430,25 @@ pub(super) fn conv_architecture_review(
 pub(super) fn conv_incident_response(
     r: &mut TemplateRenderer,
 ) -> Result<String, RecordedTraceError> {
-    let _lang = r.pick(LANGUAGES)?;
+    let lang = Some(lang_index(r.pick(LANGUAGES)?));
     let ids = conv_ids(r)?;
     let module = ids.module;
     let error = ids.error;
     let cls = ids.cls;
     let method = ids.method;
 
-    let config_block = cicd_docs::config_file(r)?;
-    let error_block = errors_diff::error_traceback(r)?;
+    let config_block = cicd_docs::config_file(r, lang)?;
+    let error_block = errors_diff::error_traceback(r, lang)?;
 
     let b1 = conv_bridge(r, BRIDGE_DEPLOY, &ids)?;
     let b2 = conv_bridge(r, BRIDGE_ARCHITECTURE_TRADEOFF, &ids)?;
     let b3 = conv_bridge(r, BRIDGE_FIX, &ids)?;
-    let edit1 = tool::tool_edit(r)?;
-    let edit2 = tool::tool_edit(r)?;
+    let edit1 = tool::tool_edit(r, lang)?;
+    let edit2 = tool::tool_edit(r, lang)?;
     let b4 = conv_bridge(r, BRIDGE_OBSERVABILITY, &ids)?;
-    let edit3 = tool::tool_edit(r)?;
+    let edit3 = tool::tool_edit(r, lang)?;
     let b5 = conv_bridge(r, BRIDGE_TEST, &ids)?;
-    let bash_verbose = tool_long::tool_bash_verbose(r)?;
+    let bash_verbose = tool_long::tool_bash_verbose(r, lang)?;
 
     let turns = vec![
         format!(

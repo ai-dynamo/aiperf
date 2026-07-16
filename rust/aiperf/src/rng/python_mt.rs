@@ -157,6 +157,16 @@ impl PythonMt19937 {
         y
     }
 
+    /// `Random.random()` (`_randommodule.c` `random_random` / `genrand_res53`):
+    /// draw two tempered words, take the high 27 and 26 bits respectively, and
+    /// combine into a 53-bit-mantissa double in `[0.0, 1.0)`:
+    /// `(a * 2^26 + b) / 2^53` with `a = next_u32() >> 5`, `b = next_u32() >> 6`.
+    pub fn random(&mut self) -> f64 {
+        let a = (self.next_u32() >> 5) as f64;
+        let b = (self.next_u32() >> 6) as f64;
+        (a * 67_108_864.0 + b) * (1.0 / 9_007_199_254_740_992.0)
+    }
+
     /// `Random.getrandbits(k)` for `0 < k <= 32`: `genrand_uint32() >> (32 - k)`.
     ///
     /// The recorded-graph `choice` never needs more than a corpus-size worth of

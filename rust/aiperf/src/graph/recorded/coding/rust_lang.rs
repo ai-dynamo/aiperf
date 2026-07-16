@@ -81,7 +81,7 @@ fn rust_http_handler(r: &mut TemplateRenderer) -> Result<String, RecordedTraceEr
 use serde::{{Deserialize, Serialize}};
 use std::sync::Arc;
 
-use crate::graph::{mod_}::{cls};
+use crate::{mod_}::{cls};
 
 #[derive(Debug, Deserialize)]
 pub struct {m1_title}Request {{{{

@@ -27,7 +27,8 @@ mod typescript;
 mod vocab;
 
 use crate::dataset::TextTokenizer;
-use crate::rng::{RngRoot, namespace};
+use crate::rng::PythonRandomGenerator;
+use crate::rng::namespace;
 
 use self::templates::{TemplateKind, TemplateRenderer};
 use super::RecordedTraceError;
@@ -36,9 +37,11 @@ use super::RecordedTraceError;
 /// (the native analogue of the Python generator's `_pool_scale`). Fractional
 /// values scale down — `0.25` gives roughly a quarter-size pool — via truncation,
 /// like Python's `int(count * scale)`. At `1.0` the pool is ~270k tokens; the
-/// default `4.0` yields a >1M-token corpus so block sampling draws from a large,
-/// structurally varied space.
-const POOL_SCALE: f64 = 4.0;
+/// default `1.0` matches agentx's weka/trace path, which constructs
+/// `CodingContentGenerator` with no `pool_tokens_target`, so `_pool_scale` clamps
+/// to `1.0` (`max(1.0, 10_000_000 / 10_000_000)`). Byte-exact corpus parity
+/// requires the SAME scale as agentx, so this is `1.0`, not a larger pool.
+const POOL_SCALE: f64 = 1.0;
 
 const TOOL_POOL_BLOCK_COUNTS: &[(TemplateKind, usize)] = &[
     (TemplateKind::Python, 45),
@@ -82,9 +85,12 @@ fn build_scaled_corpus(
 ) -> Result<Vec<u32>, RecordedTraceError> {
     // Truncating multiply, matching the Python generator's `int(count * scale)`.
     let scaled = |count: usize| (count as f64 * scale) as usize;
-    let template_seed = RngRoot::new(Some(root_seed))
-        .derive_seed(namespace::DATASET_CODING_CONTENT_TEMPLATE)
-        .expect("a seeded RNG root always derives a concrete stream seed");
+    // agentx derives `_template_rng` via `rng.derive("dataset.coding_content.template")`,
+    // i.e. sha256(f"{root_seed}:{identifier}")[:8] — NOT the BLAKE3 RngRoot algebra.
+    let template_seed = PythonRandomGenerator::derive_child_seed(
+        root_seed,
+        namespace::DATASET_CODING_CONTENT_TEMPLATE,
+    );
     let mut renderer = TemplateRenderer::new(template_seed);
     let capacity: usize = TOOL_POOL_BLOCK_COUNTS
         .iter()
