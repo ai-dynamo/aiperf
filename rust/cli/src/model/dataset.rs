@@ -255,6 +255,10 @@ pub struct FileDataset {
     /// emits `records` when `path` is absent).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub records: Option<serde_json::Value>,
+    /// Recorded-graph synthesis block (present when a `--synthesis-*` flag is set;
+    /// the full `SynthesisConfig` + trajectory/t* knobs, built in `load`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub synthesis: Option<serde_json::Value>,
 }
 
 /// A named public dataset expanded to explicit source coordinates. Ported from

@@ -184,6 +184,31 @@ pub struct ProfileFlags {
     #[arg(long = "parameter-sweep-cooldown-seconds")]
     pub parameter_sweep_cooldown_seconds: Option<f64>,
 
+    /// Trace synthesis: timestamp speedup ratio (`--synthesis-speedup-ratio`).
+    #[arg(long = "synthesis-speedup-ratio")]
+    pub synthesis_speedup_ratio: Option<f64>,
+    /// Trace synthesis: prefix branch length multiplier (`--synthesis-prefix-len-multiplier`).
+    #[arg(long = "synthesis-prefix-len-multiplier")]
+    pub synthesis_prefix_len_multiplier: Option<f64>,
+    /// Trace synthesis: radix-tree root count multiplier (`--synthesis-prefix-root-multiplier`).
+    #[arg(long = "synthesis-prefix-root-multiplier")]
+    pub synthesis_prefix_root_multiplier: Option<i64>,
+    /// Trace synthesis: prompt (leaf) length multiplier (`--synthesis-prompt-len-multiplier`).
+    #[arg(long = "synthesis-prompt-len-multiplier")]
+    pub synthesis_prompt_len_multiplier: Option<f64>,
+    /// Trace synthesis: output length multiplier (`--synthesis-output-len-multiplier`).
+    #[arg(long = "synthesis-output-len-multiplier")]
+    pub synthesis_output_len_multiplier: Option<f64>,
+    /// Trace synthesis: max input length filter (`--synthesis-max-isl`).
+    #[arg(long = "synthesis-max-isl")]
+    pub synthesis_max_isl: Option<i64>,
+    /// Trace synthesis: max output length filter (`--synthesis-max-osl`).
+    #[arg(long = "synthesis-max-osl")]
+    pub synthesis_max_osl: Option<i64>,
+    /// Trace synthesis: idle-gap cap, seconds (`--synthesis-idle-gap-cap`).
+    #[arg(long = "synthesis-idle-gap-cap")]
+    pub synthesis_idle_gap_cap: Option<f64>,
+
     /// Trials per variation (`--num-profile-runs`); `>1` repeats each run.
     #[arg(long = "num-profile-runs")]
     pub num_profile_runs: Option<u32>,

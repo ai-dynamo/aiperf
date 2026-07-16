@@ -197,6 +197,8 @@ pub(crate) struct Inputs {
     pub rankings: Option<crate::model::dataset::Rankings>,
     /// Accuracy-benchmark policy (present when `--accuracy-benchmark` is set).
     pub accuracy: Option<crate::model::config::Accuracy>,
+    /// Recorded-graph synthesis block (present when a `--synthesis-*` flag is set).
+    pub synthesis: Option<serde_json::Value>,
     /// File dataset format id (`--custom-dataset-type`).
     pub custom_dataset_type: Option<String>,
     /// Named public dataset (mutually exclusive with synthetic/file).
@@ -522,6 +524,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         agentic_cache_warmup_duration: flags.agentic_cache_warmup_duration,
         rankings: build_rankings(flags),
         accuracy: build_accuracy(flags),
+        synthesis: build_synthesis(flags),
         artifact_dir: flags
             .artifact_dir
             .clone()
@@ -658,6 +661,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             random_seed: inputs.dataset_random_seed,
             osl: inputs.osl.clone(),
             records: inputs.inline_records.clone(),
+            synthesis: inputs.synthesis.clone(),
         })
     } else {
         Dataset::Synthetic(Synthetic {
@@ -1187,6 +1191,50 @@ fn build_image_spec(flags: &ProfileFlags) -> Option<ImageSpec> {
 }
 
 /// Build the prefix-prompts block from the shared/user or pool flags.
+/// Build the recorded-graph synthesis block from the `--synthesis-*` flags
+/// (Python `_apply_synthesis` + `_project_trajectory_knobs`). Present only when a
+/// synthesis flag is set; it carries the full `SynthesisConfig` (defaults filled),
+/// the resolved sampling strategy, the trajectory-start window, and the t* seed.
+/// Only attached to a FILE dataset by the caller (synthetic runs drop it).
+fn build_synthesis(flags: &ProfileFlags) -> Option<serde_json::Value> {
+    let any = flags.synthesis_speedup_ratio.is_some()
+        || flags.synthesis_prefix_len_multiplier.is_some()
+        || flags.synthesis_prefix_root_multiplier.is_some()
+        || flags.synthesis_prompt_len_multiplier.is_some()
+        || flags.synthesis_output_len_multiplier.is_some()
+        || flags.synthesis_max_isl.is_some()
+        || flags.synthesis_max_osl.is_some()
+        || flags.synthesis_idle_gap_cap.is_some();
+    if !any {
+        return None;
+    }
+    let f = |v: f64| serde_json::Number::from_f64(v).map(serde_json::Value::Number).unwrap();
+    let mut m = serde_json::Map::new();
+    m.insert("speedup_ratio".into(), f(flags.synthesis_speedup_ratio.unwrap_or(1.0)));
+    m.insert("prefix_len_multiplier".into(), f(flags.synthesis_prefix_len_multiplier.unwrap_or(1.0)));
+    m.insert("prefix_root_multiplier".into(), serde_json::Value::from(flags.synthesis_prefix_root_multiplier.unwrap_or(1)));
+    m.insert("prompt_len_multiplier".into(), f(flags.synthesis_prompt_len_multiplier.unwrap_or(1.0)));
+    m.insert("output_len_multiplier".into(), f(flags.synthesis_output_len_multiplier.unwrap_or(1.0)));
+    // `max_isl`/`max_osl` are `None`-default (excluded when unset).
+    if let Some(v) = flags.synthesis_max_isl {
+        m.insert("max_isl".into(), serde_json::Value::from(v));
+    }
+    if let Some(v) = flags.synthesis_max_osl {
+        m.insert("max_osl".into(), serde_json::Value::from(v));
+    }
+    m.insert("idle_gap_cap_seconds".into(), f(flags.synthesis_idle_gap_cap.unwrap_or(60.0)));
+    m.insert(
+        "dataset_sampling_strategy".into(),
+        serde_json::Value::String(
+            flags.dataset_sampling_strategy.clone().unwrap_or_else(|| "sequential".to_string()),
+        ),
+    );
+    m.insert("trajectory_start_min_ratio".into(), f(flags.trajectory_start_min_ratio.unwrap_or(0.0)));
+    m.insert("trajectory_start_max_ratio".into(), f(flags.trajectory_start_max_ratio.unwrap_or(0.0)));
+    m.insert("t_star_random_seed".into(), serde_json::Value::from(flags.random_seed.unwrap_or(0)));
+    Some(serde_json::Value::Object(m))
+}
+
 /// Build the accuracy block from the `--accuracy-*` flags. Present only when
 /// `--accuracy-benchmark` is set (Python `AccuracyConfig`); `enable_cot` is
 /// tri-state (`--accuracy-enable-cot`/`--accuracy-no-enable-cot`/unset→null).

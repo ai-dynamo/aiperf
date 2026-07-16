@@ -37,6 +37,7 @@ const PORTED_CFG_SECTIONS: &[&str] = &[
     "slos",
     "sidecars",
     "accuracy",
+    "synthesis",
     "endpoint_profiles",
     "failure_policy",
     "scenario",
@@ -107,6 +108,7 @@ const FIXTURES: &[&str] = &[
     "agentic",
     "rankings",
     "accuracy",
+    "synthesis",
 ];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).
