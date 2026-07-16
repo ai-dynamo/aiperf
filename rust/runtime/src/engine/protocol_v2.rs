@@ -27,16 +27,16 @@ use crate::engine::sidecar_input::{
 };
 
 /// Authored runner protocol version.
-pub const RUNNER_PROTOCOL_V2: u32 = 2;
+pub const PROTOCOL_V2: u32 = 2;
 
 /// Open identifier resolved through a frozen runner registry.
 ///
 /// IDs deliberately use a small wire-safe grammar so they can be used as
 /// deterministic registry keys, report values, and extension namespaces.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RunnerComponentId(String);
+pub struct ComponentId(String);
 
-impl RunnerComponentId {
+impl ComponentId {
     /// Return the normalized identifier.
     pub fn as_str(&self) -> &str {
         &self.0
@@ -48,13 +48,13 @@ impl RunnerComponentId {
     }
 }
 
-impl fmt::Display for RunnerComponentId {
+impl fmt::Display for ComponentId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
     }
 }
 
-impl FromStr for RunnerComponentId {
+impl FromStr for ComponentId {
     type Err = String;
 
     fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
@@ -76,7 +76,7 @@ impl FromStr for RunnerComponentId {
     }
 }
 
-impl Serialize for RunnerComponentId {
+impl Serialize for ComponentId {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -85,7 +85,7 @@ impl Serialize for RunnerComponentId {
     }
 }
 
-impl<'de> Deserialize<'de> for RunnerComponentId {
+impl<'de> Deserialize<'de> for ComponentId {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -98,7 +98,7 @@ impl<'de> Deserialize<'de> for RunnerComponentId {
 /// Operation performed by one fresh runner process.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum RunnerOperationV2 {
+pub enum OperationV2 {
     /// Perform side-effect-free structural and static semantic validation.
     Validate,
     /// Repeat validation, prepare the run, execute it, and commit its report.
@@ -109,29 +109,29 @@ pub enum RunnerOperationV2 {
 ///
 /// This is no longer the stdin wire type: the stdin payload is the bare
 /// [`BenchmarkRunWireV2`], and the re-exec child reconstructs this envelope
-/// in-process (fixed [`RUNNER_PROTOCOL_V2`], operation from the `--execute` /
+/// in-process (fixed [`PROTOCOL_V2`], operation from the `--execute` /
 /// `--validate` mode) before handing it to the unchanged coordinator. The
 /// `Deserialize` derive is retained for tests and out-of-band tooling.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RunnerEnvelopeV2 {
-    /// Wire protocol discriminator; it must equal [`RUNNER_PROTOCOL_V2`].
+pub struct EnvelopeV2 {
+    /// Wire protocol discriminator; it must equal [`PROTOCOL_V2`].
     pub protocol_version: u32,
     /// Requested process operation.
-    pub operation: RunnerOperationV2,
+    pub operation: OperationV2,
     /// Exact Config-v2 run, including its Python-resolved bindings.
     pub run: BenchmarkRunWireV2,
 }
 
-impl RunnerEnvelopeV2 {
+impl EnvelopeV2 {
     /// Validate invariants owned by the versioned outer protocol.
     ///
     /// Component-specific config is intentionally not inspected here. Frozen
     /// factories own that strict decode during registry validation.
     pub fn validate_outer(&self) -> Result<()> {
         ensure!(
-            self.protocol_version == RUNNER_PROTOCOL_V2,
-            "runner protocol {} is unsupported; expected {RUNNER_PROTOCOL_V2}",
+            self.protocol_version == PROTOCOL_V2,
+            "runner protocol {} is unsupported; expected {PROTOCOL_V2}",
             self.protocol_version
         );
         self.run.validate_outer()
@@ -683,7 +683,7 @@ pub struct RunIdentitySpecV2 {
 pub struct NamedRunnerComponentSpecV2 {
     /// Frozen-registry identifier.
     #[serde(rename = "type")]
-    pub id: RunnerComponentId,
+    pub id: ComponentId,
     /// Strictly decoded by the selected factory.
     pub config: Box<RawValue>,
 }
@@ -743,7 +743,7 @@ pub struct EndpointProfileIdentityV2 {
     /// Run-local profile name used by workloads.
     pub profile_id: String,
     /// Open endpoint factory ID.
-    pub endpoint_id: RunnerComponentId,
+    pub endpoint_id: ComponentId,
 }
 
 fn endpoint_profile_identity(profile: &RawValue) -> Result<EndpointProfileIdentityV2> {
@@ -931,7 +931,7 @@ impl SidecarSpecV2 {
 /// Stage reported by a typed protocol-v2 failure.
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum RunnerFailureStageV2 {
+pub enum FailureStageV2 {
     /// Envelope or wire-version failure.
     Protocol,
     /// Side-effect-free static validation failure.
@@ -947,7 +947,7 @@ pub enum RunnerFailureStageV2 {
 /// One stable, typed validation diagnostic.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct RunnerDiagnosticV2 {
+pub struct DiagnosticV2 {
     /// Stable machine-readable error code.
     pub code: String,
     /// Redacted human-readable explanation.
@@ -1001,7 +1001,7 @@ pub struct RunValidationV2 {
     pub deferred_checks: Vec<DeferredCheckV2>,
     /// Typed validation diagnostics.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub errors: Vec<RunnerDiagnosticV2>,
+    pub errors: Vec<DiagnosticV2>,
 }
 
 /// Exactly-one-line response for a protocol-v2 `execute` operation.
@@ -1022,10 +1022,10 @@ pub struct RunTerminalV2 {
     pub report_path: Option<PathBuf>,
     /// Stable failed stage.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub stage: Option<RunnerFailureStageV2>,
+    pub stage: Option<FailureStageV2>,
     /// Typed failure diagnostics.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub errors: Vec<RunnerDiagnosticV2>,
+    pub errors: Vec<DiagnosticV2>,
     /// Non-authoritative diagnostic evidence emitted for failed executions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostic_artifacts: Vec<RunDiagnosticArtifactV2>,
@@ -1077,7 +1077,7 @@ mod tests {
 
     #[test]
     fn authored_envelope_preserves_factory_owned_objects() {
-        let decoded: RunnerEnvelopeV2 = serde_json::from_value(request()).unwrap();
+        let decoded: EnvelopeV2 = serde_json::from_value(request()).unwrap();
         decoded.validate_outer().unwrap();
         assert_eq!(decoded.run.transport.id.as_str(), "future_transport");
         assert_eq!(decoded.run.transport.config.get(), r#"{"node":7}"#);
@@ -1096,7 +1096,7 @@ mod tests {
     fn outer_contract_rejects_unknown_fields() {
         let mut value = request();
         value["run"]["unexpected"] = serde_json::json!(true);
-        let error = serde_json::from_value::<RunnerEnvelopeV2>(value)
+        let error = serde_json::from_value::<EnvelopeV2>(value)
             .err()
             .expect("unknown outer field must fail")
             .to_string();
@@ -1106,10 +1106,10 @@ mod tests {
     #[test]
     fn component_ids_are_open_but_wire_safe() {
         for valid in ["http", "acme_zmq4", "x"] {
-            assert_eq!(valid.parse::<RunnerComponentId>().unwrap().as_str(), valid);
+            assert_eq!(valid.parse::<ComponentId>().unwrap().as_str(), valid);
         }
         for invalid in ["", " Online_http", "Online", "a-b", "a.b", "a/b"] {
-            assert!(invalid.parse::<RunnerComponentId>().is_err(), "{invalid:?}");
+            assert!(invalid.parse::<ComponentId>().is_err(), "{invalid:?}");
         }
     }
 
@@ -1121,7 +1121,7 @@ mod tests {
             .as_array_mut()
             .unwrap()
             .push(duplicate);
-        let decoded: RunnerEnvelopeV2 = serde_json::from_value(value).unwrap();
+        let decoded: EnvelopeV2 = serde_json::from_value(value).unwrap();
         let error = decoded.validate_outer().unwrap_err().to_string();
         assert!(error.contains("duplicate endpoint profile ID"), "{error}");
     }
@@ -1130,7 +1130,7 @@ mod tests {
     fn factory_owned_config_must_still_be_an_object() {
         let mut value = request();
         value["run"]["transport"]["config"] = serde_json::json!(null);
-        let decoded: RunnerEnvelopeV2 = serde_json::from_value(value).unwrap();
+        let decoded: EnvelopeV2 = serde_json::from_value(value).unwrap();
         let error = decoded.validate_outer().unwrap_err().to_string();
         assert!(
             error.contains("transport.config must be a JSON object"),
@@ -1144,7 +1144,7 @@ mod tests {
         value["run"]["resources"]["artifacts"] = serde_json::json!({
             "records_path": "./records.jsonl"
         });
-        let decoded: RunnerEnvelopeV2 = serde_json::from_value(value).unwrap();
+        let decoded: EnvelopeV2 = serde_json::from_value(value).unwrap();
         let error = decoded.validate_outer().unwrap_err().to_string();
         assert!(error.contains("normal relative path components"), "{error}");
     }
@@ -1153,7 +1153,7 @@ mod tests {
     fn empty_resource_block_is_intentional_and_flat_legacy_fields_fail() {
         let mut value = request();
         value["run"]["resources"] = serde_json::json!({});
-        let decoded: RunnerEnvelopeV2 = serde_json::from_value(value).unwrap();
+        let decoded: EnvelopeV2 = serde_json::from_value(value).unwrap();
         decoded.validate_outer().unwrap();
         for resource in [
             RunResourceV2::Models,
@@ -1167,7 +1167,7 @@ mod tests {
 
         let mut legacy = request();
         legacy["run"]["models"] = legacy["run"]["resources"]["models"].take();
-        let error = serde_json::from_value::<RunnerEnvelopeV2>(legacy)
+        let error = serde_json::from_value::<EnvelopeV2>(legacy)
             .err()
             .unwrap()
             .to_string();

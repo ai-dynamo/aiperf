@@ -11,7 +11,7 @@
 //! [`crate::dataset::Dataset`],
 //! conversation, or second graph-source representation exists in this path.
 //!
-//! A future linked distribution injects another [`RunnerGraphInputAdapter`]
+//! A future linked distribution injects another [`GraphInputAdapter`]
 //! through the resolver. Its private authored fields remain invisible to the
 //! coordinator.
 
@@ -224,7 +224,7 @@ impl fmt::Debug for PreparedRunnerGraphInput {
 }
 
 /// Inputs shared by every direct graph-source adapter.
-pub struct RunnerGraphInputContext<'a> {
+pub struct GraphInputContext<'a> {
     /// Fully prepared tokenizer used during segment interning and token counts.
     pub tokenizer: &'a dyn TextTokenizer,
     /// Run-root seed used by recorded content reconstruction.
@@ -233,7 +233,7 @@ pub struct RunnerGraphInputContext<'a> {
 
 /// One direct authored graph-source adapter.
 #[async_trait(?Send)]
-pub trait RunnerGraphInputAdapter: fmt::Debug + Send + Sync {
+pub trait GraphInputAdapter: fmt::Debug + Send + Sync {
     /// Stable authored format discriminator.
     fn format(&self) -> &'static str;
 
@@ -241,13 +241,13 @@ pub trait RunnerGraphInputAdapter: fmt::Debug + Send + Sync {
     async fn load(
         &self,
         raw: &RawValue,
-        context: &RunnerGraphInputContext<'_>,
+        context: &GraphInputContext<'_>,
     ) -> Result<PreparedRunnerGraphInput>;
 }
 
 /// Injected open resolver for direct graph-input adapters.
 #[async_trait(?Send)]
-pub trait RunnerGraphInputAdapterResolver: fmt::Debug + Send + Sync {
+pub trait GraphInputAdapterResolver: fmt::Debug + Send + Sync {
     /// Validate only that the open format identity selects a linked adapter.
     ///
     /// Adapter-owned fields remain untouched. Full strict decoding is deferred
@@ -258,13 +258,13 @@ pub trait RunnerGraphInputAdapterResolver: fmt::Debug + Send + Sync {
     async fn load(
         &self,
         raw: &RawValue,
-        context: &RunnerGraphInputContext<'_>,
+        context: &GraphInputContext<'_>,
     ) -> Result<PreparedRunnerGraphInput>;
 }
 
 /// Deterministic built-in graph-input adapter composition.
 pub struct BuiltinRunnerGraphInputAdapterResolver {
-    adapters: BTreeMap<&'static str, Arc<dyn RunnerGraphInputAdapter>>,
+    adapters: BTreeMap<&'static str, Arc<dyn GraphInputAdapter>>,
 }
 
 impl fmt::Debug for BuiltinRunnerGraphInputAdapterResolver {
@@ -285,7 +285,7 @@ impl Default for BuiltinRunnerGraphInputAdapterResolver {
 impl BuiltinRunnerGraphInputAdapterResolver {
     /// Compose the built-in direct Graph-IR formats.
     pub fn new() -> Self {
-        let adapters: [Arc<dyn RunnerGraphInputAdapter>; 4] = [
+        let adapters: [Arc<dyn GraphInputAdapter>; 4] = [
             Arc::new(DagJsonlRunnerGraphInputAdapter),
             Arc::new(WekaTraceRunnerGraphInputAdapter),
             Arc::new(DynamoTraceRunnerGraphInputAdapter),
@@ -299,7 +299,7 @@ impl BuiltinRunnerGraphInputAdapterResolver {
         }
     }
 
-    fn selected(&self, raw: &RawValue) -> Result<&dyn RunnerGraphInputAdapter> {
+    fn selected(&self, raw: &RawValue) -> Result<&dyn GraphInputAdapter> {
         // This intentionally reads only the open discriminator. The selected
         // adapter below remains the sole owner of the full authored object.
         let identity: GraphInputIdentity = serde_json::from_str(raw.get())
@@ -307,7 +307,7 @@ impl BuiltinRunnerGraphInputAdapterResolver {
         self.selected_format(&identity.format)
     }
 
-    fn selected_format(&self, format: &str) -> Result<&dyn RunnerGraphInputAdapter> {
+    fn selected_format(&self, format: &str) -> Result<&dyn GraphInputAdapter> {
         self.adapters.get(format).map(Arc::as_ref).ok_or_else(|| {
             anyhow!(
                 "no direct Graph-IR input adapter is registered for format {:?}",
@@ -332,7 +332,7 @@ where
 }
 
 #[async_trait(?Send)]
-impl RunnerGraphInputAdapterResolver for BuiltinRunnerGraphInputAdapterResolver {
+impl GraphInputAdapterResolver for BuiltinRunnerGraphInputAdapterResolver {
     fn validate_identity(&self, raw: &RawValue) -> Result<()> {
         self.selected(raw).map(drop)
     }
@@ -340,7 +340,7 @@ impl RunnerGraphInputAdapterResolver for BuiltinRunnerGraphInputAdapterResolver 
     async fn load(
         &self,
         raw: &RawValue,
-        context: &RunnerGraphInputContext<'_>,
+        context: &GraphInputContext<'_>,
     ) -> Result<PreparedRunnerGraphInput> {
         self.selected(raw)?.load(raw, context).await
     }
@@ -358,7 +358,7 @@ struct GraphInputIdentity {
 pub struct DagJsonlRunnerGraphInputAdapter;
 
 #[async_trait(?Send)]
-impl RunnerGraphInputAdapter for DagJsonlRunnerGraphInputAdapter {
+impl GraphInputAdapter for DagJsonlRunnerGraphInputAdapter {
     fn format(&self) -> &'static str {
         "dag_jsonl"
     }
@@ -366,7 +366,7 @@ impl RunnerGraphInputAdapter for DagJsonlRunnerGraphInputAdapter {
     async fn load(
         &self,
         raw: &RawValue,
-        context: &RunnerGraphInputContext<'_>,
+        context: &GraphInputContext<'_>,
     ) -> Result<PreparedRunnerGraphInput> {
         let input: DagJsonlDatasetInput =
             decode_graph_input(raw).context("decoding direct dag_jsonl graph input")?;
@@ -378,7 +378,7 @@ impl DagJsonlRunnerGraphInputAdapter {
     async fn load_decoded(
         &self,
         input: DagJsonlDatasetInput,
-        context: &RunnerGraphInputContext<'_>,
+        context: &GraphInputContext<'_>,
     ) -> Result<PreparedRunnerGraphInput> {
         let prepared = match input {
             DagJsonlDatasetInput::File(spec) => spec.prepare(self.format())?,
@@ -427,7 +427,7 @@ pub struct DynamoTraceRunnerGraphInputAdapter;
 pub struct AIPerfTraceRunnerGraphInputAdapter;
 
 #[async_trait(?Send)]
-impl RunnerGraphInputAdapter for AIPerfTraceRunnerGraphInputAdapter {
+impl GraphInputAdapter for AIPerfTraceRunnerGraphInputAdapter {
     fn format(&self) -> &'static str {
         "aiperf_trace"
     }
@@ -435,7 +435,7 @@ impl RunnerGraphInputAdapter for AIPerfTraceRunnerGraphInputAdapter {
     async fn load(
         &self,
         raw: &RawValue,
-        context: &RunnerGraphInputContext<'_>,
+        context: &GraphInputContext<'_>,
     ) -> Result<PreparedRunnerGraphInput> {
         let input: RecordedDatasetInput =
             decode_graph_input(raw).context("decoding direct aiperf_trace graph input")?;
@@ -447,7 +447,7 @@ impl AIPerfTraceRunnerGraphInputAdapter {
     async fn load_decoded(
         &self,
         input: RecordedDatasetInput,
-        context: &RunnerGraphInputContext<'_>,
+        context: &GraphInputContext<'_>,
     ) -> Result<PreparedRunnerGraphInput> {
         let prepared = match input {
             RecordedDatasetInput::File(input) => {
@@ -479,7 +479,7 @@ impl AIPerfTraceRunnerGraphInputAdapter {
 }
 
 #[async_trait(?Send)]
-impl RunnerGraphInputAdapter for WekaTraceRunnerGraphInputAdapter {
+impl GraphInputAdapter for WekaTraceRunnerGraphInputAdapter {
     fn format(&self) -> &'static str {
         "weka_trace"
     }
@@ -487,7 +487,7 @@ impl RunnerGraphInputAdapter for WekaTraceRunnerGraphInputAdapter {
     async fn load(
         &self,
         raw: &RawValue,
-        context: &RunnerGraphInputContext<'_>,
+        context: &GraphInputContext<'_>,
     ) -> Result<PreparedRunnerGraphInput> {
         let input: RecordedDatasetInput =
             decode_graph_input(raw).context("decoding direct WEKA graph input")?;
@@ -496,7 +496,7 @@ impl RunnerGraphInputAdapter for WekaTraceRunnerGraphInputAdapter {
 }
 
 #[async_trait(?Send)]
-impl RunnerGraphInputAdapter for DynamoTraceRunnerGraphInputAdapter {
+impl GraphInputAdapter for DynamoTraceRunnerGraphInputAdapter {
     fn format(&self) -> &'static str {
         "dynamo_trace"
     }
@@ -504,7 +504,7 @@ impl RunnerGraphInputAdapter for DynamoTraceRunnerGraphInputAdapter {
     async fn load(
         &self,
         raw: &RawValue,
-        context: &RunnerGraphInputContext<'_>,
+        context: &GraphInputContext<'_>,
     ) -> Result<PreparedRunnerGraphInput> {
         let input: RecordedDatasetInput =
             decode_graph_input(raw).context("decoding direct Dynamo graph input")?;
@@ -516,7 +516,7 @@ impl WekaTraceRunnerGraphInputAdapter {
     async fn load_decoded(
         &self,
         input: RecordedDatasetInput,
-        context: &RunnerGraphInputContext<'_>,
+        context: &GraphInputContext<'_>,
     ) -> Result<PreparedRunnerGraphInput> {
         let prepared = match input {
             RecordedDatasetInput::File(input) => {
@@ -551,7 +551,7 @@ impl DynamoTraceRunnerGraphInputAdapter {
     async fn load_decoded(
         &self,
         input: RecordedDatasetInput,
-        context: &RunnerGraphInputContext<'_>,
+        context: &GraphInputContext<'_>,
     ) -> Result<PreparedRunnerGraphInput> {
         let RecordedDatasetInput::File(input) = input else {
             return Err(anyhow!(
@@ -673,7 +673,7 @@ struct PreparedRecordedInput {
 fn prepare_recorded_file(
     input: RecordedFileInput,
     expected_format: &str,
-    context: &RunnerGraphInputContext<'_>,
+    context: &GraphInputContext<'_>,
 ) -> Result<PreparedRecordedInput> {
     ensure!(
         input
@@ -787,7 +787,7 @@ fn prepare_recorded_file(
 fn prepare_recorded_public(
     input: PublicDatasetSpec,
     expected_format: &str,
-    context: &RunnerGraphInputContext<'_>,
+    context: &GraphInputContext<'_>,
 ) -> Result<PreparedRecordedInput> {
     ensure!(
         !input.name.trim().is_empty(),
@@ -1122,7 +1122,7 @@ mod tests {
         let prepared = resolver
             .load(
                 &input,
-                &RunnerGraphInputContext {
+                &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
                 },
@@ -1148,7 +1148,7 @@ mod tests {
         let error = resolver
             .load(
                 &input,
-                &RunnerGraphInputContext {
+                &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
                 },
@@ -1197,7 +1197,7 @@ mod tests {
         let prepared = resolver
             .load(
                 &input,
-                &RunnerGraphInputContext {
+                &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
                 },
@@ -1238,7 +1238,7 @@ mod tests {
         let prepared = resolver
             .load(
                 &input,
-                &RunnerGraphInputContext {
+                &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
                 },
@@ -1295,7 +1295,7 @@ mod tests {
         let error = resolver
             .load(
                 &input,
-                &RunnerGraphInputContext {
+                &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
                 },
@@ -1347,7 +1347,7 @@ mod tests {
         let prepared = resolver
             .load(
                 &input,
-                &RunnerGraphInputContext {
+                &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
                 },

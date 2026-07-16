@@ -13,18 +13,18 @@ use std::sync::Arc;
 use crate::extensions::{AIPerfRegistry, AIPerfRegistryFactory, BuiltinAIPerfRegistryFactory};
 use anyhow::Result;
 
-use crate::engine::coordinator::{RunnerProcessResultV2, RunnerV2Coordinator};
+use crate::engine::coordinator::{ProcessResultV2, Coordinator};
 use crate::engine::dataset_input::{
-    BuiltinRunnerDatasetInputAdapterResolver, RunnerDatasetInputAdapterResolver,
+    BuiltinRunnerDatasetInputAdapterResolver, DatasetInputAdapterResolver,
 };
-use crate::engine::execution_factories::{RunnerExecutionFactories, native_execution_factories};
+use crate::engine::execution_factories::{ExecutionFactories, native_execution_factories};
 use crate::engine::graph_input::{
-    BuiltinRunnerGraphInputAdapterResolver, RunnerGraphInputAdapterResolver,
+    BuiltinRunnerGraphInputAdapterResolver, GraphInputAdapterResolver,
 };
-use crate::engine::protocol::RunnerCatalog;
-use crate::engine::protocol_v2::RunnerEnvelopeV2;
+use crate::engine::protocol::Catalog;
+use crate::engine::protocol_v2::EnvelopeV2;
 use crate::engine::sidecar_input::{
-    BuiltinRunnerSidecarInputAdapterResolver, RunnerSidecarInputAdapterResolver,
+    BuiltinRunnerSidecarInputAdapterResolver, SidecarInputAdapterResolver,
 };
 
 /// One frozen implementation universe for a fresh runner child.
@@ -32,23 +32,23 @@ use crate::engine::sidecar_input::{
 /// Rust has no ambient implementation discovery. Custom distributions link
 /// extension crates and pass their explicit factories here; no core dispatcher,
 /// scheduler, validator, or reporter changes are required.
-pub struct RunnerApplication {
+pub struct Application {
     distribution_id: String,
-    coordinator: RunnerV2Coordinator,
+    coordinator: Coordinator,
 }
 
-impl RunnerApplication {
+impl Application {
     /// Compose an explicitly linked runner distribution exactly once.
     pub fn new(
         distribution_id: impl Into<String>,
         product_registry_factory: &dyn AIPerfRegistryFactory,
-        execution_factories: RunnerExecutionFactories,
-        graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
-        dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
-        sidecar_inputs: Arc<dyn RunnerSidecarInputAdapterResolver>,
+        execution_factories: ExecutionFactories,
+        graph_inputs: Arc<dyn GraphInputAdapterResolver>,
+        dataset_inputs: Arc<dyn DatasetInputAdapterResolver>,
+        sidecar_inputs: Arc<dyn SidecarInputAdapterResolver>,
     ) -> Result<Self> {
         let distribution_id = distribution_id.into();
-        let coordinator = RunnerV2Coordinator::new(
+        let coordinator = Coordinator::new(
             distribution_id.clone(),
             product_registry_factory,
             execution_factories,
@@ -80,12 +80,12 @@ impl RunnerApplication {
     }
 
     /// Return the plugins.yaml-shaped catalog for this exact linked runner.
-    pub fn catalog(&self) -> RunnerCatalog {
+    pub fn catalog(&self) -> Catalog {
         self.coordinator.catalog()
     }
 
     /// Validate or execute one protocol-v2 envelope through the frozen coordinator.
-    pub fn handle_v2(&self, envelope: RunnerEnvelopeV2) -> RunnerProcessResultV2 {
+    pub fn handle_v2(&self, envelope: EnvelopeV2) -> ProcessResultV2 {
         self.coordinator.handle(envelope)
     }
 

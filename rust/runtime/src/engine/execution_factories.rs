@@ -16,7 +16,7 @@ use crate::engine::control_plane_http::{
     ControlPlaneHttpProviderFactory, NativeControlPlaneHttpProviderFactory,
 };
 use crate::engine::graph_execution::{
-    NativeRunnerGraphPlacementFactory, RunnerGraphPlacementFactory,
+    NativeRunnerGraphPlacementFactory, GraphPlacementFactory,
 };
 use crate::engine::readiness::{
     NativeHttpReadinessPlanFactory, NativeHttpReadinessTransportFactory,
@@ -35,19 +35,19 @@ use crate::engine::turn_execution::{NativeRequestExecutorFactory, RequestExecuto
 ///
 /// [`NativeTransportExecution`]: crate::engine::registry::NativeTransportExecution
 #[derive(Clone)]
-pub struct RunnerExecutionFactories {
+pub struct ExecutionFactories {
     http: Arc<dyn RequestExecutorFactory>,
-    graph: Arc<dyn RunnerGraphPlacementFactory>,
+    graph: Arc<dyn GraphPlacementFactory>,
     readiness_plans: Arc<dyn OnlineReadinessPlanFactory>,
     readiness_transport: Arc<dyn ReadinessTransportFactory>,
     control_plane_http: Arc<dyn ControlPlaneHttpProviderFactory>,
 }
 
-impl RunnerExecutionFactories {
+impl ExecutionFactories {
     /// Compose one frozen set of independently replaceable execution seams.
     pub fn new(
         http: Arc<dyn RequestExecutorFactory>,
-        graph: Arc<dyn RunnerGraphPlacementFactory>,
+        graph: Arc<dyn GraphPlacementFactory>,
         readiness_plans: Arc<dyn OnlineReadinessPlanFactory>,
         readiness_transport: Arc<dyn ReadinessTransportFactory>,
     ) -> Self {
@@ -80,12 +80,12 @@ impl RunnerExecutionFactories {
     }
 
     /// Borrow the whole-trace graph-placement factory.
-    pub fn graph(&self) -> &dyn RunnerGraphPlacementFactory {
+    pub fn graph(&self) -> &dyn GraphPlacementFactory {
         self.graph.as_ref()
     }
 
     /// Retain the whole-trace graph-placement factory in a prepared operation.
-    pub fn graph_handle(&self) -> Arc<dyn RunnerGraphPlacementFactory> {
+    pub fn graph_handle(&self) -> Arc<dyn GraphPlacementFactory> {
         self.graph.clone()
     }
 
@@ -120,10 +120,10 @@ impl RunnerExecutionFactories {
     }
 }
 
-impl fmt::Debug for RunnerExecutionFactories {
+impl fmt::Debug for ExecutionFactories {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("RunnerExecutionFactories")
+            .debug_struct("ExecutionFactories")
             .finish_non_exhaustive()
     }
 }
@@ -135,8 +135,8 @@ impl fmt::Debug for RunnerExecutionFactories {
 /// at prepare time.
 ///
 /// [`NativeTransportExecution`]: crate::engine::registry::NativeTransportExecution
-pub fn native_execution_factories() -> RunnerExecutionFactories {
-    RunnerExecutionFactories::new(
+pub fn native_execution_factories() -> ExecutionFactories {
+    ExecutionFactories::new(
         Arc::new(NativeRequestExecutorFactory),
         Arc::new(NativeRunnerGraphPlacementFactory),
         Arc::new(NativeHttpReadinessPlanFactory),

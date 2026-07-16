@@ -63,8 +63,8 @@ use crate::clock::Clock;
 use crate::engine::graph_execution::GraphTransportKind;
 use crate::engine::protocol_v2::AuthoredRunSpecV2;
 use crate::engine::registry::{
-    NativeTransportExecution, RunnerClockKind, RunnerRunContext, RunnerTransportDescriptor,
-    RunnerTransportFactory, ValidatedTransportConfig, WorkloadRequirements, strict_decode,
+    NativeTransportExecution, ClockKind, RunContext, TransportDescriptor,
+    TransportFactory, ValidatedTransportConfig, WorkloadRequirements, strict_decode,
 };
 use crate::engine::turn_execution::{HttpExecutionBackendConfig, RequestExecutorFactory};
 use crate::extensions::AIPerfRegistry;
@@ -88,10 +88,10 @@ const fn default_itl_ms() -> f64 {
 }
 
 /// Built-in `dry_run` transport descriptor (real clock, no network).
-pub static DRY_RUN_TRANSPORT_DESCRIPTOR: RunnerTransportDescriptor = RunnerTransportDescriptor {
+pub static DRY_RUN_TRANSPORT_DESCRIPTOR: TransportDescriptor = TransportDescriptor {
     id: "dry_run",
     description: "Fake execution leaf: analytic-latency synthetic responses, zero network",
-    clock: RunnerClockKind::Real,
+    clock: ClockKind::Real,
     features: &["dry_run"],
 };
 
@@ -151,8 +151,8 @@ pub struct DryRunParams {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DryRunTransportFactoryV2;
 
-impl RunnerTransportFactory for DryRunTransportFactoryV2 {
-    fn descriptor(&self) -> &'static RunnerTransportDescriptor {
+impl TransportFactory for DryRunTransportFactoryV2 {
+    fn descriptor(&self) -> &'static TransportDescriptor {
         &DRY_RUN_TRANSPORT_DESCRIPTOR
     }
 
@@ -184,7 +184,7 @@ impl RunnerTransportFactory for DryRunTransportFactoryV2 {
     fn native_execution(
         &self,
         config: &dyn ValidatedTransportConfig,
-        _context: &RunnerRunContext,
+        _context: &RunContext,
     ) -> Result<Option<Arc<dyn NativeTransportExecution>>> {
         let config = ValidatedTransportConfig::as_any(config)
             .downcast_ref::<DryRunTransportConfigV2>()
@@ -222,7 +222,7 @@ impl NativeTransportExecution for DryRunNativeExecution {
         )
     }
 
-    fn validate_run(&self, _run: &AuthoredRunSpecV2, _context: &RunnerRunContext) -> Result<()> {
+    fn validate_run(&self, _run: &AuthoredRunSpecV2, _context: &RunContext) -> Result<()> {
         // A dry run touches no server, so URL-scheme and readiness validation are
         // skipped; the fake leaf fabricates every outcome from the analytic model.
         Ok(())
@@ -242,7 +242,7 @@ pub fn register_dry_run_transport(registry: &mut AIPerfRegistry) -> Result<()> {
 ///
 /// Built inside `prepare_native_operation` from the run's [`DryRunParams`]; it
 /// carries no process-global state, so a `dry_run` run needs no change to
-/// [`crate::engine::execution_factories::RunnerExecutionFactories`].
+/// [`crate::engine::execution_factories::ExecutionFactories`].
 #[derive(Debug, Clone, Copy)]
 pub struct FakeRequestExecutorFactory {
     params: DryRunParams,

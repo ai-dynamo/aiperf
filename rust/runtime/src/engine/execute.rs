@@ -90,15 +90,15 @@ use loadgen_core::sink::RequestObserver;
 use uuid::Uuid;
 
 use crate::engine::dataset_input::PreparedDatasetInput;
-use crate::engine::execution_factories::RunnerExecutionFactories;
+use crate::engine::execution_factories::ExecutionFactories;
 use crate::engine::gpu_telemetry::GpuTelemetryRun;
 use crate::engine::graph_execution::{
-    GraphTransportKind, PreparedRunnerGraphEndpointRuntimeFactory, RunnerGraphBackendFactory,
-    RunnerGraphBackendFactoryConfig, RunnerGraphEndpointRuntimeFactory,
-    RunnerGraphPlacementFactory,
+    GraphTransportKind, PreparedRunnerGraphEndpointRuntimeFactory, GraphBackendFactory,
+    GraphBackendFactoryConfig, GraphEndpointRuntimeFactory,
+    GraphPlacementFactory,
 };
 use crate::engine::graph_phase_runtime::{
-    GraphPhaseBackendConfig, PreparedGraphPhaseBackend, RunnerGraphPhaseBackendFactory,
+    GraphPhaseBackendConfig, PreparedGraphPhaseBackend, GraphPhaseBackendFactory,
     run_graph_phases, validate_graph_phases,
 };
 use crate::engine::heartbeat_lane::{
@@ -497,7 +497,7 @@ pub(crate) struct NativeGraphDatasetPlan {
 pub(crate) fn execute_prepared_native_plan_uncommitted_selected(
     plan: NativeRunSpec,
     request_executor: Arc<dyn RequestExecutorFactory>,
-    factories: &RunnerExecutionFactories,
+    factories: &ExecutionFactories,
     registry: &AIPerfRegistry,
     readiness: Option<Box<dyn PreparedOnlineReadiness>>,
 ) -> Result<NativeReport> {
@@ -514,7 +514,7 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_selected(
 fn execute_prepared_native_plan_uncommitted_with_runtime_factories(
     plan: NativeRunSpec,
     transport_factory: Arc<dyn RequestExecutorFactory>,
-    graph_placement: &dyn RunnerGraphPlacementFactory,
+    graph_placement: &dyn GraphPlacementFactory,
     registry: &AIPerfRegistry,
     sidecar_factory: &dyn NativeSidecarResourceFactory,
     readiness: Option<(
@@ -1250,7 +1250,7 @@ impl PreparedNativeSidecarResources {
 async fn prepare_and_execute_native(
     request: NativeRunSpec,
     transport_factory: Arc<dyn RequestExecutorFactory>,
-    graph_placement: &dyn RunnerGraphPlacementFactory,
+    graph_placement: &dyn GraphPlacementFactory,
     registry: &AIPerfRegistry,
     sidecar_factory: &dyn NativeSidecarResourceFactory,
     readiness: Option<(
@@ -1314,7 +1314,7 @@ async fn execute_native(
     accuracy: Option<&mut PreparedAccuracy>,
     sidecars: &mut PreparedNativeSidecarResources,
     transport_factory: Arc<dyn RequestExecutorFactory>,
-    graph_placement: &dyn RunnerGraphPlacementFactory,
+    graph_placement: &dyn GraphPlacementFactory,
     registry: &AIPerfRegistry,
 ) -> Result<NativeReport> {
     if request.dataset.is_graph() {
@@ -1358,13 +1358,13 @@ fn validate_graph_request(request: &NativeRunSpec) -> Result<()> {
 }
 
 struct OnlineGraphPhaseBackendFactory<'a> {
-    placement: &'a dyn RunnerGraphPlacementFactory,
+    placement: &'a dyn GraphPlacementFactory,
     worker_count: usize,
     real_clock_anchor: RealClockAnchor,
     run_origin_ns: i64,
     model: String,
     default_max_tokens: usize,
-    endpoint_runtime_factory: Arc<dyn RunnerGraphEndpointRuntimeFactory>,
+    endpoint_runtime_factory: Arc<dyn GraphEndpointRuntimeFactory>,
     segments: Arc<dyn crate::dataset::SegmentStore>,
     metrics: MetricsConfig,
     raw_enabled: bool,
@@ -1372,13 +1372,13 @@ struct OnlineGraphPhaseBackendFactory<'a> {
     cache_bust: Option<crate::engine::graph_execution::GraphCacheBust>,
 }
 
-impl RunnerGraphPhaseBackendFactory for OnlineGraphPhaseBackendFactory<'_> {
+impl GraphPhaseBackendFactory for OnlineGraphPhaseBackendFactory<'_> {
     fn prepare_backend(
         &self,
         config: GraphPhaseBackendConfig,
     ) -> Result<PreparedGraphPhaseBackend> {
-        let worker_factory = Arc::new(RunnerGraphBackendFactory::new(
-            RunnerGraphBackendFactoryConfig {
+        let worker_factory = Arc::new(GraphBackendFactory::new(
+            GraphBackendFactoryConfig {
                 real_clock_anchor: self.real_clock_anchor,
                 run_origin_ns: self.run_origin_ns,
                 model: self.model.clone(),
@@ -1407,7 +1407,7 @@ impl RunnerGraphPhaseBackendFactory for OnlineGraphPhaseBackendFactory<'_> {
 async fn execute_graph_native(
     request: NativeRunSpec,
     sidecars: &PreparedNativeSidecarResources,
-    graph_placement: &dyn RunnerGraphPlacementFactory,
+    graph_placement: &dyn GraphPlacementFactory,
     registry: &AIPerfRegistry,
 ) -> Result<NativeReport> {
     let graph = match &request.dataset {
@@ -1439,7 +1439,7 @@ async fn execute_graph_native(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
-    let endpoint_runtime_factory: Arc<dyn RunnerGraphEndpointRuntimeFactory> = {
+    let endpoint_runtime_factory: Arc<dyn GraphEndpointRuntimeFactory> = {
         let NativeEndpointPlan::Prepared(profiles) = &request.endpoint;
         Arc::new(PreparedRunnerGraphEndpointRuntimeFactory::new(
             registry.endpoints().clone(),

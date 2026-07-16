@@ -3,7 +3,7 @@
 
 //! Protocol-v2 executable workloads for the native online transports.
 //!
-//! The scheduled, graph, and static-accuracy [`RunnerWorkloadFactory`]
+//! The scheduled, graph, and static-accuracy [`WorkloadFactory`]
 //! implementations own authored-source lowering into the protocol-neutral
 //! [`NativeRunSpec`] and resolve the transport's turn-placement/graph-placement
 //! factory and readiness policy from the validated transport (http/grpc) by
@@ -33,16 +33,16 @@ use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
 use url::Url;
 
-use crate::engine::dataset_input::RunnerDatasetInputContext;
+use crate::engine::dataset_input::DatasetInputContext;
 use crate::engine::execute::{
     NativeDatasetPlan, NativeEndpointPlan, NativeGraphDatasetPlan, NativeRunSpec,
     NativeSidecarPlan, NativeStaticAccuracyEvaluatorFactory, NativeStaticAccuracyPlan,
     StaticAccuracyEvaluatorFactory, StaticAccuracyEvaluatorProcessSpec,
     execute_prepared_native_plan_uncommitted_selected, load_tokenizer,
 };
-use crate::engine::execution_factories::RunnerExecutionFactories;
+use crate::engine::execution_factories::ExecutionFactories;
 use crate::engine::graph_execution::GraphTransportKind;
-use crate::engine::graph_input::RunnerGraphInputContext;
+use crate::engine::graph_input::GraphInputContext;
 use crate::engine::protocol::{ArtifactSpec, PhaseSpec, TokenizerSpec};
 use crate::engine::protocol_v2::AuthoredRunSpecV2;
 use crate::engine::readiness::{
@@ -50,7 +50,7 @@ use crate::engine::readiness::{
 };
 use crate::engine::registry::{
     GRAPH_WORKLOAD_DESCRIPTOR, GraphWorkloadConfigV2, NativeTransportExecution, PreparedRunOutcome,
-    PreparedRunnerOperation, RunnerRunContext, RunnerWorkloadDescriptor, RunnerWorkloadFactory,
+    PreparedRunnerOperation, RunContext, WorkloadDescriptor, WorkloadFactory,
     SCHEDULED_WORKLOAD_DESCRIPTOR, STATIC_ACCURACY_WORKLOAD_DESCRIPTOR, ScheduledWorkloadConfigV2,
     StaticAccuracyWorkloadConfigV2, ValidatedTransportConfig, ValidatedWorkloadConfig,
     WorkloadRequirements, inference_workload_requirements, strict_decode, validate_common_workload,
@@ -60,11 +60,11 @@ use crate::engine::turn_execution::RequestExecutorFactory;
 /// Native execution binding for the built-in `http` transport.
 ///
 /// HTTP is the base transport: it drives the shared hyper turn-placement factory
-/// (injected through [`RunnerExecutionFactories`], so a remote HTTP placement can
+/// (injected through [`ExecutionFactories`], so a remote HTTP placement can
 /// replace it) and is the only native transport that performs a model-readiness
 /// probe before profiling.
 ///
-/// [`RunnerExecutionFactories`]: crate::engine::execution_factories::RunnerExecutionFactories
+/// [`ExecutionFactories`]: crate::engine::execution_factories::ExecutionFactories
 #[derive(Clone)]
 pub struct HttpNativeExecution {
     executor: Arc<dyn RequestExecutorFactory>,
@@ -90,7 +90,7 @@ impl NativeTransportExecution for HttpNativeExecution {
         Ok(GraphTransportKind::Http)
     }
 
-    fn validate_run(&self, _run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> Result<()> {
+    fn validate_run(&self, _run: &AuthoredRunSpecV2, context: &RunContext) -> Result<()> {
         validate_online_run(context)
     }
 
@@ -108,7 +108,7 @@ impl NativeTransportExecution for HttpNativeExecution {
 /// native path consults the transport registry; there is no per-transport
 /// `match` in any workload.
 fn resolve_native_execution(
-    context: &RunnerRunContext,
+    context: &RunContext,
     transport: &dyn ValidatedTransportConfig,
     transport_id: &str,
 ) -> Result<Option<Arc<dyn NativeTransportExecution>>> {
@@ -123,7 +123,7 @@ use crate::engine::sidecar_input::{CONTENT_SERVER_SIDECAR_ID, ContentServerSpec}
 
 /// Register the built-in executable workloads (`scheduled`, `graph`).
 ///
-/// Each is one [`RunnerWorkloadFactory`] that owns its authored-source lowering
+/// Each is one [`WorkloadFactory`] that owns its authored-source lowering
 /// and resolves the transport's turn-placement/graph-placement factory from the
 /// validated transport by id/type. Any registered transport (http, grpc,
 /// dynosim) can drive them; there is no per-transport pair object and no
@@ -180,8 +180,8 @@ impl fmt::Debug for ScheduledWorkloadFactoryV2 {
     }
 }
 
-impl RunnerWorkloadFactory for ScheduledWorkloadFactoryV2 {
-    fn descriptor(&self) -> &'static RunnerWorkloadDescriptor {
+impl WorkloadFactory for ScheduledWorkloadFactoryV2 {
+    fn descriptor(&self) -> &'static WorkloadDescriptor {
         &SCHEDULED_WORKLOAD_DESCRIPTOR
     }
 
@@ -204,7 +204,7 @@ impl RunnerWorkloadFactory for ScheduledWorkloadFactoryV2 {
     fn validate_run(
         &self,
         run: &AuthoredRunSpecV2,
-        context: &RunnerRunContext,
+        context: &RunContext,
         transport: &dyn ValidatedTransportConfig,
         workload: &dyn ValidatedWorkloadConfig,
         transport_id: &str,
@@ -232,7 +232,7 @@ impl RunnerWorkloadFactory for ScheduledWorkloadFactoryV2 {
     fn prepare_with_context(
         &self,
         run: &AuthoredRunSpecV2,
-        context: &RunnerRunContext,
+        context: &RunContext,
         transport: Box<dyn ValidatedTransportConfig>,
         workload: Box<dyn ValidatedWorkloadConfig>,
         transport_id: &str,
@@ -278,8 +278,8 @@ impl fmt::Debug for GraphWorkloadFactoryV2 {
     }
 }
 
-impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
-    fn descriptor(&self) -> &'static RunnerWorkloadDescriptor {
+impl WorkloadFactory for GraphWorkloadFactoryV2 {
+    fn descriptor(&self) -> &'static WorkloadDescriptor {
         &GRAPH_WORKLOAD_DESCRIPTOR
     }
 
@@ -301,7 +301,7 @@ impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
     fn validate_run(
         &self,
         run: &AuthoredRunSpecV2,
-        context: &RunnerRunContext,
+        context: &RunContext,
         transport: &dyn ValidatedTransportConfig,
         workload: &dyn ValidatedWorkloadConfig,
         transport_id: &str,
@@ -345,7 +345,7 @@ impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
     fn prepare_with_context(
         &self,
         run: &AuthoredRunSpecV2,
-        context: &RunnerRunContext,
+        context: &RunContext,
         transport: Box<dyn ValidatedTransportConfig>,
         workload: Box<dyn ValidatedWorkloadConfig>,
         transport_id: &str,
@@ -395,8 +395,8 @@ impl fmt::Debug for StaticAccuracyWorkloadFactoryV2 {
     }
 }
 
-impl RunnerWorkloadFactory for StaticAccuracyWorkloadFactoryV2 {
-    fn descriptor(&self) -> &'static RunnerWorkloadDescriptor {
+impl WorkloadFactory for StaticAccuracyWorkloadFactoryV2 {
+    fn descriptor(&self) -> &'static WorkloadDescriptor {
         &STATIC_ACCURACY_WORKLOAD_DESCRIPTOR
     }
 
@@ -421,7 +421,7 @@ impl RunnerWorkloadFactory for StaticAccuracyWorkloadFactoryV2 {
     fn validate_run(
         &self,
         run: &AuthoredRunSpecV2,
-        context: &RunnerRunContext,
+        context: &RunContext,
         _transport: &dyn ValidatedTransportConfig,
         workload: &dyn ValidatedWorkloadConfig,
         transport_id: &str,
@@ -445,7 +445,7 @@ impl RunnerWorkloadFactory for StaticAccuracyWorkloadFactoryV2 {
     fn prepare_with_context(
         &self,
         run: &AuthoredRunSpecV2,
-        context: &RunnerRunContext,
+        context: &RunContext,
         transport: Box<dyn ValidatedTransportConfig>,
         workload: Box<dyn ValidatedWorkloadConfig>,
         transport_id: &str,
@@ -481,7 +481,7 @@ impl RunnerWorkloadFactory for StaticAccuracyWorkloadFactoryV2 {
 /// adding a native transport changes nothing in this function.
 fn prepare_native_operation(
     run: &AuthoredRunSpecV2,
-    context: &RunnerRunContext,
+    context: &RunContext,
     plan: NativeRunSpec,
     binding: Arc<dyn NativeTransportExecution>,
 ) -> Result<Box<dyn PreparedRunnerOperation>> {
@@ -513,7 +513,7 @@ fn workload_config<'a, T: 'static>(
         .ok_or_else(|| anyhow!("online {workload_id} workload received a different config type"))
 }
 
-fn validate_online_run(context: &RunnerRunContext) -> Result<()> {
+fn validate_online_run(context: &RunContext) -> Result<()> {
     context.default_endpoint_profile()?;
     for (profile_id, profile) in context.endpoint_profiles() {
         ensure!(
@@ -536,7 +536,7 @@ fn validate_online_run(context: &RunnerRunContext) -> Result<()> {
 
 pub(crate) fn prepare_online_readiness(
     run: &AuthoredRunSpecV2,
-    context: &RunnerRunContext,
+    context: &RunContext,
 ) -> Result<Box<dyn PreparedOnlineReadiness>> {
     let profiles = context
         .endpoint_profiles()
@@ -1022,7 +1022,7 @@ impl StaticAccuracyConfigV2 {
 
 pub(crate) fn lower_scheduled(
     run: &AuthoredRunSpecV2,
-    context: &RunnerRunContext,
+    context: &RunContext,
     workload: &ScheduledWorkloadConfigV2,
     tokenizers: &dyn OnlineTokenizerSourceResolver,
 ) -> Result<NativeRunSpec> {
@@ -1053,7 +1053,7 @@ pub(crate) fn lower_scheduled(
         && !endpoint_descriptor
             .input_modalities
             .contains(&Modality::Image);
-    let prepare_context = RunnerDatasetInputContext {
+    let prepare_context = DatasetInputContext {
         registry: context.product_registry(),
         models: &run.models,
         run_rng_root: RngRoot::new(run.identity.random_seed),
@@ -1092,7 +1092,7 @@ pub(crate) fn lower_scheduled(
 }
 
 fn media_generator_factory(
-    context: &RunnerRunContext,
+    context: &RunContext,
 ) -> Result<Arc<dyn SyntheticMediaGeneratorFactory>> {
     let Some(spec) = context
         .sidecar_inputs()
@@ -1114,7 +1114,7 @@ fn media_generator_factory(
 
 fn lower_graph(
     run: &AuthoredRunSpecV2,
-    context: &RunnerRunContext,
+    context: &RunContext,
     workload: &GraphWorkloadConfigV2,
     tokenizers: &dyn OnlineTokenizerSourceResolver,
     transport_kind: GraphTransportKind,
@@ -1131,7 +1131,7 @@ fn lower_graph(
             &runtime,
             context.graph_inputs().load(
                 &workload.dataset,
-                &RunnerGraphInputContext {
+                &GraphInputContext {
                     tokenizer: tokenizer_impl.as_ref(),
                     run_random_seed: run.identity.random_seed,
                 },
@@ -1164,7 +1164,7 @@ fn lower_graph(
 
 fn lower_static_accuracy(
     run: &AuthoredRunSpecV2,
-    context: &RunnerRunContext,
+    context: &RunContext,
     workload: &StaticAccuracyWorkloadConfigV2,
     tokenizers: &dyn OnlineTokenizerSourceResolver,
     evaluator_factory: Arc<dyn StaticAccuracyEvaluatorFactory>,
@@ -1188,7 +1188,7 @@ fn lower_static_accuracy(
     )
 }
 
-fn validate_static_accuracy_endpoint(context: &RunnerRunContext) -> Result<()> {
+fn validate_static_accuracy_endpoint(context: &RunContext) -> Result<()> {
     let profile = context.default_endpoint_profile()?;
     let descriptor = context
         .product_registry()
@@ -1246,7 +1246,7 @@ fn build_common_plan(
 
 fn validate_graph_endpoint_profile_references(
     bundle: &crate::graph::input::GraphInputBundle,
-    context: &RunnerRunContext,
+    context: &RunContext,
 ) -> Result<()> {
     context.default_endpoint_profile()?;
     for plan in &bundle.plans {
@@ -1288,7 +1288,7 @@ fn native_plan_report_facts(plan: &NativeRunSpec) -> Result<ReportPairRunFacts> 
 struct PreparedNativeOperation {
     plan: NativeRunSpec,
     request_executor: Arc<dyn RequestExecutorFactory>,
-    execution_factories: RunnerExecutionFactories,
+    execution_factories: ExecutionFactories,
     product_registry: Arc<crate::extensions::AIPerfRegistry>,
     readiness: Option<Box<dyn PreparedOnlineReadiness>>,
     report_facts: ReportPairRunFacts,

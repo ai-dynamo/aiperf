@@ -314,7 +314,7 @@ where
 }
 
 /// Direct adapter from one authored sidecar body to its retained typed input.
-pub trait RunnerSidecarInputAdapter: fmt::Debug + Send + Sync {
+pub trait SidecarInputAdapter: fmt::Debug + Send + Sync {
     /// Stable sidecar input ID.
     fn input_id(&self) -> &'static str;
 
@@ -323,7 +323,7 @@ pub trait RunnerSidecarInputAdapter: fmt::Debug + Send + Sync {
 }
 
 /// Injected resolver over an open, deterministic sidecar adapter registry.
-pub trait RunnerSidecarInputAdapterResolver: fmt::Debug + Send + Sync {
+pub trait SidecarInputAdapterResolver: fmt::Debug + Send + Sync {
     /// Select and validate every authored input exactly once.
     fn prepare(&self, authored: &[AuthoredSidecarInput<'_>]) -> Result<PreparedSidecarInputs>;
 }
@@ -397,7 +397,7 @@ impl PreparedSidecarInputs {
 
 /// Deterministic built-in sidecar-input adapter composition.
 pub struct BuiltinRunnerSidecarInputAdapterResolver {
-    adapters: BTreeMap<&'static str, Arc<dyn RunnerSidecarInputAdapter>>,
+    adapters: BTreeMap<&'static str, Arc<dyn SidecarInputAdapter>>,
 }
 
 impl fmt::Debug for BuiltinRunnerSidecarInputAdapterResolver {
@@ -418,7 +418,7 @@ impl Default for BuiltinRunnerSidecarInputAdapterResolver {
 impl BuiltinRunnerSidecarInputAdapterResolver {
     /// Compose the built-in adapters in stable ID order.
     pub fn new() -> Self {
-        let adapters: [Arc<dyn RunnerSidecarInputAdapter>; 5] = [
+        let adapters: [Arc<dyn SidecarInputAdapter>; 5] = [
             Arc::new(ContentServerInputAdapter),
             Arc::new(GpuTelemetryInputAdapter),
             Arc::new(LiveStreamingInputAdapter),
@@ -434,7 +434,7 @@ impl BuiltinRunnerSidecarInputAdapterResolver {
     }
 }
 
-impl RunnerSidecarInputAdapterResolver for BuiltinRunnerSidecarInputAdapterResolver {
+impl SidecarInputAdapterResolver for BuiltinRunnerSidecarInputAdapterResolver {
     fn prepare(&self, authored: &[AuthoredSidecarInput<'_>]) -> Result<PreparedSidecarInputs> {
         let mut entries = BTreeMap::new();
         for input in authored {
@@ -474,7 +474,7 @@ struct ServerMetricsInputAdapter;
 #[derive(Debug)]
 struct LiveStreamingInputAdapter;
 
-impl RunnerSidecarInputAdapter for ContentServerInputAdapter {
+impl SidecarInputAdapter for ContentServerInputAdapter {
     fn input_id(&self) -> &'static str {
         CONTENT_SERVER_SIDECAR_ID
     }
@@ -511,7 +511,7 @@ impl RunnerSidecarInputAdapter for ContentServerInputAdapter {
     }
 }
 
-impl RunnerSidecarInputAdapter for GpuTelemetryInputAdapter {
+impl SidecarInputAdapter for GpuTelemetryInputAdapter {
     fn input_id(&self) -> &'static str {
         GPU_TELEMETRY_SIDECAR_ID
     }
@@ -558,7 +558,7 @@ impl RunnerSidecarInputAdapter for GpuTelemetryInputAdapter {
     }
 }
 
-impl RunnerSidecarInputAdapter for NetworkLatencyInputAdapter {
+impl SidecarInputAdapter for NetworkLatencyInputAdapter {
     fn input_id(&self) -> &'static str {
         NETWORK_LATENCY_SIDECAR_ID
     }
@@ -598,7 +598,7 @@ impl RunnerSidecarInputAdapter for NetworkLatencyInputAdapter {
     }
 }
 
-impl RunnerSidecarInputAdapter for ServerMetricsInputAdapter {
+impl SidecarInputAdapter for ServerMetricsInputAdapter {
     fn input_id(&self) -> &'static str {
         SERVER_METRICS_SIDECAR_ID
     }
@@ -643,7 +643,7 @@ impl RunnerSidecarInputAdapter for ServerMetricsInputAdapter {
     }
 }
 
-impl RunnerSidecarInputAdapter for LiveStreamingInputAdapter {
+impl SidecarInputAdapter for LiveStreamingInputAdapter {
     fn input_id(&self) -> &'static str {
         LIVE_STREAMING_SIDECAR_ID
     }

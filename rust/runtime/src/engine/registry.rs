@@ -32,20 +32,20 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, value::RawValue};
 
-use crate::engine::dataset_input::RunnerDatasetInputAdapterResolver;
-use crate::engine::execution_factories::RunnerExecutionFactories;
-use crate::engine::graph_input::RunnerGraphInputAdapterResolver;
+use crate::engine::dataset_input::DatasetInputAdapterResolver;
+use crate::engine::execution_factories::ExecutionFactories;
+use crate::engine::graph_input::GraphInputAdapterResolver;
 use crate::engine::protocol::PhaseSpec;
 use crate::engine::protocol_v2::{
     AuthoredRunSpecV2, NamedRunnerComponentSpecV2, RunDiagnosticArtifactV2, RunResourceV2,
-    RunnerComponentId, RunnerFailureStageV2,
+    ComponentId, FailureStageV2,
 };
 use crate::engine::sidecar_input::PreparedSidecarInputs;
 
 /// Clock family supplied by one prepared transport.
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
-pub enum RunnerClockKind {
+pub enum ClockKind {
     /// Monotonic wall-clock execution.
     Real,
     /// Deterministic discrete-event virtual time.
@@ -54,25 +54,25 @@ pub enum RunnerClockKind {
 
 /// Deterministic capability facts for one linked transport factory.
 ///
-/// These feed the `--capabilities` [`RunnerCatalog`] only. There is no
+/// These feed the `--capabilities` [`Catalog`] only. There is no
 /// transport×workload compatibility predicate: any registered workload runs over
 /// any registered transport, and transport-specific execution is resolved by the
 /// workload's `prepare_with_context` from the validated transport by id/type.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
-pub struct RunnerTransportDescriptor {
+pub struct TransportDescriptor {
     /// Stable registry ID.
     pub id: &'static str,
     /// Human-readable implementation description.
     pub description: &'static str,
     /// Clock family exposed by this transport (catalog fact).
-    pub clock: RunnerClockKind,
+    pub clock: ClockKind,
     /// Statically compiled transport feature IDs (catalog fact).
     pub features: &'static [&'static str],
 }
 
 /// Deterministic capability facts for one linked workload factory.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
-pub struct RunnerWorkloadDescriptor {
+pub struct WorkloadDescriptor {
     /// Stable registry ID.
     pub id: &'static str,
     /// Human-readable implementation description.
@@ -194,9 +194,9 @@ where
 }
 
 /// Startup-only transport validation and preparation half of the registry.
-pub trait RunnerTransportFactory: Debug + Send + Sync {
+pub trait TransportFactory: Debug + Send + Sync {
     /// Describe the exact compiled implementation.
-    fn descriptor(&self) -> &'static RunnerTransportDescriptor;
+    fn descriptor(&self) -> &'static TransportDescriptor;
 
     /// Strictly decode and validate factory-owned authored config.
     fn validate(
@@ -218,7 +218,7 @@ pub trait RunnerTransportFactory: Debug + Send + Sync {
     fn native_execution(
         &self,
         _config: &dyn ValidatedTransportConfig,
-        _context: &RunnerRunContext,
+        _context: &RunContext,
     ) -> Result<Option<Arc<dyn NativeTransportExecution>>> {
         Ok(None)
     }
@@ -235,7 +235,7 @@ pub trait RunnerTransportFactory: Debug + Send + Sync {
 /// registering a factory that returns its own binding, and nothing in the
 /// workloads changes. A transport whose execution mode is not the
 /// `RequestExecutor` seam (dynosim) returns `None` from
-/// [`RunnerTransportFactory::native_execution`] instead.
+/// [`TransportFactory::native_execution`] instead.
 pub trait NativeTransportExecution: Send + Sync {
     /// Turn-placement factory this transport drives below the shared dispatcher.
     fn executor_factory(&self) -> Arc<dyn crate::engine::turn_execution::RequestExecutorFactory>;
@@ -250,16 +250,16 @@ pub trait NativeTransportExecution: Send + Sync {
 
     /// Transport-specific run-level validation (endpoint URL schemes, server
     /// reachability policy, …), performed after component configs decode.
-    fn validate_run(&self, run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> Result<()>;
+    fn validate_run(&self, run: &AuthoredRunSpecV2, context: &RunContext) -> Result<()>;
 
     /// Additive transport provenance stamped onto the terminal response.
     fn provenance(&self) -> BTreeMap<String, String>;
 }
 
 /// Startup-only workload validation half of the registry.
-pub trait RunnerWorkloadFactory: Debug + Send + Sync {
+pub trait WorkloadFactory: Debug + Send + Sync {
     /// Describe the exact compiled implementation.
-    fn descriptor(&self) -> &'static RunnerWorkloadDescriptor;
+    fn descriptor(&self) -> &'static WorkloadDescriptor;
 
     /// Strictly decode and validate factory-owned authored config.
     fn validate(&self, authored: &RawValue) -> Result<Box<dyn ValidatedWorkloadConfig>>;
@@ -276,7 +276,7 @@ pub trait RunnerWorkloadFactory: Debug + Send + Sync {
     fn validate_run(
         &self,
         _run: &AuthoredRunSpecV2,
-        _context: &RunnerRunContext,
+        _context: &RunContext,
         _transport: &dyn ValidatedTransportConfig,
         _workload: &dyn ValidatedWorkloadConfig,
         _transport_id: &str,
@@ -288,13 +288,13 @@ pub trait RunnerWorkloadFactory: Debug + Send + Sync {
     ///
     /// The workload lowers its own authored config once and resolves the
     /// transport's dispatcher/placement factory from the coordinator-frozen
-    /// [`RunnerExecutionFactories`] by `transport_id`; it is otherwise
+    /// [`ExecutionFactories`] by `transport_id`; it is otherwise
     /// transport-blind. The default rejects execution so a descriptor-only
     /// workload cannot silently run.
     fn prepare_with_context(
         &self,
         _run: &AuthoredRunSpecV2,
-        _context: &RunnerRunContext,
+        _context: &RunContext,
         _transport: Box<dyn ValidatedTransportConfig>,
         _workload: Box<dyn ValidatedWorkloadConfig>,
         _transport_id: &str,
@@ -317,7 +317,7 @@ pub trait PreparedReportCommit: Debug {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreparedRunFailure {
     /// Stable failed stage.
-    pub stage: RunnerFailureStageV2,
+    pub stage: FailureStageV2,
     /// Stable lowercase-snake-case diagnostic code.
     pub code: String,
     /// Secret-safe failure detail.
@@ -329,7 +329,7 @@ pub struct PreparedRunFailure {
 impl PreparedRunFailure {
     /// Construct a validated failure that must not produce a native report path.
     pub fn new(
-        stage: RunnerFailureStageV2,
+        stage: FailureStageV2,
         code: impl Into<String>,
         message: impl Into<String>,
     ) -> Result<Self> {
@@ -357,7 +357,7 @@ impl PreparedRunFailure {
 
     /// Reporting-policy failure after execution produced only a diagnostic artifact.
     pub fn reporting(code: impl Into<String>, message: impl Into<String>) -> Result<Self> {
-        Self::new(RunnerFailureStageV2::Reporting, code, message)
+        Self::new(FailureStageV2::Reporting, code, message)
     }
 
     /// Attach already-persisted, content-addressed diagnostic evidence.
@@ -454,7 +454,7 @@ pub struct ValidatedRunnerSelection {
     workload_id: String,
     transport: Box<dyn ValidatedTransportConfig>,
     workload: Box<dyn ValidatedWorkloadConfig>,
-    workload_factory: Arc<dyn RunnerWorkloadFactory>,
+    workload_factory: Arc<dyn WorkloadFactory>,
 }
 
 impl Debug for ValidatedRunnerSelection {
@@ -489,7 +489,7 @@ impl ValidatedRunnerSelection {
 /// workload at prepare time.
 impl AIPerfRegistry {
     /// Register one transport factory, rejecting duplicate IDs.
-    pub fn register_transport(&mut self, factory: Arc<dyn RunnerTransportFactory>) -> Result<()> {
+    pub fn register_transport(&mut self, factory: Arc<dyn TransportFactory>) -> Result<()> {
         let id = checked_descriptor_id(factory.descriptor().id, "transport")?;
         self.transports
             .insert(id.into_string(), factory)
@@ -497,7 +497,7 @@ impl AIPerfRegistry {
     }
 
     /// Register one workload factory, rejecting duplicate IDs.
-    pub fn register_workload(&mut self, factory: Arc<dyn RunnerWorkloadFactory>) -> Result<()> {
+    pub fn register_workload(&mut self, factory: Arc<dyn WorkloadFactory>) -> Result<()> {
         let id = checked_descriptor_id(factory.descriptor().id, "workload")?;
         self.workloads
             .insert(id.into_string(), factory)
@@ -506,12 +506,12 @@ impl AIPerfRegistry {
 
     /// Resolve one registered transport factory by ID for native-execution
     /// binding, returning `None` when no transport with that ID is compiled in.
-    pub fn transport_factory(&self, id: &str) -> Option<Arc<dyn RunnerTransportFactory>> {
+    pub fn transport_factory(&self, id: &str) -> Option<Arc<dyn TransportFactory>> {
         self.transports.get(id).cloned()
     }
 
     /// Return transport descriptors in deterministic ID order.
-    pub fn transport_descriptors(&self) -> Vec<&'static RunnerTransportDescriptor> {
+    pub fn transport_descriptors(&self) -> Vec<&'static TransportDescriptor> {
         self.transports
             .values()
             .map(|factory| factory.descriptor())
@@ -519,7 +519,7 @@ impl AIPerfRegistry {
     }
 
     /// Return workload descriptors in deterministic ID order.
-    pub fn workload_descriptors(&self) -> Vec<&'static RunnerWorkloadDescriptor> {
+    pub fn workload_descriptors(&self) -> Vec<&'static WorkloadDescriptor> {
         self.workloads
             .values()
             .map(|factory| factory.descriptor())
@@ -590,7 +590,7 @@ impl AIPerfRegistry {
     pub fn validate_run(
         &self,
         run: &AuthoredRunSpecV2,
-        context: &RunnerRunContext,
+        context: &RunContext,
         selection: &ValidatedRunnerSelection,
     ) -> Result<()> {
         selection.workload_factory.validate_run(
@@ -610,7 +610,7 @@ impl AIPerfRegistry {
     pub fn prepare_with_context(
         &self,
         run: &AuthoredRunSpecV2,
-        context: &RunnerRunContext,
+        context: &RunContext,
         selection: ValidatedRunnerSelection,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
         selection.workload_factory.prepare_with_context(
@@ -623,7 +623,7 @@ impl AIPerfRegistry {
     }
 }
 
-fn checked_descriptor_id(value: &str, kind: &str) -> Result<RunnerComponentId> {
+fn checked_descriptor_id(value: &str, kind: &str) -> Result<ComponentId> {
     value
         .parse()
         .map_err(|error: String| anyhow!("invalid runner {kind} descriptor ID: {error}"))
@@ -660,7 +660,7 @@ fn validate_resource_requirements(
 
 fn unknown_component<'a>(
     kind: &str,
-    requested: &RunnerComponentId,
+    requested: &ComponentId,
     available: impl Iterator<Item = &'a String>,
 ) -> anyhow::Error {
     let choices = available.map(String::as_str).collect::<Vec<_>>().join(", ");
@@ -709,7 +709,7 @@ impl AIPerfExtension for HttpExtension {
 
 /// Built-in native gRPC transport (Clock-injected Tonic HTTP/2 channels).
 ///
-/// gRPC is one transport over the same `RunnerTransportFactory` seam as
+/// gRPC is one transport over the same `TransportFactory` seam as
 /// `http`/`dynosim`, gated behind the `grpc` Cargo feature: a lite/HTTP-only
 /// runner drops this extension (and the `tonic` framework) entirely. The
 /// transport-neutral Riva ASR/TTS/NLP and KServe-gRPC endpoint *dialects* are
@@ -952,21 +952,21 @@ pub struct ValidatedEndpointProfileV2 {
 /// factories clone this cheap handle into their prepared operation; they never
 /// invoke a built-in registry factory or independently decode endpoint policy.
 #[derive(Clone)]
-pub struct RunnerRunContext {
+pub struct RunContext {
     distribution_id: String,
     product_registry: Arc<AIPerfRegistry>,
-    execution_factories: RunnerExecutionFactories,
-    graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
-    dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
+    execution_factories: ExecutionFactories,
+    graph_inputs: Arc<dyn GraphInputAdapterResolver>,
+    dataset_inputs: Arc<dyn DatasetInputAdapterResolver>,
     sidecar_inputs: Arc<PreparedSidecarInputs>,
     endpoint_profiles: Arc<Vec<ValidatedEndpointProfileV2>>,
     endpoint_profile_indexes: Arc<BTreeMap<String, usize>>,
 }
 
-impl Debug for RunnerRunContext {
+impl Debug for RunContext {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("RunnerRunContext")
+            .debug_struct("RunContext")
             .field("distribution_id", &self.distribution_id)
             .field("execution_factories", &self.execution_factories)
             .field(
@@ -985,14 +985,14 @@ impl Debug for RunnerRunContext {
     }
 }
 
-impl RunnerRunContext {
+impl RunContext {
     /// Freeze one validated profile collection beside the process registry.
     pub fn new(
         distribution_id: impl Into<String>,
         product_registry: Arc<AIPerfRegistry>,
-        execution_factories: RunnerExecutionFactories,
-        graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
-        dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
+        execution_factories: ExecutionFactories,
+        graph_inputs: Arc<dyn GraphInputAdapterResolver>,
+        dataset_inputs: Arc<dyn DatasetInputAdapterResolver>,
         sidecar_inputs: Arc<PreparedSidecarInputs>,
         profiles: Vec<ValidatedEndpointProfileV2>,
     ) -> Result<Self> {
@@ -1044,27 +1044,27 @@ impl RunnerRunContext {
     }
 
     /// Borrow the execution-placement universe frozen by the coordinator.
-    pub fn execution_factories(&self) -> &RunnerExecutionFactories {
+    pub fn execution_factories(&self) -> &ExecutionFactories {
         &self.execution_factories
     }
 
     /// Retain the exact execution-placement universe in a prepared operation.
-    pub fn execution_factories_handle(&self) -> RunnerExecutionFactories {
+    pub fn execution_factories_handle(&self) -> ExecutionFactories {
         self.execution_factories.clone()
     }
 
     /// Borrow the frozen graph-input resolver composed by the coordinator.
-    pub fn graph_inputs(&self) -> &dyn RunnerGraphInputAdapterResolver {
+    pub fn graph_inputs(&self) -> &dyn GraphInputAdapterResolver {
         self.graph_inputs.as_ref()
     }
 
     /// Borrow the frozen dataset-input resolver composed by the coordinator.
-    pub fn dataset_inputs(&self) -> &dyn RunnerDatasetInputAdapterResolver {
+    pub fn dataset_inputs(&self) -> &dyn DatasetInputAdapterResolver {
         self.dataset_inputs.as_ref()
     }
 
     /// Clone the dataset-input resolver into a prepared scheduled operation.
-    pub fn dataset_inputs_handle(&self) -> Arc<dyn RunnerDatasetInputAdapterResolver> {
+    pub fn dataset_inputs_handle(&self) -> Arc<dyn DatasetInputAdapterResolver> {
         self.dataset_inputs.clone()
     }
 
@@ -1319,39 +1319,39 @@ fn seconds_to_optional_ns(value: f64, field: &str) -> Result<Option<i64>> {
 }
 
 /// Built-in online HTTP transport descriptor.
-pub static ONLINE_HTTP_TRANSPORT_DESCRIPTOR: RunnerTransportDescriptor =
-    RunnerTransportDescriptor {
+pub static ONLINE_HTTP_TRANSPORT_DESCRIPTOR: TransportDescriptor =
+    TransportDescriptor {
         id: "http",
         description: "Clock-injected native HTTP transport over a real clock",
-        clock: RunnerClockKind::Real,
+        clock: ClockKind::Real,
         features: &["control_plane_http", "h1", "h2c", "http", "tls", "uds"],
     };
 
 /// Built-in online gRPC transport descriptor.
 #[cfg(feature = "grpc")]
-pub static ONLINE_GRPC_TRANSPORT_DESCRIPTOR: RunnerTransportDescriptor =
-    RunnerTransportDescriptor {
+pub static ONLINE_GRPC_TRANSPORT_DESCRIPTOR: TransportDescriptor =
+    TransportDescriptor {
         id: "grpc",
         description: "Clock-injected native gRPC transport over Tonic HTTP/2 channels",
-        clock: RunnerClockKind::Real,
+        clock: ClockKind::Real,
         features: &["grpc", "h2", "tls"],
     };
 
 /// Built-in scheduled workload descriptor.
-pub static SCHEDULED_WORKLOAD_DESCRIPTOR: RunnerWorkloadDescriptor = RunnerWorkloadDescriptor {
+pub static SCHEDULED_WORKLOAD_DESCRIPTOR: WorkloadDescriptor = WorkloadDescriptor {
     id: "scheduled",
     description: "Clock-paced scheduled request and session workloads",
 };
 
 /// Built-in direct Graph-IR workload descriptor.
-pub static GRAPH_WORKLOAD_DESCRIPTOR: RunnerWorkloadDescriptor = RunnerWorkloadDescriptor {
+pub static GRAPH_WORKLOAD_DESCRIPTOR: WorkloadDescriptor = WorkloadDescriptor {
     id: "graph",
     description: "Direct authored DAG lowering and whole-trace Graph-IR execution",
 };
 
 /// Built-in static-accuracy workload descriptor (HTTP only).
-pub static STATIC_ACCURACY_WORKLOAD_DESCRIPTOR: RunnerWorkloadDescriptor =
-    RunnerWorkloadDescriptor {
+pub static STATIC_ACCURACY_WORKLOAD_DESCRIPTOR: WorkloadDescriptor =
+    WorkloadDescriptor {
         id: "static_accuracy",
         description: "Canonical-evaluator static accuracy over the scheduled HTTP path",
     };
@@ -1359,8 +1359,8 @@ pub static STATIC_ACCURACY_WORKLOAD_DESCRIPTOR: RunnerWorkloadDescriptor =
 #[derive(Debug)]
 struct OnlineHttpTransportFactoryV2;
 
-impl RunnerTransportFactory for OnlineHttpTransportFactoryV2 {
-    fn descriptor(&self) -> &'static RunnerTransportDescriptor {
+impl TransportFactory for OnlineHttpTransportFactoryV2 {
+    fn descriptor(&self) -> &'static TransportDescriptor {
         &ONLINE_HTTP_TRANSPORT_DESCRIPTOR
     }
 
@@ -1391,7 +1391,7 @@ impl RunnerTransportFactory for OnlineHttpTransportFactoryV2 {
     fn native_execution(
         &self,
         _config: &dyn ValidatedTransportConfig,
-        context: &RunnerRunContext,
+        context: &RunContext,
     ) -> Result<Option<Arc<dyn NativeTransportExecution>>> {
         Ok(Some(Arc::new(
             crate::engine::online_execution::HttpNativeExecution::new(
@@ -1406,8 +1406,8 @@ impl RunnerTransportFactory for OnlineHttpTransportFactoryV2 {
 struct OnlineGrpcTransportFactoryV2;
 
 #[cfg(feature = "grpc")]
-impl RunnerTransportFactory for OnlineGrpcTransportFactoryV2 {
-    fn descriptor(&self) -> &'static RunnerTransportDescriptor {
+impl TransportFactory for OnlineGrpcTransportFactoryV2 {
+    fn descriptor(&self) -> &'static TransportDescriptor {
         &ONLINE_GRPC_TRANSPORT_DESCRIPTOR
     }
 
@@ -1425,7 +1425,7 @@ impl RunnerTransportFactory for OnlineGrpcTransportFactoryV2 {
     fn native_execution(
         &self,
         _config: &dyn ValidatedTransportConfig,
-        _context: &RunnerRunContext,
+        _context: &RunContext,
     ) -> Result<Option<Arc<dyn NativeTransportExecution>>> {
         Ok(Some(Arc::new(
             crate::engine::grpc_execution::GrpcNativeExecution::new(),
@@ -1511,13 +1511,13 @@ mod tests {
     use super::*;
     use crate::extensions::AIPerfRegistryFactory;
 
-    static TRANSPORT: RunnerTransportDescriptor = RunnerTransportDescriptor {
+    static TRANSPORT: TransportDescriptor = TransportDescriptor {
         id: "acme_remote",
         description: "fixture remote placement",
-        clock: RunnerClockKind::Real,
+        clock: ClockKind::Real,
         features: &["http"],
     };
-    static WORKLOAD: RunnerWorkloadDescriptor = RunnerWorkloadDescriptor {
+    static WORKLOAD: WorkloadDescriptor = WorkloadDescriptor {
         id: "acme_workload",
         description: "fixture workload",
     };
@@ -1537,8 +1537,8 @@ mod tests {
     #[derive(Debug)]
     struct Transport;
 
-    impl RunnerTransportFactory for Transport {
-        fn descriptor(&self) -> &'static RunnerTransportDescriptor {
+    impl TransportFactory for Transport {
+        fn descriptor(&self) -> &'static TransportDescriptor {
             &TRANSPORT
         }
 
@@ -1556,8 +1556,8 @@ mod tests {
     #[derive(Debug)]
     struct Workload;
 
-    impl RunnerWorkloadFactory for Workload {
-        fn descriptor(&self) -> &'static RunnerWorkloadDescriptor {
+    impl WorkloadFactory for Workload {
+        fn descriptor(&self) -> &'static WorkloadDescriptor {
             &WORKLOAD
         }
 
@@ -1585,7 +1585,7 @@ mod tests {
         fn validate_run(
             &self,
             _run: &AuthoredRunSpecV2,
-            _context: &RunnerRunContext,
+            _context: &RunContext,
             transport: &dyn ValidatedTransportConfig,
             workload: &dyn ValidatedWorkloadConfig,
             _transport_id: &str,
@@ -1606,7 +1606,7 @@ mod tests {
         fn prepare_with_context(
             &self,
             _run: &AuthoredRunSpecV2,
-            _context: &RunnerRunContext,
+            _context: &RunContext,
             transport: Box<dyn ValidatedTransportConfig>,
             workload: Box<dyn ValidatedWorkloadConfig>,
             _transport_id: &str,
@@ -1771,7 +1771,7 @@ mod tests {
             client: ClientConfig::default(),
             session_header: None,
         };
-        let context = RunnerRunContext::new(
+        let context = RunContext::new(
             format!("blake3:{}", "a".repeat(64)),
             Arc::new(AIPerfRegistry::builtin().unwrap()),
             crate::engine::execution_factories::native_execution_factories(),
@@ -1950,12 +1950,12 @@ mod tests {
 
     #[test]
     fn capabilities_catalog_auto_derives_from_the_registered_component_set() {
-        use crate::engine::protocol::RunnerCatalog;
+        use crate::engine::protocol::Catalog;
 
         let registry = crate::extensions::BuiltinAIPerfRegistryFactory
             .build()
             .unwrap();
-        let catalog = RunnerCatalog::from_registry(&registry);
+        let catalog = Catalog::from_registry(&registry);
 
         // Transports are exactly the components the composition-root extension
         // list registered; gating an extension out drops its transport from the

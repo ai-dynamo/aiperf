@@ -623,7 +623,7 @@ pub struct PreparedDatasetInput {
 }
 
 /// Inputs shared by all backend-neutral dataset source adapters.
-pub struct RunnerDatasetInputContext<'a> {
+pub struct DatasetInputContext<'a> {
     /// Frozen compile-time loader/sampler/endpoint registry universe.
     pub registry: &'a AIPerfRegistry,
     /// Authored model selection policy.
@@ -644,7 +644,7 @@ pub struct RunnerDatasetInputContext<'a> {
 
 /// One direct authored dataset-source adapter.
 #[async_trait(?Send)]
-pub trait RunnerDatasetInputAdapter: fmt::Debug + Send + Sync {
+pub trait DatasetInputAdapter: fmt::Debug + Send + Sync {
     /// Stable Config-v2 source discriminator.
     fn source_type(&self) -> &'static str;
 
@@ -652,25 +652,25 @@ pub trait RunnerDatasetInputAdapter: fmt::Debug + Send + Sync {
     async fn load(
         &self,
         raw: &RawValue,
-        context: &RunnerDatasetInputContext<'_>,
+        context: &DatasetInputContext<'_>,
     ) -> Result<PreparedDatasetInput>;
 }
 
 /// Injected open resolver for dataset-input adapters.
 #[async_trait(?Send)]
-pub trait RunnerDatasetInputAdapterResolver: fmt::Debug + Send + Sync {
+pub trait DatasetInputAdapterResolver: fmt::Debug + Send + Sync {
     /// Select the adapter from the source discriminator and retain its loaded
     /// canonical dataset as the first shared runtime representation.
     async fn load(
         &self,
         raw: &RawValue,
-        context: &RunnerDatasetInputContext<'_>,
+        context: &DatasetInputContext<'_>,
     ) -> Result<PreparedDatasetInput>;
 }
 
 /// Deterministic built-in dataset-input adapter composition.
 pub struct BuiltinRunnerDatasetInputAdapterResolver {
-    adapters: BTreeMap<&'static str, Arc<dyn RunnerDatasetInputAdapter>>,
+    adapters: BTreeMap<&'static str, Arc<dyn DatasetInputAdapter>>,
 }
 
 impl fmt::Debug for BuiltinRunnerDatasetInputAdapterResolver {
@@ -691,7 +691,7 @@ impl Default for BuiltinRunnerDatasetInputAdapterResolver {
 impl BuiltinRunnerDatasetInputAdapterResolver {
     /// Compose all built-in source adapters in deterministic ID order.
     pub fn new() -> Self {
-        let adapters: [Arc<dyn RunnerDatasetInputAdapter>; 3] = [
+        let adapters: [Arc<dyn DatasetInputAdapter>; 3] = [
             Arc::new(SyntheticDatasetInputAdapter),
             Arc::new(FileDatasetInputAdapter),
             Arc::new(PublicDatasetInputAdapter),
@@ -714,11 +714,11 @@ struct DatasetInputIdentity {
 }
 
 #[async_trait(?Send)]
-impl RunnerDatasetInputAdapterResolver for BuiltinRunnerDatasetInputAdapterResolver {
+impl DatasetInputAdapterResolver for BuiltinRunnerDatasetInputAdapterResolver {
     async fn load(
         &self,
         raw: &RawValue,
-        context: &RunnerDatasetInputContext<'_>,
+        context: &DatasetInputContext<'_>,
     ) -> Result<PreparedDatasetInput> {
         // This decode reads only the open discriminator. The selected adapter
         // then performs the sole full decode and source load; no intermediate
@@ -784,7 +784,7 @@ where
 }
 
 #[async_trait(?Send)]
-impl RunnerDatasetInputAdapter for SyntheticDatasetInputAdapter {
+impl DatasetInputAdapter for SyntheticDatasetInputAdapter {
     fn source_type(&self) -> &'static str {
         "synthetic"
     }
@@ -792,7 +792,7 @@ impl RunnerDatasetInputAdapter for SyntheticDatasetInputAdapter {
     async fn load(
         &self,
         raw: &RawValue,
-        context: &RunnerDatasetInputContext<'_>,
+        context: &DatasetInputContext<'_>,
     ) -> Result<PreparedDatasetInput> {
         let SyntheticDatasetInput::Synthetic(spec) =
             decode_dataset_source(raw).context("decoding synthetic dataset source")?;
@@ -821,7 +821,7 @@ impl RunnerDatasetInputAdapter for SyntheticDatasetInputAdapter {
 }
 
 #[async_trait(?Send)]
-impl RunnerDatasetInputAdapter for FileDatasetInputAdapter {
+impl DatasetInputAdapter for FileDatasetInputAdapter {
     fn source_type(&self) -> &'static str {
         "file"
     }
@@ -829,7 +829,7 @@ impl RunnerDatasetInputAdapter for FileDatasetInputAdapter {
     async fn load(
         &self,
         raw: &RawValue,
-        context: &RunnerDatasetInputContext<'_>,
+        context: &DatasetInputContext<'_>,
     ) -> Result<PreparedDatasetInput> {
         let FileDatasetInput::File(spec) =
             decode_dataset_source(raw).context("decoding file dataset source")?;
@@ -861,7 +861,7 @@ impl RunnerDatasetInputAdapter for FileDatasetInputAdapter {
 }
 
 #[async_trait(?Send)]
-impl RunnerDatasetInputAdapter for PublicDatasetInputAdapter {
+impl DatasetInputAdapter for PublicDatasetInputAdapter {
     fn source_type(&self) -> &'static str {
         "public"
     }
@@ -869,7 +869,7 @@ impl RunnerDatasetInputAdapter for PublicDatasetInputAdapter {
     async fn load(
         &self,
         raw: &RawValue,
-        context: &RunnerDatasetInputContext<'_>,
+        context: &DatasetInputContext<'_>,
     ) -> Result<PreparedDatasetInput> {
         let PublicDatasetInput::Public(spec) =
             decode_dataset_source(raw).context("decoding public dataset source")?;

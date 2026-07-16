@@ -13,7 +13,7 @@ use crate::extensions::AIPerfRegistry;
 
 /// One plugins.yaml-shaped catalog entry.
 #[derive(Debug, Serialize)]
-pub struct RunnerCatalogEntry {
+pub struct CatalogEntry {
     /// Human-readable factory description.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<&'static str>,
@@ -24,22 +24,22 @@ pub struct RunnerCatalogEntry {
 
 /// Linked runner inventory emitted by `--capabilities`.
 #[derive(Debug, Serialize)]
-pub struct RunnerCatalog {
+pub struct Catalog {
     /// Catalog document version.
     pub schema_version: &'static str,
     /// Endpoint dialect inventory.
-    pub endpoint: BTreeMap<String, RunnerCatalogEntry>,
+    pub endpoint: BTreeMap<String, CatalogEntry>,
     /// Transport inventory.
-    pub transport: BTreeMap<String, RunnerCatalogEntry>,
+    pub transport: BTreeMap<String, CatalogEntry>,
     /// Linked custom dataset loaders.
-    pub custom_dataset_loader: BTreeMap<String, RunnerCatalogEntry>,
+    pub custom_dataset_loader: BTreeMap<String, CatalogEntry>,
     /// Linked public dataset loaders.
-    pub public_dataset_loader: BTreeMap<String, RunnerCatalogEntry>,
+    pub public_dataset_loader: BTreeMap<String, CatalogEntry>,
     /// Linked dataset samplers.
-    pub dataset_sampler: BTreeMap<String, RunnerCatalogEntry>,
+    pub dataset_sampler: BTreeMap<String, CatalogEntry>,
 }
 
-impl RunnerCatalog {
+impl Catalog {
     /// Serialize the exact endpoint and transport catalog linked into this binary.
     pub fn from_registry(product_registry: &AIPerfRegistry) -> Self {
         let endpoint = product_registry
@@ -48,7 +48,7 @@ impl RunnerCatalog {
             .map(|descriptor| {
                 (
                     descriptor.id.to_owned(),
-                    RunnerCatalogEntry {
+                    CatalogEntry {
                         description: Some(descriptor.description),
                         metadata: serde_json::to_value(descriptor)
                             .expect("static endpoint descriptors are serializable"),
@@ -62,7 +62,7 @@ impl RunnerCatalog {
             .map(|descriptor| {
                 (
                     descriptor.id.to_owned(),
-                    RunnerCatalogEntry {
+                    CatalogEntry {
                         description: Some(descriptor.description),
                         metadata: serde_json::json!({
                             "transport_type": descriptor.id,

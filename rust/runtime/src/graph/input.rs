@@ -63,7 +63,7 @@ pub struct GraphInputBundle {
 ///
 /// This is deliberately a format-specific compiler, not an adapter or
 /// registry. Identity dispatch and strict authored-wire decoding live in the
-/// runner's object-safe `RunnerGraphInputAdapter` seam, so a product run can
+/// runner's object-safe `GraphInputAdapter` seam, so a product run can
 /// never traverse two format registries or two source representations.
 pub async fn compile_dag_jsonl_input(
     config: GraphInputConfig,

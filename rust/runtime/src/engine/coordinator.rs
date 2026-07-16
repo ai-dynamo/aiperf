@@ -5,7 +5,7 @@
 //!
 //! The stock binary and statically linked custom distributions use the same
 //! coordinator. Concrete registries meet here exactly once; transport/workload
-//! pair adapters receive only the frozen [`RunnerRunContext`] and their own
+//! pair adapters receive only the frozen [`RunContext`] and their own
 //! validated configuration.
 
 use std::collections::BTreeMap;
@@ -18,24 +18,24 @@ use crate::report::finalize_and_write_native_report_json;
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 
-use crate::engine::dataset_input::RunnerDatasetInputAdapterResolver;
-use crate::engine::execution_factories::RunnerExecutionFactories;
-use crate::engine::graph_input::RunnerGraphInputAdapterResolver;
-use crate::engine::protocol::RunnerCatalog;
+use crate::engine::dataset_input::DatasetInputAdapterResolver;
+use crate::engine::execution_factories::ExecutionFactories;
+use crate::engine::graph_input::GraphInputAdapterResolver;
+use crate::engine::protocol::Catalog;
 use crate::engine::protocol_v2::{
-    DeferredCheckV2, RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2,
-    RunnerEnvelopeV2, RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
+    DeferredCheckV2, PROTOCOL_V2, RunTerminalV2, RunValidationV2, DiagnosticV2,
+    EnvelopeV2, FailureStageV2, OperationV2, ValidationCompletenessV2,
 };
 use crate::engine::redaction::redact_diagnostic;
 use crate::engine::registry::{
-    PreparedRunFailure, PreparedRunOutcome, RunnerRunContext, validate_endpoint_profiles_v2,
+    PreparedRunFailure, PreparedRunOutcome, RunContext, validate_endpoint_profiles_v2,
 };
-use crate::engine::sidecar_input::RunnerSidecarInputAdapterResolver;
+use crate::engine::sidecar_input::SidecarInputAdapterResolver;
 
 /// Exactly one typed response emitted for a protocol-v2 request.
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
-pub enum RunnerResponseV2 {
+pub enum ResponseV2 {
     /// Response to a side-effect-free validation operation.
     Validation(RunValidationV2),
     /// Terminal response to an execution operation.
@@ -44,9 +44,9 @@ pub enum RunnerResponseV2 {
 
 /// One coordinator result plus the process exit status that carries it.
 #[derive(Debug)]
-pub struct RunnerProcessResultV2 {
+pub struct ProcessResultV2 {
     /// Exactly one response object for stdout JSONL.
-    pub response: RunnerResponseV2,
+    pub response: ResponseV2,
     /// Zero for success, one for a validated run failure, or two for protocol failure.
     pub exit_code: i32,
 }
@@ -56,19 +56,19 @@ pub struct RunnerProcessResultV2 {
 /// A custom statically linked executable injects alternate registry factories
 /// or graph-input adapters here. The execution coordinator and all hot-path
 /// scheduling code remain unchanged.
-pub struct RunnerV2Coordinator {
+pub struct Coordinator {
     distribution_id: String,
     product_registry: Arc<AIPerfRegistry>,
-    execution_factories: RunnerExecutionFactories,
-    graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
-    dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
-    sidecar_inputs: Arc<dyn RunnerSidecarInputAdapterResolver>,
+    execution_factories: ExecutionFactories,
+    graph_inputs: Arc<dyn GraphInputAdapterResolver>,
+    dataset_inputs: Arc<dyn DatasetInputAdapterResolver>,
+    sidecar_inputs: Arc<dyn SidecarInputAdapterResolver>,
 }
 
-impl std::fmt::Debug for RunnerV2Coordinator {
+impl std::fmt::Debug for Coordinator {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("RunnerV2Coordinator")
+            .debug_struct("Coordinator")
             .field("distribution_id", &self.distribution_id)
             .field("transports", &self.product_registry.transport_descriptors())
             .field("workloads", &self.product_registry.workload_descriptors())
@@ -76,15 +76,15 @@ impl std::fmt::Debug for RunnerV2Coordinator {
     }
 }
 
-impl RunnerV2Coordinator {
+impl Coordinator {
     /// Compose every startup registry exactly once for this child process.
     pub fn new(
         distribution_id: impl Into<String>,
         product_registry_factory: &dyn AIPerfRegistryFactory,
-        execution_factories: RunnerExecutionFactories,
-        graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
-        dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
-        sidecar_inputs: Arc<dyn RunnerSidecarInputAdapterResolver>,
+        execution_factories: ExecutionFactories,
+        graph_inputs: Arc<dyn GraphInputAdapterResolver>,
+        dataset_inputs: Arc<dyn DatasetInputAdapterResolver>,
+        sidecar_inputs: Arc<dyn SidecarInputAdapterResolver>,
     ) -> Result<Self> {
         let distribution_id = distribution_id.into();
         validate_distribution_id(&distribution_id)?;
@@ -106,12 +106,12 @@ impl RunnerV2Coordinator {
     }
 
     /// Return the plugins.yaml-shaped catalog from this process's frozen registry.
-    pub fn catalog(&self) -> RunnerCatalog {
-        RunnerCatalog::from_registry(self.product_registry.as_ref())
+    pub fn catalog(&self) -> Catalog {
+        Catalog::from_registry(self.product_registry.as_ref())
     }
 
     /// Validate or execute one strict authored envelope through the frozen registries.
-    pub fn handle(&self, envelope: RunnerEnvelopeV2) -> RunnerProcessResultV2 {
+    pub fn handle(&self, envelope: EnvelopeV2) -> ProcessResultV2 {
         let operation = envelope.operation;
         let benchmark_id = Some(envelope.run.benchmark_id.clone());
         if let Err(error) = envelope.validate_outer() {
@@ -128,7 +128,7 @@ impl RunnerV2Coordinator {
                 operation,
                 self.distribution_id.clone(),
                 benchmark_id,
-                RunnerFailureStageV2::Validation,
+                FailureStageV2::Validation,
                 "invalid_run",
                 message,
                 path,
@@ -142,7 +142,7 @@ impl RunnerV2Coordinator {
                     operation,
                     self.distribution_id.clone(),
                     benchmark_id,
-                    RunnerFailureStageV2::Validation,
+                    FailureStageV2::Validation,
                     "invalid_run",
                     format!("{error:#}"),
                     1,
@@ -157,7 +157,7 @@ impl RunnerV2Coordinator {
                     operation,
                     self.distribution_id.clone(),
                     benchmark_id,
-                    RunnerFailureStageV2::Validation,
+                    FailureStageV2::Validation,
                     "invalid_transport_workload_selection",
                     format!("{error:#}"),
                     1,
@@ -173,7 +173,7 @@ impl RunnerV2Coordinator {
                         operation,
                         self.distribution_id.clone(),
                         benchmark_id,
-                        RunnerFailureStageV2::Validation,
+                        FailureStageV2::Validation,
                         "invalid_endpoint_profiles",
                         format!("{error:#}"),
                         1,
@@ -205,14 +205,14 @@ impl RunnerV2Coordinator {
                     operation,
                     self.distribution_id.clone(),
                     benchmark_id,
-                    RunnerFailureStageV2::Validation,
+                    FailureStageV2::Validation,
                     "invalid_sidecars",
                     format!("{error:#}"),
                     1,
                 );
             }
         };
-        let context = match RunnerRunContext::new(
+        let context = match RunContext::new(
             self.distribution_id.clone(),
             self.product_registry.clone(),
             self.execution_factories.clone(),
@@ -227,7 +227,7 @@ impl RunnerV2Coordinator {
                     operation,
                     self.distribution_id.clone(),
                     benchmark_id,
-                    RunnerFailureStageV2::Validation,
+                    FailureStageV2::Validation,
                     "invalid_run_context",
                     format!("{error:#}"),
                     1,
@@ -242,7 +242,7 @@ impl RunnerV2Coordinator {
                 operation,
                 self.distribution_id.clone(),
                 benchmark_id,
-                RunnerFailureStageV2::Validation,
+                FailureStageV2::Validation,
                 "invalid_transport_workload_run",
                 format!("{error:#}"),
                 1,
@@ -261,7 +261,7 @@ impl RunnerV2Coordinator {
                     operation,
                     self.distribution_id.clone(),
                     benchmark_id,
-                    RunnerFailureStageV2::Validation,
+                    FailureStageV2::Validation,
                     "invalid_report_provenance",
                     format!("{error:#}"),
                     1,
@@ -269,10 +269,10 @@ impl RunnerV2Coordinator {
             }
         };
 
-        if operation == RunnerOperationV2::Validate {
-            return RunnerProcessResultV2 {
-                response: RunnerResponseV2::Validation(RunValidationV2 {
-                    protocol_version: RUNNER_PROTOCOL_V2,
+        if operation == OperationV2::Validate {
+            return ProcessResultV2 {
+                response: ResponseV2::Validation(RunValidationV2 {
+                    protocol_version: PROTOCOL_V2,
                     event: "run_validation",
                     benchmark_id,
                     success: true,
@@ -299,7 +299,7 @@ impl RunnerV2Coordinator {
                 return terminal_failure(
                     self.distribution_id.clone(),
                     benchmark_id,
-                    RunnerFailureStageV2::Preparation,
+                    FailureStageV2::Preparation,
                     "preparation_failed",
                     format!("{error:#}"),
                     1,
@@ -321,7 +321,7 @@ impl RunnerV2Coordinator {
                         return terminal_failure(
                             self.distribution_id.clone(),
                             benchmark_id,
-                            RunnerFailureStageV2::Reporting,
+                            FailureStageV2::Reporting,
                             error.code,
                             error.message,
                             1,
@@ -330,9 +330,9 @@ impl RunnerV2Coordinator {
                 };
                 provenance.insert("transport".into(), transport_id);
                 provenance.insert("workload".into(), workload_id);
-                RunnerProcessResultV2 {
-                    response: RunnerResponseV2::Terminal(RunTerminalV2 {
-                        protocol_version: RUNNER_PROTOCOL_V2,
+                ProcessResultV2 {
+                    response: ResponseV2::Terminal(RunTerminalV2 {
+                        protocol_version: PROTOCOL_V2,
                         event: "run_terminal",
                         benchmark_id,
                         success: true,
@@ -360,7 +360,7 @@ impl RunnerV2Coordinator {
                     terminal_failure(
                         self.distribution_id.clone(),
                         benchmark_id,
-                        RunnerFailureStageV2::Execution,
+                        FailureStageV2::Execution,
                         "execution_failed",
                         format!("{error:#}"),
                         1,
@@ -460,18 +460,18 @@ fn validate_distribution_id(value: &str) -> Result<()> {
 
 #[allow(clippy::too_many_arguments)]
 fn failure(
-    operation: RunnerOperationV2,
+    operation: OperationV2,
     distribution_id: String,
     benchmark_id: Option<String>,
-    stage: RunnerFailureStageV2,
+    stage: FailureStageV2,
     code: &str,
     message: impl Into<String>,
     exit_code: i32,
-) -> RunnerProcessResultV2 {
-    if operation == RunnerOperationV2::Validate {
-        RunnerProcessResultV2 {
-            response: RunnerResponseV2::Validation(RunValidationV2 {
-                protocol_version: RUNNER_PROTOCOL_V2,
+) -> ProcessResultV2 {
+    if operation == OperationV2::Validate {
+        ProcessResultV2 {
+            response: ResponseV2::Validation(RunValidationV2 {
+                protocol_version: PROTOCOL_V2,
                 event: "run_validation",
                 benchmark_id,
                 success: false,
@@ -495,17 +495,17 @@ fn failure(
 
 #[allow(clippy::too_many_arguments)]
 fn failure_with_path(
-    operation: RunnerOperationV2,
+    operation: OperationV2,
     distribution_id: String,
     benchmark_id: Option<String>,
-    stage: RunnerFailureStageV2,
+    stage: FailureStageV2,
     code: &str,
     message: impl Into<String>,
     path: Option<&str>,
     exit_code: i32,
-) -> RunnerProcessResultV2 {
+) -> ProcessResultV2 {
     let message = message.into();
-    if operation != RunnerOperationV2::Validate {
+    if operation != OperationV2::Validate {
         return terminal_failure(
             distribution_id,
             benchmark_id,
@@ -515,15 +515,15 @@ fn failure_with_path(
             exit_code,
         );
     }
-    RunnerProcessResultV2 {
-        response: RunnerResponseV2::Validation(RunValidationV2 {
-            protocol_version: RUNNER_PROTOCOL_V2,
+    ProcessResultV2 {
+        response: ResponseV2::Validation(RunValidationV2 {
+            protocol_version: PROTOCOL_V2,
             event: "run_validation",
             benchmark_id,
             success: false,
             completeness: ValidationCompletenessV2::Static,
             deferred_checks: Vec::new(),
-            errors: vec![RunnerDiagnosticV2 {
+            errors: vec![DiagnosticV2 {
                 code: code.to_owned(),
                 message: redact_diagnostic(message),
                 path: path.map(str::to_owned),
@@ -536,11 +536,11 @@ fn failure_with_path(
 fn terminal_failure(
     distribution_id: String,
     benchmark_id: Option<String>,
-    stage: RunnerFailureStageV2,
+    stage: FailureStageV2,
     code: &str,
     message: impl Into<String>,
     exit_code: i32,
-) -> RunnerProcessResultV2 {
+) -> ProcessResultV2 {
     terminal_failure_with_artifacts(
         distribution_id,
         benchmark_id,
@@ -555,15 +555,15 @@ fn terminal_failure(
 fn terminal_failure_with_artifacts(
     _distribution_id: String,
     benchmark_id: Option<String>,
-    stage: RunnerFailureStageV2,
+    stage: FailureStageV2,
     code: &str,
     message: impl Into<String>,
     diagnostic_artifacts: Vec<crate::engine::protocol_v2::RunDiagnosticArtifactV2>,
     exit_code: i32,
-) -> RunnerProcessResultV2 {
-    RunnerProcessResultV2 {
-        response: RunnerResponseV2::Terminal(RunTerminalV2 {
-            protocol_version: RUNNER_PROTOCOL_V2,
+) -> ProcessResultV2 {
+    ProcessResultV2 {
+        response: ResponseV2::Terminal(RunTerminalV2 {
+            protocol_version: PROTOCOL_V2,
             event: "run_terminal",
             benchmark_id,
             success: false,
@@ -577,8 +577,8 @@ fn terminal_failure_with_artifacts(
     }
 }
 
-fn diagnostic(code: &str, message: impl Into<String>) -> RunnerDiagnosticV2 {
-    RunnerDiagnosticV2 {
+fn diagnostic(code: &str, message: impl Into<String>) -> DiagnosticV2 {
+    DiagnosticV2 {
         code: code.to_owned(),
         message: redact_diagnostic(message.into()),
         path: None,
@@ -742,19 +742,19 @@ mod tests {
         let result = terminal_failure_with_artifacts(
             format!("blake3:{}", "b".repeat(64)),
             Some("watch-1".to_owned()),
-            RunnerFailureStageV2::Reporting,
+            FailureStageV2::Reporting,
             "archive_remote_finalization_failed",
             "remote archive unavailable",
             vec![artifact.clone()],
             1,
         );
 
-        let RunnerResponseV2::Terminal(terminal) = result.response else {
+        let ResponseV2::Terminal(terminal) = result.response else {
             panic!("expected a terminal response");
         };
         assert!(!terminal.success);
         assert_eq!(terminal.report_path, None);
-        assert_eq!(terminal.stage, Some(RunnerFailureStageV2::Reporting));
+        assert_eq!(terminal.stage, Some(FailureStageV2::Reporting));
         assert_eq!(terminal.diagnostic_artifacts, vec![artifact]);
     }
 }

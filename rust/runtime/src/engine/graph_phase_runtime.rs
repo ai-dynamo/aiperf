@@ -59,11 +59,11 @@ use crate::engine::execute::{
 };
 use crate::engine::graph_execution::{
     ChannelRunnerGraphExecutionEventSink, GraphCancellationConfig, ObservedRunnerGraphPlacement,
-    RunnerGraphExecutionEvent, RunnerGraphExecutionEventSink,
+    GraphExecutionEvent, GraphExecutionEventSink,
 };
 use crate::engine::graph_input::TStarWindow;
 use crate::engine::protocol::{AdaptiveControlVariableSpec, PhaseCommonSpec, PhaseSpec};
-use crate::engine::protocol_v2::RunnerFailureStageV2;
+use crate::engine::protocol_v2::FailureStageV2;
 use crate::engine::records::CapturedRecord;
 use crate::engine::registry::PreparedRunFailure;
 
@@ -72,7 +72,7 @@ pub(crate) struct GraphPhaseBackendConfig {
     pub(crate) metrics_phase: MetricsPhase,
     pub(crate) prefill_concurrency: Option<usize>,
     pub(crate) cancellation: Option<GraphCancellationConfig>,
-    pub(crate) events: Arc<dyn RunnerGraphExecutionEventSink>,
+    pub(crate) events: Arc<dyn GraphExecutionEventSink>,
 }
 
 /// One phase-local whole-trace backend returned by an injected implementation.
@@ -82,7 +82,7 @@ pub(crate) struct PreparedGraphPhaseBackend {
 }
 
 /// Backend construction seam beneath the one shared graph phase driver.
-pub(crate) trait RunnerGraphPhaseBackendFactory {
+pub(crate) trait GraphPhaseBackendFactory {
     fn prepare_backend(&self, config: GraphPhaseBackendConfig)
     -> Result<PreparedGraphPhaseBackend>;
 }
@@ -264,7 +264,7 @@ pub fn graph_pressure_grace_sec(user_grace: Option<f64>, cache_pressure: f64) ->
 struct PreparedGraphPhase {
     workload: GraphWorkload,
     placement: Rc<dyn TracePlacement>,
-    events: mpsc::UnboundedReceiver<RunnerGraphExecutionEvent>,
+    events: mpsc::UnboundedReceiver<GraphExecutionEvent>,
     intervals: Rc<RefCell<Box<dyn crate::timing::IntervalGenerator>>>,
     session_slots: Option<Rc<SlotPool>>,
     prefill_initial: Option<usize>,
@@ -1397,7 +1397,7 @@ struct GraphPhaseExecution {
     adaptive_control_variable: Option<AdaptiveControlVariable>,
     controller: Rc<dyn ScheduledPhaseController>,
     failures: Rc<GraphPhaseFailures>,
-    events: RefCell<Option<mpsc::UnboundedReceiver<RunnerGraphExecutionEvent>>>,
+    events: RefCell<Option<mpsc::UnboundedReceiver<GraphExecutionEvent>>>,
     captured: Rc<RefCell<Vec<CapturedRecord>>>,
     progress: Rc<GraphPhaseProgress>,
     adaptive_sampler: Option<SharedWindowSampler>,
@@ -1469,13 +1469,13 @@ fn ingest_graph_execution_event(
     captured: &Rc<RefCell<Vec<CapturedRecord>>>,
     sampler: Option<&SharedWindowSampler>,
     progress: &GraphPhaseProgress,
-    event: RunnerGraphExecutionEvent,
+    event: GraphExecutionEvent,
 ) {
     match event {
-        RunnerGraphExecutionEvent::FirstToken { trace_id, uuid } => {
+        GraphExecutionEvent::FirstToken { trace_id, uuid } => {
             progress.first_token(&trace_id, uuid);
         }
-        RunnerGraphExecutionEvent::Record { record, node_id } => {
+        GraphExecutionEvent::Record { record, node_id } => {
             if let Some(sampler) = sampler {
                 sampler.borrow_mut().on_record(&record.ingest);
             }
@@ -1491,7 +1491,7 @@ fn ingest_graph_execution_event(
             }
             captured.borrow_mut().push(*record);
         }
-        RunnerGraphExecutionEvent::TraceComplete {
+        GraphExecutionEvent::TraceComplete {
             trace_id,
             node_count,
             requires_node_records,
@@ -2003,7 +2003,7 @@ pub(crate) async fn run_graph_phases(
     allow_dataset_wrap: bool,
     t_star: TStarWindow,
     phase_sidecars: Vec<Vec<Rc<dyn ScheduledPhaseSidecar>>>,
-    backends: &dyn RunnerGraphPhaseBackendFactory,
+    backends: &dyn GraphPhaseBackendFactory,
     on_failure: OnFailure,
 ) -> Result<GraphPhaseRunOutput> {
     validate_dataset_wrap_policy(phases, input, allow_dataset_wrap)?;
@@ -2138,7 +2138,7 @@ fn trajectory_warmup_failed_error(failed_trace_ids: &[String]) -> anyhow::Error 
         failed_trace_ids.join(", ")
     );
     match PreparedRunFailure::new(
-        RunnerFailureStageV2::Execution,
+        FailureStageV2::Execution,
         "trajectory_warmup_failed",
         message,
     ) {
@@ -2189,7 +2189,7 @@ fn prepare_graph_phase(
     t_star: TStarWindow,
     trace_instances: GraphTraceInstanceSequence,
     session_slots: Option<Rc<SlotPool>>,
-    backends: &dyn RunnerGraphPhaseBackendFactory,
+    backends: &dyn GraphPhaseBackendFactory,
     on_failure: OnFailure,
 ) -> Result<PreparedGraphPhase> {
     let phase_index = u64::try_from(phase_index).context("graph phase index exceeds u64")?;
@@ -2259,7 +2259,7 @@ fn prepare_graph_phase(
         }
     };
     let (events_tx, events_rx) = mpsc::unbounded_channel();
-    let event_sink: Arc<dyn RunnerGraphExecutionEventSink> =
+    let event_sink: Arc<dyn GraphExecutionEventSink> =
         Arc::new(ChannelRunnerGraphExecutionEventSink::new(events_tx));
     let adaptive = graph_adaptive_config(phase, benchmark_id, artifact_dir)?;
     let prefill_initial = match (common.prefill_concurrency, adaptive.as_ref()) {
@@ -3676,7 +3676,7 @@ mod tests {
             &captured,
             Some(&sampler),
             &progress,
-            RunnerGraphExecutionEvent::FirstToken {
+            GraphExecutionEvent::FirstToken {
                 trace_id: "trace-adaptive".into(),
                 uuid: Uuid::nil(),
             },
@@ -3685,7 +3685,7 @@ mod tests {
             &captured,
             Some(&sampler),
             &progress,
-            RunnerGraphExecutionEvent::Record {
+            GraphExecutionEvent::Record {
                 record: Box::new(record),
                 node_id: None,
             },
@@ -4022,7 +4022,7 @@ mod tests {
                 &captured,
                 None,
                 &progress,
-                RunnerGraphExecutionEvent::Record {
+                GraphExecutionEvent::Record {
                     record: Box::new(record),
                     node_id: Some(node_id.to_owned()),
                 },
@@ -4073,7 +4073,7 @@ mod tests {
             &captured,
             None,
             &progress,
-            RunnerGraphExecutionEvent::Record {
+            GraphExecutionEvent::Record {
                 record: Box::new(graph_phase_record("tmpl-a::inst-a", false, false)),
                 node_id: None,
             },
@@ -4088,7 +4088,7 @@ mod tests {
         let failure = error
             .downcast_ref::<PreparedRunFailure>()
             .expect("structured warmup failure");
-        assert_eq!(failure.stage, RunnerFailureStageV2::Execution);
+        assert_eq!(failure.stage, FailureStageV2::Execution);
         assert_eq!(failure.code, "trajectory_warmup_failed");
         assert!(failure.message.contains("trace-a"));
         assert!(failure.message.contains("trace-b"));

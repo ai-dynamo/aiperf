@@ -21,7 +21,7 @@ use url::Url;
 use crate::engine::graph_execution::GraphTransportKind;
 use crate::engine::grpc_turn_execution::NativeGrpcExecutionBackendFactory;
 use crate::engine::protocol_v2::AuthoredRunSpecV2;
-use crate::engine::registry::{NativeTransportExecution, RunnerRunContext};
+use crate::engine::registry::{NativeTransportExecution, RunContext};
 use crate::engine::turn_execution::RequestExecutorFactory;
 
 /// Native execution binding for the built-in `grpc` transport.
@@ -54,7 +54,7 @@ impl NativeTransportExecution for GrpcNativeExecution {
         Ok(GraphTransportKind::Grpc)
     }
 
-    fn validate_run(&self, run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> Result<()> {
+    fn validate_run(&self, run: &AuthoredRunSpecV2, context: &RunContext) -> Result<()> {
         validate_grpc_run(run, context)
     }
 
@@ -70,7 +70,7 @@ impl NativeTransportExecution for GrpcNativeExecution {
 /// binding, `grpc://`/`grpcs://` URLs, no HTTP-only client policy, no readiness
 /// retries (unsupported over gRPC today), one routing/session policy across
 /// profiles, and no online sidecars.
-pub(crate) fn validate_grpc_run(run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> Result<()> {
+pub(crate) fn validate_grpc_run(run: &AuthoredRunSpecV2, context: &RunContext) -> Result<()> {
     let default = context.default_endpoint_profile()?;
     let default_http_client = ClientConfig::default();
     let bindings = GrpcBindingRegistry::builtin()?;

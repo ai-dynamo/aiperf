@@ -68,15 +68,15 @@ use loadgen_core::sink::RequestObserver;
 use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
 
-use crate::engine::dataset_input::{PreparedDatasetInput, RunnerDatasetInputContext};
+use crate::engine::dataset_input::{PreparedDatasetInput, DatasetInputContext};
 use crate::engine::execute::{
     NativeConversationSourceFactory, build_native_scheduled_phase_plan_with_source_factory,
     load_tokenizer, metrics_config, native_scheduled_resources, phase_seamless_to_next,
 };
-use crate::engine::graph_execution::{RunnerGraphExecutionEvent, RunnerGraphExecutionEventSink};
-use crate::engine::graph_input::RunnerGraphInputContext;
+use crate::engine::graph_execution::{GraphExecutionEvent, GraphExecutionEventSink};
+use crate::engine::graph_input::GraphInputContext;
 use crate::engine::graph_phase_runtime::{
-    GraphPhaseBackendConfig, PreparedGraphPhaseBackend, RunnerGraphPhaseBackendFactory,
+    GraphPhaseBackendConfig, PreparedGraphPhaseBackend, GraphPhaseBackendFactory,
     run_graph_phases, validate_graph_phases,
 };
 use crate::engine::online_execution::{
@@ -86,8 +86,8 @@ use crate::engine::protocol::{MetricsSpec, ModelSelectionStrategy, PhaseSpec};
 use crate::engine::protocol_v2::AuthoredRunSpecV2;
 use crate::engine::records::{CapturedModelOutput, CapturedRecord};
 use crate::engine::registry::{
-    GraphWorkloadConfigV2, PreparedRunOutcome, PreparedRunnerOperation, RunnerClockKind,
-    RunnerRunContext, RunnerTransportDescriptor, RunnerTransportFactory, ScheduledWorkloadConfigV2,
+    GraphWorkloadConfigV2, PreparedRunOutcome, PreparedRunnerOperation, ClockKind,
+    RunContext, TransportDescriptor, TransportFactory, ScheduledWorkloadConfigV2,
     ValidatedTransportConfig, ValidatedWorkloadConfig, WorkloadRequirements,
 };
 
@@ -126,17 +126,17 @@ const DYNOSIM_TRANSPORT_FEATURES: &[&str] = &[
     "dynamo-parity",
 ];
 
-static DYNOSIM_OFFLINE_DESCRIPTOR: RunnerTransportDescriptor = RunnerTransportDescriptor {
+static DYNOSIM_OFFLINE_DESCRIPTOR: TransportDescriptor = TransportDescriptor {
     id: DYNOSIM_OFFLINE_ID,
     description: "Dynamo passive-engine co-simulation on one deterministic SimClock",
-    clock: RunnerClockKind::Sim,
+    clock: ClockKind::Sim,
     features: DYNOSIM_TRANSPORT_FEATURES,
 };
 
-static DYNOSIM_ONLINE_DESCRIPTOR: RunnerTransportDescriptor = RunnerTransportDescriptor {
+static DYNOSIM_ONLINE_DESCRIPTOR: TransportDescriptor = TransportDescriptor {
     id: DYNOSIM_ONLINE_ID,
     description: "Dynamo passive-engine in-process replay under the real wall clock",
-    clock: RunnerClockKind::Real,
+    clock: ClockKind::Real,
     features: DYNOSIM_TRANSPORT_FEATURES,
 };
 
@@ -824,8 +824,8 @@ impl DynosimTransportFactory {
     }
 }
 
-impl RunnerTransportFactory for DynosimTransportFactory {
-    fn descriptor(&self) -> &'static RunnerTransportDescriptor {
+impl TransportFactory for DynosimTransportFactory {
+    fn descriptor(&self) -> &'static TransportDescriptor {
         if self.online {
             &DYNOSIM_ONLINE_DESCRIPTOR
         } else {
@@ -850,7 +850,7 @@ impl RunnerTransportFactory for DynosimTransportFactory {
 /// scheduled and graph workload factories resolve these transports by type and
 /// dispatch to [`prepare_dynosim_scheduled`]/[`prepare_dynosim_graph`]; there is
 /// no per-transport pair object. Direct graph preparation resolves its
-/// authored-input adapter from the coordinator-owned [`RunnerRunContext`].
+/// authored-input adapter from the coordinator-owned [`RunContext`].
 pub fn register_dynosim_transport(registry: &mut crate::extensions::AIPerfRegistry) -> Result<()> {
     registry.register_transport(Arc::new(DynosimTransportFactory::offline()))?;
     registry.register_transport(Arc::new(DynosimTransportFactory::online()))?;
@@ -873,7 +873,7 @@ pub fn validated_dynosim_transport(
 /// dynosim transport (there is no per-transport pair object).
 pub(crate) fn dynosim_scheduled_validate_run(
     run: &AuthoredRunSpecV2,
-    context: &RunnerRunContext,
+    context: &RunContext,
     transport: &dyn ValidatedTransportConfig,
     workload: &ScheduledWorkloadConfigV2,
 ) -> Result<()> {
@@ -906,7 +906,7 @@ pub(crate) fn dynosim_scheduled_validate_run(
 /// Prepare a dynosim scheduled operation from the coordinator-owned context.
 pub(crate) fn prepare_dynosim_scheduled(
     run: &AuthoredRunSpecV2,
-    context: &RunnerRunContext,
+    context: &RunContext,
     transport: Box<dyn ValidatedTransportConfig>,
     workload: Box<dyn ValidatedWorkloadConfig>,
     tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
@@ -943,7 +943,7 @@ pub(crate) fn prepare_dynosim_scheduled(
     );
 
     let rng_root = RngRoot::new(run.identity.random_seed);
-    let dataset_context = RunnerDatasetInputContext {
+    let dataset_context = DatasetInputContext {
         registry: context.product_registry(),
         models: &run.models,
         run_rng_root: rng_root,
@@ -1435,7 +1435,7 @@ fn seconds_to_ns(value: f64, name: &str) -> Result<i64> {
 /// transport (there is no per-transport pair object).
 pub(crate) fn dynosim_graph_validate_run(
     _run: &AuthoredRunSpecV2,
-    context: &RunnerRunContext,
+    context: &RunContext,
     transport: &dyn ValidatedTransportConfig,
     workload: &GraphWorkloadConfigV2,
 ) -> Result<()> {
@@ -1472,7 +1472,7 @@ pub(crate) fn dynosim_graph_validate_run(
 /// Prepare a dynosim direct-graph operation from the coordinator-owned context.
 pub(crate) fn prepare_dynosim_graph(
     run: &AuthoredRunSpecV2,
-    context: &RunnerRunContext,
+    context: &RunContext,
     transport: Box<dyn ValidatedTransportConfig>,
     workload: Box<dyn ValidatedWorkloadConfig>,
     tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
@@ -1508,7 +1508,7 @@ pub(crate) fn prepare_dynosim_graph(
     let prepared = runtime
         .block_on(context.graph_inputs().load(
             &workload.dataset,
-            &RunnerGraphInputContext {
+            &GraphInputContext {
                 tokenizer: tokenizer.as_ref(),
                 run_random_seed: run.identity.random_seed,
             },
@@ -1545,13 +1545,13 @@ fn validated_graph_workload(
 }
 
 struct OfflineGraphRunnerEventSink {
-    events: Arc<dyn RunnerGraphExecutionEventSink>,
+    events: Arc<dyn GraphExecutionEventSink>,
 }
 
 impl OfflineGraphEventSink for OfflineGraphRunnerEventSink {
     fn first_token(&self, uuid: uuid::Uuid, trace_id: &str) -> Result<()> {
         self.events
-            .emit(RunnerGraphExecutionEvent::FirstToken {
+            .emit(GraphExecutionEvent::FirstToken {
                 trace_id: trace_id.to_owned(),
                 uuid,
             })
@@ -1560,7 +1560,7 @@ impl OfflineGraphEventSink for OfflineGraphRunnerEventSink {
 
     fn record(&self, record: OfflineGraphRequestRecord) -> Result<()> {
         self.events
-            .emit(RunnerGraphExecutionEvent::Record {
+            .emit(GraphExecutionEvent::Record {
                 record: Box::new(CapturedRecord {
                     uuid: record.uuid,
                     x_correlation_id: record.trace_id,
@@ -1580,7 +1580,7 @@ struct DynosimGraphPhaseBackendFactory {
     backends: Rc<dyn OfflineGraphBackendFactory>,
 }
 
-impl RunnerGraphPhaseBackendFactory for DynosimGraphPhaseBackendFactory {
+impl GraphPhaseBackendFactory for DynosimGraphPhaseBackendFactory {
     fn prepare_backend(
         &self,
         config: GraphPhaseBackendConfig,
@@ -2302,7 +2302,7 @@ pub struct DynosimTraceOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::registry::RunnerTransportFactory;
+    use crate::engine::registry::TransportFactory;
     use crate::extensions::{AIPerfRegistryFactory, BuiltinAIPerfRegistryFactory};
 
     fn raw(value: Value) -> Box<RawValue> {
@@ -2378,8 +2378,8 @@ mod tests {
     fn factory_registration_is_derived_from_the_feature_bearing_registry() {
         let registry = BuiltinAIPerfRegistryFactory.build().unwrap();
         for (transport_id, clock) in [
-            (DYNOSIM_OFFLINE_ID, RunnerClockKind::Sim),
-            (DYNOSIM_ONLINE_ID, RunnerClockKind::Real),
+            (DYNOSIM_OFFLINE_ID, ClockKind::Sim),
+            (DYNOSIM_ONLINE_ID, ClockKind::Real),
         ] {
             let descriptor = registry
                 .transport_descriptors()

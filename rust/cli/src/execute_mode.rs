@@ -10,7 +10,7 @@
 //! boundary the separate runner binary used to provide.
 //!
 //! The protocol is unchanged: read the entire request from stdin, run it through
-//! `RunnerApplication::handle_v2`, and write exactly one JSONL envelope to stdout
+//! `Application::handle_v2`, and write exactly one JSONL envelope to stdout
 //! (STDOUT is the protocol channel; all diagnostics go to STDERR via the CLI's
 //! `tracing` subscriber). Speaks protocol v2 only; a panic anywhere in
 //! prepare/execute is caught and converted to a typed v2 failure envelope so the
@@ -18,7 +18,7 @@
 //!
 //! The stdin payload is a bare protocol-v2 `BenchmarkRun`; the requested
 //! operation is selected by the re-exec MODE (argv), not a wire field. The child
-//! reconstructs the internal `RunnerEnvelopeV2` (fixed protocol version + the
+//! reconstructs the internal `EnvelopeV2` (fixed protocol version + the
 //! mode's operation) before the unchanged `handle_v2`.
 //!
 //! Modes (selected by the first argument, set by the re-exec spawn site):
@@ -31,12 +31,12 @@
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 
-use aiperf_runtime::engine::application::RunnerApplication;
+use aiperf_runtime::engine::application::Application;
 use aiperf_runtime::engine::cellular_kind::CellularRunKind;
 use aiperf_runtime::engine::distribution_identity::current_distribution_id;
 use aiperf_runtime::engine::protocol_v2::{
-    BenchmarkRunWireV2, RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2,
-    RunnerEnvelopeV2, RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
+    BenchmarkRunWireV2, PROTOCOL_V2, RunTerminalV2, RunValidationV2, DiagnosticV2,
+    EnvelopeV2, FailureStageV2, OperationV2, ValidationCompletenessV2,
 };
 use aiperf_runtime::engine::redaction::redact_diagnostic;
 use serde_json::Value;
@@ -83,10 +83,10 @@ pub fn is_execution_mode(args: &[String]) -> bool {
 /// The catalog is a direct in-process call — there is no `--capabilities`
 /// subprocess/argv mode and no Python preflight. Any Rust caller that needs the
 /// linked distribution's plugins.yaml-shaped inventory calls this.
-pub fn capabilities_catalog() -> anyhow::Result<aiperf_runtime::engine::protocol::RunnerCatalog> {
+pub fn capabilities_catalog() -> anyhow::Result<aiperf_runtime::engine::protocol::Catalog> {
     let distribution_id = current_distribution_id()
         .map_err(|error| anyhow::anyhow!("failed to identify aiperf distribution: {error}"))?;
-    let application = RunnerApplication::stock(distribution_id)
+    let application = Application::stock(distribution_id)
         .map_err(|error| anyhow::anyhow!("failed to compose aiperf distribution: {error:#}"))?;
     Ok(application.catalog())
 }
@@ -102,9 +102,9 @@ pub fn dispatch(args: &[String]) -> ! {
     // stdin payload is a bare `BenchmarkRun`. `--validate` requests the
     // side-effect-free validate operation; every other stdin mode executes.
     let operation = if validate_mode {
-        RunnerOperationV2::Validate
+        OperationV2::Validate
     } else {
-        RunnerOperationV2::Execute
+        OperationV2::Execute
     };
 
     // A cell child fetches its sliced envelope over velo, not stdin. Every other
@@ -210,7 +210,7 @@ fn run_cell() -> ! {
     let run_bytes = run_object_bytes(&envelope_bytes);
     configure_dynosim_process_defaults(&run_bytes);
     let application = compose_stock_application();
-    run_v2(&run_bytes, RunnerOperationV2::Execute, &application);
+    run_v2(&run_bytes, OperationV2::Execute, &application);
 }
 
 /// Extract the bare `BenchmarkRun` object from a wrapped `{"run": …}` cellular
@@ -351,7 +351,7 @@ fn run_controller(envelope: &Value) -> ! {
             provenance.insert("record_count".to_owned(), outcome.record_count.to_string());
             write_json_line(
                 &RunTerminalV2 {
-                    protocol_version: RUNNER_PROTOCOL_V2,
+                    protocol_version: PROTOCOL_V2,
                     event: "run_terminal",
                     benchmark_id,
                     success: true,
@@ -384,12 +384,12 @@ fn emit_cellular_failure(benchmark_id: Option<String>, code: &'static str, messa
     tracing::error!(error = %message, "cellular run failed");
     write_json_line(
         &RunTerminalV2 {
-            protocol_version: RUNNER_PROTOCOL_V2,
+            protocol_version: PROTOCOL_V2,
             event: "run_terminal",
             benchmark_id,
             success: false,
             report_path: None,
-            stage: Some(RunnerFailureStageV2::Execution),
+            stage: Some(FailureStageV2::Execution),
             errors: vec![diagnostic(code, message)],
             diagnostic_artifacts: Vec::new(),
             provenance: BTreeMap::new(),
@@ -398,7 +398,7 @@ fn emit_cellular_failure(benchmark_id: Option<String>, code: &'static str, messa
     );
 }
 
-fn compose_stock_application() -> RunnerApplication {
+fn compose_stock_application() -> Application {
     let distribution_id = match current_distribution_id() {
         Ok(distribution_id) => distribution_id,
         Err(error) => {
@@ -406,7 +406,7 @@ fn compose_stock_application() -> RunnerApplication {
             std::process::exit(2);
         }
     };
-    match RunnerApplication::stock(distribution_id) {
+    match Application::stock(distribution_id) {
         Ok(application) => application,
         Err(error) => {
             tracing::error!(
@@ -478,10 +478,10 @@ fn configure_dynosim_process_defaults(input: &[u8]) {
 ///
 /// The stdin payload is a bare [`BenchmarkRunWireV2`]; the `operation` is
 /// selected by the re-exec mode (`--execute` vs `--validate`), not carried on the
-/// wire. The internal [`RunnerEnvelopeV2`] is reconstructed here with the fixed
-/// [`RUNNER_PROTOCOL_V2`] so the unchanged `handle_v2`/coordinator seam is
+/// wire. The internal [`EnvelopeV2`] is reconstructed here with the fixed
+/// [`PROTOCOL_V2`] so the unchanged `handle_v2`/coordinator seam is
 /// preserved. A malformed bare run is reported as a typed v2 protocol failure.
-fn run_v2(input: &[u8], operation: RunnerOperationV2, application: &RunnerApplication) -> ! {
+fn run_v2(input: &[u8], operation: OperationV2, application: &Application) -> ! {
     let distribution_id = application.distribution_id().to_owned();
     let run = match serde_json::from_slice::<BenchmarkRunWireV2>(input) {
         Ok(run) => run,
@@ -493,8 +493,8 @@ fn run_v2(input: &[u8], operation: RunnerOperationV2, application: &RunnerApplic
             format!("invalid protocol-v2 request: {error}"),
         ),
     };
-    let envelope = RunnerEnvelopeV2 {
-        protocol_version: RUNNER_PROTOCOL_V2,
+    let envelope = EnvelopeV2 {
+        protocol_version: PROTOCOL_V2,
         operation,
         run,
     };
@@ -533,16 +533,16 @@ fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
 /// operation (validation failure for `validate`, execution-stage terminal for
 /// `execute`).
 fn write_v2_internal_panic(
-    operation: RunnerOperationV2,
+    operation: OperationV2,
     distribution_id: String,
     benchmark_id: Option<String>,
     message: String,
 ) -> ! {
     let message = format!("aiperf internal panic: {message}");
     match operation {
-        RunnerOperationV2::Validate => write_json_line(
+        OperationV2::Validate => write_json_line(
             &RunValidationV2 {
-                protocol_version: RUNNER_PROTOCOL_V2,
+                protocol_version: PROTOCOL_V2,
                 event: "run_validation",
                 benchmark_id,
                 success: false,
@@ -552,10 +552,10 @@ fn write_v2_internal_panic(
             },
             2,
         ),
-        RunnerOperationV2::Execute => write_v2_terminal_failure(
+        OperationV2::Execute => write_v2_terminal_failure(
             distribution_id,
             benchmark_id,
-            RunnerFailureStageV2::Execution,
+            FailureStageV2::Execution,
             "internal_panic",
             message,
             2,
@@ -571,16 +571,16 @@ fn benchmark_id_hint(input: &[u8]) -> Option<String> {
 }
 
 fn write_v2_protocol_failure(
-    operation: Option<RunnerOperationV2>,
+    operation: Option<OperationV2>,
     distribution_id: String,
     benchmark_id: Option<String>,
     code: &str,
     message: String,
 ) -> ! {
     match operation {
-        Some(RunnerOperationV2::Validate) => write_json_line(
+        Some(OperationV2::Validate) => write_json_line(
             &RunValidationV2 {
-                protocol_version: RUNNER_PROTOCOL_V2,
+                protocol_version: PROTOCOL_V2,
                 event: "run_validation",
                 benchmark_id,
                 success: false,
@@ -590,10 +590,10 @@ fn write_v2_protocol_failure(
             },
             2,
         ),
-        Some(RunnerOperationV2::Execute) | None => write_v2_terminal_failure(
+        Some(OperationV2::Execute) | None => write_v2_terminal_failure(
             distribution_id,
             benchmark_id,
-            RunnerFailureStageV2::Protocol,
+            FailureStageV2::Protocol,
             code,
             message,
             2,
@@ -604,14 +604,14 @@ fn write_v2_protocol_failure(
 fn write_v2_terminal_failure(
     _distribution_id: String,
     benchmark_id: Option<String>,
-    stage: RunnerFailureStageV2,
+    stage: FailureStageV2,
     code: &str,
     message: String,
     exit_code: i32,
 ) -> ! {
     write_json_line(
         &RunTerminalV2 {
-            protocol_version: RUNNER_PROTOCOL_V2,
+            protocol_version: PROTOCOL_V2,
             event: "run_terminal",
             benchmark_id,
             success: false,
@@ -625,8 +625,8 @@ fn write_v2_terminal_failure(
     )
 }
 
-fn diagnostic(code: &str, message: String) -> RunnerDiagnosticV2 {
-    RunnerDiagnosticV2 {
+fn diagnostic(code: &str, message: String) -> DiagnosticV2 {
+    DiagnosticV2 {
         code: code.to_owned(),
         message: redact_diagnostic(message),
         path: None,

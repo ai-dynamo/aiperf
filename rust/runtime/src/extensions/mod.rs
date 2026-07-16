@@ -28,7 +28,7 @@ use crate::endpoints::{
     EndpointRegistryError,
 };
 #[cfg(feature = "engine")]
-use crate::engine::registry::{RunnerTransportFactory, RunnerWorkloadFactory};
+use crate::engine::registry::{TransportFactory, WorkloadFactory};
 use crate::export::ExporterRegistry;
 
 /// Error returned while constructing or extending an [`AIPerfRegistry`].
@@ -261,12 +261,12 @@ pub struct AIPerfRegistry {
     /// Name-keyed protocol-v2 transport factories. Selection resolves a transport
     /// by id from this one catalog; there is no separate runner registry.
     #[cfg(feature = "engine")]
-    pub(crate) transports: TransactionalRegistry<Arc<dyn RunnerTransportFactory>>,
+    pub(crate) transports: TransactionalRegistry<Arc<dyn TransportFactory>>,
     /// Name-keyed protocol-v2 workload factories. Any registered workload runs
     /// over any registered transport; the workload owns transport-specific
     /// preparation resolved by id.
     #[cfg(feature = "engine")]
-    pub(crate) workloads: TransactionalRegistry<Arc<dyn RunnerWorkloadFactory>>,
+    pub(crate) workloads: TransactionalRegistry<Arc<dyn WorkloadFactory>>,
     extension_names: BTreeSet<String>,
 }
 

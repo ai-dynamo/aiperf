@@ -88,7 +88,7 @@ pub enum GraphTransportKind {
 /// policy. This factory owns only where a complete prepared trace executes. A
 /// future ZMQ or RPC implementation can therefore replace native placement
 /// without changing graph workload or runner orchestration code.
-pub trait RunnerGraphPlacementFactory: Send + Sync {
+pub trait GraphPlacementFactory: Send + Sync {
     /// Build one placement backend from a worker-local execution factory.
     fn build(
         &self,
@@ -107,7 +107,7 @@ pub trait RunnerGraphPlacementFactory: Send + Sync {
 }
 
 /// Worker-to-coordinator facts emitted by a graph execution placement.
-pub(crate) enum RunnerGraphExecutionEvent {
+pub(crate) enum GraphExecutionEvent {
     /// One node crossed its first meaningful token edge.
     FirstToken {
         /// Unique root execution-instance identity.
@@ -149,25 +149,25 @@ pub(crate) enum RunnerGraphExecutionEvent {
 /// The stock implementation uses an in-process JSON-free channel. A future
 /// remote placement can decode the same terminal facts into this seam without
 /// changing phase accounting, adaptive sampling, or artifact collection.
-pub(crate) trait RunnerGraphExecutionEventSink: Send + Sync {
+pub(crate) trait GraphExecutionEventSink: Send + Sync {
     /// Deliver one ordered execution event or fail the run if delivery closed.
-    fn emit(&self, event: RunnerGraphExecutionEvent) -> Result<(), TraceError>;
+    fn emit(&self, event: GraphExecutionEvent) -> Result<(), TraceError>;
 }
 
 /// Channel-backed execution-event sink used by native placement.
 pub(crate) struct ChannelRunnerGraphExecutionEventSink {
-    sender: mpsc::UnboundedSender<RunnerGraphExecutionEvent>,
+    sender: mpsc::UnboundedSender<GraphExecutionEvent>,
 }
 
 impl ChannelRunnerGraphExecutionEventSink {
     /// Bind the worker side to one phase-local coordinator receiver.
-    pub(crate) fn new(sender: mpsc::UnboundedSender<RunnerGraphExecutionEvent>) -> Self {
+    pub(crate) fn new(sender: mpsc::UnboundedSender<GraphExecutionEvent>) -> Self {
         Self { sender }
     }
 }
 
-impl RunnerGraphExecutionEventSink for ChannelRunnerGraphExecutionEventSink {
-    fn emit(&self, event: RunnerGraphExecutionEvent) -> Result<(), TraceError> {
+impl GraphExecutionEventSink for ChannelRunnerGraphExecutionEventSink {
+    fn emit(&self, event: GraphExecutionEvent) -> Result<(), TraceError> {
         self.sender
             .send(event)
             .map_err(|_| TraceError::Other("graph execution event receiver closed".into()))
@@ -180,7 +180,7 @@ impl RunnerGraphExecutionEventSink for ChannelRunnerGraphExecutionEventSink {
 /// and future remote transports as well as traces that reached a worker.
 pub(crate) struct ObservedRunnerGraphPlacement {
     delegate: Rc<dyn TracePlacement>,
-    events: Arc<dyn RunnerGraphExecutionEventSink>,
+    events: Arc<dyn GraphExecutionEventSink>,
     requires_node_records: bool,
 }
 
@@ -188,7 +188,7 @@ impl ObservedRunnerGraphPlacement {
     /// Decorate one placement without changing its dispatch/control semantics.
     pub(crate) fn new(
         delegate: Rc<dyn TracePlacement>,
-        events: Arc<dyn RunnerGraphExecutionEventSink>,
+        events: Arc<dyn GraphExecutionEventSink>,
         requires_node_records: bool,
     ) -> Self {
         Self {
@@ -205,7 +205,7 @@ impl TracePlacement for ObservedRunnerGraphPlacement {
         let trace_id = plan.trace.id.clone();
         let node_count = plan.graph.nodes.len();
         let result = self.delegate.execute_trace(plan).await;
-        self.events.emit(RunnerGraphExecutionEvent::TraceComplete {
+        self.events.emit(GraphExecutionEvent::TraceComplete {
             trace_id,
             node_count,
             requires_node_records: self.requires_node_records,
@@ -227,7 +227,7 @@ impl TracePlacement for ObservedRunnerGraphPlacement {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NativeRunnerGraphPlacementFactory;
 
-impl RunnerGraphPlacementFactory for NativeRunnerGraphPlacementFactory {
+impl GraphPlacementFactory for NativeRunnerGraphPlacementFactory {
     fn build(
         &self,
         worker_count: usize,
@@ -249,17 +249,17 @@ impl RunnerGraphPlacementFactory for NativeRunnerGraphPlacementFactory {
 /// Native HTTP prepares local transports and endpoint bindings. A future
 /// remote placement can implement this contract with the same data-only
 /// [`PreparedTurn`] identity without changing graph scheduling.
-pub(crate) trait RunnerGraphEndpointRuntimeFactory: Send + Sync {
+pub(crate) trait GraphEndpointRuntimeFactory: Send + Sync {
     /// Prepare one worker-local dispatcher before any trace is admitted.
     fn prepare_worker(
         &self,
         clock: Rc<dyn Clock>,
         run_origin_ns: i64,
         model: &str,
-    ) -> Result<Rc<dyn RunnerGraphEndpointRuntime>>;
+    ) -> Result<Rc<dyn GraphEndpointRuntime>>;
 }
 
-pub(crate) trait RunnerGraphEndpointRuntime {
+pub(crate) trait GraphEndpointRuntime {
     fn materialize(&self, input: GraphEndpointRequest) -> Result<GraphEndpointDispatch>;
 
     /// Transport the worker-local dispatchers were built over. Used to prove the
@@ -326,13 +326,13 @@ impl PreparedRunnerGraphEndpointRuntimeFactory {
     }
 }
 
-impl RunnerGraphEndpointRuntimeFactory for PreparedRunnerGraphEndpointRuntimeFactory {
+impl GraphEndpointRuntimeFactory for PreparedRunnerGraphEndpointRuntimeFactory {
     fn prepare_worker(
         &self,
         clock: Rc<dyn Clock>,
         run_origin_ns: i64,
         model: &str,
-    ) -> Result<Rc<dyn RunnerGraphEndpointRuntime>> {
+    ) -> Result<Rc<dyn GraphEndpointRuntime>> {
         let mut table = PreparedEndpointTable::new();
         let mut staged = Vec::with_capacity(self.profiles.len());
         for profile in self.profiles.iter() {
@@ -450,7 +450,7 @@ struct PreparedRunnerGraphEndpointRuntime {
     transport_kind: GraphTransportKind,
 }
 
-impl RunnerGraphEndpointRuntime for PreparedRunnerGraphEndpointRuntime {
+impl GraphEndpointRuntime for PreparedRunnerGraphEndpointRuntime {
     fn kind(&self) -> GraphTransportKind {
         self.transport_kind
     }
@@ -550,19 +550,19 @@ fn credit_phase(phase: Phase) -> CreditPhase {
 }
 
 /// Immutable inputs shared by every worker-local graph backend.
-pub(crate) struct RunnerGraphBackendFactoryConfig {
+pub(crate) struct GraphBackendFactoryConfig {
     pub(crate) real_clock_anchor: RealClockAnchor,
     pub(crate) run_origin_ns: i64,
     pub(crate) model: String,
     pub(crate) default_max_tokens: usize,
-    pub(crate) endpoint_runtime_factory: Arc<dyn RunnerGraphEndpointRuntimeFactory>,
+    pub(crate) endpoint_runtime_factory: Arc<dyn GraphEndpointRuntimeFactory>,
     pub(crate) segments: Arc<dyn SegmentStore>,
     pub(crate) metrics: MetricsConfig,
     pub(crate) phase: Phase,
     pub(crate) prefill_concurrency: Option<usize>,
     pub(crate) cancellation: Option<GraphCancellationConfig>,
     pub(crate) raw_enabled: bool,
-    pub(crate) events: Arc<dyn RunnerGraphExecutionEventSink>,
+    pub(crate) events: Arc<dyn GraphExecutionEventSink>,
     /// Config-selected per-node failure discipline. `Abort` aborts the trace on
     /// the first node failure (default); `Continue` treats a failed node as
     /// empty and drains the DAG.
@@ -580,7 +580,7 @@ pub(crate) struct RunnerGraphBackendFactoryConfig {
 /// (FIRST_TURN_PREFIX arm) onto the native recorded-graph path. The marker text
 /// is `[rid:<sha256(f"{benchmark_id}:{recycle_pass}:{trajectory_index}:{trace_id}")[:12]>]\n\n`;
 /// on the native path the per-trace instance nonce (the suffix of
-/// [`RunnerGraphSink::trace_id`] after `"::"`) supplies the cross-instance and
+/// [`EngineGraphSink::trace_id`] after `"::"`) supplies the cross-instance and
 /// cross-recycle uniqueness agentx gets from its `(recycle_pass, trajectory_index)`
 /// tuple, so `recycle_pass`/`trajectory_index` are folded into the instance id
 /// and pinned at `0` in the digest tuple. Because the marker is a per-run nonce,
@@ -668,17 +668,17 @@ pub(crate) struct GraphCancellationConfig {
 }
 
 /// Native runner factory installed into whole-trace placement.
-pub(crate) struct RunnerGraphBackendFactory {
-    config: RunnerGraphBackendFactoryConfig,
+pub(crate) struct GraphBackendFactory {
+    config: GraphBackendFactoryConfig,
 }
 
-impl RunnerGraphBackendFactory {
-    pub(crate) fn new(config: RunnerGraphBackendFactoryConfig) -> Self {
+impl GraphBackendFactory {
+    pub(crate) fn new(config: GraphBackendFactoryConfig) -> Self {
         Self { config }
     }
 }
 
-impl TracePlacementFactory for RunnerGraphBackendFactory {
+impl TracePlacementFactory for GraphBackendFactory {
     fn create_backend(
         &self,
         worker_id: usize,
@@ -728,7 +728,7 @@ impl TracePlacementFactory for RunnerGraphBackendFactory {
         let node_policy = (!policies.is_empty())
             .then(|| Rc::new(CompositeNodeDispatchPolicy::new(policies)) as Rc<_>);
 
-        Ok(Rc::new(RunnerGraphWorkerBackend {
+        Ok(Rc::new(GraphWorkerBackend {
             clock,
             endpoint_runtime,
             materializer: Rc::new(SegmentItemsMaterializer::new(self.config.segments.clone())),
@@ -753,9 +753,9 @@ impl TracePlacementFactory for RunnerGraphBackendFactory {
     }
 }
 
-struct RunnerGraphWorkerBackend {
+struct GraphWorkerBackend {
     clock: Rc<dyn Clock>,
-    endpoint_runtime: Rc<dyn RunnerGraphEndpointRuntime>,
+    endpoint_runtime: Rc<dyn GraphEndpointRuntime>,
     materializer: Rc<SegmentItemsMaterializer>,
     segments: Arc<dyn SegmentStore>,
     metrics: MetricsConfig,
@@ -765,7 +765,7 @@ struct RunnerGraphWorkerBackend {
     default_max_tokens: usize,
     run_origin_ns: i64,
     raw_enabled: bool,
-    events: Arc<dyn RunnerGraphExecutionEventSink>,
+    events: Arc<dyn GraphExecutionEventSink>,
     node_policy: Option<Rc<dyn NodeDispatchPolicy>>,
     on_failure: OnFailure,
     cache_bust: Option<GraphCacheBust>,
@@ -777,7 +777,7 @@ struct RunnerGraphWorkerBackend {
 }
 
 #[async_trait(?Send)]
-impl TracePlacement for RunnerGraphWorkerBackend {
+impl TracePlacement for GraphWorkerBackend {
     async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError> {
         if self.cancelled.get() {
             return Err(TraceError::Cancelled(format!(
@@ -804,7 +804,7 @@ impl TracePlacement for RunnerGraphWorkerBackend {
             self.run_origin_ns,
             self.metrics.clone(),
         ));
-        let sink = Rc::new(RunnerGraphSink {
+        let sink = Rc::new(EngineGraphSink {
             clock: self.clock.clone(),
             endpoint_runtime: self.endpoint_runtime.clone(),
             trace_id: plan.trace.id.clone(),
@@ -879,9 +879,9 @@ impl TracePlacement for RunnerGraphWorkerBackend {
     }
 }
 
-struct RunnerGraphSink {
+struct EngineGraphSink {
     clock: Rc<dyn Clock>,
-    endpoint_runtime: Rc<dyn RunnerGraphEndpointRuntime>,
+    endpoint_runtime: Rc<dyn GraphEndpointRuntime>,
     trace_id: String,
     nodes: HashMap<String, LlmNode>,
     segments: Arc<dyn SegmentStore>,
@@ -894,7 +894,7 @@ struct RunnerGraphSink {
     run_origin_ns: i64,
     raw_enabled: bool,
     terminal_nodes: HashSet<String>,
-    events: Arc<dyn RunnerGraphExecutionEventSink>,
+    events: Arc<dyn GraphExecutionEventSink>,
     /// Per-conversation first-turn cache-bust marker, minted once per trace
     /// instance. `None` when cache-bust is disabled.
     cache_bust_marker: Option<String>,
@@ -902,7 +902,7 @@ struct RunnerGraphSink {
 }
 
 #[async_trait(?Send)]
-impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
+impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
     async fn dispatch(
         &self,
         node_id: &str,
@@ -1036,7 +1036,7 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
                 &|_| {
                     if !first_token_emitted.replace(true)
                         && let Err(error) =
-                            self.events.emit(RunnerGraphExecutionEvent::FirstToken {
+                            self.events.emit(GraphExecutionEvent::FirstToken {
                                 trace_id: self.trace_id.clone(),
                                 uuid,
                             })
@@ -1071,7 +1071,7 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
                     self.trace_id
                 )
             })?;
-        self.events.emit(RunnerGraphExecutionEvent::Record {
+        self.events.emit(GraphExecutionEvent::Record {
             record: Box::new(CapturedRecord {
                 uuid,
                 x_correlation_id: self.trace_id.clone(),
@@ -1098,7 +1098,7 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
     }
 }
 
-impl RunnerGraphSink {
+impl EngineGraphSink {
     fn verify_finalized_records(&self) -> Result<()> {
         let (arrivals, retained) = self.observer.record_counts();
         let emitted = usize::try_from(self.emitted_records.get()).unwrap_or(usize::MAX);
