@@ -1,6 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from aiperf.common.messages.accuracy_messages import (
+    AccuracyRecordsMessage,
+    ProcessAccuracyResultMessage,
+)
 from aiperf.common.messages.base_messages import (
     ErrorMessage,
     Message,
@@ -77,6 +81,7 @@ from aiperf.common.messages.worker_messages import (
 )
 
 __all__ = [
+    "AccuracyRecordsMessage",
     "AllRecordsReceivedMessage",
     "BaseServiceErrorMessage",
     "BaseServiceMessage",
@@ -105,6 +110,7 @@ __all__ = [
     "ProcessRecordsResponse",
     "ProcessAllResultsMessage",
     "ProcessRecordsResultMessage",
+    "ProcessAccuracyResultMessage",
     "ProcessServerMetricsResultMessage",
     "ProcessTelemetryResultMessage",
     "ProfileCancelCommand",
