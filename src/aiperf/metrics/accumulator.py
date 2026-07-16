@@ -38,6 +38,10 @@ from aiperf.metrics.network_adjusted_analyzer import (
     compute_network_adjusted_arrays,
     inject_network_adjusted_from_arrays,
 )
+from aiperf.metrics.replay_sched_lag_analyzer import inject_replay_sched_lag_metrics
+from aiperf.metrics.types.replay_sched_lag_metrics import (
+    REPLAY_SCHED_DEGRADED_THRESHOLD_MS,
+)
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
 if TYPE_CHECKING:
@@ -95,6 +99,10 @@ class MetricsAccumulator(BaseMetricsProcessor):
         # Run-level mean network RTT (ns), delivered by the RecordsManager before
         # summarize() when network latency calibration is active. None = no-op.
         self._network_rtt_ns: float | None = None
+
+        # One-shot latch for the run-level "replay schedule degraded" warning
+        # emitted by inject_replay_sched_lag_metrics (fires at most once per run).
+        self._replay_degraded_warned: bool = False
 
         # Derive functions for DERIVED metrics
         # _setup_metrics includes transitive dependencies (RECORD/AGGREGATE),
@@ -398,6 +406,19 @@ class MetricsAccumulator(BaseMetricsProcessor):
         # uniformly via the scalar_dict.
         scalar_dict[tag] = float(backend.sum)
 
+    def _warn_replay_degraded(self, p50: float, p90: float, p99: float) -> None:
+        """Emit the run-level replay-schedule-degraded warning at most once."""
+        if self._replay_degraded_warned:
+            return
+        self._replay_degraded_warned = True
+        self.warning(
+            f"Replay schedule degraded: anchored send lag p50={p50:.0f} ms, "
+            f"p90={p90:.0f} ms, p99={p99:.0f} ms exceeds "
+            f"{REPLAY_SCHED_DEGRADED_THRESHOLD_MS:.0f} ms. Request timing no longer "
+            f"tracks the recorded schedule; consider lowering replay_speedup or the "
+            f"offered load."
+        )
+
     def _resolve_derived_metrics(
         self, scalar_dict: MetricResultsDict, *, is_timeslice: bool = False
     ) -> None:
@@ -558,6 +579,15 @@ class MetricsAccumulator(BaseMetricsProcessor):
                     self._network_rtt_ns,
                     mask=mask,
                 )
+            # Run-scoped replay send-lag family (fixed-schedule only): anchored at
+            # the run-global least-late request, so computed once over the masked
+            # offset column, never per timeslice.
+            inject_replay_sched_lag_metrics(
+                self._column_store,
+                overall_results,
+                mask=mask,
+                warn_degraded=self._warn_replay_degraded,
+            )
 
         overall_results = self._filter_hidden_metrics(overall_results)
         self.debug(lambda: f"Summarized {len(overall_results)} metric results")

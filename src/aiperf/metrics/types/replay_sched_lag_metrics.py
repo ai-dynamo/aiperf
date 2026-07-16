@@ -38,9 +38,9 @@ because re-anchoring each slice at its own least-late request would erase the
 cumulative schedule drift these metrics exist to expose.
 """
 
-from typing import ClassVar
+from __future__ import annotations
 
-import numpy as np
+from typing import ClassVar
 
 from aiperf.common.constants import NANOS_PER_MILLIS
 from aiperf.common.enums import (
@@ -50,13 +50,10 @@ from aiperf.common.enums import (
     MetricTimeUnit,
 )
 from aiperf.common.exceptions import NoMetricValue
-from aiperf.common.logging import AIPerfLogger
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics.base_derived_metric import BaseDerivedMetric
 from aiperf.metrics.base_record_metric import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
-
-_logger = AIPerfLogger(__name__)
 
 REPLAY_SCHED_DEGRADED_THRESHOLD_MS: float = 500.0
 """Anchored send-lag p99 (ms) above which a replay run is flagged degraded.
@@ -112,34 +109,26 @@ class ReplaySendScheduleOffsetMetric(BaseRecordMetric[int]):
         return record.timestamp_ns - int(intended_ms * NANOS_PER_MILLIS)
 
 
-_lag_cache: tuple[object, int, np.ndarray] | None = None
+class _ReplaySchedLagDeferMixin:
+    """Deferred-derivation behavior for the injected replay send-lag metrics.
 
-
-def _anchored_lag_ms(metric_results: MetricResultsDict) -> np.ndarray:
-    """Return per-request send lag in ms, anchored at the least-late request.
-
-    The p50/p90/p99 metrics derive back-to-back from the same offsets, so the
-    last computation is cached, keyed on array identity and length (offset
-    arrays are append-only).
-
-    Raises:
-        NoMetricValue: If no absolutely-scheduled request produced an offset.
+    Not a metric itself (does not subclass BaseMetric) so it is never registered.
+    The whole family is a distribution over the run-global
+    ``replay_send_schedule_offset`` column, which the scalar summarize path does
+    not expose, so the derive defers and :func:`inject_replay_sched_lag_metrics`
+    fills the values post-aggregation from the column store -- mirroring how
+    ``network_adjusted_*`` and the derived-latency family are injected.
     """
-    global _lag_cache
-    values = metric_results.get_or_raise(ReplaySendScheduleOffsetMetric)
-    size = len(values.data)
-    if size == 0:
-        raise NoMetricValue("No absolutely-scheduled requests were recorded.")
-    if _lag_cache is not None and _lag_cache[0] is values and _lag_cache[1] == size:
-        return _lag_cache[2]
-    data = np.asarray(values.data, dtype=np.float64)
-    anchored = (data - data.min()) / NANOS_PER_MILLIS
-    _lag_cache = (values, size, anchored)
-    return anchored
+
+    def _derive_value(self, metric_results: MetricResultsDict):
+        raise NoMetricValue(
+            f"{self.tag} is injected post-aggregation from the "  # type: ignore[attr-defined]
+            "replay_send_schedule_offset column"
+        )
 
 
-class _ReplaySchedLagPercentileBase(BaseDerivedMetric[float]):
-    """Shared derive logic for the anchored send-lag percentile metrics."""
+class ReplaySchedLagPercentileBase(_ReplaySchedLagDeferMixin, BaseDerivedMetric[float]):
+    """Shared metadata for the anchored send-lag percentile metrics."""
 
     __is_abstract__ = True
     percentile: float
@@ -150,11 +139,8 @@ class _ReplaySchedLagPercentileBase(BaseDerivedMetric[float]):
     timeslice_derivable = False
     required_metrics: ClassVar[set[str]] = {ReplaySendScheduleOffsetMetric.tag}
 
-    def _derive_value(self, metric_results: MetricResultsDict) -> float:
-        return float(np.percentile(_anchored_lag_ms(metric_results), self.percentile))
 
-
-class ReplaySchedLagP50Metric(_ReplaySchedLagPercentileBase):
+class ReplaySchedLagP50Metric(ReplaySchedLagPercentileBase):
     """Median anchored send lag of a fixed-schedule replay run, in ms.
 
     Formula:
@@ -168,7 +154,7 @@ class ReplaySchedLagP50Metric(_ReplaySchedLagPercentileBase):
     short_header = "Sched Lag p50"
 
 
-class ReplaySchedLagP90Metric(_ReplaySchedLagPercentileBase):
+class ReplaySchedLagP90Metric(ReplaySchedLagPercentileBase):
     """90th-percentile anchored send lag of a fixed-schedule replay run, in ms.
 
     Formula:
@@ -182,7 +168,7 @@ class ReplaySchedLagP90Metric(_ReplaySchedLagPercentileBase):
     short_header = "Sched Lag p90"
 
 
-class ReplaySchedLagP99Metric(_ReplaySchedLagPercentileBase):
+class ReplaySchedLagP99Metric(ReplaySchedLagPercentileBase):
     """99th-percentile anchored send lag of a fixed-schedule replay run, in ms.
 
     Formula:
@@ -196,15 +182,15 @@ class ReplaySchedLagP99Metric(_ReplaySchedLagPercentileBase):
     short_header = "Sched Lag p99"
 
 
-class ReplaySchedDegradedMetric(BaseDerivedMetric[int]):
+class ReplaySchedDegradedMetric(_ReplaySchedLagDeferMixin, BaseDerivedMetric[int]):
     """Boolean (0/1) signal that the replay could not keep up with the offered
     schedule: anchored send-lag p99 exceeded
     :data:`REPLAY_SCHED_DEGRADED_THRESHOLD_MS`.
 
-    Logs a one-line warning (at most once per run) with the lag percentiles
-    when degraded, so runs whose timing fidelity is compromised are called out
-    even though these metrics are hidden from the console table. The metric
-    value itself stays continuous: it is re-derived on every summarize tick.
+    Injected by :func:`inject_replay_sched_lag_metrics`, which also emits a
+    one-line warning (at most once per run) with the lag percentiles when
+    degraded, so runs whose timing fidelity is compromised are called out even
+    though these metrics are hidden from the console table.
 
     Formula:
         1 if p99(offset - min(offset)) > REPLAY_SCHED_DEGRADED_THRESHOLD_MS else 0
@@ -222,23 +208,3 @@ class ReplaySchedDegradedMetric(BaseDerivedMetric[int]):
         ReplaySchedLagP90Metric.tag,
         ReplaySchedLagP99Metric.tag,
     }
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._warned = False
-
-    def _derive_value(self, metric_results: MetricResultsDict) -> int:
-        p50 = metric_results.get_or_raise(ReplaySchedLagP50Metric)
-        p90 = metric_results.get_or_raise(ReplaySchedLagP90Metric)
-        p99 = metric_results.get_or_raise(ReplaySchedLagP99Metric)
-        degraded = p99 > REPLAY_SCHED_DEGRADED_THRESHOLD_MS
-        if degraded and not self._warned:
-            self._warned = True
-            _logger.warning(
-                f"Replay schedule degraded: anchored send lag p50={p50:.0f} ms, "
-                f"p90={p90:.0f} ms, p99={p99:.0f} ms exceeds "
-                f"{REPLAY_SCHED_DEGRADED_THRESHOLD_MS:.0f} ms. Request timing no "
-                f"longer tracks the recorded schedule; consider lowering "
-                f"replay_speedup or the offered load."
-            )
-        return int(degraded)
