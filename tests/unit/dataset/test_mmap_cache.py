@@ -143,6 +143,48 @@ class TestComputeCacheKey:
         on = mmap_cache.compute_cache_key_from_run(run)
         assert off is not None and on is not None and off != on
 
+    def test_preformat_endpoint_knobs_change_key_only_when_preformat_on(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # With preformat on, endpoint.format_payload() bakes the stream flag and
+        # the max_tokens-vs-max_completion_tokens field name into the stored
+        # bytes, so runs differing only in those knobs must NOT share a cache
+        # entry (else a HIT serves bytes the run never asked for). With preformat
+        # off the knobs don't touch the stored mmap, so the key must be stable.
+        from aiperf.common.environment import Environment
+        from aiperf.plugin.enums import CustomDatasetType
+
+        trace = _write_input_file(
+            tmp_path,
+            b'{"session_id": "s1", "timestamp": 0, "input_length": 8}\n',
+        )
+
+        def key_for(*, streaming: bool, legacy: bool) -> str | None:
+            run = make_run_from_cli(
+                CLIConfig(
+                    model_names=["test-model"],
+                    input_file=str(trace),
+                    custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                    prompt_output_tokens_mean=64,
+                    streaming=streaming,
+                    use_legacy_max_tokens=legacy,
+                )
+            )
+            return mmap_cache.compute_cache_key_from_run(run)
+
+        monkeypatch.setattr(Environment.DATASET, "PREFORMAT_PAYLOADS", True)
+        assert key_for(streaming=True, legacy=False) != key_for(
+            streaming=False, legacy=False
+        )
+        assert key_for(streaming=False, legacy=True) != key_for(
+            streaming=False, legacy=False
+        )
+
+        monkeypatch.setattr(Environment.DATASET, "PREFORMAT_PAYLOADS", False)
+        assert key_for(streaming=True, legacy=False) == key_for(
+            streaming=False, legacy=True
+        )
+
     def test_inter_turn_delay_cap_changes_key_on_file_dataset(
         self, tmp_path: Path
     ) -> None:
@@ -603,14 +645,19 @@ class TestAcquireCacheLock:
         assert alpha_in.is_set() and beta_in.is_set()
 
     @pytest.mark.asyncio
-    async def test_timeout_raises(self) -> None:
-        """Holder beyond timeout causes the waiter to raise filelock.Timeout."""
-        import asyncio
+    async def test_timeout_degrades_to_unlocked_populate(self) -> None:
+        """Holder beyond timeout lets the waiter proceed unlocked, not raise.
 
-        from filelock import Timeout as FileLockTimeout
+        A populator SIGKILLed before completing leaves the lock held (NFS
+        tombstone) with no complete entry, so the cache-complete bypass never
+        fires. Rather than fail the whole run, the waiter degrades to an
+        unlocked populate (safe: populate is atomic). The waiter therefore
+        enters the context body while the holder still holds the lock."""
+        import asyncio
 
         holder_acquired = asyncio.Event()
         holder_release = asyncio.Event()
+        waiter_entered = asyncio.Event()
 
         async def holder() -> None:
             async with mmap_cache.acquire_cache_lock("k", timeout=5.0):
@@ -619,13 +666,14 @@ class TestAcquireCacheLock:
 
         async def waiter() -> None:
             await holder_acquired.wait()
-            with pytest.raises(FileLockTimeout):
-                async with mmap_cache.acquire_cache_lock("k", timeout=0.5):
-                    pass
+            # Does NOT raise filelock.Timeout: proceeds unlocked after timeout.
+            async with mmap_cache.acquire_cache_lock("k", timeout=0.5):
+                waiter_entered.set()
 
         holder_task = asyncio.create_task(holder())
         try:
             await asyncio.wait_for(waiter(), timeout=5.0)
+            assert waiter_entered.is_set()
         finally:
             holder_release.set()
             await holder_task

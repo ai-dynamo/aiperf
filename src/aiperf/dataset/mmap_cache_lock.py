@@ -153,22 +153,39 @@ async def acquire_cache_lock(
         str(lock_path), mode=0o664, thread_local=False
     )
     try:
-        acquired = await asyncio.to_thread(
-            _blocking_acquire, lock, timeout, lock_path, _cache_complete
-        )
-    except NotImplementedError as e:
-        if "use SoftFileLock instead" not in str(e):
-            raise
+        try:
+            acquired = await asyncio.to_thread(
+                _blocking_acquire, lock, timeout, lock_path, _cache_complete
+            )
+        except NotImplementedError as e:
+            if "use SoftFileLock instead" not in str(e):
+                raise
+            _logger.warning(
+                lambda: (
+                    f"Filesystem at {lock_path} does not support flock; "
+                    f"falling back to SoftFileLock (less robust on crash)."
+                )
+            )
+            lock = SoftFileLock(str(lock_path), thread_local=False)
+            acquired = await asyncio.to_thread(
+                _blocking_acquire, lock, timeout, lock_path, _cache_complete
+            )
+    except Timeout:
+        # A populator SIGKILLed *before* completing (e.g. on the SoftFileLock/NFS
+        # path, where the lock tombstone persists) leaves an incomplete entry, so
+        # the cache-complete bypass never fires and every waiter blocks the full
+        # timeout. Rather than fail the whole run, degrade to an unlocked
+        # populate: mmap_cache.populate writes to a tmp dir and atomically
+        # renames it into place, so a concurrent unlocked populate is safe --
+        # it may duplicate the tokenize work but cannot corrupt the entry.
         _logger.warning(
             lambda: (
-                f"Filesystem at {lock_path} does not support flock; "
-                f"falling back to SoftFileLock (less robust on crash)."
+                f"Timed out acquiring mmap-cache lock at {lock_path} after "
+                f"{timeout}s; proceeding with an unlocked populate (populate is "
+                f"atomic, so this is safe but may repeat the tokenize)."
             )
         )
-        lock = SoftFileLock(str(lock_path), thread_local=False)
-        acquired = await asyncio.to_thread(
-            _blocking_acquire, lock, timeout, lock_path, _cache_complete
-        )
+        acquired = False
     try:
         yield
     finally:

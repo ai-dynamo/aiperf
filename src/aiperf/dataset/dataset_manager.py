@@ -179,7 +179,12 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         wakes after the winner populates uses the cached entry instead of
         repeating the work.
         """
-        cache_hit = self._try_cache_lookup()
+        # Offload to a thread: computing the key hashes the entire input file
+        # (or walks the whole input dir), which for the multi-GB traces this
+        # cache targets would block the DatasetManager event loop -- and its
+        # heartbeat/command handlers -- for the full hash. Mirrors the populate/
+        # restore paths, which are already offloaded.
+        cache_hit = await asyncio.to_thread(self._try_cache_lookup)
         if cache_hit is not None:
             self.info(
                 f"Memory-mapped dataset cache HIT (key={cache_hit.manifest.cache_key}); "
@@ -211,7 +216,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         result into the cache on the way out.
         """
         if self._cache_key_for_run is not None:
-            hit_under_lock = self._lookup_under_lock()
+            hit_under_lock = await asyncio.to_thread(self._lookup_under_lock)
             if hit_under_lock is not None:
                 self.info(
                     f"Memory-mapped dataset cache HIT under lock "

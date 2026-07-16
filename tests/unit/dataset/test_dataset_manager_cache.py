@@ -465,6 +465,27 @@ class TestDatasetManagerCacheThreadOffload:
         assert mmap_cache.lookup(key, compressed=False) is not None
 
     @pytest.mark.asyncio
+    async def test_cache_lookup_offloaded_to_thread(
+        self,
+        tmp_path: Path,
+        mock_tokenizer,
+        to_thread_calls: list[Callable[..., Any]],
+    ) -> None:
+        # Computing the key hashes the entire (multi-GB) input file, so the
+        # lookup must run off the event loop or it blocks the DatasetManager's
+        # heartbeat/command handlers for the full hash during configure.
+        trace = _write_trace(tmp_path)
+        run = _make_run(file_path=trace, benchmark_id="offload-lookup")
+
+        dm = await _run_configure(run)
+        await dm.stop()
+
+        assert any(
+            getattr(func, "__func__", None) is DatasetManager._try_cache_lookup
+            for func in to_thread_calls
+        ), "_try_cache_lookup must be dispatched via asyncio.to_thread"
+
+    @pytest.mark.asyncio
     async def test_configure_from_cache_hit_restore_offloaded_to_thread(
         self,
         tmp_path: Path,

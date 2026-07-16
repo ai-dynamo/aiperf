@@ -716,6 +716,20 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
         # decoded bytes, and a cache HIT adopts the stored format verbatim, so a
         # warm entry built with the other setting serves the wrong format.
         "preformat_payloads": Environment.DATASET.PREFORMAT_PAYLOADS,
+        # When preformat_payloads is on, endpoint.format_payload() bakes the
+        # stream flag, endpoint.extra, and the max_tokens-vs-max_completion_tokens
+        # field name into the stored bytes, so those knobs must key the cache or a
+        # warm entry serves bytes the run never asked for (e.g. "stream": true).
+        # Gated on the flag so the common non-preformat key stays stable.
+        "preformat_endpoint": (
+            {
+                "streaming": cfg.endpoint.streaming,
+                "use_legacy_max_tokens": cfg.endpoint.use_legacy_max_tokens,
+                "extra": cfg.endpoint.extra,
+            }
+            if Environment.DATASET.PREFORMAT_PAYLOADS
+            else None
+        ),
         "inline_records_sha256": records_hash,
         "prompt": prompt_dump,
         "endpoint_type": str(cfg.endpoint.type),
