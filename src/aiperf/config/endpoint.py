@@ -245,6 +245,17 @@ class EndpointConfig(BaseConfig):
         ),
     ]
 
+    uds_path: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Connect over this Unix-domain socket path instead of TCP. "
+            "The endpoint URL still supplies the request path and Host header, so "
+            "keep it a normal http:// value (the socket carries the transport). "
+            "HTTP/1.1 only; intended for local co-located inference servers.",
+        ),
+    ]
+
     connection_limit: Annotated[
         int,
         Field(

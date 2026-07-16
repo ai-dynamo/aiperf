@@ -182,6 +182,7 @@ def _authored_endpoint(
     _set_optional(result, "path", endpoint.path)
     _set_optional(result, "api_key", endpoint.api_key)
     _set_optional(result, "session_header", endpoint.session_header)
+    _set_optional(result, "uds_path", endpoint.uds_path)
     if endpoint.request_content_type is not None:
         result["request_content_type"] = {
             "application/json": "application_json",

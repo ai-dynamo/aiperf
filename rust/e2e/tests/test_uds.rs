@@ -2,40 +2,31 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! End-to-end coverage for the mock server's Unix-domain-socket (UDS) HTTP/1.1
-//! listener (`--uds`, env `MOCK_SERVER_UDS`).
+//! listener (`--uds`, env `MOCK_SERVER_UDS`), driven through the full product
+//! path: `aiperf profile` targets the socket via `endpoint.udsPath`.
 //!
-//! # Why this is a Rust-level e2e, not `aiperf profile`
+//! # The product path
 //!
-//! The runner *transport* supports HTTP/1.1 over a Unix socket
-//! (`rust/aiperf/src/transport_http/client/connection.rs` connects a
-//! `tokio::net::UnixStream` and negotiates h1 whenever `ClientConfig.uds_path`
-//! is set), but **nothing on the product path wires a URL or flag through to
-//! `uds_path`**:
+//! The runner's HTTP transport connects a `tokio::net::UnixStream` (HTTP/1.1)
+//! whenever `ClientConfig.uds_path` is set
+//! (`rust/aiperf/src/transport_http/client/connection.rs`). That is now wired
+//! end to end: the Python `endpoint.uds_path` field
+//! (`src/aiperf/config/endpoint.py`) is projected by `rust_wire._authored_endpoint`
+//! into the protocol-v2 `EndpointProfileConfigV2.uds_path`
+//! (`rust/aiperf/src/runner_protocol/registry.rs`), which threads it into the
+//! `ClientConfig` (forcing HTTP/1.1). The endpoint URL still supplies the
+//! request path + `Host` header, so it stays a normal `http://…` value.
 //!
-//! - The Python frontend (`src/aiperf/`) has no `uds` / `unix://` knob — a full
-//!   grep for `uds`, `unix://`, `unix_socket` finds nothing in the config or
-//!   CLI surface.
-//! - The protocol-v2 endpoint DTO the runner accepts
-//!   (`EndpointProfileConfigV2` in `rust/aiperf/src/runner_protocol/registry.rs`)
-//!   has no `uds`/`uds_path` field, and the `ClientConfig` it builds
-//!   (`registry.rs`, the `let client = ClientConfig { .. }` block) leaves
-//!   `uds_path` at its `None` default.
-//! - The only in-tree code that parses a `unix:` URL prefix into `uds_path` is
-//!   `rust/aiperf/src/graph/transport_bench.rs`, a benchmark harness — not the
-//!   product runner.
-//!
-//! So `aiperf profile` genuinely cannot target a Unix socket today: the missing
-//! knob is a `uds`/`unix://` mapping into `EndpointProfileConfigV2` +
-//! `registry.rs`'s `ClientConfig` builder (and a matching Python config field).
-//! That wiring lives under `rust/aiperf/**` and the Python frontend — out of
-//! scope for this mock-server feature. This test therefore proves the shipped
-//! listener directly: it runs the exact serve loop the `--uds` binary path
-//! spawns (`aiperf_mock_server::listener::serve_router_uds`) and drives it with
-//! an HTTP/1.1 client over the Unix socket, asserting a correct chat-completion
-//! response (status 200 + generated content + usage), which is the same router
-//! and generation seam the TCP e2e suite exercises.
+//! [`uds_chat_via_aiperf_profile_raw_records`] proves it decisively: the run's
+//! endpoint URL points at a **closed** TCP port, so a valid raw-record export
+//! is only possible if every request was carried over the Unix socket.
+//! [`uds_health_over_unix_socket`] / [`uds_chat_completion_over_unix_socket`]
+//! add direct-client coverage of the shipped `serve_router_uds` loop.
 
 #![cfg(unix)]
+
+mod common;
+use common::*;
 
 use std::time::Duration;
 
@@ -44,6 +35,118 @@ use aiperf_mock_server::{app, build_router};
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
+
+/// Requests / OSL / concurrency for the profile-driven run.
+const UDS_REQUESTS: u32 = 6;
+const UDS_OSL: usize = 8;
+const UDS_CONCURRENCY: u32 = 2;
+
+/// A Config-v2 YAML that targets a Unix socket: the endpoint URL is a **dead**
+/// TCP port (`127.0.0.1:1`) so only `udsPath` can serve the run, and readiness
+/// probing is disabled (`waitForModelTimeout: 0.0`) so nothing dials the URL.
+fn uds_config(socket: &str) -> String {
+    format!(
+        "schemaVersion: \"2.0\"\n\
+         benchmark:\n\
+        \x20 model: gpt-4\n\
+        \x20 endpoint:\n\
+        \x20   url: http://127.0.0.1:1/v1/chat/completions\n\
+        \x20   type: chat\n\
+        \x20   streaming: true\n\
+        \x20   udsPath: {socket}\n\
+        \x20   waitForModelTimeout: 0.0\n\
+        \x20 dataset:\n\
+        \x20   type: synthetic\n\
+        \x20   entries: {UDS_REQUESTS}\n\
+        \x20   prompts:\n\
+        \x20     isl: {{mean: 64, stddev: 0}}\n\
+        \x20     osl: {{mean: {UDS_OSL}, stddev: 0}}\n\
+        \x20 phases:\n\
+        \x20   - name: profiling\n\
+        \x20     type: concurrency\n\
+        \x20     requests: {UDS_REQUESTS}\n\
+        \x20     concurrency: {UDS_CONCURRENCY}\n\
+        \x20 gpuTelemetry: {{enabled: false}}\n\
+        \x20 serverMetrics: {{enabled: false}}\n\
+        \x20 artifacts:\n\
+        \x20   raw: true\n\
+        \x20   records:\n\
+        \x20     - jsonl\n\
+        \x20 runtime:\n\
+        \x20   ui: none\n"
+    )
+}
+
+/// Reconstruct the streamed assistant content of one raw record from its SSE
+/// `choices[0].delta.content` frames.
+fn record_content(record: &Value) -> String {
+    let mut out = String::new();
+    if let Some(responses) = record.get("responses").and_then(Value::as_array) {
+        for resp in responses {
+            let Some(packets) = resp.get("packets").and_then(Value::as_array) else {
+                continue;
+            };
+            for packet in packets {
+                if packet.get("name").and_then(Value::as_str) != Some("data") {
+                    continue;
+                }
+                let Some(raw) = packet.get("value").and_then(Value::as_str) else {
+                    continue;
+                };
+                if raw.trim() == "[DONE]" {
+                    continue;
+                }
+                if let Ok(obj) = serde_json::from_str::<Value>(raw.trim())
+                    && let Some(c) = obj.pointer("/choices/0/delta/content").and_then(Value::as_str)
+                {
+                    out.push_str(c);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `aiperf profile` streams chat over the Unix socket end to end. The endpoint
+/// URL is a closed TCP port, so a well-formed raw-record export proves every
+/// request was carried over `udsPath`, not TCP.
+#[tokio::test]
+async fn uds_chat_via_aiperf_profile_raw_records() {
+    if cfg!(target_os = "macos") {
+        return;
+    }
+    let socket = start_uds_mock().await;
+    let socket_str = socket.to_string_lossy().into_owned();
+
+    let h = AIPerfHarness::new().await; // harness supplies venv + runner; its TCP mock is unused
+    let cfg_file = h.artifact_path().join("uds.yaml");
+    std::fs::write(&cfg_file, uds_config(&socket_str)).expect("write uds config");
+
+    let r = h.run(&format!("--config {}", cfg_file.display()));
+    assert!(
+        r.success(),
+        "uds run failed (exit {}):\nstdout:\n{}\nstderr:\n{}",
+        r.exit_code,
+        r.stdout,
+        r.stderr
+    );
+
+    let records = r.artifacts.raw_records();
+    assert_eq!(
+        records.len(),
+        UDS_REQUESTS as usize,
+        "one raw record per request over the Unix socket"
+    );
+    for (i, rec) in records.iter().enumerate() {
+        let timing = extract_timing(rec);
+        assert_eq!(timing.status, Some(200), "record {i}: status {:?}", timing.status);
+        assert!(
+            !record_content(rec).is_empty(),
+            "record {i}: streamed content should be non-empty"
+        );
+    }
+    let _ = std::fs::remove_file(&socket);
+}
 
 /// A collision-free temp socket path under the OS temp dir.
 fn temp_socket_path(tag: &str) -> std::path::PathBuf {
@@ -72,16 +175,26 @@ async fn start_uds_mock() -> std::path::PathBuf {
     let path = temp_socket_path("chat");
     let path_str = path.to_str().unwrap().to_owned();
 
-    let state = app::build_state(cfg);
-    let router = build_router(state);
-
+    // Serve the socket on its OWN dedicated runtime thread, NOT the caller's
+    // `#[tokio::test]` runtime: the profile-driven test blocks that runtime on a
+    // synchronous `aiperf` subprocess, which would otherwise starve the accept
+    // loop and make the socket unreachable for the duration of the run.
     let serve_path = path_str.clone();
-    tokio::spawn(async move {
-        let _ = aiperf_mock_server::listener::serve_router_uds(router, &serve_path).await;
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("uds mock runtime");
+        rt.block_on(async move {
+            let state = app::build_state(cfg);
+            let router = build_router(state);
+            let _ = aiperf_mock_server::listener::serve_router_uds(router, &serve_path).await;
+        });
     });
 
     // Wait for the socket to appear and accept.
-    for _ in 0..100 {
+    for _ in 0..200 {
         if path.exists() && UnixStream::connect(&path_str).await.is_ok() {
             return path;
         }

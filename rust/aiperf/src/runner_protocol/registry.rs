@@ -847,6 +847,13 @@ struct EndpointProfileConfigV2 {
     http2: bool,
     #[serde(default = "default_ssl_verify")]
     ssl_verify: bool,
+    /// Optional Unix-domain socket path. When set, the HTTP transport connects
+    /// over this socket (HTTP/1.1) instead of TCP; the endpoint `urls` still
+    /// supply the request path and `Host` header. Carried out-of-band alongside
+    /// `urls` (like `ssl_verify`/`http2`) because a `unix://` URL is rejected by
+    /// the frontend's http(s)-only scheme validators.
+    #[serde(default)]
+    uds_path: Option<String>,
     #[serde(default = "default_connection_limit")]
     connection_limit: usize,
     #[serde(default = "default_keepalive_timeout")]
@@ -1163,11 +1170,17 @@ pub fn validate_endpoint_profiles_v2(
                 &format!("endpoint profile {index}.timeout_seconds"),
             )?,
             ssl_verify: config.ssl_verify,
-            http_version: if config.http2 {
+            // A Unix-domain socket connection is HTTP/1.1-only (the transport's
+            // UDS branch hard-codes h1), so force Http1Only when a socket path is
+            // set rather than silently downgrading an authored `http2: true`.
+            http_version: if config.uds_path.is_some() {
+                HttpVersion::Http1Only
+            } else if config.http2 {
                 HttpVersion::Http2PriorKnowledge
             } else {
                 HttpVersion::Auto
             },
+            uds_path: config.uds_path.clone(),
             keepalive_ns: Some(seconds_to_ns(
                 config.keepalive_timeout,
                 &format!("endpoint profile {index}.keepalive_timeout"),

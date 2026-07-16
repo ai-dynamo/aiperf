@@ -602,7 +602,10 @@
           "anyOf": [
             {
               "items": {
-                "const": "json",
+                "enum": [
+                  "json",
+                  "genai_perf"
+                ],
                 "type": "string"
               },
               "type": "array"
@@ -619,7 +622,11 @@
           "anyOf": [
             {
               "items": {
-                "const": "jsonl",
+                "enum": [
+                  "jsonl",
+                  "csv",
+                  "parquet"
+                ],
                 "type": "string"
               },
               "type": "array"
@@ -629,7 +636,7 @@
               "type": "boolean"
             }
           ],
-          "description": "Per-request records export formats. Only 'jsonl' is wired up today. Set to false to disable the per-record JSONL file.",
+          "description": "Per-request records export formats. 'jsonl' writes the row-oriented `profile_export.jsonl`; 'csv' writes a flat `profile_export_records.csv` (one row per request, a `{metric}_value`/`{metric}_unit` column pair per metric); 'parquet' writes a wide, columnar `profile_export.parquet` sidecar. Combine them (`[jsonl, csv, parquet]`) or select any subset. Parquet requires an `aiperf-runner` built with the `parquet` feature (the default build). Set to false to disable per-record export entirely.",
           "title": "Records"
         },
         "raw": {
@@ -1117,6 +1124,20 @@
                       "description": "Stop after this many sessions completed (must be >= 1).",
                       "title": "Sessions"
                     },
+                    "agenticCacheWarmupDuration": {
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                      "title": "Agenticcachewarmupduration"
+                    },
                     "concurrency": {
                       "default": 1,
                       "description": "Max concurrent in-flight requests (must be >= 1). Primary control for concurrency phases.",
@@ -1414,6 +1435,20 @@
                       "default": null,
                       "description": "Stop after this many sessions completed (must be >= 1).",
                       "title": "Sessions"
+                    },
+                    "agenticCacheWarmupDuration": {
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                      "title": "Agenticcachewarmupduration"
                     },
                     "concurrency": {
                       "anyOf": [
@@ -1738,6 +1773,20 @@
                       "default": null,
                       "description": "Stop after this many sessions completed (must be >= 1).",
                       "title": "Sessions"
+                    },
+                    "agenticCacheWarmupDuration": {
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                      "title": "Agenticcachewarmupduration"
                     },
                     "concurrency": {
                       "anyOf": [
@@ -2077,6 +2126,20 @@
                       "description": "Stop after this many sessions completed (must be >= 1).",
                       "title": "Sessions"
                     },
+                    "agenticCacheWarmupDuration": {
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                      "title": "Agenticcachewarmupduration"
+                    },
                     "concurrency": {
                       "anyOf": [
                         {
@@ -2400,6 +2463,20 @@
                       "default": null,
                       "description": "Stop after this many sessions completed (must be >= 1).",
                       "title": "Sessions"
+                    },
+                    "agenticCacheWarmupDuration": {
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                      "title": "Agenticcachewarmupduration"
                     },
                     "concurrency": {
                       "anyOf": [
@@ -2732,6 +2809,20 @@
                       "description": "Stop after this many sessions completed (must be >= 1).",
                       "title": "Sessions"
                     },
+                    "agenticCacheWarmupDuration": {
+                      "anyOf": [
+                        {
+                          "exclusiveMinimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                      "title": "Agenticcachewarmupduration"
+                    },
                     "concurrency": {
                       "anyOf": [
                         {
@@ -2975,6 +3066,23 @@
           "$ref": "#/$defs/RuntimeConfig",
           "description": "Runtime configuration for worker processes and inter-process communication."
         },
+        "failurePolicy": {
+          "anyOf": [
+            {
+              "enum": [
+                "continue",
+                "abort"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How the run reacts to a failed request. 'continue' records the failure and keeps running (resilient); 'abort' fails the whole benchmark on the first non-cancellation failure (fail-fast). When unset, each execution path applies its historical default: scheduled runs are resilient, graph (DAG) runs are fail-fast. Cancellations are never treated as failures.",
+          "title": "Failurepolicy"
+        },
         "logging": {
           "$ref": "#/$defs/LoggingConfig"
         },
@@ -3026,6 +3134,77 @@
           ],
           "default": null,
           "description": "Optional explicit native workload selection. When omitted, the protocol-v2 projection selects graph for dag_jsonl, static_accuracy for enabled accuracy, and scheduled otherwise."
+        },
+        "scenario": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Lock all benchmark invariants for a named scenario (e.g. 'inferencex-agentx-mvp'). Plain data here; the lock is applied by the ScenarioResolver step in the pre-bootstrap resolver chain (auto-fills defaults, validates, raises ScenarioLockError on conflict). Distinct from the sweep ``scenarios`` strategy (SweepConfig), which expands hand-picked named runs -- this field is a single invariant LOCK, not a sweep.",
+          "title": "Scenario"
+        },
+        "unsafeOverride": {
+          "default": false,
+          "description": "Convert scenario lock errors to warnings; stamps submission_valid=false in the resolved scenario outcome. No-op without ``scenario``. Plain data; consumed by the ScenarioResolver.",
+          "title": "Unsafeoverride",
+          "type": "boolean"
+        },
+        "trajectoryStartMinRatio": {
+          "default": 0.0,
+          "description": "Lower bound of the recorded-graph trajectory-start (t*) snapshot window, expressed as a fraction of each recorded trace's total duration. The native runner samples a per-trace start offset in [min_ratio, max_ratio] of the trace's duration so replay begins mid-trajectory (an active t* window) rather than at t=0. 0.0 (with a 0.0 max) disables the window and starts every trace at its beginning.",
+          "title": "Trajectorystartminratio",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Lower bound of the recorded-graph trajectory-start (t*) snapshot window, expressed as a fraction of each recorded trace's total duration. The native runner samples a per-trace start offset in [min_ratio, max_ratio] of the trace's duration so replay begins mid-trajectory (an active t* window) rather than at t=0. 0.0 (with a 0.0 max) disables the window and starts every trace at its beginning.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Trajectorystartminratio",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "trajectoryStartMaxRatio": {
+          "default": 0.0,
+          "description": "Upper bound of the recorded-graph trajectory-start (t*) snapshot window, expressed as a fraction of each recorded trace's total duration. Paired with trajectory_start_min_ratio; must be >= it. 0.0 disables the window (every trace starts at t=0).",
+          "title": "Trajectorystartmaxratio",
+          "oneOf": [
+            {
+              "default": 0.0,
+              "description": "Upper bound of the recorded-graph trajectory-start (t*) snapshot window, expressed as a fraction of each recorded trace's total duration. Paired with trajectory_start_min_ratio; must be >= it. 0.0 disables the window (every trace starts at t=0).",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Trajectorystartmaxratio",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
         },
         "model": {
           "description": "Shorthand for 'models'. Accepts a single value which will be converted to a list/dict. Model configuration. Accepts a single model name string, a list of model names, or an advanced configuration with strategy and weighted items. All forms are normalized to ModelsAdvanced.",
@@ -3719,6 +3898,20 @@
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
                 },
+                "agenticCacheWarmupDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                  "title": "Agenticcachewarmupduration"
+                },
                 "concurrency": {
                   "default": 1,
                   "description": "Max concurrent in-flight requests (must be >= 1). Primary control for concurrency phases.",
@@ -4016,6 +4209,20 @@
                   "default": null,
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
+                },
+                "agenticCacheWarmupDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                  "title": "Agenticcachewarmupduration"
                 },
                 "concurrency": {
                   "anyOf": [
@@ -4340,6 +4547,20 @@
                   "default": null,
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
+                },
+                "agenticCacheWarmupDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                  "title": "Agenticcachewarmupduration"
                 },
                 "concurrency": {
                   "anyOf": [
@@ -4679,6 +4900,20 @@
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
                 },
+                "agenticCacheWarmupDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                  "title": "Agenticcachewarmupduration"
+                },
                 "concurrency": {
                   "anyOf": [
                     {
@@ -5002,6 +5237,20 @@
                   "default": null,
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
+                },
+                "agenticCacheWarmupDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                  "title": "Agenticcachewarmupduration"
                 },
                 "concurrency": {
                   "anyOf": [
@@ -5333,6 +5582,20 @@
                   "default": null,
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
+                },
+                "agenticCacheWarmupDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                  "title": "Agenticcachewarmupduration"
                 },
                 "concurrency": {
                   "anyOf": [
@@ -5689,6 +5952,20 @@
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
                 },
+                "agenticCacheWarmupDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                  "title": "Agenticcachewarmupduration"
+                },
                 "concurrency": {
                   "default": 1,
                   "description": "Max concurrent in-flight requests (must be >= 1). Primary control for concurrency phases.",
@@ -5986,6 +6263,20 @@
                   "default": null,
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
+                },
+                "agenticCacheWarmupDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                  "title": "Agenticcachewarmupduration"
                 },
                 "concurrency": {
                   "anyOf": [
@@ -6310,6 +6601,20 @@
                   "default": null,
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
+                },
+                "agenticCacheWarmupDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                  "title": "Agenticcachewarmupduration"
                 },
                 "concurrency": {
                   "anyOf": [
@@ -6649,6 +6954,20 @@
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
                 },
+                "agenticCacheWarmupDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                  "title": "Agenticcachewarmupduration"
+                },
                 "concurrency": {
                   "anyOf": [
                     {
@@ -6972,6 +7291,20 @@
                   "default": null,
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
+                },
+                "agenticCacheWarmupDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                  "title": "Agenticcachewarmupduration"
                 },
                 "concurrency": {
                   "anyOf": [
@@ -7303,6 +7636,20 @@
                   "default": null,
                   "description": "Stop after this many sessions completed (must be >= 1).",
                   "title": "Sessions"
+                },
+                "agenticCacheWarmupDuration": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+                  "title": "Agenticcachewarmupduration"
                 },
                 "concurrency": {
                   "anyOf": [
@@ -7924,6 +8271,31 @@
           "title": "Sessions",
           "x-jinja2-supported": true
         },
+        "agenticCacheWarmupDuration": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+          "title": "Agenticcachewarmupduration",
+          "x-jinja2-supported": true
+        },
         "concurrency": {
           "default": 1,
           "description": "Max concurrent in-flight requests (must be >= 1). Primary control for concurrency phases.",
@@ -8449,6 +8821,31 @@
           "default": null,
           "description": "Stop after this many sessions completed (must be >= 1).",
           "title": "Sessions",
+          "x-jinja2-supported": true
+        },
+        "agenticCacheWarmupDuration": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+          "title": "Agenticcachewarmupduration",
           "x-jinja2-supported": true
         },
         "concurrency": {
@@ -10110,6 +10507,19 @@
           "title": "Sslverify",
           "type": "boolean"
         },
+        "udsPath": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Connect over this Unix-domain socket path instead of TCP. The endpoint URL still supplies the request path and Host header, so keep it a normal http:// value (the socket carries the transport). HTTP/1.1 only; intended for local co-located inference servers.",
+          "title": "Udspath"
+        },
         "connectionLimit": {
           "default": 2500,
           "description": "Maximum simultaneous HTTP/1 connections per origin and runner worker. HTTP/2 multiplexes concurrent streams over one connection.",
@@ -10930,6 +11340,31 @@
           "title": "Sessions",
           "x-jinja2-supported": true
         },
+        "agenticCacheWarmupDuration": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+          "title": "Agenticcachewarmupduration",
+          "x-jinja2-supported": true
+        },
         "concurrency": {
           "anyOf": [
             {
@@ -11519,6 +11954,31 @@
           "default": null,
           "description": "Stop after this many sessions completed (must be >= 1).",
           "title": "Sessions",
+          "x-jinja2-supported": true
+        },
+        "agenticCacheWarmupDuration": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+          "title": "Agenticcachewarmupduration",
           "x-jinja2-supported": true
         },
         "concurrency": {
@@ -13909,6 +14369,31 @@
           "title": "Sessions",
           "x-jinja2-supported": true
         },
+        "agenticCacheWarmupDuration": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+          "title": "Agenticcachewarmupduration",
+          "x-jinja2-supported": true
+        },
         "concurrency": {
           "anyOf": [
             {
@@ -14751,6 +15236,31 @@
           "default": null,
           "description": "Total worker processes across the deployment (the maximum, ramped up to from `workers_min`). null = auto-detect based on CPU cores. Distinct from `workers_per_pod` (per-Kubernetes-pod fan-out) and `workers_min` (lower bound for adaptive ramp).",
           "title": "Workers",
+          "x-jinja2-supported": true
+        },
+        "cells": {
+          "default": 1,
+          "description": "Number of native execution cells the run is partitioned across (cellular mode). 1 (default) runs the ordinary single-process native path, byte-for-byte unchanged. With cells > 1 the launched `aiperf-runner` becomes a controller that spawns that many `aiperf-runner --cell` subprocesses over a `(cell_id, cell_count)` partition of the request budget, merges their records in global dispatch order into one report, and fails the run closed on any unsupported shape. Supported only for the scheduled HTTP transport over seeded, single-turn synthetic datasets against a single endpoint URL with request-bounded phases; see the cellular roadmap spec.",
+          "title": "Cells",
+          "oneOf": [
+            {
+              "default": 1,
+              "description": "Number of native execution cells the run is partitioned across (cellular mode). 1 (default) runs the ordinary single-process native path, byte-for-byte unchanged. With cells > 1 the launched `aiperf-runner` becomes a controller that spawns that many `aiperf-runner --cell` subprocesses over a `(cell_id, cell_count)` partition of the request budget, merges their records in global dispatch order into one report, and fails the run closed on any unsupported shape. Supported only for the scheduled HTTP transport over seeded, single-turn synthetic datasets against a single endpoint URL with request-bounded phases; see the cellular roadmap spec.",
+              "minimum": 1,
+              "title": "Cells",
+              "type": "integer"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
           "x-jinja2-supported": true
         },
         "recordProcessors": {
@@ -17004,6 +17514,31 @@
           "default": null,
           "description": "Stop after this many sessions completed (must be >= 1).",
           "title": "Sessions",
+          "x-jinja2-supported": true
+        },
+        "agenticCacheWarmupDuration": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Extended cache-pressure warmup duration, in seconds, for recorded-graph (agentic/weka) replay. When set on a warmup phase, the native runner drives cache-pressure warmup traffic for this many seconds to prime the server's prefix/KV cache before profiling begins. None (the default) disables the extended cache-pressure warmup.",
+          "title": "Agenticcachewarmupduration",
           "x-jinja2-supported": true
         },
         "concurrency": {
