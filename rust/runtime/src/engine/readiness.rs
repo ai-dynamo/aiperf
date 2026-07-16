@@ -316,22 +316,26 @@ impl PreparedReadinessTarget {
         // path below stays at WARN.
         match &self.success {
             ReadinessSuccess::ModelListed(_) => {
+                // Wording mirrors Python `readiness_probe.py:145` so the harness'
+                // readiness-log grep (`Model '<id>' ready`) matches.
                 tracing::info!(
-                    model = %self.model,
-                    base_url = %self.base_url,
-                    attempts,
-                    "readiness: model ready"
+                    "Model '{}' ready at {} after {} attempt(s)",
+                    self.model,
+                    self.base_url,
+                    attempts
                 );
             }
             ReadinessSuccess::NonServerError => {
                 let status = response
                     .status
                     .map_or_else(|| "unknown".to_owned(), |value| value.to_string());
+                // Wording mirrors Python `readiness_probe.py:342` (`Inference probe
+                // ready`, capital I) for the harness grep.
                 tracing::info!(
-                    url = %self.request.url,
-                    status = %status,
-                    attempts,
-                    "readiness: inference probe ready"
+                    "Inference probe ready at {} (status={}, attempt {})",
+                    self.request.url,
+                    status,
+                    attempts
                 );
             }
             ReadinessSuccess::SuccessfulStatus => {
