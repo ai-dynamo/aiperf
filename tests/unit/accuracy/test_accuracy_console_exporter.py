@@ -9,6 +9,7 @@ from rich.console import Console
 
 from aiperf.accuracy.accuracy_console_exporter import AccuracyConsoleExporter
 from aiperf.accuracy.models import AccuracySummary, TaskAccuracyStats
+from aiperf.common.exceptions import ConsoleExporterDisabled
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
 from tests.unit.conftest import make_benchmark_run
@@ -142,3 +143,19 @@ class TestAccuracyConsoleExporterExport:
         output = buf.getvalue()
         assert "Warning" not in output
         assert "inference server" not in output
+
+    async def test_constructor_raises_when_accuracy_disabled(self) -> None:
+        cfg = make_benchmark_run(
+            model_names=["test-model"],
+            endpoint_type=EndpointType.COMPLETIONS,
+            streaming=False,
+            accuracy=None,
+        ).cfg
+        exporter_config = ExporterConfig(
+            cfg=cfg,
+            results=None,
+            telemetry_results=None,
+            accuracy_results=None,
+        )
+        with pytest.raises(ConsoleExporterDisabled):
+            AccuracyConsoleExporter(exporter_config=exporter_config)

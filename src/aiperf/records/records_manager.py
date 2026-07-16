@@ -8,7 +8,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from aiperf.accuracy.models import ProcessAccuracyResult
+from aiperf.accuracy.models import AccuracySummary, ProcessAccuracyResult
 from aiperf.common.accumulator_protocols import (
     AccumulatorProtocol,
     ExportContext,
@@ -1501,12 +1501,25 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         Mirrors ``_publish_telemetry_results``: exports the phase-scoped accuracy
         summary from the AccuracyAccumulator and publishes it independently from
         inference results.
+
+        Exactly-once contract: this method only runs when accuracy is enabled and
+        the phase is PROFILING, and it ALWAYS publishes exactly one
+        ``ProcessAccuracyResultMessage`` before returning. The SystemController
+        clears ``_should_wait_for_accuracy`` only on receipt of that message, so a
+        missing publish would hang shutdown forever. When there is no accumulator,
+        or ``export_results`` raises, a terminal ``results=None`` summary is
+        published instead; the success path publishes the real summary. Every path
+        publishes once and only once.
         """
-        if self._accuracy_accumulator is None:
-            return
-        summary = await self._accuracy_accumulator.export_results(
-            ExportContext(phase=phase)
-        )
+        summary: AccuracySummary | None = None
+        if self._accuracy_accumulator is not None:
+            try:
+                summary = await self._accuracy_accumulator.export_results(
+                    ExportContext(phase=phase)
+                )
+            except Exception as e:  # noqa: BLE001 - must still publish a terminal message
+                self.exception(f"Accuracy summary export failed: {e!r}")
+                summary = None
         await self.publish(
             ProcessAccuracyResultMessage(
                 service_id=self.service_id,

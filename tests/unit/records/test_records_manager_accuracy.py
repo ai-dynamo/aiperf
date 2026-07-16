@@ -115,8 +115,15 @@ class TestPublishAccuracyResults:
         assert msg.accuracy_result.results is None
 
     @pytest.mark.asyncio
-    async def test_no_accumulator_is_noop(self) -> None:
+    async def test_no_accumulator_publishes_terminal_none(self) -> None:
+        """No accumulator must still publish exactly one terminal ``results=None``.
+
+        The SystemController clears ``_should_wait_for_accuracy`` only on this
+        message, so a bare early-return would hang shutdown forever when the
+        accumulator failed to construct while accuracy is config-enabled.
+        """
         mgr = MagicMock()
+        mgr.service_id = "rm"
         mgr.publish = AsyncMock()
         mgr._accuracy_accumulator = None
         mgr._publish_accuracy_results = (
@@ -125,4 +132,34 @@ class TestPublishAccuracyResults:
 
         await mgr._publish_accuracy_results(CreditPhase.PROFILING)
 
-        mgr.publish.assert_not_awaited()
+        mgr.publish.assert_awaited_once()
+        msg = mgr.publish.await_args.args[0]
+        assert isinstance(msg, ProcessAccuracyResultMessage)
+        assert msg.accuracy_result.results is None
+
+    @pytest.mark.asyncio
+    async def test_export_raises_still_publishes_terminal_none(self) -> None:
+        """An ``export_results`` failure logs and still publishes ``results=None``.
+
+        Guarantees the exactly-once terminal message so shutdown never hangs on a
+        summary-computation error.
+        """
+        accumulator = MagicMock()
+        accumulator.export_results = AsyncMock(side_effect=RuntimeError("boom"))
+
+        mgr = MagicMock()
+        mgr.service_id = "rm"
+        mgr.publish = AsyncMock()
+        mgr.exception = MagicMock()
+        mgr._accuracy_accumulator = accumulator
+        mgr._publish_accuracy_results = (
+            RecordsManager._publish_accuracy_results.__get__(mgr)
+        )
+
+        await mgr._publish_accuracy_results(CreditPhase.PROFILING)
+
+        assert mgr.exception.called
+        mgr.publish.assert_awaited_once()
+        msg = mgr.publish.await_args.args[0]
+        assert isinstance(msg, ProcessAccuracyResultMessage)
+        assert msg.accuracy_result.results is None
