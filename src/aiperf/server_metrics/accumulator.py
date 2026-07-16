@@ -146,8 +146,14 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             ServerMetricsResults containing endpoint summaries with computed statistics,
             or None if no endpoints were successfully scraped during profiling.
         """
-        start_ns = ctx.start_ns
-        end_ns = ctx.end_ns
+        # ExportContext bounds are Optional (None = unbounded). Production callers
+        # always pass concrete ints, but normalize here so a bare
+        # ``export_results(ExportContext())`` can't reach the int-only max()/
+        # comparison in _compute_endpoint_summaries and raise TypeError. 0 means
+        # "from the beginning"; the per-endpoint max(end, last_update) still
+        # captures the final scrape.
+        start_ns = ctx.start_ns or 0
+        end_ns = ctx.end_ns or 0
         error_summary = ctx.error_summary
         warmup_start_ns = ctx.warmup_start_ns
         warmup_end_ns = ctx.warmup_end_ns

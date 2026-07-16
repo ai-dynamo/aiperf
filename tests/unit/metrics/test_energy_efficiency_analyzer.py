@@ -106,6 +106,25 @@ class TestEnergyEfficiencyAnalyzer:
         assert by_tag["goodput_per_watt"] == pytest.approx(0.08)  # 8 / 100
 
     @pytest.mark.asyncio
+    async def test_zero_valued_per_watt_metrics_are_emitted_not_dropped(self) -> None:
+        # A genuine 0.0 goodput (no request met the SLO) is a valid measurement:
+        # goodput_per_watt must be emitted as 0.0, not silently omitted.
+        gpu = _StubGpu(energy=(1000.0, 2), power=(200.0, 2))
+        summary = _metrics_summary(
+            total_osl=5000.0,
+            request_count=100.0,
+            request_throughput=10.0,
+            output_token_throughput=50.0,
+            goodput=0.0,
+        )
+
+        results = await _analyzer(concurrency=8).analyze(_ctx(gpu, summary))
+        by_tag = {r.tag: r.avg for r in results}
+
+        assert "goodput_per_watt" in by_tag
+        assert by_tag["goodput_per_watt"] == pytest.approx(0.0)
+
+    @pytest.mark.asyncio
     async def test_no_gpu_accumulator_returns_empty(self) -> None:
         summary = _metrics_summary(total_osl=5000.0)
         results = await _analyzer().analyze(_ctx(None, summary))

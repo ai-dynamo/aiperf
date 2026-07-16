@@ -152,6 +152,36 @@ class TestServerMetricsAccumulator:
         assert result.endpoint_summaries is not None
         assert len(result.endpoint_summaries) == 1
 
+    async def test_export_results_unbounded_context_does_not_crash(
+        self,
+        mock_cfg: BenchmarkRun,
+    ) -> None:
+        """A bare ExportContext() (start_ns/end_ns == None) must not reach the
+        int-only max()/comparison in _compute_endpoint_summaries and raise; None
+        bounds are normalized to unbounded and still produce a summary."""
+        processor = ServerMetricsAccumulator(mock_cfg)
+        for i in range(3):
+            gauge = MetricFamily(
+                type=PrometheusMetricType.GAUGE,
+                description="KV cache usage",
+                samples=[MetricSample(labels=None, value=0.4 + i * 0.05)],
+            )
+            await processor.process_server_metrics_record(
+                ServerMetricsRecord(
+                    endpoint_url="http://node1:8081/metrics",
+                    timestamp_ns=1_000_000_000 + i * 100_000_000,
+                    endpoint_latency_ns=5_000_000,
+                    metrics={"cache_usage": gauge},
+                )
+            )
+
+        result = await processor.export_results(ExportContext())
+
+        assert result is not None
+        assert isinstance(result, ServerMetricsResults)
+        assert result.endpoint_summaries is not None
+        assert len(result.endpoint_summaries) == 1
+
     async def test_export_results_includes_warmup_endpoint_summaries(
         self,
         mock_cfg: BenchmarkRun,

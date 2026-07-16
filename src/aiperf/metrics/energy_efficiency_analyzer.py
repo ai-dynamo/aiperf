@@ -239,12 +239,19 @@ class EnergyEfficiencyAnalyzer:
         if avg_power_w <= 0:
             return []
         out: list[MetricResult] = []
-        if throughput := metric("request_throughput"):
+        # Compare to None, not truthiness: a genuine 0.0 throughput/goodput is a
+        # valid per-watt result (e.g. goodput_per_watt == 0 when no request met the
+        # SLO) and must be emitted, not silently dropped. avg_power_w > 0 is
+        # guaranteed above, so none of these divisions is degenerate.
+        throughput = metric("request_throughput")
+        if throughput is not None:
             out.append(_result(PerformancePerWattMetric, throughput / avg_power_w))
-        if output_tps := metric("output_token_throughput"):
+        output_tps = metric("output_token_throughput")
+        if output_tps is not None:
             out.append(
                 _result(OutputTokensPerSecondPerWattMetric, output_tps / avg_power_w)
             )
-        if goodput := metric("goodput"):
+        goodput = metric("goodput")
+        if goodput is not None:
             out.append(_result(GoodputPerWattMetric, goodput / avg_power_w))
         return out
