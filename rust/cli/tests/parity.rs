@@ -36,6 +36,13 @@ const PORTED_CFG_SECTIONS: &[&str] = &[
     "network_latency",
     "slos",
     "sidecars",
+    "accuracy",
+    "endpoint_profiles",
+    "failure_policy",
+    "scenario",
+    "trajectory_start_max_ratio",
+    "trajectory_start_min_ratio",
+    "unsafe_override",
 ];
 
 /// Run-level (non-`cfg`) fields the native type currently models byte-exact.
@@ -96,6 +103,7 @@ const FIXTURES: &[&str] = &[
     "warmup_arrival",
     "export_extras",
     "alias_genai",
+    "toplevel",
 ];
 
 /// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).

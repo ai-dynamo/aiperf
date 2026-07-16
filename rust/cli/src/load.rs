@@ -183,6 +183,14 @@ pub(crate) struct Inputs {
     /// Inline file-dataset records authored directly in the config (mutually
     /// exclusive with `input_file`; emitted verbatim as `records` on the wire).
     pub inline_records: Option<serde_json::Value>,
+    /// Named submission scenario (`--scenario`; `cfg.scenario`).
+    pub scenario: Option<String>,
+    /// Recorded-graph trajectory-start window lower ratio (`--trajectory-start-min-ratio`).
+    pub trajectory_start_min_ratio: f64,
+    /// Recorded-graph trajectory-start window upper ratio (`--trajectory-start-max-ratio`).
+    pub trajectory_start_max_ratio: f64,
+    /// Relax cross-field validation (`--unsafe-override`; `cfg.unsafe_override`).
+    pub unsafe_override: bool,
     /// File dataset format id (`--custom-dataset-type`).
     pub custom_dataset_type: Option<String>,
     /// Named public dataset (mutually exclusive with synthetic/file).
@@ -501,6 +509,10 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         video_spec: build_video_spec(flags),
         adaptive_scale: build_adaptive_scale(flags, concurrency)?,
         prefix_prompts: build_prefix_prompts(flags),
+        scenario: flags.scenario.clone(),
+        trajectory_start_min_ratio: flags.trajectory_start_min_ratio.unwrap_or(0.0),
+        trajectory_start_max_ratio: flags.trajectory_start_max_ratio.unwrap_or(0.0),
+        unsafe_override: flags.unsafe_override,
         artifact_dir: flags
             .artifact_dir
             .clone()
@@ -877,6 +889,15 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         server_metrics: Some(server_cfg),
         network_latency: Some(network_latency_cfg),
         sidecars: Some(sidecars),
+        // Always-emitted top-level cfg fields (match Python's unconditional
+        // serialization; carry the scenario/trajectory/unsafe flag values).
+        accuracy: None,
+        endpoint_profiles: serde_json::Map::new(),
+        failure_policy: None,
+        scenario: inputs.scenario.clone(),
+        trajectory_start_max_ratio: inputs.trajectory_start_max_ratio,
+        trajectory_start_min_ratio: inputs.trajectory_start_min_ratio,
+        unsafe_override: inputs.unsafe_override,
     };
 
     let benchmark_id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();

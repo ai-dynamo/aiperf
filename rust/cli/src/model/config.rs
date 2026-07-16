@@ -80,5 +80,29 @@ pub struct BenchmarkConfig {
     /// Lowered side-channel sidecars (`cfg.sidecars`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sidecars: Option<Sidecars>,
-    // Further sections (slos, …) are added here as ported.
+    // The following seven fields are ALWAYS emitted (Python's Config v2 serializes
+    // them unconditionally, at their defaults when unset), so they carry no
+    // `skip_serializing_if` — matching Python byte-exact and carrying the
+    // `--scenario` / `--unsafe-override` / `--trajectory-start-*` flag values.
+    /// Accuracy-benchmark policy (`cfg.accuracy`; null unless an accuracy run).
+    #[serde(default)]
+    pub accuracy: Option<serde_json::Value>,
+    /// Per-endpoint override profiles (`cfg.endpoint_profiles`; empty by default).
+    #[serde(default)]
+    pub endpoint_profiles: serde_json::Map<String, serde_json::Value>,
+    /// Sweep/cluster failure policy (`cfg.failure_policy`; null on the CLI path).
+    #[serde(default)]
+    pub failure_policy: Option<serde_json::Value>,
+    /// Named submission scenario (`cfg.scenario`; `--scenario`).
+    #[serde(default)]
+    pub scenario: Option<String>,
+    /// Recorded-graph trajectory-start window upper ratio (`--trajectory-start-max-ratio`).
+    #[serde(default)]
+    pub trajectory_start_max_ratio: f64,
+    /// Recorded-graph trajectory-start window lower ratio (`--trajectory-start-min-ratio`).
+    #[serde(default)]
+    pub trajectory_start_min_ratio: f64,
+    /// Escape hatch that relaxes cross-field validation (`--unsafe-override`).
+    #[serde(default)]
+    pub unsafe_override: bool,
 }

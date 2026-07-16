@@ -93,6 +93,22 @@ pub struct ProfileFlags {
     #[arg(long = "no-sweep-table", default_value_t = false)]
     pub no_sweep_table: bool,
 
+    /// Named submission scenario (`--scenario`; `cfg.scenario`).
+    #[arg(long = "scenario")]
+    pub scenario: Option<String>,
+
+    /// Recorded-graph trajectory-start window lower ratio (`--trajectory-start-min-ratio`).
+    #[arg(long = "trajectory-start-min-ratio")]
+    pub trajectory_start_min_ratio: Option<f64>,
+
+    /// Recorded-graph trajectory-start window upper ratio (`--trajectory-start-max-ratio`).
+    #[arg(long = "trajectory-start-max-ratio")]
+    pub trajectory_start_max_ratio: Option<f64>,
+
+    /// Relax cross-field config validation (`--unsafe-override`).
+    #[arg(long = "unsafe-override", default_value_t = false)]
+    pub unsafe_override: bool,
+
     /// Trials per variation (`--num-profile-runs`); `>1` repeats each run.
     #[arg(long = "num-profile-runs")]
     pub num_profile_runs: Option<u32>,

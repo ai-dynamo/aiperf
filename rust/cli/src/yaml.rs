@@ -181,6 +181,17 @@ struct Benchmark {
     wandb: Option<WandbSection>,
     /// Worker/cell runtime policy.
     runtime: Option<RuntimeSection>,
+    /// Named submission scenario (`cfg.scenario`).
+    scenario: Option<String>,
+    /// Recorded-graph trajectory-start window lower ratio.
+    #[serde(default, alias = "trajectoryStartMinRatio")]
+    trajectory_start_min_ratio: Option<f64>,
+    /// Recorded-graph trajectory-start window upper ratio.
+    #[serde(default, alias = "trajectoryStartMaxRatio")]
+    trajectory_start_max_ratio: Option<f64>,
+    /// Relax cross-field validation (`cfg.unsafe_override`).
+    #[serde(default, alias = "unsafeOverride")]
+    unsafe_override: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1043,6 +1054,11 @@ impl Benchmark {
             video_spec,
             adaptive_scale,
             prefix_prompts,
+            // Authored via `benchmark.scenario` / `.trajectoryStart*` / `.unsafeOverride`.
+            scenario: self.scenario.clone(),
+            trajectory_start_min_ratio: self.trajectory_start_min_ratio.unwrap_or(0.0),
+            trajectory_start_max_ratio: self.trajectory_start_max_ratio.unwrap_or(0.0),
+            unsafe_override: self.unsafe_override.unwrap_or(false),
             artifact_dir: artifact_dir
                 .or_else(|| config_artifact_dir.map(PathBuf::from))
                 .unwrap_or_else(|| PathBuf::from("artifacts")),
