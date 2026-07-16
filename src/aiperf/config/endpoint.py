@@ -316,6 +316,17 @@ class EndpointConfig(BaseConfig):
         ),
     ]
 
+    session_body_field: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Optional request body field used to carry the same per-session "
+                "affinity identifier as the configured session header."
+            ),
+        ),
+    ]
+
     wait_for_model_timeout: Annotated[
         float,
         Field(

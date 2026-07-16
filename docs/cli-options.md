@@ -379,6 +379,10 @@ Content type for request body serialization. By default, requests are sent as 'a
 
 HTTP header name used to carry the per-session affinity identifier. When set, replaces the default `X-Correlation-ID` header with the provided name (e.g., `--session-header X-Session-ID`).
 
+#### `--session-body-field` `<str>`
+
+Optional request body field used to carry the same per-session affinity identifier as `--session-header` (or `X-Correlation-ID` by default). For example, use `--session-body-field session_id` for SGLang session-aware requests.
+
 ### Tokenizer
 
 #### `--tokenizer` `<str>`
@@ -1836,6 +1840,10 @@ Content type for request body serialization. By default, requests are sent as 'a
 #### `--session-header` `<str>`
 
 HTTP header name used to carry the per-session affinity identifier. When set, replaces the default `X-Correlation-ID` header with the provided name (e.g., `--session-header X-Session-ID`).
+
+#### `--session-body-field` `<str>`
+
+Optional request body field used to carry the same per-session affinity identifier as `--session-header` (or `X-Correlation-ID` by default). For example, use `--session-body-field session_id` for SGLang session-aware requests.
 
 ### Tokenizer
 

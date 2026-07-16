@@ -91,6 +91,8 @@ aiperf profile \
   --fixed-schedule
 ```
 
+For an endpoint such as SGLang that expects the session identifier in the request body, add `--session-header x-dynamo-session-id --session-body-field session_id`. This copies each recorded Exgentic session ID into the top-level `session_id` field without changing the dataset.
+
 `source_model` selects the model that produced the trace; `--model` selects the target model receiving the replay. `benchmark` selects an Exgentic v2 workload. Invalid filters report the available harness/model combinations. The v1 dataset contains 22 combinations across five harnesses and six canonical source models.
 
 Fixed-schedule mode emits each recorded call as an independently scheduled one-turn request using its start offset from the source session. Calls that overlapped in the trace therefore overlap during replay. Selected source sessions start together at offset zero. Without `--fixed-schedule`, each source session remains a closed-loop multi-turn conversation: AIPerf waits for one live response before applying the recorded residual delay and sending the next request.

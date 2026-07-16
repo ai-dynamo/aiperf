@@ -9286,6 +9286,19 @@
           "description": "HTTP header name used to carry the per-session affinity identifier. When set, replaces the default `X-Correlation-ID` header. Useful when the inference server expects a custom session-affinity header (e.g. `--session-header X-Session-ID`).",
           "title": "Sessionheader"
         },
+        "sessionBodyField": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional request body field used to carry the same per-session affinity identifier as the configured session header.",
+          "title": "Sessionbodyfield"
+        },
         "waitForModelTimeout": {
           "default": 0.0,
           "description": "Enable a pre-flight readiness probe by setting this to a positive value (seconds). aiperf applies this timeout to each URL/model probe before starting the benchmark, aborting with a non-zero exit if any probe times out. For multiple URLs or models, worst-case wall-clock time can be roughly this timeout multiplied by the number of URL/model probes. The probe strategy is controlled by `--wait-for-model-mode`, which defaults to sending a 1-token inference request. 0 (default) disables the probe. Eliminates the need for external shell-based readiness loops in containers and Kubernetes recipes.",

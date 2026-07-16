@@ -389,6 +389,22 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    session_body_field: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional request body field used to carry the same per-session "
+                "affinity identifier as `--session-header` (or `X-Correlation-ID` "
+                "by default). For example, use `--session-body-field session_id` "
+                "for SGLang session-aware requests."
+            ),
+        ),
+        CLIParameter(
+            name=("--session-body-field",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
     @property
     def url(self) -> str:
         """Return the first URL for backward compatibility."""

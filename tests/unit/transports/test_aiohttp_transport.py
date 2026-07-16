@@ -5,9 +5,11 @@ import asyncio
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import orjson
 import pytest
 
 from aiperf.common.enums import ConnectionReuseStrategy, CreditPhase
+from aiperf.common.models import Turn
 from aiperf.common.models.record_models import RequestInfo, RequestRecord
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import TransportType
@@ -296,6 +298,26 @@ class TestAioHttpTransport:
         assert isinstance(json_bytes, bytes)
         assert b"messages" in json_bytes
         assert b"gpt-4" in json_bytes
+
+    @pytest.mark.asyncio
+    async def test_send_request_copies_resolved_session_header_to_body(self):
+        model_endpoint = create_model_endpoint_info()
+        model_endpoint.endpoint.session_header = "x-dynamo-session-id"
+        model_endpoint.endpoint.session_body_field = "session_id"
+        transport = AioHttpTransport(model_endpoint=model_endpoint)
+        await self._setup_initialized_transport_with_mock(transport)
+
+        request_info = create_request_info(model_endpoint)
+        request_info.turns = [
+            Turn(extra_headers={"x-dynamo-session-id": "source-session-1"})
+        ]
+        payload = {"model": "test-model", "messages": []}
+
+        await transport.send_request(request_info, payload)
+
+        args = self._extract_call_args(transport.aiohttp_client.post_request.call_args)
+        assert args["headers"]["x-dynamo-session-id"] == "source-session-1"
+        assert orjson.loads(args["json_bytes"])["session_id"] == "source-session-1"
 
     @pytest.mark.asyncio
     async def test_send_request_handles_exception(
