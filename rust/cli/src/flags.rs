@@ -196,7 +196,9 @@ pub struct ProfileFlags {
     #[arg(long = "confidence-level")]
     pub confidence_level: Option<f64>,
     /// Cooldown between sweep variations, seconds (`--parameter-sweep-cooldown-seconds`).
-    #[arg(long = "parameter-sweep-cooldown-seconds")]
+    /// `allow_hyphen_values` lets a negative value reach validation (see
+    /// `profile_run_cooldown_seconds`).
+    #[arg(long = "parameter-sweep-cooldown-seconds", allow_hyphen_values = true)]
     pub parameter_sweep_cooldown_seconds: Option<f64>,
 
     /// Trace synthesis: timestamp speedup ratio (`--synthesis-speedup-ratio`).
@@ -443,7 +445,9 @@ pub struct ProfileFlags {
     pub parameter_sweep_mode: String,
 
     /// Seconds to wait between trials/variations (`--profile-run-cooldown-seconds`).
-    #[arg(long = "profile-run-cooldown-seconds")]
+    /// `allow_hyphen_values` lets a negative value (`-1.0`) reach validation as a
+    /// value rather than clap misreading it as the `-1` short flag.
+    #[arg(long = "profile-run-cooldown-seconds", allow_hyphen_values = true)]
     pub profile_run_cooldown_seconds: Option<f64>,
 
     /// Keep the warmup phase on trials after the first

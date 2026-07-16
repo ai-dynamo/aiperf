@@ -34,6 +34,11 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         }
     };
 
+    // Multi-run / convergence bounds (`_multi_run._summarize_and_export` guards,
+    // `_strategy.validate_convergence_config`, and the `MultiRunConfig` field
+    // bounds). A validation failure returns a non-zero exit via `anyhow::Err`.
+    validate_multi_run(&flags)?;
+
     // YAML `--config`: a `sweep:` block expands to a native sweep; otherwise it
     // is one run through the native YAML surface.
     if let Some(path) = &flags.config_file {
@@ -95,7 +100,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         other => anyhow::bail!("unknown --sweep-type {other:?} (grid/zip)"),
     };
     let expansion = sweep::expand(&flags, sweep_type)?;
-    let trials = flags.num_profile_runs.unwrap_or(1).max(1);
+    let trials = flags.num_profile_runs.unwrap_or(1);
     if !expansion.is_sweep && trials <= 1 {
         return run_single(load::resolve(&flags)?);
     }
@@ -105,6 +110,57 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         other => anyhow::bail!("unknown --parameter-sweep-mode {other:?} (repeated/independent)"),
     };
     run_sweep(&flags, &expansion, trials, order)
+}
+
+/// Validate the multi-run / convergence flag bounds before any run work.
+///
+/// Mirrors the Python `MultiRunConfig` field bounds (`config/sweep/multi_run.py`),
+/// `_strategy.validate_convergence_config`, and the confidence-level check
+/// (`ConfidenceAggregation.__init__`). Each failure is an `anyhow::Err`, which
+/// `main` maps to a non-zero exit.
+fn validate_multi_run(flags: &ProfileFlags) -> anyhow::Result<()> {
+    if let Some(n) = flags.num_profile_runs
+        && !(1..=10).contains(&n)
+    {
+        anyhow::bail!(
+            "--num-profile-runs must be between 1 and 10 (got {n}); \
+             the trials-per-variation ceiling is 10."
+        );
+    }
+    if let Some(c) = flags.confidence_level
+        && !(c > 0.0 && c < 1.0)
+    {
+        anyhow::bail!(
+            "--confidence-level must be between 0 and 1 (exclusive) (got {c}); \
+             common values are 0.90, 0.95, 0.99."
+        );
+    }
+    for (name, cooldown) in [
+        (
+            "--profile-run-cooldown-seconds",
+            flags.profile_run_cooldown_seconds,
+        ),
+        (
+            "--parameter-sweep-cooldown-seconds",
+            flags.parameter_sweep_cooldown_seconds,
+        ),
+    ] {
+        if let Some(s) = cooldown {
+            if s < 0.0 {
+                anyhow::bail!("{name} must not be negative (got {s}).");
+            }
+            if s > 86400.0 {
+                anyhow::bail!("{name} cooldown exceeds the 24h (86400s) maximum (got {s}).");
+            }
+        }
+    }
+    if flags.convergence_metric.is_some() && flags.num_profile_runs.unwrap_or(1) <= 1 {
+        anyhow::bail!(
+            "--convergence-metric requires --num-profile-runs > 1. \
+             Set --num-profile-runs to at least 2 to enable adaptive convergence."
+        );
+    }
+    Ok(())
 }
 
 /// Execute one built run through the runner and map its terminal outcome, echoing
@@ -153,7 +209,7 @@ fn run_yaml_sweep(
 ) -> anyhow::Result<i32> {
     let sweep_id = uuid::Uuid::new_v4().simple().to_string();
     let cells = plan_yaml_cells(flags.artifact_dir.clone(), &base, &sweep, &sweep_id)?;
-    run_cells(flags, &cells)
+    run_cells(flags, &cells, true, IterationOrder::Repeated)
 }
 
 /// Execute a grid `--search-recipe`: expand its config-path axes into a static
@@ -165,7 +221,7 @@ fn run_recipe_sweep(
 ) -> anyhow::Result<i32> {
     let sweep_id = uuid::Uuid::new_v4().simple().to_string();
     let cells = plan_recipe_cells(flags, &recipe, &sweep_id)?;
-    run_cells(flags, &cells)
+    run_cells(flags, &cells, true, IterationOrder::Repeated)
 }
 
 /// Drive the dynamic monotonic SLA-saturation search (`max-concurrency-under-sla
@@ -732,7 +788,7 @@ fn run_sweep(
         disable_warmup,
         load::resolve,
     )?;
-    run_cells(flags, &cells)
+    run_cells(flags, &cells, expansion.is_sweep, order)
 }
 
 /// Resolve the per-variation seed policy from the multi-run/sweep seed flags
@@ -750,7 +806,12 @@ pub fn seed_policy(flags: &ProfileFlags) -> sweep_run::SeedPolicy {
 /// Run every planned cell in turn (with an optional inter-cell cooldown), render
 /// the sweep table, and write the aggregate. Shared by the flag-driven sweep,
 /// the multi-run path, and the YAML `sweep:` path.
-fn run_cells(flags: &ProfileFlags, cells: &[sweep_run::Cell]) -> anyhow::Result<i32> {
+fn run_cells(
+    flags: &ProfileFlags,
+    cells: &[sweep_run::Cell],
+    is_sweep: bool,
+    order: IterationOrder,
+) -> anyhow::Result<i32> {
     let runner = exec_bin::resolve()?;
     let child_pid = crate::signals::install();
     let cooldown = flags
@@ -824,12 +885,10 @@ fn run_cells(flags: &ProfileFlags, cells: &[sweep_run::Cell]) -> anyhow::Result<
     tracing::info!("{}", "=".repeat(80));
 
     tracing::info!("Computing aggregate statistics...");
-    sweep::aggregate::finish(flags, &outcomes)?;
-    let failed = total - successful;
-    if failed > 0 {
+    let exit_code = sweep::aggregate::finish(flags, &outcomes, is_sweep, order)?;
+    if exit_code != 0 {
+        let failed = total - successful;
         tracing::warn!("{failed}/{total} sweep cells failed");
-        Ok(1)
-    } else {
-        Ok(0)
     }
+    Ok(exit_code)
 }

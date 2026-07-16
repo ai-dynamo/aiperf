@@ -20,6 +20,7 @@ use crate::flags::ProfileFlags;
 
 pub mod aggregate;
 pub mod artifact_dir;
+pub mod confidence;
 pub mod run;
 pub mod yaml_sweep;
 
