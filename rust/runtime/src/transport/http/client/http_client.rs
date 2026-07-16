@@ -25,7 +25,7 @@ use crate::transport::http::client::connection::{
     SendCompletion, Sender, TimedBody, establish, with_timeout,
 };
 use crate::transport::http::config::ClientConfig;
-use crate::transport::http::models::SseMessage;
+use crate::transport::core::SseMessage;
 use crate::transport::http::sse::{SseMessageHandler, read_sse, read_sse_with_handler};
 
 #[derive(Default)]

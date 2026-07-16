@@ -84,8 +84,8 @@ use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest, Requ
 use crate::multiturn::TurnToSend;
 use crate::scheduled::{ModelResponseMetadata, TurnDispatchOutcome};
 use crate::transport::core::{DispatchResult, MeasuredContext, MeasuredOutcome};
+use crate::transport::core::{PreparedTurn, RequestExecutor};
 use crate::transport::core::{RequestRecord, Response, TextResponse};
-use crate::transport::http::{PreparedTurn, RequestExecutor};
 
 /// Default synthetic time-to-first-token (milliseconds).
 const fn default_ttft_ms() -> f64 {
@@ -435,7 +435,7 @@ impl NativeTransportExecution for DryRunNativeExecution {
         model: &str,
         _transport_config: crate::transport::http::TransportSinkConfig,
         _endpoints: Rc<crate::endpoints::PreparedEndpointTable>,
-    ) -> Result<Rc<dyn crate::transport::http::Dispatcher>> {
+    ) -> Result<Rc<dyn crate::transport::core::Dispatcher>> {
         Ok(Rc::new(FakeDispatcher::new(FakeFabricator::new(
             clock,
             model.to_string(),
@@ -763,7 +763,7 @@ impl FakeDispatcher {
 }
 
 #[async_trait(?Send)]
-impl crate::transport::http::Dispatcher for FakeDispatcher {
+impl crate::transport::core::Dispatcher for FakeDispatcher {
     async fn dispatch_collect(
         &self,
         turn: PreparedTurn,
@@ -823,7 +823,8 @@ mod tests {
     use crate::endpoints::{EndpointId, EndpointKey};
     use crate::multiturn::{PreparedEndpointReference, TurnDataPolicy};
     use crate::transport::core::Request;
-    use crate::transport::http::{PreparedHttpEndpoint, TransportSinkConfig};
+    use crate::transport::core::PreparedEndpoint;
+    use crate::transport::http::TransportSinkConfig;
 
     /// All-zero analytic params (no base latency, no scaling, no jitter) to build
     /// on with struct-update syntax.
@@ -884,7 +885,7 @@ mod tests {
                 url_index: None,
             },
             model: "fixture-model".to_string(),
-            endpoint: PreparedHttpEndpoint::Prepared(PreparedEndpointReference {
+            endpoint: PreparedEndpoint::Prepared(PreparedEndpointReference {
                 key: EndpointKey::from_index(0),
                 endpoint_id: EndpointId::new("chat").unwrap(),
             }),

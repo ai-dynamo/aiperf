@@ -21,7 +21,7 @@ use crate::endpoints::{
     RequestRecord as EndpointRequestRecord, ResponseData, ServerResponse, Turn, UsageView,
 };
 use crate::metrics_core::RequestTrace;
-use crate::transport::http::models::{ErrorDetails, ErrorKind, RequestRecord};
+use crate::transport::core::{ErrorDetails, ErrorKind, RequestRecord};
 use crate::transport::http::transport::endpoint_binding::{
     HttpEndpointBinding, HttpEndpointBindingError, HttpEndpointRequest, HttpEndpointResponseFilter,
     MetadataHttpEndpointBinding, prepare_request,
@@ -710,7 +710,7 @@ fn http_trace(record: &RequestRecord) -> RequestTrace {
 mod tests {
     use super::*;
     use crate::endpoints::PreparedEndpoint;
-    use crate::transport::http::models::SseMessage;
+    use crate::transport::core::SseMessage;
     use crate::transport::http::transport::endpoint_binding::decode_sse_response;
 
     /// Prepare a builtin streaming endpoint by its open ID.

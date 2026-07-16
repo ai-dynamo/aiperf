@@ -58,7 +58,7 @@ impl NativeTransportExecution for GrpcNativeExecution {
         model: &str,
         transport_config: crate::transport::http::TransportSinkConfig,
         endpoints: Rc<crate::endpoints::PreparedEndpointTable>,
-    ) -> Result<Rc<dyn crate::transport::http::Dispatcher>> {
+    ) -> Result<Rc<dyn crate::transport::core::Dispatcher>> {
         Ok(Rc::new(
             crate::engine::grpc_turn_execution::grpc_sink_with_endpoints(
                 clock,

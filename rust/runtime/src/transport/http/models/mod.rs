@@ -4,7 +4,5 @@
 //! Idiomatic Rust data models for the transport layer.
 
 pub mod request;
-pub mod sse;
 
 pub use request::{HttpVersion, RequestConfig};
-pub use sse::{SseField, SseFieldName, SseMessage};

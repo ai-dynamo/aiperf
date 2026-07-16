@@ -33,7 +33,7 @@ use aiperf_runtime::graph::placement::{GraphPlacementError, TracePlacementFactor
 use aiperf_runtime::metrics_core::InferenceDimensions;
 use aiperf_runtime::multiturn::TurnToSend;
 use aiperf_runtime::transport::core::{MeasuredContext, MeasuredOutcome};
-use aiperf_runtime::transport::http::{PreparedTurn, RequestExecutor};
+use aiperf_runtime::transport::core::{PreparedTurn, RequestExecutor};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use serde_json::{Value, json};

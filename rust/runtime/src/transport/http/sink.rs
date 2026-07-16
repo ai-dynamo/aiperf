@@ -14,7 +14,6 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
-use std::fmt;
 use std::rc::Rc;
 
 use anyhow::{Result, anyhow};
@@ -30,18 +29,19 @@ use crate::transport::http::sse::ChatChunk;
 
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata};
 use crate::transport::core::{
-    ConnectionReuseStrategy, DispatchResult, ErrorDetails, ErrorKind, MeasuredContext,
-    MeasuredOutcome, Request, RequestRecord, Response,
+    ConnectionReuseStrategy, DispatchResult, Dispatcher, ErrorDetails, ErrorKind, MeasuredContext,
+    MeasuredOutcome, PreparedEndpoint, PreparedTurn, Request, RequestExecutor, RequestRecord,
+    Response, SseMessage,
 };
 use crate::transport::http::config::ClientConfig;
-use crate::transport::http::models::{HttpVersion, RequestConfig, SseMessage};
+use crate::transport::http::models::{HttpVersion, RequestConfig};
 use crate::transport::http::transport::http_transport::HttpTransport;
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::{ObservedTokenKind, ObservedUsage, RequestObserver, RequestSink};
 use serde_json::Value;
 
 pub use crate::multiturn::PreparedEndpointReference;
-use crate::multiturn::{TurnDataPolicy, TurnEndpoint, TurnToSend};
+use crate::multiturn::{TurnDataPolicy, TurnToSend};
 use crate::scheduled::{
     ModelResponseMetadata, TurnDispatchOutcome, TurnDispatcher, TurnResponseObserver,
 };
@@ -114,196 +114,6 @@ fn enforce_turn_data_policy(
     }
 }
 
-/// Owned execution command handed from the single logical dispatcher to an
-/// injected HTTP execution backend.
-///
-/// The scheduling-only [`TurnToSend`] retains an `Rc` session backend so that
-/// continuations can be materialized locally. This projection deliberately
-/// removes that scheduler state: every remaining field is owned and `Send`, and
-/// the endpoint's stable identity is carried by the worker-local prepared
-/// binding key in [`PreparedEndpointReference`]. Local backends retain the
-/// already-resolved prepared adapter allocation.
-#[derive(Clone)]
-pub struct PreparedTurn {
-    /// Transport-ready request fields.
-    pub request: Request,
-    /// Effective model selected for this turn.
-    pub model: String,
-    /// Worker-resolved endpoint binding selected during preparation.
-    pub endpoint: PreparedHttpEndpoint,
-    /// Whether the request came from the endpoint-aware dataset seam.
-    pub endpoint_aware: bool,
-    /// Content retention/cache/diagnostic policy fixed by materialization.
-    pub data_policy: TurnDataPolicy,
-}
-
-impl fmt::Debug for PreparedTurn {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("PreparedTurn")
-            .field("request", &self.request)
-            .field("model", &self.model)
-            .field("endpoint", &self.endpoint)
-            .field("endpoint_aware", &self.endpoint_aware)
-            .field("data_policy", &self.data_policy)
-            .finish()
-    }
-}
-
-/// Endpoint selection retained by one scheduler-free HTTP command.
-///
-/// This is an enum rather than a bare [`PreparedEndpointReference`] to keep the
-/// seam open for a future non-prepared execution binding.
-#[derive(Clone)]
-pub enum PreparedHttpEndpoint {
-    /// Protocol-v2 worker-local prepared binding.
-    Prepared(PreparedEndpointReference),
-}
-
-impl fmt::Debug for PreparedHttpEndpoint {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Prepared(reference) => formatter
-                .debug_tuple("PreparedEndpoint")
-                .field(reference)
-                .finish(),
-        }
-    }
-}
-
-impl PreparedTurn {
-    /// Remove scheduler-local session state and build one owned HTTP command.
-    pub fn from_turn(turn: TurnToSend, model: &str) -> Self {
-        let is_final_turn = turn.is_final_turn();
-        let endpoint_aware = turn.request_body.is_some();
-        let data_policy = turn.data_policy;
-        let model = turn
-            .effective_model
-            .clone()
-            .unwrap_or_else(|| model.to_string());
-        let endpoint = match turn.endpoint {
-            TurnEndpoint::Prepared(reference) => PreparedHttpEndpoint::Prepared(reference),
-        };
-        Self {
-            request: Request {
-                uuid: turn.uuid,
-                input_length: turn.input_length,
-                max_output_tokens: turn.max_output_tokens,
-                prompt_text: None,
-                request_body: None,
-                request_body_bytes: turn.request_body,
-                headers: turn.request_headers,
-                parameters: turn.request_parameters,
-                endpoint_path: turn.endpoint_path,
-                streaming: turn.streaming,
-                x_correlation_id: Some(turn.request_correlation_id),
-                is_final_turn,
-                cancel_after_ns: turn.cancel_after_ns,
-                url_index: turn.url_index,
-            },
-            model,
-            endpoint,
-            endpoint_aware,
-            data_policy,
-        }
-    }
-}
-
-/// Pluggable execution placement behind the one logical turn dispatcher.
-///
-/// Implementations may execute on the caller's reactor, a thread-per-core
-/// local pool, or a remote transport such as ZMQ. Scheduling, phase policy,
-/// admission, adaptive control, and record capture remain above this seam and
-/// therefore do not change when execution placement changes.
-#[async_trait(?Send)]
-pub trait RequestExecutor {
-    /// Set the shared run origin after backend startup and before dispatch.
-    fn set_run_origin(&self, start_ns: i64) -> Result<()>;
-
-    /// Whether endpoint-normalized response frames can cross this placement.
-    fn supports_response_streaming(&self) -> bool {
-        false
-    }
-
-    /// Resolve labels using the same endpoint/model selection as execution.
-    fn inference_dimensions(&self, turn: &TurnToSend) -> InferenceDimensions;
-
-    /// Configure worker-local metric accumulation.
-    ///
-    /// Called once after [`set_run_origin`](Self::set_run_origin) and before any
-    /// [`execute_measured`](Self::execute_measured). Builds one
-    /// [`NativeMetricsObserver`] per execution worker from the single resolved
-    /// [`MetricsConfig`] so every worker accumulator shares an identical
-    /// configuration. Backends that do not support worker-local measurement
-    /// reject the call.
-    fn configure_measurement(&self, _config: MetricsConfig, _origin_ns: i64) -> Result<()> {
-        Err(anyhow!(
-            "selected HTTP execution placement does not support worker-local measurement"
-        ))
-    }
-
-    /// Execute one prepared request while accumulating its metrics into the
-    /// worker-local observer (no per-token replay across the coordinator).
-    async fn execute_measured(
-        &self,
-        _turn: PreparedTurn,
-        _context: MeasuredContext,
-        _on_first_token: &dyn Fn(i64),
-    ) -> Result<MeasuredOutcome> {
-        Err(anyhow!(
-            "selected HTTP execution placement does not support worker-local measurement"
-        ))
-    }
-
-    /// Worker-local measured execution with live response-frame forwarding.
-    async fn execute_measured_streaming(
-        &self,
-        _turn: PreparedTurn,
-        _context: MeasuredContext,
-        _on_first_token: &dyn Fn(i64),
-        _responses: &dyn TurnResponseObserver,
-    ) -> Result<MeasuredOutcome> {
-        Err(anyhow!(
-            "selected HTTP execution placement does not support worker-local measurement"
-        ))
-    }
-
-    /// Warm the dispatch cold path on every execution worker before timed
-    /// issuance begins, so the first authored request is not delayed relative to
-    /// its schedule by one-time setup (connection establishment, endpoint body
-    /// materialization, tokenizer/JIT warmup).
-    ///
-    /// This is the Rust-native analogue of the Python engine's ZMQ "workers
-    /// ready, go" barrier: each worker sends one throwaway request through its
-    /// real sink and discards the result, so the timed run starts warm and all
-    /// workers begin issuing from the same warmed state. The warmup request is
-    /// **never recorded** (a no-op observer, discarded outcome), so it does not
-    /// enter the metrics. Failures are non-fatal — the timed run surfaces any
-    /// real transport error itself. The default is a no-op for placements that
-    /// need no warmup.
-    async fn prewarm(&self, _turn: PreparedTurn) -> Result<()> {
-        Ok(())
-    }
-
-    /// Drain every worker observer into flat `(uuid, record)` pairs after all
-    /// dispatched turns reach terminal.
-    ///
-    /// Each record carries the worker's dense-local `request_index`; the
-    /// coordinator reassigns the global dispatch ordinal and rewrites `admit_ns`
-    /// during its uuid-join, then re-ingests in dispatch order. Backends without
-    /// worker-local measurement return an empty vector.
-    fn drain_records(&self, _end_ns: i64) -> Result<Vec<(Uuid, RecordIngest)>> {
-        Ok(Vec::new())
-    }
-
-    /// Drain backend-owned execution resources after all dispatched turns have
-    /// reached terminal. In-process direct execution owns no extra resources;
-    /// thread pools and remote clients override this lifecycle hook.
-    fn shutdown(&self) -> Result<()> {
-        Ok(())
-    }
-}
-
 /// Construction policy for one online HTTP sink.
 ///
 /// The client config owns Clock-enforced transport deadlines and protocol
@@ -339,40 +149,6 @@ pub trait HttpRequestDispatcher: RequestSink<Request> {
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
     ) -> Result<HttpDispatchResult>;
-}
-
-/// Transport-neutral `PreparedTurn` dispatch seam shared by the graph path.
-///
-/// This is deliberately distinct from [`HttpRequestDispatcher`] (the scheduled
-/// path, keyed on [`Request`]). Both [`TransportSink`] and the native gRPC
-/// sink already expose an identical inherent `dispatch_collect(turn:
-/// PreparedTurn, …)`; this object-safe trait unifies them so a graph sink can
-/// hold its transport as `Rc<dyn Dispatcher>` and later dispatch a graph dataset
-/// over gRPC without branching on a concrete backend. It is `#[async_trait(?Send)]`
-/// because graph workers own their sink in `Rc`/`RefCell` on a thread-local
-/// `LocalSet`.
-///
-/// Extension point: a future non-HTTP/non-gRPC `PreparedTurn` transport
-/// implements this trait and nothing in the graph runtime changes.
-#[async_trait(?Send)]
-pub trait Dispatcher {
-    /// Execute one owned scheduler-free command, retaining its terminal
-    /// response facts, and invoke `on_first_token` once with TTFT in nanoseconds.
-    async fn dispatch_collect(
-        &self,
-        turn: PreparedTurn,
-        observer: &dyn RequestObserver,
-        on_first_token: &dyn Fn(i64),
-    ) -> Result<DispatchResult>;
-
-    /// Resolve report dimensions using the same endpoint selection as dispatch.
-    fn inference_dimensions(&self, request: &Request) -> InferenceDimensions;
-
-    /// Whether the transport can publish live response frames before terminal
-    /// completion.
-    fn supports_response_streaming(&self) -> bool {
-        false
-    }
 }
 
 /// Live OpenAI-chat sink over [`crate::transport::http`]. Shares the caller's clock and
@@ -1328,7 +1104,7 @@ impl TransportSink {
         }
         let collected = if endpoint_aware {
             match endpoint {
-                PreparedHttpEndpoint::Prepared(reference) => {
+                PreparedEndpoint::Prepared(reference) => {
                     let table = self.prepared_endpoints.as_ref().ok_or_else(|| {
                         anyhow::anyhow!(
                             "HTTP worker received prepared endpoint key {} without a prepared table",

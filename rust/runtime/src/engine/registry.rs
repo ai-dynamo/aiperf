@@ -258,7 +258,7 @@ pub trait NativeTransportExecution: Send + Sync {
         model: &str,
         transport_config: crate::transport::http::TransportSinkConfig,
         endpoints: std::rc::Rc<crate::endpoints::PreparedEndpointTable>,
-    ) -> Result<std::rc::Rc<dyn crate::transport::http::Dispatcher>>;
+    ) -> Result<std::rc::Rc<dyn crate::transport::core::Dispatcher>>;
 
     /// Human-readable transport label used in graph tracing/diagnostics.
     fn graph_transport_label(&self) -> &'static str {

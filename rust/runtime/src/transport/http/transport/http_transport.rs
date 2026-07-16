@@ -19,7 +19,8 @@ use crate::transport::http::client::http_client::{
 };
 use crate::transport::http::client::pool::{ConnectionManager, ConnectionPool};
 use crate::transport::http::config::ClientConfig;
-use crate::transport::http::models::{RequestConfig, SseMessage};
+use crate::transport::core::SseMessage;
+use crate::transport::http::models::RequestConfig;
 use crate::transport::http::transport::headers::build_headers;
 use crate::transport::http::transport::url::build_url;
 

@@ -332,7 +332,7 @@ mod tests {
 
     use crate::metrics_core::{Phase, RecordIngest, TokenCounts};
     use crate::transport::core::{RequestRecord, Response};
-    use crate::transport::http::models::SseMessage;
+    use crate::transport::core::SseMessage;
     use uuid::Uuid;
 
     use super::*;
