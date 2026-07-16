@@ -100,6 +100,49 @@ fn sweep_cells_match_oracle() {
 }
 
 #[test]
+fn yaml_sweep_cells_match_oracle() {
+    // A config-authored `sweep:` block (grid over dotted-path parameters) must
+    // reproduce the oracle's per-cell list: labels, dir names, artifact dirs,
+    // seeds, and the swept scalar landing in the right config subtree.
+    let golden = load_golden("sweep_yaml");
+    let cells_g = golden["cells"].as_array().expect("cells array");
+
+    let path = std::path::Path::new("../../tools/parity/configs/sweep_dist.yaml");
+    let mut base = aiperf_cli::yaml::read_env_substituted(path).expect("read config");
+    let sweep = aiperf_cli::sweep::yaml_sweep::parse(&base)
+        .expect("parse sweep")
+        .expect("sweep block present");
+    aiperf_cli::sweep::yaml_sweep::normalize_benchmark(&mut base);
+    let cells = aiperf_cli::profile::plan_yaml_cells(
+        Some(std::path::PathBuf::from("/tmp/aiperf-parity/sweep_dist")),
+        &base,
+        &sweep,
+        "parity-sweep",
+    )
+    .expect("plan yaml cells");
+
+    assert_eq!(cells.len(), cells_g.len(), "cell count");
+    let ported = ["phases", "datasets", "endpoint", "models", "runtime", "metrics"];
+    for (i, (cell, want)) in cells.iter().zip(cells_g).enumerate() {
+        assert_eq!(cell.label, want["label"], "cell {i} label");
+        assert_eq!(
+            cell.run.artifact_dir.to_str().unwrap(),
+            want["artifact_dir"].as_str().unwrap(),
+            "cell {i} artifact_dir"
+        );
+        assert_eq!(cell.run.random_seed, want["random_seed"].as_u64(), "cell {i} random_seed");
+        let built = serde_json::to_value(&cell.run).expect("serialize");
+        for section in ported {
+            assert_eq!(
+                built["cfg"][section], want["request"]["run"]["cfg"][section],
+                "cell {i} cfg.{section} diverges\n got {:#}\nwant {:#}",
+                built["cfg"][section], want["request"]["run"]["cfg"][section]
+            );
+        }
+    }
+}
+
+#[test]
 fn multi_run_cells_match_oracle() {
     for (name, sweep_type, trials) in MULTI_FIXTURES {
         let golden = load_golden(name);

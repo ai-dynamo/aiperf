@@ -47,11 +47,33 @@ pub(crate) fn resolve_str(
     let raw: serde_json::Value = serde_yaml::from_str(text)
         .map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))?;
     let expanded = crate::expand::expand_config(raw)?;
+    resolve_expanded_value(expanded, artifact_dir)
+}
+
+/// Resolve an already `${ENV}`+Jinja-expanded config value into one run. Shared
+/// by the single-run path and the YAML `sweep:` path (which env-substitutes once,
+/// overrides per variation, then Jinja-renders each variation before this call).
+pub(crate) fn resolve_expanded_value(
+    expanded: serde_json::Value,
+    artifact_dir: Option<PathBuf>,
+) -> anyhow::Result<crate::model::BenchmarkRun> {
     let file: ConfigFile = serde_json::from_value(expanded)
         .map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))?;
     let random_seed = file.random_seed;
     let inputs = file.benchmark.into_inputs(artifact_dir, random_seed)?;
     load::build(inputs)
+}
+
+/// Parse a config file to its raw value and apply only `${ENV}` substitution
+/// (stage 1). Used by the YAML sweep path, which must expand the sweep block
+/// against the env-substituted-but-not-yet-Jinja-rendered base (Python's
+/// plan-build order).
+pub fn read_env_substituted(path: &std::path::Path) -> anyhow::Result<serde_json::Value> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("failed to read config {}: {e}", path.display()))?;
+    let raw: serde_json::Value = serde_yaml::from_str(&text)
+        .map_err(|e| anyhow::anyhow!("failed to parse config {}: {e}", path.display()))?;
+    crate::expand::substitute_env(raw)
 }
 
 /// A string or a list of strings (Config shorthand for single-vs-many).

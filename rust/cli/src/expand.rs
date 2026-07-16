@@ -51,7 +51,21 @@ const SKIP_TEMPLATE_PATH_PREFIXES: &[&str] = &[
 
 /// Apply env-var substitution then Jinja rendering to a parsed config value.
 pub fn expand_config(root: Value) -> anyhow::Result<Value> {
-    let root = substitute_env_vars(root)?;
+    let root = substitute_env(root)?;
+    render_with_context(root)
+}
+
+/// Stage 1 only: `${ENV}` substitution over the value tree. Exposed so the YAML
+/// sweep expander can substitute the base config once, then Jinja-render each
+/// variation separately (matching Python's plan-build order:
+/// env → sweep-expand → per-variation Jinja).
+pub(crate) fn substitute_env(root: Value) -> anyhow::Result<Value> {
+    substitute_env_vars(root)
+}
+
+/// Stages 2+3: build the Jinja context from `root` and render every template
+/// string in it. Used per-variation after the sweep override rewrites the tree.
+pub(crate) fn render_with_context(root: Value) -> anyhow::Result<Value> {
     let context = build_context(&root)?;
     render_jinja(root, &context, "")
 }

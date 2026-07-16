@@ -21,6 +21,7 @@ use crate::flags::ProfileFlags;
 pub mod aggregate;
 pub mod artifact_dir;
 pub mod run;
+pub mod yaml_sweep;
 
 /// How an axis value renders in labels / dir names (mirrors the config field type).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
