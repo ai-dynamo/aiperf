@@ -123,6 +123,7 @@ fn yaml_sweep_cells_match_oracle() {
         &base,
         &sweep,
         "parity-sweep",
+        None,
     )
     .expect("plan yaml cells");
 

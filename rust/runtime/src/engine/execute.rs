@@ -130,7 +130,7 @@ use crate::engine::sidecar_input::{
     PreparedSidecarInputs, SERVER_METRICS_SIDECAR_ID, ServerMetricsSpec,
 };
 use crate::engine::turn_execution::{
-    HttpExecutionBackendConfig, HttpPreparedEndpointTableFactory, RequestExecutorFactory,
+    ExecutionBackendConfig, PreparedEndpointTableFactory, RequestExecutorFactory,
 };
 
 type PhaseRuntimeParts = (
@@ -363,7 +363,7 @@ impl NativePreparedEndpointTableFactory {
     }
 }
 
-impl HttpPreparedEndpointTableFactory for NativePreparedEndpointTableFactory {
+impl PreparedEndpointTableFactory for NativePreparedEndpointTableFactory {
     fn prepare_worker(&self) -> Result<PreparedEndpointTable> {
         self.prepare_table()
     }
@@ -2231,9 +2231,8 @@ pub(crate) async fn execute_scheduled_shard(
         shared.workers,
     )?;
 
-    let prepared_endpoints: Arc<dyn HttpPreparedEndpointTableFactory> =
-        shared.table_factory.clone();
-    let execution_backend = shared.transport_factory.build(HttpExecutionBackendConfig {
+    let prepared_endpoints: Arc<dyn PreparedEndpointTableFactory> = shared.table_factory.clone();
+    let execution_backend = shared.transport_factory.build(ExecutionBackendConfig {
         // One worker: the sink stays on this thread's reactor, co-located with the
         // scheduler — the old per-request mpsc/oneshot hop is gone.
         workers: 1,
@@ -2627,7 +2626,7 @@ async fn execute_native_inner(
     // retain/sharded arms leave this `None` and fold their retained records post-run.
     let mut folded_otel: Option<OtelRecordAccumulator> = None;
     let (captured, input_sessions, was_cancelled, has_warmup, start_ns) = if !shardable {
-        let execution_backend = transport_factory.build(HttpExecutionBackendConfig {
+        let execution_backend = transport_factory.build(ExecutionBackendConfig {
             workers: request.workers,
             coordinator_clock: clock.clone(),
             real_clock_anchor,
@@ -3349,7 +3348,7 @@ pub(crate) trait NativeConversationSourceFactory {
 type NativeEndpointExecutionParts<'a> = (
     Vec<String>,
     TransportSinkConfig,
-    Option<Arc<dyn HttpPreparedEndpointTableFactory>>,
+    Option<Arc<dyn PreparedEndpointTableFactory>>,
     Box<dyn NativeConversationSourceFactory + 'a>,
 );
 

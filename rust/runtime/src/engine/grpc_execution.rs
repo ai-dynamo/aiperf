@@ -19,7 +19,7 @@ use anyhow::{Context, Result, ensure};
 use url::Url;
 
 use crate::engine::graph_execution::GraphTransportKind;
-use crate::engine::grpc_turn_execution::NativeGrpcExecutionBackendFactory;
+use crate::engine::grpc_turn_execution::GrpcExecutionFactory;
 use crate::engine::protocol_v2::AuthoredRunSpecV2;
 use crate::engine::registry::{NativeTransportExecution, RunnerRunContext};
 use crate::engine::turn_execution::RequestExecutorFactory;
@@ -27,7 +27,7 @@ use crate::engine::turn_execution::RequestExecutorFactory;
 /// Native execution binding for the built-in `grpc` transport.
 ///
 /// gRPC drives the same `RequestExecutor` seam as HTTP; the binding owns its
-/// own [`NativeGrpcExecutionBackendFactory`] (it is not a named field of the
+/// own [`GrpcExecutionFactory`] (it is not a named field of the
 /// process execution-factory set), so gRPC is a transport the workloads treat
 /// identically to any other. Readiness polling is skipped (no gRPC server-ready
 /// probe today) and graph nodes dispatch over the Tonic sink.
@@ -43,7 +43,7 @@ impl GrpcNativeExecution {
 
 impl NativeTransportExecution for GrpcNativeExecution {
     fn executor_factory(&self) -> Arc<dyn RequestExecutorFactory> {
-        Arc::new(NativeGrpcExecutionBackendFactory::default())
+        Arc::new(GrpcExecutionFactory::default())
     }
 
     fn readiness_enabled(&self) -> bool {

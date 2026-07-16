@@ -5,7 +5,7 @@
 //! transport, reached through the ordinary Python frontend via `--cells N`.
 //!
 //! gRPC and HTTP cellular runs share ONE executor: the coordinator selects a
-//! different `RequestExecutorFactory` (`NativeGrpcExecutionBackendFactory` vs the
+//! different `RequestExecutorFactory` (`GrpcExecutionFactory` vs the
 //! HTTP one), but the cell-issuer injection (`CellularAutonomousIssuer`) and the
 //! records shipper (`CellRecordsShipper`) live in the shared `execute_native_inner`
 //! loop above the transport — so a gRPC cell ships its partition exactly as an HTTP
