@@ -1667,13 +1667,27 @@ fn validate_cellular_phase_budgets(envelope: &serde_json::Value, cell_count: u32
         // per-request probability, so the aggregate cancellation rate matches, though
         // the exact cancelled subset differs (cell-local RNG order) — an accepted
         // non-byte-parity approximation, not a rejected shape.
-        for cap in ["concurrency", "prefill_concurrency"] {
-            if let Some(value) = phase.get(cap).and_then(serde_json::Value::as_u64) {
-                ensure!(
-                    value >= cells,
-                    "cellular runs require a `{cap}` cap >= cell_count ({cell_count}) so it splits evenly (a smaller cap floors to 1 per cell and over-subscribes the aggregate to cell_count); phase {name:?} has {value}"
-                );
-            }
+        ensure_cellular_cap_floor(phase, name, cell_count)?;
+    }
+    Ok(())
+}
+
+/// Ensures a phase's `concurrency` / `prefill_concurrency` caps are each at least
+/// `cell_count` — the shared floor both the scheduled and graph cellular paths enforce.
+///
+/// [`build_cell_envelope`] splits every cap round-robin per cell with a `.max(1)` floor,
+/// so a cap below `cell_count` collapses to 1 per cell and the cells' caps sum to
+/// `cell_count` — silently over-subscribing the aggregate in-flight. `name` labels the
+/// offending phase. The reason is identical for both run kinds, so the message does not
+/// name graph-vs-scheduled.
+fn ensure_cellular_cap_floor(phase: &serde_json::Value, name: &str, cell_count: u32) -> Result<()> {
+    let cells = u64::from(cell_count);
+    for cap in ["concurrency", "prefill_concurrency"] {
+        if let Some(value) = phase.get(cap).and_then(serde_json::Value::as_u64) {
+            ensure!(
+                value >= cells,
+                "cellular runs require a `{cap}` cap >= cell_count ({cell_count}) so it splits evenly (a smaller cap floors to 1 per cell and over-subscribes the aggregate to cell_count); phase {name:?} has {value}"
+            );
         }
     }
     Ok(())
@@ -1703,7 +1717,6 @@ fn validate_graph_cellular_phases(envelope: &serde_json::Value, cell_count: u32)
         .pointer("/run/cfg/phases")
         .and_then(serde_json::Value::as_array)
         .context("run cfg has no phases array")?;
-    let cells = cell_count as u64;
     for phase in phases {
         let name = phase
             .get("name")
@@ -1716,14 +1729,7 @@ fn validate_graph_cellular_phases(envelope: &serde_json::Value, cell_count: u32)
         );
         // Session/prefill concurrency caps split round-robin per cell; below cell_count
         // they floor to 1 and over-subscribe the aggregate, so require >= cell_count.
-        for cap in ["concurrency", "prefill_concurrency"] {
-            if let Some(value) = phase.get(cap).and_then(serde_json::Value::as_u64) {
-                ensure!(
-                    value >= cells,
-                    "cellular graph runs require a `{cap}` cap >= cell_count ({cell_count}) so it splits evenly; phase {name:?} has {value}"
-                );
-            }
-        }
+        ensure_cellular_cap_floor(phase, name, cell_count)?;
     }
     Ok(())
 }
