@@ -38,6 +38,9 @@ use crate::cellular::shard::{ColumnStorePartition, RecordsShardPartition};
 /// operator-hardcoded coordinate. Gated on the `velo` feature.
 #[cfg(feature = "velo")]
 pub mod connect;
+/// Velo distribution for the dataset fan-out data plane (ultimate spec §3).
+#[cfg(feature = "velo")]
+pub mod dataset_velo;
 /// Velo distribution for the monotonic phaser control plane (ultimate spec §4).
 #[cfg(feature = "velo")]
 pub mod phaser_velo;
