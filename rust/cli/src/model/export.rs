@@ -544,13 +544,23 @@ mod tests {
         assert!(sm.json && sm.csv);
         // Only the five runner-known keys are serialized (deny_unknown_fields).
         let value = serde_json::to_value(&sm).unwrap();
-        let keys: std::collections::BTreeSet<&str> =
-            value.as_object().unwrap().keys().map(String::as_str).collect();
+        let keys: std::collections::BTreeSet<&str> = value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
         assert_eq!(
             keys,
-            ["aiperf_version", "benchmark_id", "csv", "input_config", "json"]
-                .into_iter()
-                .collect()
+            [
+                "aiperf_version",
+                "benchmark_id",
+                "csv",
+                "input_config",
+                "json"
+            ]
+            .into_iter()
+            .collect()
         );
     }
 
@@ -567,7 +577,10 @@ mod tests {
         assert!(!sm.json && sm.csv);
         assert!(sm.input_config.is_null());
         let value = serde_json::to_value(&sm).unwrap();
-        assert!(value.get("input_config").is_none(), "csv export omits input_config");
+        assert!(
+            value.get("input_config").is_none(),
+            "csv export omits input_config"
+        );
     }
 
     #[test]

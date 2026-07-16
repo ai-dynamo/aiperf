@@ -33,12 +33,7 @@ pub struct DegradationKneeSpec {
 /// `ValueError` guards: a NaN/inf/zero baseline collapses the cutoff comparison
 /// so "no knee in range" is indistinguishable from junk data).
 pub fn process(sweep_json: &Value, spec: &DegradationKneeSpec) -> anyhow::Result<Value> {
-    let points = extract_points(
-        sweep_json,
-        &spec.swept_param,
-        &spec.metric_tag,
-        &spec.stat,
-    )?;
+    let points = extract_points(sweep_json, &spec.swept_param, &spec.metric_tag, &spec.stat)?;
     let (baseline_x, baseline_y) = points[0];
     anyhow::ensure!(
         baseline_y.is_finite(),
@@ -93,9 +88,15 @@ pub fn process(sweep_json: &Value, spec: &DegradationKneeSpec) -> anyhow::Result
         knee.map(|(_, y)| num(y)).unwrap_or(Value::Null),
     );
     out.insert("threshold_pct".into(), num(spec.threshold_pct));
-    out.insert("swept_metric".into(), Value::String(spec.metric_tag.clone()));
+    out.insert(
+        "swept_metric".into(),
+        Value::String(spec.metric_tag.clone()),
+    );
     out.insert("stat".into(), Value::String(spec.stat.clone()));
-    out.insert("swept_param".into(), Value::String(spec.swept_param.clone()));
+    out.insert(
+        "swept_param".into(),
+        Value::String(spec.swept_param.clone()),
+    );
     out.insert("all_points".into(), Value::Array(all_points));
     Ok(Value::Object(out))
 }
@@ -129,7 +130,11 @@ mod tests {
     #[test]
     fn finds_first_knee_past_cutoff() {
         // baseline 10 * 1.2 = 12; first y > 12 is at concurrency 19 (y=13).
-        let out = process(&agg(&[(1, 10.0), (7, 11.5), (19, 13.0), (52, 40.0)]), &spec()).unwrap();
+        let out = process(
+            &agg(&[(1, 10.0), (7, 11.5), (19, 13.0), (52, 40.0)]),
+            &spec(),
+        )
+        .unwrap();
         assert_eq!(out["baseline_concurrency"].as_i64(), Some(1));
         assert_eq!(out["knee_concurrency"].as_i64(), Some(19));
         assert_eq!(out["swept_metric"], "request_latency");
