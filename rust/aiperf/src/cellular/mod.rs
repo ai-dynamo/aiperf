@@ -47,6 +47,7 @@
 
 pub mod broadcast;
 pub mod dataset_session;
+pub mod dispatch_state;
 pub mod heartbeat;
 pub mod issuance;
 pub mod partition;
