@@ -32,7 +32,7 @@ pub use discovery::{
     DiscoveryPlugin, DiscoveryReply, DiscoveryRequest, DiscoveryState, HUB_DISCOVERY,
     handle_discovery,
 };
-pub use plugin::{HubError, HubPlugin};
+pub use plugin::{HUB_ABI_VERSION, HubAbiRequirement, HubError, HubPlugin};
 
 /// Composes [`HubPlugin`]s over one velo instance and serves both their HTTP and
 /// velo surfaces.
@@ -65,14 +65,26 @@ impl Hub {
         &self.velo
     }
 
-    /// Register `plugin`: validate its prefix, reject a duplicate, and only then
-    /// install its velo handlers on the shared instance. On success the plugin is
-    /// retained for HTTP mounting by [`serve`](Self::serve).
+    /// Register `plugin`: negotiate its declared hub ABI, validate its prefix,
+    /// reject a duplicate, and only then install its velo handlers on the shared
+    /// instance. On success the plugin is retained for HTTP mounting by
+    /// [`serve`](Self::serve).
     ///
-    /// Registration is transactional in spirit — a plugin whose prefix collides is
-    /// rejected before any of its velo handlers are installed.
+    /// Registration is transactional in spirit — a plugin that declares an
+    /// incompatible ABI, or whose prefix collides, is rejected before any of its
+    /// velo handlers are installed and before any hub state (prefixes, retained
+    /// plugins) is touched, so the hub is left exactly as it was. The ABI check
+    /// runs first because it inspects no hub state and so needs no rollback.
     pub fn register(&mut self, plugin: Box<dyn HubPlugin>) -> Result<(), HubError> {
         let prefix = plugin.prefix().to_owned();
+        let required = plugin.required_abi();
+        if !required.accepts(HUB_ABI_VERSION) {
+            return Err(HubError::IncompatibleAbi {
+                prefix,
+                required,
+                supported: HUB_ABI_VERSION,
+            });
+        }
         if prefix.is_empty() || !prefix.starts_with('/') {
             return Err(HubError::InvalidPrefix(prefix));
         }

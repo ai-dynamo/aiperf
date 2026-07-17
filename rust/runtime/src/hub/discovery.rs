@@ -19,7 +19,7 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use velo::{Context, Handler, Velo};
 
-use super::plugin::{HubError, HubPlugin};
+use super::plugin::{HubAbiRequirement, HubError, HubPlugin};
 
 /// The velo unary handler name the discovery plugin registers.
 pub const HUB_DISCOVERY: &str = "hub.discovery";
@@ -99,6 +99,13 @@ impl HubPlugin for DiscoveryPlugin {
         "/discovery"
     }
 
+    /// The discovery plugin tracks the hub's own ABI exactly: it is an in-tree
+    /// plugin compiled against the current `HUB_ABI_VERSION`, so it declares the
+    /// current requirement explicitly rather than relying on the trait default.
+    fn required_abi(&self) -> HubAbiRequirement {
+        HubAbiRequirement::current()
+    }
+
     fn router(&self) -> axum::Router {
         axum::Router::new()
             .route("/hello", post(http_hello))
@@ -134,7 +141,7 @@ mod tests {
 
     use super::*;
     use crate::cellular::transport::connect::{BindSpec, build_velo, connect_controller};
-    use crate::hub::Hub;
+    use crate::hub::{HUB_ABI_VERSION, Hub};
 
     /// A minimal second plugin (no velo handlers) so registration/mount tests can
     /// exercise more than one prefix and the duplicate-prefix guard.
@@ -142,6 +149,26 @@ mod tests {
     impl HubPlugin for NoopPlugin {
         fn prefix(&self) -> &str {
             self.0
+        }
+        fn router(&self) -> axum::Router {
+            axum::Router::new().route("/ping", axum::routing::get(|| async { "pong" }))
+        }
+        fn register_velo_handlers(&self, _velo: &Arc<Velo>) -> Result<(), HubError> {
+            Ok(())
+        }
+    }
+
+    /// A plugin declaring an explicit ABI requirement, to exercise negotiation.
+    struct AbiPlugin {
+        prefix: &'static str,
+        required: HubAbiRequirement,
+    }
+    impl HubPlugin for AbiPlugin {
+        fn prefix(&self) -> &str {
+            self.prefix
+        }
+        fn required_abi(&self) -> HubAbiRequirement {
+            self.required
         }
         fn router(&self) -> axum::Router {
             axum::Router::new().route("/ping", axum::routing::get(|| async { "pong" }))
@@ -194,6 +221,52 @@ mod tests {
         let bad = hub.register(Box::new(NoopPlugin("nope")));
         assert!(matches!(bad, Err(HubError::InvalidPrefix(_))), "{bad:?}");
         assert_eq!(hub.prefixes().len(), 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn registration_negotiates_abi_and_rolls_back_on_mismatch() {
+        let velo = build_velo(BindSpec::TcpLoopback).await.expect("velo");
+        let mut hub = Hub::new(velo);
+
+        // A plugin declaring a range that includes the hub's ABI registers.
+        hub.register(Box::new(AbiPlugin {
+            prefix: "/compat",
+            required: HubAbiRequirement::range(HUB_ABI_VERSION, HUB_ABI_VERSION + 5),
+        }))
+        .expect("compatible plugin registers");
+        // And the discovery plugin (declares current) coexists.
+        hub.register(Box::new(DiscoveryPlugin::new(discovery_state(
+            "tcp://127.0.0.1:1".to_owned(),
+        ))))
+        .expect("discovery registers");
+        assert_eq!(
+            hub.prefixes().collect::<Vec<_>>(),
+            vec!["/compat", "/discovery"]
+        );
+
+        // A plugin requiring a future-only ABI is rejected, naming the mismatch,
+        // and leaves the hub state (prefix count) exactly as before.
+        let incompatible = hub.register(Box::new(AbiPlugin {
+            prefix: "/future",
+            required: HubAbiRequirement::exact(HUB_ABI_VERSION + 1),
+        }));
+        match incompatible {
+            Err(HubError::IncompatibleAbi {
+                prefix,
+                required,
+                supported,
+            }) => {
+                assert_eq!(prefix, "/future");
+                assert_eq!(required, HubAbiRequirement::exact(HUB_ABI_VERSION + 1));
+                assert_eq!(supported, HUB_ABI_VERSION);
+            }
+            other => panic!("expected IncompatibleAbi, got {other:?}"),
+        }
+        // Rolled back: the failed register added no prefix.
+        assert_eq!(
+            hub.prefixes().collect::<Vec<_>>(),
+            vec!["/compat", "/discovery"]
+        );
     }
 
     /// POST the discovery request over HTTP with a raw hyper client (direct
