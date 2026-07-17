@@ -93,8 +93,15 @@ fn sample_weighted(
     trace_id: &str,
     source: &str,
 ) -> Result<String, ConditionalError> {
-    let total: f64 = weights.values().copied().filter(|weight| *weight > 0.0).sum();
-    if !(total > 0.0) {
+    let total: f64 = weights
+        .values()
+        .copied()
+        .filter(|weight| *weight > 0.0)
+        .sum();
+    // Reject an all-non-positive or NaN total via positive-form logic (a bare
+    // `!(total > 0.0)` trips `clippy::neg_cmp_op_on_partial_ord`).
+    let usable_total = total.is_finite() && total > 0.0;
+    if !usable_total {
         return Err(ConditionalError(format!(
             "branch weights for source {source:?} are all non-positive"
         )));
@@ -120,8 +127,7 @@ fn sample_weighted(
     // key deterministically rather than failing.
     Ok(weights
         .iter()
-        .filter(|(_, weight)| **weight > 0.0)
-        .next_back()
+        .rfind(|(_, weight)| **weight > 0.0)
         .map(|(key, _)| key.clone())
         .expect("total > 0 guarantees a positive-weight key"))
 }
