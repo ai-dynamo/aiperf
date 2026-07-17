@@ -31,13 +31,16 @@ _ENERGY_BASE_TICKS = 40_000_000_000_000
 
 def _env_float_or(name: str, default: float) -> float:
     """Parse an optional float env var, falling back to ``default`` when invalid."""
+    import math
+
     raw = os.environ.get(name, "").strip()
     if not raw:
         return default
     try:
-        return float(raw)
+        parsed = float(raw)
     except ValueError:
         return default
+    return parsed if math.isfinite(parsed) else default
 
 
 def _env_int(name: str, default: int) -> int:

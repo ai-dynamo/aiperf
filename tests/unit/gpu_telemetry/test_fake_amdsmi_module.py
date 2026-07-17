@@ -28,7 +28,19 @@ def _purge_fake() -> None:
 def load_fake_amdsmi(monkeypatch):
     """Import a fresh fake ``amdsmi`` module configured via the given env vars."""
 
+    _KNOWN_VARS = (
+        "AIPERF_MOCK_AMDSMI",
+        "AIPERF_MOCK_AMDSMI_NUM_GPUS",
+        "AIPERF_MOCK_AMDSMI_MODEL",
+        "AIPERF_MOCK_AMDSMI_GFX_ACTIVITY",
+        "AIPERF_MOCK_AMDSMI_POWER_W",
+        "AIPERF_MOCK_AMDSMI_TEMP_C",
+        "AIPERF_MOCK_AMDSMI_VRAM_USED_FRACTION",
+    )
+
     def _load(**env: object):
+        for var in _KNOWN_VARS:
+            monkeypatch.delenv(var, raising=False)
         env.setdefault("AIPERF_MOCK_AMDSMI", "1")
         for key, value in env.items():
             monkeypatch.setenv(key, str(value))
@@ -182,12 +194,13 @@ class TestOverrides:
 class TestCollectorConsumesFake:
     @pytest.mark.asyncio
     async def test_collector_produces_amd_records(self, load_fake_amdsmi):
+        from aiperf.gpu_telemetry import amdsmi_collector
+        from aiperf.gpu_telemetry.amdsmi_collector import AMDSMITelemetryCollector
+
         fake = load_fake_amdsmi(
             AIPERF_MOCK_AMDSMI_MODEL="mi355x",
             AIPERF_MOCK_AMDSMI_NUM_GPUS=2,
         )
-        from aiperf.gpu_telemetry import amdsmi_collector
-        from aiperf.gpu_telemetry.amdsmi_collector import AMDSMITelemetryCollector
 
         records = []
 
