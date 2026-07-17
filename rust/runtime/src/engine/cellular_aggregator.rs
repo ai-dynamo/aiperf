@@ -379,7 +379,9 @@ pub async fn run_aggregator(envelope: &serde_json::Value) -> Result<()> {
                 .parse()
                 .context("parsing AIPERF_CELL_COUNT")?;
             let fanout: u32 = std::env::var(CELL_AGG_FANOUT_ENV)
-                .context("AIPERF_AGG_SHIP_ADDR is a template but AIPERF_CELL_AGG_FANOUT is missing")?
+                .context(
+                    "AIPERF_AGG_SHIP_ADDR is a template but AIPERF_CELL_AGG_FANOUT is missing",
+                )?
                 .parse()
                 .context("parsing AIPERF_CELL_AGG_FANOUT")?;
             let parent_id = k8s_tier_parent_id(cell_count, fanout, tier_index, agg_id).context(
