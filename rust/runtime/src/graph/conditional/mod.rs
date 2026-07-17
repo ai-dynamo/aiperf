@@ -15,6 +15,7 @@
 //! No runtime node kind, edge kind, reducer, channel type, or reactive branch
 //! machinery is introduced. See `specs/conditional-graph-lowering.md`.
 
+mod fold;
 mod model;
 mod resolve;
 
@@ -23,4 +24,5 @@ pub use model::{
     AuthoredLlmNode, AuthoredNode, AuthoredReplayNode, AuthoredStaticEdge, AuthoredTrace,
     BranchTargets, ConditionalError, MessagePart, PromptGrammarItem, parse_authored_graph,
 };
+pub use fold::{CompiledPrompts, FoldedTrace, compile_prompts, fold_replay_and_emit};
 pub use resolve::{TakenEdge, TakenGraph, resolve_and_prune, resolve_branch_key};
