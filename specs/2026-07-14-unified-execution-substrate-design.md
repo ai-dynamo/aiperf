@@ -13,8 +13,8 @@ Stage 2 collapses the two placement backends and two workload drivers into one `
 
 **Relationship.** This is the concrete realization of the "unify scheduled + graph under one
 substrate" endgame in `2026-07-12-cellular-ready-seams-and-roadmap.md` §S5. It builds on
-`2026-07-13-p1-generic-execution-substrate-names.md` (`built`, the generic naming + the single
-sharded execution model). It reuses the transport-neutral body plane
+`2026-07-16-unified-thread-per-core-execution.md` (`built`, the single sharded execution model
+and, in its P1 substrate-names appendix, the generic naming). It reuses the transport-neutral body plane
 (`2026-07-13-segment-unification-design.md`, `2026-07-13-endpoint-body-construction-design.md`) and
 the `OnFailure` enum. It is the seam a future WebSocket transport and the offline dynosim path slot
 into for free.

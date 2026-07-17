@@ -366,3 +366,77 @@ parallelism it inherits for free comes entirely from the sharded runtime above i
 | `merge_shards` (concat + sort by global ordinal) | `sharded_scheduled.rs:388-417` |
 | gRPC shares `build_native`, no worker loop | `grpc_turn_execution.rs:4-12, 65-90` |
 | D5 once-per-cell vs per-thread split | `sharded_scheduled.rs:76-83`, `execute.rs:2502-2522` |
+
+---
+
+## Naming vocabulary (the P1 substrate names)
+
+The scheduled worker and the runner graph sink (`RunnerGraphSink`) always shared one
+transport dispatch, one set of measured DTOs, and one `NativeMetricsObserver`, but the
+old names hid that convergence (`Http*` on types gRPC and graph also used; `Turn*` on
+the leaf request DTO). The P1 pass gave the shared substrate one generic vocabulary,
+relocated the transport-neutral types into a `transport::core` module with no `http`
+dependency, and collapsed the dispatch sprawl to a small primitive set. This appendix
+records only those naming decisions; the execution model above is the substrate they
+name. Grounded in `transport/core/dispatch.rs`, `transport/core/mod.rs`,
+`transport/http/sink.rs`, `transport/grpc/sink.rs`, `endpoints/registry.rs`.
+
+### Old → new names (transport-neutral DTOs)
+
+| Old (path-specific) | New (generic) | Role |
+|---|---|---|
+| `PreparedHttpTurn` | `PreparedTurn` | the transport-neutral dispatch unit both paths build and dispatch verbatim (`transport/core/dispatch.rs:187`) |
+| `MeasuredTurnContext` | `MeasuredContext` | register-metadata → dispatch → record wiring context (`dispatch.rs:137`) |
+| `MeasuredTurnOutcome` | `MeasuredOutcome` | the measured terminal outcome (`dispatch.rs:167`) |
+| `HttpTurnDispatchResult` | `DispatchResult` | `{ outcome, request_payload, record }` (`dispatch.rs:116`) |
+| `TurnRequest` | `Request` | the leaf dispatch DTO shared by http/grpc/dynosim/dry_run (`dispatch.rs:36`, `dispatch(&Request)`) |
+| `PreparedHttpEndpoint` | `PreparedEndpoint` | the prepared per-endpoint binding trait (`endpoints/registry.rs:456`) |
+| `HttpTrace` | `RequestTrace` | per-request derived-metrics trace filled by every transport (matches Python `BaseTraceData`) |
+| — | `RequestRecord` / `Response` / `TextResponse` | generic per-request record + parsed response (`transport/core/record.rs`, `response.rs`) |
+| — | `TraceData` / `TraceExport` / `TraceReference` | transport-neutral per-request trace timing (`transport/core/trace.rs`) |
+| — | `ErrorDetails` / `ErrorKind`, `ConnectionReuseStrategy` | shared error + reuse vocabulary (`transport/core/{error,reuse}.rs`) |
+
+Names that stay path-specific because they *are* path-specific: `HttpRequestDispatcher`
+(genuinely http), `GraphSink` / `GraphReply` (per-node DAG splice), `TransportSink`
+(the http sink type), `GrpcTransportSink` (the grpc sink type). The raw http-client
+trace stays `transport::http::models::TraceData` (genuinely http).
+
+### The collapsed dispatch surface
+
+The ~6 near-duplicate `TransportSink` dispatch methods collapsed to a small primitive
+set on a clear level convention — **`dispatch_*`** = transport-level (send bytes +
+measure):
+
+- `dispatch_measured` — context-wired: register metadata → dispatch → record
+  (`transport/http/sink.rs:972`, `transport/grpc/sink.rs:222`).
+- `dispatch_collect` — the `None`-observer convenience over the streaming primitive
+  (`http/sink.rs:944`, `grpc/sink.rs:240`).
+- `dispatch_collect_streaming(…, Option<&dyn TurnResponseObserver>)` — the primitive
+  (`Some` = forward live frames, `None` = terminal-only) (`http/sink.rs:996`).
+
+### The `Dispatcher` trait
+
+`Dispatcher` (`transport/core/dispatch.rs:383`) is the object-safe transport-dispatch
+trait extracting the `dispatch_collect(PreparedTurn) + inference_dimensions` method HTTP
+and gRPC already shared. `impl Dispatcher for TransportSink` (http) and
+`impl Dispatcher for GrpcTransportSink` (`transport/grpc/sink.rs:481`) are thin — both
+bodies already existed. The runner graph sink holds `Rc<dyn Dispatcher>` (not a concrete
+`Rc<TransportSink>`), so graph nodes dispatch over http *or* grpc through the one trait
+and the placement never matches on a transport kind.
+
+### The `transport::{core, http, grpc}` layout
+
+All transport code lives under one `crate::transport` parent with an honest dependency
+direction:
+
+- `transport::core` — the transport-neutral dispatch vocabulary (every type in the table
+  above, plus the `RequestExecutor` and `Dispatcher` traits and the SSE
+  `SseMessage`/`SseField`/`SseFieldName` types). It has **no** dependency on
+  `transport::http` or `transport::grpc`, so a future transport takes the shared
+  vocabulary without pulling in an existing wire client.
+- `transport::http` — the hyper client + its `sink` (`TransportSink`).
+- `transport::grpc` — the tonic client + its `sink` (`GrpcTransportSink`),
+  `#[cfg(feature = "grpc")]`.
+
+`transport::http` and `transport::grpc` depend on `transport::core`; the reverse does
+not hold.

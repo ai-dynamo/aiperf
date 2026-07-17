@@ -590,15 +590,6 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   alignment (`--use-server-token-count`), fixed-schedule anchor→issuance-start,
   warm-start prewarm+lead barrier. Non-bugs: RNG-stream variance, Python
   saturation jitter.
-- `specs/2026-07-13-p1-generic-execution-substrate-names.md` — **P1 naming pass**
-  (built: renames + fold; `inference_dimensions` signature kept by design — see
-  the 2026-07-14 addenda): give the already-shared execution substrate one generic
-  vocabulary. The DTO/placement/method renames and the dispatch-method fold landed
-  (collect surface → two primitives).
-  `PreparedHttpTurn`/`MeasuredTurn*`/`HttpTurnDispatchResult` →
-  `PreparedTurn`/`Measured*`/`DispatchResult`; placement seams →
-  `RequestExecutor` (per-request) / `TracePlacement` (per-trace). Pure rename +
-  de-dup, no behavior change; does not merge the seams (deferred).
 - `specs/2026-07-14-unified-execution-substrate-design.md` — **north-star;
   Stage 1 built**: one `Dispatcher`, one `WorkerPool`, any workload over any
   transport. **Stage 1 shipped**: an object-safe `Dispatcher` trait
@@ -645,15 +636,13 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
 - `specs/2026-07-09-dynamo-aiperf-{shared-core,request-rate-tokenizer}-design.md`
   — historical precursors (built on dynamo's `lib/mocker`; superseded by the
   standalone workspace).
-- `specs/2026-07-12-track-a-*.md` + `specs/2026-07-12-{scheduled-worker-local-accumulation,http-connector-seam-uds-duplex,lean-per-request-hotpath,single-observer-compat-projection,cellular-ready-seams-and-roadmap}.md`
-  — **PR1 + PR2 (A1) built; A3/A4/A2 planning.** The Track-A measurement-path
-  refactor design set: implementation plan (PR1 `RunCapture` uuid-keyed join
-  **(built)** → A1 worker-local accumulation **(built, runner HTTP + gRPC via an
-  additive `execute_turn_measured`/`drain_records` seam; `BufferedObserver` kept
-  for agentic/evaluation)** → A3 connector / A4 lean → A2 compat projection),
-  regression harnesses, the four component specs, and the cellular-ready seams +
-  roadmap (single-issuer today, cross-node autonomous cells deferred). Start with
-  `specs/2026-07-12-track-a-implementation.md`.
+- `specs/2026-07-12-{scheduled-worker-local-accumulation,cellular-ready-seams-and-roadmap}.md`
+  — **built.** The worker-local accumulation perf lever + cellular-ready seams
+  roadmap: worker-local accumulation is **built** (runner HTTP + gRPC via the
+  `execute_turn_measured`/`drain_records` measured seam; the `RunCapture` uuid-keyed
+  join it depends on is built too), and the S1–S4 cellular seams (single-issuer
+  today, cross-node autonomous cells) are built. (The earlier Track-A
+  connector/lean/compat-projection planning specs were abandoned and removed.)
 - `specs/2026-07-15-cellular-horizontal-scale-k6-parity-design.md`
   — **path to k6-class horizontal scale without losing measurement fidelity.**
   Verified against `grafana/k6` source that AIPerf already owns k6's hard part

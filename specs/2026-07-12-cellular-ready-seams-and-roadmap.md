@@ -12,9 +12,10 @@ cross-node transport that carries them is
 `2026-07-15-velo-cell-transport-design.md`; the Phase-3+ live-fabric north-star
 (dataset fan-out, monotonic phaser, per-request dispatch state machine,
 bounded-memory collection) is `2026-07-15-ultimate-cellular-velo-runtime-design.md`,
-authoritative for the seams' next era. The Track-A worker-local-accumulation /
-connector-seam / lean-hotpath / single-observer specs feed the single-process impls
-below.
+authoritative for the seams' next era. The
+`2026-07-12-scheduled-worker-local-accumulation.md` perf lever feeds the
+single-process impls below. (The earlier Track-A connector-seam / lean-hotpath /
+single-observer planning specs were abandoned and removed.)
 
 ## The idea
 
