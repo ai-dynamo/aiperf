@@ -16,6 +16,8 @@ use std::cell::Cell;
 #[cfg(test)]
 use std::collections::BTreeMap;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -128,6 +130,10 @@ pub struct TransportSinkConfig {
     pub connection_reuse: ConnectionReuseStrategy,
     /// Optional replacement for the default `X-Correlation-ID` header.
     pub session_header: Option<String>,
+    /// Content-server origin (`http://host:port`) for this run, when the server
+    /// is enabled. Media URLs starting with it are tagged at dispatch with
+    /// `?rid&mi&td`; `None` disables tagging.
+    pub content_server_base: Option<Arc<str>>,
 }
 
 /// Response-capturing request-dispatch seam used by the shared paced issuer.
@@ -163,6 +169,7 @@ pub struct TransportSink {
     model: String,
     start_ns: Cell<i64>,
     connection_reuse: ConnectionReuseStrategy,
+    content_server_base: Option<Arc<str>>,
     prepared_endpoints: Option<Rc<PreparedEndpointTable>>,
     /// Worker-local metric accumulator for measured execution. Unset until
     /// [`configure_measurement`] is called.
@@ -258,6 +265,7 @@ impl TransportSink {
             model: model.into(),
             start_ns: Cell::new(start_ns),
             connection_reuse: config.connection_reuse,
+            content_server_base: config.content_server_base,
             prepared_endpoints: None,
             measurement: WorkerMeasurement::default(),
         })
@@ -1053,6 +1061,33 @@ impl TransportSink {
     }
 }
 
+/// Wall-clock nanoseconds since the Unix epoch (0 if the clock predates it).
+fn wall_now_ns() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos() as u64)
+        .unwrap_or(0)
+}
+
+/// Tag content-server media URLs in `body` with `?rid&mi&td`, returning the
+/// possibly-reserialized bytes. Only URLs starting with `base` are rewritten; a
+/// body with no matching URL (or a non-JSON body) is returned unchanged so the
+/// byte-exact fast path is preserved for non-media requests.
+fn tag_content_urls(body: Bytes, base: &str, rid: &str, wall_ns: u64) -> Bytes {
+    let Ok(mut value) = serde_json::from_slice::<Value>(&body) else {
+        return body;
+    };
+    if crate::content_server::tag_media_urls(&mut value, base, rid, wall_ns) == 0 {
+        return body;
+    }
+    match serde_json::to_vec(&value) {
+        Ok(bytes) => Bytes::from(bytes),
+        // Unreachable: `value` came from valid JSON. Keep the original on the
+        // impossible error rather than panicking on the hot path.
+        Err(_) => body,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
@@ -1067,6 +1102,43 @@ mod tests {
         #[cfg(feature = "grpc")]
         assert_dispatcher::<crate::transport::grpc::GrpcTransportSink>();
         fn _takes_dyn(_: &dyn Dispatcher) {}
+    }
+
+    #[test]
+    fn tag_content_urls_tags_only_matching_base() {
+        let base = "http://127.0.0.1:8090";
+        let body = Bytes::from(
+            serde_json::to_vec(&serde_json::json!({
+                "messages": [{"role": "user", "content": [
+                    {"type": "image_url", "image_url": {"url": "http://127.0.0.1:8090/content/images/a.png"}},
+                    {"type": "image_url", "image_url": {"url": "https://cdn.example.com/user.jpg"}},
+                ]}]
+            }))
+            .unwrap(),
+        );
+        let tagged = tag_content_urls(body, base, "req-9", 777);
+        let value: Value = serde_json::from_slice(&tagged).unwrap();
+        assert_eq!(
+            value.pointer("/messages/0/content/0/image_url/url").unwrap(),
+            "http://127.0.0.1:8090/content/images/a.png?rid=req-9&mi=0&td=777"
+        );
+        assert_eq!(
+            value.pointer("/messages/0/content/1/image_url/url").unwrap(),
+            "https://cdn.example.com/user.jpg"
+        );
+    }
+
+    #[test]
+    fn tag_content_urls_returns_body_unchanged_when_no_match() {
+        let base = "http://127.0.0.1:8090";
+        let original = Bytes::from(
+            serde_json::to_vec(&serde_json::json!({
+                "messages": [{"role": "user", "content": "plain text only"}]
+            }))
+            .unwrap(),
+        );
+        let out = tag_content_urls(original.clone(), base, "req", 1);
+        assert_eq!(out, original);
     }
 
     #[derive(Default)]

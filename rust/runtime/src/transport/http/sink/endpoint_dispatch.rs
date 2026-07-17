@@ -231,6 +231,15 @@ impl TransportSink {
                 Bytes::from(serde_json::to_vec(&payload)?)
             }
         };
+        // Tag content-server media URLs with rid/mi/dispatch-time so served
+        // transfers correlate back to this request; leaves external URLs and
+        // non-media bodies untouched.
+        let body = match self.content_server_base.as_deref() {
+            Some(base) => {
+                super::tag_content_urls(body, base, &uuid.to_string(), super::wall_now_ns())
+            }
+            None => body,
+        };
         let mut endpoint_metrics = ObservedEndpointMetrics {
             num_images: serde_json::from_slice::<Value>(&body)
                 .ok()
