@@ -79,6 +79,39 @@ fn is_tokenizer_file(filename: &str) -> bool {
         || is_chat_template_file(filename)
 }
 
+/// The single predicate `download_blocking` applies to `repo.info()` siblings: a
+/// tokenizer artifact that is not an ignored file, an image, or a weight file.
+fn is_downloadable_tokenizer_file(filename: &str) -> bool {
+    !IGNORED.contains(&filename)
+        && !is_image(filename)
+        && !is_weight_file(filename)
+        && is_tokenizer_file(filename)
+}
+
+/// Reject repository ids that are not a bare or `namespace/name` HuggingFace id,
+/// before any network call.
+///
+/// Fails closed on empty input, whitespace or control characters, and empty /
+/// `.` / `..` path segments — a crafted id (`""`, `"../etc/passwd"`,
+/// `"https://evil.example"`, `"org//name"`) must never reach the hub client or
+/// influence the on-disk cache path.
+fn validate_repository_id(repository: &str) -> Result<()> {
+    let valid = !repository.is_empty()
+        && !repository
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control())
+        && repository
+            .split('/')
+            .all(|segment| !segment.is_empty() && segment != "." && segment != "..");
+    if valid {
+        Ok(())
+    } else {
+        Err(DatasetError::Tokenizer(format!(
+            "invalid Hugging Face repository id {repository:?}"
+        )))
+    }
+}
+
 /// Download `repository`'s tokenizer files into the standard HuggingFace cache and
 /// return the snapshot directory for [`crate::dataset::HuggingFaceTokenizer::from_directory`].
 ///
@@ -99,6 +132,7 @@ pub async fn download_hugging_face_tokenizer(repository: &str) -> Result<PathBuf
 
 /// Blocking `hf-hub` download body, run on a `spawn_blocking` worker.
 fn download_blocking(repository: &str) -> Result<PathBuf> {
+    validate_repository_id(repository)?;
     let api = build_api()?;
     let repo = api.model(repository.to_string());
 
@@ -118,12 +152,7 @@ fn download_blocking(repository: &str) -> Result<PathBuf> {
         .siblings
         .iter()
         .map(|sibling| sibling.rfilename.as_str())
-        .filter(|filename| {
-            !IGNORED.contains(filename)
-                && !is_image(filename)
-                && !is_weight_file(filename)
-                && is_tokenizer_file(filename)
-        })
+        .filter(|filename| is_downloadable_tokenizer_file(filename))
         .collect();
     if tokenizer_files.is_empty() {
         return Err(DatasetError::Tokenizer(format!(
@@ -212,7 +241,16 @@ fn resolve_model_cache_dir(path: &Path, model_name: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_chat_template_file, is_tokenizer_file, is_weight_file};
+    use super::*;
+    use std::path::Path;
+
+    fn block_on<F: std::future::Future>(future: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(future)
+    }
 
     #[test]
     fn recognizes_tokenizer_files() {
@@ -242,5 +280,131 @@ mod tests {
         assert!(is_weight_file("pytorch_model.bin"));
         assert!(!is_weight_file("tokenizer.json"));
         assert!(!is_weight_file("config.json"));
+    }
+
+    /// The download filter must never pull a weight/image/ignored file, even one
+    /// wearing a tokenizer-ish name (`tokenizer.safetensors`).
+    #[test]
+    fn downloadable_filter_excludes_weights_images_and_ignored() {
+        assert!(is_downloadable_tokenizer_file("tokenizer.json"));
+        assert!(is_downloadable_tokenizer_file("tokenizer_config.json"));
+        assert!(is_downloadable_tokenizer_file("chat_template.jinja"));
+
+        assert!(!is_downloadable_tokenizer_file("tokenizer.safetensors"));
+        assert!(!is_downloadable_tokenizer_file("model.safetensors"));
+        assert!(!is_downloadable_tokenizer_file("pytorch_model.bin"));
+        assert!(!is_downloadable_tokenizer_file(".gitattributes"));
+        assert!(!is_downloadable_tokenizer_file("README.md"));
+        assert!(!is_downloadable_tokenizer_file("preview.png"));
+        assert!(!is_downloadable_tokenizer_file(""));
+        assert!(!is_downloadable_tokenizer_file("TOKENIZER.JSON"));
+    }
+
+    /// The classifier matches by suffix and admits sub-paths; it is not a
+    /// path-traversal defense (the hub never serves such siblings, hf-hub owns
+    /// cache-path safety, and `validate_repository_id` guards the id itself).
+    #[test]
+    fn classifier_is_suffix_based_not_a_path_guard() {
+        assert!(is_tokenizer_file("onnx/tokenizer.json"));
+        assert!(is_tokenizer_file("../tokenizer.json"));
+        assert!(is_tokenizer_file("evil_tokenizer.json"));
+    }
+
+    /// Adversarial repository ids fail closed before any hub call.
+    #[test]
+    fn rejects_adversarial_repository_ids() {
+        for bad in [
+            "",
+            " ",
+            "\t",
+            ".",
+            "..",
+            "../etc/passwd",
+            "org/../secret",
+            "org//name",
+            "/leading",
+            "trailing/",
+            "https://evil.example/repo",
+            "has space",
+            "line\nbreak",
+            "null\0byte",
+        ] {
+            assert!(
+                validate_repository_id(bad).is_err(),
+                "should reject {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_valid_repository_ids() {
+        for ok in [
+            "gpt2",
+            "openai-community/gpt2",
+            "Qwen/Qwen2.5-7B-Instruct",
+            "org/name.with.dots",
+        ] {
+            assert!(validate_repository_id(ok).is_ok(), "should accept {ok:?}");
+        }
+    }
+
+    /// A traversal id errors through the public async entry with no network,
+    /// because validation is the first thing `download_blocking` does.
+    #[test]
+    fn adversarial_id_short_circuits_before_network() {
+        let error = block_on(download_hugging_face_tokenizer("../etc/passwd")).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("invalid Hugging Face repository id"),
+            "msg: {error}"
+        );
+    }
+
+    #[test]
+    fn cache_dir_original_subfolder_climbs_one_level() {
+        let dir = resolve_model_cache_dir(Path::new("/cache/x/original"), "org/name");
+        assert_eq!(dir, Path::new("/cache/x"));
+    }
+
+    #[test]
+    fn cache_dir_returns_path_when_pattern_present() {
+        let path = Path::new("/cache/models--org--name/snapshots/abcdef");
+        assert_eq!(resolve_model_cache_dir(path, "org/name"), path);
+    }
+
+    #[test]
+    fn cache_dir_returns_dir_holding_tokenizer_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("tokenizer.json"), "{}").unwrap();
+        assert_eq!(resolve_model_cache_dir(tmp.path(), "org/name"), tmp.path());
+    }
+
+    #[test]
+    fn cache_dir_unchanged_for_nonmatching_or_bare_name() {
+        let path = Path::new("/some/unrelated/path");
+        // No matching pattern and no tokenizer.json on disk -> returned as-is.
+        assert_eq!(resolve_model_cache_dir(path, "org/name"), path);
+        // A bare (single-segment) name skips the models--org--name block entirely.
+        assert_eq!(resolve_model_cache_dir(path, "gpt2"), path);
+    }
+
+    /// A nonexistent repo surfaces a clean error naming the repo, never a panic.
+    #[test]
+    #[ignore = "hits the Hugging Face hub"]
+    fn nonexistent_repository_errors_cleanly() {
+        let repo = "aiperf-nonexistent-model-xyz-000000";
+        let error = block_on(download_hugging_face_tokenizer(repo)).unwrap_err();
+        assert!(error.to_string().contains(repo), "msg: {error}");
+    }
+
+    /// `HF_HUB_OFFLINE=1` with a cold cache errors rather than hanging.
+    #[test]
+    #[ignore = "run with HF_HUB_OFFLINE=1 and a cold cache"]
+    fn offline_cold_cache_errors() {
+        let result = block_on(download_hugging_face_tokenizer(
+            "aiperf-definitely-not-cached-000000",
+        ));
+        assert!(result.is_err());
     }
 }
