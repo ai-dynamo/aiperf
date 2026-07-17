@@ -207,7 +207,7 @@
   "source": {
    "dataset": "Lin-Chen/MMStar",
    "split": "val",
-   "subset": "default",
+   "subset": "val",
    "type": "hugging_face"
   },
   "streaming": false
@@ -263,7 +263,7 @@
   "source": {
    "dataset": "openai/openai_humaneval",
    "split": "test",
-   "subset": "default",
+   "subset": "openai_humaneval",
    "type": "hugging_face"
   },
   "streaming": false

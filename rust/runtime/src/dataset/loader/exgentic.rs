@@ -553,20 +553,32 @@ fn normalize_system(value: Option<&Value>) -> Result<Vec<Value>> {
     let Some(value) = value else {
         return Ok(Vec::new());
     };
-    let text = value.as_str().ok_or_else(|| {
-        DatasetError::Validation("gen_ai.system_instructions must be a string".into())
-    })?;
-    if text.is_empty() {
-        return Ok(Vec::new());
+    match value {
+        Value::Null => Ok(Vec::new()),
+        // v2 traces store system instructions as a native array of content parts.
+        Value::Array(parts) => {
+            let mut normalized = Vec::new();
+            normalize_parts("system", parts, &mut normalized)?;
+            Ok(normalized)
+        }
+        // v1 traces store either plain system text or a JSON-encoded parts array.
+        Value::String(text) => {
+            if text.is_empty() {
+                return Ok(Vec::new());
+            }
+            if let Ok(parsed) = serde_json::from_str::<Value>(text)
+                && let Some(parts) = parsed.as_array()
+            {
+                let mut normalized = Vec::new();
+                normalize_parts("system", parts, &mut normalized)?;
+                return Ok(normalized);
+            }
+            Ok(vec![serde_json::json!({"role": "system", "content": text})])
+        }
+        _ => Err(DatasetError::Validation(
+            "gen_ai.system_instructions must be a string or content-part array".into(),
+        )),
     }
-    if let Ok(parts) = serde_json::from_str::<Value>(text)
-        && let Some(parts) = parts.as_array()
-    {
-        let mut normalized = Vec::new();
-        normalize_parts("system", parts, &mut normalized)?;
-        return Ok(normalized);
-    }
-    Ok(vec![serde_json::json!({"role":"system","content":text})])
 }
 
 fn normalize_tools(value: Option<&Value>) -> Result<Option<Vec<Value>>> {
@@ -607,14 +619,23 @@ fn request_extra_body(attributes: &Map<String, Value>) -> Result<Option<Map<Stri
         extra.insert("temperature".into(), Value::from(temperature));
     }
     if let Some(stop) = attributes.get("gen_ai.request.stop_sequences") {
-        let stop = stop
-            .as_array()
-            .filter(|values| values.iter().all(Value::is_string))
-            .ok_or_else(|| {
-                DatasetError::Validation("gen_ai.request.stop_sequences must be strings".into())
-            })?;
-        if !stop.is_empty() {
-            extra.insert("stop".into(), Value::Array(stop.clone()));
+        let sequences = match stop {
+            Value::Null => Vec::new(),
+            Value::Array(items) if items.iter().all(Value::is_string) => items.clone(),
+            // v2 may encode the array as a JSON string, or carry a single stop word.
+            Value::String(text) => match serde_json::from_str::<Value>(text) {
+                Ok(Value::Array(items)) if items.iter().all(Value::is_string) => items,
+                _ if !text.is_empty() => vec![Value::String(text.clone())],
+                _ => Vec::new(),
+            },
+            _ => {
+                return Err(DatasetError::Validation(
+                    "gen_ai.request.stop_sequences must be strings".into(),
+                ));
+            }
+        };
+        if !sequences.is_empty() {
+            extra.insert("stop".into(), Value::Array(sequences));
         }
     }
     Ok((!extra.is_empty()).then_some(extra))
