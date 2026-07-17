@@ -238,7 +238,19 @@ pub fn run_cellular(
     // multi-process tests can exercise the shipping mechanism. Off by default,
     // so a normal `--cells N` run keeps shared-filesystem concatenation.
     let force_http = crate::engine::cellular_cell::artifact_http_force_enabled();
-    let http_shipping = (cross_host || force_http)
+    // A cross-host coordinate that resolves to a LOOPBACK host is really a co-located
+    // deployment: every cell resolves `cell_artifact_authority()` to `None` and uses
+    // its own local writes instead of HTTP. The controller MUST agree — otherwise it
+    // binds the upload server and blocks forever in `wait_for_cells` for uploads no
+    // cell ever sends (the deadlock a same-host SLURM allocation, and the loopback
+    // SLURM simulation, hit). k8s leaves the controller coordinate empty (the routable
+    // pod authority is injected into the cells only), so an empty coordinate is treated
+    // as routable and shipping stays on; a SLURM run sets the coordinate on every task,
+    // so a loopback coordinate co-locates. The `force_http` test seam deliberately ships
+    // over loopback and overrides this.
+    let cross_host_over_http =
+        force_http || (cross_host && !controller_coordinate_is_loopback());
+    let http_shipping = cross_host_over_http
         && crate::engine::cellular_cell::http_artifact_shipping_enabled()
         && !crate::engine::artifact_shipping::shippable_relatives(&artifacts).is_empty();
     // A cross-host cell cannot read a controller-local `file`/`path` dataset
@@ -247,7 +259,7 @@ pub fn run_cellular(
     // dataset and HTTP shipping enabled needs the serve; same-host cells read the
     // controller-local path directly, and synthetic/inline-records/public need no serve.
     let dataset_source = crate::engine::cellular_cell::cellular_file_dataset_path(envelope);
-    let dataset_ship = (cross_host || force_http)
+    let dataset_ship = cross_host_over_http
         && crate::engine::cellular_cell::http_artifact_shipping_enabled()
         && dataset_source.is_some();
     // Compute the serve plan before binding so an
@@ -297,7 +309,7 @@ pub fn run_cellular(
         .build()
         .context("building controller runtime")?;
 
-    let result = runtime.block_on(async move {
+    runtime.block_on(async move {
         let temp_root =
             std::env::temp_dir().join(format!("aiperf-cellular-{}", std::process::id()));
         // Cleans the scratch tree on every exit path, including a bail. On a bail this
@@ -902,21 +914,7 @@ pub fn run_cellular(
             cell_count,
             record_count,
         })
-    });
-    // The block above has already durably written the merged report, the exports, and
-    // the heartbeat sidecar. A CROSS-HOST controller (k8s / SLURM) binds its velo
-    // transport on a routable interface and never spawns/joins the "expect, don't
-    // spawn" cell tasks, so a velo accept worker can be parked in a blocking accept
-    // that a graceful runtime drop would join forever. k8s tolerates this — the
-    // operator deletes the pod — but a SLURM `srun` task has no external killer and
-    // would strand the whole allocation. Leak the runtime instead of dropping it: the
-    // outcome is fully computed and the process hard-exits (`std::process::exit`) right
-    // after the caller emits `run_terminal`, so skipping teardown of a leaf process
-    // that is about to exit is sound and avoids both the join-forever hang and a
-    // background-shutdown race against the parked worker. (The same-host path drops
-    // cleanly on its own; this only affects the otherwise-hung cross-host teardown.)
-    std::mem::forget(runtime);
-    result
+    })
 }
 
 /// The controller's HTTP artifact-upload bind. A fixed routable port
@@ -947,6 +945,30 @@ fn controller_artifact_bind() -> std::net::SocketAddr {
 ///   "expect, don't spawn" launchers do not inject it).
 /// - **local**: pre-bind a loopback TCP listener so the actual port is known before
 ///   build; cells connect to `tcp://127.0.0.1:<port>`.
+/// Whether the controller's cell coordinate (`AIPERF_CELL_CONTROLLER_ADDR`, a
+/// `tcp://HOST:PORT` velo endpoint) resolves to a LOOPBACK host — i.e. a co-located
+/// deployment where cells write to a shared filesystem instead of shipping over HTTP.
+/// Mirrors the cell-side loopback carve-out in
+/// [`cell_artifact_authority`](crate::engine::cellular_cell::cell_artifact_authority)
+/// so the controller and its cells always agree on whether HTTP shipping is active.
+/// An unset/empty coordinate (k8s injects the routable authority into the cells only)
+/// is NOT loopback, so cross-host shipping stays on.
+#[cfg(feature = "cellular")]
+fn controller_coordinate_is_loopback() -> bool {
+    let Ok(coordinate) =
+        std::env::var(crate::engine::cellular_cell::CELL_CONTROLLER_ADDR_ENV)
+    else {
+        return false;
+    };
+    let Some(host_port) = coordinate.strip_prefix("tcp://") else {
+        return false;
+    };
+    let host = host_port.rsplit_once(':').map_or(host_port, |(host, _)| host);
+    host.parse::<std::net::IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or_else(|_| host.eq_ignore_ascii_case("localhost"))
+}
+
 #[cfg(feature = "cellular")]
 fn controller_bind_and_endpoint(cross_host: bool, temp_root: &Path) -> Result<(BindSpec, String)> {
     let _ = temp_root;
