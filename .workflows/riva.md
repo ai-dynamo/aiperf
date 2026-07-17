@@ -230,8 +230,8 @@ Build the sole Rust executable from a coherent tree containing commits
 `1b398a603`:
 
 ```bash
-env -u RUSTC_WRAPPER cargo build --locked --release -p aiperf-cli
-target/release/aiperf --capabilities \
+env -u RUSTC_WRAPPER cargo build --manifest-path rust/Cargo.toml --locked --release -p aiperf-cli
+rust/target/release/aiperf --capabilities \
   | jq '{distribution_id, endpoint_types, supported_pairs}'
 ```
 
@@ -260,7 +260,7 @@ streaming RMIR profile:
 ```bash
 set -euo pipefail
 
-RUNNER=target/release/aiperf
+RUNNER=rust/target/release/aiperf
 TARGET="/tmp/aiperf-riva-gke-real-$(date +%s)"
 DIST="$($RUNNER --capabilities | jq -er '.distribution_id')"
 AUDIO="$(base64 -w0 /tmp/riva-front-center-16k.wav)"

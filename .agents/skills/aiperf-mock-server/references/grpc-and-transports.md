@@ -18,7 +18,7 @@ reuses the same prost messages the runner's gRPC client encodes (no build-time `
 is HTTP-only under `--processes N` (warned-and-skipped in balancer mode).
 
 ```bash
-cargo run -p aiperf-mock-server -- --fast --grpc-port 8001
+cargo run --manifest-path rust/Cargo.toml -p aiperf-mock-server -- --fast --grpc-port 8001
 # target with transport.type: grpc, grpc://127.0.0.1:8001
 ```
 

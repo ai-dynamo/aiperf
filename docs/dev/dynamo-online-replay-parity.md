@@ -125,7 +125,7 @@ in-process native driver — no Python subprocess and no external checkout requi
 ## Running the parity gate manually
 
 ```bash
-cargo test -p aiperf-runtime --features dynosim --lib \
+cargo test --manifest-path rust/Cargo.toml -p aiperf-runtime --features dynosim --lib \
   online_matches_native_dynamo_live_replay_apples_to_apples -- --nocapture
 ```
 

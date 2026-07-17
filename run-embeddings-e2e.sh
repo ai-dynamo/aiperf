@@ -76,7 +76,7 @@ trap cleanup EXIT
 # ---- mock (only when no external --target given) --------------------------
 if [[ -z "$TARGET" ]]; then
   TARGET="grpc://127.0.0.1:8001"
-  MOCK_BIN="./target/release/aiperf-mock-server"
+  MOCK_BIN="./rust/target/release/aiperf-mock-server"
   echo ">> starting FP32 embedding mock on gRPC :8001 (dim=$DIM)"
   if [[ -x "$MOCK_BIN" ]]; then
     "$MOCK_BIN" --fast --grpc-port 8001 --grpc-embedding-dim "$DIM" >/tmp/aiperf-emb-mock.log 2>&1 &

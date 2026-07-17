@@ -16,7 +16,7 @@ description: >-
   and saturation modes, error injection, extended usage fields, tool calls,
   accuracy-dataset ground-truth mode, GPU/vLLM/SGLang telemetry, and TLS/UDS/gRPC
   transports — each documented in a `references/*.md` file. Prefer this skill over
-  guessing flags: the server has many knobs and non-obvious startup gotchas
+  guessing flags the server has many knobs and non-obvious startup gotchas
   (HF tokenizer download, IPv6-vs-IPv4 localhost) that this captures.
 ---
 
@@ -34,11 +34,11 @@ Read those if a flag here looks stale — code is truth.
 ## The 30-second path (fast, offline, no HF download)
 
 ```bash
-# From the workspace root (rust/... visible). Build once:
-cargo build --release -p aiperf-mock-server
+# From the repo root (the Cargo workspace lives under rust/). Build once:
+cargo build --release --manifest-path rust/Cargo.toml -p aiperf-mock-server
 
 # Run instant-latency + no tokenizer download, on 127.0.0.1:8000:
-./target/release/aiperf-mock-server --fast --no-tokenizer
+./rust/target/release/aiperf-mock-server --fast --no-tokenizer
 ```
 
 `--fast` (`-f`) zeros every latency (TTFT/ITL, embeddings, ranking, images) and bypasses the

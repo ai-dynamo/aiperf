@@ -307,8 +307,8 @@ text.
 aiperf profile --config dynosim_offline_replay.yaml
 ```
 
-This requires an `aiperf` binary (crate `aiperf-cli`) built with the `dynosim` Cargo feature (and the
-sibling `dynamo-aiperf-native` checkout). There is no `replay_mode` field; the
+This requires an `aiperf` binary (crate `aiperf-cli`) built with the `dynosim` Cargo feature (which
+pulls the pinned ai-dynamo/dynamo git dep). There is no `replay_mode` field; the
 transport ID selects virtual or wall-clock replay. The live Dynamo mocker server and the
 replay-optimize sweep remain native tools: `python -m dynamo.mocker` and Dynamo's
 profiler.

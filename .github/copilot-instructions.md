@@ -172,7 +172,7 @@ make wheel
 make install-app
 ```
 
-`make wheel` builds the pyo3 module with maturin and injects `target/release/aiperf` into the wheel's scripts directory through `tools/wheel_repack.py`. The installed `aiperf` command is the native binary. `CLI_FEATURES` selects the packaged binary feature set.
+`make wheel` builds the pyo3 module with maturin and injects `rust/target/release/aiperf` into the wheel's scripts directory through `tools/wheel_repack.py`. The installed `aiperf` command is the native binary. `CLI_FEATURES` selects the packaged binary feature set.
 
 Product commands:
 

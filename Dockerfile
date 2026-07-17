@@ -72,7 +72,8 @@ WORKDIR /workspace
 
 # The native runner is compiled from source with maturin (ai-dynamo's model),
 # so the wheel-builder needs a Rust toolchain, a C toolchain for linking, git for
-# the sibling checkout, and maturin[patchelf] for the manylinux auditwheel repair.
+# cargo to fetch the pinned dynamo git dep, and maturin[patchelf] for the
+# manylinux auditwheel repair.
 RUN apt-get update -y \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         build-essential \
@@ -91,10 +92,10 @@ RUN uv pip install --python "${VIRTUAL_ENV}/bin/python" "maturin[patchelf]"
 
 # Runner feature profile selected at build time:
 #   offline (default) — full-fat: crate default features `dynosim` + `parquet`.
-#                       Needs the sibling dynamo-aiperf-native checkout (cloned
-#                       below) and ships the offline/online Dynamo replay transports.
+#                       cargo fetches the pinned ai-dynamo/dynamo git dep during
+#                       the build; ships the offline/online Dynamo replay transports.
 #   online            — HTTP/gRPC + parquet only (`--no-default-features
-#                       --features parquet`); no dynosim, no sibling checkout.
+#                       --features parquet`); no dynosim, no dynamo git dep.
 # The container build passes this via --build-arg AIPERF_RUNNER_PROFILE (see
 # .github/workflows/nightly.yml); the wheel-artifact extraction uses the default.
 ARG AIPERF_RUNNER_PROFILE=offline
