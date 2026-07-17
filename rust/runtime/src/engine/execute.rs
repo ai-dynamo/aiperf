@@ -533,19 +533,33 @@ fn execute_prepared_native_plan_uncommitted_with_runtime_factories(
 ) -> Result<NativeReport> {
     validate_plan(&plan)?;
     // Thread-per-core sharding hands each worker a disjoint conversation subset via a
-    // modulo partition (`two_level_partition`). When the scheduled dataset has fewer
-    // conversations than worker threads, the surplus threads receive an empty subset:
-    // a request-bounded phase then fails building its request-rate workload
+    // modulo partition (`two_level_partition`). Its modulus is the GLOBAL sub-cell
+    // grid width `cells * workers` (a thread of cell `c` owns instances
+    // `i % (cells*workers) == c + cells*thread`), so a thread's conversation source is
+    // empty unless a cell-local conversation lands in its residue class. When the grid
+    // is wider than the cell's conversation count, the surplus threads receive an empty
+    // subset: a request-bounded phase then fails building its request-rate workload
     // ("conversation dataset cannot be empty"), and a rate phase later fails issuing a
-    // new session ("... is not sampleable"). Cap the worker count to the conversation
-    // count so every worker owns at least one conversation and recycles it to fill its
+    // new session ("... is not sampleable").
+    //
+    // Cap `workers` so the FULL grid `cells * workers` fits within the cell's
+    // conversation count — i.e. `workers <= conversations / cells` — so every one of
+    // the grid's threads owns at least one conversation and recycles it to fill its
     // budget share (matching the Python frontend, which recycles a small dataset to
-    // fill request_count). Graph and static-accuracy plans partition differently and
-    // are left untouched.
+    // fill request_count). A single-process run (`cells == 1`) reduces to the plain
+    // `workers <= conversations` cap. Graph and static-accuracy plans partition
+    // differently and are left untouched.
     if let NativeDatasetPlan::PreparedLinear(prepared) = &plan.dataset {
         let conversations = prepared.dataset.conversations().len();
-        if conversations > 0 && plan.workers > conversations {
-            plan.workers = conversations;
+        // The sub-cell grid width is `cells * workers`; `cells` comes from the same
+        // `AIPERF_CELL_COUNT` env the two-level partition reads (default 1).
+        let cells = ModuloCellPartition::from_env()
+            .map(|partition| partition.cell_count())
+            .unwrap_or(1)
+            .max(1) as usize;
+        let max_workers = (conversations / cells).max(1);
+        if conversations > 0 && plan.workers > max_workers {
+            plan.workers = max_workers;
         }
     }
     let virtual_clock = plan
