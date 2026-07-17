@@ -118,6 +118,7 @@ pub(crate) fn finite_guarded(value: ReportValue) -> Option<f64> {
 }
 
 pub mod accuracy_csv;
+pub mod analysis_html;
 pub mod analysis_txt;
 pub mod console_txt;
 pub mod dataset_analysis;
