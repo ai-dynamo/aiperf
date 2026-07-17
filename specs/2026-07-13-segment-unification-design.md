@@ -268,6 +268,6 @@ Retained by design (a proven WONTFIX, not a shortcut):
 
 - `2026-07-13-endpoint-body-construction-design.md` — the dispatch-side companion (handles → wire bytes).
 - `2026-07-10-aiperf-rust-dataset-segment-seam-design.md` — the segment store this completes.
-- `2026-07-13-greenfield-execution-vocabulary.md` / `2026-07-13-p1-generic-execution-substrate-names.md` — the `Turn`→`Request` naming this enables.
+- `2026-07-13-p1-generic-execution-substrate-names.md` — the `Turn`→`Request` naming this enables.
 - `2026-07-10-aiperf-transport-rust-port-design.md` — the `Full<Bytes>` + `SendCompletion` send path §6 protects.
 - `2026-07-13-websocket-transport-design.md` — segments are transport-agnostic; a WS materializer consumes the same store (§6's one-body rule is HTTP-local, so WS is additive).

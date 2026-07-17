@@ -12,8 +12,7 @@ Stage 2 collapses the two placement backends and two workload drivers into one `
 `Workload` trait; it is designed here but not implemented.
 
 **Relationship.** This is the concrete realization of the "unify scheduled + graph under one
-substrate" endgame in `2026-07-12-cellular-ready-seams-and-roadmap.md` §S5. It adopts the target
-vocabulary of `2026-07-13-greenfield-execution-vocabulary.md` and builds on
+substrate" endgame in `2026-07-12-cellular-ready-seams-and-roadmap.md` §S5. It builds on
 `2026-07-13-p1-generic-execution-substrate-names.md` (`built`, the generic naming + the single
 sharded execution model). It reuses the transport-neutral body plane
 (`2026-07-13-segment-unification-design.md`, `2026-07-13-endpoint-body-construction-design.md`) and

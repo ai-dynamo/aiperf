@@ -504,11 +504,6 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   ramps, cancellation, and endpoint selection; graph phases consume arrival/
   prefill ramps and adaptive concurrency/prefill/request-rate controls through
   placement-wide worker updates.
-- `specs/2026-07-11-aiperf-rust-dag-branch-orchestrator-design.md` — **superseded by the
-  `aiperf-graph` async-dataflow engine**: FORK/SPAWN fan-out = out-edges, join =
-  `ChannelRequirement.count`, sticky-routing/drain-observer = deleted credit-protocol
-  artifacts. Direct lowering, FORK/SPAWN materialization, whole-trace session/static-
-  node bounds, and FAIL_FAST are built for runner `dag_jsonl`. Lineage doc.
 - `specs/2026-07-10-aiperf-rust-coverage-gap-ledger.md` — research synthesis of
   unspec'd bodies; addendum notes metrics, telemetry, and RNG gaps are now covered
   by dedicated specs/addenda.
@@ -588,13 +583,6 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   non-goal framing with the current `LocalSet` + `drive_sim`/`drive_real` +
   HTTP-dispatch path, runner-only `graph` workload, and canonical `aiperf-rng`
   BLAKE3 recorded-content synthesis.
-- `specs/2026-07-13-scheduled-graph-production-convergence.md` — **code-grounded
-  audit**: the scheduled and graph online paths already share `TransportSink`,
-  `PreparedHttpTurn`, `NativeMetricsObserver`, the `IntervalGenerator`/`SlotPool`
-  primitives, and the phase orchestrator; graph arrival/admission are thin
-  wrappers over the same primitives. Only failure behavior genuinely differs
-  (graph fail-fast/abort-run vs. scheduled resilient). Corrects the
-  graph-is-metrics-lite impression; flags incidental cleanups; no refactor.
 - `specs/2026-07-14-python-rust-timing-parity-proof.md` — **built + proven**:
   A/B every legacy timing mode under `AIPERF_RUNTIME_ENGINE=python` vs `rust`
   against a deterministic mock — worst response-timing divergence 1.06% (all
@@ -611,24 +599,6 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   `PreparedTurn`/`Measured*`/`DispatchResult`; placement seams →
   `RequestExecutor` (per-request) / `TracePlacement` (per-trace). Pure rename +
   de-dup, no behavior change; does not merge the seams (deferred).
-- `specs/2026-07-13-greenfield-execution-vocabulary.md` — **north-star vocabulary**
-  (design, converged via naming review): the unconstrained-ideal names for the v2
-  unified substrate. Four work levels `Replay` → `Trace` (definition) → `Session`
-  (in-flight instance) → `Request`; seams `BenchmarkRun`/`Phase`/`Workload`/`Pacer`/
-  `SlotPool`/`StopCondition`/`WorkerPool`/`Dispatcher`/`Observer`/`OnFailure`/`Clock`
-  (`MonotonicClock`/`VirtualClock`). Deletes the executor tier and `Admission`
-  outright. Destination the P1 renames walk toward; not an incremental plan.
-- `specs/2026-07-13-scheduled-graph-convergence-implementation.md` — **built**:
-  implements the convergence trio. The audit's one deferred decision (failure
-  behavior) ships as the greenfield `OnFailure { Continue, Abort }` enum shared by
-  scheduled and graph, wired through an optional `cfg.failure_policy` (absent →
-  each path's historical default, no regression); graph `Continue` uses the
-  dormant `Resilient`/`Continue` library policies, scheduled `Abort` latches a
-  `Failed`-terminal `bail!`. Keeps `DurationGraphStop`/`ScheduledGraphArrival` as
-  documented unwired seams; documents why scheduled streaming dispatch stays off.
-  Carries the P1 rename pass (DTO/placement/method renames, landed after the
-  concurrent bodyplan work committed `http.rs`); the P1 method-fold,
-  `inference_dimensions` signature change, and discarded-observer cleanup stay deferred.
 - `specs/2026-07-14-unified-execution-substrate-design.md` — **north-star;
   Stage 1 built**: one `Dispatcher`, one `WorkerPool`, any workload over any
   transport. **Stage 1 shipped**: an object-safe `Dispatcher` trait
