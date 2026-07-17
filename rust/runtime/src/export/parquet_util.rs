@@ -10,10 +10,15 @@
 //! `build_schema`/`build_record_batch` and its own `write_parquet` wrapper
 //! (which differ in their `with_context` messages and directory handling).
 
+use std::fs::File;
+use std::path::Path;
 use std::sync::Arc;
 
+use anyhow::{Context, Result};
 use arrow::array::{ArrayRef, Float64Array, StringArray};
 use arrow::datatypes::Schema;
+use arrow::record_batch::RecordBatch;
+use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
 use parquet::file::metadata::KeyValue;
 use parquet::file::properties::WriterProperties;
@@ -41,4 +46,34 @@ pub(crate) fn writer_properties(schema: &Arc<Schema>) -> WriterProperties {
         .set_compression(Compression::SNAPPY)
         .set_key_value_metadata(Some(kv))
         .build()
+}
+
+/// Write one `RecordBatch` to a Parquet file at `path` under the shared Snappy +
+/// metadata writer properties, creating the parent directory (idempotent).
+///
+/// `subject` labels the `with_context` diagnostics — e.g. `"parquet export"` for
+/// the aggregated sink, `"per-record parquet"` for the sidecar — so each sink's
+/// error context stays specific while the one-shot writer sequence lives once.
+pub(crate) fn write_parquet_table(
+    path: &Path,
+    schema: Arc<Schema>,
+    batch: &RecordBatch,
+    subject: &str,
+) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {subject} directory {}", parent.display()))?;
+    }
+    let file =
+        File::create(path).with_context(|| format!("creating {subject} {}", path.display()))?;
+    let props = writer_properties(&schema);
+    let mut writer = ArrowWriter::try_new(file, schema, Some(props))
+        .with_context(|| format!("constructing {subject} arrow writer"))?;
+    writer
+        .write(batch)
+        .with_context(|| format!("writing {subject} batch"))?;
+    writer
+        .close()
+        .with_context(|| format!("finalizing {subject} file"))?;
+    Ok(())
 }

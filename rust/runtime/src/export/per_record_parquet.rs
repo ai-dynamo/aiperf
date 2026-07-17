@@ -315,18 +315,7 @@ fn bool_column<I: Iterator<Item = Option<bool>>>(values: I) -> ArrayRef {
 /// Write the record batch to Parquet with Snappy compression and file-level
 /// key-value metadata mirroring the schema metadata.
 fn write_parquet(path: &Path, schema: Arc<Schema>, batch: &RecordBatch) -> Result<()> {
-    let file = File::create(path)
-        .with_context(|| format!("creating per-record parquet {}", path.display()))?;
-    let props = writer_properties(&schema);
-    let mut writer = ArrowWriter::try_new(file, schema, Some(props))
-        .context("constructing per-record parquet arrow writer")?;
-    writer
-        .write(batch)
-        .context("writing per-record parquet batch")?;
-    writer
-        .close()
-        .context("finalizing per-record parquet file")?;
-    Ok(())
+    super::parquet_util::write_parquet_table(path, schema, batch, "per-record parquet")
 }
 
 /// Default row-group row bound for the incremental streaming writer. Each buffer

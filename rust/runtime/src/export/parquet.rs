@@ -37,7 +37,6 @@
 //!   (`infer_unit` + `BaseMetricUnit.display_name`)
 
 use std::collections::{BTreeMap, HashMap};
-use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -45,9 +44,8 @@ use anyhow::{Context, Result, bail};
 use arrow::array::{ArrayRef, Int64Array};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
-use parquet::arrow::ArrowWriter;
 
-use crate::export::parquet_util::{float_column, string_column, writer_properties};
+use crate::export::parquet_util::{float_column, string_column};
 
 use crate::export::{ExportConfig, Exporter};
 use crate::metrics_core::NativeReport;
@@ -919,20 +917,5 @@ fn build_record_batch(
 /// `compression="snappy"`) and file-level key-value metadata mirroring the schema
 /// metadata. Byte-identity with pyarrow is not attempted (see module docs).
 fn write_parquet(path: &Path, schema: Arc<Schema>, batch: &RecordBatch) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating parquet export directory {}", parent.display()))?;
-    }
-    let file = File::create(path)
-        .with_context(|| format!("creating parquet export {}", path.display()))?;
-
-    let props = writer_properties(&schema);
-
-    let mut writer = ArrowWriter::try_new(file, schema, Some(props))
-        .context("constructing parquet arrow writer")?;
-    writer
-        .write(batch)
-        .context("writing parquet record batch")?;
-    writer.close().context("finalizing parquet file")?;
-    Ok(())
+    super::parquet_util::write_parquet_table(path, schema, batch, "parquet export")
 }
