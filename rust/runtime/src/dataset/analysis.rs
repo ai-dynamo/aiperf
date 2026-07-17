@@ -125,6 +125,111 @@ pub fn stat_summary(values: &[f64]) -> Option<StatSummary> {
     })
 }
 
+/// Structural summary of a planned dataset: how conversations and turns are
+/// distributed.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DatasetShape {
+    /// Number of distinct conversations.
+    pub conversations: u64,
+    /// Total number of turns across all conversations.
+    pub total_turns: u64,
+    /// Number of conversations with exactly one turn.
+    pub single_turn_conversations: u64,
+    /// Number of conversations with more than one turn.
+    pub multi_turn_conversations: u64,
+    /// Distribution of turn counts per conversation, when non-empty.
+    pub turns_per_conversation: Option<StatSummary>,
+    /// Distinct model names referenced by the dataset. Populated by a later
+    /// adapter; empty until then.
+    pub models: Vec<String>,
+    /// Largest zero-based turn index observed.
+    pub max_turn_index: usize,
+}
+
+/// Compute the [`DatasetShape`] over a set of planned turns. Turns are grouped
+/// by `conversation_id`; per-conversation turn counts feed
+/// `turns_per_conversation`.
+pub fn dataset_shape(turns: &[AnalyzedTurn]) -> DatasetShape {
+    use std::collections::BTreeMap;
+
+    let mut per_conversation: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut max_turn_index = 0usize;
+    for turn in turns {
+        *per_conversation
+            .entry(turn.conversation_id.as_str())
+            .or_insert(0) += 1;
+        max_turn_index = max_turn_index.max(turn.turn_index);
+    }
+
+    let counts: Vec<f64> = per_conversation.values().map(|&c| c as f64).collect();
+    let single_turn_conversations = per_conversation.values().filter(|&&c| c == 1).count() as u64;
+    let multi_turn_conversations = per_conversation.values().filter(|&&c| c > 1).count() as u64;
+
+    DatasetShape {
+        conversations: per_conversation.len() as u64,
+        total_turns: turns.len() as u64,
+        single_turn_conversations,
+        multi_turn_conversations,
+        turns_per_conversation: stat_summary(&counts),
+        models: vec![],
+        max_turn_index,
+    }
+}
+
+/// Sequence-length summary of a planned dataset: input, output, combined, and
+/// ratio distributions plus aggregate token budgets.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LengthStats {
+    /// Input-sequence-length distribution, when non-empty.
+    pub isl: Option<StatSummary>,
+    /// Output-sequence-length distribution, when non-empty.
+    pub osl: Option<StatSummary>,
+    /// Combined input-plus-output length distribution, when non-empty.
+    pub total: Option<StatSummary>,
+    /// Distribution of input/output ratios over turns with positive output,
+    /// when non-empty.
+    pub isl_osl_ratio: Option<StatSummary>,
+    /// Sum of input tokens across all turns.
+    pub total_prompt_tokens: u64,
+    /// Sum of maximum output tokens across all turns.
+    pub total_completion_tokens: u64,
+    /// Sum of input and output token budgets across all turns.
+    pub grand_total_tokens: u64,
+}
+
+/// Compute the [`LengthStats`] over a set of planned turns. Ratios are computed
+/// only for turns with a positive output budget.
+pub fn length_stats(turns: &[AnalyzedTurn]) -> LengthStats {
+    let mut isl = Vec::with_capacity(turns.len());
+    let mut osl = Vec::with_capacity(turns.len());
+    let mut total = Vec::with_capacity(turns.len());
+    let mut ratio = Vec::new();
+    let mut total_prompt_tokens = 0u64;
+    let mut total_completion_tokens = 0u64;
+    for turn in turns {
+        let input = turn.input_tokens as f64;
+        let output = turn.max_output_tokens as f64;
+        isl.push(input);
+        osl.push(output);
+        total.push(input + output);
+        if turn.max_output_tokens > 0 {
+            ratio.push(input / output);
+        }
+        total_prompt_tokens += turn.input_tokens;
+        total_completion_tokens += turn.max_output_tokens;
+    }
+
+    LengthStats {
+        isl: stat_summary(&isl),
+        osl: stat_summary(&osl),
+        total: stat_summary(&total),
+        isl_osl_ratio: stat_summary(&ratio),
+        total_prompt_tokens,
+        total_completion_tokens,
+        grand_total_tokens: total_prompt_tokens + total_completion_tokens,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,5 +253,59 @@ mod tests {
     #[test]
     fn stat_summary_empty_is_none() {
         assert!(stat_summary(&[]).is_none());
+    }
+
+    fn fixture_turns() -> Vec<AnalyzedTurn> {
+        // conversation "a": 2 turns; conversation "b": 1 turn
+        vec![
+            AnalyzedTurn {
+                conversation_id: "a".into(),
+                turn_index: 0,
+                input_tokens: 100,
+                max_output_tokens: 20,
+                delay_ms: None,
+                block_ids: None,
+                system_handle: None,
+            },
+            AnalyzedTurn {
+                conversation_id: "a".into(),
+                turn_index: 1,
+                input_tokens: 150,
+                max_output_tokens: 30,
+                delay_ms: Some(500.0),
+                block_ids: None,
+                system_handle: None,
+            },
+            AnalyzedTurn {
+                conversation_id: "b".into(),
+                turn_index: 0,
+                input_tokens: 200,
+                max_output_tokens: 40,
+                delay_ms: None,
+                block_ids: None,
+                system_handle: None,
+            },
+        ]
+    }
+
+    #[test]
+    fn shape_counts_conversations_and_turns() {
+        let s = dataset_shape(&fixture_turns());
+        assert_eq!(s.conversations, 2);
+        assert_eq!(s.total_turns, 3);
+        assert_eq!(s.single_turn_conversations, 1);
+        assert_eq!(s.multi_turn_conversations, 1);
+        assert_eq!(s.max_turn_index, 1);
+        assert_eq!(s.turns_per_conversation.unwrap().mean, 1.5);
+    }
+
+    #[test]
+    fn length_stats_sums_token_budgets() {
+        let l = length_stats(&fixture_turns());
+        assert_eq!(l.total_prompt_tokens, 450);
+        assert_eq!(l.total_completion_tokens, 90);
+        assert_eq!(l.grand_total_tokens, 540);
+        assert_eq!(l.isl.unwrap().max, 200.0);
+        assert_eq!(l.osl.unwrap().min, 20.0);
     }
 }
