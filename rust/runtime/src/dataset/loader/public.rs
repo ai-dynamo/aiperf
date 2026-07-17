@@ -760,18 +760,27 @@ async fn load_hugging_face_revision_rows(
         if max_rows.is_some_and(|cap| rows.len() >= cap) {
             break;
         }
-        let url = hugging_face_resolve_url(dataset, commit, &path)?;
-        let key = format!("hf-file:{dataset}:{commit}:{path}");
-        let body = config
-            .fetcher
-            .fetch(url.as_str(), &key, config.bearer_token.as_deref())
-            .await?;
         let remaining = max_rows.map(|cap| cap.saturating_sub(rows.len()));
-        rows.extend(rows_from_remote_bytes(
-            body,
-            &format!("hf://{dataset}@{commit}/{path}"),
-            remaining,
-        )?);
+        let label = format!("hf://{dataset}@{commit}/{path}");
+
+        // A shard (multi-GB parquet like voxpopuli, or one big `traces.jsonl` like
+        // weka) can dwarf the few rows a run needs. Match Python's `datasets`: pull
+        // the file through `hf-hub` (cached, resumable, xet-accelerated, shared with
+        // the HF cache) and read only the first `remaining` rows from the local file
+        // — `BufReader` lines for jsonl, seeked row groups for parquet — never
+        // loading or parsing the whole shard.
+        match load_hf_file_streaming(dataset, commit, &path, remaining, &label).await? {
+            Some(streamed) => rows.extend(streamed),
+            None => {
+                let url = hugging_face_resolve_url(dataset, commit, &path)?;
+                let key = format!("hf-file:{dataset}:{commit}:{path}");
+                let body = config
+                    .fetcher
+                    .fetch(url.as_str(), &key, config.bearer_token.as_deref())
+                    .await?;
+                rows.extend(rows_from_remote_bytes(body, &label, remaining)?);
+            }
+        }
     }
     if let Some(cap) = max_rows {
         rows.truncate(cap);
@@ -882,6 +891,133 @@ async fn load_datasets_server_rows(
             },
         })
         .collect())
+}
+
+/// Download an HF revision file through `hf-hub` (cached, shared with the HF
+/// cache) and read only the first `max_rows` rows from the local file — jsonl by
+/// line, parquet by seeked row groups — so a giant shard is never fully loaded or
+/// parsed. Returns `None` for formats this streaming reader does not handle
+/// (`json`, `csv`), so the caller falls back to a full fetch.
+async fn load_hf_file_streaming(
+    dataset: &str,
+    commit: &str,
+    path: &str,
+    max_rows: Option<usize>,
+    label: &str,
+) -> Result<Option<Vec<RawRow>>> {
+    let is_jsonl = supported_tabular_extension(path) == Some("jsonl");
+    let is_parquet = supported_tabular_extension(path) == Some("parquet");
+    if !is_jsonl && !is_parquet {
+        return Ok(None);
+    }
+    #[cfg(not(feature = "parquet"))]
+    if is_parquet {
+        // Lite build has no Parquet reader; fall back to the full-fetch path,
+        // which surfaces the clear "requires the parquet feature" error.
+        return Ok(None);
+    }
+    let (dataset, commit, path, label_owned) = (
+        dataset.to_owned(),
+        commit.to_owned(),
+        path.to_owned(),
+        label.to_owned(),
+    );
+    let values = tokio::task::spawn_blocking(move || -> Result<Vec<Value>> {
+        let local = hf_hub_download_dataset_file(&dataset, &commit, &path)?;
+        if is_jsonl {
+            read_jsonl_head(&local, max_rows, &label_owned)
+        } else {
+            read_parquet_head(&local, max_rows, &label_owned)
+        }
+    })
+    .await
+    .map_err(|error| {
+        DatasetError::Validation(format!("streaming dataset file task failed: {error}"))
+    })??;
+    Ok(Some(rows_from_values(values, label)?))
+}
+
+/// Download one revision-pinned file from a HuggingFace *dataset* repo via
+/// `hf-hub`, returning the local cache path. Reuses the standard `~/.cache/huggingface`
+/// cache (shared with Python) and hf-hub's resumable/xet transfer.
+fn hf_hub_download_dataset_file(
+    dataset: &str,
+    commit: &str,
+    path: &str,
+) -> Result<std::path::PathBuf> {
+    use hf_hub::api::sync::ApiBuilder;
+    use hf_hub::{Repo, RepoType};
+    let api = ApiBuilder::from_env()
+        .with_retries(3)
+        .build()
+        .map_err(|error| DatasetError::Validation(format!("configuring hf-hub client: {error}")))?;
+    api.repo(Repo::with_revision(
+        dataset.to_string(),
+        RepoType::Dataset,
+        commit.to_string(),
+    ))
+    .get(path)
+    .map_err(|error| {
+        DatasetError::Validation(format!("downloading hf://{dataset}@{commit}/{path}: {error}"))
+    })
+}
+
+/// Read at most `max_rows` JSON values from a local JSONL file, one per line,
+/// without loading the whole file into memory.
+fn read_jsonl_head(
+    path: &std::path::Path,
+    max_rows: Option<usize>,
+    label: &str,
+) -> Result<Vec<Value>> {
+    use std::io::BufRead;
+    let reader = std::io::BufReader::new(std::fs::File::open(path).map_err(DatasetError::Io)?);
+    let mut values = Vec::new();
+    for line in reader.lines() {
+        if max_rows.is_some_and(|cap| values.len() >= cap) {
+            break;
+        }
+        let line = line.map_err(DatasetError::Io)?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        values.push(serde_json::from_str(&line).map_err(|error| {
+            DatasetError::Validation(format!("{label}: invalid JSONL line: {error}"))
+        })?);
+    }
+    Ok(values)
+}
+
+/// Read at most `max_rows` rows from a local Parquet file. `SerializedFileReader`
+/// over a `File` seeks, so only the row groups the iterator touches are read.
+#[cfg(feature = "parquet")]
+fn read_parquet_head(
+    path: &std::path::Path,
+    max_rows: Option<usize>,
+    label: &str,
+) -> Result<Vec<Value>> {
+    let reader = SerializedFileReader::new(std::fs::File::open(path).map_err(DatasetError::Io)?)
+        .map_err(|error| DatasetError::Validation(format!("opening Parquet {label}: {error}")))?;
+    reader
+        .get_row_iter(None)
+        .map_err(|error| DatasetError::Validation(format!("reading Parquet {label}: {error}")))?
+        .take(max_rows.unwrap_or(usize::MAX))
+        .map(|row| {
+            row.map(|row| row.to_json_value()).map_err(|error| {
+                DatasetError::Validation(format!("decoding a Parquet row from {label}: {error}"))
+            })
+        })
+        .collect()
+}
+
+#[cfg(not(feature = "parquet"))]
+fn read_parquet_head(
+    _path: &std::path::Path,
+    _max_rows: Option<usize>,
+    _label: &str,
+) -> Result<Vec<Value>> {
+    Err(DatasetError::Validation(
+        "reading Parquet requires the `parquet` feature".into(),
+    ))
 }
 
 fn jsonl_or_json_rows(source: &DatasetSource) -> Result<Vec<RawRow>> {
