@@ -1119,11 +1119,15 @@ mod tests {
         let tagged = tag_content_urls(body, base, "req-9", 777);
         let value: Value = serde_json::from_slice(&tagged).unwrap();
         assert_eq!(
-            value.pointer("/messages/0/content/0/image_url/url").unwrap(),
+            value
+                .pointer("/messages/0/content/0/image_url/url")
+                .unwrap(),
             "http://127.0.0.1:8090/content/images/a.png?rid=req-9&mi=0&td=777"
         );
         assert_eq!(
-            value.pointer("/messages/0/content/1/image_url/url").unwrap(),
+            value
+                .pointer("/messages/0/content/1/image_url/url")
+                .unwrap(),
             "https://cdn.example.com/user.jpg"
         );
     }
