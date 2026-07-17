@@ -299,6 +299,24 @@ pub fn ship_velo_artifacts_if_enabled(
     let Some(coordinate) = coordinate else {
         return Ok(()); // no controller coordinate — nothing to ship to
     };
+    // Same-host gate (mirrors the HTTP `cell_artifact_authority` loopback rule): a
+    // loopback controller coordinate is a co-located run whose cells use shared-FS
+    // concatenation — ship nothing unless the test/dev force seam is engaged. A
+    // routable (k8s) coordinate always ships.
+    let host = coordinate
+        .strip_prefix("tcp://")
+        .map(|host_port| host_port.rsplit_once(':').map_or(host_port, |(host, _)| host));
+    let is_loopback = host
+        .map(|host| {
+            host.parse::<std::net::IpAddr>()
+                .map(|ip| ip.is_loopback())
+                .unwrap_or(host.eq_ignore_ascii_case("localhost"))
+        })
+        // A `uds://` coordinate is always a co-located local run.
+        .unwrap_or(true);
+    if is_loopback && !artifact_http_force_enabled() {
+        return Ok(());
+    }
     let relatives =
         crate::engine::artifact_stream_velo::shippable_relatives_velo(artifacts);
     if relatives.is_empty() {
