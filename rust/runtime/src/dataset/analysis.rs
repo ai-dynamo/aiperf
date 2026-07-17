@@ -439,6 +439,285 @@ pub fn timeline_stats(records: &[AnalyzedRecord]) -> Option<TimelineStats> {
     })
 }
 
+/// Realized/ideal prefix-cache reuse analysis for the dataset report.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CacheReuseAnalysis {
+    /// How the block identities feeding the analysis were derived.
+    pub identity_source: prefix_cache::IdentitySource,
+    /// Ideal (unbounded, no-eviction) reuse statistics.
+    pub ideal: prefix_cache::IdealReuse,
+    /// Realized finite-capacity LRU hit-rate curve in ascending capacity order.
+    pub realized: Vec<prefix_cache::CacheCurvePoint>,
+    /// Block size in tokens used to derive the identities.
+    pub block_size: u32,
+}
+
+/// Full `--dry-run` dataset analysis: structural, length, per-turn, cache-reuse,
+/// and execution-timeline sections.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DatasetAnalysis {
+    /// Structural summary (conversations, turns).
+    pub shape: DatasetShape,
+    /// Sequence-length summary.
+    pub lengths: LengthStats,
+    /// Per-turn-index breakdown.
+    pub turns: TurnStats,
+    /// Prefix-cache reuse analysis, when usable block identities exist.
+    pub cache: Option<CacheReuseAnalysis>,
+    /// Execution-timeline summary, when records are present.
+    pub timeline: Option<TimelineStats>,
+}
+
+/// Options controlling dataset analysis.
+#[derive(Debug, Clone)]
+pub struct AnalysisOptions {
+    /// Block size in tokens for length-structure identity synthesis.
+    pub block_size: u32,
+    /// When set, an additional realized-curve point at this explicit LRU
+    /// capacity (in blocks) is appended to the sweep.
+    pub explicit_cache_blocks: Option<u64>,
+}
+
+impl Default for AnalysisOptions {
+    fn default() -> Self {
+        Self {
+            block_size: 16,
+            explicit_cache_blocks: None,
+        }
+    }
+}
+
+/// Extract per-request block-id sequences and the identity source they were
+/// derived from.
+///
+/// If any turn carries precomputed `block_ids`, those are used directly and the
+/// source is [`IdentitySource::HashIds`]. Otherwise block ids are synthesized
+/// from sequence-length structure ([`IdentitySource::LengthStructure`]): within
+/// a conversation, turn `i` reuses turn `i - 1`'s leading
+/// `floor(prev_isl / block_size)` blocks so multi-turn prefixes chain, and a
+/// shared `system_handle` maps to a shared leading block run across
+/// conversations. The [`IdentitySource::TokenBlocks`] variant is reserved for a
+/// later materialized-token path and is not produced here.
+fn request_blocks(
+    turns: &[AnalyzedTurn],
+    opts: &AnalysisOptions,
+) -> (
+    prefix_cache::IdentitySource,
+    Vec<prefix_cache::RequestBlocks>,
+) {
+    use std::collections::{BTreeMap, HashMap};
+
+    let block_size = (opts.block_size as u64).max(1);
+
+    // Direct path: precomputed content hashes.
+    if turns.iter().any(|t| t.block_ids.is_some()) {
+        let blocks = turns
+            .iter()
+            .map(|t| prefix_cache::RequestBlocks {
+                conversation_id: t.conversation_id.clone(),
+                turn_index: t.turn_index,
+                block_ids: t.block_ids.clone().unwrap_or_default(),
+            })
+            .collect();
+        return (prefix_cache::IdentitySource::HashIds, blocks);
+    }
+
+    // Fallback: synthesize block ids from length structure. Ids are drawn from a
+    // single monotone id space so distinct block runs never collide.
+    let mut by_conversation: BTreeMap<&str, Vec<&AnalyzedTurn>> = BTreeMap::new();
+    for turn in turns {
+        by_conversation
+            .entry(turn.conversation_id.as_str())
+            .or_default()
+            .push(turn);
+    }
+
+    let mut next_id: i64 = 1;
+    // Shared leading block run per system-prompt handle.
+    let mut system_runs: HashMap<u64, Vec<i64>> = HashMap::new();
+    let mut out: Vec<prefix_cache::RequestBlocks> = Vec::with_capacity(turns.len());
+
+    for (_conversation, mut group) in by_conversation {
+        group.sort_by_key(|t| t.turn_index);
+        let mut prev_ids: Vec<i64> = Vec::new();
+        let mut prev_isl: u64 = 0;
+
+        for (position, turn) in group.iter().enumerate() {
+            let n_blocks = turn.input_tokens.div_ceil(block_size) as usize;
+            let mut ids: Vec<i64> = Vec::with_capacity(n_blocks);
+
+            if position == 0 {
+                // Leading shared run from the system handle, when present.
+                if let Some(handle) = turn.system_handle {
+                    let run = system_runs.entry(handle).or_insert_with(|| {
+                        let id = next_id;
+                        next_id += 1;
+                        vec![id]
+                    });
+                    let take = run.len().min(n_blocks);
+                    ids.extend_from_slice(&run[..take]);
+                }
+            } else {
+                // Reuse the previous turn's leading whole blocks.
+                let reuse = (prev_isl / block_size) as usize;
+                let reuse = reuse.min(prev_ids.len()).min(n_blocks);
+                ids.extend_from_slice(&prev_ids[..reuse]);
+            }
+
+            while ids.len() < n_blocks {
+                ids.push(next_id);
+                next_id += 1;
+            }
+
+            prev_ids = ids.clone();
+            prev_isl = turn.input_tokens;
+            out.push(prefix_cache::RequestBlocks {
+                conversation_id: turn.conversation_id.clone(),
+                turn_index: turn.turn_index,
+                block_ids: ids,
+            });
+        }
+    }
+
+    (prefix_cache::IdentitySource::LengthStructure, out)
+}
+
+/// Assemble the full [`DatasetAnalysis`] from planned turns and observed records.
+///
+/// Section builders (`dataset_shape`, `length_stats`, `turn_stats`,
+/// `timeline_stats`) are combined with a prefix-cache reuse analysis. Block
+/// identities are extracted by [`request_blocks`], then joined to record
+/// `start_ns` on `(conversation_id, turn_index)` and sorted into arrival order
+/// for both the ideal and realized reuse computations. When
+/// `opts.explicit_cache_blocks` is set, an extra realized point at that capacity
+/// is appended. `cache` is `None` when no usable block identities exist. Every
+/// serialized `f64` is guarded to a finite value (non-finite becomes `0.0`).
+pub fn analyze(
+    turns: &[AnalyzedTurn],
+    records: &[AnalyzedRecord],
+    opts: &AnalysisOptions,
+) -> DatasetAnalysis {
+    use std::collections::HashMap;
+
+    let shape = dataset_shape(turns);
+    let lengths = length_stats(turns);
+    let turns_stats = turn_stats(turns);
+    let timeline = timeline_stats(records);
+
+    let (identity_source, blocks) = request_blocks(turns, opts);
+    let cache = if blocks.iter().any(|b| !b.block_ids.is_empty()) {
+        // Join to record start times to establish arrival order.
+        let mut start_by_key: HashMap<(&str, usize), i64> = HashMap::new();
+        for r in records {
+            start_by_key.insert((r.conversation_id.as_str(), r.turn_index), r.start_ns);
+        }
+        let mut arrival = blocks;
+        arrival.sort_by_key(|b| {
+            start_by_key
+                .get(&(b.conversation_id.as_str(), b.turn_index))
+                .copied()
+                .unwrap_or(i64::MAX)
+        });
+
+        let ideal = prefix_cache::ideal_reuse(&arrival);
+        let mut realized = prefix_cache::realized_sweep(&arrival, ideal.unique_blocks);
+        if let Some(capacity) = opts.explicit_cache_blocks {
+            realized.push(prefix_cache::realized_reuse(&arrival, capacity));
+        }
+
+        Some(CacheReuseAnalysis {
+            identity_source,
+            ideal,
+            realized,
+            block_size: opts.block_size,
+        })
+    } else {
+        None
+    };
+
+    let mut analysis = DatasetAnalysis {
+        shape,
+        lengths,
+        turns: turns_stats,
+        cache,
+        timeline,
+    };
+    sanitize_analysis(&mut analysis);
+    analysis
+}
+
+/// Replace a non-finite value (NaN/Inf) with `0.0`; pass finite values through.
+fn finite(x: f64) -> f64 {
+    if x.is_finite() { x } else { 0.0 }
+}
+
+/// Guard every `f64` in a [`StatSummary`] to a finite value.
+fn sanitize_stat(s: &mut StatSummary) {
+    s.mean = finite(s.mean);
+    s.std = finite(s.std);
+    s.min = finite(s.min);
+    s.max = finite(s.max);
+    s.sum = finite(s.sum);
+    s.p1 = finite(s.p1);
+    s.p5 = finite(s.p5);
+    s.p10 = finite(s.p10);
+    s.p25 = finite(s.p25);
+    s.p50 = finite(s.p50);
+    s.p75 = finite(s.p75);
+    s.p90 = finite(s.p90);
+    s.p95 = finite(s.p95);
+    s.p99 = finite(s.p99);
+}
+
+/// Guard every serialized `f64` reachable from a [`DatasetAnalysis`].
+fn sanitize_analysis(a: &mut DatasetAnalysis) {
+    if let Some(s) = a.shape.turns_per_conversation.as_mut() {
+        sanitize_stat(s);
+    }
+    for opt in [
+        &mut a.lengths.isl,
+        &mut a.lengths.osl,
+        &mut a.lengths.total,
+        &mut a.lengths.isl_osl_ratio,
+    ] {
+        if let Some(s) = opt.as_mut() {
+            sanitize_stat(s);
+        }
+    }
+    for row in &mut a.turns.by_index {
+        if let Some(s) = row.isl.as_mut() {
+            sanitize_stat(s);
+        }
+        if let Some(s) = row.osl.as_mut() {
+            sanitize_stat(s);
+        }
+        if let Some(v) = row.mean_history_growth.as_mut() {
+            *v = finite(*v);
+        }
+        if let Some(s) = row.authored_think_time_ms.as_mut() {
+            sanitize_stat(s);
+        }
+    }
+    if let Some(c) = a.cache.as_mut() {
+        c.ideal.hit_rate = finite(c.ideal.hit_rate);
+        for p in &mut c.realized {
+            p.hit_rate = finite(p.hit_rate);
+        }
+    }
+    if let Some(t) = a.timeline.as_mut() {
+        t.concurrency.time_weighted_avg = finite(t.concurrency.time_weighted_avg);
+        for sample in &mut t.concurrency.samples {
+            sample.0 = finite(sample.0);
+        }
+        t.throughput.requests_per_s = finite(t.throughput.requests_per_s);
+        t.throughput.output_tokens_per_s = finite(t.throughput.output_tokens_per_s);
+        t.throughput.run_duration_s = finite(t.throughput.run_duration_s);
+        if let Some(s) = t.queue.queue_delay_ms.as_mut() {
+            sanitize_stat(s);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -564,5 +843,47 @@ mod tests {
             t.by_index[1].authored_think_time_ms.as_ref().unwrap().mean,
             500.0
         );
+    }
+
+    #[test]
+    fn analyze_end_to_end_with_hash_ids() {
+        let turns = vec![
+            AnalyzedTurn {
+                conversation_id: "a".into(),
+                turn_index: 0,
+                input_tokens: 32,
+                max_output_tokens: 8,
+                delay_ms: None,
+                block_ids: Some(vec![1, 2]),
+                system_handle: None,
+            },
+            AnalyzedTurn {
+                conversation_id: "a".into(),
+                turn_index: 1,
+                input_tokens: 48,
+                max_output_tokens: 8,
+                delay_ms: None,
+                block_ids: Some(vec![1, 2, 3]),
+                system_handle: None,
+            },
+        ];
+        let records = vec![
+            rec("a", 0, 0, 1_000_000_000, 8),
+            rec("a", 1, 1_000_000_000, 2_000_000_000, 8),
+        ];
+        let a = analyze(&turns, &records, &AnalysisOptions::default());
+        assert_eq!(a.shape.conversations, 1);
+        let cache = a.cache.clone().unwrap();
+        assert!(matches!(
+            cache.identity_source,
+            prefix_cache::IdentitySource::HashIds
+        ));
+        // blocks: r0 [1,2], r1 [1,2,3] → 2 cached of 5.
+        assert_eq!(cache.ideal.cached_blocks, 2);
+        assert!(!cache.realized.is_empty());
+        assert!(a.timeline.is_some());
+        // serde round-trips without NaN
+        let json = serde_json::to_string(&a).unwrap();
+        assert!(!json.contains("NaN"));
     }
 }
