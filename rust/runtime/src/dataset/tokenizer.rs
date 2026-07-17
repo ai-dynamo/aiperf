@@ -263,12 +263,20 @@ impl HuggingFaceTokenizer {
             vocab_size: vocab_size_of(&introspect),
         };
         let config_path = directory.join("tokenizer_config.json");
-        if config_path.is_file() {
-            let config: Value = serde_json::from_slice(&std::fs::read(&config_path)?)?;
-            tokenizer.bos_token_id = special_token_id(&introspect, &config, "bos_token");
-            tokenizer.eos_token_id = special_token_id(&introspect, &config, "eos_token");
-            tokenizer.formatter = build_prompt_formatter(&config);
+        let tokenizer_config = if config_path.is_file() {
+            Some(serde_json::from_slice::<Value>(&std::fs::read(
+                &config_path,
+            )?)?)
+        } else {
+            None
+        };
+        if let Some(config) = &tokenizer_config {
+            tokenizer.formatter = build_prompt_formatter(config);
         }
+        tokenizer.bos_token_id =
+            resolve_special_token(directory, &introspect, tokenizer_config.as_ref(), "bos");
+        tokenizer.eos_token_id =
+            resolve_special_token(directory, &introspect, tokenizer_config.as_ref(), "eos");
         Ok(tokenizer)
     }
 
@@ -398,7 +406,58 @@ impl OAIChatLikeRequest for ChatLikeRequest {
     }
 }
 
-/// Resolve a `tokenizer_config.json` special-token declaration to its id.
+/// Resolve a model's BOS or EOS token id from the HuggingFace metadata files.
+///
+/// Mirrors the precedence used by the retired `llm_tokenizer` and by HF itself: a
+/// `{kind}_token` string in `tokenizer_config.json`, then in
+/// `special_tokens_map.json`, then a numeric `{kind}_token_id` in `config.json` or
+/// `generation_config.json` — where GPT-2-style repos (whose `tokenizer_config.json`
+/// is only `{"model_max_length": …}`) declare theirs. `None` when no source names one.
+fn resolve_special_token(
+    directory: &Path,
+    introspect: &HfTokenizer,
+    tokenizer_config: Option<&Value>,
+    kind: &str,
+) -> Option<u32> {
+    let string_field = format!("{kind}_token");
+    let id_field = format!("{kind}_token_id");
+
+    if let Some(config) = tokenizer_config
+        && let Some(id) = special_token_id(introspect, config, &string_field)
+    {
+        return Some(id);
+    }
+    if let Some(map) = read_json_file(&directory.join("special_tokens_map.json"))
+        && let Some(id) = special_token_id(introspect, &map, &string_field)
+    {
+        return Some(id);
+    }
+    for file in ["config.json", "generation_config.json"] {
+        if let Some(config) = read_json_file(&directory.join(file))
+            && let Some(id) = config.get(&id_field).and_then(numeric_token_id)
+        {
+            return Some(id);
+        }
+    }
+    None
+}
+
+/// Read and parse a best-effort JSON metadata file, ignoring a missing or invalid one.
+fn read_json_file(path: &Path) -> Option<Value> {
+    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+}
+
+/// Extract a numeric token id, tolerating the array form some
+/// `generation_config.json` files use for `eos_token_id`.
+fn numeric_token_id(value: &Value) -> Option<u32> {
+    match value {
+        Value::Array(items) => items.iter().find_map(numeric_token_id),
+        _ => u32::try_from(value.as_u64()?).ok(),
+    }
+}
+
+/// Resolve a special-token *string* declaration (`tokenizer_config.json` /
+/// `special_tokens_map.json`) to its id.
 ///
 /// Accepts either a bare string token or an `AddedToken`-style object with a
 /// `content` field, then maps it through the introspection tokenizer.
@@ -521,5 +580,32 @@ mod tests {
         assert_eq!(templated.len(), 4);
         assert_eq!(tokenizer.bos_token_id(), Some(1));
         assert_eq!(tokenizer.eos_token_id(), Some(2));
+    }
+
+    /// End-to-end proof that the `hf-hub` download plus the `dynamo-tokenizers`
+    /// encode/decode path produce the exact, well-known GPT-2 BPE token ids —
+    /// i.e. the crate swap is byte-identical on a real tokenizer. Network-gated
+    /// (`--ignored`) since it fetches `gpt2` from the Hugging Face hub.
+    #[test]
+    #[ignore = "downloads the gpt2 tokenizer from the Hugging Face hub"]
+    fn gpt2_download_encodes_to_known_ids() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let directory = runtime
+            .block_on(crate::dataset::hf_hub::download_hugging_face_tokenizer(
+                "gpt2",
+            ))
+            .expect("download gpt2 tokenizer");
+
+        let tokenizer = HuggingFaceTokenizer::from_directory(&directory).unwrap();
+        // Canonical GPT-2 BPE encoding of "Hello world".
+        let tokens = tokenizer.encode("Hello world").unwrap();
+        assert_eq!(tokens, vec![15496, 995]);
+        assert_eq!(tokenizer.decode(&tokens).unwrap(), "Hello world");
+        assert_eq!(tokenizer.vocab_size(), Some(50257));
+        // gpt2 declares `<|endoftext|>` (id 50256) as both bos and eos.
+        assert_eq!(tokenizer.eos_token_id(), Some(50256));
     }
 }
