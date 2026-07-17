@@ -309,8 +309,22 @@ async fn handle_open(
     let cell_id = request.cell_id;
     tokio::spawn(async move {
         let result = consume_stream_to_file(anchor, &dest).await;
+        if let Ok(bytes) = &result {
+            // A dedicated observable (mirrors the HTTP plane's "received artifact
+            // upload over HTTP" line) so an operator/test can confirm the bytes really
+            // crossed the velo stream. Enable with
+            // `AIPERF_RUNNER_LOG=warn,aiperf_cellular_artifact=info`.
+            tracing::info!(
+                target: "aiperf_cellular_artifact",
+                cell_id,
+                artifact = %rel_label,
+                transport = "velo",
+                bytes = *bytes,
+                "received artifact stream over velo"
+            );
+        }
         // A dropped receiver (a cell that never CLOSEs) is benign: log and move on.
-        if commit_tx.send(result.map_err(|e| e.to_string())).is_err() {
+        if commit_tx.send(result.map(|_| ()).map_err(|e| e.to_string())).is_err() {
             tracing::debug!(
                 target: "aiperf_cellular_artifact",
                 cell_id,
@@ -335,17 +349,19 @@ async fn handle_open(
 async fn consume_stream_to_file(
     mut anchor: velo::StreamAnchor<Vec<u8>>,
     dest: &Path,
-) -> Result<()> {
+) -> Result<u64> {
     let mut sink = DecompressToFile::create(dest)
         .with_context(|| format!("creating artifact sink {}", dest.display()))?;
+    let mut received: u64 = 0;
     while let Some(frame) = anchor.next().await {
         match frame {
             Ok(StreamFrame::Item(chunk)) => {
+                received += chunk.len() as u64;
                 sink.write_chunk(&chunk).context("writing artifact chunk")?;
             }
             Ok(StreamFrame::Finalized) => {
                 sink.finish().context("committing artifact file")?;
-                return Ok(());
+                return Ok(received);
             }
             Ok(StreamFrame::Dropped) => {
                 bail!("artifact stream sender dropped before finalize")
