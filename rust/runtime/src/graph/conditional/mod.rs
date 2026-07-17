@@ -16,9 +16,11 @@
 //! machinery is introduced. See `specs/conditional-graph-lowering.md`.
 
 mod model;
+mod resolve;
 
 pub use model::{
     AuthoredChannelSpec, AuthoredConditionalEdge, AuthoredEdge, AuthoredGraph, AuthoredGraphDoc,
     AuthoredLlmNode, AuthoredNode, AuthoredReplayNode, AuthoredStaticEdge, AuthoredTrace,
-    BranchTargets, ConditionalError, PromptGrammarItem, parse_authored_graph,
+    BranchTargets, ConditionalError, MessagePart, PromptGrammarItem, parse_authored_graph,
 };
+pub use resolve::{TakenEdge, TakenGraph, resolve_and_prune, resolve_branch_key};
