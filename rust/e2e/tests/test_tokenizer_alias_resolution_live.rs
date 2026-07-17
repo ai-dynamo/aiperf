@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 mod common;
-use common::*;
 
 const DOCUMENTED_ALIASES: &[(&str, &str)] = &[
     ("bert-base-uncased", "google-bert/bert-base-uncased"),
