@@ -207,8 +207,20 @@ impl Workload for FixedScheduleWorkload {
         // Combined with the connection prewarm above, issuance starts warm and
         // on-schedule — the Rust-native equivalent of the Python engine's
         // ZMQ "workers ready, go" barrier.
+        //
+        // The lead compensates for REAL wall-clock scheduling cost only. Under a
+        // virtual clock the up-front pass takes zero sim-time, so the first
+        // target is never overdue and no lead is warranted; applying one would
+        // shift the whole authored grid off `auto_offset_timestamps`' "earliest
+        // turn lands at run start" contract and corrupt deterministic replay
+        // offsets. Gate it on the clock seam so simulation stays exactly on-grid.
         const SCHEDULE_START_LEAD_NS: i64 = 25_000_000;
-        let anchor_ns = runtime.now_ns().saturating_add(SCHEDULE_START_LEAD_NS);
+        let lead_ns = if runtime.clock().is_virtual() {
+            0
+        } else {
+            SCHEDULE_START_LEAD_NS
+        };
+        let anchor_ns = runtime.now_ns().saturating_add(lead_ns);
         for entry in &self.schedule.entries {
             let target_ns = self.schedule_source.timestamp_to_ns(
                 anchor_ns,
