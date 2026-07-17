@@ -32,7 +32,7 @@ use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 
 use aiperf_runtime::engine::application::Application;
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 use aiperf_runtime::engine::cellular_kind::CellularRunKind;
 use aiperf_runtime::engine::distribution_identity::current_distribution_id;
 use aiperf_runtime::engine::protocol_v2::{
@@ -151,7 +151,7 @@ pub fn dispatch(args: &[String]) -> ! {
 /// the partition/controller environment (`AIPERF_CELL_*`); the cell fetches its
 /// sliced execute envelope from the controller over velo, then runs it through the
 /// ordinary single-process path (which the environment makes cell-aware).
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 fn run_cell() -> ! {
     // A dedicated runtime just to fetch the envelope over velo; dropped before the
     // execute path builds its own thread-per-core runtime.
@@ -231,7 +231,7 @@ fn run_object_bytes(envelope: &[u8]) -> Vec<u8> {
 /// loopback port, collect its subtree of cells' folded stores, merge them, and ship
 /// the one merged store up to the controller. Reads the run envelope (piped by the
 /// controller on stdin) only for the merge `MetricsConfig`.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 fn run_aggregator(input: &[u8]) -> ! {
     let envelope = match serde_json::from_slice::<Value>(input) {
         Ok(envelope) => envelope,
@@ -263,7 +263,7 @@ fn run_aggregator(input: &[u8]) -> ! {
 }
 
 /// Without the `velo` feature there is no cell transport, so `--aggregator` cannot run.
-#[cfg(not(feature = "velo"))]
+#[cfg(not(feature = "cellular"))]
 fn run_aggregator(_input: &[u8]) -> ! {
     tracing::error!(
         "aiperf was built without the `velo` feature; `--aggregator` (tier-T2 tree merge) requires it"
@@ -272,7 +272,7 @@ fn run_aggregator(_input: &[u8]) -> ! {
 }
 
 /// Without the `velo` feature there is no cell transport, so `--cell` cannot run.
-#[cfg(not(feature = "velo"))]
+#[cfg(not(feature = "cellular"))]
 fn run_cell() -> ! {
     tracing::error!(
         "aiperf was built without the `velo` feature; `--cell` (multi-cell runs) requires it"
@@ -282,7 +282,7 @@ fn run_cell() -> ! {
 
 /// Without the `velo` feature there is no cell transport, so a `cells>1` run
 /// cannot be driven; fail closed with a typed execution envelope.
-#[cfg(not(feature = "velo"))]
+#[cfg(not(feature = "cellular"))]
 fn run_controller(envelope: &Value) -> ! {
     let benchmark_id = envelope
         .pointer("/run/benchmark_id")
@@ -298,7 +298,7 @@ fn run_controller(envelope: &Value) -> ! {
 
 /// Runs this process as the cellular controller: drive the cells over velo, merge
 /// their records into the single report, and emit the one terminal envelope.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 fn run_controller(envelope: &Value) -> ! {
     let benchmark_id = envelope
         .pointer("/run/benchmark_id")

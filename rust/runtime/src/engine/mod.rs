@@ -19,11 +19,11 @@ pub mod application;
 // zstd (Stage E). Only reachable on the velo cellular path (it reuses the velo
 // controller's bootstrap/DNS addressing), and its zstd streaming core is gated on
 // the `zstd` dep the `velo` feature pulls in.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 pub mod artifact_shipping;
 pub mod cellular_cell;
 // Tier-T2 hierarchical merge: the aggregator role between cells and the controller.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 pub mod cellular_aggregator;
 // The controller orchestration (cell launch + velo transport + merge) is only
 // reachable with the `velo` feature; `owned_positions` (needed by the non-velo
@@ -33,7 +33,7 @@ pub mod cell_launcher;
 // cell zeroes its record timeline at the velo START barrier instead of its
 // post-setup local run start.
 pub mod cell_origin;
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 pub mod cellular_controller;
 // The scheduled-vs-graph classification both the controller and the cell name.
 pub mod cellular_kind;

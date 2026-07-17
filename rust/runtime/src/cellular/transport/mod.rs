@@ -36,17 +36,17 @@ use crate::cellular::shard::{ColumnStorePartition, RecordsShardPartition};
 /// Discovery-free connection seam: velo transport construction + the
 /// bootstrap-PeerInfo exchange that lets a cell reach the controller from one
 /// operator-hardcoded coordinate. Gated on the `velo` feature.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 pub mod connect;
 /// Velo distribution for the dataset fan-out data plane (ultimate spec §3).
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 pub mod dataset_velo;
 /// Velo distribution for the monotonic phaser control plane (ultimate spec §4).
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 pub mod phaser_velo;
 /// The velo-backed cell↔controller transport (cell client + controller
 /// endpoint), gated on the `velo` feature.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 pub mod velo_transport;
 
 /// One self-attributing message from a cell to the controller. A cell sends its

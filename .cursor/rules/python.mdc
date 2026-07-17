@@ -142,7 +142,7 @@ Package the single `aiperf` wheel (maturin backend, `pyproject.toml`). There is
 executable into the wheel's scripts directory as `aiperf-<ver>.data/scripts/aiperf`
 — no separate runner wheel. Because it carries a native binary
 the wheel is platform + CPython-ABI specific (no longer `py3-none-any`); the full
-execution surface (`--features full` = `dynosim` + `parquet` + `velo`) requires the
+execution surface (`--features full` = `dynosim` + `parquet` + `cellular`) requires the
 sibling `dynamo-aiperf-native` checkout at build time (the default `--features parquet`
 build is sibling-free):
 

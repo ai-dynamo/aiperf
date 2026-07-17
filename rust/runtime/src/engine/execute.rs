@@ -1767,7 +1767,7 @@ async fn execute_graph_native(
     //   `issued` is the accumulator's ingested count (which survives sketch's fold-and-clear
     //   — `record_count()` is 0 for a sketch store), `errored` the retained errored count,
     //   so `completed = issued - errored`.
-    #[cfg(feature = "velo")]
+    #[cfg(feature = "cellular")]
     if let Some(shipper) = crate::engine::cellular_cell::CellRecordsShipper::from_env() {
         // No `capture`/wall clock is in scope on the graph path, so derive the run span
         // from the records themselves: last observed end minus first observed start,
@@ -1866,7 +1866,7 @@ async fn execute_graph_native(
     // artifacts into its own artifact_dir, ship them to the controller's HTTP upload
     // server with streaming zstd. A no-op on the same-host launcher (Stage D
     // concatenates the local writes) or the single-process path.
-    #[cfg(feature = "velo")]
+    #[cfg(feature = "cellular")]
     crate::engine::cellular_cell::ship_http_artifacts_if_enabled(
         &request.artifact_dir,
         &request.artifacts,
@@ -3305,7 +3305,7 @@ async fn execute_native_inner(
     //   record total. For exact-fold that is the store's `record_count()`, but a sketch
     //   store clears each row after harvesting (`record_count() == 0`), so the surviving
     //   `ingested_count()` is the true total. `completed = issued - errored`.
-    #[cfg(feature = "velo")]
+    #[cfg(feature = "cellular")]
     if let Some(shipper) = crate::engine::cellular_cell::CellRecordsShipper::from_env() {
         let epoch_ns: i64 = clock.now_ns().saturating_sub(start_ns);
         if exact_fold || sketch_mode {
@@ -3385,7 +3385,7 @@ async fn execute_native_inner(
     // on this cell's own filesystem; ship them to the controller's HTTP upload server
     // with streaming zstd. A no-op on the same-host launcher (Stage D concatenates the
     // local writes) or the single-process path.
-    #[cfg(feature = "velo")]
+    #[cfg(feature = "cellular")]
     crate::engine::cellular_cell::ship_http_artifacts_if_enabled(
         &request.artifact_dir,
         &request.artifacts,

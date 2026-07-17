@@ -178,7 +178,7 @@ install-native: native-cli #? install the pure-Rust `aiperf` into dist/native-bi
 
 # CLI_FEATURES selects the unified `aiperf` binary's execution profile, mirroring
 # the Dockerfile's build knob. Default = `full` (the entire execution surface:
-# dynosim + parquet + velo + grpc) so cellular, graph-cellular, parquet sidecars,
+# dynosim + parquet + cellular + grpc) so cellular, graph-cellular, parquet sidecars,
 # and offline/online Dynamo replay all work out of the box — and the e2e suite
 # passes without a per-target feature dance. This REQUIRES the sibling
 # `dynamo-aiperf-native` checkout (for the `dynosim` mocker). If you don't have it,

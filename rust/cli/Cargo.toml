@@ -18,14 +18,14 @@ path = "src/main.rs"
 [features]
 # The `aiperf` binary is BOTH the entry point and the execution engine: it
 # re-execs itself (`aiperf --execute`) over the protocol-v2 stdio seam for each
-# run/probe/cell. The heavy execution features live here as OPT-IN so the default
-# `cargo build -p aiperf-cli` stays lean and sibling-free (HTTP/gRPC/scheduled/
-# graph execution works; dynosim & cellular gated off). `grpc` is in the default
-# set (gRPC is a first-class native transport), so the shipped wheel — built with
+# run/probe/cell. `grpc` (native gRPC transport) and `cellular` (`--cells N`
+# multi-process, carried over the `velo` git dependency — no sibling needed) are
+# default; only `dynosim` (needs the sibling checkout) is opt-in. `cargo build -p
+# aiperf-cli` and the shipped wheel — built with
 # `--features parquet`, which does NOT disable defaults — keeps it; a lean
 # HTTP-only binary drops it with `--no-default-features`. The Makefile builds the
 # wheel binary with the feature set an image needs (default: `parquet`).
-default = ["grpc"]
+default = ["grpc", "cellular"]
 
 # Base: embed a CPython interpreter (pyo3 `auto-initialize`). Enables in-process
 # delegation of every non-profile/config subcommand (chat/plot/plugins/service/
@@ -49,10 +49,10 @@ dynosim = ["aiperf-runtime/dynosim"]
 grpc = ["aiperf-runtime/grpc"]
 # Server-metrics Parquet + public `.parquet` reader (arrow/parquet). Sibling-free.
 parquet = ["aiperf-runtime/parquet"]
-# Cellular cross-host cell transport over ai-dynamo/velo. Gates the velo
-# controller/cell/aggregator re-exec path; `cells=1` is byte-unchanged and
-# `cells>1` fails closed without it.
-velo = ["aiperf-runtime/velo"]
+# Cellular cross-host cell transport (over the `velo` messaging framework). Gates
+# the controller/cell/aggregator re-exec path; `cells=1` is byte-unchanged and
+# `cells>1` fails closed without it. In the default set.
+cellular = ["aiperf-runtime/cellular"]
 dynamo-router-runtime = ["dynosim", "aiperf-runtime/dynamo-router-runtime"]
 dynamo-zmq-events = ["dynosim", "aiperf-runtime/dynamo-zmq-events"]
 dynamo-kvbm-offload = ["dynosim", "aiperf-runtime/dynamo-kvbm-offload"]
@@ -67,7 +67,7 @@ dynamo-full = [
 ]
 dynamo-parity = ["dynamo-full", "aiperf-runtime/dynamo-parity"]
 # Convenience: the full execution surface (sibling required).
-full = ["dynosim", "parquet", "velo", "grpc"]
+full = ["dynosim", "parquet", "cellular", "grpc"]
 
 [dependencies]
 aiperf-runtime = { path = "../runtime", default-features = false, features = ["engine"] }
