@@ -1040,15 +1040,24 @@ pub(crate) struct PreparedNativeSidecarResources {
     network_latency_records_path: Option<PathBuf>,
     server_metrics_jsonl_path: Option<PathBuf>,
     server_metrics_parquet_wire_path: Option<PathBuf>,
-    /// Signals the media-fetch drain task to finish and flush. `Cell` so a
-    /// finalize tail holding `&self` can take it.
-    media_finalize: Cell<Option<tokio::sync::oneshot::Sender<()>>>,
-    /// Background task folding content records into media-fetch metrics.
-    media_handle: Cell<Option<tokio::task::JoinHandle<MediaMetricsSummary>>>,
+    /// Background task folding content records into media-fetch metrics. Joined
+    /// at the finalize tail after the content server (its record sender) is
+    /// dropped.
+    media_handle: Option<tokio::task::JoinHandle<MediaMetricsSummary>>,
 }
 
 /// Artifact filename for per-fetch media records.
 const MEDIA_RECORDS_FILENAME: &str = "media_records.jsonl";
+
+/// The content-server origin to tag media URLs with, or `None` when no server
+/// publishes files this run (media stays inline, nothing to correlate).
+fn content_server_media_base(run: &NativeRunSpec) -> Result<Option<Arc<str>>> {
+    Ok(run
+        .sidecars
+        .content_server()?
+        .filter(|spec| spec.content_dir.is_some())
+        .map(|spec| Arc::from(spec.base_url())))
+}
 
 /// Ingest one content record into the aggregator and stream its row. Ingestion
 /// (and thus metric folding) always happens; the row is written only when the
@@ -1123,7 +1132,6 @@ impl NativeSidecarResourceFactory for BuiltinNativeSidecarResourceFactory {
             .then(|| metrics_config(&run.metrics, run.endpoint.use_server_token_count()))
             .transpose()?;
 
-        let mut media_finalize = None;
         let mut media_handle = None;
         let content_server = match content_server_spec {
             Some(spec) => {
@@ -1138,7 +1146,6 @@ impl NativeSidecarResourceFactory for BuiltinNativeSidecarResourceFactory {
                     )?;
                     let (record_tx, mut record_rx) =
                         tokio::sync::mpsc::unbounded_channel::<ContentRequestRecord>();
-                    let (finalize_tx, mut finalize_rx) = tokio::sync::oneshot::channel::<()>();
                     let handle = tokio::spawn(async move {
                         let mut aggregator = MediaFetchAggregator::new();
                         let mut writer = match MediaRecordWriter::create(&path) {
@@ -1148,34 +1155,19 @@ impl NativeSidecarResourceFactory for BuiltinNativeSidecarResourceFactory {
                                 None
                             }
                         };
-                        loop {
-                            tokio::select! {
-                                received = record_rx.recv() => match received {
-                                    Some(record) => ingest_media_record(
-                                        &mut aggregator,
-                                        writer.as_mut(),
-                                        &record,
-                                    ),
-                                    None => break,
-                                },
-                                _ = &mut finalize_rx => {
-                                    while let Ok(record) = record_rx.try_recv() {
-                                        ingest_media_record(
-                                            &mut aggregator,
-                                            writer.as_mut(),
-                                            &record,
-                                        );
-                                    }
-                                    break;
-                                }
-                            }
+                        // Drains until every sender is dropped, which happens when
+                        // the content server is shut down at the finalize tail (all
+                        // fetches have completed by then, so none are lost). Writes
+                        // go through a BufWriter, so disk syscalls are infrequent and
+                        // confined to this dedicated task.
+                        while let Some(record) = record_rx.recv().await {
+                            ingest_media_record(&mut aggregator, writer.as_mut(), &record);
                         }
                         if let Some(mut writer) = writer {
                             let _ = writer.flush();
                         }
                         aggregator.finish()
                     });
-                    media_finalize = Some(finalize_tx);
                     media_handle = Some(handle);
                     Some(record_tx)
                 } else {
@@ -1233,24 +1225,28 @@ impl NativeSidecarResourceFactory for BuiltinNativeSidecarResourceFactory {
             network_latency_records_path,
             server_metrics_jsonl_path,
             server_metrics_parquet_wire_path,
-            media_finalize: Cell::new(media_finalize),
-            media_handle: Cell::new(media_handle),
+            media_handle,
         })
     }
 }
 
 impl PreparedNativeSidecarResources {
-    /// Signal the media-fetch drain task to finish, then collect its finalized
-    /// distributions. Returns an empty summary when the content server had no
-    /// media wiring. Idempotent: a second call returns the empty default.
-    async fn finalize_media_metrics(&self) -> MediaMetricsSummary {
-        let (Some(finalize), Some(handle)) = (self.media_finalize.take(), self.media_handle.take())
-        else {
+    /// Shut the content server down (releasing the record sender) so the drain
+    /// task reaches channel-close, then collect its finalized distributions.
+    /// Returns an empty summary when there was no media wiring. Idempotent.
+    async fn finalize_media_metrics(&mut self) -> MediaMetricsSummary {
+        let Some(handle) = self.media_handle.take() else {
             return MediaMetricsSummary::default();
         };
-        // The receiver drains remaining records on this signal; a closed channel
-        // (task already ended) is fine.
-        let _ = finalize.send(());
+        // Dropping the server releases the tracker's sender; the drain task then
+        // sees channel-close and finalizes. All fetches have completed by the
+        // finalize tail, so this loses none. `shutdown_run_resources` later finds
+        // the server already taken and skips it.
+        if let Some(mut content_server) = self.content_server.take()
+            && let Err(error) = content_server.shutdown().await
+        {
+            tracing::warn!(error = %error, "content server shutdown during media finalize failed");
+        }
         match handle.await {
             Ok(summary) => {
                 tracing::info!(
@@ -1485,7 +1481,7 @@ impl GraphPhaseBackendFactory for OnlineGraphPhaseBackendFactory<'_> {
 
 async fn execute_graph_native(
     request: NativeRunSpec,
-    sidecars: &PreparedNativeSidecarResources,
+    sidecars: &mut PreparedNativeSidecarResources,
     graph_placement: &dyn GraphPlacementFactory,
     registry: &AIPerfRegistry,
 ) -> Result<NativeReport> {
@@ -1529,11 +1525,7 @@ async fn execute_graph_native(
             profiles.clone(),
             input_token_counter.clone(),
             transport,
-            request
-                .sidecars
-                .content_server()?
-                .filter(|spec| spec.content_dir.is_some())
-                .map(|spec| Arc::from(spec.base_url())),
+            content_server_media_base(&request)?,
         )?)
     };
     let real_clock_anchor = sidecars.real_clock_anchor;
@@ -2710,11 +2702,7 @@ async fn execute_native_inner(
                 session_header: profile.session_header.clone(),
                 // Tag content-server media URLs so served fetches correlate back
                 // to the request; only when the server publishes files.
-                content_server_base: request
-                    .sidecars
-                    .content_server()?
-                    .filter(|spec| spec.content_dir.is_some())
-                    .map(|spec| Arc::from(spec.base_url())),
+                content_server_base: content_server_media_base(&request)?,
             },
             Some(table_factory),
             Box::new(PreparedNativeConversationSourceFactory {

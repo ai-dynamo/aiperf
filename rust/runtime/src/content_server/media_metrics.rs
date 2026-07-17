@@ -23,7 +23,7 @@ use crate::metrics_core::kernel::linear_distribution;
 use crate::metrics_core::sidecar::{SidecarSeries, SidecarStats};
 use crate::metrics_core::{SidecarMetric, Unit};
 
-/// Metric name constants (verbatim from the spec).
+/// Metric names.
 pub const TIME_TO_MEDIA_FETCH: &str = "time_to_media_fetch";
 pub const MEDIA_SERVING_LATENCY: &str = "media_serving_latency";
 pub const MEDIA_TIME_TO_FIRST_BYTE: &str = "media_time_to_first_byte";
@@ -70,6 +70,13 @@ pub struct MediaMetricsSummary {
     pub negative_ttmf: u64,
 }
 
+/// Per-request fetch rollup, keyed by `rid`.
+#[derive(Debug, Default)]
+struct RequestRollup {
+    count: u32,
+    bytes: u64,
+}
+
 /// Folds content-server records into media-fetch distributions online.
 #[derive(Debug, Default)]
 pub struct MediaFetchAggregator {
@@ -77,8 +84,7 @@ pub struct MediaFetchAggregator {
     serving_latency: Vec<f64>,
     time_to_first_byte: Vec<f64>,
     transfer_duration: Vec<f64>,
-    per_request_count: HashMap<String, u32>,
-    per_request_bytes: HashMap<String, u64>,
+    per_request: HashMap<String, RequestRollup>,
     total_fetches: u64,
     unmatched: u64,
     negative_ttmf: u64,
@@ -121,8 +127,11 @@ impl MediaFetchAggregator {
             .push(record.time_to_first_byte_ns as f64);
         self.transfer_duration
             .push(record.transfer_duration_ns as f64);
-        *self.per_request_count.entry(tag.rid.clone()).or_insert(0) += 1;
-        *self.per_request_bytes.entry(tag.rid.clone()).or_insert(0) += record.body_bytes;
+        // `time_to_first_body_byte_ns` is carried on the per-fetch artifact for
+        // offline analysis but is not summarized into its own distribution.
+        let rollup = self.per_request.entry(tag.rid.clone()).or_default();
+        rollup.count += 1;
+        rollup.bytes += record.body_bytes;
 
         Some(MediaRecord {
             rid: tag.rid,
@@ -143,9 +152,9 @@ impl MediaFetchAggregator {
     /// request.
     pub fn finish(self) -> MediaMetricsSummary {
         let per_request_bytes: Vec<f64> =
-            self.per_request_bytes.values().map(|&b| b as f64).collect();
+            self.per_request.values().map(|r| r.bytes as f64).collect();
         let per_request_count: Vec<f64> =
-            self.per_request_count.values().map(|&c| c as f64).collect();
+            self.per_request.values().map(|r| r.count as f64).collect();
 
         let mut metrics = BTreeMap::new();
         let series = [

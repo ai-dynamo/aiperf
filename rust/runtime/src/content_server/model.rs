@@ -10,7 +10,12 @@ use serde::{Deserialize, Serialize};
 
 /// Sink for streaming each completed request record out of the tracker to a
 /// live consumer (the media-fetch aggregator), independent of the bounded
-/// retention buffer.
+/// retention buffer. Unbounded because the producer ([`RequestTracker::record`])
+/// runs synchronously inside the HTTP response path and must not block on a full
+/// queue; the consumer only parses and folds, so it keeps pace, and the run's own
+/// request rate bounds the in-flight volume.
+///
+/// [`RequestTracker::record`]: crate::content_server::RequestTracker::record
 pub type ContentRecordSender = tokio::sync::mpsc::UnboundedSender<ContentRequestRecord>;
 
 /// One completed HTTP request served by the content server.

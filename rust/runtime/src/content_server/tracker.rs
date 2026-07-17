@@ -91,17 +91,18 @@ impl RequestTracker {
 
     /// Append one completed request and update non-evicting lifetime counters.
     pub fn record(&self, record: ContentRequestRecord) {
+        // Forward to the streaming consumer outside the lock; the retention
+        // buffer below is independent, so the aggregator sees every record even
+        // when retention is disabled.
+        if let Some(sink) = &self.record_sink {
+            let _ = sink.send(record.clone());
+        }
         let mut state = self
             .state
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
         state.total_requests = state.total_requests.saturating_add(1);
         state.total_bytes_served = state.total_bytes_served.saturating_add(record.body_bytes);
-        // Forward to the streaming consumer before the retention buffer so the
-        // aggregator sees every record even when retention is disabled.
-        if let Some(sink) = &self.record_sink {
-            let _ = sink.send(record.clone());
-        }
         if self.max_records == 0 {
             return;
         }

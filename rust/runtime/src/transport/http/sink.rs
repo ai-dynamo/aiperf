@@ -1070,21 +1070,22 @@ fn wall_now_ns() -> u64 {
 }
 
 /// Tag content-server media URLs in `body` with `?rid&mi&td`, returning the
-/// possibly-reserialized bytes. Only URLs starting with `base` are rewritten; a
-/// body with no matching URL (or a non-JSON body) is returned unchanged so the
-/// byte-exact fast path is preserved for non-media requests.
-fn tag_content_urls(body: Bytes, base: &str, rid: &str, wall_ns: u64) -> Bytes {
+/// possibly-reserialized bytes along with the parsed payload (so the caller can
+/// reuse it instead of re-parsing). Only URLs starting with `base` are rewritten;
+/// bytes are reserialized only when a URL actually changed, and a non-JSON body
+/// is returned unchanged.
+fn tag_content_urls(body: Bytes, base: &str, rid: &str, wall_ns: u64) -> (Bytes, Option<Value>) {
     let Ok(mut value) = serde_json::from_slice::<Value>(&body) else {
-        return body;
+        return (body, None);
     };
     if crate::content_server::tag_media_urls(&mut value, base, rid, wall_ns) == 0 {
-        return body;
+        return (body, Some(value));
     }
     match serde_json::to_vec(&value) {
-        Ok(bytes) => Bytes::from(bytes),
+        Ok(bytes) => (Bytes::from(bytes), Some(value)),
         // Unreachable: `value` came from valid JSON. Keep the original on the
         // impossible error rather than panicking on the hot path.
-        Err(_) => body,
+        Err(_) => (body, Some(value)),
     }
 }
 
@@ -1116,7 +1117,7 @@ mod tests {
             }))
             .unwrap(),
         );
-        let tagged = tag_content_urls(body, base, "req-9", 777);
+        let (tagged, _) = tag_content_urls(body, base, "req-9", 777);
         let value: Value = serde_json::from_slice(&tagged).unwrap();
         assert_eq!(
             value
@@ -1141,7 +1142,7 @@ mod tests {
             }))
             .unwrap(),
         );
-        let out = tag_content_urls(original.clone(), base, "req", 1);
+        let (out, _) = tag_content_urls(original.clone(), base, "req", 1);
         assert_eq!(out, original);
     }
 

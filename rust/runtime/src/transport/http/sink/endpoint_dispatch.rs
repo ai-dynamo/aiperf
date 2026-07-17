@@ -232,18 +232,18 @@ impl TransportSink {
             }
         };
         // Tag content-server media URLs with rid/mi/dispatch-time so served
-        // transfers correlate back to this request; leaves external URLs and
-        // non-media bodies untouched.
-        let body = match self.content_server_base.as_deref() {
-            Some(base) => {
-                super::tag_content_urls(body, base, &uuid.to_string(), super::wall_now_ns())
-            }
-            None => body,
+        // transfers correlate back to this request; external URLs and non-media
+        // bodies are untouched. The parse is shared with image counting below.
+        let (body, parsed) = match self.content_server_base.as_deref() {
+            Some(base) => super::tag_content_urls(body, base, &uuid.to_string(), super::wall_now_ns()),
+            None => (body, None),
         };
+        let payload =
+            parsed.or_else(|| serde_json::from_slice::<Value>(&body).ok());
         let mut endpoint_metrics = ObservedEndpointMetrics {
-            num_images: serde_json::from_slice::<Value>(&body)
-                .ok()
-                .map(|payload| endpoint.extract_payload_inputs(&payload).image_count as usize)
+            num_images: payload
+                .as_ref()
+                .map(|payload| endpoint.extract_payload_inputs(payload).image_count as usize)
                 .filter(|count| *count > 0),
             ..ObservedEndpointMetrics::default()
         };
