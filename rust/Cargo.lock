@@ -2295,6 +2295,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 [[package]]
 name = "dynamo-data-gen"
 version = "1.3.0"
+source = "git+https://github.com/ai-dynamo/dynamo.git?rev=14e2cf76b04736e9b99412dfbe76cf1af45ae67a#14e2cf76b04736e9b99412dfbe76cf1af45ae67a"
 dependencies = [
  "anyhow",
  "dynamo-kv-hashing",
@@ -2307,6 +2308,7 @@ dependencies = [
 [[package]]
 name = "dynamo-kv-hashing"
 version = "1.3.0"
+source = "git+https://github.com/ai-dynamo/dynamo.git?rev=14e2cf76b04736e9b99412dfbe76cf1af45ae67a#14e2cf76b04736e9b99412dfbe76cf1af45ae67a"
 dependencies = [
  "derive_builder",
  "dynamo-tokens",
@@ -2318,6 +2320,7 @@ dependencies = [
 [[package]]
 name = "dynamo-kv-router"
 version = "1.3.0"
+source = "git+https://github.com/ai-dynamo/dynamo.git?rev=14e2cf76b04736e9b99412dfbe76cf1af45ae67a#14e2cf76b04736e9b99412dfbe76cf1af45ae67a"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2351,6 +2354,7 @@ dependencies = [
 [[package]]
 name = "dynamo-memory"
 version = "1.3.0"
+source = "git+https://github.com/ai-dynamo/dynamo.git?rev=14e2cf76b04736e9b99412dfbe76cf1af45ae67a#14e2cf76b04736e9b99412dfbe76cf1af45ae67a"
 dependencies = [
  "anyhow",
  "cudarc",
@@ -2367,6 +2371,7 @@ dependencies = [
 [[package]]
 name = "dynamo-mocker"
 version = "1.3.0"
+source = "git+https://github.com/ai-dynamo/dynamo.git?rev=14e2cf76b04736e9b99412dfbe76cf1af45ae67a#14e2cf76b04736e9b99412dfbe76cf1af45ae67a"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2440,6 +2445,7 @@ dependencies = [
 [[package]]
 name = "dynamo-runtime"
 version = "1.3.0"
+source = "git+https://github.com/ai-dynamo/dynamo.git?rev=14e2cf76b04736e9b99412dfbe76cf1af45ae67a#14e2cf76b04736e9b99412dfbe76cf1af45ae67a"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2528,6 +2534,7 @@ dependencies = [
 [[package]]
 name = "dynamo-tokens"
 version = "1.3.0"
+source = "git+https://github.com/ai-dynamo/dynamo.git?rev=14e2cf76b04736e9b99412dfbe76cf1af45ae67a#14e2cf76b04736e9b99412dfbe76cf1af45ae67a"
 dependencies = [
  "bs58",
  "bytemuck",
@@ -3996,6 +4003,7 @@ dependencies = [
 [[package]]
 name = "kvbm-common"
 version = "1.3.0"
+source = "git+https://github.com/ai-dynamo/dynamo.git?rev=14e2cf76b04736e9b99412dfbe76cf1af45ae67a#14e2cf76b04736e9b99412dfbe76cf1af45ae67a"
 dependencies = [
  "dynamo-tokens",
  "serde",
@@ -4004,6 +4012,7 @@ dependencies = [
 [[package]]
 name = "kvbm-config"
 version = "1.3.0"
+source = "git+https://github.com/ai-dynamo/dynamo.git?rev=14e2cf76b04736e9b99412dfbe76cf1af45ae67a#14e2cf76b04736e9b99412dfbe76cf1af45ae67a"
 dependencies = [
  "anyhow",
  "dynamo-memory",
@@ -4020,6 +4029,7 @@ dependencies = [
 [[package]]
 name = "kvbm-engine"
 version = "1.3.0"
+source = "git+https://github.com/ai-dynamo/dynamo.git?rev=14e2cf76b04736e9b99412dfbe76cf1af45ae67a#14e2cf76b04736e9b99412dfbe76cf1af45ae67a"
 dependencies = [
  "anyhow",
  "aws-config",
@@ -4052,6 +4062,7 @@ dependencies = [
 [[package]]
 name = "kvbm-kernels"
 version = "1.3.0"
+source = "git+https://github.com/ai-dynamo/dynamo.git?rev=14e2cf76b04736e9b99412dfbe76cf1af45ae67a#14e2cf76b04736e9b99412dfbe76cf1af45ae67a"
 dependencies = [
  "cudarc",
 ]
@@ -4059,6 +4070,7 @@ dependencies = [
 [[package]]
 name = "kvbm-logical"
 version = "1.3.0"
+source = "git+https://github.com/ai-dynamo/dynamo.git?rev=14e2cf76b04736e9b99412dfbe76cf1af45ae67a#14e2cf76b04736e9b99412dfbe76cf1af45ae67a"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4084,6 +4096,7 @@ dependencies = [
 [[package]]
 name = "kvbm-physical"
 version = "1.3.0"
+source = "git+https://github.com/ai-dynamo/dynamo.git?rev=14e2cf76b04736e9b99412dfbe76cf1af45ae67a#14e2cf76b04736e9b99412dfbe76cf1af45ae67a"
 dependencies = [
  "aligned-vec",
  "anyhow",
