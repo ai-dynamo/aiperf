@@ -165,30 +165,7 @@ At the end of each profiling phase, `EnergyEfficiencyAnalyzer` — an `analyzer`
 
 `EnergyEfficiencyAnalyzer.analyze()` is called by the `SummaryContext` at summarize time. It calls `GPUTelemetryAccumulator.available_platforms()` to discover which vendors reported data, then fans out per vendor: querying windowed energy and power totals, computing the 12 derived metrics (total power, total energy, tokens/joule, energy/token, energy/request, energy/user, energy-delay product, performance/watt, output TPS/watt, goodput/watt, average power), and returning them as injected `MetricResult` objects. Each vendor's metrics render in their own console section (`GPU_POWER_EFFICIENCY_NVIDIA`, `GPU_POWER_EFFICIENCY_AMD`); a section is omitted entirely when no GPU of that vendor reported.
 
-```mermaid
-flowchart TD
-    DCGM["DCGM Collector\nnvidia_power_usage\nnvidia_energy_consumption"]
-    PYNVML["pynvml Collector\nnvidia_power_usage"]
-    AMDSMI["amdsmi Collector\namd_power\namd_energy_consumption"]
-
-    DCGM --> ACC
-    PYNVML --> ACC
-    AMDSMI --> ACC
-
-    ACC["GPUTelemetryAccumulator\npartitioned by platform"]
-    MSUM["MetricsAccumulator summary\ntotal_osl · request_count\nrequest_throughput · goodput\nrequest_latency"]
-
-    ACC -->|"available_platforms()\ntotal_power_watts(platform=p)\ntotal_energy_joules(platform=p)"| EEA
-    MSUM --> EEA
-
-    EEA["EnergyEfficiencyAnalyzer\nanalyzer plugin · SummaryContext\nfan-out per vendor via _VENDOR_METRICS"]
-
-    EEA --> NV["nvidia_total_gpu_power\nnvidia_total_gpu_energy\nnvidia_average_gpu_power\n... (12 metrics)"]
-    EEA --> AMD["amd_total_gpu_power\namd_total_gpu_energy\namd_average_gpu_power\n... (12 metrics)"]
-
-    NV --> CNVIDIA["Console: GPU Power Efficiency (NVIDIA)"]
-    AMD --> CAMD["Console: GPU Power Efficiency (AMD)"]
-```
+![GPU Power Efficiency Data Flow](diagrams/gpu-power-efficiency-flow.svg)
 
 See [`docs/dev/patterns.md` — Externally-Injected Derived Metric Pattern](dev/patterns.md#externally-injected-derived-metric-pattern) for the metric class contract and instructions for adding a new vendor.
 
