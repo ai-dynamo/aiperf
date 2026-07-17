@@ -135,6 +135,7 @@ mod tests {
     use super::*;
     use crate::cellular::transport::connect::{BindSpec, build_velo};
     use crate::cellular::transport::velo_transport::VeloCellClient;
+    use crate::cellular::transport::CellClient;
     use crate::cellular::{CellMessage, ControllerTransport};
     use crate::hub::Hub;
 
