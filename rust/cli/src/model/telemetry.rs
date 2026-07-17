@@ -214,6 +214,80 @@ pub struct Sidecars {
     /// Network-latency sidecar (present when enabled).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_latency: Option<NetworkLatencySidecar>,
+    /// Run-owned HTTP content-server sidecar (present when
+    /// `AIPERF_CONTENT_SERVER_ENABLED` is set).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_server: Option<ContentServerSidecar>,
+}
+
+/// The lowered `cfg.sidecars.content_server` block: a run-owned native HTTP
+/// server that publishes generated images/videos as `http://host:port/content/*`
+/// URLs instead of inline base64. Mirrors the Python `_ContentServerSettings`
+/// schema (env prefix `AIPERF_CONTENT_SERVER_`) since the native profile path
+/// resolves Config v2 in Rust rather than through the Python frontend.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ContentServerSidecar {
+    /// Host/interface to bind and advertise in generated media URLs.
+    pub host: String,
+    /// TCP port for `/healthz` and `/content/*`.
+    pub port: u16,
+    /// Existing directory to serve. Absent leaves synthetic media inline over a
+    /// run-scoped temporary serving root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_dir: Option<std::path::PathBuf>,
+    /// Bounded recent completed-transfer record capacity.
+    pub max_tracked_records: usize,
+}
+
+impl ContentServerSidecar {
+    /// Build from the `AIPERF_CONTENT_SERVER_*` environment variables, or `None`
+    /// when the server is disabled (`AIPERF_CONTENT_SERVER_ENABLED` unset/false).
+    ///
+    /// Defaults match the Python schema: `HOST=0.0.0.0`, `PORT=8090`,
+    /// `MAX_TRACKED_RECORDS=10000`, empty `CONTENT_DIR` (inline media). A
+    /// non-empty `CONTENT_DIR` is lexically resolved to an absolute path (the
+    /// runtime requires an absolute directory and validates its existence at
+    /// execution start).
+    pub fn from_env() -> Option<Self> {
+        let truthy = |value: String| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        };
+        if !std::env::var("AIPERF_CONTENT_SERVER_ENABLED")
+            .ok()
+            .is_some_and(truthy)
+        {
+            return None;
+        }
+        let host = std::env::var("AIPERF_CONTENT_SERVER_HOST")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "0.0.0.0".to_string());
+        let port = std::env::var("AIPERF_CONTENT_SERVER_PORT")
+            .ok()
+            .and_then(|value| value.trim().parse::<u16>().ok())
+            .unwrap_or(8090);
+        let max_tracked_records = std::env::var("AIPERF_CONTENT_SERVER_MAX_TRACKED_RECORDS")
+            .ok()
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .unwrap_or(10_000);
+        let content_dir = std::env::var("AIPERF_CONTENT_SERVER_CONTENT_DIR")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                let path = std::path::PathBuf::from(value);
+                std::path::absolute(&path).unwrap_or(path)
+            });
+        Some(Self {
+            host,
+            port,
+            content_dir,
+            max_tracked_records,
+        })
+    }
 }
 
 impl GpuTelemetrySidecar {

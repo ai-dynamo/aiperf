@@ -959,6 +959,11 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             }
         }),
         network_latency: network_latency_sidecar,
+        // Opt-in run-owned content server, enabled purely through the
+        // `AIPERF_CONTENT_SERVER_*` environment (no dedicated flag): when set it
+        // externalizes generated images/videos as HTTP URLs. The runtime enforces
+        // its online-HTTP placement rules and directory validation.
+        content_server: crate::model::telemetry::ContentServerSidecar::from_env(),
     };
     let gpu_cfg = crate::model::telemetry::GpuTelemetryConfig {
         enabled: inputs.gpu_telemetry_enabled,
