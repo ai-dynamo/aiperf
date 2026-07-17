@@ -140,6 +140,31 @@ curl -s localhost:8000/v1/chat/completions -H 'content-type: application/json' \
 curl -s localhost:8000/metrics | grep content_bytes_fetched  # > 0 after a fetch
 ```
 
+### End-to-end with the content server and media-fetch metrics
+
+This flag is what lets the mock stand in for a VLM server that fetches images, so AIPerf's
+request-correlated media-fetch metrics (`time_to_media_fetch`, `media_serving_latency`,
+`media_fetch_count`, ...) have something to measure. Full validated recipe:
+
+```bash
+CS=/tmp/aiperf-content; ART=/tmp/aiperf-e2e; mkdir -p "$CS" "$ART"
+MOCK_SERVER_FETCH_CONTENT_URLS=true MOCK_SERVER_PORT=8300 \
+  ./target/release/aiperf-mock-server --no-tokenizer &
+
+AIPERF_CONTENT_SERVER_ENABLED=true AIPERF_CONTENT_SERVER_HOST=127.0.0.1 \
+AIPERF_CONTENT_SERVER_PORT=8190 AIPERF_CONTENT_SERVER_CONTENT_DIR="$CS" \
+./target/release/aiperf profile --model-names test --url http://127.0.0.1:8300 \
+  --endpoint-type chat --image-width-mean 48 --image-height-mean 48 --image-batch-size 2 \
+  --request-count 10 --concurrency 2 --artifact-dir "$ART" --tokenizer gpt2
+```
+
+Then: `$ART/media_records.jsonl` has one line per fetch (`rid`/`mi`/`td` + timings), and
+`$ART/native-v2.json` `media_metrics` holds the six distributions. With `--image-batch-size 2`,
+`media_fetch_count` avg is `2.0` and each request's records carry `mi` `0` and `1` — the
+multi-media-per-turn disambiguation. `aiperf` logs `media-fetch metrics finalized total_fetches=N
+unmatched=0`. Note `AIPERF_CONTENT_SERVER_PORT` (media URL origin) must differ from the mock's
+port, and the content dir must exist before the run.
+
 ## Multi-process load balancer (`--processes N`)
 
 A single server process shares one tokio runtime; at very high request rates the runtime
