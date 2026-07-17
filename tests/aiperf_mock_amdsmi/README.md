@@ -23,8 +23,13 @@ make install-mock-amdsmi
 uv pip install -e tests/aiperf_mock_amdsmi
 ```
 
-It is deliberately **not** part of the default `make install`, so `amdsmi` only
-appears when you opt in.
+It is deliberately **not** part of the default `make install`.
+
+> **Do not install on real AMD hardware.** Installing this package places a
+> top-level `amdsmi` module in your virtualenv that shadows the real ROCm
+> bindings at the import level. Even with the dormancy gate active (i.e.
+> `AIPERF_MOCK_AMDSMI` unset), `import amdsmi` will raise `OSError` instead of
+> loading the real driver bindings, silently suppressing real AMD telemetry.
 
 ## Dormancy gate
 
