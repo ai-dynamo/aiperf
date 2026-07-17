@@ -28,6 +28,7 @@ pub struct AIPerfMockMetrics {
     pub RANKINGS_GENERATED_TOTAL: IntCounterVec,
     pub PASSAGES_RANKED_TOTAL: IntCounterVec,
     pub IMAGES_PROCESSED_TOTAL: IntCounterVec,
+    pub CONTENT_BYTES_FETCHED_TOTAL: IntCounterVec,
     pub SERVER_UPTIME_SECONDS: Gauge,
     pub REQUEST_BYTES_TOTAL: IntCounterVec,
     pub RESPONSE_BYTES_TOTAL: IntCounterVec,
@@ -182,6 +183,14 @@ impl AIPerfMockMetrics {
                 &["endpoint"],
             )
             .unwrap(),
+            CONTENT_BYTES_FETCHED_TOTAL: IntCounterVec::new(
+                Opts::new(
+                    "aiperf_mock_content_bytes_fetched_total",
+                    "Total bytes downloaded from image_url/video_url content fetches",
+                ),
+                &["endpoint"],
+            )
+            .unwrap(),
             SERVER_UPTIME_SECONDS: Gauge::new(
                 "aiperf_mock_uptime_seconds",
                 "Server uptime in seconds (updated on metrics scrape)",
@@ -252,6 +261,9 @@ impl AIPerfMockMetrics {
             .unwrap();
         m.registry
             .register(Box::new(m.IMAGES_PROCESSED_TOTAL.clone()))
+            .unwrap();
+        m.registry
+            .register(Box::new(m.CONTENT_BYTES_FETCHED_TOTAL.clone()))
             .unwrap();
         m.registry
             .register(Box::new(m.SERVER_UPTIME_SECONDS.clone()))

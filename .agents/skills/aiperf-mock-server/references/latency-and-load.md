@@ -97,6 +97,49 @@ leading blocks that match a previously-seen prefix skip prefill and are reported
 | `--image-retrieval-base-latency` | 10.0 | Base ms for `/v1/image/infer` |
 | `--image-retrieval-per-image-latency` | 5.0 | ms per retrieved image |
 
+## Fetching content-server URLs (`--fetch-content-urls`)
+
+By default the mock treats `image_url` / `video_url` values as **opaque strings** — it never
+dials out, so an AIPerf content server (`AIPERF_CONTENT_SERVER_*`, which rewrites generated
+media to `http://host:8090/content/...` URLs) is never actually hit, and its serving /
+transfer-record path stays cold. `--fetch-content-urls` (env `MOCK_SERVER_FETCH_CONTENT_URLS`,
+default **off**) makes the mock actually HTTP-GET those URLs so the content server is exercised
+end to end.
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--fetch-content-urls` | `false` | GET `http(s)` `image_url`/`video_url` targets instead of ignoring them |
+| `--content-fetch-timeout` | `30.0` | Per-request fetch timeout (seconds) |
+
+Behavior when enabled:
+
+- **`/v1/chat/completions`** — every `image_url`/`video_url` part (OpenAI string or `{url}` form)
+  is fetched **concurrently** before latency simulation. `data:` URIs and non-`http(s)` schemes
+  are skipped.
+- **`/v1/image/infer`** (`image_retrieval`) — each `input[].url` is fetched and the **real
+  downloaded byte count** feeds `usage.images_size_mb` (default-off keeps the old base64
+  string-length proxy).
+- Fetches are best-effort: any parse error, connect/transfer failure, or timeout is logged
+  (`content fetch ...` at DEBUG/WARN) and counts as 0 bytes — a fetch **never** fails the mock
+  response.
+- Downloaded volume is exposed as Prometheus `aiperf_mock_content_bytes_fetched_total{endpoint}`.
+
+**HTTP only.** The fetch client is hyper `client-legacy` over a plain `HttpConnector` (no TLS
+stack, no proxy) — deliberate, to keep a second crypto provider out of the binary and because the
+content server serves plain HTTP. `https://` targets will fail-and-log rather than download.
+`--fast` is orthogonal (it zeros latencies, not network I/O); the flag defaults off so `--fast`
+runs are unaffected unless you opt in.
+
+Quick check:
+
+```bash
+MOCK_SERVER_FETCH_CONTENT_URLS=true ./target/release/aiperf-mock-server --no-tokenizer &
+curl -s localhost:8000/v1/chat/completions -H 'content-type: application/json' \
+  -d '{"model":"m","messages":[{"role":"user","content":[
+       {"type":"image_url","image_url":{"url":"http://HOST:8090/content/images/img_000001.png"}}]}]}' >/dev/null
+curl -s localhost:8000/metrics | grep content_bytes_fetched  # > 0 after a fetch
+```
+
 ## Multi-process load balancer (`--processes N`)
 
 A single server process shares one tokio runtime; at very high request rates the runtime

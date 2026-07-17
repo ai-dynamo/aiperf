@@ -688,6 +688,14 @@ impl MetricRecorder {
         self.record_basic_success(endpoint, latency_secs);
     }
 
+    pub fn record_content_bytes_fetched(&self, endpoint: &str, bytes: u64) {
+        self.metrics
+            .aiperf
+            .CONTENT_BYTES_FETCHED_TOTAL
+            .with_label_values(&[endpoint])
+            .inc_by(bytes);
+    }
+
     pub fn record_tgi_success(&self, endpoint: &str, usage: &Usage, latency_secs: f64) {
         self.metrics
             .aiperf

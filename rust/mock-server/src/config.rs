@@ -302,7 +302,7 @@ pub struct MockServerConfig {
     /// `--disable-radix-cache=False`): a prompt's leading blocks that match a
     /// cached prefix skip prefill, lowering TTFT, and are reported as
     /// `usage.prompt_tokens_details.cached_tokens`. Hits occur only on genuinely
-    /// shared prefixes (multi-turn history, shared system prompts). Mirrors
+    /// shared prefixes such as multi-turn history and system prompts. Uses
     /// SGLang's `--disable-radix-cache`.
     #[arg(
         long,
@@ -323,7 +323,7 @@ pub struct MockServerConfig {
     pub prefix_cache_block_tokens: usize,
 
     /// Cache capacity in tokens (LRU eviction). Bounds the reuse window: once
-    /// exceeded, least-recently-used prefixes go cold and stop hitting. Mirrors
+    /// exceeded, least-recently-used prefixes go cold and stop hitting. Uses
     /// SGLang's `max_total_num_tokens` KV pool (which it derives from
     /// mem-fraction-static x GPU memory); the default is a representative
     /// single-large-GPU pool. Scale to your deployment for fidelity.
@@ -355,7 +355,7 @@ pub struct MockServerConfig {
     pub prefix_cache_latency_aware: bool,
 
     /// KV-cache eviction policy applied when the prefix cache is at capacity.
-    /// Mirrors SGLang's `--radix-eviction-policy` (default `lru`); choices:
+    /// SGLang-compatible radix eviction policy (default `lru`); choices:
     /// lru, lfu, fifo, mru, filo, priority, slru. Only observable under capacity
     /// pressure (set `--prefix-cache-capacity-blocks` below the working set);
     /// otherwise nothing is evicted and every policy behaves identically. The
@@ -405,6 +405,27 @@ pub struct MockServerConfig {
         default_value_t = 5.0
     )]
     pub image_retrieval_per_image_latency: f64,
+
+    /// Actually HTTP-GET `image_url`/`video_url` values in chat and
+    /// `/v1/image/infer` requests instead of treating them as opaque strings.
+    /// Off by default so existing runs with fake/non-routable URLs are
+    /// unaffected; enable to exercise an AIPerf content server (or any URL
+    /// host) end to end, triggering its serving and transfer-record path.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_FETCH_CONTENT_URLS",
+        default_value_t = false
+    )]
+    pub fetch_content_urls: bool,
+
+    /// Per-request timeout (seconds) for content-URL fetches when
+    /// `--fetch-content-urls` is enabled.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_CONTENT_FETCH_TIMEOUT",
+        default_value_t = 30.0
+    )]
+    pub content_fetch_timeout: f64,
 
     #[arg(long, env = "MOCK_SERVER_LOG_LEVEL", default_value = "INFO")]
     pub log_level: String,
