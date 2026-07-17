@@ -17,6 +17,9 @@
 //! artifact planes do today); "co-bound" means one [`Hub`]/[`HubServer`] owns and
 //! lifecycle-manages both, not that they share a port.
 
+#[cfg(feature = "engine")]
+mod artifact;
+mod cell_controller;
 mod discovery;
 mod plugin;
 
@@ -28,6 +31,9 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use velo::Velo;
 
+#[cfg(feature = "engine")]
+pub use artifact::{ARTIFACT_PREFIX, ArtifactHubPlugin, ReceiverSlot};
+pub use cell_controller::{CELL_CONTROLLER_PREFIX, CellControllerHubPlugin, TransportSlot};
 pub use discovery::{
     DiscoveryPlugin, DiscoveryReply, DiscoveryRequest, DiscoveryState, HUB_DISCOVERY,
     handle_discovery,

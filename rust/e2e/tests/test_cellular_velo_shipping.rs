@@ -124,8 +124,11 @@ fn velo_observables(r: &RunResult) -> Vec<String> {
 
 /// Run the config against `h`'s mock at `cells` cells. When `velo`, additionally set
 /// the force seam + the velo transport toggle + the `info`-level artifact observable
-/// filter, so a multi-cell run ships its artifacts over the velo plane.
-fn run(h: &AIPerfHarness, cells: u32, velo: bool) -> RunResult {
+/// filter, so a multi-cell run ships its artifacts over the velo plane. When `hub`,
+/// also set `AIPERF_CELLULAR_HUB=1` so the controller stands up ONE velo hub (the
+/// cell↔controller + `/artifact` + discovery plugins on one anchor) instead of the
+/// standalone planes — cells reach it by the identical `tcp://` coordinate.
+fn run_modes(h: &AIPerfHarness, cells: u32, velo: bool, hub: bool) -> RunResult {
     let tmp = tempfile::TempDir::new().unwrap();
     let cfg = tmp.path().join("velo_coverage.yaml");
     std::fs::write(&cfg, config(&h.mock.url, cells)).unwrap();
@@ -134,7 +137,15 @@ fn run(h: &AIPerfHarness, cells: u32, velo: bool) -> RunResult {
         env.push(("AIPERF_CELL_ARTIFACT_HTTP_FORCE", "1"));
         env.push(("AIPERF_ARTIFACT_TRANSPORT", "velo"));
     }
+    if hub {
+        env.push(("AIPERF_CELLULAR_HUB", "1"));
+    }
     h.run_env(&format!("--config {} --ui simple", cfg.display()), &env)
+}
+
+/// Run the config against `h`'s mock at `cells` cells (standalone-plane path).
+fn run(h: &AIPerfHarness, cells: u32, velo: bool) -> RunResult {
+    run_modes(h, cells, velo, false)
 }
 
 /// A same-host multi-process `--cells N` run with `AIPERF_ARTIFACT_TRANSPORT=velo`
@@ -287,5 +298,166 @@ async fn test_cellular_velo_shipping_matches_single_cell() {
         sorted(&ob, |r| output_projection(r)),
         sorted(&oc, |r| output_projection(r)),
         "outputs.json deterministic (text) SET diverged after velo shipping"
+    );
+}
+
+/// Run the config against `h`'s mock at `CELLS` cells over the velo plane, with the
+/// controller-forwarded observable surfaced (`warn,aiperf=info`) and, when `hub`, the
+/// hub anchor (`AIPERF_CELLULAR_HUB=1`). The default path and the hub path are driven
+/// through the identical config + force seam + velo transport; only the anchor differs.
+fn run_velo_cells(h: &AIPerfHarness, hub: bool) -> RunResult {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let cfg = tmp.path().join("velo_coverage.yaml");
+    std::fs::write(&cfg, config(&h.mock.url, CELLS)).unwrap();
+    // The controller forwards each receiver line under the `aiperf` binary target, so an
+    // `aiperf=info` level (rather than a per-target `aiperf_cellular_artifact=info`
+    // directive that only matches the un-forwarded target) reliably surfaces the
+    // `received artifact stream over velo` observable into `logs/aiperf.log`.
+    let mut env: Vec<(&str, &str)> = vec![
+        ("AIPERF_LOG", "warn,aiperf=info"),
+        ("AIPERF_CELL_ARTIFACT_HTTP_FORCE", "1"),
+        ("AIPERF_ARTIFACT_TRANSPORT", "velo"),
+    ];
+    if hub {
+        env.push(("AIPERF_CELLULAR_HUB", "1"));
+    }
+    // `--random-seed` sets `run.random_seed`, which every cell inherits verbatim (the
+    // controller only auto-derives a per-identity seed when none is authored), so both
+    // the default and hub runs synthesize the byte-identical dataset — the seed pin is
+    // what makes two independent cellular runs comparable.
+    h.run_env(
+        &format!("--config {} --ui simple --random-seed {SEED}", cfg.display()),
+        &env,
+    )
+}
+
+/// Assert a velo-shipping cellular run streamed every cell's artifacts over the velo
+/// plane (one `transport="velo"` observable per cell), and return its records + outputs.
+fn assert_velo_run(label: &str, r: &RunResult) {
+    assert!(
+        r.success(),
+        "{label} velo {CELLS}-cell run failed (exit {}):\nstdout:\n{}\nstderr:\n{}",
+        r.exit_code,
+        r.stdout,
+        r.stderr
+    );
+    assert!(
+        r.artifacts.find_file("**/cellular-heartbeat.json").is_some(),
+        "{label} {CELLS}-cell run must go through the controller (cellular-heartbeat.json)"
+    );
+    let observables = velo_observables(r);
+    assert!(
+        !observables.is_empty(),
+        "{label}: no velo artifact-stream observable — the bytes did not go over velo. \
+         Log tail:\n{}",
+        aiperf_log(r)
+            .lines()
+            .rev()
+            .take(40)
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    for cell_id in 0..CELLS {
+        assert!(
+            observables
+                .iter()
+                .any(|l| l.contains(&format!("cell_id={cell_id}"))
+                    && (l.contains("transport=\"velo\"") || l.contains("transport=velo"))),
+            "{label}: cell {cell_id} streamed no artifacts over velo; observables:\n{}",
+            observables.join("\n")
+        );
+    }
+}
+
+/// A hub-mode cellular run (`AIPERF_CELLULAR_HUB=1`) stands up ONE velo hub as the
+/// cellular anchor — the cell↔controller plugin (register/heartbeat/partition), the
+/// `/artifact` plugin (the streaming-zstd receiver), and the discovery plugin on a
+/// single velo instance — instead of the standalone transport + separate artifact
+/// receiver. This asserts the hub path is WIRE- and DATA-equivalent to the default
+/// (standalone) velo path: both 3-cell runs ship every cell's artifacts over velo, and
+/// their merged per-record output (records.jsonl / raw.jsonl / outputs.json) is
+/// identical up to the accepted per-cell-local `session_num`. Comparing the two
+/// cellular paths (not a 1-cell baseline) isolates the anchor change from the unrelated
+/// single-vs-multi-cell session-id/synthesis differences.
+#[tokio::test]
+async fn test_cellular_hub_mode_matches_default_velo_path() {
+    // Flaky on macOS CI like the other artifact e2es; skip there.
+    if cfg!(target_os = "macos") {
+        return;
+    }
+
+    let h_default = AIPerfHarness::new().await;
+    let default_path = run_velo_cells(&h_default, false);
+    assert_velo_run("default", &default_path);
+
+    let h_hub = AIPerfHarness::new().await;
+    let hub_path = run_velo_cells(&h_hub, true);
+    assert_velo_run("hub", &hub_path);
+
+    // inputs.json byte-identical: both are 3-cell velo runs over the same seeded
+    // dataset; only the control-plane anchor differs, never the dataset.
+    let inputs_default = std::fs::read(
+        default_path
+            .artifacts
+            .find_file("**/inputs.json")
+            .expect("default inputs.json"),
+    )
+    .unwrap();
+    let inputs_hub = std::fs::read(
+        hub_path
+            .artifacts
+            .find_file("**/inputs.json")
+            .expect("hub inputs.json"),
+    )
+    .unwrap();
+    assert_eq!(
+        inputs_default, inputs_hub,
+        "inputs.json must be byte-identical between the default and hub velo paths"
+    );
+
+    // records.jsonl deterministic row set (excludes session_num per the module doc).
+    let recs_default = default_path.artifacts.jsonl();
+    let recs_hub = hub_path.artifacts.jsonl();
+    assert_eq!(
+        recs_default.len(),
+        ENTRIES as usize,
+        "full-coverage default velo run must emit one record per conversation"
+    );
+    assert_eq!(
+        recs_default.len(),
+        recs_hub.len(),
+        "default and hub velo paths must emit the same records.jsonl count"
+    );
+    assert_eq!(
+        sorted(&recs_default, record_projection),
+        sorted(&recs_hub, record_projection),
+        "records.jsonl deterministic row SET diverged between the default and hub paths"
+    );
+
+    // raw.jsonl request-payload set.
+    let raw_default = default_path.artifacts.raw_records();
+    let raw_hub = hub_path.artifacts.raw_records();
+    let raw_key = |r: &Value| r["payload"]["messages"].to_string();
+    assert_eq!(
+        sorted(&raw_default, raw_key),
+        sorted(&raw_hub, raw_key),
+        "raw.jsonl request-payload SET diverged between the default and hub paths"
+    );
+
+    // outputs.json deterministic text set.
+    let od = outputs(&default_path);
+    let oh = outputs(&hub_path);
+    assert_eq!(od.len(), oh.len(), "outputs.json row count diverged (default vs hub)");
+    assert_eq!(
+        sorted(&od, |r| output_projection(r)),
+        sorted(&oh, |r| output_projection(r)),
+        "outputs.json deterministic (text) SET diverged between the default and hub paths"
+    );
+
+    eprintln!(
+        "hub-mode parity confirmed: {} default + {} hub velo artifact streams across {} cells",
+        velo_observables(&default_path).len(),
+        velo_observables(&hub_path).len(),
+        CELLS
     );
 }

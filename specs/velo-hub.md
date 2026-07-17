@@ -154,24 +154,69 @@ shared `parse_endpoint`, matching the operator injection already used for the
 controller (`CELL_CONTROLLER_ADDR_ENV`, `controller_dns_name` in
 `src/aiperf/kubernetes/`).
 
+### The `/artifact` plugin (velo artifact plane fold-in)
+
+`ArtifactHubPlugin` (prefix `/artifact`, gated on the `engine` feature) re-homes the
+velo artifact-streaming plane onto the hub. Its `register_velo_handlers` installs the
+exact OPEN/CLOSE/DONE streaming handlers via
+`engine::artifact_stream_velo::ArtifactVeloReceiver::register` — the per-file
+`velo::StreamAnchor` consumers and the streaming-zstd bounded-memory machinery are
+reused verbatim; only the mount point moves onto the hub velo instance. The bound
+`ArtifactVeloReceiver` (which owns the cell-completion barrier) is captured into a
+take-once slot (`ReceiverSlot`) the bootstrap owns after `Hub::register` returns, so
+the controller still awaits `wait_for_cells`. The HTTP surface is a dual-surface
+diagnostic: `GET /artifact/allowed` returns the same fail-closed allowlist the velo
+OPEN handler enforces, from the same plugin state. The bulk byte movement stays on the
+velo stream primitive (ordered + backpressured); the streaming OPEN/CLOSE/DONE protocol
+has no faithful plain-axum mirror and is not duplicated. `engine::artifact_shipping`
+(the raw-hyper HTTP `:9600` plane) and the standalone `ArtifactVeloReceiver` are
+retained unchanged — the fold-in is additive, not a replacement.
+
+### The cell↔controller plugin (control plane fold-in)
+
+`CellControllerHubPlugin` (prefix `/cell`) re-homes the register / heartbeat /
+partition / store-partition velo handlers onto the hub. Its `register_velo_handlers`
+calls `cellular::transport::velo_transport::VeloControllerTransport::bind_controller`
+on the hub velo — the exact handlers, unchanged — making a `Hub` the connect anchor the
+standalone controller is today (the `:9500` role). Because `VeloControllerTransport`
+carries a live `ControllerTransport::recv` stream the controller must own, the bound
+transport is captured into a take-once slot (`TransportSlot`) the bootstrap takes back
+out after registration. Its velo surface is inherently peer-registration + streaming
+coordination with no faithful plain-HTTP mirror, so the HTTP surface is a diagnostic
+`GET /cell/status`; the full protocol stays on velo.
+
+### Hub bootstrap wiring and the `AIPERF_CELLULAR_HUB` toggle
+
+`engine::cellular_controller` gates the hub path on `AIPERF_CELLULAR_HUB`
+(`1`/`true`/`on`/`yes`; default **off**). When off, behavior is byte-identical to the
+standalone planes: the `VeloControllerTransport` binds directly on the control-plane
+velo and the velo artifact receiver (when per-record artifacts ride velo) registers
+directly. When on, `build_cellular_hub` stands up ONE `Hub` over the same control-plane
+velo instance, mounting the cell↔controller plugin, the `/artifact` plugin (only when
+`http_shipping && velo_artifacts`), and the discovery plugin (advertising the mounted
+prefixes and the hub's dial-able endpoint), then serves the co-bound axum diagnostic
+surface (`AIPERF_CELLULAR_HUB_HTTP_BIND`, default loopback `:0`). The captured
+transport + artifact receiver flow back into the unchanged collect/barrier/merge loop,
+and the served `HubServer` is held for the run. Cells reach the hub by the identical
+`tcp://HOST:PORT` velo coordinate either way — the hub IS the connect anchor the
+controller already is, so no cell-side change is needed. The `test_cellular_hub_mode_
+matches_default_velo_path` e2e proves a hub-mode 3-cell velo run is wire- and
+data-equivalent (byte-identical `inputs.json`, identical records/raw/outputs row sets,
+per-cell velo observables) to the default standalone velo path.
+
 ## Future requirements
 
-This pass delivers a reviewable vertical slice: the plugin trait, the hub host,
-the discovery plugin, and the dual-surface tests. The following are explicitly
-**deferred** and are additive — the existing controller and artifact planes are
-untouched and keep working as-is:
+The vertical slice and all three original fold-ins are delivered. Remaining additive
+work (not blocking):
 
-- **Fold the artifact plane in as a plugin.** `engine::artifact_shipping`'s
-  upload/dataset routes become a `HubPlugin` (prefix `/artifact`) mounted on the
-  hub's axum service, retiring the separate `:9600` server. Its velo surface (if
-  any) registers alongside. The streaming-zstd bounded-memory machinery is reused
-  verbatim; only the mount point moves.
-- **Fold the cell↔controller plane in as a plugin.** The register / heartbeat /
-  partition / store-partition handlers (`cellular::transport::velo_transport`)
-  become a `HubPlugin` that registers exactly those velo handlers, making the hub
-  the connect anchor the controller is today (the `:9500` role).
-- **Wiring the hub into the engine bootstrap** (`engine::cellular_controller`) so
-  a real run stands up a hub instead of the two standalone servers.
+- **Retire the raw-hyper `:9600` artifact server.** The velo artifact plane is folded
+  into the hub, but the HTTP-transport artifact path (`engine::artifact_shipping`) still
+  binds its own server when `http_upload` is selected. Folding those upload/dataset
+  routes onto the hub's axum surface would retire the second port entirely.
+- **Hub-mode dataset fan-out and phaser planes.** `AIPERF_CELL_DATASET_FANOUT` and
+  `AIPERF_CELL_PHASER_START` still bind their servers directly on the control-plane velo
+  even under `AIPERF_CELLULAR_HUB`; they could become hub plugins for a single unified
+  anchor.
 
 ## Source anchors
 
@@ -181,6 +226,15 @@ untouched and keep working as-is:
 - `rust/runtime/src/hub/discovery.rs` — `DiscoveryPlugin`, `DiscoveryState`,
   `DiscoveryRequest`/`DiscoveryReply`, `handle_discovery`, and the dual-surface
   tests.
+- `rust/runtime/src/hub/artifact.rs` — `ArtifactHubPlugin` (prefix `/artifact`,
+  `engine`-gated), the `ReceiverSlot` capture, and the hub-anchor streaming test.
+- `rust/runtime/src/hub/cell_controller.rs` — `CellControllerHubPlugin` (prefix
+  `/cell`), the `TransportSlot` capture, and the hub-anchor register test.
+- `rust/runtime/src/engine/cellular_controller.rs` — the `AIPERF_CELLULAR_HUB`
+  toggle (`CELLULAR_HUB_ENV`), `build_cellular_hub`, and the hub-mode bootstrap
+  round-trip test.
+- `rust/e2e/tests/test_cellular_velo_shipping.rs` —
+  `test_cellular_hub_mode_matches_default_velo_path`, the hub-vs-default parity e2e.
 - `rust/runtime/src/cellular/transport/connect.rs` — reused `build_velo`,
   `BindSpec`, `parse_endpoint`, `connect_controller`.
 - `rust/runtime/src/engine/artifact_shipping.rs` — the HTTP+zstd artifact plane
