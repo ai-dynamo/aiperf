@@ -178,12 +178,21 @@ impl ArtifactVeloReceiver {
         });
 
         // OPEN (unary): register the cell, create the per-file anchor + consumer,
-        // reply with the handle.
+        // reply with the handle. Capture a `Weak<Velo>` (not `Arc`) so the handler
+        // does not form a reference cycle with the velo instance that owns it —
+        // `create_anchor` lives on `Velo`, not the messenger `ctx.msg`.
         let open_state = state.clone();
+        let open_velo = Arc::downgrade(&velo);
         velo.register_handler(
             Handler::unary_handler_async(HANDLER_ARTIFACT_OPEN, move |ctx: Context| {
                 let state = open_state.clone();
-                async move { handle_open(&state, ctx).await }
+                let velo = open_velo.clone();
+                async move {
+                    let Some(velo) = velo.upgrade() else {
+                        return Err(anyhow::anyhow!("velo instance dropped before artifact open"));
+                    };
+                    handle_open(&state, &velo, ctx).await
+                }
             })
             .build(),
         )
@@ -251,7 +260,11 @@ impl ArtifactVeloReceiver {
 
 /// Handle an OPEN: validate the path, register the cell peer, create the per-file
 /// anchor + streaming-decompress consumer, and reply with the anchor handle.
-async fn handle_open(state: &Arc<ReceiverState>, ctx: Context) -> anyhow::Result<Option<Bytes>> {
+async fn handle_open(
+    state: &Arc<ReceiverState>,
+    velo: &Arc<Velo>,
+    ctx: Context,
+) -> anyhow::Result<Option<Bytes>> {
     let request: OpenRequest = rmp_serde::from_slice(&ctx.payload)
         .map_err(|error| anyhow::anyhow!("decode OpenRequest: {error}"))?;
     // Validate the relative path against the run allowlist (fail closed on traversal
@@ -273,7 +286,7 @@ async fn handle_open(state: &Arc<ReceiverState>, ctx: Context) -> anyhow::Result
         .join(&rel);
 
     // One anchor + consumer per file: no shared per-chunk lock.
-    let anchor = ctx.msg.create_anchor::<Vec<u8>>();
+    let anchor = velo.create_anchor::<Vec<u8>>();
     let handle = anchor.handle();
 
     let (commit_tx, commit_rx) = oneshot::channel::<Result<(), String>>();
