@@ -151,6 +151,7 @@ impl<M: WireMessage + 'static> TracePlacement for LocalGraphTraceExecutionBacken
                 self.sink.clone(),
                 self.materializer.clone(),
                 self.node_policy.clone(),
+                self.node_failure.clone(),
             );
             let result = actor.run(plan, &abort).await;
             self.flat_aborts

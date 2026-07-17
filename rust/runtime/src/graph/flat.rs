@@ -22,7 +22,10 @@ use tokio::sync::Notify;
 use crate::graph::errors::TraceError;
 use crate::graph::materialize::PromptMaterializer;
 use crate::graph::model::{GraphRecord, GraphTracePlan};
-use crate::graph::policy::{NodeDispatchInfo, NodeDispatchPolicy};
+use crate::graph::policy::{
+    NodeDispatchInfo, NodeDispatchPolicy, NodeFailure, NodeFailureDisposition, NodeFailureKind,
+    NodeFailurePolicy,
+};
 use crate::graph::reducers::ChanVal;
 use crate::graph::sink::{GraphReplyStatus, GraphSink};
 use crate::graph::wire::WireMessage;
@@ -91,6 +94,7 @@ pub struct FlatGraphActor<M: WireMessage> {
     sink: Rc<dyn GraphSink<M>>,
     materializer: Rc<dyn PromptMaterializer>,
     node_policy: Rc<dyn NodeDispatchPolicy>,
+    node_failure: Rc<dyn NodeFailurePolicy>,
 }
 
 impl<M: WireMessage + 'static> FlatGraphActor<M> {
@@ -99,11 +103,13 @@ impl<M: WireMessage + 'static> FlatGraphActor<M> {
         sink: Rc<dyn GraphSink<M>>,
         materializer: Rc<dyn PromptMaterializer>,
         node_policy: Rc<dyn NodeDispatchPolicy>,
+        node_failure: Rc<dyn NodeFailurePolicy>,
     ) -> Self {
         Self {
             sink,
             materializer,
             node_policy,
+            node_failure,
         }
     }
 
@@ -151,16 +157,53 @@ impl<M: WireMessage + 'static> FlatGraphActor<M> {
         let reply = tokio::select! {
             biased;
             () = abort.tripped() => return Ok(()),
-            result = &mut dispatch => result.map_err(|error| TraceError::Other(error.to_string()))?,
+            result = &mut dispatch => result,
         };
-        permit.on_terminal(reply.status);
 
-        match reply.status {
-            // The sink emits the RequestRecord in every terminal case (including
-            // Failed); the flat actor only reports fatal orchestration errors.
-            GraphReplyStatus::Completed
-            | GraphReplyStatus::Cancelled
-            | GraphReplyStatus::Failed => Ok(()),
+        // Classify the terminal exactly as the general executor does: a Completed
+        // reply is Ok; a Failed/Cancelled reply or a sink error becomes a
+        // `NodeFailure` whose disposition (from the same `node_failure` policy)
+        // decides Continue (Ok) vs Abort (Err). The sink already emitted the
+        // RequestRecord in every case.
+        let (kind, message) = match reply {
+            Ok(reply) => {
+                permit.on_terminal(reply.status);
+                match reply.status {
+                    GraphReplyStatus::Completed => return Ok(()),
+                    GraphReplyStatus::Failed => {
+                        (NodeFailureKind::FailedReply, "backend returned a failed reply".to_string())
+                    }
+                    GraphReplyStatus::Cancelled => (
+                        NodeFailureKind::CancelledReply,
+                        "backend returned a cancelled reply".to_string(),
+                    ),
+                }
+            }
+            Err(error) => {
+                permit.on_terminal(GraphReplyStatus::Failed);
+                (NodeFailureKind::Sink, error.to_string())
+            }
+        };
+
+        let failure = NodeFailure {
+            trace_id,
+            node_id: node_id.clone(),
+            kind,
+            message,
+        };
+        match self.node_failure.on_failure(&failure) {
+            NodeFailureDisposition::ContinueWithEmpty => Ok(()),
+            NodeFailureDisposition::AbortTrace => {
+                let message = format!(
+                    "graph node {:?} failed ({:?}): {}",
+                    failure.node_id, failure.kind, failure.message
+                );
+                if failure.kind == NodeFailureKind::CancelledReply {
+                    Err(TraceError::Cancelled(message))
+                } else {
+                    Err(TraceError::Other(message))
+                }
+            }
         }
     }
 }
@@ -284,6 +327,7 @@ mod tests {
             sink.clone(),
             Rc::new(StubMaterializer),
             Rc::new(crate::graph::policy::NoopNodeDispatchPolicy),
+            Rc::new(crate::graph::policy::ResilientNodeFailurePolicy),
         );
         let abort = FlatAbort::new();
         actor.run(one_node_plan("t-1"), &abort).await.unwrap();
@@ -302,6 +346,7 @@ mod tests {
             sink.clone(),
             Rc::new(StubMaterializer),
             Rc::new(crate::graph::policy::NoopNodeDispatchPolicy),
+            Rc::new(crate::graph::policy::ResilientNodeFailurePolicy),
         );
         let abort = FlatAbort::new();
         abort.trip();
