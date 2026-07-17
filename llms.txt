@@ -163,10 +163,16 @@ in-process Dynamo replay requires `transport.type: dynosim_offline` or
 `transport.type: dynosim_online` and a feature-bearing runner. Each native
 transport (`http`/`grpc`/`dry_run`) is resolved from the transport registry
 through its `NativeTransportExecution` binding, so the scheduled/graph workloads
-never branch on a transport enum. There is ONE thread-per-core execution backend
-(`turn_execution::ThreadPerCoreExecutor`) generic over a `WorkerSink` (the Rust
-analogue of Python `BaseTransport.send_request`); a transport contributes only an
-`ExecutionSinkBuilder`, never its own worker loop — gRPC has no parallel
+never branch on a transport enum. There is ONE thread-per-core execution model:
+`workers==1` runs a single co-located `WorkerSink` on the coordinator reactor
+(`turn_execution::build_native`), and `workers>1` tiles that same sink across `W`
+self-contained sub-cells (`sharded_scheduled::run_sharded_scheduled`) — no
+cross-thread per-request hop (the former `ThreadPerCoreExecutor` was deleted).
+Every workload shape shards (rate/concurrency by budget, user_centric/
+fixed_schedule per conversation, static-accuracy by per-shard capture graded once
+at finalize; `shardable` is just `workers > 1`). A transport contributes only a
+`WorkerSink` via an `ExecutionSinkBuilder`, never its own worker loop/measurement
+(`transport::reduce`/`transport::measure` are shared) — gRPC has no parallel
 execution path. Adding a transport is writing a sink builder and registering a
 factory; gating one out is not registering it.
 
