@@ -310,10 +310,7 @@ fn representative_value(entry: &MetricEntry) -> Option<f64> {
 }
 
 fn finite(value: ReportValue) -> Option<f64> {
-    match value {
-        ReportValue::Finite(value) if value.is_finite() => Some(value),
-        _ => None,
-    }
+    crate::export::finite_guarded(value)
 }
 
 /// Reproduce `_build_tag_payload` (`mlflow_data_exporter.py:386`): version,

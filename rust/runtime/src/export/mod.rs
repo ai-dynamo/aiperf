@@ -35,7 +35,7 @@ use std::sync::Arc;
 
 use crate::extensions::DuplicateName;
 use crate::metrics_core::NativeReport;
-use crate::metrics_core::report::MetricSeries;
+use crate::metrics_core::report::{MetricSeries, ReportValue};
 
 /// Classification of a metric's series for summary selection, mirroring Python
 /// `native_report._summary_series`.
@@ -112,6 +112,28 @@ pub(crate) fn summary_series(series: &[MetricSeries]) -> SummarySeries<'_> {
                 None => SummarySeries::NoAggregate,
             }
         }
+    }
+}
+
+/// Lower a [`ReportValue`] to its inner `f64` by passthrough: `Finite` always
+/// yields its payload, `NonFinite` yields `None`. The `Finite` payload is
+/// trusted as-is (no `is_finite` re-check) — the projection that constructed the
+/// value already decided finiteness. Sinks that additionally reject a non-finite
+/// `Finite` payload use [`finite_guarded`] instead.
+pub(crate) fn finite_passthrough(value: ReportValue) -> Option<f64> {
+    match value {
+        ReportValue::Finite(value) => Some(value),
+        ReportValue::NonFinite => None,
+    }
+}
+
+/// Lower a [`ReportValue`] to its inner `f64`, additionally dropping a `Finite`
+/// payload that is not `is_finite` (a defensively-guarded NaN/inf). Sinks that
+/// trust the constructor's finiteness use [`finite_passthrough`] instead.
+pub(crate) fn finite_guarded(value: ReportValue) -> Option<f64> {
+    match value {
+        ReportValue::Finite(value) if value.is_finite() => Some(value),
+        _ => None,
     }
 }
 

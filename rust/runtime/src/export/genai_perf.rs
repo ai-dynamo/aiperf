@@ -238,10 +238,7 @@ impl Projected {
 /// A finite value is present; a non-finite or absent value is `None`. This is
 /// the single choke point enforcing the null→None→exclude_none contract.
 fn finite(value: Option<ReportValue>) -> Option<f64> {
-    match value {
-        Some(ReportValue::Finite(number)) if number.is_finite() => Some(number),
-        _ => None,
-    }
+    value.and_then(crate::export::finite_guarded)
 }
 
 /// Select the summary series for a metric (`native_report.py:791-806`

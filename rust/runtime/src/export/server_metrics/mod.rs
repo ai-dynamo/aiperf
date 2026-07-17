@@ -141,10 +141,7 @@ impl Exporter for ServerMetricsExporter {
 /// tails so `exclude_none`-style omission matches the Python compat path (a JSON
 /// null becomes `None` and is dropped, never emitted).
 fn finite(value: ReportValue) -> Option<f64> {
-    match value {
-        ReportValue::Finite(value) if value.is_finite() => Some(value),
-        _ => None,
-    }
+    crate::export::finite_guarded(value)
 }
 
 /// Python `BaseMetricUnit.display_name`: enum member name lowercased with

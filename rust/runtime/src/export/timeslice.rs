@@ -286,19 +286,13 @@ fn summary_series<'a>(
 /// Present, finite value of an optional [`ReportValue`]; non-finite/absent both
 /// lower to `None`.
 fn finite_opt(value: Option<ReportValue>) -> Option<f64> {
-    match value {
-        Some(ReportValue::Finite(value)) => Some(value),
-        _ => None,
-    }
+    value.and_then(crate::export::finite_passthrough)
 }
 
 /// Present, finite value of a required [`ReportValue`]; non-finite lowers to
 /// `None` (the Python projection drops it rather than serializing a sentinel).
 fn finite(value: ReportValue) -> Option<f64> {
-    match value {
-        ReportValue::Finite(value) => Some(value),
-        ReportValue::NonFinite => None,
-    }
+    crate::export::finite_passthrough(value)
 }
 
 /// Percentiles retained in canonical numeric order, non-finite entries dropped.

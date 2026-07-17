@@ -531,10 +531,7 @@ fn distribution(series: &MetricSeries) -> Option<&ReportDistributionStats> {
 
 /// A finite report value, or `None` for absent/non-finite tails.
 fn finite(value: Option<ReportValue>) -> Option<f64> {
-    match value {
-        Some(ReportValue::Finite(value)) => Some(value),
-        _ => None,
-    }
+    value.and_then(crate::export::finite_passthrough)
 }
 
 /// Multiplier converting a report display unit to seconds. The report has
