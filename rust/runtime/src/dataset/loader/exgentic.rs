@@ -553,20 +553,32 @@ fn normalize_system(value: Option<&Value>) -> Result<Vec<Value>> {
     let Some(value) = value else {
         return Ok(Vec::new());
     };
-    let text = value.as_str().ok_or_else(|| {
-        DatasetError::Validation("gen_ai.system_instructions must be a string".into())
-    })?;
-    if text.is_empty() {
-        return Ok(Vec::new());
+    match value {
+        Value::Null => Ok(Vec::new()),
+        // v2 traces store system instructions as a native array of content parts.
+        Value::Array(parts) => {
+            let mut normalized = Vec::new();
+            normalize_parts("system", parts, &mut normalized)?;
+            Ok(normalized)
+        }
+        // v1 traces store either plain system text or a JSON-encoded parts array.
+        Value::String(text) => {
+            if text.is_empty() {
+                return Ok(Vec::new());
+            }
+            if let Ok(parsed) = serde_json::from_str::<Value>(text)
+                && let Some(parts) = parsed.as_array()
+            {
+                let mut normalized = Vec::new();
+                normalize_parts("system", parts, &mut normalized)?;
+                return Ok(normalized);
+            }
+            Ok(vec![serde_json::json!({"role": "system", "content": text})])
+        }
+        _ => Err(DatasetError::Validation(
+            "gen_ai.system_instructions must be a string or content-part array".into(),
+        )),
     }
-    if let Ok(parts) = serde_json::from_str::<Value>(text)
-        && let Some(parts) = parts.as_array()
-    {
-        let mut normalized = Vec::new();
-        normalize_parts("system", parts, &mut normalized)?;
-        return Ok(normalized);
-    }
-    Ok(vec![serde_json::json!({"role":"system","content":text})])
 }
 
 fn normalize_tools(value: Option<&Value>) -> Result<Option<Vec<Value>>> {
