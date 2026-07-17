@@ -9,7 +9,7 @@ Synthetic video and embedded-audio-track configuration.
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
     BeforeValidator,
@@ -17,7 +17,6 @@ from pydantic import (
     Field,
     model_validator,
 )
-from typing_extensions import Self
 
 from aiperf.common.enums import (
     VideoAudioCodec,

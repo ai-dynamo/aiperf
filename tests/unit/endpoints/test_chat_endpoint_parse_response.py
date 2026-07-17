@@ -2,10 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for ChatEndpoint parse_response functionality."""
 
+import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.models.record_models import (
     ReasoningResponseData,
+    RequestRecord,
+    TextResponse,
     TextResponseData,
     ToolCallResponseData,
 )
@@ -377,3 +381,45 @@ class TestChatEndpointParseResponse:
         assert parsed is not None
         assert isinstance(parsed.data, ReasoningResponseData)
         assert parsed.data.reasoning == "Thinking..."
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            param(
+                {"choices": [{"message": {"content": "hi"}}]}, id="missing-object"
+            ),
+            param(
+                {"object": "error", "message": "backend died", "code": 500},
+                id="vllm-error-object",
+            ),
+            param({"error": {"message": "Internal Server Error"}}, id="error-body"),
+        ],
+    )  # fmt: skip
+    def test_parse_response_unrecognized_object_returns_none(self, endpoint, body):
+        """Malformed/error bodies (server crash, proxy errors) degrade to None
+        instead of raising, so the worker records a failure and continues."""
+        assert endpoint.parse_response(create_mock_response(1, body)) is None
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            param(
+                {"choices": [{"message": {"content": "hi"}}]}, id="missing-object"
+            ),
+            param(
+                {"object": "error", "message": "backend died", "code": 500},
+                id="vllm-error-object",
+            ),
+            param({"error": {"message": "Internal Server Error"}}, id="error-body"),
+        ],
+    )  # fmt: skip
+    def test_build_assistant_turn_unrecognized_object_returns_none(
+        self, endpoint, body
+    ):
+        """build_assistant_turn (DAG/multi-turn replay path) must not raise on a
+        malformed/error response - it returns None so no assistant turn is stored."""
+        record = RequestRecord(
+            model_name="m",
+            responses=[TextResponse(perf_ns=1, text=orjson.dumps(body).decode())],
+        )
+        assert endpoint.build_assistant_turn(record) is None

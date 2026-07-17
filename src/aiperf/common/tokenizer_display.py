@@ -291,10 +291,10 @@ def log_tokenizer_validation_results(
     for entry in results:
         if entry.was_resolved:
             logger.info(
-                f"✓ Tokenizer {entry.resolved_name} detected for {entry.original_name}"
+                f"[OK] Tokenizer {entry.resolved_name} detected for {entry.original_name}"
             )
         else:
-            logger.info(f"✓ Tokenizer {entry.resolved_name} detected")
+            logger.info(f"[OK] Tokenizer {entry.resolved_name} detected")
 
     total = len(results)
     resolved = sum(1 for e in results if e.was_resolved)
@@ -303,7 +303,7 @@ def log_tokenizer_validation_results(
         parts.append(f"{resolved} resolved")
     if elapsed_seconds is not None:
         parts.append(f"{elapsed_seconds:.1f}s")
-    logger.info(" • ".join(parts))
+    logger.info(" | ".join(parts))
 
 
 def _display_panel(title: str, content: str, console: Console | None = None) -> None:

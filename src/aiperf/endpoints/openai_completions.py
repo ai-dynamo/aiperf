@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from aiperf.common.constants import WARMUP_SYSTEM_MESSAGE_PREFIX
+from aiperf.common.enums import CreditPhase
 from aiperf.common.models import (
     BaseResponseData,
     InferenceServerResponse,
@@ -37,11 +39,17 @@ class CompletionsEndpoint(BaseEndpoint):
         prompts = [
             content for text in turn.texts for content in text.contents if content
         ]
+        if request_info.credit_phase == CreditPhase.WARMUP:
+            prompts = [
+                f"{WARMUP_SYSTEM_MESSAGE_PREFIX}\n{prompt}" for prompt in prompts
+            ]
 
         extra = model_endpoint.endpoint.extra or []
 
         payload = {
-            "prompt": prompts,
+            # A single prompt goes on the wire as a bare string (the canonical
+            # OpenAI form); some gateways reject the list[str] wrapping.
+            "prompt": prompts[0] if len(prompts) == 1 else prompts,
             "model": turn.model or model_endpoint.primary_model_name,
             "stream": model_endpoint.endpoint.streaming,
         }
@@ -115,5 +123,8 @@ class CompletionsEndpoint(BaseEndpoint):
                     return None
                 return self.make_text_response_data(choices[0].get("text"))
             case _:
-                object_type = json_obj.get("object")
-                raise ValueError(f"Unsupported OpenAI object type: {object_type!r}")
+                # Unrecognized object: the server can return arbitrary bodies
+                # (error JSON, proxy pages, truncated streams on crash). Degrade
+                # to None like the no-choices case above rather than raising, so
+                # the worker records a failure and keeps going.
+                return None

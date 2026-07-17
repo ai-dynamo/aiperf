@@ -51,11 +51,11 @@ For ICL specifically:
 - `count`, `sum`, `min`, `max`, `avg`, `std` are computed exactly and match what an exact array would produce.
 - Per-request ICL lists in `profile_export.jsonl` are unchanged — anything that needs sample-level precision can read those.
 
-For all other metrics: **no change**. Scalar record metrics still use the exact-storage `MetricArray` path. Aggregate metrics (`inter_token_latency`, `request_latency`, etc.) compute through their own existing aggregator; t-digest is not in their path.
+For all other metrics: **no change**. Scalar record metrics still use the exact numpy column store (`ColumnStore`). Aggregate metrics (`inter_token_latency`, `request_latency`, etc.) compute through their own existing aggregator; t-digest is not in their path.
 
 ## Where it lives
 
 - Aggregator class: [`src/aiperf/metrics/list_metric_aggregation.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/metrics/list_metric_aggregation.py) — `TDigestListMetricAggregator`.
-- Selection site: [`src/aiperf/post_processors/metric_results_processor.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/post_processors/metric_results_processor.py) — first-touch dispatch by `isinstance(value, list)`.
+- Selection site: [`src/aiperf/metrics/column_store.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/metrics/column_store.py) — first-touch dispatch by `isinstance(value, list)` in `ColumnStore._resolve_tag_handler()`.
 - Compression knob: `Environment.METRICS.TDIGEST_COMPRESSION` (env: `AIPERF_METRICS_TDIGEST_COMPRESSION`, default 500).
 - Dependency: [`crick~=0.0.8`](https://pypi.org/project/crick/) (Cython/C-backed t-digest, BSD-3, dask-org maintained).

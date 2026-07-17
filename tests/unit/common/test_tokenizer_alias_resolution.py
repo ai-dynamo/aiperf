@@ -184,6 +184,34 @@ class TestTokenizerAliasResolution:
         mock_model_info.assert_not_called()
         mock_list_models.assert_not_called()
 
+    def test_resolve_alias_treats_posix_absolute_path_as_local(
+        self, mock_model_info, mock_list_models
+    ):
+        """Regression for the Windows-path edge case: a POSIX-style absolute
+        path like ``/home/user/foo`` is NOT absolute under ``WindowsPath``
+        (``WindowsPath('/home/user/foo').is_absolute() == False`` — Windows
+        requires a drive letter for absoluteness). The resolver uses
+        ``path.anchor`` instead, which is truthy for any path with a drive
+        AND/OR a root, so the POSIX-style path is still recognized as local
+        on Windows and skips the HuggingFace network round-trip. Pins
+        Ergo-Low-2 from the F-series review.
+        """
+        from pathlib import PureWindowsPath
+
+        # Document the bug we're avoiding — if this stops being true, the
+        # path.anchor workaround can be simplified back to is_absolute().
+        # ``PureWindowsPath`` (no FS access) is used so this assertion runs
+        # on every platform, not only Windows.
+        assert PureWindowsPath("/home/user/foo").is_absolute() is False
+        assert bool(PureWindowsPath("/home/user/foo").anchor) is True
+
+        # The resolver itself must skip the network for this path shape on
+        # every platform (the anchor check fires regardless of OS).
+        result = Tokenizer.resolve_alias("/home/user/foo")
+        assert result.resolved_name == "/home/user/foo"
+        mock_model_info.assert_not_called()
+        mock_list_models.assert_not_called()
+
     def test_resolve_alias_skips_in_offline_mode(
         self, mock_model_info, mock_list_models, monkeypatch
     ):

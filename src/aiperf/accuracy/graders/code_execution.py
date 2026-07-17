@@ -40,6 +40,7 @@ import orjson
 
 from aiperf.accuracy.graders.base import BaseGrader
 from aiperf.accuracy.models import GradingResult
+from aiperf.common.utils import allow_daemon_children
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -50,6 +51,7 @@ try:
     from lighteval.tasks.tasks.lcb.codegen_metrics import (
         codegen_metrics,
         extract_code,
+        translate_private_test_cases,
     )
 
     _HAS_LIGHTEVAL_LCB = True
@@ -57,6 +59,7 @@ except ImportError:  # pragma: no cover
     _HAS_LIGHTEVAL_LCB = False
     codegen_metrics = None  # type: ignore[assignment]
     extract_code = None  # type: ignore[assignment]
+    translate_private_test_cases = None  # type: ignore[assignment]
 
 
 _MISSING_LIGHTEVAL_HINT = (
@@ -87,10 +90,15 @@ class CodeExecutionGrader(BaseGrader):
     raised an exception during execution.
     """
 
-    def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
-        super().__init__(run=run, **kwargs)
+    @classmethod
+    def check_available(cls) -> None:
+        """Raise if lighteval is missing (see ``BaseGrader.check_available``)."""
         if not _HAS_LIGHTEVAL_LCB:
             raise RuntimeError(_MISSING_LIGHTEVAL_HINT)
+
+    def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
+        super().__init__(run=run, **kwargs)
+        self.check_available()
 
     def extract_answer(self, response_text: str, **kwargs: Any) -> str:
         """Return the code block lighteval would extract from the response.
@@ -101,7 +109,7 @@ class CodeExecutionGrader(BaseGrader):
         """
         try:
             return str(extract_code(response_text) or "")
-        except Exception as exc:  # pragma: no cover - defensive  # noqa: BLE001
+        except Exception as exc:  # pragma: no cover - defensive
             _log.debug("extract_code raised: %s", exc, exc_info=True)
             return ""
 
@@ -143,13 +151,9 @@ class CodeExecutionGrader(BaseGrader):
             # thread keeps the event loop free for other concurrent
             # grade() calls during a benchmark run.
             metrics, _ = await asyncio.to_thread(
-                codegen_metrics,
-                evaluation_sample,
-                generated_code,
-                k_list=list(_LCB_PASS_AT_K),
-                num_process_evaluate=_LCB_NUM_PROCESSES,
+                _run_codegen_metrics, evaluation_sample, generated_code
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _log.debug("lighteval codegen_metrics raised: %s", exc, exc_info=True)
             return _grading_failure(
                 response_text, ground_truth, f"sandboxed exec failed: {exc}"
@@ -172,6 +176,33 @@ class CodeExecutionGrader(BaseGrader):
             ),
             extracted_answer=snippet,
             ground_truth="<lcb test cases>",
+        )
+
+
+def _run_codegen_metrics(
+    evaluation_sample: list[dict[str, str]], generated_code: list[list[str]]
+) -> tuple[dict[str, Any], Any]:
+    """Run lighteval's ``codegen_metrics`` with the daemon flag cleared.
+
+    ``codegen_metrics`` fans out to a ProcessPoolExecutor. AIPerf runs the
+    record processor as a daemon (every service is spawned with
+    ``daemon=True``), and Python forbids daemons from spawning child
+    processes, so the flag must be cleared for the duration of the fork or
+    grading dies with "daemonic processes are not allowed to have children"
+    — silently mislabeled as unparsed.
+
+    TODO: This flag-flipping is a pragmatic workaround. The cleaner design is
+    to own the sandboxed-execution pool outside the daemon (e.g. a non-daemon
+    executor service the record processor delegates to) so no daemon state is
+    mutated. Revisit if sandboxed grading needs to scale beyond a single
+    per-record pool.
+    """
+    with allow_daemon_children():
+        return codegen_metrics(
+            evaluation_sample,
+            generated_code,
+            k_list=list(_LCB_PASS_AT_K),
+            num_process_evaluate=_LCB_NUM_PROCESSES,
         )
 
 
@@ -234,7 +265,7 @@ def _payload_to_test_cases(
         raise TypeError(f"expected dict payload, got {type(payload).__name__}")
 
     public_cases = _parse_test_cases(payload.get("public_test_cases", ""))
-    private_cases = _parse_test_cases(payload.get("private_test_cases", ""))
+    private_cases = _decode_private_test_cases(payload.get("private_test_cases", ""))
     all_cases = public_cases + private_cases
     if not all_cases:
         # A payload with zero test cases is unambiguously malformed:
@@ -276,6 +307,45 @@ def _parse_test_cases(raw: Any) -> list[dict[str, Any]]:
     raise TypeError(
         f"test cases must be a JSON string or list, got {type(raw).__name__}"
     )
+
+
+def _decode_private_test_cases(raw: Any) -> list[dict[str, Any]]:
+    """Decode LCB's ``private_test_cases`` field.
+
+    The upstream LCB dataset stores ``private_test_cases`` as a
+    base64 → zlib → pickle → json blob to keep the on-disk size
+    reasonable (the private cases can be much larger than the public
+    ones). ``translate_private_test_cases`` in
+    ``lighteval.tasks.tasks.lcb.codegen_metrics`` is the canonical
+    decoder; the trt-llm/lighteval LCB task calls it the same way
+    (``private_test_cases =
+    translate_private_test_cases(line["private_test_cases"])``).
+
+    For string inputs we try the encoded decode first to match the
+    production data path. If decoding raises (the string is plain
+    JSON — the legacy shape used by older fixtures and in-process
+    callers), fall back to the same JSON-string handling
+    ``_parse_test_cases`` uses for the public side so existing
+    consumers don't break. Already-deserialized lists are passed
+    through verbatim.
+    """
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        return raw
+    if (
+        isinstance(raw, str | bytes | bytearray)
+        and translate_private_test_cases is not None
+    ):
+        try:
+            return translate_private_test_cases(raw)
+        except Exception:  # graceful fallback to legacy plain-JSON shape
+            _log.debug(
+                "translate_private_test_cases couldn't decode raw private_test_cases; "
+                "falling back to plain JSON parse",
+                exc_info=True,
+            )
+    return _parse_test_cases(raw)
 
 
 def _grading_failure(

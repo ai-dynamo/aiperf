@@ -61,6 +61,9 @@ class MockCreditRouter:
             self._pending.append(asyncio.create_task(self._do_return(credit)))
             await yield_to_event_loop()
 
+    async def wait_for_workers(self, timeout: float) -> None:
+        pass
+
     async def _do_return(self, credit: Credit) -> None:
         await asyncio.sleep(0.001)
         if self._return_cb:

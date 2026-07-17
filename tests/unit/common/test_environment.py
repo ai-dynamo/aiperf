@@ -19,45 +19,69 @@ class TestServiceSettingsUvloopWindows:
     """Test suite for automatic uvloop disabling on Windows."""
 
     @pytest.mark.parametrize(
-        "platform_name,expected_disable_uvloop",
+        "is_windows,expected_disable_uvloop",
         [
-            param("Windows", True, id="windows_auto_disabled"),
-            param("Linux", False, id="linux_enabled"),
-            param("Darwin", False, id="macos_enabled"),
+            param(True, True, id="windows_auto_disabled"),
+            param(False, False, id="linux_enabled"),
+            param(False, False, id="macos_enabled"),
         ],
     )
-    @patch("aiperf.common.environment.platform.system")
-    def test_platform_uvloop_detection(
-        self, mock_platform, platform_name, expected_disable_uvloop
-    ):
+    def test_platform_uvloop_detection(self, is_windows, expected_disable_uvloop):
         """Test that uvloop is automatically disabled on Windows and enabled elsewhere."""
-        mock_platform.return_value = platform_name
-
-        settings = _ServiceSettings()
-
-        assert settings.DISABLE_UVLOOP is expected_disable_uvloop
+        with patch("aiperf.common.environment.IS_WINDOWS", is_windows):
+            settings = _ServiceSettings()
+            assert settings.DISABLE_UVLOOP is expected_disable_uvloop
 
     @pytest.mark.parametrize(
-        "platform_name,manual_setting,expected_result",
+        "is_windows,manual_setting,expected_result",
         [
-            param("Windows", False, True, id="windows_override_attempt"),
-            param("Windows", True, True, id="windows_manual_disable"),
-            param("Linux", True, True, id="linux_manual_disable"),
-            param("Linux", False, False, id="linux_default_enabled"),
-            param("Darwin", True, True, id="macos_manual_disable"),
-            param("Darwin", False, False, id="macos_default_enabled"),
+            param(True, False, True, id="windows_override_attempt"),
+            param(True, True, True, id="windows_manual_disable"),
+            param(False, True, True, id="linux_manual_disable"),
+            param(False, False, False, id="linux_default_enabled"),
+            param(False, True, True, id="macos_manual_disable"),
+            param(False, False, False, id="macos_default_enabled"),
         ],
     )
-    @patch("aiperf.common.environment.platform.system")
-    def test_manual_uvloop_settings(
-        self, mock_platform, platform_name, manual_setting, expected_result
-    ):
+    def test_manual_uvloop_settings(self, is_windows, manual_setting, expected_result):
         """Test manual DISABLE_UVLOOP settings across platforms."""
-        mock_platform.return_value = platform_name
+        with patch("aiperf.common.environment.IS_WINDOWS", is_windows):
+            settings = _ServiceSettings(DISABLE_UVLOOP=manual_setting)
+            assert settings.DISABLE_UVLOOP is expected_result
 
-        settings = _ServiceSettings(DISABLE_UVLOOP=manual_setting)
 
-        assert settings.DISABLE_UVLOOP is expected_result
+class TestWindowsTcpPortWindowValidation:
+    """Pins the port-window-fits-in-TCP-range validator. Without it,
+    ``build_socket_address`` would silently emit invalid URLs like
+    ``tcp://127.0.0.1:84999`` and fail at ZMQ bind time with a
+    misleading error.
+    """
+
+    def test_valid_window_within_range_is_accepted(self) -> None:
+        """The default values (28000 + 20000 = 48000 max port) are well
+        under 65535 and must not trip the validator."""
+        settings = _ServiceSettings()
+        assert (
+            settings.WINDOWS_TCP_BASE_PORT + settings.WINDOWS_TCP_PORT_RANGE - 1
+            <= 65535
+        )
+
+    def test_boundary_window_exactly_fitting_is_accepted(self) -> None:
+        """Window where ``base + range - 1 == 65535`` is the largest legal
+        config — must NOT raise. Example: base 45536 + range 20000 → max
+        port 65535."""
+        _ServiceSettings(WINDOWS_TCP_BASE_PORT=45536, WINDOWS_TCP_PORT_RANGE=20000)
+
+    def test_window_overflowing_max_port_raises(self) -> None:
+        """When ``base + range - 1 > 65535`` the model_validator must raise
+        with a message naming both env-var names so the user knows which
+        knob to adjust."""
+        with pytest.raises(Exception) as exc:
+            _ServiceSettings(WINDOWS_TCP_BASE_PORT=65000, WINDOWS_TCP_PORT_RANGE=20000)
+        msg = str(exc.value)
+        assert "WINDOWS_TCP_BASE_PORT" in msg
+        assert "WINDOWS_TCP_PORT_RANGE" in msg
+        assert "65535" in msg
 
 
 class TestProfileConfigureTimeout:

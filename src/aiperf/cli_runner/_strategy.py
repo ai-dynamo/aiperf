@@ -19,6 +19,7 @@ multi-run path can't honor before any setup work begins.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
     from aiperf.orchestrator.convergence.base import ConvergenceCriterion
     from aiperf.orchestrator.search_planner.base import SearchPlanner
     from aiperf.orchestrator.strategies import ExecutionStrategy
+
+logger = logging.getLogger(__name__)
 
 
 def validate_convergence_config(plan: BenchmarkPlan) -> None:
@@ -123,6 +126,10 @@ def _build_search_planner(plan: BenchmarkPlan) -> SearchPlanner | None:
     the `search_planner` category) are reachable through the same code path
     as the built-in `bayesian` planner.
 
+    When 2+ SLO tiers are configured (via ``--search-sla-tier``), the
+    ``MultiTierPlanner`` is instantiated instead of the single-tier planner.
+    Single-tier behavior (no ``--search-sla-tier``) remains unchanged.
+
     The planner class is responsible for raising a clear ImportError if an
     explicitly requested optional sampler is unavailable.
     """
@@ -131,8 +138,32 @@ def _build_search_planner(plan: BenchmarkPlan) -> SearchPlanner | None:
     if not isinstance(plan.sweep, AdaptiveSearchSweep):
         return None
 
+    cfg = plan.sweep
+
+    # Multi-tier override: when 2+ tiers are configured, activate the
+    # MultiTierPlanner regardless of the underlying planner selection.
+    # Single-tier behavior is preserved: existing planners run unmodified.
+    if len(cfg.sla_tiers) >= 2:
+        from aiperf.orchestrator.search_planner.multi_tier_planner import (
+            MultiTierPlanner,
+        )
+        from aiperf.plugin.enums import SearchPlannerType
+
+        # The search style's *algorithm* is not used by multi-tier (it runs its
+        # own bracket/bisection); warn so the user isn't surprised. The style's
+        # precision and warmup settings ARE still applied.
+        if cfg.planner != SearchPlannerType.SMOOTH_ISOTONIC:
+            logger.warning(
+                "The search algorithm for --search-style %s is not used when "
+                "--search-sla-tier is active; multi-tier uses its own "
+                "bracket/bisection method. The style's precision and warmup "
+                "settings still apply.",
+                cfg.planner,
+            )
+        return MultiTierPlanner(plan.configs[0], cfg, cfg.sla_tiers)
+
     from aiperf.plugin import plugins
     from aiperf.plugin.enums import PluginType
 
-    planner_cls = plugins.get_class(PluginType.SEARCH_PLANNER, str(plan.sweep.planner))
-    return planner_cls(plan.configs[0], plan.sweep)
+    planner_cls = plugins.get_class(PluginType.SEARCH_PLANNER, str(cfg.planner))
+    return planner_cls(plan.configs[0], cfg)

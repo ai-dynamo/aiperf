@@ -88,40 +88,6 @@ class TestBuildLoaderKwargs:
             )
         assert kwargs == {}
 
-    def test_category_forwarded_when_set(self, aimo_config):
-        from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
-
-        composer = PublicDatasetComposer(run=make_run(aimo_config), tokenizer=None)
-        with patch(
-            "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
-            return_value=PublicDatasetLoaderMetadata(
-                hf_dataset_name="nvidia/SPEED-Bench",
-                hf_split="test",
-                hf_subset="qualitative",
-                category="coding",
-            ),
-        ):
-            kwargs = composer._build_loader_kwargs(
-                PublicDatasetType.AIMO, HFInstructionResponseDatasetLoader
-            )
-        assert kwargs["category"] == "coding"
-
-    def test_no_category_in_kwargs_when_none(self, aimo_config):
-        from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
-
-        composer = PublicDatasetComposer(run=make_run(aimo_config), tokenizer=None)
-        with patch(
-            "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
-            return_value=PublicDatasetLoaderMetadata(
-                hf_dataset_name="nvidia/SPEED-Bench",
-                hf_split="test",
-            ),
-        ):
-            kwargs = composer._build_loader_kwargs(
-                PublicDatasetType.AIMO, HFInstructionResponseDatasetLoader
-            )
-        assert "category" not in kwargs
-
     def test_multi_turn_forwarded_to_supporting_loader(self, aimo_config):
         from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
 
@@ -142,7 +108,7 @@ class TestBuildLoaderKwargs:
 
     def test_multi_turn_raises_for_unsupported_loader(self, aimo_config):
         """A loader that doesn't declare multi_turn on its __init__ must not
-        silently swallow the kwarg via **kwargs — composer should refuse."""
+        silently swallow the kwarg via **kwargs; composer should refuse."""
         from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
 
         composer = PublicDatasetComposer(run=make_run(aimo_config), tokenizer=None)

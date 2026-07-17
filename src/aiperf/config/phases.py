@@ -1,6 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-
 """
 AIPerf Configuration v2.0 - Phase Configuration
 
@@ -11,7 +10,7 @@ making invalid states unrepresentable.
 
 from __future__ import annotations
 
-from typing import Annotated, ClassVar, Literal
+from typing import Annotated, ClassVar, Literal, Self
 
 from pydantic import (
     ConfigDict,
@@ -19,8 +18,8 @@ from pydantic import (
     Field,
     model_validator,
 )
-from typing_extensions import Self
 
+from aiperf.config.adaptive_scale_phase import AdaptiveScalePhaseMixin
 from aiperf.config.base import BaseConfig
 from aiperf.config.cancellation import CancellationConfig
 from aiperf.config.loader.duration import (
@@ -29,6 +28,7 @@ from aiperf.config.loader.duration import (
     _parse_duration,
 )
 from aiperf.config.ramp import RampConfig, RampSpec, _normalize_ramp
+from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.plugin.enums import PhaseType, PhaseTypeStr, RampType
 
 __all__ = [
@@ -51,6 +51,7 @@ __all__ = [
     "_normalize_duration",
     "_normalize_ramp",
     "_parse_duration",
+    "get_phase_rate",
 ]
 
 
@@ -59,7 +60,7 @@ __all__ = [
 # =============================================================================
 
 
-class BasePhaseConfig(BaseConfig):
+class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
     """Base configuration shared by all phase types.
 
     Not instantiated directly -- use a concrete type via the
@@ -198,6 +199,14 @@ class BasePhaseConfig(BaseConfig):
         Field(
             default=None,
             description="Request cancellation testing configuration.",
+        ),
+    ]
+
+    sla: Annotated[
+        list[SLAFilter],
+        Field(
+            default_factory=list,
+            description="SLA filters evaluated by adaptive load controllers.",
         ),
     ]
 
@@ -393,11 +402,6 @@ class UserCentricPhase(RatePhaseConfig):
         return self
 
 
-# =============================================================================
-# FIXED SCHEDULE PHASE
-# =============================================================================
-
-
 class FixedSchedulePhase(BasePhaseConfig):
     """Replay requests at predetermined timestamps from a trace dataset.
 
@@ -465,3 +469,12 @@ PhaseConfig = Annotated[
     | FixedSchedulePhase,
     Discriminator("type"),
 ]
+
+
+def get_phase_rate(phase: BasePhaseConfig) -> float | None:
+    """Return the configured request rate for a phase, or None for non-rate phases.
+
+    Single accessor for the ``rate`` field so a future rename fails fast here
+    instead of being silently swallowed by scattered ``getattr(..., None)`` reads.
+    """
+    return phase.rate if isinstance(phase, RatePhaseConfig) else None

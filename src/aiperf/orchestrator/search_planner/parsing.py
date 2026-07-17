@@ -1,14 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""CLI grammar primitives for --search-space and --search-sla.
+"""CLI grammar primitives for --search-space, --search-sla, and --search-sla-tier.
 
 Pure parsing - no Optuna / BoTorch import, so import cost is negligible. The
 objective shape (metric / stat / direction) is three separate Pydantic-validated
 fields and needs no parser.
 
 Grammar:
-    --search-space "PATH:LO,HI[:KIND]"      (repeatable; KIND in int/real)
-    --search-sla   "TAG:STAT:OP:THRESHOLD"  (repeatable)
+    --search-space    "PATH:LO,HI[:KIND]"                  (repeatable; KIND in int/real)
+    --search-sla      "TAG:STAT:OP:THRESHOLD"              (repeatable)
+    --search-sla-tier "LABEL:FILTER[,FILTER...]"           (repeatable; 2-10 tiers)
 
 Errors raise ``TypeError`` naming the offending flag so cyclopts / click
 surface the message cleanly.
@@ -19,9 +20,23 @@ from __future__ import annotations
 from typing import Any, cast
 
 from aiperf.config.sweep.adaptive import SearchSpaceDimension, SLAFilter
+from aiperf.orchestrator.search_planner.multi_tier_models import SLOTier
 
 _VALID_KINDS = ("int", "real")
-_VALID_SLA_STATS: tuple[str, ...] = ("avg", "p50", "p90", "p95", "p99")
+_VALID_SLA_STATS: tuple[str, ...] = (
+    "avg",
+    "p1",
+    "p5",
+    "p10",
+    "p25",
+    "p50",
+    "p75",
+    "p90",
+    "p95",
+    "p99",
+    "min",
+    "max",
+)
 _VALID_SLA_OPS: tuple[str, ...] = ("lt", "le", "gt", "ge")
 
 
@@ -132,3 +147,102 @@ def parse_sla_filter(value: str) -> SLAFilter:
         op=cast(Any, op),
         threshold=threshold,
     )
+
+
+# ---------------------------------------------------------------------------
+# --search-sla-tier parsing
+# ---------------------------------------------------------------------------
+
+_TIER_COUNT_MIN = 2
+_TIER_COUNT_MAX = 10
+
+
+def _has_label(value: str) -> bool:
+    """Determine if the tier string starts with an explicit label.
+
+    A valid filter has exactly 3 colons (metric_tag:stat:op:threshold).
+    If the text before the first comma has != 3 colons, a label is present:
+    - More than 3 colons means a label: prefix adds an extra colon separator
+    - Fewer than 3 colons means it's a bare label without any filter content
+    """
+    first_segment = value.split(",", 1)[0]
+    return first_segment.count(":") != 3
+
+
+def parse_sla_tier(value: str, *, _auto_index: int = 0) -> SLOTier:
+    """Parse a single ``--search-sla-tier`` flag value.
+
+    Grammar: ``"LABEL:FILTER[,FILTER...]"`` or ``"FILTER[,FILTER...]"``
+
+    When the first colon-delimited segment before the first comma has fewer
+    than 3 colons it is treated as a label. Otherwise an auto-generated
+    label (``tier_1``, ``tier_2``, ...) is assigned using ``_auto_index``.
+
+    Each FILTER uses the existing ``metric_tag:stat:op:threshold`` grammar
+    parsed via :func:`parse_sla_filter`.
+
+    Raises:
+        TypeError: when the value cannot be parsed or produces zero filters.
+    """
+    if not value.strip():
+        raise TypeError("--search-sla-tier: value must not be empty.")
+
+    if _has_label(value):
+        # Split label from the rest at the first colon
+        label, _, remainder = value.partition(":")
+        if not label:
+            raise TypeError(
+                f"--search-sla-tier {value!r}: label before ':' must not be empty."
+            )
+    else:
+        label = f"tier_{_auto_index + 1}"
+        remainder = value
+
+    # Split remainder by comma to get individual filter strings
+    filter_strs = [f.strip() for f in remainder.split(",") if f.strip()]
+    if not filter_strs:
+        raise TypeError(
+            f"--search-sla-tier {value!r}: tier '{label}' contains zero filters. "
+            f"Each tier must have at least one filter in 'metric_tag:stat:op:threshold' format."
+        )
+
+    filters: list[SLAFilter] = []
+    for fs in filter_strs:
+        try:
+            filters.append(parse_sla_filter(fs))
+        except TypeError as e:
+            raise TypeError(
+                f"--search-sla-tier {value!r}: error parsing filter {fs!r} in tier '{label}': {e}"
+            ) from e
+
+    return SLOTier(label=label, filters=filters)
+
+
+def validate_tier_list(tiers: list[SLOTier]) -> list[SLOTier]:
+    """Validate a list of parsed SLO tiers.
+
+    Checks:
+    - Tier count is in [{_TIER_COUNT_MIN}, {_TIER_COUNT_MAX}].
+    - No duplicate labels.
+
+    Raises:
+        ValueError: when tier count is out of range or labels are duplicated.
+    """
+    count = len(tiers)
+    if count < _TIER_COUNT_MIN or count > _TIER_COUNT_MAX:
+        raise ValueError(
+            f"--search-sla-tier: expected between {_TIER_COUNT_MIN} and "
+            f"{_TIER_COUNT_MAX} tiers, got {count}."
+        )
+
+    seen: dict[str, int] = {}
+    for i, tier in enumerate(tiers):
+        if tier.label in seen:
+            raise ValueError(
+                f"--search-sla-tier: duplicate label {tier.label!r} "
+                f"(tiers {seen[tier.label] + 1} and {i + 1}). "
+                f"Each tier must have a unique label."
+            )
+        seen[tier.label] = i
+
+    return tiers

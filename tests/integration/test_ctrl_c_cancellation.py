@@ -9,6 +9,7 @@ These tests verify the graceful cancellation via Ctrl+C:
 
 import pytest
 
+from aiperf.common.constants import IS_WINDOWS
 from tests.harness.utils import AIPerfMockServer
 from tests.integration.conftest import AIPerfSignalCLI
 from tests.integration.conftest import IntegrationTestDefaults as defaults
@@ -16,6 +17,15 @@ from tests.integration.conftest import IntegrationTestDefaults as defaults
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+@pytest.mark.skipif(
+    IS_WINDOWS,
+    reason=(
+        "Windows uses CTRL_C_EVENT/CTRL_BREAK_EVENT instead of POSIX SIGINT, "
+        "and signal.signal(SIGINT, ...) in child processes raises "
+        "ValueError: Unsupported signal: 2. Graceful Ctrl+C cancellation is "
+        "not supported on Windows — track separately if needed."
+    ),
+)
 class TestCtrlCCancellation:
     """Tests for Ctrl+C (SIGINT) benchmark cancellation functionality."""
 

@@ -254,3 +254,457 @@ class TestRateRampRequiresRequestRate:
         user = _make_user(loadgen=loadgen)
         prof = build_profiling(user)
         assert prof.get("rate_ramp") == {"duration": 30}
+
+
+class TestAdaptiveScaleRoutes:
+    def test_adaptive_scale_cli_fields_route_to_profiling_phase(
+        self: TestAdaptiveScaleRoutes,
+    ) -> None:
+        loadgen = CLIConfig(
+            adaptive_scale=True,
+            adaptive_sustain_duration=120.0,
+            adaptive_assessment_period=30.0,
+            adaptive_scale_sla=["request_latency:p95:le:30000"],
+            benchmark_duration=600.0,
+            concurrency=200,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+
+        assert prof["type"] == PhaseType.CONCURRENCY
+        assert prof["adaptive_scale"] is True
+        assert prof["adaptive_sustain_duration"] == 120.0
+        assert prof["adaptive_assessment_period"] == 30.0
+        assert prof["sla"] == [
+            {
+                "metric_tag": "request_latency",
+                "stat": "p95",
+                "op": "le",
+                "threshold": 30000.0,
+            }
+        ]
+
+    def test_adaptive_scale_compact_control_routes_to_profiling_phase(
+        self: TestAdaptiveScaleRoutes,
+    ) -> None:
+        loadgen = CLIConfig(
+            adaptive_scale=True,
+            adaptive_scale_control="request_rate:1,200:float",
+            adaptive_sustain_duration=120.0,
+            adaptive_scale_sla=["request_latency:p95:le:30000"],
+            benchmark_duration=600.0,
+            request_rate=200.0,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+
+        assert prof["adaptive_control_variable"] == "request_rate"
+        assert prof["adaptive_control_min"] == 1.0
+        assert prof["adaptive_control_max"] == 200.0
+        assert "adaptive_scale_control" not in prof
+
+    @pytest.mark.parametrize(
+        ("control", "match"),
+        [
+            pytest.param("concurrency:1", "variable:min,max:type", id="missing-type"),
+            pytest.param(
+                ":1,10:int", "requires a control variable", id="blank-variable"
+            ),
+            pytest.param(
+                "concurrency:1.5,10:int",
+                "min bound must be an integer",
+                id="bad-int-min",
+            ),
+            pytest.param(
+                "request_rate:one,10:float",
+                "min bound must be a number",
+                id="bad-float-min",
+            ),
+            pytest.param(
+                "concurrency:1,10:string",
+                "type must be 'int' or 'float'",
+                id="bad-type",
+            ),
+        ],
+    )
+    def test_adaptive_scale_rejects_invalid_compact_control(
+        self: TestAdaptiveScaleRoutes, control: str, match: str
+    ) -> None:
+        loadgen = CLIConfig(
+            adaptive_scale=True,
+            adaptive_scale_control=control,
+            adaptive_sustain_duration=120.0,
+            adaptive_scale_sla=["request_latency:p95:le:30000"],
+            benchmark_duration=600.0,
+            concurrency=100,
+        )
+        user = _make_user(loadgen=loadgen)
+
+        with pytest.raises(ValueError, match=match):
+            build_profiling(user)
+
+    def test_adaptive_scale_rejects_mixed_compact_and_expanded_control(
+        self: TestAdaptiveScaleRoutes,
+    ) -> None:
+        loadgen = CLIConfig(
+            adaptive_scale=True,
+            adaptive_scale_control="concurrency:1,100:int",
+            adaptive_control_variable="concurrency",
+            adaptive_sustain_duration=120.0,
+            adaptive_scale_sla=["request_latency:p95:le:30000"],
+            benchmark_duration=600.0,
+            concurrency=100,
+        )
+        user = _make_user(loadgen=loadgen)
+
+        with pytest.raises(ValueError, match="Use either --adaptive-scale-control"):
+            build_profiling(user)
+
+    def test_adaptive_scale_requires_concurrency(
+        self: TestAdaptiveScaleRoutes,
+    ) -> None:
+        loadgen = CLIConfig(
+            adaptive_scale=True,
+            adaptive_sustain_duration=120.0,
+            benchmark_duration=600.0,
+            request_rate=10.0,
+        )
+        user = _make_user(loadgen=loadgen)
+
+        with pytest.raises(ValueError, match="--adaptive-scale requires --concurrency"):
+            build_profiling(user)
+
+    def test_adaptive_scale_rejects_search_sla(
+        self: TestAdaptiveScaleRoutes,
+    ) -> None:
+        loadgen = CLIConfig(
+            adaptive_scale=True,
+            adaptive_sustain_duration=120.0,
+            benchmark_duration=600.0,
+            concurrency=200,
+            search_sla=["request_latency:p95:le:30000"],
+        )
+        user = _make_user(loadgen=loadgen)
+
+        with pytest.raises(ValueError, match="--adaptive-scale-sla"):
+            build_profiling(user)
+
+    def test_adaptive_scale_sla_requires_adaptive_scale(
+        self: TestAdaptiveScaleRoutes,
+    ) -> None:
+        loadgen = CLIConfig(
+            benchmark_duration=600.0,
+            concurrency=200,
+            adaptive_scale_sla=["request_latency:p95:le:30000"],
+        )
+        user = _make_user(loadgen=loadgen)
+
+        with pytest.raises(ValueError, match="--adaptive-scale-sla requires"):
+            build_profiling(user)
+
+    def test_adaptive_scale_sla_still_reports_malformed_filter_without_adaptive_scale(
+        self: TestAdaptiveScaleRoutes,
+    ) -> None:
+        loadgen = CLIConfig(
+            benchmark_duration=600.0,
+            concurrency=200,
+            adaptive_scale_sla=["bad"],
+        )
+        user = _make_user(loadgen=loadgen)
+
+        with pytest.raises(TypeError, match="--adaptive-scale-sla"):
+            build_profiling(user)
+
+    def test_adaptive_scale_cli_accepts_itl_and_goodput_slas(
+        self: TestAdaptiveScaleRoutes,
+    ) -> None:
+        loadgen = CLIConfig(
+            adaptive_scale=True,
+            adaptive_sustain_duration=120.0,
+            benchmark_duration=600.0,
+            concurrency=200,
+            adaptive_scale_sla=[
+                "itl:p95:le:100",
+                "goodput:avg:ge:20",
+            ],
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+
+        assert prof["sla"] == [
+            {
+                "metric_tag": "itl",
+                "stat": "p95",
+                "op": "le",
+                "threshold": 100.0,
+            },
+            {
+                "metric_tag": "goodput",
+                "stat": "avg",
+                "op": "ge",
+                "threshold": 20.0,
+            },
+        ]
+
+    def test_adaptive_scale_rejects_concurrency_ramp(
+        self: TestAdaptiveScaleRoutes,
+    ) -> None:
+        from aiperf.config.phases import ConcurrencyPhase
+
+        with pytest.raises(
+            ValueError, match="adaptive_scale cannot be combined with concurrency_ramp"
+        ):
+            ConcurrencyPhase.model_validate(
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "duration": 600,
+                    "concurrency": 200,
+                    "concurrency_ramp": 30,
+                    "adaptive_scale": True,
+                    "adaptive_sustain_duration": 120,
+                    "sla": [
+                        {
+                            "metric_tag": "request_latency",
+                            "stat": "p95",
+                            "op": "le",
+                            "threshold": 30000,
+                        }
+                    ],
+                }
+            )
+
+    def test_nested_adaptive_scale_yaml_lowers_to_flat_phase_fields(
+        self: TestAdaptiveScaleRoutes,
+    ) -> None:
+        from aiperf.config.phases import ConcurrencyPhase
+
+        phase = ConcurrencyPhase.model_validate(
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "duration": 600,
+                "concurrency": 200,
+                "sla": {
+                    "request_latency": {"p95": {"lt": 30000}},
+                    "itl": {"p95": {"le": 100}},
+                    "goodput": {"avg": {"ge": 20}},
+                },
+                "adaptive_scale": {
+                    "enabled": True,
+                    "min_concurrency": 2,
+                    "max_concurrency": 200,
+                    "window": 30,
+                    "minCompletedRequests": 3,
+                    "sustain_duration": 120,
+                    "strategy": {
+                        "type": "ramp_until_fail",
+                        "step_policy": "sla_margin",
+                        "base_step": 10,
+                        "max_step_multiplier": 4,
+                    },
+                },
+            }
+        )
+
+        assert phase.adaptive_scale is True
+        assert phase.adaptive_control_min == 2
+        assert phase.adaptive_control_max == 200
+        assert phase.adaptive_assessment_period == 30
+        assert phase.adaptive_min_completed_requests == 3
+        assert phase.adaptive_sustain_duration == 120
+        assert phase.adaptive_scale_strategy_type == "ramp_until_fail"
+        assert phase.adaptive_scale_step_policy == "sla_margin"
+        assert phase.adaptive_scale_base_step == 10
+        assert phase.adaptive_scale_max_step_multiplier == 4
+        assert [sla.metric_tag for sla in phase.sla] == [
+            "request_latency",
+            "itl",
+            "goodput",
+        ]
+
+    @pytest.mark.parametrize(
+        ("phase_data", "match"),
+        [
+            pytest.param(
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "concurrency": 8,
+                    "adaptive_scale": True,
+                    "adaptive_sustain_duration": 10,
+                    "sla": [
+                        {
+                            "metric_tag": "request_latency",
+                            "stat": "p95",
+                            "op": "le",
+                            "threshold": 100,
+                        }
+                    ],
+                },
+                "adaptive_scale requires duration",
+                id="missing-duration",
+            ),
+            pytest.param(
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "duration": 60,
+                    "concurrency": 8,
+                    "adaptive_scale": True,
+                    "sla": [
+                        {
+                            "metric_tag": "request_latency",
+                            "stat": "p95",
+                            "op": "le",
+                            "threshold": 100,
+                        }
+                    ],
+                },
+                "adaptive_scale requires adaptive_sustain_duration",
+                id="missing-sustain",
+            ),
+            pytest.param(
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "duration": 60,
+                    "concurrency": 8,
+                    "adaptive_scale": True,
+                    "adaptive_sustain_duration": 10,
+                },
+                "adaptive_scale requires sla filters",
+                id="missing-sla",
+            ),
+            pytest.param(
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "duration": 60,
+                    "concurrency": 8,
+                    "adaptive_scale": True,
+                    "adaptive_sustain_duration": 10,
+                    "adaptive_control_min": 8,
+                    "adaptive_control_max": 8,
+                    "sla": [
+                        {
+                            "metric_tag": "request_latency",
+                            "stat": "p95",
+                            "op": "le",
+                            "threshold": 100,
+                        }
+                    ],
+                },
+                "control.max must be > control.min",
+                id="bad-bounds",
+            ),
+            pytest.param(
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "duration": 60,
+                    "concurrency": 8,
+                    "adaptive_scale": True,
+                    "adaptive_sustain_duration": 10,
+                    "adaptive_control_min": 1.5,
+                    "adaptive_control_max": 8,
+                    "sla": [
+                        {
+                            "metric_tag": "request_latency",
+                            "stat": "p95",
+                            "op": "le",
+                            "threshold": 100,
+                        }
+                    ],
+                },
+                "control.min must be an integer",
+                id="non-integer-min",
+            ),
+            pytest.param(
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "duration": 60,
+                    "concurrency": 8,
+                    "adaptive_scale": True,
+                    "adaptive_sustain_duration": 10,
+                    "adaptive_control_min": 9,
+                    "adaptive_control_max": 10,
+                    "sla": [
+                        {
+                            "metric_tag": "request_latency",
+                            "stat": "p95",
+                            "op": "le",
+                            "threshold": 100,
+                        }
+                    ],
+                },
+                "control.min must be <= concurrency",
+                id="min-exceeds-concurrency",
+            ),
+        ],
+    )
+    def test_adaptive_scale_validation_errors(
+        self: TestAdaptiveScaleRoutes, phase_data: dict, match: str
+    ) -> None:
+        from aiperf.config.phases import ConcurrencyPhase
+
+        with pytest.raises(ValueError, match=match):
+            ConcurrencyPhase.model_validate(phase_data)
+
+    @pytest.mark.parametrize(
+        ("block", "match"),
+        [
+            pytest.param(
+                {"enabled": "maybe"}, "enabled must be a boolean", id="bad-enabled"
+            ),
+            pytest.param(
+                {"control": "bad"}, "control must be a mapping", id="bad-control"
+            ),
+            pytest.param(
+                {"strategy": "bad"}, "strategy must be a mapping", id="bad-strategy"
+            ),
+            pytest.param({"sla": "bad"}, "sla must be a mapping or list", id="bad-sla"),
+        ],
+    )
+    def test_nested_adaptive_scale_rejects_invalid_blocks(
+        self: TestAdaptiveScaleRoutes, block: dict, match: str
+    ) -> None:
+        from aiperf.config.phases import ConcurrencyPhase
+
+        with pytest.raises(ValueError, match=match):
+            ConcurrencyPhase.model_validate(
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "duration": 60,
+                    "concurrency": 8,
+                    "adaptive_scale": block,
+                    "adaptive_sustain_duration": 10,
+                    "sla": [
+                        {
+                            "metric_tag": "request_latency",
+                            "stat": "p95",
+                            "op": "le",
+                            "threshold": 100,
+                        }
+                    ],
+                }
+            )
+
+    def test_nested_adaptive_scale_string_false_disables_phase(
+        self: TestAdaptiveScaleRoutes,
+    ) -> None:
+        from aiperf.config.phases import ConcurrencyPhase
+
+        phase = ConcurrencyPhase.model_validate(
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "duration": 600,
+                "concurrency": 200,
+                "adaptive_scale": {"enabled": "false"},
+            }
+        )
+
+        assert phase.adaptive_scale is False

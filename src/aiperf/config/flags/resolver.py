@@ -15,8 +15,18 @@ works the way users intuit instead of throwing
 from __future__ import annotations
 
 import copy
+import logging
 from typing import TYPE_CHECKING, Any
 
+from aiperf.common.enums import DatasetType
+from aiperf.config.flags._resolver_adaptive import (
+    apply_basic_adaptive_scale_overrides,
+)
+from aiperf.config.flags._resolver_helpers import promote_benchmark_magic_lists
+from aiperf.config.flags._resolver_server_metrics import (
+    build_server_metrics_override,
+    normalize_server_metrics_base_for_override,
+)
 from aiperf.config.flags._section_fields import (
     ENDPOINT_FIELDS,
     INPUT_FIELDS,
@@ -31,6 +41,8 @@ if TYPE_CHECKING:
     from aiperf.config import AIPerfConfig
     from aiperf.config.config import BenchmarkConfig
     from aiperf.config.flags import CLIConfig
+
+logger = logging.getLogger(__name__)
 
 
 def resolve_config(
@@ -89,29 +101,18 @@ def resolve_config(
     base_config = AIPerfConfig.model_validate(pre_merged)
 
     overrides = build_cli_overrides(cli_config, benchmark_config=base_config.benchmark)
-    if overrides:
-        overrides = _wrap_under_envelope(overrides)
+    overrides = _wrap_under_envelope(overrides) if overrides else overrides
+    yaml_dict = normalize_server_metrics_base_for_override(yaml_dict, overrides)
     merged = deep_merge(yaml_dict, overrides) if overrides else yaml_dict
+    _apply_dataset_filter_overrides(merged, cli_config)
     _apply_phase_loadgen_overrides(merged, cli_config)
-    benchmark = merged.get("benchmark")
-    if isinstance(benchmark, dict):
-        sweep_type = getattr(cli_config, "sweep_type", "grid")
-        _promote_cli_dataset_magic_lists(benchmark, cli_config, sweep_type=sweep_type)
-        _retarget_dataset_magic_lists(benchmark)
-        _promote_magic_lists_to_sweep_block(benchmark, sweep_type=sweep_type)
-        promoted_sweep = benchmark.pop("sweep", None)
-        if isinstance(promoted_sweep, dict):
-            existing_sweep = merged.get("sweep")
-            if isinstance(existing_sweep, dict):
-                existing_sweep.setdefault(
-                    "type", promoted_sweep.get("type", sweep_type)
-                )
-                existing_sweep.setdefault("parameters", {})
-                existing_sweep["parameters"].update(
-                    promoted_sweep.get("parameters", {})
-                )
-            else:
-                merged["sweep"] = promoted_sweep
+    promote_benchmark_magic_lists(
+        merged,
+        cli_config,
+        promote_cli_dataset_magic_lists=_promote_cli_dataset_magic_lists,
+        promote_magic_lists_to_sweep_block=_promote_magic_lists_to_sweep_block,
+        retarget_dataset_magic_lists=_retarget_dataset_magic_lists,
+    )
     return AIPerfConfig.model_validate(merged)
 
 
@@ -152,14 +153,20 @@ def build_cli_overrides(
         build_tokenizer,
     )
     from aiperf.config.flags._converter_runtime import build_logging_runtime
+    from aiperf.config.flags._converter_telemetry import build_wandb
 
     out: dict[str, Any] = {}
     _apply_endpoint_overrides(out, cli)
     _apply_input_overrides(out, cli)
     _apply_recipe_and_multirun(out, cli, benchmark_config=benchmark_config)
     _apply_artifacts_overrides(out, cli)
+    _apply_optional_section(out, "server_metrics", build_server_metrics_override(cli))
     _apply_optional_section(out, "tokenizer", build_tokenizer(cli))
     _apply_optional_section(out, "accuracy", build_accuracy(cli))
+    wandb_base_enabled = benchmark_config is not None and benchmark_config.wandb.enabled
+    _apply_optional_section(
+        out, "wandb", build_wandb(cli, base_enabled=wandb_base_enabled)
+    )
 
     if "no_sweep_table" in cli.model_fields_set:
         out["no_sweep_table"] = cli.no_sweep_table
@@ -343,6 +350,34 @@ def _apply_input_overrides(out: dict[str, Any], cli: CLIConfig) -> None:
         out.pop("endpoint", None)
 
 
+def _apply_dataset_filter_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
+    if "dataset_filters" not in cli.model_fields_set:
+        return
+
+    from aiperf.config.flags._converter_dataset import _parse_dataset_filters
+
+    benchmark = merged.get("benchmark")
+    if not isinstance(benchmark, dict):
+        raise ValueError("--dataset-filter requires a public dataset")
+    dataset = benchmark.get("dataset")
+    if not isinstance(dataset, dict):
+        datasets = benchmark.get("datasets")
+        if not isinstance(datasets, list) or not datasets:
+            raise ValueError("--dataset-filter requires a public dataset")
+        if len(datasets) > 1:
+            logger.warning(
+                "--dataset-filter with multiple YAML datasets applies only to "
+                "the first dataset"
+            )
+        dataset = datasets[0]
+    if not isinstance(dataset, dict):
+        raise ValueError("--dataset-filter requires a public dataset")
+    if dataset.get("type") != DatasetType.PUBLIC:
+        raise ValueError("--dataset-filter requires a public dataset")
+    filters = dataset.setdefault("filters", {})
+    filters.update(_parse_dataset_filters(cli.dataset_filters))
+
+
 # CLI loadgen flag -> phase field. Each entry is (loadgen_attr, phase_key).
 # The CLI help promises "CLI flags override values from the config file";
 # this table makes that real for YAML-supplied phase shapes by overlaying
@@ -356,6 +391,11 @@ _LOADGEN_PHASE_FIELD_MAP: tuple[tuple[str, str], ...] = (
     ("request_rate", "rate"),
     ("user_centric_rate", "rate"),
     ("num_users", "users"),
+    ("adaptive_sustain_duration", "adaptive_sustain_duration"),
+    ("adaptive_assessment_period", "adaptive_assessment_period"),
+    ("adaptive_control_variable", "adaptive_control_variable"),
+    ("adaptive_control_min", "adaptive_control_min"),
+    ("adaptive_control_max", "adaptive_control_max"),
 )
 
 
@@ -388,6 +428,7 @@ def _apply_phase_loadgen_overrides(merged: dict[str, Any], cli: CLIConfig) -> No
         return
 
     _reject_loadgen_target_collisions(fields_set)
+    apply_basic_adaptive_scale_overrides(target, cli)
 
     for attr, key in _LOADGEN_PHASE_FIELD_MAP:
         if attr not in fields_set:

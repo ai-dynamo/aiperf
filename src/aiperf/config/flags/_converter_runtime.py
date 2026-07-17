@@ -94,6 +94,8 @@ def _apply_runtime_basics(runtime_dict: dict[str, Any], cli: CLIConfig) -> None:
         runtime_dict["api_port"] = cli.api_port
     if "api_host" in cli_set:
         runtime_dict["api_host"] = cli.api_host
+    if "stats_interval" in cli_set and cli.stats_interval is not None:
+        runtime_dict["stats_interval"] = cli.stats_interval
 
 
 def _apply_verbosity_and_ui(
@@ -114,6 +116,20 @@ def _apply_verbosity_and_ui(
         runtime_dict["ui"] = UIType.SIMPLE
     elif not ui_set and not is_tty():
         runtime_dict["ui"] = UIType.NONE
+
+    # Dashboard requires a TTY: Textual issues console-setup syscalls that
+    # block forever on Windows when stdout is a pipe (e.g. subprocess.PIPE
+    # from a test harness, ``aiperf ... | tee``, CI capture). Downgrade to
+    # SIMPLE rather than hanging. Applies to every platform — Linux/macOS
+    # don't hang, but a non-TTY dashboard renders nothing useful there either.
+    if runtime_dict.get("ui") == UIType.DASHBOARD and not is_tty():
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "--ui dashboard requires an interactive terminal; "
+            "stdout is not a TTY, falling back to --ui simple"
+        )
+        runtime_dict["ui"] = UIType.SIMPLE
 
 
 def _build_communication(cli: CLIConfig) -> dict[str, Any] | None:

@@ -109,33 +109,41 @@
     "record_processor": {
       "title": "Record Processor Plugins",
       "type": "object",
-      "description": "Record processors stream records and compute metrics in a distributed manner.\nFirst stage of metrics pipeline, handling per-record computations.\nOne-to-many mapping: multiple processors can be loaded simultaneously.",
+      "description": "Record PRODUCERS parse a record and emit one typed result on a declared\nrecord-type channel. First stage of the metrics pipeline, handling per-record\ncomputations. One-to-many mapping: multiple producers can be loaded simultaneously.",
       "additionalProperties": {
         "$ref": "#/$defs/RecordProcessorPlugin"
       }
     },
-    "results_processor": {
-      "title": "Results Processor Plugins",
+    "record_observer": {
+      "title": "Record Observer Plugins",
       "type": "object",
-      "description": "Results processors aggregate results from record processors and compute derived metrics.\nFinal stage of metrics pipeline for aggregated statistics and summaries.\nOne-to-many mapping: multiple processors can be loaded simultaneously.",
+      "description": "Record OBSERVERS view the produced results + the record and act (e.g. write\nJSONL); they return nothing and emit no channel record. Second stage of the\nrecord-processor service. One-to-many mapping: multiple observers loaded simultaneously.",
       "additionalProperties": {
-        "$ref": "#/$defs/ResultsProcessorPlugin"
+        "$ref": "#/$defs/RecordObserverPlugin"
       }
     },
-    "gpu_telemetry_processor": {
-      "title": "GPU Telemetry Processor Plugins",
+    "accumulator": {
+      "title": "Accumulator Plugins",
       "type": "object",
-      "description": "GPU telemetry processors aggregate and export GPU telemetry records locally\nwithin GPUTelemetryManager. Side-channel pipeline that keeps telemetry\nrecords in their origin process rather than routing through RecordsManager.\nOne-to-many mapping: multiple processors can be loaded simultaneously.",
+      "description": "Accumulators ingest records, support time-range queries, and produce summaries.\nPrimary data stores in the records pipeline. Each accumulator declares which\nrecord types it handles. One-to-many mapping: multiple accumulators loaded simultaneously.",
       "additionalProperties": {
-        "$ref": "#/$defs/GpuTelemetryProcessorPlugin"
+        "$ref": "#/$defs/AccumulatorPlugin"
       }
     },
-    "server_metrics_processor": {
-      "title": "Server Metrics Processor Plugins",
+    "stream_exporter": {
+      "title": "Stream Exporter Plugins",
       "type": "object",
-      "description": "Server metrics processors aggregate and export Prometheus server metrics\nrecords locally within ServerMetricsManager. Side-channel pipeline that\nkeeps server metrics records in their origin process rather than routing\nthrough RecordsManager.\nOne-to-many mapping: multiple processors can be loaded simultaneously.",
+      "description": "Stream exporters write each record to an external sink (e.g. JSONL files) as it\narrives. No summarization dependencies. Finalized after all records are processed.\nOne-to-many mapping: multiple exporters loaded simultaneously.",
       "additionalProperties": {
-        "$ref": "#/$defs/ServerMetricsProcessorPlugin"
+        "$ref": "#/$defs/StreamExporterPlugin"
+      }
+    },
+    "analyzer": {
+      "title": "Analyzer Plugins",
+      "type": "object",
+      "description": "Analyzers run at summarize time and join across accumulators, reading peer\nstate from the SummaryContext to compute cross-accumulator metrics (e.g.\nenergy efficiency joins GPU telemetry to inference tokens). They store no\nrecords and declare the accumulators they require; skipped when any is absent.\nOne-to-many mapping: multiple analyzers loaded simultaneously.",
+      "additionalProperties": {
+        "$ref": "#/$defs/AnalyzerPlugin"
       }
     },
     "accuracy_grader": {
@@ -648,6 +656,25 @@
               "default": null,
               "description": "Default token block size for hash-based prompt caching. Used when the user does not explicitly set --isl-block-size. Must match the block size used to generate the trace's hash_ids (e.g. 16 for Bailian, 512 for Mooncake).",
               "title": "Default Block Size"
+            },
+            "category": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Filter dataset rows to a specific category value. Used by custom loaders that support per-category subsets (e.g. SPEED-Bench).",
+              "title": "Category"
+            },
+            "multi_turn": {
+              "default": false,
+              "description": "When true, each row becomes one Conversation with multiple Turn objects.",
+              "title": "Multi Turn",
+              "type": "boolean"
             }
           },
           "title": "CustomDatasetLoaderMetadata",
@@ -788,7 +815,7 @@
             },
             "multi_turn": {
               "default": false,
-              "description": "When true, each row becomes one Conversation with multiple Turn objects. For HFConversationDatasetLoader: user\u2192assistant (OpenAI roles) or human\u2192gpt (ShareGPT-style ``from`` fields) pairs. For SpeedBenchLoader and SpecBenchLoader: all entries in the ``turns`` array. Default false preserves single-turn behavior.",
+              "description": "When true, each row becomes one Conversation with multiple Turn objects. For HFConversationDatasetLoader: user\u2192assistant (OpenAI roles) or human\u2192gpt (ShareGPT-style ``from`` fields) pairs.",
               "title": "Multi Turn",
               "type": "boolean"
             },
@@ -798,18 +825,11 @@
               "title": "Streaming",
               "type": "boolean"
             },
-            "category": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "description": "Filter dataset rows to a specific category value. Used by loaders that support per-category subsets (e.g. SPEED-Bench).",
-              "title": "Category"
+            "has_timing_data": {
+              "default": false,
+              "description": "Whether the loader emits timestamps suitable for fixed-schedule replay.",
+              "title": "Has Timing Data",
+              "type": "boolean"
             },
             "prompt_template": {
               "anyOf": [
@@ -1059,27 +1079,28 @@
           "type": "integer"
         },
         "metadata": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
+          "description": "Metadata schema for record producer plugins.\n\nProducers parse a record and emit one typed result on a declared record-type\nchannel. RecordProcessorService groups producer outputs by this declared\n``record_type`` (rather than runtime type-sniffing) and routes each group to\nits dedicated downstream message.\n\nReferenced by: categories.yaml record_processor.metadata_class\nUsed in: plugins.yaml record_processor entries",
+          "properties": {
+            "record_type": {
+              "description": "The record_type channel this producer emits onto. Values: 'metric_records', 'accuracy', 'gpu_telemetry', 'server_metrics', 'network_latency', 'credit_phase_stats'.",
+              "title": "Record Type",
+              "type": "string"
             }
+          },
+          "required": [
+            "record_type"
           ],
-          "default": null,
-          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
-          "title": "Metadata"
+          "title": "RecordProducerMetadata",
+          "type": "object"
         }
       },
       "required": [
         "class"
       ],
       "title": "Record Processor Plugin",
-      "description": "Record processors stream records and compute metrics in a distributed manner.\nFirst stage of metrics pipeline, handling per-record computations.\nOne-to-many mapping: multiple processors can be loaded simultaneously."
+      "description": "Record PRODUCERS parse a record and emit one typed result on a declared\nrecord-type channel. First stage of the metrics pipeline, handling per-record\ncomputations. One-to-many mapping: multiple producers can be loaded simultaneously."
     },
-    "ResultsProcessorPlugin": {
+    "RecordObserverPlugin": {
       "type": "object",
       "properties": {
         "class": {
@@ -1117,10 +1138,10 @@
       "required": [
         "class"
       ],
-      "title": "Results Processor Plugin",
-      "description": "Results processors aggregate results from record processors and compute derived metrics.\nFinal stage of metrics pipeline for aggregated statistics and summaries.\nOne-to-many mapping: multiple processors can be loaded simultaneously."
+      "title": "Record Observer Plugin",
+      "description": "Record OBSERVERS view the produced results + the record and act (e.g. write\nJSONL); they return nothing and emit no channel record. Second stage of the\nrecord-processor service. One-to-many mapping: multiple observers loaded simultaneously."
     },
-    "GpuTelemetryProcessorPlugin": {
+    "AccumulatorPlugin": {
       "type": "object",
       "properties": {
         "class": {
@@ -1141,27 +1162,31 @@
           "type": "integer"
         },
         "metadata": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
+          "description": "Metadata schema for record routing in accumulator and stream exporter plugins.\n\nDefines which record types an accumulator or stream exporter accepts. Used by\nRecordsManager to build a routing table: incoming records are dispatched to all\naccumulators and stream exporters whose record_types include the matching type.\nThe role (accumulator vs stream_exporter) is determined by the plugin category.\n\nReferenced by: categories.yaml accumulator.metadata_class, stream_exporter.metadata_class\nUsed in: plugins.yaml accumulator and stream_exporter entries",
+          "properties": {
+            "record_types": {
+              "description": "Record type identifiers this accumulator or stream exporter accepts for routing. RecordsManager dispatches incoming records to all accumulators and stream exporters whose record_types include the matching type. Values: 'metric_records', 'gpu_telemetry', 'server_metrics', 'accuracy', 'network_latency', 'credit_phase_stats'.",
+              "items": {
+                "type": "string"
+              },
+              "title": "Record Types",
+              "type": "array"
             }
+          },
+          "required": [
+            "record_types"
           ],
-          "default": null,
-          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
-          "title": "Metadata"
+          "title": "RecordRoutingMetadata",
+          "type": "object"
         }
       },
       "required": [
         "class"
       ],
-      "title": "GPU Telemetry Processor Plugin",
-      "description": "GPU telemetry processors aggregate and export GPU telemetry records locally\nwithin GPUTelemetryManager. Side-channel pipeline that keeps telemetry\nrecords in their origin process rather than routing through RecordsManager.\nOne-to-many mapping: multiple processors can be loaded simultaneously."
+      "title": "Accumulator Plugin",
+      "description": "Accumulators ingest records, support time-range queries, and produce summaries.\nPrimary data stores in the records pipeline. Each accumulator declares which\nrecord types it handles. One-to-many mapping: multiple accumulators loaded simultaneously."
     },
-    "ServerMetricsProcessorPlugin": {
+    "StreamExporterPlugin": {
       "type": "object",
       "properties": {
         "class": {
@@ -1182,25 +1207,79 @@
           "type": "integer"
         },
         "metadata": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
+          "description": "Metadata schema for record routing in accumulator and stream exporter plugins.\n\nDefines which record types an accumulator or stream exporter accepts. Used by\nRecordsManager to build a routing table: incoming records are dispatched to all\naccumulators and stream exporters whose record_types include the matching type.\nThe role (accumulator vs stream_exporter) is determined by the plugin category.\n\nReferenced by: categories.yaml accumulator.metadata_class, stream_exporter.metadata_class\nUsed in: plugins.yaml accumulator and stream_exporter entries",
+          "properties": {
+            "record_types": {
+              "description": "Record type identifiers this accumulator or stream exporter accepts for routing. RecordsManager dispatches incoming records to all accumulators and stream exporters whose record_types include the matching type. Values: 'metric_records', 'gpu_telemetry', 'server_metrics', 'accuracy', 'network_latency', 'credit_phase_stats'.",
+              "items": {
+                "type": "string"
+              },
+              "title": "Record Types",
+              "type": "array"
             }
+          },
+          "required": [
+            "record_types"
           ],
-          "default": null,
-          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
-          "title": "Metadata"
+          "title": "RecordRoutingMetadata",
+          "type": "object"
         }
       },
       "required": [
         "class"
       ],
-      "title": "Server Metrics Processor Plugin",
-      "description": "Server metrics processors aggregate and export Prometheus server metrics\nrecords locally within ServerMetricsManager. Side-channel pipeline that\nkeeps server metrics records in their origin process rather than routing\nthrough RecordsManager.\nOne-to-many mapping: multiple processors can be loaded simultaneously."
+      "title": "Stream Exporter Plugin",
+      "description": "Stream exporters write each record to an external sink (e.g. JSONL files) as it\narrives. No summarization dependencies. Finalized after all records are processed.\nOne-to-many mapping: multiple exporters loaded simultaneously."
+    },
+    "AnalyzerPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "description": "Metadata schema for analyzer plugins.\n\nAnalyzers run at summarize time and join across accumulators. They store no\nrecords; instead they declare their dependencies by KIND:\n\n- ``required_accumulators``: needs the LIVE accumulator instance (via\n  ``SummaryContext.get_accumulator``) to run a query not present in the\n  summary \u2014 e.g. energy efficiency calls ``GPUTelemetryAccumulator``'s\n  windowed ``total_energy_joules`` / ``total_power_watts``.\n- ``required_summaries``: needs only the already-computed summary output\n  (via ``SummaryContext.get_output``) \u2014 e.g. energy efficiency reads token\n  and duration totals off the metrics accumulator's summary.\n\nRecordsManager runs an analyzer only when every required accumulator is\nloaded AND every required summary was produced; otherwise it is skipped\n(e.g. energy efficiency is skipped when GPU telemetry is disabled).\n\nReferenced by: categories.yaml analyzer.metadata_class\nUsed in: plugins.yaml analyzer entries",
+          "properties": {
+            "required_accumulators": {
+              "description": "AccumulatorType names whose LIVE instance this analyzer queries via SummaryContext.get_accumulator(). The analyzer is skipped unless all are loaded. Values: 'metric_records', 'gpu_telemetry', 'server_metrics', 'accuracy', 'network_latency'.",
+              "items": {
+                "type": "string"
+              },
+              "title": "Required Accumulators",
+              "type": "array"
+            },
+            "required_summaries": {
+              "description": "AccumulatorType names whose SUMMARY output this analyzer reads via SummaryContext.get_output(). The analyzer is skipped unless all were produced. NOTE: only the 'metric_results' summary is currently registered into SummaryContext.accumulator_outputs; side-channel accumulators (gpu_telemetry, server_metrics, accuracy, network_latency) summarize separately and are NOT available here -- depend on their LIVE instance via required_accumulators instead. Declaring one of those in required_summaries silently skips the analyzer every run.",
+              "items": {
+                "type": "string"
+              },
+              "title": "Required Summaries",
+              "type": "array"
+            }
+          },
+          "title": "AnalyzerMetadata",
+          "type": "object"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Analyzer Plugin",
+      "description": "Analyzers run at summarize time and join across accumulators, reading peer\nstate from the SummaryContext to compute cross-accumulator metrics (e.g.\nenergy efficiency joins GPU telemetry to inference tokens). They store no\nrecords and declare the accumulators they require; skipped when any is absent.\nOne-to-many mapping: multiple analyzers loaded simultaneously."
     },
     "AccuracyGraderPlugin": {
       "type": "object",

@@ -180,7 +180,10 @@ class TestArtifactDirResolverEdgeCases:
         real_dir = tmp_path / "real_artifacts"
         real_dir.mkdir()
         link = tmp_path / "link_to_artifacts"
-        link.symlink_to(real_dir)
+        try:
+            link.symlink_to(real_dir)
+        except OSError as e:
+            pytest.skip(f"symlink creation not permitted: {e}")
 
         run = _make_run(minimal_config, artifact_dir=link / "output")
         ArtifactDirResolver().resolve(run)
@@ -304,7 +307,10 @@ class TestDatasetResolverEdgeCases:
         real_file = tmp_path / "real_data.jsonl"
         real_file.write_text('{"prompt": "hello"}\n')
         link = tmp_path / "link_data.jsonl"
-        link.symlink_to(real_file)
+        try:
+            link.symlink_to(real_file)
+        except OSError as e:
+            pytest.skip(f"symlink creation not permitted: {e}")
 
         config = _make_config(
             datasets=[{"name": "profiling", "type": "file", "path": str(link)}],

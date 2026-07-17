@@ -7,12 +7,17 @@ import hashlib
 import logging
 import random
 import time
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from time import perf_counter
 from typing import Any
 
 import orjson
-from aiperf_mock_server.config import server_config
+from aiperf_mock_server.config import (
+    MockServerConfig,
+    public_config_dump,
+    server_config,
+)
 from aiperf_mock_server.dcgm_faker import DCGMFaker
 from aiperf_mock_server.metrics import (
     AIPERF_MOCK_REGISTRY,
@@ -39,6 +44,7 @@ from aiperf_mock_server.metrics_utils import (
     track_request,
 )
 from aiperf_mock_server.models import (
+    AnthropicMessagesRequest,
     ChatCompletionRequest,
     CohereRerankRequest,
     CompletionRequest,
@@ -57,7 +63,10 @@ from aiperf_mock_server.request_recorder import RequestRecorder, set_global_reco
 from aiperf_mock_server.scheduler import init_scheduler, shutdown_scheduler
 from aiperf_mock_server.utils import (
     RequestCtx,
+    anthropic_stop_reason,
     make_ctx,
+    simulate_anthropic_cache,
+    stream_anthropic_messages,
     stream_chat_completion,
     stream_text_completion,
     stream_tgi_completion,
@@ -100,7 +109,7 @@ async def lifespan(_: FastAPI):
     """Initialize server on startup."""
     global server_start_time
     server_start_time = time.time()
-    logger.info("Server starting: %s", server_config.model_dump())
+    logger.info("Server starting: %s", public_config_dump(server_config))
     if server_config.random_seed is not None:
         random.seed(server_config.random_seed)
 
@@ -194,8 +203,87 @@ class TimingMiddleware:
 
 
 _INFERENCE_PATHS: frozenset[str] = frozenset(
-    {"/v1/chat/completions", "/v1/completions", "/v1/embeddings"}
+    {"/v1/chat/completions", "/v1/completions", "/v1/embeddings", "/v1/messages"}
 )
+_AUTH_PROTECTED_PATHS: frozenset[str] = frozenset(
+    {
+        "/generate",
+        "/generate_stream",
+        "/rag/api/prompt",
+        "/rerank",
+        "/v1/chat/completions",
+        "/v1/chat/embeddings",
+        "/v1/completions",
+        "/v1/custom-multimodal",
+        "/v1/embeddings",
+        "/v1/image/infer",
+        "/v1/images/edits",
+        "/v1/images/generations",
+        "/v1/infer",
+        "/v1/messages",
+        "/v1/ranking",
+        "/v1/responses",
+        "/v1/videos",
+        "/v2/rerank",
+    }
+)
+
+
+def _is_auth_protected_path(path: str) -> bool:
+    return path in _AUTH_PROTECTED_PATHS or path.startswith("/v1/videos/")
+
+
+def _asgi_headers(headers: object) -> Mapping[str, str]:
+    if not isinstance(headers, list):
+        return {}
+
+    result: dict[str, str] = {}
+    for item in headers:
+        if not isinstance(item, tuple) or len(item) != 2:
+            continue
+        name, value = item
+        if isinstance(name, bytes) and isinstance(value, bytes):
+            result[name.decode("latin-1").lower()] = value.decode("latin-1")
+    return result
+
+
+class InferenceAuthMiddleware:
+    """Enforces optional API-key auth on inference endpoints."""
+
+    def __init__(self, inner_app: ASGIApp, config: MockServerConfig) -> None:
+        self.app = inner_app
+        self.config = config
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        path = str(scope.get("path", ""))
+        if (
+            scope["type"] == "http"
+            and self.config.api_key is not None
+            and _is_auth_protected_path(path)
+        ):
+            headers = _asgi_headers(scope.get("headers"))
+            header_name = self.config.auth_header_name.lower()
+            header_value = headers.get(header_name)
+            # aiperf --api-key sends "Authorization: Bearer <api_key>"
+            authorized = header_value == self.config.api_key or (
+                header_name == "authorization"
+                and header_value == f"Bearer {self.config.api_key}"
+            )
+            if not authorized:
+                body = orjson.dumps({"error": "Unauthorized"})
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 401,
+                        "headers": [
+                            (b"content-type", b"application/json"),
+                            (b"content-length", str(len(body)).encode()),
+                        ],
+                    }
+                )
+                await send({"type": "http.response.body", "body": body})
+                return
+        await self.app(scope, receive, send)
 
 
 class InferenceReadinessMiddleware:
@@ -234,7 +322,9 @@ class InferenceReadinessMiddleware:
 
 
 # Wrap FastAPI with ASGI middleware for earliest possible timing
-asgi_app = InferenceReadinessMiddleware(TimingMiddleware(app))
+asgi_app = InferenceAuthMiddleware(
+    InferenceReadinessMiddleware(TimingMiddleware(app)), server_config
+)
 
 
 # ============================================================================
@@ -291,6 +381,186 @@ async def _chat_stream_wrapper(
     """Wrapper for streaming that records metrics after completion."""
     async with async_track_llm_request(ctx, req.model, endpoint):
         async for chunk in stream_chat_completion(ctx, endpoint, req.include_usage):
+            yield chunk
+
+
+# ============================================================================
+# Anthropic Messages
+# ============================================================================
+
+
+def _should_emit_tool_use(req: AnthropicMessagesRequest) -> dict[str, Any] | None:
+    """Return the synthesised tool_use block to emit, or None if tools aren't
+    declared on the request.
+
+    Triggered whenever the request declares ``tools`` unless ``tool_choice``
+    is ``{"type":"none"}``. ``{"type":"auto"}`` synthesises too — deliberately:
+    absent ``tool_choice`` defaults to ``auto`` on the real API, so the two
+    must behave identically, and a deterministic mock that always exercises
+    the tool path beats probabilistic realism for benchmarking. Picks the
+    first declared tool's ``name`` and fabricates an ``input`` dict so a
+    FORK-mode replay sees the parent's tool_use round-trip through
+    ``build_assistant_turn``.
+    """
+    tools = req.tools
+    if not tools:
+        return None
+    choice_type = (req.tool_choice or {}).get("type")
+    if choice_type == "none":
+        return None
+    first = tools[0] if isinstance(tools[0], dict) else {}
+    name = first.get("name") or "mock_tool"
+    return {
+        "type": "tool_use",
+        "id": "toolu_mock_1",
+        "name": name,
+        "input": {"arg": "value"},
+    }
+
+
+def _anthropic_cache_requested(req: AnthropicMessagesRequest) -> bool:
+    """True when the request opts into prompt caching.
+
+    Recognizes the top-level ``cache_control`` (automatic caching mode) plus
+    per-block ``cache_control`` markers on system blocks or message content
+    blocks - the same opt-in surfaces the real API accepts.
+    """
+    if req.cache_control is not None:
+        return True
+    if isinstance(req.system, list) and any(
+        isinstance(b, dict) and b.get("cache_control") for b in req.system
+    ):
+        return True
+    for message in req.messages:
+        content = message.content
+        if isinstance(content, list) and any(
+            isinstance(b, dict) and b.get("cache_control") for b in content
+        ):
+            return True
+    return False
+
+
+def _anthropic_cache_triple(
+    ctx: RequestCtx, req: AnthropicMessagesRequest
+) -> tuple[int, int, int]:
+    """Disjoint ``(input, cache_read, cache_creation)`` accounting for ``req``.
+
+    No-cache identity (full prompt as uncached ``input_tokens``) unless the
+    request opts into caching, in which case the simulated prefix cache
+    reports reads/creations exactly like the real API's disjoint accounting.
+    """
+    total = ctx.usage["prompt_tokens"]
+    if not _anthropic_cache_requested(req):
+        return total, 0, 0
+    return simulate_anthropic_cache(
+        req.model,
+        req.system,
+        [m.model_dump() for m in req.messages],
+        total,
+    )
+
+
+def _build_anthropic_response_data(
+    ctx: RequestCtx,
+    req: AnthropicMessagesRequest | None = None,
+    cache_triple: tuple[int, int, int] | None = None,
+) -> dict[str, Any]:
+    """Build non-streaming Anthropic Messages response data.
+
+    When ``req`` is supplied and declares ``tools``, append a synthesised
+    ``tool_use`` block after any text/thinking and set
+    ``stop_reason="tool_use"``.
+    """
+    content: list[dict[str, Any]] = []
+
+    if ctx.reasoning_content:
+        content.append(
+            {
+                "type": "thinking",
+                "thinking": ctx.reasoning_content,
+                "signature": "mock-signature",
+            }
+        )
+
+    content.append({"type": "text", "text": ctx.content})
+
+    stop_reason = anthropic_stop_reason(ctx.finish_reason)
+    tool_use_block = _should_emit_tool_use(req) if req is not None else None
+    if tool_use_block is not None:
+        content.append(tool_use_block)
+        stop_reason = "tool_use"
+
+    total = ctx.usage["prompt_tokens"]
+    input_tokens, cache_read, cache_creation = cache_triple or (total, 0, 0)
+    return {
+        "id": ctx.request_id,
+        "type": "message",
+        "role": "assistant",
+        "content": content,
+        "model": ctx.model,
+        "stop_reason": stop_reason,
+        "stop_sequence": None,
+        "usage": {
+            "input_tokens": input_tokens,
+            "output_tokens": ctx.usage["completion_tokens"],
+            "cache_creation_input_tokens": cache_creation,
+            "cache_read_input_tokens": cache_read,
+        },
+    }
+
+
+@app.post("/v1/messages", response_model=None)
+@with_error_injection
+async def anthropic_messages(
+    req: AnthropicMessagesRequest,
+    request: Request,
+) -> ORJSONResponse | StreamingResponse:
+    """Anthropic Messages endpoint."""
+    endpoint = "/v1/messages"
+    # The real API rejects requests without the anthropic-version header;
+    # enforce the same contract so header regressions fail against the mock.
+    if "anthropic-version" not in request.headers:
+        return ORJSONResponse(
+            {
+                "type": "error",
+                "error": {
+                    "type": "invalid_request_error",
+                    "message": "anthropic-version header is required",
+                },
+            },
+            status_code=400,
+        )
+    init_model_config(req.model)
+    ctx = make_ctx(req, endpoint, request.state.start_time)
+    cache_triple = _anthropic_cache_triple(ctx, req)
+
+    if req.stream:
+        STREAMING_REQUESTS_TOTAL.labels(endpoint=endpoint, model=req.model).inc()
+        return StreamingResponse(
+            _anthropic_stream_wrapper(ctx, req, endpoint, cache_triple),
+            media_type="text/event-stream",
+        )
+
+    with track_llm_request(ctx, req.model, endpoint):
+        await ctx.latency_sim.wait_for_tokens(len(ctx.tokens))
+        response_data = _build_anthropic_response_data(ctx, req, cache_triple)
+        response_bytes = len(orjson.dumps(response_data))
+        record_request_bytes(endpoint, len(ctx.tokenized.text), response_bytes)
+        return ORJSONResponse(response_data)
+
+
+async def _anthropic_stream_wrapper(
+    ctx: RequestCtx,
+    req: AnthropicMessagesRequest,
+    endpoint: str,
+    cache_triple: tuple[int, int, int],
+):
+    """Wrapper for Anthropic streaming that records metrics after completion."""
+    async with async_track_llm_request(ctx, req.model, endpoint):
+        tool_use_block = _should_emit_tool_use(req)
+        async for chunk in stream_anthropic_messages(
+            ctx, endpoint, tool_use_block=tool_use_block, cache_triple=cache_triple
+        ):
             yield chunk
 
 
@@ -1121,7 +1391,7 @@ async def solido_rag(req: SolidoRAGRequest, request: Request) -> ORJSONResponse:
 @app.get("/health")
 async def health():
     """Health check."""
-    return {"status": "healthy", "config": server_config.model_dump()}
+    return {"status": "healthy", "config": public_config_dump(server_config)}
 
 
 @app.get("/v1/models")
@@ -1146,7 +1416,7 @@ async def root():
     return {
         "message": "AIPerf Mock Server",
         "version": "2.0.0",
-        "config": server_config.model_dump(),
+        "config": public_config_dump(server_config),
     }
 
 

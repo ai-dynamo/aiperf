@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+import inspect
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
@@ -343,3 +344,27 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
                     conv=conversation: f"Set user_context_message for session {idx} "
                     f"(conversation {conv.session_id})"
                 )
+
+    @staticmethod
+    def _loader_accepts_kwarg(loader_class: type, name: str) -> bool:
+        """Return True when ``name`` is an explicitly declared parameter of
+        ``loader_class.__init__`` (or any class in its MRO before ``BaseMixin``).
+
+        ``**kwargs`` does not count as acceptance — the silent-swallow chain
+        through ``BaseMixin.__init__`` is exactly what this check exists to
+        catch.
+        """
+        for klass in loader_class.__mro__:
+            if klass.__name__ == "BaseMixin":
+                break
+            try:
+                params = inspect.signature(klass.__init__).parameters
+            except (TypeError, ValueError):
+                continue
+            param = params.get(name)
+            if param is not None and param.kind in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            ):
+                return True
+        return False

@@ -1045,7 +1045,7 @@ jobs:
             --request POST \
             --form "token=<${TOKEN_FILE}" \
             --form "ref=main" \
-            --form "variables[PIPELINE_TYPE]=nightly" \
+            --form "variables[PIPELINE_TYPE]=security" \
             --form "variables[RELEASE_TYPE]=${RELEASE_TYPE}" \
             --form "variables[PROJECT]=aiperf" \
             --form "variables[SOURCE_BRANCH]=main" \

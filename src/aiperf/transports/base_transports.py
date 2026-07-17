@@ -122,6 +122,8 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
             headers[correlation_header] = request_info.x_correlation_id
 
         headers.update(request_info.endpoint_headers)
+        if request_info.turns and request_info.turns[-1].extra_headers:
+            headers.update(request_info.turns[-1].extra_headers)
         headers.update(self.get_transport_headers(request_info))
 
         return headers

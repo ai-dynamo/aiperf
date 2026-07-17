@@ -196,18 +196,18 @@ class TestScalarTimeSeriesEmpty:
 class TestScalarTimeSeriesNumericEdgeCases:
     """Test numeric edge cases."""
 
-    @pytest.mark.parametrize(
-        "value", [1e308, 1e-308, -100.5, 0.0, float("inf"), float("-inf"), float("nan")]
-    )
-    def test_extreme_values(self, value: float) -> None:
-        """Test that extreme numeric values are stored correctly."""
+    @pytest.mark.parametrize("value", [1e308, 1e-308, -100.5, 0.0])
+    def test_append_extreme_finite_value_stores_exact_value(self, value: float) -> None:
+        """Test that extreme (but finite) numeric values are stored correctly.
+
+        Non-finite values (NaN/+-Inf) are intentionally excluded: the
+        MetricSample.value FiniteFloat contract forbids constructing a sample
+        with a non-finite value, so such a value can never reach the series.
+        """
         ts = ScalarTimeSeries()
         ts.append(_NS, MetricSample(value=value))
 
-        if np.isnan(value):
-            assert np.isnan(ts.values[0])
-        else:
-            assert ts.values[0] == value or np.isinf(ts.values[0])
+        assert ts.values[0] == value
 
     def test_none_value_raises(self) -> None:
         """Test that None value raises ValueError."""

@@ -108,10 +108,11 @@ class TestZMQStreamingRouterClientSendTo:
 
             await client.send_to(identity, sample_credit)
 
-            mock_socket.send_multipart.assert_called_once()
-            sent_data = mock_socket.send_multipart.call_args[0][0]
-            assert sent_data[0] == identity.encode()
-            decoded = msgspec.msgpack.decode(sent_data[1], type=Credit)
+            # FD path frames the message as two sync sends: identity + payload.
+            assert mock_socket._sync_send.call_count == 2
+            calls = mock_socket._sync_send.call_args_list
+            assert calls[0][0][0] == identity.encode()
+            decoded = msgspec.msgpack.decode(calls[1][0][0], type=Credit)
             assert decoded.id == sample_credit.id
 
     @pytest.mark.asyncio
@@ -125,7 +126,8 @@ class TestZMQStreamingRouterClientSendTo:
             for identity in multiple_identities:
                 await client.send_to(identity, sample_credit)
 
-            assert mock_socket.send_multipart.call_count == len(multiple_identities)
+            # Two sync sends (identity + payload) per message.
+            assert mock_socket._sync_send.call_count == len(multiple_identities) * 2
 
     @pytest.mark.asyncio
     async def test_send_to_raises_when_not_initialized(
@@ -159,8 +161,9 @@ class TestZMQStreamingRouterClientSendTo:
 
             await client.send_to(special_identity, sample_credit)
 
-            sent_data = mock_socket.send_multipart.call_args[0][0]
-            assert sent_data[0] == special_identity.encode()
+            assert mock_socket._sync_send.call_args_list[0][0][0] == (
+                special_identity.encode()
+            )
 
 
 class TestZMQStreamingRouterClientReceiver:
@@ -187,18 +190,11 @@ class TestZMQStreamingRouterClientReceiver:
         ) -> None:
             await callback((recv_identity, message))
 
-        # Setup mock to return message once then block forever
-        call_count = 0
-
-        async def mock_recv():
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return [identity.encode(), msgspec.msgpack.encode(sample_worker_ready)]
-            await asyncio.Future()  # Block forever after first call
-
+        # FD path drains the [identity, payload] frames off the raw socket.
         streaming_router_test_helper.setup_mock_socket(
-            recv_multipart_side_effect=mock_recv
+            recv_multipart_side_effect=[
+                [identity.encode(), msgspec.msgpack.encode(sample_worker_ready)]
+            ]
         )
 
         async with streaming_router_test_helper.create_client() as client:
@@ -221,17 +217,10 @@ class TestZMQStreamingRouterClientReceiver:
         wait_for_background_task,
     ):
         """Test that receiver logs warning when no handler is registered."""
-        call_count = 0
-
-        async def mock_recv():
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return [b"worker-1", msgspec.msgpack.encode(sample_worker_ready)]
-            await asyncio.Future()  # Block forever after first call
-
         streaming_router_test_helper.setup_mock_socket(
-            recv_multipart_side_effect=mock_recv
+            recv_multipart_side_effect=[
+                [b"worker-1", msgspec.msgpack.encode(sample_worker_ready)]
+            ]
         )
 
         async with streaming_router_test_helper.create_client(auto_start=True):
@@ -252,27 +241,21 @@ class TestZMQStreamingRouterClientReceiver:
         streaming_router_test_helper,
         exception,
         iterations,
-        time_traveler,
     ):
-        """Test that receiver handles exceptions gracefully."""
-        call_count = 0
-        done_event = asyncio.Event()
+        """Test that the FD-driver surfaces a recv error without crashing.
 
-        async def mock_recv():
-            nonlocal call_count
-            call_count += 1
-            if call_count < iterations:
-                raise exception
-            done_event.set()
-            await asyncio.Future()  # Block forever after
-
+        A raising recv is reported via the driver's on_error callback (generic
+        error) or yields no data (zmq.Again); the client stays RUNNING.
+        """
         streaming_router_test_helper.setup_mock_socket(
-            recv_multipart_side_effect=mock_recv
+            recv_multipart_side_effect=[exception]
         )
 
-        async with streaming_router_test_helper.create_client(auto_start=True):
-            await asyncio.wait_for(done_event.wait(), timeout=1.0)
-            assert call_count >= iterations
+        async with streaming_router_test_helper.create_client(
+            auto_start=True
+        ) as client:
+            await asyncio.sleep(0)
+            assert client.state == LifecycleState.RUNNING
 
     @pytest.mark.asyncio
     async def test_receiver_stops_on_cancelled_error(
@@ -302,17 +285,10 @@ class TestZMQStreamingRouterClientReceiver:
         async def test_handler(identity: str, message: WorkerToRouterMessage) -> None:
             await callback((identity, message))
 
-        call_count = 0
-
-        async def mock_recv():
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return [b"", msgspec.msgpack.encode(sample_worker_ready)]
-            await asyncio.Future()  # Block forever after first call
-
         streaming_router_test_helper.setup_mock_socket(
-            recv_multipart_side_effect=mock_recv
+            recv_multipart_side_effect=[
+                [b"", msgspec.msgpack.encode(sample_worker_ready)]
+            ]
         )
 
         async with streaming_router_test_helper.create_client() as client:
@@ -396,4 +372,4 @@ class TestZMQStreamingRouterClientEdgeCases:
                 ]
             )
 
-            assert mock_socket.send_multipart.call_count == len(multiple_identities)
+            assert mock_socket._sync_send.call_count == len(multiple_identities) * 2

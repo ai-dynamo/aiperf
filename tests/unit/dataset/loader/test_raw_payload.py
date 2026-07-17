@@ -82,6 +82,15 @@ class TestRawPayloadCanLoad:
             data={"messages": [], "data": [{"session_id": "s", "payloads": []}]}
         )
 
+    def test_speed_bench_row_rejected(self):
+        assert not RawPayloadDatasetLoader.can_load(
+            data={
+                "question_id": "speed-coding-1".ljust(32, "0"),
+                "category": "coding",
+                "messages": [{"role": "user", "content": "Implement binary search."}],
+            }
+        )
+
     def test_directory_with_jsonl_accepted(self, jsonl_dir: Path):
         assert RawPayloadDatasetLoader.can_load(filename=jsonl_dir)
 

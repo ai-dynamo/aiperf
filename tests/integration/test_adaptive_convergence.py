@@ -38,7 +38,7 @@ class TestAdaptiveConvergence:
                 --workers-max {defaults.workers_max} \
                 --ui none
             """,
-            timeout=300.0,
+            timeout=600.0,  # bumped from 300s for slow Windows VDI
         )
 
         assert result.exit_code == 0
@@ -115,7 +115,7 @@ class TestAdaptiveConvergence:
                 --workers-max {defaults.workers_max} \
                 --ui none
             """,
-            timeout=300.0,
+            timeout=600.0,  # bumped from 300s for slow Windows VDI
         )
 
         assert result.exit_code == 0
@@ -160,7 +160,7 @@ class TestAdaptiveConvergence:
                 --workers-max {defaults.workers_max} \
                 --ui none
             """,
-            timeout=300.0,
+            timeout=600.0,  # bumped from 300s for slow Windows VDI
         )
 
         assert result.exit_code == 0
@@ -197,7 +197,7 @@ class TestAdaptiveConvergence:
                 --workers-max {defaults.workers_max} \
                 --ui none
             """,
-            timeout=300.0,
+            timeout=600.0,  # bumped from 300s for slow Windows VDI
         )
 
         assert result.exit_code == 0

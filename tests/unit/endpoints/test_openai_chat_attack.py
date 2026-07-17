@@ -242,11 +242,16 @@ class TestChatParseResponseHostile:
         calling extract_chat_response_data. Graceful skip."""
         assert endpoint.parse_response(create_mock_response(1, {})) is None
 
-    def test_unknown_object_type_raises(self, endpoint):
-        with pytest.raises(ValueError, match="Unsupported OpenAI object type"):
+    def test_unknown_object_type_returns_none(self, endpoint):
+        """An unrecognized object type is server output, not an invariant
+        violation - parse_response degrades to None instead of raising so the
+        worker records a failed request and keeps benchmarking."""
+        assert (
             endpoint.parse_response(
                 create_mock_response(1, {"object": "garbage", "choices": []})
             )
+            is None
+        )
 
     def test_none_json_returns_none(self, endpoint):
         """When the response body is non-JSON, get_json returns None and the

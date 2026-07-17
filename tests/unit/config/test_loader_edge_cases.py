@@ -13,6 +13,7 @@ Focuses on:
 from __future__ import annotations
 
 import stat
+import sys
 import textwrap
 from pathlib import Path
 
@@ -99,6 +100,10 @@ class TestLoadConfig:
         with pytest.raises(ConfigurationError, match="not found"):
             load_config(missing)
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="Windows uses ACLs not POSIX permission bits; chmod(0o000) is a no-op",
+    )
     def test_load_from_unreadable_file_raises(self, tmp_path: Path) -> None:
         cfg_file = tmp_path / "locked.yaml"
         cfg_file.write_text(_MINIMAL_YAML)

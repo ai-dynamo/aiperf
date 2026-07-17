@@ -38,8 +38,9 @@ class TestZMQPubClientPublish:
 
         await client.publish(sample_message)
 
-        mock_zmq_socket.send_multipart.assert_called_once()
-        sent_parts = mock_zmq_socket.send_multipart.call_args[0][0]
+        # PUB FD path frames the message as two sync sends: topic + payload.
+        sent_parts = [c.args[0] for c in mock_zmq_socket._sync_send.call_args_list]
+        assert len(sent_parts) == 2
 
         # First part is topic
         topic = sent_parts[0].decode()
@@ -61,7 +62,7 @@ class TestZMQPubClientPublish:
 
         await client.publish(message)
 
-        sent_parts = mock_zmq_socket.send_multipart.call_args[0][0]
+        sent_parts = [c.args[0] for c in mock_zmq_socket._sync_send.call_args_list]
         topic = sent_parts[0].decode()
 
         assert topic == f"{MessageType.HEARTBEAT}{TOPIC_END}"
@@ -82,7 +83,7 @@ class TestZMQPubClientPublish:
 
         await client.publish(message)
 
-        sent_parts = mock_zmq_socket.send_multipart.call_args[0][0]
+        sent_parts = [c.args[0] for c in mock_zmq_socket._sync_send.call_args_list]
         topic = sent_parts[0].decode()
 
         expected_topic = f"{MessageType.COMMAND}{TOPIC_DELIMITER}service-123{TOPIC_END}"
@@ -104,7 +105,7 @@ class TestZMQPubClientPublish:
 
         await client.publish(message)
 
-        sent_parts = mock_zmq_socket.send_multipart.call_args[0][0]
+        sent_parts = [c.args[0] for c in mock_zmq_socket._sync_send.call_args_list]
         topic = sent_parts[0].decode()
 
         expected_topic = f"{MessageType.COMMAND}{TOPIC_DELIMITER}WORKER{TOPIC_END}"
@@ -127,7 +128,7 @@ class TestZMQPubClientPublish:
 
         await client.publish(message)
 
-        sent_parts = mock_zmq_socket.send_multipart.call_args[0][0]
+        sent_parts = [c.args[0] for c in mock_zmq_socket._sync_send.call_args_list]
         topic = sent_parts[0].decode()
 
         # Should use service_id in topic
@@ -238,4 +239,5 @@ class TestZMQPubClientEdgeCases:
         for msg in messages:
             await client.publish(msg)
 
-        assert mock_zmq_socket.send_multipart.call_count == 5
+        # Two sync sends (topic + payload) per publish.
+        assert mock_zmq_socket._sync_send.call_count == 5 * 2

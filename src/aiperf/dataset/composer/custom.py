@@ -128,7 +128,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
             path = Path(file_path)
 
             # If it's a directory, use path-based detection only
-            if path.is_dir():
+            if path.is_dir() or path.suffix.lower() == ".parquet":
                 return self._infer_type(data=None, filename=file_path)
 
             # For files, read first non-empty line and use both content and path detection
@@ -138,7 +138,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
                         continue
                     try:
                         data = load_json_str(line)
-                    except orjson.JSONDecodeError:
+                    except (orjson.JSONDecodeError, UnicodeDecodeError):
                         # Non-JSON file (e.g. CSV) — fall back to filename-based detection
                         return self._infer_type(data=None, filename=file_path)
                     return self._infer_type(data=data, filename=file_path)
@@ -281,7 +281,18 @@ class CustomDatasetComposer(BaseDatasetComposer):
             # own default.
             kwargs["num_conversations"] = self._file_dataset.entries
 
+        if loader_metadata.category is not None:
+            kwargs["category"] = loader_metadata.category
+
         LoaderClass = plugins.get_class(PluginType.CUSTOM_DATASET_LOADER, dataset_type)
+
+        if loader_metadata.multi_turn:
+            if not self._loader_accepts_kwarg(LoaderClass, "multi_turn"):
+                raise ValueError(
+                    f"Loader {LoaderClass.__name__} does not support the 'multi_turn' parameter."
+                )
+            kwargs["multi_turn"] = loader_metadata.multi_turn
+
         if self._inline_records is not None:
             self.loader = LoaderClass(
                 inline_records=self._inline_records,

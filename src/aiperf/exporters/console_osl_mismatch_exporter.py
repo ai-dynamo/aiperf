@@ -27,7 +27,7 @@ class ConsoleOSLMismatchExporter(AIPerfLoggerMixin):
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(**kwargs)
-        if exporter_config.results is None:
+        if exporter_config.results is None or not exporter_config.results.records:
             self._metrics_by_tag = {}
         else:
             self._metrics_by_tag = {r.tag: r for r in exporter_config.results.records}
@@ -99,12 +99,12 @@ class ConsoleOSLMismatchExporter(AIPerfLoggerMixin):
 [bold]Why:[/bold] Server hit EOS token before reaching requested output length.
 
 [bold]Fix Options:[/bold]
-  • [green]--extra-inputs ignore_eos:true[/green] — Generate until max_tokens (vLLM, TensorRT-LLM)
-  • [green]--extra-inputs min_tokens:<N>[/green] — Set minimum output length (vLLM, TensorRT-LLM, SGLang)
-  • [green]--use-server-token-count[/green] — Use server-reported token counts if tokenizer mismatch suspected
+  - [green]--extra-inputs ignore_eos:true[/green] - Generate until max_tokens (vLLM, TensorRT-LLM)
+  - [green]--extra-inputs min_tokens:<N>[/green] - Set minimum output length (vLLM, TensorRT-LLM, SGLang)
+  - [green]--use-server-token-count[/green] - Use server-reported token counts if tokenizer mismatch suspected
 
 [bold]Diagnostics:[/bold]
-  • Review [cyan]profile_export.jsonl[/cyan] → [cyan]osl_mismatch_diff_pct[/cyan] for per-request values
-  • Adjust: [green]AIPERF_METRICS_OSL_MISMATCH_PCT_THRESHOLD={self._pct_threshold:g}[/green]
-  • Adjust: [green]AIPERF_METRICS_OSL_MISMATCH_MAX_TOKEN_THRESHOLD={self._max_token_threshold}[/green]\
+  - Review [cyan]profile_export.jsonl[/cyan] -> [cyan]osl_mismatch_diff_pct[/cyan] for per-request values
+  - Adjust: [green]AIPERF_METRICS_OSL_MISMATCH_PCT_THRESHOLD={self._pct_threshold:g}[/green]
+  - Adjust: [green]AIPERF_METRICS_OSL_MISMATCH_MAX_TOKEN_THRESHOLD={self._max_token_threshold}[/green]\
 """

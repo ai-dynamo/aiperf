@@ -20,6 +20,42 @@ if TYPE_CHECKING:
 
 _logger = AIPerfLogger(__name__)
 
+# FileDataset fields consumed only by the baseten_trace loader. The
+# convert-time guard can reject them only when --custom-dataset-type is
+# explicit; with an auto-detected format they would otherwise silently
+# no-op (e.g. --replay-speedup on a mooncake JSONL replays at recorded
+# speed), so warn once the resolved format is known.
+_BASETEN_ONLY_REPLAY_FIELDS = (
+    "trace_session_sample_ratio",
+    "replay_speedup",
+    "max_idle_gap_cap_seconds",
+    "open_loop_replay",
+    "open_loop_strict",
+    "omit_kv_hints",
+    "force_min_tokens",
+)
+
+
+def _warn_ignored_baseten_only_fields(
+    name: str, ds: object, dataset_type: object
+) -> None:
+    """Warn when baseten_trace-only replay knobs are set on another loader."""
+    from aiperf.plugin.enums import CustomDatasetType
+
+    if dataset_type is None or dataset_type == CustomDatasetType.BASETEN_TRACE:
+        return
+    fields_set = getattr(ds, "model_fields_set", set())
+    ignored = [
+        f
+        for f in _BASETEN_ONLY_REPLAY_FIELDS
+        if f in fields_set and getattr(ds, f) is not None
+    ]
+    if ignored:
+        _logger.warning(
+            f"Dataset '{name}' resolved to {dataset_type}, which ignores the "
+            f"baseten_trace-only replay option(s): {', '.join(ignored)}."
+        )
+
 
 @dataclass(slots=True)
 class _DatasetResolution:
@@ -46,12 +82,17 @@ class DatasetResolver:
         ``fixed_schedule`` validation, and counts records/sessions. Raises
         ``FileNotFoundError`` when a file dataset path does not exist.
         """
-        from aiperf.config.dataset import FileDataset
+        from aiperf.config.dataset import FileDataset, PublicDataset
+        from aiperf.plugin import plugins
 
         acc = _DatasetResolution()
         format_map = self._build_format_map()
 
         for ds in run.cfg.datasets:
+            if isinstance(ds, PublicDataset):
+                metadata = plugins.get_public_dataset_loader_metadata(ds.dataset)
+                acc.has_timing[ds.name] = metadata.has_timing_data
+                continue
             if not isinstance(ds, FileDataset):
                 continue
             self._resolve_one(name=ds.name, ds=ds, format_map=format_map, acc=acc)
@@ -65,6 +106,7 @@ class DatasetResolver:
         if acc.types:
             run.resolved.dataset_types = acc.types
             run.resolved.dataset_sampling_strategies = acc.sampling
+        if acc.has_timing:
             run.resolved.dataset_has_timing_data = acc.has_timing
         if acc.total_records:
             run.resolved.dataset_total_records = acc.total_records
@@ -117,6 +159,7 @@ class DatasetResolver:
             acc.has_timing[name] = self._check_timing_data(
                 str(resolved), first_record, dataset_type
             )
+        _warn_ignored_baseten_only_fields(name, ds, dataset_type)
 
         # 3. Count records and sessions (for validation and fixed_schedule)
         if not resolved.is_dir():
@@ -156,6 +199,7 @@ class DatasetResolver:
         if dataset_type is not None:
             acc.types[name] = dataset_type
             acc.sampling[name] = DatasetResolver._resolve_sampling(ds, dataset_type)
+        _warn_ignored_baseten_only_fields(name, ds, dataset_type)
 
         # Count records (sum across pools if multi-pool).
         if isinstance(records, dict):
@@ -209,18 +253,13 @@ class DatasetResolver:
         from aiperf.common.enums import DatasetFormat
         from aiperf.plugin.enums import CustomDatasetType
 
-        return {
-            str(DatasetFormat.SINGLE_TURN): CustomDatasetType.SINGLE_TURN,
-            str(DatasetFormat.MULTI_TURN): CustomDatasetType.MULTI_TURN,
-            str(DatasetFormat.MOONCAKE_TRACE): CustomDatasetType.MOONCAKE_TRACE,
-            str(DatasetFormat.RANDOM_POOL): CustomDatasetType.RANDOM_POOL,
-            str(DatasetFormat.BAILIAN_TRACE): CustomDatasetType.BAILIAN_TRACE,
-            str(DatasetFormat.BURST_GPT_TRACE): CustomDatasetType.BURST_GPT_TRACE,
-            str(DatasetFormat.DAG_JSONL): CustomDatasetType.DAG_JSONL,
-            str(
-                DatasetFormat.SAGEMAKER_DATA_CAPTURE
-            ): CustomDatasetType.SAGEMAKER_DATA_CAPTURE,
-        }
+        mapping: dict[str, object] = {}
+        for fmt in DatasetFormat:
+            try:
+                mapping[str(fmt)] = CustomDatasetType(str(fmt))
+            except ValueError:
+                continue
+        return mapping
 
     @staticmethod
     def _read_first_jsonl_record(file_path: str) -> dict | None:
@@ -321,6 +360,8 @@ class DatasetResolver:
             # load time (see ``BurstGPTTraceDatasetLoader._REQUIRED_COLUMNS``),
             # so the dataset cannot load without timing.
             return True
+        if dataset_type == CustomDatasetType.BASETEN_TRACE:
+            return True
 
         record = first_record
         if record is None:
@@ -353,6 +394,13 @@ class DatasetResolver:
         chat_id fields. For single-turn, each record is its own session.
         """
         from aiperf.plugin.enums import CustomDatasetType
+
+        if dataset_type == CustomDatasetType.BASETEN_TRACE:
+            from aiperf.dataset.loader.baseten_trace import (
+                count_baseten_parquet_records_and_sessions,
+            )
+
+            return count_baseten_parquet_records_and_sessions(file_path)
 
         is_multi_turn = dataset_type in (
             CustomDatasetType.MULTI_TURN,

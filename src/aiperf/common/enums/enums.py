@@ -1,9 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any
-
-from typing_extensions import Self
+from typing import Any, Self
 
 from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum
 
@@ -77,6 +75,11 @@ class CommAddress(CaseInsensitiveStrEnum):
     # Referenced by aiperf.config.comm.*.
     CREDIT_RETURN_ROUTER = "credit_return_router"
     """Address for credit-return ROUTER-DEALER traffic (separate from CREDIT_ROUTER for high-throughput modes)."""
+
+    CREDIT_RETURN = "credit_return"
+    """Address for the credit-return PUSH/PULL fan-in channel (worker PUSH -> timing-manager PULL).
+    CreditReturn/FirstToken ride this dedicated channel so the dispatch CREDIT_ROUTER stays
+    send-only; returns are unaddressed fan-in (worker_id travels in CreditReturn)."""
 
     CONTROL = "control"
     """Control-plane address for service-manager commands."""
@@ -283,6 +286,19 @@ class ImageSource(CaseInsensitiveStrEnum):
     without requiring files on disk."""
 
 
+class ImageSourceSamplingStrategy(CaseInsensitiveStrEnum):
+    """How source images are selected from a finite source-image pool."""
+
+    RANDOM_WITH_REPLACEMENT = "random-with-replacement"
+    """Draw each source image independently; repeats may occur immediately."""
+
+    SHUFFLE_CYCLE = "shuffle-cycle"
+    """Draw every source image once per shuffled cycle; reshuffle after exhaustion."""
+
+    SEQUENTIAL_CYCLE = "sequential-cycle"
+    """Walk source images in sorted load order; wrap after exhaustion."""
+
+
 class IPVersion(CaseInsensitiveStrEnum):
     """IP version for HTTP socket connections."""
 
@@ -346,12 +362,14 @@ class MessageType(CaseInsensitiveStrEnum):
     ERROR = "error"
     HEARTBEAT = "heartbeat"
     INFERENCE_RESULTS = "inference_results"
-    METRIC_RECORDS = "metric_records"
+    RECORDS = "records"
     PARSED_INFERENCE_RESULTS = "parsed_inference_results"
     PROCESSING_STATS = "processing_stats"
     PROCESS_RECORDS_RESULT = "process_records_result"
     PROCESS_TELEMETRY_RESULT = "process_telemetry_result"
     PROCESS_SERVER_METRICS_RESULT = "process_server_metrics_result"
+    PROCESS_ACCURACY_RESULT = "process_accuracy_result"
+    PROCESS_ALL_RESULTS = "process_all_results"
     PROFILE_PROGRESS = "profile_progress"
     PROFILE_RESULTS = "profile_results"
     REALTIME_METRICS = "realtime_metrics"
@@ -363,6 +381,7 @@ class MessageType(CaseInsensitiveStrEnum):
     TELEMETRY_STATUS = "telemetry_status"
     SERVER_METRICS_RECORD = "server_metrics_record"
     SERVER_METRICS_STATUS = "server_metrics_status"
+    NETWORK_LATENCY_RECORD = "network_latency_record"
     WORKER_HEALTH = "worker_health"
     WORKER_STATUS_SUMMARY = "worker_status_summary"
 

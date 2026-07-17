@@ -51,6 +51,7 @@ class Groups:
     VIDEO_INPUT = Group.create_ordered("Video Input")
     SERVICE = Group.create_ordered("Service")
     SERVER_METRICS = Group.create_ordered("Server Metrics")
+    NETWORK_LATENCY = Group.create_ordered("Network Latency")
     GPU_TELEMETRY = Group.create_ordered("GPU Telemetry")
     UI = Group.create_ordered("UI")
     WORKERS = Group.create_ordered("Workers")

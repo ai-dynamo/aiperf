@@ -3,6 +3,7 @@
 """UserFile model: path validation, format inference, content typing."""
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,26 @@ from aiperf.config.user_files import (
     build_user_file_context,
     materialize_user_files,
 )
+
+
+def _try_symlink_or_skip(link: Path, target: Path) -> None:
+    """Create a symlink, or pytest.skip if the platform forbids it.
+
+    Windows requires Admin or Developer Mode to create symlinks (WinError
+    1314 otherwise). Locked-down corporate Windows VDIs typically have
+    neither, so we skip rather than fail there. Only skip on permission or
+    operation-not-supported errors; re-raise other OSError values so they
+    surface as test failures rather than silent skips.
+    """
+    import errno
+
+    try:
+        link.symlink_to(target)
+    except OSError as e:
+        if e.errno in (errno.EPERM, errno.EACCES, errno.ENOSYS):
+            pytest.skip(f"symlink creation not permitted on this platform: {e}")
+        raise
+
 
 # --- Path validation ----------------------------------------------------------
 
@@ -209,7 +230,7 @@ def test_materialize_overwrites_existing(tmp_path):
 def test_materialize_symlink_escape_rejected(tmp_path):
     outside = tmp_path.parent / "outside"
     outside.mkdir(exist_ok=True)
-    (tmp_path / "evil").symlink_to(outside)
+    _try_symlink_or_skip(tmp_path / "evil", outside)
     files = [UserFile(path="evil/a.txt", content="x")]
     with pytest.raises(UserFileError) as exc_info:
         materialize_user_files(files, run_dir=tmp_path, context={})
@@ -219,6 +240,10 @@ def test_materialize_symlink_escape_rejected(tmp_path):
     )
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Windows uses ACLs not POSIX permission bits; os.chmod(0o500) is a no-op",
+)
 def test_materialize_write_failure_raises(tmp_path):
     import os
 
@@ -241,7 +266,7 @@ def test_materialize_jinja_comment_is_stripped(tmp_path):
 def test_materialize_intermediate_symlink_escape_rejected(tmp_path):
     outside = tmp_path.parent / "outside_2"
     outside.mkdir(exist_ok=True)
-    (tmp_path / "evil").symlink_to(outside)
+    _try_symlink_or_skip(tmp_path / "evil", outside)
     files = [UserFile(path="evil/sub/a.txt", content="x")]
     with pytest.raises(UserFileError) as exc_info:
         materialize_user_files(files, run_dir=tmp_path, context={})

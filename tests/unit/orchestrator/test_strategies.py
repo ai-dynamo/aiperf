@@ -320,7 +320,10 @@ class TestFixedTrialsStrategy:
             path = strategy.get_run_path(base_dir, run_index)
 
             assert path.name == label
-            assert str(path).endswith(f"profile_runs/{label}")
+            # Use os.sep so the literal works on both POSIX (/) and Windows (\\)
+            import os
+
+            assert str(path).endswith(f"profile_runs{os.sep}{label}")
 
 
 class TestAdaptiveStrategy:

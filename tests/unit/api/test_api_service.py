@@ -319,7 +319,7 @@ class TestFastAPIServiceStartStop:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                raise asyncio.TimeoutError
+                raise TimeoutError
             return await real_wait_for(*args, **kwargs)
 
         with patch(

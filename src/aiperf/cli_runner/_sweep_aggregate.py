@@ -20,29 +20,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from aiperf.cli_runner._pareto import _resolve_pareto_axes
+from aiperf.orchestrator.models import VariationKey, _variation_key
 
 if TYPE_CHECKING:
     from aiperf.common.aiperf_logger import AIPerfLogger
     from aiperf.config import BenchmarkPlan
     from aiperf.orchestrator.models import RunResult
-
-
-VariationKey = tuple[str, tuple[tuple[str, Any], ...]]
-"""Hashable key for grouping :class:`RunResult` by variation identity.
-
-A 2-tuple of ``(variation_label, sorted_values_tuple)``. The label MUST
-be part of the key because QMC samplers (Sobol/LHS) over coarse integer
-dimensions routinely produce two distinct sample rows that collapse to
-the same ``values`` dict - those are distinct sweep cells (they were
-sampled independently and may differ in non-integer dims after rounding)
-and must NOT be pooled. Per the user's
-``feedback_never_aggregate_across_runs.md`` rule, only runs that share
-ns + model + settings AND differ in exactly one swept dimension may be
-aggregated; collisions on the values dict are not "the same cell".
-
-The values tuple is retained alongside the label so SweepAnalyzer can
-still surface the parameter combination for reporting.
-"""
 
 
 def _resolve_model_name_for_variation(
@@ -101,22 +84,6 @@ def _plan_post_process(plan: BenchmarkPlan) -> Any:
     return plan.sweep.post_process
 
 
-def _variation_key(label: str, values: dict[str, Any]) -> VariationKey:
-    """Hashable, order-stable key for a variation cell.
-
-    Pairs the variation label with the sorted values tuple so QMC cells
-    with collision-prone integer dims (e.g. Sobol over ``lo=1, hi=4``)
-    each get a distinct group even when ``values`` happens to match.
-
-    Example:
-        >>> _variation_key("sobol_0001", {"concurrency": 3})
-        ('sobol_0001', (('concurrency', 3),))
-        >>> _variation_key("sobol_0006", {"concurrency": 3})
-        ('sobol_0006', (('concurrency', 3),))
-    """
-    return (label, tuple(sorted(values.items())))
-
-
 def _key_values(key: VariationKey) -> tuple[tuple[str, Any], ...]:
     """Return the values-tuple half of a :data:`VariationKey`."""
     return key[1]
@@ -125,6 +92,42 @@ def _key_values(key: VariationKey) -> tuple[tuple[str, Any], ...]:
 def _key_label(key: VariationKey) -> str:
     """Return the label half of a :data:`VariationKey`."""
     return key[0]
+
+
+def _variation_dir_name(
+    key: VariationKey, variation_label: str, group: list[RunResult]
+) -> str:
+    """Per-variation directory name, readable even for nested overrides.
+
+    Scenario sweeps without an explicit ``values:`` block carry nested
+    override dicts in ``variation_values``; ``_hashable_value`` serializes
+    those to long JSON strings, and :func:`_format_dir_name` would turn
+    that into an unreadable on-disk path (e.g.
+    ``benchmark_{datasets[{namedefault,prompts{isl{mean1000}}}]}``). When
+    any variation value is non-scalar, fall back to the human-authored
+    ``variation_label`` (e.g. ``aa-1k``), which is the natural cell
+    identity. Scalar sweeps keep the ``{leaf}_{value}`` form
+    (e.g. ``concurrency_10``).
+
+    Example:
+        >>> # nested override -> label
+        >>> # scalar override  -> "concurrency_10"
+    """
+    from aiperf.config.sweep import (
+        _format_dir_name,
+        _is_nested_override,
+        _label_dir_segment,
+    )
+
+    # Sanitize the label identically to `SweepVariation.dir_name` so per-run
+    # and aggregate directories match even for sanitizable labels (e.g.
+    # `qps:100` -> `qps100` on both). `variation_index` mirrors the per-run
+    # variation index for the empty-label fallback.
+    index = group[0].variation_index if group else 0
+    fallback = _label_dir_segment(variation_label, index)
+    if any(_is_nested_override(result.variation_values) for result in group):
+        return fallback
+    return _format_dir_name(dict(_key_values(key))) or fallback
 
 
 def _group_results_by_variation(
@@ -456,9 +459,7 @@ async def _export_one_variation_aggregate(
     if model := _resolve_model_name_for_variation(plan, key):
         aggregate_result.metadata["model"] = model
 
-    from aiperf.config.sweep import _format_dir_name
-
-    variation_dir_name = _format_dir_name(dict(_key_values(key))) or variation_label
+    variation_dir_name = _variation_dir_name(key, variation_label, group)
     aggregate_dir = _per_variation_aggregate_dir(
         base_dir, variation_dir_name, _plan_iteration_order(plan)
     )

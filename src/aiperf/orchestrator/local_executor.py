@@ -97,18 +97,47 @@ class LocalSubprocessExecutor(RunExecutor):
     ) -> subprocess.CompletedProcess[str]:
         """Run the benchmark subprocess runner and return its completed-process.
 
-        The api_key is forwarded via ``AIPERF_INJECTED_API_KEY`` rather
-        than written into ``run_config.json`` (which would be redacted by
-        the field_serializer anyway). ``subprocess_runner.main`` consumes
-        and unsets the variable before invoking the benchmark, so neither
-        the subprocess's own children nor any logging path sees it.
+        Three credential-bearing fields are forwarded out-of-band via env
+        vars rather than written into ``run_config.json`` (which redacts
+        them via the EndpointConfig field_serializers anyway):
+
+        * ``AIPERF_INJECTED_API_KEY`` — ``endpoint.api_key``
+        * ``AIPERF_INJECTED_HEADERS`` — sensitive entries of ``endpoint.headers``
+          (Authorization, X-API-Key, …)
+        * ``AIPERF_INJECTED_ENDPOINT_URLS`` — full ``endpoint.urls`` list,
+          forwarded only when at least one URL carries userinfo
+          (``user:pass@host``) that ``redact_url`` would strip
+
+        ``subprocess_runner.main`` consumes and unsets all three variables
+        before invoking the benchmark, so neither the subprocess's own
+        children nor any logging path sees them.
+
+        Internal injection env vars are popped from the copied parent env
+        before being conditionally re-set, so a stale value the parent
+        shell happened to carry (e.g. from a prior aiperf invocation, or
+        set by a CI wrapper) cannot leak into a run whose own config has
+        no api_key / no sensitive headers / no userinfo URLs.
         """
         import os
 
+        from aiperf.common.redact import extract_sensitive_headers, redact_url
+
         env = os.environ.copy()
+        # Clear any stale AIPERF_INJECTED_* the parent shell may carry —
+        # see method docstring above. Must precede the conditional set
+        # so an unset field on this run does not inherit a prior value.
+        env.pop("AIPERF_INJECTED_API_KEY", None)
+        env.pop("AIPERF_INJECTED_HEADERS", None)
+        env.pop("AIPERF_INJECTED_ENDPOINT_URLS", None)
         api_key = run.cfg.endpoint.api_key
         if api_key is not None:
             env["AIPERF_INJECTED_API_KEY"] = api_key
+        sensitive_headers = extract_sensitive_headers(run.cfg.endpoint.headers)
+        if sensitive_headers:
+            env["AIPERF_INJECTED_HEADERS"] = orjson.dumps(sensitive_headers).decode()
+        urls = list(run.cfg.endpoint.urls)
+        if any(redact_url(url) != url for url in urls):
+            env["AIPERF_INJECTED_ENDPOINT_URLS"] = orjson.dumps(urls).decode()
         # No timeout - SystemController handles benchmark duration internally.
         # stdin/stdout pass through so Textual can detect TTY and render live dashboard.
         # -u forces unbuffered output for live dashboard rendering.

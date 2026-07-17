@@ -263,7 +263,7 @@ class FakeTransport(BaseTransport):
             # Wait for cancellation timeout or completion
             try:
                 return await asyncio.wait_for(request_task, timeout=cancel_delay_sec)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Cancel the request
                 request_task.cancel()
                 with suppress(asyncio.CancelledError):

@@ -45,7 +45,9 @@ class TestMetricsConfigLoader:
 DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL, gauge, NVLink bandwidth (in KB/s)
 DCGM_FI_PROF_PIPE_TENSOR_ACTIVE, gauge, Tensor core active (in %)
 """
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".csv", delete=False, encoding="utf-8"
+        ) as f:
             f.write(csv_content)
             csv_path = Path(f.name)
 
@@ -75,7 +77,9 @@ DCGM_FI_DEV_POWER_USAGE, gauge, Power (in W)
 
 # Comment 2
 """
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".csv", delete=False, encoding="utf-8"
+        ) as f:
             f.write(csv_content)
             csv_path = Path(f.name)
 
@@ -93,7 +97,9 @@ DCGM_FI_DEV_POWER_USAGE, gauge, Power (in W)
         csv_content = """INVALID_FIELD, gauge, Should be skipped
 DCGM_FI_DEV_GPU_UTIL, gauge, Valid field (in %)
 """
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".csv", delete=False, encoding="utf-8"
+        ) as f:
             f.write(csv_content)
             csv_path = Path(f.name)
 
@@ -113,7 +119,9 @@ DCGM_FI_DEV_GPU_UTIL, gauge, Valid field (in %)
 DCGM_FI_DEV_POWER_USAGE, gauge, Valid metric (in W)
 DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION, counter, Valid counter (in MJ)
 """
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".csv", delete=False, encoding="utf-8"
+        ) as f:
             f.write(csv_content)
             csv_path = Path(f.name)
 
@@ -183,7 +191,9 @@ DCGM_FI_DEV_POWER_USAGE, gauge, Power draw (in W)
 DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
 DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL, gauge, NVLink bandwidth (in KB/s)
 """
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".csv", delete=False, encoding="utf-8"
+        ) as f:
             f.write(csv_content)
             csv_path = Path(f.name)
 
@@ -228,7 +238,9 @@ DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL, gauge, NVLink bandwidth (in KB/s)
         csv_content = """DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL, gauge, NVLink bandwidth (in KB/s)
 DCGM_FI_PROF_PIPE_TENSOR_ACTIVE, gauge, Tensor active (in %)
 """
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".csv", delete=False, encoding="utf-8"
+        ) as f:
             f.write(csv_content)
             csv_path = Path(f.name)
 
@@ -263,7 +275,9 @@ DCGM_FI_DEV_MEM_CLOCK, gauge, Memory clock (in MHz)
 DCGM_FI_DEV_MEMORY_TEMP, gauge, Memory temp (in °C)
 DCGM_FI_DEV_POWER_MGMT_LIMIT, gauge, Power limit (in W)
 """
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".csv", delete=False, encoding="utf-8"
+        ) as f:
             f.write(csv_content)
             csv_path = Path(f.name)
 
@@ -381,7 +395,9 @@ DCGM_FI_DEV_POWER_MGMT_LIMIT, gauge, Power limit (in W)
         csv_content = """DCGM_FI_DEV_POWER_USAGE, gauge
 DCGM_FI_DEV_GPU_TEMP, gauge, Valid field (in C)
 """
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".csv", delete=False, encoding="utf-8"
+        ) as f:
             f.write(csv_content)
             csv_path = Path(f.name)
 
@@ -414,7 +430,9 @@ DCGM_FI_DEV_GPU_TEMP, gauge, Valid field (in C)
 INVALID_FIELD, gauge, Should be skipped
 DCGM_FI_DEV_GPU_UTIL, invalid_type, Should be skipped
 """
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".csv", delete=False, encoding="utf-8"
+        ) as f:
             f.write(csv_content)
             csv_path = Path(f.name)
 

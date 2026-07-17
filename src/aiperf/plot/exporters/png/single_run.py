@@ -17,6 +17,7 @@ from aiperf.plot.core.plot_specs import (
     DataSource,
     PlotSpec,
 )
+from aiperf.plot.exceptions import DataUnavailableError
 from aiperf.plot.exporters.png.base import BasePNGExporter
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
@@ -74,6 +75,13 @@ class SingleRunPNGExporter(BasePNGExporter):
                 self.debug(f"Generated {spec.filename}")
                 generated_files.append(path)
 
+            except (DataUnavailableError, KeyError) as e:
+                # Expected when this run lacks the data a plot needs (e.g.
+                # streaming-only metrics in a non-streaming run). Skip the plot
+                # rather than logging an error.
+                self.warning(
+                    f"Skipping plot '{spec.name}': required data not available: {e}"
+                )
             except Exception as e:
                 self.error(f"Failed to generate {spec.name}: {e}")
 

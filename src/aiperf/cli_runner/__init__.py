@@ -17,6 +17,7 @@ from uuid import uuid4
 from aiperf.cli_runner._callbacks import CompletedRun, OnComplete
 from aiperf.cli_runner._multi_run import _run_multi_benchmark
 from aiperf.cli_runner._preflight import (
+    _preflight_accuracy_deps,
     _preflight_artifact_dir,
     _preflight_endpoint_ready,
     _preflight_fd_limit,
@@ -50,6 +51,7 @@ def run_benchmark(plan: BenchmarkPlan) -> None:
         )
 
     _preflight_artifact_dir(plan)
+    _preflight_accuracy_deps(plan)
     _preflight_fd_limit()
     _preflight_endpoint_ready(plan)
 

@@ -199,6 +199,9 @@ from aiperf.config.types import (
     SequenceDistributionEntry,
     validate_probability_distribution,
 )
+from aiperf.config.wandb import (
+    WandbConfig,
+)
 
 __all__ = [
     "AIPerfConfig",
@@ -287,6 +290,7 @@ __all__ = [
     "VIDEO_AUDIO_CODEC_MAP",
     "VideoAudioConfig",
     "VideoConfig",
+    "WandbConfig",
     "ZMQDualBindConfig",
     "ZMQDualBindProxyConfig",
     "ZMQIPCConfig",

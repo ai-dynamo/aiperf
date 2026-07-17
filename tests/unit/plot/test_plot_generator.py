@@ -569,6 +569,42 @@ class TestTimeSeriesHistogram:
         assert marker.color == LIGHT_MODE_PRIMARY_COLOR
 
 
+class TestTimesliceScatter:
+    """Tests for create_timeslice_scatter method."""
+
+    @pytest.fixture
+    def timeslice_df(self):
+        """Create sample timeslice summary DataFrame for testing."""
+        return pd.DataFrame(
+            {
+                "Timeslice": [0, 1, 2],
+                "avg": [100.0, 120.0, 110.0],
+                "std": [10.0, 12.0, 11.0],
+            }
+        )
+
+    def test_std_legend_trace_does_not_affect_x_axis(
+        self, plot_generator, timeslice_df
+    ):
+        """Test std legend proxy does not add sentinel values to the data range."""
+        fig = plot_generator.create_timeslice_scatter(
+            df=timeslice_df,
+            x_col="Timeslice",
+            y_col="avg",
+            metric_name="Time to First Token",
+            average_value=110.0,
+            average_std=8.0,
+        )
+
+        std_legend_trace = next(
+            trace for trace in fig.data if trace.name == "±1 Timeslice Std"
+        )
+
+        assert list(std_legend_trace.x) == [None]
+        assert list(std_legend_trace.y) == [None]
+        assert -999999 not in list(std_legend_trace.x)
+
+
 class TestDualAxisPlots:
     """Tests for dual-axis plotting functions."""
 

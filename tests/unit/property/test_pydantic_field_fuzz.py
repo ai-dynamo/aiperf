@@ -75,7 +75,7 @@ def _check_no_unhandled(model: type[BaseModel], data: Any) -> None:
         model.model_validate(data)
     except ALLOWED:
         pass
-    except Exception as e:  # noqa: BLE001 -- we want the exception type
+    except Exception as e:  # we want the exception type
         raise AssertionError(
             f"{model.__name__}.model_validate raised unhandled "
             f"{type(e).__name__}: {e!r}\nfor input: {data!r}"
@@ -228,7 +228,7 @@ def test_sampling_distribution_union_never_unhandled(data: Any) -> None:
         _DIST_ADAPTER.validate_python(data)
     except ALLOWED:
         pass
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         raise AssertionError(
             f"SamplingDistribution discriminator raised unhandled "
             f"{type(e).__name__}: {e!r}\nfor input: {data!r}"

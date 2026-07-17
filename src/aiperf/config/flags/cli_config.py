@@ -20,9 +20,9 @@ populated CLIConfig into the canonical AIPerfConfig.
 This file is intentionally large (~3200 LOC, ~200 fields) — every CLI flag
 is a top-level field by design, so size scales linearly with field count.
 The flat shape is the post-flatten architecture. Section dividers group
-fields by their CLIParameter ``Groups.X``. Both the file-size and
-pydantic-fields ergonomics checks have an explicit intentional exception
-for this file (see ``tools/check_ergonomics.py::INTENTIONAL_FILE_SIZE_EXEMPTIONS``).
+fields by their CLIParameter ``Groups.X``. The pydantic-fields
+ergonomics check has an explicit intentional exception for this file (see
+``tools/check_ergonomics.py::INTENTIONAL_PYDANTIC_FIELDS_EXEMPTIONS``).
 
 See aiperf.config.flags.__init__ for the hard rules around adding new fields,
 and ``docs/dev/patterns.md`` § "Adding a New CLI Flag" for the recipe.
@@ -45,6 +45,7 @@ from aiperf.common.enums import (
     GPUTelemetryMode,
     ImageFormat,
     ImageSource,
+    ImageSourceSamplingStrategy,
     ModelSelectionStrategy,
     RequestContentType,
     ServerMetricsFormat,
@@ -440,6 +441,23 @@ class CLIConfig(BaseConfig):
         ),
     ] = False
 
+    apply_chat_template: Annotated[
+        bool,
+        Field(
+            description="Apply the HuggingFace tokenizer's chat template when counting input tokens. "
+            "When enabled: synthetic ISL is compensated for chat-template wrapping (BOS, role headers, "
+            "EOT, generation-prompt suffix) and the record processor reports ISL using "
+            "`apply_chat_template(tokenize=True, add_generation_prompt=True)` for chat-shape payloads. "
+            "When disabled (default), both paths use bare-text encoding, so reported ISL matches the "
+            "prompt content the user asked for and ignores template overhead. Requires an HF tokenizer "
+            "with a chat template configured; no-ops on tiktoken / un-templated models.",
+        ),
+        CLIParameter(
+            name=("--apply-chat-template",),
+            group=Groups.TOKENIZER,
+        ),
+    ] = False
+
     ##############################################################################
     # Input
     ##############################################################################
@@ -482,7 +500,7 @@ class CLIConfig(BaseConfig):
         Field(
             description="Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. "
             "Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), "
-            "directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.",
+            "Parquet for `baseten_trace`, directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.",
         ),
         BeforeValidator(parse_file),
         CLIParameter(
@@ -518,12 +536,26 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    dataset_filters: Annotated[
+        list[str],
+        Field(
+            default_factory=list,
+            description="Dataset-specific filter in key=value form. Repeat for multiple "
+            "filters. Only supported by public datasets that declare filter support.",
+        ),
+        CLIParameter(
+            name=("--dataset-filter",),
+            consume_multiple=True,
+            group=Groups.INPUT,
+        ),
+    ]
+
     custom_dataset_type: Annotated[
         CustomDatasetType | None,
         Field(
             description="Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. "
             "Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), "
-            "`mooncake_trace`/`bailian_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; "
+            "`mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; "
             "when using `random_pool`, `--conversation-num` defaults to 100 if not specified; "
             "batch sizes > 1 sample each modality independently from a flat pool and do not preserve "
             "per-entry associations - use `single_turn` if paired modalities must stay together). "
@@ -560,6 +592,22 @@ class CLIConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--random-seed",),
+            group=Groups.INPUT,
+        ),
+    ] = None
+
+    trace_session_sample_ratio: Annotated[
+        float | None,
+        Field(
+            default=None,
+            gt=0.0,
+            le=1.0,
+            description="Fraction of trace sessions to keep for replay, sampled "
+            "whole-session to preserve multi-turn integrity; deterministic when "
+            "`--random-seed` is set. Only supported by the baseten_trace loader.",
+        ),
+        CLIParameter(
+            name=("--trace-session-sample-ratio",),
             group=Groups.INPUT,
         ),
     ] = None
@@ -814,18 +862,122 @@ class CLIConfig(BaseConfig):
         Field(
             default=None,
             ge=0.0,
-            description="Clamp per-turn replay delays (read from JSONL trace "
-            "files) to at most this many seconds. ``None`` disables the cap. "
-            "Used by the DAG JSONL loader to keep long pre-recorded waits "
-            "from stalling the benchmark; the loader reports the clamp count "
-            "at end of load. Routes onto the active FileDataset's "
-            "``inter_turn_delay_cap_seconds`` field at config-resolution time.",
+            description="Clamp per-turn replay delays to at most this many "
+            "seconds; ``None`` disables the cap. Honored by the DAG JSONL loader "
+            "and the baseten_trace loader's closed-loop think-times; the clamp "
+            "count is reported at end of load. Maps to FileDataset "
+            "``inter_turn_delay_cap_seconds``.",
         ),
         CLIParameter(
             name=("--inter-turn-delay-cap-seconds",),
             group=Groups.CONVERSATION_INPUT,
         ),
     ] = None
+
+    max_idle_gap_cap_seconds: Annotated[
+        float | None,
+        Field(
+            default=None,
+            gt=0.0,
+            description="Collapse idle gaps between consecutive requests (across "
+            "all sessions) to at most this many seconds, so a sparse or "
+            "session-sampled trace does not replay dead air; ``None`` disables "
+            "the cap. The cap is in replay wall-clock seconds, applied after "
+            "--replay-speedup compression, so it bounds actual benchmark idle "
+            "time regardless of speedup. Only supported by the baseten_trace "
+            "loader. Maps to FileDataset ``max_idle_gap_cap_seconds``.",
+        ),
+        CLIParameter(
+            name=("--max-idle-gap-cap-seconds",),
+            group=Groups.CONVERSATION_INPUT,
+        ),
+    ] = None
+
+    replay_speedup: Annotated[
+        float | None,
+        Field(
+            default=None,
+            gt=0.0,
+            description="Trace replay wall-clock compression (10 = 10x faster "
+            "than recorded): divides normalized timestamps and inter-turn delays; "
+            "``None`` = real time. Unlike synthesis speedup_ratio, hash_ids stay "
+            "untouched (KV-cache fidelity). Only supported by the baseten_trace "
+            "loader. Maps to FileDataset ``replay_speedup``.",
+        ),
+        CLIParameter(
+            name=("--replay-speedup",),
+            group=Groups.CONVERSATION_INPUT,
+        ),
+    ] = None
+
+    open_loop_replay: Annotated[
+        bool,
+        Field(
+            default=True,
+            description="Open-loop replay (the default): each session starts at "
+            "its absolute, speedup-scaled recorded timestamp; continuation turns "
+            "fire at max(recorded timestamp, prior-turn completion). Pass "
+            "`--no-open-loop-replay` for closed-loop back-pressure: continuation "
+            "turns fire a think-time (recorded start-to-start gap minus recorded "
+            "e2e duration) after the prior turn completes, keeping sessions "
+            "causally ordered when replayed service times differ from recorded "
+            "(e.g. A/A comparisons). Only honored by the baseten_trace loader. "
+            "Maps to FileDataset ``open_loop_replay``.",
+        ),
+        CLIParameter(
+            name=("--open-loop-replay",),
+            negative="--no-open-loop-replay",
+            group=Groups.CONVERSATION_INPUT,
+        ),
+    ] = True
+
+    open_loop_strict: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="In open-loop replay, fire every trace row at its "
+            "absolute recorded timestamp as an independent single-turn session, "
+            "trading away multi-turn grouping and session metrics. Only honored "
+            "by the baseten_trace loader. Maps to FileDataset "
+            "``open_loop_strict``.",
+        ),
+        CLIParameter(
+            name=("--open-loop-strict",),
+            group=Groups.CONVERSATION_INPUT,
+        ),
+    ] = False
+
+    omit_kv_hints: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Drop recorded KV-cache hints (``hash_ids``, "
+            "``block_size``) from replayed request bodies, for strict frontends "
+            "that reject unknown parameters. Only honored by the baseten_trace "
+            "loader. Maps to FileDataset ``omit_kv_hints``.",
+        ),
+        CLIParameter(
+            name=("--omit-kv-hints",),
+            group=Groups.CONVERSATION_INPUT,
+        ),
+    ] = False
+
+    force_min_tokens: Annotated[
+        bool,
+        Field(
+            default=True,
+            description="Pin ``min_tokens`` to the recorded output length so "
+            "replayed generations match recorded lengths; pass "
+            "`--no-force-min-tokens` to let EOS end generations naturally (some "
+            "servers reject ``min_tokens``). Only honored by the baseten_trace "
+            "loader. Maps to FileDataset ``force_min_tokens``.",
+        ),
+        CLIParameter(
+            name=("--force-min-tokens",),
+            negative="--no-force-min-tokens",
+            group=Groups.CONVERSATION_INPUT,
+        ),
+    ] = True
 
     ##############################################################################
     # Prompt
@@ -976,10 +1128,11 @@ class CLIConfig(BaseConfig):
         Field(
             default=None,
             ge=1,
-            description="Token block size for hash-based prompt caching in trace datasets (`mooncake_trace`, `bailian_trace`). When `hash_ids` are provided in trace entries, "
-            "prompts are divided into blocks of this size. Each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation "
-            "of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`. "
-            "When not set, the trace loader's `default_block_size` from plugin metadata is used (e.g. 16 for `bailian_trace`, 512 for `mooncake_trace`).",
+            description="Token block size for hash-based prompt synthesis when dataset entries carry `hash_ids`: each `hash_id` maps to a cached "
+            "block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length "
+            "equals `(num_hash_ids - 1) * block_size + final_block_size`. Only supported with synthetic datasets: with `--input-file` the flag is "
+            "rejected at convert time, and trace replay loaders always use the `default_block_size` from their plugin metadata "
+            "(16 for `bailian_trace`, 64 for `baseten_trace`, 512 for `mooncake_trace`).",
         ),
         CLIParameter(
             name=(
@@ -1252,9 +1405,9 @@ class CLIConfig(BaseConfig):
             description="Source image generation mode (default `noise`). "
             "`noise` generates random noise images on the fly at the requested dimensions — no files on disk required, "
             "and the pool is effectively unbounded so servers cannot dedupe on identical inputs. "
-            "`assets` loads images from the built-in `assets/source_images` directory (ships with a small set of 4 images) "
-            "and resizes them to the requested dimensions. "
-            "A path to a directory loads images from the given directory (e.g. `--image-source ./source_images`). "
+            "`assets` indexes images from the built-in `assets/source_images` directory (ships with a small set of 4 images) "
+            "and lazily loads them at the requested dimensions. "
+            "A path to a directory indexes images from the given directory (e.g. `--image-source ./source_images`). "
             "Note: random-noise images are roughly incompressible, so payload bytes are larger than equivalent natural images.",
         ),
         CLIParameter(
@@ -1262,6 +1415,21 @@ class CLIConfig(BaseConfig):
             group=Groups.IMAGE_INPUT,
         ),
     ]
+
+    image_source_sampling: Annotated[
+        ImageSourceSamplingStrategy,
+        Field(
+            description="How source images are selected from finite image sources selected by `--image-source assets` "
+            "or `--image-source <directory>`. `random-with-replacement` draws each source image independently; "
+            "repeats may occur immediately. `shuffle-cycle` draws every source image once per shuffled cycle, "
+            "reshuffling after exhaustion. `sequential-cycle` walks source images in sorted load order and wraps "
+            "after exhaustion. For `noise`, only `random-with-replacement` is valid because there is no finite source pool.",
+        ),
+        CLIParameter(
+            name=("--image-source-sampling",),
+            group=Groups.IMAGE_INPUT,
+        ),
+    ] = ImageSourceSamplingStrategy.RANDOM_WITH_REPLACEMENT
 
     ##############################################################################
     # Video Input
@@ -1778,6 +1946,118 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    adaptive_scale: Annotated[
+        bool,
+        Field(
+            description=(
+                "Enable stable single-run adaptive scale control. Use "
+                "--adaptive-scale-control variable:min,max:type to choose the "
+                "controlled variable and bounds, and --adaptive-scale-sla "
+                "metric:stat:op:threshold to define pass/fail criteria. Also "
+                "requires --benchmark-duration and --adaptive-sustain-duration."
+            ),
+        ),
+        CLIParameter(name=("--adaptive-scale",), group=Groups.LOAD_GENERATOR),
+    ] = False
+
+    adaptive_sustain_duration: Annotated[
+        float | None,
+        Field(
+            gt=0,
+            description="Duration in seconds to sustain load near the discovered adaptive scale boundary.",
+        ),
+        CLIParameter(
+            name=("--adaptive-sustain-duration",), group=Groups.LOAD_GENERATOR
+        ),
+    ] = None
+
+    adaptive_assessment_period: Annotated[
+        float | None,
+        Field(
+            ge=1.0,
+            description="Duration in seconds for each adaptive scale SLA assessment window.",
+        ),
+        CLIParameter(
+            name=("--adaptive-assessment-period", "--adaptive-scale-assessment-period"),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = None
+
+    adaptive_scale_control: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Compact adaptive scale control spec in variable:min,max:type "
+                "form. The variable is one of concurrency, prefill_concurrency, "
+                "request_rate, or users; min and max are required explicit "
+                "bounds; type is int for discrete controls and float for rate "
+                "controls. Examples: concurrency:1,1000:int, "
+                "prefill_concurrency:1,8:int, request_rate:1,200:float, "
+                "users:10,500:int. Do not combine this with expanded "
+                "--adaptive-control-* flags."
+            ),
+        ),
+        CLIParameter(name=("--adaptive-scale-control",), group=Groups.LOAD_GENERATOR),
+    ] = None
+
+    adaptive_control_variable: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Adaptive scale control variable: concurrency, prefill_concurrency, request_rate, or users.",
+        ),
+        CLIParameter(
+            name=("--adaptive-control-variable",), group=Groups.LOAD_GENERATOR
+        ),
+    ] = None
+
+    adaptive_control_min: Annotated[
+        float | None,
+        Field(
+            gt=0,
+            default=None,
+            description="Minimum adaptive scale control value.",
+        ),
+        CLIParameter(name=("--adaptive-control-min",), group=Groups.LOAD_GENERATOR),
+    ] = None
+
+    adaptive_control_max: Annotated[
+        float | None,
+        Field(
+            gt=0,
+            default=None,
+            description="Maximum adaptive scale control value. Inferred from the phase target when omitted.",
+        ),
+        CLIParameter(name=("--adaptive-control-max",), group=Groups.LOAD_GENERATOR),
+    ] = None
+
+    adaptive_scale_sla: Annotated[
+        list[str] | None,
+        Field(
+            default=None,
+            description=(
+                "SLA filter for adaptive scale. Format: "
+                "'metric_tag:stat:op:threshold'. Latency-family metrics "
+                "(request_latency, time_to_first_token/ttft, "
+                "inter_token_latency/itl/tpot) support percentile stats; "
+                "window scalar/rate metrics (request_throughput, "
+                "output_token_throughput, goodput, "
+                "goodput_ratio, success_rate, "
+                "error_rate, cancellation_rate) support {avg, min, max}. "
+                "Full metric/stat table: "
+                "[Adaptive SLA metric support]"
+                "(tutorials/yaml-config.md#adaptive-sla-metric-support). "
+                "op in {lt, le, gt, ge}; threshold is a float. Repeatable. "
+                "Example: --adaptive-scale-sla 'request_latency:p95:le:30000'."
+            ),
+        ),
+        CLIParameter(
+            name=("--adaptive-scale-sla",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = None
+
     ##############################################################################
     # Warmup
     ##############################################################################
@@ -2206,6 +2486,47 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    wandb_project: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Weights & Biases project name. Setting this enables wandb export.",
+        ),
+        CLIParameter(name=("--wandb-project",), group=Groups.OUTPUT),
+    ] = None
+
+    wandb_entity: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Weights & Biases entity (team or user). Defaults to the API key's default entity.",
+        ),
+        CLIParameter(name=("--wandb-entity",), group=Groups.OUTPUT),
+    ] = None
+
+    wandb_run_name: Annotated[
+        str | None,
+        Field(default=None, description="Weights & Biases run name."),
+        CLIParameter(name=("--wandb-run-name",), group=Groups.OUTPUT),
+    ] = None
+
+    wandb_tags: Annotated[
+        list[str] | None,
+        Field(
+            default=None,
+            description=(
+                "Additional Weights & Biases run tags to attach on upload. "
+                "Can be specified multiple times or as a comma-separated list."
+            ),
+        ),
+        BeforeValidator(parse_str_or_list),
+        CLIParameter(
+            name=("--wandb-tag",),
+            consume_multiple=True,
+            group=Groups.OUTPUT,
+        ),
+    ] = None
+
     ##############################################################################
     # HTTP Trace
     ##############################################################################
@@ -2284,6 +2605,59 @@ class CLIConfig(BaseConfig):
             group=Groups.SERVER_METRICS,
         ),
     ] = _DEFAULT_SERVER_METRICS_FORMATS
+
+    ##############################################################################
+    # Network Latency
+    ##############################################################################
+    network_latency_automatic: Annotated[
+        bool,
+        Field(
+            description=(
+                "Automatically measure network latency (DISABLED BY DEFAULT). "
+                "Opens a fresh TCP connection to the endpoint throughout the run, "
+                "measures the handshake RTT, and subtracts the mean from request-start-anchored "
+                "latency metrics (request_latency, time_to_first_token, "
+                "time_to_first_output_token). Raw metrics are preserved; adjusted values are "
+                "emitted as separate network_adjusted_* metrics plus a network_rtt summary. "
+                "Mutually exclusive with --network-latency-mean."
+            ),
+        ),
+        CLIParameter(
+            name=("--network-latency-automatic",),
+            group=Groups.NETWORK_LATENCY,
+        ),
+    ] = False
+
+    network_latency_mean: Annotated[
+        float | None,
+        Field(
+            ge=0.0,
+            description=(
+                "Set a fixed mean network RTT in milliseconds to subtract, bypassing active "
+                "probing. Implicitly enables network latency adjustment. Mutually exclusive "
+                "with --network-latency-automatic."
+            ),
+        ),
+        CLIParameter(
+            name=("--network-latency-mean",),
+            group=Groups.NETWORK_LATENCY,
+        ),
+    ] = None
+
+    network_latency_ping_interval: Annotated[
+        float | None,
+        Field(
+            gt=0.0,
+            description=(
+                "Seconds between TCP-handshake RTT probes during profiling "
+                "(default: 1.0s). Only applies with --network-latency-automatic."
+            ),
+        ),
+        CLIParameter(
+            name=("--network-latency-ping-interval",),
+            group=Groups.NETWORK_LATENCY,
+        ),
+    ] = None
 
     ##############################################################################
     # GPU Telemetry
@@ -2873,7 +3247,8 @@ class CLIConfig(BaseConfig):
             description=(
                 "SLA filter to attach to the adaptive-search or grid path. "
                 "Format: 'metric_tag:stat:op:threshold'. Stat in "
-                "{avg, p50, p90, p95, p99}; op in {lt, le, gt, ge}; threshold is "
+                "{avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; "
+                "op in {lt, le, gt, ge}; threshold is "
                 "a float. Repeatable. Example: --search-sla "
                 "'time_to_first_token:p95:lt:200' --search-sla "
                 "'request_error_rate:p99:lt:0.05'. Composes with recipe-named "
@@ -2883,6 +3258,28 @@ class CLIConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--search-sla",),
+            group=Groups.MULTI_RUN,
+        ),
+    ] = None
+
+    search_sla_tier: Annotated[
+        list[str] | None,
+        Field(
+            default=None,
+            description=(
+                "Multi-tier SLO grouping flag. Each invocation defines one tier "
+                "of SLA filters. Format: 'LABEL:FILTER[,FILTER...]' or "
+                "'FILTER[,FILTER...]' (auto-labels tier_1, tier_2, ...). "
+                "Requires 2-10 invocations. Example: --search-sla-tier "
+                "'fast:output_token_throughput:avg:gt:300,time_to_first_token:p95:lt:5000' "
+                "--search-sla-tier "
+                "'standard:output_token_throughput:avg:gt:100,time_to_first_token:p95:lt:10000'. "
+                "When used, all --search-sla filters are still parsed and compose "
+                "with tier definitions."
+            ),
+        ),
+        CLIParameter(
+            name=("--search-sla-tier",),
             group=Groups.MULTI_RUN,
         ),
     ] = None
@@ -3316,6 +3713,7 @@ class CLIConfig(BaseConfig):
         CLIParameter(
             name=("--accuracy-enable-cot",),
             group=Groups.ACCURACY,
+            negative="--accuracy-no-enable-cot",
         ),
     ] = None
 
@@ -3431,6 +3829,24 @@ class CLIConfig(BaseConfig):
         ),
         CLIParameter(
             name="--api-host",
+            group=Groups.SERVICE,
+        ),
+    ] = None
+
+    stats_interval: Annotated[
+        float | None,
+        Field(
+            ge=0.0,
+            le=1000.0,
+            description=(
+                "Interval in seconds between realtime stats publishes (dashboards "
+                "and the per-tick log block). 0 disables the log block while "
+                "dashboards continue to poll. Defaults to 5s under --ui dashboard, "
+                "30s otherwise. Overrides AIPERF_UI_REALTIME_METRICS_INTERVAL."
+            ),
+        ),
+        CLIParameter(
+            name=("--stats-interval",),
             group=Groups.SERVICE,
         ),
     ] = None

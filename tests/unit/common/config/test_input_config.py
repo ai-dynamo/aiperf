@@ -15,7 +15,7 @@ parse CLI input shapes (extra/headers tuples, goodput dict-from-string).
 """
 
 import tempfile
-from pathlib import PosixPath
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -33,6 +33,7 @@ def test_input_config_defaults():
     assert config.input_file == InputDefaults.FILE
     assert config.random_seed == InputDefaults.RANDOM_SEED
     assert config.custom_dataset_type == InputDefaults.CUSTOM_DATASET_TYPE
+    assert config.trace_session_sample_ratio == InputDefaults.TRACE_SESSION_SAMPLE_RATIO
     assert config.goodput == InputDefaults.GOODPUT
     # Modality fields are flat post-Task-13; smoke-check a representative
     # field per modality to confirm they exist and carry their defaults.
@@ -55,16 +56,27 @@ def test_input_config_custom_values():
 
         assert config.extra_inputs == [("key", "value")]
         assert config.headers == [("Authorization", "Bearer token")]
-        assert config.input_file == PosixPath(temp_file.name)
+        assert config.input_file == Path(temp_file.name)
         assert config.random_seed == 42
         assert config.custom_dataset_type == CustomDatasetType.MULTI_TURN
+
+
+def test_input_config_trace_session_sample_ratio():
+    config = CLIConfig(trace_session_sample_ratio=0.1)
+    assert config.trace_session_sample_ratio == 0.1
+
+
+@pytest.mark.parametrize("ratio", [0.0, -0.1, 1.1])
+def test_input_config_trace_session_sample_ratio_validation(ratio):
+    with pytest.raises(ValidationError):
+        CLIConfig(trace_session_sample_ratio=ratio)
 
 
 def test_input_config_file_validation():
     """File field accepts a path string but rejects non-string scalars."""
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
         config = CLIConfig(input_file=temp_file.name)
-        assert config.input_file == PosixPath(temp_file.name)
+        assert config.input_file == Path(temp_file.name)
 
     with pytest.raises(ValidationError):
         CLIConfig(input_file=12345)
@@ -87,14 +99,14 @@ def test_custom_dataset_type_with_file_succeeds():
             custom_dataset_type=CustomDatasetType.MULTI_TURN, input_file=temp_file.name
         )
         assert config.custom_dataset_type == CustomDatasetType.MULTI_TURN
-        assert config.input_file == PosixPath(temp_file.name)
+        assert config.input_file == Path(temp_file.name)
 
 
 def test_file_without_custom_dataset_type_succeeds():
     """File without custom_dataset_type is allowed (auto-inference at runtime)."""
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
         config = CLIConfig(input_file=temp_file.name, custom_dataset_type=None)
-        assert config.input_file == PosixPath(temp_file.name)
+        assert config.input_file == Path(temp_file.name)
         assert config.custom_dataset_type is None
 
 

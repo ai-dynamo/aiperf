@@ -10,7 +10,7 @@ Endpoint - Server connection and API configuration
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 from urllib.parse import urlparse
 
 from pydantic import (
@@ -20,7 +20,6 @@ from pydantic import (
     field_serializer,
     model_validator,
 )
-from typing_extensions import Self
 
 from aiperf.common.enums import (
     ConnectionReuseStrategy,

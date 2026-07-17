@@ -82,6 +82,10 @@ This document provides a comprehensive reference of all metrics available in AIP
   - [OSL Mismatch Metrics](#osl-mismatch-metrics)
     - [OSL Mismatch Diff %](#osl-mismatch-diff-)
     - [OSL Mismatch Count](#osl-mismatch-count)
+  - [Replay Schedule Lag Metrics](#replay-schedule-lag-metrics)
+    - [Replay Send Schedule Offset](#replay-send-schedule-offset)
+    - [Replay Schedule Lag p50 / p90 / p99](#replay-schedule-lag-p50--p90--p99)
+    - [Replay Schedule Degraded](#replay-schedule-degraded)
   - [Goodput Metrics](#goodput-metrics)
     - [Good Request Count](#good-request-count)
     - [Good Request Fraction](#good-request-fraction)
@@ -97,6 +101,9 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Minimum Request Timestamp](#minimum-request-timestamp)
     - [Maximum Response Timestamp](#maximum-response-timestamp)
     - [Benchmark Duration](#benchmark-duration)
+  - [Network Latency Calibration Metrics](#network-latency-calibration-metrics)
+    - [Network RTT](#network-rtt)
+    - [Network-Adjusted Latency Metrics](#network-adjusted-latency-metrics)
   - [HTTP Trace Metrics](#http-trace-metrics)
     - [HTTP Blocked](#http-blocked)
     - [HTTP DNS Lookup](#http-dns-lookup)
@@ -117,6 +124,14 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Total GPU Energy](#total-gpu-energy)
     - [Output Tokens per Joule](#output-tokens-per-joule)
     - [Energy per User](#energy-per-user)
+    - [Average GPU Power](#average-gpu-power)
+    - [Energy per Output Token](#energy-per-output-token)
+    - [Energy per Total Token](#energy-per-total-token)
+    - [Energy per Request](#energy-per-request)
+    - [Performance per Watt](#performance-per-watt)
+    - [Output Tokens per Second per Watt](#output-tokens-per-second-per-watt)
+    - [Goodput per Watt](#goodput-per-watt)
+    - [Energy Delay Product](#energy-delay-product)
 - [Metric Flags Reference](#metric-flags-reference)
 
 ---
@@ -757,6 +772,7 @@ usage_prompt_cache_read_tokens = response.usage.cache_read_input_tokens  # from 
 - Taken from the API response `usage` object, not computed by AIPerf.
 - OpenAI surfaces cache reads as `prompt_tokens_details.cached_tokens` (or `input_tokens_details.cached_tokens`); writes are transparent and not reported.
 - Anthropic surfaces cache reads at the top level as `cache_read_input_tokens`; writes are reported separately as [Usage Prompt Cache Write Tokens](#usage-prompt-cache-write-tokens).
+- **Self-hosted servers gate this behind a flag:** vLLM needs `--enable-prompt-tokens-details` and SGLang needs `--enable-cache-report` (both default off); TRT-LLM emits `cached_tokens` by default. Without the flag these metrics read all-None even when the server is caching — see [Vendor Usage Field Reference](reference/vendor-usage-fields.md).
 - For streaming responses, uses the last non-None value reported.
 
 ---
@@ -1265,6 +1281,68 @@ osl_mismatch_count = sum(1 for r in records if diff_tokens > threshold_tokens)
 
 ---
 
+## Replay Schedule Lag Metrics
+
+> [!NOTE]
+> These metrics report how faithfully a fixed-schedule trace replay delivered its offered (recorded) request schedule. The whole family is `FIXED_SCHEDULE_ONLY`: it is computed only when the profiling phase type is `fixed_schedule`, and stays inactive under any other timing mode even when the dataset carries turn timestamps (e.g. a timestamped trace swept with `--no-fixed-schedule`). The metrics are **not displayed in console output** but are available in exports; a warning is logged when the run is flagged degraded.
+
+Note that an explicit `--fixed-schedule` flag is not required for the family to activate: a timestamped `--custom-dataset-type` trace (a top-level `timestamp` field in the first record of JSONL traces such as `mooncake_trace` and `bailian_trace`, or a `timestamp_start_unix_ms` column in `baseten_trace` Parquet) auto-promotes the profiling phase to `fixed_schedule`, so these metrics then appear in profile exports. Pass `--no-fixed-schedule` to keep the user-selected timing mode, which also deactivates the family.
+
+Every absolutely-scheduled turn carries its intended send time (`Turn.timestamp`, ms relative to the schedule zero), and the worker stamps `RequestRecord.timestamp_ns` (wall clock) when the request is dispatched to the transport. The wall-clock instant of the schedule zero is not recorded, so lag is reported **relative to the least-late request** of the run (`lag = offset - min(offset)`).
+
+The derived family is computed once over the whole run and is **excluded from `--slice-duration` timeslice exports**: re-deriving it per slice would re-anchor each slice at its own least-late request and erase the cumulative schedule drift these metrics exist to expose.
+
+**What this cannot measure:**
+- A constant delay applied uniformly to every request (the least-late request defines zero).
+- Lag of delay-scheduled continuation turns (back-pressure replay fires them relative to the prior turn's completion; they carry no absolute intended time and are excluded).
+- True wire time (`timestamp_ns` is stamped worker-side at transport dispatch, before the TCP write).
+
+### Replay Send Schedule Offset
+
+**Type:** [Record Metric](#record-metrics)
+
+Internal building block: the raw per-request send offset. Values are epoch-scale nanoseconds; only differences between them are meaningful.
+
+**Formula:**
+```python
+replay_send_schedule_offset = record.timestamp_ns - turn.timestamp * 1e6
+```
+
+**Notes:**
+- `INTERNAL`: hidden from output unless `AIPERF_DEV_SHOW_INTERNAL_METRICS` is enabled.
+- Skipped for records whose dispatched turn has no absolute schedule timestamp.
+
+---
+
+### Replay Schedule Lag p50 / p90 / p99
+
+**Type:** [Derived Metric](#derived-metrics)
+
+Percentiles of the anchored send lag across the run, in milliseconds. Schedule degradation (event-loop stalls, worker saturation, queue buildup) shows up as growing lag percentiles.
+
+**Formula:**
+```python
+lag_ms = (offsets - offsets.min()) / 1e6
+replay_sched_lag_p50 = percentile(lag_ms, 50)
+replay_sched_lag_p90 = percentile(lag_ms, 90)
+replay_sched_lag_p99 = percentile(lag_ms, 99)
+```
+
+---
+
+### Replay Schedule Degraded
+
+**Type:** [Derived Metric](#derived-metrics)
+
+Boolean (0/1) signal that the replay could not keep up with the offered schedule: anchored send-lag p99 exceeded 500 ms. When degraded, a warning with the lag percentiles is logged at most once per run (the first time the run is flagged); the metric value itself is re-derived on every summarize tick.
+
+**Formula:**
+```python
+replay_sched_degraded = 1 if percentile(lag_ms, 99) > 500.0 else 0
+```
+
+---
+
 ## Goodput Metrics
 
 > [!NOTE]
@@ -1480,6 +1558,67 @@ benchmark_duration = max_response_timestamp - min_request_timestamp
 **Notes:**
 - Uses wall-clock timestamps representing real calendar time.
 - Used as the denominator for throughput calculations; represents the effective measurement window.
+
+---
+
+## Network Latency Calibration Metrics
+
+These metrics appear only when network latency calibration is enabled (with
+`--network-latency-automatic` or `--network-latency-mean`). They make benchmark runs
+taken from different client network locations comparable by removing the client-to-endpoint
+network round-trip from the reported latencies.
+
+With `--network-latency-automatic`, AIPerf opens a fresh TCP connection to the endpoint
+host:port on an interval throughout profiling (`--network-latency-ping-interval`, default 1s)
+and records the handshake RTT. The handshake is one network round-trip with no server compute,
+so it isolates the network leg and is immune to server load. Each probe is written to
+`profile_export_network_latency.jsonl`. The **mean** RTT over successful probes is then
+subtracted from the request-start-anchored latency metrics. Alternatively, a fixed mean RTT
+can be supplied with `--network-latency-mean <ms>` to skip probing (the two flags are
+mutually exclusive). The chosen RTT is logged at run completion.
+
+Subtracting a constant from a distribution shifts the mean and every percentile by that
+constant and leaves the standard deviation unchanged, so the adjustment is applied to the
+aggregated results (clamped at 0). The raw metrics are always preserved.
+
+### Network RTT
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The mean network RTT that was subtracted from the adjusted latency metrics (single value).
+
+**Notes:**
+- Measured via TCP handshakes throughout the run, or supplied directly via `--network-latency-mean`.
+- Full per-probe samples and per-target statistics are written to `profile_export_network_latency.jsonl`.
+
+---
+
+### Network-Adjusted Latency Metrics
+
+**Type:** [Derived Metric](#derived-metrics)
+
+Non-destructive, RTT-corrected variants of the request-start-anchored latency metrics:
+
+| Metric | Tag | Source metric |
+|---|---|---|
+| Network-Adjusted Request Latency | `network_adjusted_request_latency` | Request Latency |
+| Network-Adjusted Time to First Token | `network_adjusted_time_to_first_token` | Time to First Token (TTFT) |
+| Network-Adjusted Time to First Output Token | `network_adjusted_time_to_first_output_token` | Time to First Output Token (TTFO) |
+
+**Formula:**
+```python
+# nanoseconds, applied to every aggregated statistic (avg, min, max, p1..p99)
+network_adjusted_ns = max(0, source_metric_ns - mean_network_rtt_ns)
+```
+
+**Notes:**
+- Only metrics whose interval starts at the client request-send timestamp are adjusted.
+  Time to Second Token (second_response - first_response), Inter Token Latency (ITL), and
+  Inter Chunk Latency (ICL) are intentionally **not** adjusted: they are intra-stream gaps
+  that do not include the connection RTT (and for ITL the RTT cancels in
+  `(request_latency - ttft)`), so they are already network-invariant.
+- Values are clamped at 0; if the subtracted RTT exceeds some measured latencies a warning
+  is logged (the RTT may be larger than the true network leg).
 
 ---
 
@@ -1739,9 +1878,11 @@ http_req_chunks_received = trace.response_chunks_count
 ## GPU Power Efficiency Metrics
 
 > [!NOTE]
-> All metrics in this section require `--gpu-telemetry` to be enabled and the underlying collector (DCGM, pynvml, or amdsmi) to expose the relevant signal (`gpu_power_usage` and/or `energy_consumption`). They are computed once per profiling phase by `GPUTelemetryAccumulator.compute_efficiency_metrics`, not by the standard derivation walk — see the [Externally-Injected Derived Metric pattern](dev/patterns.md#externally-injected-derived-metric-pattern).
+> All metrics in this section require `--gpu-telemetry` to be enabled and the underlying collector (DCGM, pynvml, or amdsmi) to expose the relevant signal (`gpu_power_usage` and/or `energy_consumption`). They are computed once per profiling phase by the `EnergyEfficiencyAnalyzer` — an `analyzer` plugin that joins the GPU-telemetry accumulator (energy/power) to the metrics-accumulator summary (tokens/throughput/latency) via the `SummaryContext` — not by the standard derivation walk. See the [Externally-Injected Derived Metric pattern](dev/patterns.md#externally-injected-derived-metric-pattern) and the `analyzer` plugin category.
 
-Each metric's header surfaces the number of GPUs that contributed valid data (e.g. `Total GPU Power (8 GPUs)`), so a partial-cohort run (where one or more GPUs failed to report) is distinguishable from a full run. Tags are emitted in this order when present: `total_gpu_power`, `total_gpu_energy`, `output_tokens_per_joule`, `energy_per_user`. Each tag is independently omitted when its underlying signal is unavailable.
+**Energy source.** Total GPU energy is taken from the DCGM `energy_consumption` counter delta when available (`source = dcgm_counter`), and the time-averaged fleet power is derived from it as `total_gpu_energy / profiling_duration_s`. When no energy counter is exposed (e.g. pynvml/amdsmi power-only collectors), the analyzer falls back to **power integration** (`source = power_integration`): `total_gpu_energy = total_gpu_power * profiling_duration_s`, and the average power is the fleet power gauge itself. If neither signal is present the family is skipped.
+
+The family is skipped entirely when GPU telemetry is not collected. Each tag is independently omitted when its underlying signal is unavailable (e.g. `energy_per_user` only appears for concurrency runs; `goodput_per_watt` only when goodput SLOs are configured). Tags: `energy_delay_product`, `performance_per_watt`, `output_tps_per_watt`, `goodput_per_watt`, `average_gpu_power`, `total_gpu_energy`, `total_gpu_power`, `energy_per_total_token`, `energy_per_output_token`, `energy_per_request`, `output_tokens_per_joule`, `energy_per_user`.
 
 ### Total GPU Power
 
@@ -1802,14 +1943,14 @@ Inference energy efficiency: number of output tokens produced per joule of GPU e
 
 **Formula:**
 ```python
-output_tokens_per_joule = total_output_tokens / total_gpu_energy
+output_tokens_per_joule = total_osl / total_gpu_energy
 ```
 
 **Notes:**
 - Unit: `tokens/J`.
 - Flagged `LARGER_IS_BETTER | PRODUCES_TOKENS_ONLY`.
-- Numerator comes from the request records (`total_output_tokens`); denominator comes from the GPU telemetry counter delta above. The header reports the energy-side GPU count, since that's the cohort the metric depends on.
-- Omitted when `total_output_tokens` is absent from the records or aggregate `total_gpu_energy` is zero.
+- Numerator is total output tokens (`total_osl` from the metrics summary); denominator comes from the GPU telemetry counter delta (or integrated power) above.
+- Omitted when `total_osl` is absent from the summary or aggregate `total_gpu_energy` is zero.
 
 ---
 
@@ -1829,9 +1970,123 @@ energy_per_user_j = total_gpu_energy / concurrency
 **Notes:**
 - Unit: `joules/user`.
 - Flagged `MetricFlags.NONE` — smaller-is-better is the default for unflagged metrics.
-- Denominator is the profiling phase's configured `concurrency`. The resolver defaults this to `1` when `--concurrency` isn't specified in concurrency-mode runs, so the metric is emitted in the common case.
-- Header reports the energy-side GPU count (the same cohort `total_gpu_energy` reports), e.g. `Energy per User (8 GPUs)`.
+- Denominator is the profiling phase's configured `concurrency` (`run.cfg.get_profiling_phases()[0].concurrency`). The resolver defaults this to `1` when `--concurrency` isn't specified in concurrency-mode runs, so the metric is emitted in the common case.
 - Omitted when concurrency is unset (e.g. pure `--request-rate` mode) or aggregate GPU energy is unavailable.
+
+---
+
+### Average GPU Power
+
+**Type:** [Derived Metric](#derived-metrics) (externally injected)
+
+Time-averaged total GPU power over the profiling window, in watts (`W`) — the fleet power that actually produced `total_gpu_energy`. Under the DCGM counter path this is derived from energy; under power integration it equals `total_gpu_power`.
+
+**Formula:**
+```python
+# dcgm_counter source:
+average_gpu_power_w = total_gpu_energy / profiling_duration_s
+# power_integration source:
+average_gpu_power_w = total_gpu_power
+```
+
+---
+
+### Energy per Output Token
+
+**Type:** [Derived Metric](#derived-metrics) (externally injected)
+
+The primary energy-efficiency metric: GPU energy spent per output token, in millijoules per token (`mJ/token`). Lower is better. Normalizes across model sizes, hardware, and batch sizes.
+
+**Formula:**
+```python
+energy_per_output_token_mj = total_gpu_energy * 1000 / total_osl
+```
+
+---
+
+### Energy per Total Token
+
+**Type:** [Derived Metric](#derived-metrics) (externally injected)
+
+GPU energy per total (input + output) token, in `mJ/token`. Captures combined prefill + decode cost; useful when comparing systems with different input/output ratios.
+
+**Formula:**
+```python
+energy_per_total_token_mj = total_gpu_energy * 1000 / (total_isl + total_osl)
+```
+
+---
+
+### Energy per Request
+
+**Type:** [Derived Metric](#derived-metrics) (externally injected)
+
+GPU energy consumed per request, in joules per request (`joules/request`).
+
+**Formula:**
+```python
+energy_per_request_j = total_gpu_energy / request_count
+```
+
+---
+
+### Performance per Watt
+
+**Type:** [Derived Metric](#derived-metrics) (externally injected)
+
+Request throughput per watt of GPU power draw, in `requests/sec/W`. Higher is better — the standard HPC/MLPerf efficiency metric, enabling apples-to-apples comparison across GPU SKUs and power envelopes.
+
+**Formula:**
+```python
+performance_per_watt = request_throughput / average_gpu_power
+```
+
+---
+
+### Output Tokens per Second per Watt
+
+**Type:** [Derived Metric](#derived-metrics) (externally injected)
+
+Output-token throughput per watt of GPU power draw, in `tokens/sec/W`. Higher is better — the token-level companion to `performance_per_watt`, insensitive to request size.
+
+**Formula:**
+```python
+output_tps_per_watt = output_token_throughput / average_gpu_power
+```
+
+**Notes:**
+- Flagged `LARGER_IS_BETTER | PRODUCES_TOKENS_ONLY`.
+- Omitted when `output_token_throughput` is absent or average power is zero.
+
+---
+
+### Goodput per Watt
+
+**Type:** [Derived Metric](#derived-metrics) (externally injected)
+
+SLO-passing request throughput (goodput) per watt of GPU power draw, in `good-req/s/W`. Higher is better — measures efficient work that actually met its latency SLOs, not raw throughput.
+
+**Formula:**
+```python
+goodput_per_watt = goodput / average_gpu_power
+```
+
+**Notes:**
+- Flagged `LARGER_IS_BETTER`.
+- Only meaningful when goodput SLOs are configured (`--goodput`); omitted otherwise or when average power is zero.
+
+---
+
+### Energy Delay Product
+
+**Type:** [Derived Metric](#derived-metrics) (externally injected)
+
+Joint energy-and-latency figure of merit, in joule-seconds (`J*s`). Lower is better — penalizes both slow-but-efficient and fast-but-wasteful configurations, useful for finding the Pareto-optimal operating point.
+
+**Formula:**
+```python
+energy_delay_product = energy_per_request * mean_request_latency_s
+```
 
 ---
 

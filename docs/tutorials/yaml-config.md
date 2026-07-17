@@ -315,6 +315,168 @@ benchmark:
 
 Each phase is a complete arrival pattern in its own right, with its own concurrency, duration, and arrival shape (`concurrency`, `constant`, `poisson`, `gamma`, `fixed_schedule`, `user_centric`, ...).
 
+## Adaptive scale in YAML
+
+Adaptive scale is for single-run boundary discovery. Instead of launching a sweep or separate search trials, AIPerf runs one profiling phase, starts at a low control value, evaluates SLA windows, ramps up while every SLA filter passes, and then sustains near the discovered boundary.
+
+The canonical adaptive shape uses a nested `control` block. Supported v1 control variables are `concurrency`, `prefill_concurrency`, `request_rate`, and `users`. Existing flat concurrency fields such as `control_variable: concurrency` and `min_concurrency` are still accepted as compatibility aliases, but new configs should use `control.variable`, `control.min`, and `control.max`.
+
+```yaml
+schemaVersion: "2.0"
+
+benchmark:
+  model: meta-llama/Llama-3.1-8B-Instruct
+  endpoint:
+    url: http://localhost:8000/v1/chat/completions
+    type: chat
+    streaming: true
+  dataset:
+    type: synthetic
+    entries: 1000
+    prompts: {isl: 512, osl: 128}
+  phases:
+    - name: profiling
+      type: concurrency
+      concurrency: 200
+      prefill_concurrency: 64
+      duration: 3600
+      adaptive_scale:
+        enabled: true
+        control:
+          variable: prefill_concurrency
+          min: 1
+          max: 64
+        assessment_period: 60
+        min_completed_requests: 20
+        sustain_duration: 1800
+        strategy:
+          type: ramp_until_fail
+          step_policy: sla_margin
+          base_step: 10
+          max_step_multiplier: 4
+      sla:
+        request_latency:
+          p95:
+            le: 30000
+        error_rate:
+          avg:
+            le: 0.01
+```
+
+Adaptive scale rejects fixed ramps on the same variable it controls. For example, do not combine `control.variable: prefill_concurrency` with `prefill_ramp`. Fixed ramps for other variables are allowed.
+
+The CLI exposes a compact sweep-like control flag for the common single-phase case: `--adaptive-scale-control variable:min,max:type`, plus repeated `--adaptive-scale-sla metric:stat:op:threshold` flags. For example: `--adaptive-scale-control "concurrency:1,1000:int" --adaptive-scale-sla "request_latency:p95:le:30000"`. Expanded `--adaptive-control-variable`, `--adaptive-control-min`, and `--adaptive-control-max` flags remain supported for advanced scripting; if expanded `--adaptive-control-max` is omitted, AIPerf infers it from the matching phase target such as `--concurrency`, `--prefill-concurrency`, `--request-rate`, or `--num-users`. Do not mix compact and expanded control forms.
+
+Adaptive scale combines SLA filters with simple AND semantics. A window passes only when every configured filter passes. Step sizing uses the smallest normalized passing margin, so the closest SLA boundary controls the next increase. There are no weights, formulas, or multi-objective scoring in single-run adaptive scale.
+
+For lower-is-better SLA filters such as latency, TTFT, error rate, or cancellation rate, use `lt` or `le`:
+
+```yaml
+sla:
+  time_to_first_token:
+    p95:
+      le: 3000
+  cancellation_rate:
+    avg:
+      le: 0.05
+```
+
+For higher-is-better SLA filters such as throughput or adaptive-window success ratio, use `gt` or `ge`:
+
+```yaml
+sla:
+  request_throughput:
+    avg:
+      ge: 80
+  success_rate:
+    avg:
+      ge: 0.95
+```
+
+Quality-qualified adaptive goodput is also higher-is-better, but must be paired with at least one per-request quality filter:
+
+```yaml
+sla:
+  request_latency:
+    p95:
+      le: 30000
+  goodput:
+    avg:
+      ge: 20
+```
+
+For streaming token quality, pair goodput with TTFT and ITL filters:
+
+```yaml
+sla:
+  ttft:
+    p95:
+      le: 2000
+  itl:
+    p95:
+      le: 100
+  goodput:
+    avg:
+      ge: 20
+```
+
+### Adaptive SLA metric support
+
+Timing thresholds use milliseconds. This table is the adaptive SLA metric/stat support matrix:
+
+| Metric family | Metric tags and aliases | Supported stats | Window semantics |
+| --- | --- | --- | --- |
+| E2E latency | `request_latency` | `avg`, `min`, `max`, `p1`, `p5`, `p10`, `p25`, `p50`, `p75`, `p90`, `p95`, `p99` | Per-request latency samples from successful requests. |
+| Time to first token | `time_to_first_token`, `ttft` | `avg`, `min`, `max`, `p1`, `p5`, `p10`, `p25`, `p50`, `p75`, `p90`, `p95`, `p99` | Per-request TTFT samples from successful streaming requests. Missing TTFT samples fail TTFT SLA windows. |
+| Inter-token latency | `inter_token_latency`, `itl`, `tpot` | `avg`, `min`, `max`, `p1`, `p5`, `p10`, `p25`, `p50`, `p75`, `p90`, `p95`, `p99` | Per-request ITL/TPOT samples from successful streaming requests. Missing ITL samples fail ITL SLA windows. |
+| Request throughput | `throughput`, `request_throughput`, `completed_request_throughput` | `avg`, `min`, `max` | Successful completed requests per second in the adaptive window. |
+| Output token throughput | `output_token_throughput` | `avg`, `min`, `max` | Output tokens from successful completed requests per second in the adaptive window. |
+| Quality goodput | `goodput` | `avg`, `min`, `max` | Quality-passing successful requests per second. Requires at least one request-latency, TTFT, or ITL quality filter. |
+| Goodput ratio | `goodput_ratio` | `avg`, `min`, `max` | Quality-passing successful requests divided by total attempts. Requires at least one request-latency, TTFT, or ITL quality filter. |
+| Success rate | `success_rate`, `request_success_rate` | `avg`, `min`, `max` | Successful completed requests divided by total attempts. |
+| Error rate | `error_rate`, `request_error_rate` | `avg`, `min`, `max` | Failed requests divided by total attempts. |
+| Cancellation rate | `cancellation_rate`, `request_cancellation_rate` | `avg`, `min`, `max` | Cancelled requests divided by total attempts. |
+
+For window-level rate and ratio metrics, `avg`, `min`, and `max` currently evaluate the same scalar value for each adaptive window.
+
+Adaptive `users` is valid only on `user_centric` phases. It controls target live simulated user timelines while keeping total QPS fixed; changing users changes per-user turn gap and population pressure rather than acting as another spelling of request rate.
+
+```yaml
+benchmark:
+  phases:
+    - name: profiling
+      type: user_centric
+      users: 5000
+      rate: 100
+      duration: 8h
+      adaptive_scale:
+        enabled: true
+        control:
+          variable: users
+          min: 500
+          max: 5000
+        assessment_period: 300
+        sustain_duration: 6h
+      sla:
+        time_to_first_token:
+          p95:
+            le: 3000
+        cancellation_rate:
+          avg:
+            le: 0.10
+```
+
+Adaptive scale writes two timing-owned artifacts into the run directory:
+
+```text
+adaptive_scale_events.jsonl
+adaptive_scale_summary.json
+```
+
+These artifacts use schema version 2 and generic control fields such as `control_variable`, `control_value_before`, `control_value_after`, `boundary_value`, `last_passing_value`, and `first_failing_value`. Every `adaptive_window` event includes all evaluated SLA values and the binding constraint. Dynamo-style pollers should gate fault injection on explicit events such as `sustain_started` rather than fixed sleeps.
+
+Use adaptive scale when you want continuous pressure inside one benchmark invocation. Use `sweep` or `adaptive_search` when you want offline multi-run exploration across many independent trials.
+
 ## Sweeps in YAML
 
 Sweeps are the killer feature of YAML configs. The CLI only ever supported list-style flags like `--concurrency 8,16,32`. YAML lets you sweep any field, combine multiple parameters, or pull from a quasi-random distribution.

@@ -111,14 +111,26 @@ def write_search_history(
         }
         for h in history
     ]
-    payload = {
-        "config": _build_config_block(cfg),
+    config_block = _build_config_block(cfg)
+    payload: dict[str, Any] = {
+        "config": config_block,
         "iterations": iterations_payload,
         "best_trials": _compute_best_trials(history, cfg),
         "boundary_summary": _resolve_boundary_summary(history, cfg, planner),
-        "recipe": cfg.recipe_name,
-        "convergence_reason": convergence_reason,
     }
+
+    # Multi-tier extension: add tier_results, tier_metadata, config.tiers
+    if planner is not None and _is_multi_tier(planner):
+        config_block["tiers"] = [
+            {"label": t.label, "filters": [f.model_dump() for f in t.filters]}
+            for t in cfg.sla_tiers
+        ]
+        payload["tier_results"] = [tr.model_dump() for tr in planner.tier_results()]
+        payload["tier_metadata"] = planner.tier_metadata()
+
+    payload["recipe"] = cfg.recipe_name
+    payload["convergence_reason"] = convergence_reason
+
     out = base_dir / "search_history.json"
     # Scrub non-finite values: orjson silently maps NaN/inf to JSON null,
     # which would erase the difference between "scorer returned NaN"
@@ -312,3 +324,8 @@ def _compute_boundary_summary(
         "feasible_max": feasible_max,
         "infeasible_min": infeasible_min,
     }
+
+
+def _is_multi_tier(planner: Any) -> bool:
+    """Check if planner is a MultiTierPlanner without importing it at module level."""
+    return hasattr(planner, "tier_results") and hasattr(planner, "tier_metadata")

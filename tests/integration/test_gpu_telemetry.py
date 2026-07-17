@@ -12,8 +12,8 @@ from tests.harness.utils import AIPerfCLI, AIPerfMockServer
 
 
 @pytest.mark.skipif(
-    platform.system() == "Darwin",
-    reason="Requires NVIDIA GPUs for DCGM telemetry (only available on Linux CI).",
+    platform.system() in ("Darwin", "Windows"),
+    reason="Requires NVIDIA GPUs for DCGM telemetry (only available on Linux CI; DCGM is Linux-only).",
 )
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -95,7 +95,7 @@ class TestGpuTelemetry:
         assert export_file.exists(), "GPU telemetry export file should exist"
 
         # Read and validate JSONL content
-        content = export_file.read_text()
+        content = export_file.read_text(encoding="utf-8")
         lines = content.splitlines()
         assert len(lines) > 0, "Export file should contain telemetry records"
 
@@ -150,7 +150,7 @@ class TestGpuTelemetry:
         export_file = result.artifacts_dir / "custom_test_gpu_telemetry.jsonl"
         if export_file.exists():
             # Verify content is valid
-            content = export_file.read_text()
+            content = export_file.read_text(encoding="utf-8")
             lines = content.splitlines()
             assert len(lines) > 0, "Export file should contain telemetry records"
 

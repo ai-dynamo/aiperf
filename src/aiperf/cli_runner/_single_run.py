@@ -66,7 +66,7 @@ def _run_single_benchmark(
     try:
         chain = build_default_resolver_chain()
         chain.resolve_all(run)
-    except Exception as e:  # noqa: BLE001 - resolver chain wraps every user-input error type
+    except Exception as e:  # resolver chain wraps every user-input error type
         # ``logger.error`` over ``.exception``: user-input errors carry their
         # own context; tracebacks trip chaos-harness crash heuristics.
         logger.error(f"Configuration resolution failed: {e}")

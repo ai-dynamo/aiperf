@@ -12,6 +12,7 @@ from aiperf.common.models import Turn
 from aiperf.dataset.loader.base_loader import LoaderProbeData
 from aiperf.dataset.loader.base_trace_loader import BaseTraceDatasetLoader
 from aiperf.dataset.loader.models import MooncakeTrace
+from aiperf.dataset.loader.speed_bench import is_speed_bench_row
 
 
 class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
@@ -46,6 +47,8 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
         This will handle all of the validation logic for the different input combinations.
         """
         if data is None:
+            return False
+        if is_speed_bench_row(data):
             return False
 
         try:

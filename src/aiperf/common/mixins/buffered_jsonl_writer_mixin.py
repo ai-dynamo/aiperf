@@ -3,15 +3,17 @@
 """Mixin for buffered JSONL writing with automatic flushing."""
 
 import asyncio
+import contextlib
+import time
 from pathlib import Path
-from typing import Generic
+from typing import ClassVar, Generic
 
 import aiofiles
 import orjson
 
 from aiperf.common.environment import Environment
 from aiperf.common.finite import scrub_non_finite
-from aiperf.common.hooks import on_init, on_stop
+from aiperf.common.hooks import on_init, on_start, on_stop
 from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 from aiperf.common.types import BaseModelT
 from aiperf.common.utils import yield_to_event_loop
@@ -32,10 +34,17 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         lines_written: Number of lines written
     """
 
+    # Field names to exclude from each serialized JSONL line. Subclasses that
+    # write a model carrying a wire-only field (e.g. a RecordData ``record_type``
+    # discriminator needed for ZMQ reconstruction but not wanted on disk) set this
+    # to keep the on-disk output identical to before that field was added.
+    _jsonl_exclude_fields: ClassVar[set[str] | None] = None
+
     def __init__(
         self,
         output_file: Path,
         batch_size: int,
+        flush_interval: float = Environment.METRICS.EXPORT_FLUSH_INTERVAL,
         **kwargs,
     ):
         """Initialize the buffered JSONL writer.
@@ -43,6 +52,10 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         Args:
             output_file: Path to the JSONL output file
             batch_size: Number of records to buffer before auto-flushing
+            flush_interval: Periodic flush interval (seconds) for the background
+                task that drains the in-memory buffer at low throughput. Default
+                is ``Environment.METRICS.EXPORT_FLUSH_INTERVAL`` so operators can
+                bound worst-case freshness without code changes.
             **kwargs: Additional arguments passed to parent class
         """
         super().__init__(**kwargs)
@@ -51,7 +64,20 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         self._file_handle = None
         self._file_lock = asyncio.Lock()
         self._buffer: list[bytes] = []  # Store bytes for binary mode
+        # Per-batch flush tasks only. Tracked separately from ``self.tasks`` so
+        # ``_close_file`` drains exactly the pending flushes without waiting for
+        # (or cancelling) unrelated tasks the subclass scheduled via execute_async.
+        self._flush_tasks: set[asyncio.Task] = set()
         self._batch_size = batch_size
+        self._flush_interval = flush_interval
+        self._last_flush_monotonic = time.monotonic()
+        # Self-managed periodic-flush task. Deliberately NOT registered via
+        # @background_task / execute_async (which would add it to ``self.tasks``):
+        # callers drain transient writes with ``wait_for_tasks()``, and a
+        # perpetual loop in that set would make ``wait_for_tasks()`` block
+        # forever. We start it in ``_start_periodic_flush`` and cancel it in
+        # ``_close_file``.
+        self._periodic_flush_task: asyncio.Task | None = None
 
     @on_init
     async def _open_file(self) -> None:
@@ -92,7 +118,13 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
             # scrub_non_finite enforces "null on disk = absent" across the
             # JSONL so per-record NaN/inf doesn't masquerade as missing.
             json_bytes = orjson.dumps(
-                scrub_non_finite(record.model_dump(exclude_none=True, mode="json"))
+                scrub_non_finite(
+                    record.model_dump(
+                        exclude_none=True,
+                        mode="json",
+                        exclude=self._jsonl_exclude_fields,
+                    )
+                )
             )
 
             buffer_to_flush = None
@@ -105,10 +137,22 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
                 self._buffer = []
 
             if buffer_to_flush:
-                self.execute_async(self._flush_buffer(buffer_to_flush))
+                task = self.execute_async(self._flush_buffer(buffer_to_flush))
+                self._flush_tasks.add(task)
+                task.add_done_callback(self._flush_tasks.discard)
 
         except Exception as e:
             self.error(f"Failed to write record: {e!r}")
+
+    async def flush_buffer(self) -> None:
+        """Flush the current internal buffer to disk.
+
+        Public counterpart to ``_flush_buffer``: swaps out the live buffer and
+        writes all pending records. Safe to call when the buffer is empty.
+        """
+        buffer_to_flush = self._buffer
+        self._buffer = []
+        await self._flush_buffer(buffer_to_flush)
 
     async def _flush_buffer(self, buffer_to_flush: list[bytes]) -> None:
         """Write buffered records to disk using bulk write.
@@ -135,26 +179,80 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
                 bulk_data = b"\n".join(buffer_to_flush) + b"\n"
                 await self._file_handle.write(bulk_data)
                 await self._file_handle.flush()
+                self._last_flush_monotonic = time.monotonic()
             except Exception as e:
                 self.exception(f"Failed to flush buffer: {e!r}")
+
+    @on_start
+    async def _start_periodic_flush(self) -> None:
+        """Start the self-managed periodic-flush loop on service start."""
+        if self._periodic_flush_task is None or self._periodic_flush_task.done():
+            self._periodic_flush_task = asyncio.create_task(
+                self._flush_buffer_periodically()
+            )
+
+    async def _flush_buffer_periodically(self) -> None:
+        """Flush buffered records on a time boundary even at low throughput.
+
+        Bounds worst-case freshness of the JSONL file when the in-memory batch
+        never reaches ``batch_size`` (e.g. very low arrival rate). The interval
+        is the per-instance ``flush_interval`` set in ``__init__``. Runs until
+        cancelled by ``_close_file`` on shutdown.
+
+        Self-managed (not a ``@background_task``) so it never lands in
+        ``self.tasks`` and never blocks ``wait_for_tasks()``, which callers use
+        to drain only the transient per-batch flush tasks.
+
+        Resilience mirrors ``_background_task_loop``: a non-cancellation error
+        in one iteration is logged and the loop continues draining on the next
+        interval, so a transient failure never permanently stops periodic
+        flushing for the rest of the run.
+        """
+        while True:
+            try:
+                await asyncio.sleep(self._flush_interval)
+                if not self._buffer:
+                    continue
+                buffer_to_flush = self._buffer
+                self._buffer = []
+                # Shield the flush so a cancel (from _close_file during
+                # teardown) can't interrupt an in-flight write and silently
+                # drop the records we already pulled out of self._buffer.
+                await asyncio.shield(self._flush_buffer(buffer_to_flush))
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                self.exception(f"Error in periodic flush loop: {e!r}")
+                # Give some time to recover, just in case.
+                await asyncio.sleep(0.001)
 
     @on_stop
     async def _close_file(self) -> None:
         """Flush remaining buffer and close the file handle (called automatically on shutdown)."""
-        # Wait for any pending flush tasks to complete
-        if self.tasks:
+        # Stop the self-managed periodic-flush loop first so it can't race the
+        # final flush or keep the buffer churning during teardown.
+        if self._periodic_flush_task is not None:
+            self._periodic_flush_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._periodic_flush_task
+            self._periodic_flush_task = None
+
+        # Wait for any pending flush tasks to complete. Drain only the flush
+        # tasks (not all of self.tasks) so unrelated subclass tasks are neither
+        # waited on nor cancelled here.
+        if self._flush_tasks:
             try:
                 await asyncio.wait_for(
-                    self.wait_for_tasks(),
+                    asyncio.gather(*list(self._flush_tasks)),
                     timeout=Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self.warning(
-                    f"Timeout waiting for {len(self.tasks)} pending flush tasks during shutdown. "
+                    f"Timeout waiting for {len(self._flush_tasks)} pending flush tasks during shutdown. "
                     "Cancelling tasks and proceeding with cleanup."
                 )
-                # Cancel any remaining tasks to prevent resource leaks
-                await self.cancel_all_tasks()
+                for task in self._flush_tasks:
+                    task.cancel()
                 await yield_to_event_loop()
 
         buffer_to_flush = self._buffer

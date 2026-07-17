@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# CODEOWNERS for ai-dynamo/aiperf
+#
+# Defines the repository's code owners. With the "Require review from Code
+# Owners" branch-protection rule on `main`, a PR can only merge after one of
+# these owners approves — so a named team member (not an automated reviewer
+# such as the dynamo-ops bot) must sign off before merge. Owners are also
+# auto-requested for review on PRs touching a matching path.
+#
+# Each line is a file pattern followed by one or more owners (GitHub @usernames);
+# the LAST matching pattern takes precedence.
+# Docs: https://docs.github.com/articles/about-code-owners
+
+# Default owners for everything in the repository — the core NVIDIA AIPerf team.
+*   @ajcasagrande @debermudez @matthewkotila @ilana-n @lkomali @ganeshku1 @FrankD412

@@ -83,7 +83,7 @@ class MetricsConfigLoader(AIPerfLoggerMixin):
         """
         custom_metrics = []
 
-        with open(csv_path) as f:
+        with open(csv_path, encoding="utf-8") as f:
             for line_num, line in enumerate(f, start=1):
                 line = line.strip()
 

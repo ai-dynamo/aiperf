@@ -301,8 +301,8 @@ class FileDataset(BaseConfig):
             description="Path to file or directory containing benchmark dataset. "
             "Can be absolute or relative. Mutually exclusive with `records:`. "
             "Supported formats depend on the format field: "
-            "JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace, "
-            "directories for random_pool.",
+            "JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace/"
+            "bailian_trace, Parquet for baseten_trace, directories for random_pool.",
         ),
     ]
 
@@ -326,7 +326,8 @@ class FileDataset(BaseConfig):
             description="Dataset file format determining parsing logic and expected file structure. "
             "single_turn: JSONL with single prompt-response exchanges. "
             "multi_turn: JSONL with conversation history. "
-            "mooncake_trace / bailian_trace / burst_gpt_trace: timestamped trace files for replay. "
+            "mooncake_trace / bailian_trace / baseten_trace / burst_gpt_trace: "
+            "timestamped trace files for replay. "
             "sagemaker_data_capture: JSONL captured by SageMaker DataCapture. "
             "random_pool: directory of reusable prompts.",
         ),
@@ -349,7 +350,9 @@ class FileDataset(BaseConfig):
             default=None,
             description="Trace synthesis/transformation configuration. "
             "Allows scaling timestamps and token lengths before replay. "
-            "Only used with mooncake_trace format.",
+            "Applies to trace formats such as mooncake_trace and baseten_trace, "
+            "except speedup_ratio, which is rejected for baseten_trace "
+            "(use replay_speedup / --replay-speedup to scale replay pacing there).",
         ),
     ]
 
@@ -373,16 +376,103 @@ class FileDataset(BaseConfig):
         ),
     ]
 
+    trace_session_sample_ratio: Annotated[
+        float | None,
+        Field(
+            gt=0.0,
+            le=1.0,
+            default=None,
+            description="Fraction of trace sessions to keep for replay, sampled "
+            "whole-session to preserve multi-turn integrity; deterministic when "
+            "``random_seed`` is set. Only supported by the baseten_trace loader.",
+        ),
+    ]
+
     inter_turn_delay_cap_seconds: Annotated[
         float | None,
         Field(
             default=None,
             ge=0.0,
-            description="Clamp per-turn replay delays (read from JSONL trace "
-            "files) to at most this many seconds. ``None`` disables the cap. "
-            "Used by the DAG JSONL loader to keep long pre-recorded waits "
-            "from stalling the benchmark; ``DelayCapTracker`` reports the "
-            "clamp count at end of load.",
+            description="Clamp per-turn replay delays to at most this many "
+            "seconds; ``None`` disables the cap. Honored by the DAG JSONL loader "
+            "and the baseten_trace loader's closed-loop think-times; the clamp "
+            "count is reported at end of load.",
+        ),
+    ]
+
+    max_idle_gap_cap_seconds: Annotated[
+        float | None,
+        Field(
+            default=None,
+            gt=0.0,
+            description="Collapse idle gaps between consecutive requests (across "
+            "all sessions) to at most this many seconds, so a sparse or "
+            "session-sampled trace does not replay dead air; ``None`` disables "
+            "the cap. The cap is in replay wall-clock seconds, applied after "
+            "replay_speedup compression, so it bounds actual benchmark idle "
+            "time regardless of speedup. Only supported by the baseten_trace "
+            "loader.",
+        ),
+    ]
+
+    replay_speedup: Annotated[
+        float | None,
+        Field(
+            default=None,
+            gt=0.0,
+            description="Trace replay wall-clock compression (10 = 10x faster "
+            "than recorded): divides normalized timestamps and inter-turn delays; "
+            "``None`` = real time. Unlike synthesis speedup_ratio, hash_ids stay "
+            "untouched (KV-cache fidelity). Only supported by the baseten_trace "
+            "loader.",
+        ),
+    ]
+
+    open_loop_replay: Annotated[
+        bool,
+        Field(
+            default=True,
+            description="Open-loop replay (the default): each session starts at "
+            "its absolute, speedup-scaled recorded timestamp; continuation turns "
+            "fire at max(recorded timestamp, prior-turn completion). Set "
+            "``False`` for closed-loop back-pressure: continuation turns fire a "
+            "think-time (recorded start-to-start gap minus recorded e2e duration) "
+            "after the prior turn completes, keeping sessions causally ordered "
+            "when replayed service times differ from recorded (e.g. A/A "
+            "comparisons). Only honored by the baseten_trace loader.",
+        ),
+    ]
+
+    open_loop_strict: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="In open-loop replay, fire every trace row at its "
+            "absolute recorded timestamp as an independent single-turn session, "
+            "trading away multi-turn grouping and session metrics. Only honored "
+            "by the baseten_trace loader.",
+        ),
+    ]
+
+    omit_kv_hints: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Drop recorded KV-cache hints (``hash_ids``, "
+            "``block_size``) from replayed request bodies, for strict frontends "
+            "that reject unknown parameters. Only honored by the baseten_trace "
+            "loader.",
+        ),
+    ]
+
+    force_min_tokens: Annotated[
+        bool,
+        Field(
+            default=True,
+            description="Pin ``min_tokens`` to the recorded output length so "
+            "replayed generations match recorded lengths; disable to let EOS end "
+            "generations naturally (some servers reject ``min_tokens``). Only "
+            "honored by the baseten_trace loader.",
         ),
     ]
 
@@ -425,6 +515,19 @@ class FileDataset(BaseConfig):
         if records_set and isinstance(self.records, list) and not self.records:
             raise ValueError("`records:` must contain at least one record.")
 
+        return self
+
+    @model_validator(mode="after")
+    def _validate_open_loop_strict_requires_open_loop(self) -> FileDataset:
+        # open_loop_strict is an open-loop-only modifier; the loader would
+        # silently ignore it in closed-loop replay. Strict defaults False and
+        # open-loop defaults True, so strict=True with open-loop=False can
+        # only come from an explicitly contradictory config.
+        if self.open_loop_strict and not self.open_loop_replay:
+            raise ValueError(
+                "--open-loop-strict requires open-loop replay; remove "
+                "--no-open-loop-replay (or drop --open-loop-strict)."
+            )
         return self
 
     @model_validator(mode="after")
@@ -510,6 +613,15 @@ class PublicDataset(BaseConfig):
             description="HuggingFace dataset subset/config name override (e.g. 'sharegpt4o'). "
             "Only applies for HuggingFace-backed public dataset loaders. "
             "Takes priority over the subset defined in the plugin registry.",
+        ),
+    ]
+
+    filters: Annotated[
+        dict[str, str],
+        Field(
+            default_factory=dict,
+            description="Dataset-specific filters forwarded to public dataset loaders. "
+            "Supported keys and values depend on the selected dataset.",
         ),
     ]
 

@@ -84,6 +84,21 @@ def redact_headers(headers: dict[str, str] | None) -> dict[str, str] | None:
     }
 
 
+def extract_sensitive_headers(headers: dict[str, str] | None) -> dict[str, str]:
+    """Return only the entries from ``headers`` that ``redact_headers`` would
+    redact, keyed by their original (un-lowercased) name.
+
+    Used by orchestrator IPC: ``EndpointConfig.headers`` is redacted on every
+    JSON dump, so the subprocess loads a ``run_config.json`` whose
+    credential-bearing headers carry the literal string ``<redacted>``. The
+    parent forwards the real values out-of-band via ``AIPERF_INJECTED_HEADERS``
+    and the child overlays them back onto the loaded config.
+    """
+    if not headers:
+        return {}
+    return {k: v for k, v in headers.items() if k.lower() in _SENSITIVE_HEADER_NAMES}
+
+
 def redact_header_tuples(
     headers: list[tuple[str, str]],
 ) -> list[tuple[str, str]]:

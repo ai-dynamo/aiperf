@@ -110,7 +110,7 @@ class TestApiKeyRedactionRawExportHTTP:
 
         raw_file = next(temp_output_dir.glob("**/*profile_export_raw.jsonl"), None)
         assert raw_file is not None
-        assert API_KEY not in raw_file.read_text(), (
+        assert API_KEY not in raw_file.read_text(encoding="utf-8"), (
             "Real API key found in raw records JSONL file"
         )
 
@@ -183,7 +183,7 @@ class TestApiKeyRedactionHttpTrace:
 
         jsonl_file = next(temp_output_dir.glob("**/*profile_export.jsonl"), None)
         assert jsonl_file is not None
-        assert API_KEY not in jsonl_file.read_text(), (
+        assert API_KEY not in jsonl_file.read_text(encoding="utf-8"), (
             "API key found in JSONL file with --export-http-trace enabled"
         )
 

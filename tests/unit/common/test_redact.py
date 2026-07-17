@@ -14,6 +14,7 @@ from aiperf.common.models.model_endpoint_info import EndpointInfo
 from aiperf.common.redact import (
     _SENSITIVE_HEADER_NAMES,
     REDACTED_VALUE,
+    extract_sensitive_headers,
     redact_cli_command,
     redact_headers,
     redact_string,
@@ -94,6 +95,65 @@ class TestRedactHeaders:
         assert result["Content-Type"] == "application/json"
         assert result["X-Request-ID"] == "req-001"
         assert result["User-Agent"] == "aiperf/1.0"
+
+
+# =============================================================================
+# extract_sensitive_headers
+# =============================================================================
+
+
+class TestExtractSensitiveHeaders:
+    """Tests for extract_sensitive_headers().
+
+    Inverse of ``redact_headers``: returns only the entries the redactor
+    would strip. Used by the orchestrator to forward credential-bearing
+    headers via env var so the on-disk run_config.json stays redacted but
+    the subprocess can still authenticate to the upstream.
+    """
+
+    def test_none_returns_empty(self):
+        assert extract_sensitive_headers(None) == {}
+
+    def test_empty_dict_returns_empty(self):
+        assert extract_sensitive_headers({}) == {}
+
+    def test_only_non_sensitive_returns_empty(self):
+        assert extract_sensitive_headers({"Accept": "text/plain"}) == {}
+
+    def test_returns_sensitive_subset_preserving_case(self):
+        headers = {
+            "Authorization": "Api-Key abc123",
+            "X-API-Key": "nvapi-xyz",
+            "Content-Type": "application/json",
+            "X-Trace": "trace-1",
+        }
+        result = extract_sensitive_headers(headers)
+        assert result == {
+            "Authorization": "Api-Key abc123",
+            "X-API-Key": "nvapi-xyz",
+        }
+
+    def test_case_insensitive_match_preserves_original_case(self):
+        result = extract_sensitive_headers({"authorization": "Bearer tok"})
+        # Match is case-insensitive but the returned key is the caller's spelling
+        assert result == {"authorization": "Bearer tok"}
+
+    def test_redact_round_trip(self):
+        """extract + redact recovers the full header set.
+
+        Property: redact_headers(orig) | extract_sensitive_headers(orig)
+        is the same as orig (with redact's copy of non-sensitive entries).
+        """
+        orig = {
+            "Authorization": "Api-Key real-key",
+            "Content-Type": "application/json",
+        }
+        redacted = redact_headers(orig)
+        sensitive = extract_sensitive_headers(orig)
+        # The IPC round-trip: child loads `redacted`, parent forwards
+        # `sensitive`, child overlays.
+        reconstructed = {**redacted, **sensitive}
+        assert reconstructed == orig
 
 
 # =============================================================================

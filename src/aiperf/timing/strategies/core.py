@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
     from aiperf.credit.issuer import CreditIssuer
+    from aiperf.credit.messages import CreditReturn, FirstToken
     from aiperf.credit.structs import Credit
     from aiperf.timing.config import CreditPhaseConfig
     from aiperf.timing.conversation_source import ConversationSource
@@ -78,6 +79,24 @@ class TimingStrategyProtocol(Protocol):
         Args:
             credit: Completed credit with conversation/turn info
         """
+        ...
+
+
+@runtime_checkable
+class CreditResultAwareStrategyProtocol(Protocol):
+    """Optional hook for strategies that need full credit result status."""
+
+    async def handle_credit_result(self, credit_return: CreditReturn) -> None:
+        """Observe a returned credit including error/cancellation status."""
+        ...
+
+
+@runtime_checkable
+class FirstTokenAwareStrategyProtocol(Protocol):
+    """Optional hook for strategies that need TTFT samples."""
+
+    async def handle_first_token(self, first_token: FirstToken) -> None:
+        """Observe a first-token event including TTFT."""
         ...
 
 

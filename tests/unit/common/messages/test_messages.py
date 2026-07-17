@@ -61,11 +61,23 @@ class TestBaseStatusMessageTimestamp:
 
     def test_request_ns_differs_between_instances(self):
         """Each instance gets its own timestamp via default_factory, not a shared class-level value."""
+        import sys
+        import time
+
         msg1 = StatusMessage(
             state=LifecycleState.RUNNING,
             service_id="svc-1",
             service_type=ServiceType.WORKER,
         )
+        # Windows ``time.time_ns()`` has ~16ms granularity (system clock tick);
+        # back-to-back calls can collapse to the same value. Spin without
+        # blocking until the clock advances, so we get monotonic separation
+        # without violating the no-blocking-sleep rule.
+        if sys.platform == "win32":
+            start_ns = msg1.request_ns
+            deadline_ns = time.time_ns() + 100_000_000  # 100ms upper bound
+            while time.time_ns() == start_ns and time.time_ns() < deadline_ns:
+                pass
         msg2 = StatusMessage(
             state=LifecycleState.RUNNING,
             service_id="svc-2",
@@ -334,6 +346,38 @@ class TestMessageToJsonBytes:
         # Should be deserializable
         restored = message_type.from_json(json_bytes)
         assert restored.message_type == message.message_type
+
+    def test_console_group_survives_to_json_bytes_but_not_public_dump(self):
+        """Reversion guard (db058ce39): MetricResult.console_group is stripped
+        from public dumps but MUST survive the cross-process bus. to_json_bytes()
+        passes context={'include_internal': True}; a plain model_dump_json() (the
+        public/exporter shape) must still drop it. If the opt-in is dropped, an
+        analyzer-injected console_group never reaches the console exporter (a
+        separate process)."""
+        from aiperf.common.enums import MetricConsoleGroup
+        from aiperf.common.messages import RealtimeMetricsMessage
+        from aiperf.common.models import MetricResult
+
+        result = MetricResult(
+            tag="custom_injected_tag",
+            header="Custom",
+            unit="tokens",
+            avg=1.0,
+            console_group=MetricConsoleGroup.USAGE,
+        )
+        message = RealtimeMetricsMessage(
+            service_id="records-manager",
+            service_type=ServiceType.RECORDS_MANAGER,
+            metrics=[result],
+        )
+
+        # IPC path keeps console_group.
+        ipc = orjson.loads(message.to_json_bytes())
+        assert ipc["metrics"][0]["console_group"] == MetricConsoleGroup.USAGE
+
+        # Public path (user-facing exports / REST) strips it.
+        public = json.loads(message.model_dump_json(exclude_none=True))
+        assert "console_group" not in public["metrics"][0]
 
 
 class TestMessageStringRepresentation:

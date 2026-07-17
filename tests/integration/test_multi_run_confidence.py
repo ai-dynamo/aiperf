@@ -332,7 +332,7 @@ class TestMultiRunConfidence:
         aggregate_dir = temp_output_dir / "aggregate"
         agg_csv = aggregate_dir / "profile_export_aiperf_aggregate.csv"
 
-        csv_content = agg_csv.read_text()
+        csv_content = agg_csv.read_text(encoding="utf-8")
         lines = csv_content.strip().split("\n")
 
         # Check header

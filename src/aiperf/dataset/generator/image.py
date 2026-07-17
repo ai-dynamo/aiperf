@@ -8,7 +8,11 @@ import numpy as np
 from PIL import Image, UnidentifiedImageError
 
 from aiperf.common import random_generator as rng
-from aiperf.common.enums import ImageFormat, ImageSource
+from aiperf.common.enums import (
+    ImageFormat,
+    ImageSource,
+    ImageSourceSamplingStrategy,
+)
 from aiperf.config.dataset.content import ImageConfig
 from aiperf.dataset import utils
 from aiperf.dataset.generator.base import BaseGenerator
@@ -23,9 +27,9 @@ class ImageGenerator(BaseGenerator):
     on mean and standard deviation values.
 
     Supports three source modes:
-    - ASSETS: loads images from the bundled 'assets/source_images' directory
+    - ASSETS: indexes images from the bundled 'assets/source_images' directory
     - NOISE: generates random noise images on the fly
-    - PATH: loads images from the given directory (e.g. `./source_images`)
+    - PATH: indexes images from the given directory (e.g. `./source_images`)
     """
 
     def __init__(self, config: ImageConfig | None, **kwargs):
@@ -45,42 +49,50 @@ class ImageGenerator(BaseGenerator):
             source_images_dir = (
                 Path(__file__).parent.resolve() / "assets" / "source_images"
             )
-            self._source_images = self._load_source_images_from_disk(source_images_dir)
+            self._configure_source_image_paths(source_images_dir)
             self._create_source_image = self._create_from_source_images
         elif self.config.source == ImageSource.NOISE:
             self._noise_rng = rng.derive("dataset.image.noise")
             self._create_source_image = self._create_from_noise
         elif isinstance(self.config.source, Path):
             self._source_rng = rng.derive("dataset.image.source")
-            self._source_images = self._load_source_images_from_disk(self.config.source)
+            self._configure_source_image_paths(self.config.source)
             self._create_source_image = self._create_from_source_images
         else:
             raise ValueError(f"Invalid source: {self.config.source}")
 
-    def _load_source_images_from_disk(self, source_path: Path) -> list[Image.Image]:
-        """Load source images from the given directory."""
+    def _configure_source_image_paths(self, source_path: Path) -> None:
+        self._source_images_dir = source_path
+        self._source_image_paths = self._load_source_image_paths_from_disk(source_path)
+        self._available_source_image_indexes = list(
+            range(len(self._source_image_paths))
+        )
+        self._available_source_image_index_set = set(
+            self._available_source_image_indexes
+        )
+        self._source_image_indexes: list[int] = []
+        self._source_image_index = 0
+
+    def _load_source_image_paths_from_disk(self, source_path: Path) -> list[Path]:
+        """Index candidate source-image paths from the given directory."""
         if not source_path.exists():
             raise FileNotFoundError(f"The directory '{source_path}' does not exist.")
         if not source_path.is_dir():
             raise NotADirectoryError(f"The path '{source_path}' is not a directory.")
 
-        image_paths = sorted(glob.glob(str(source_path / "*")))
-        images: list[Image.Image] = []
-        for path in image_paths:
-            try:
-                with Image.open(path) as img:
-                    images.append(img.copy())
-            except (UnidentifiedImageError, OSError) as e:
-                self.debug(
-                    lambda p=path, exc=e: f"Skipping non-image file '{p}': {exc}"
-                )
-        if not images:
+        supported_extensions = {ext.lower() for ext in Image.registered_extensions()}
+        image_paths = [
+            Path(path)
+            for path in sorted(glob.glob(str(source_path / "*")))
+            if Path(path).suffix.lower() in supported_extensions
+        ]
+        if not image_paths:
             raise ValueError(
                 f"No source images found in '{source_path}'. "
                 "Please ensure the directory contains at least one image file."
             )
-        self.debug(lambda: f"Pre-loaded {len(images)} source images from disk")
-        return images
+        self.debug(lambda: f"Indexed {len(image_paths)} source image paths from disk")
+        return image_paths
 
     def generate(self, *args, **kwargs) -> str:
         """Generate an image with the configured parameters.
@@ -110,9 +122,57 @@ class ImageGenerator(BaseGenerator):
         return f"data:image/{image_format.name.lower()};base64,{base64_image}"
 
     def _create_from_source_images(self, width: int, height: int) -> Image.Image:
-        """Sample one pre-loaded source image and resize to target dimensions."""
-        image = self._source_rng.choice(self._source_images).copy()
-        return image.resize(size=(width, height))
+        """Open one sampled source image and resize to target dimensions."""
+        while self._available_source_image_indexes:
+            index, path = self._next_source_image_path()
+            try:
+                with Image.open(path) as image:
+                    return image.resize(size=(width, height))
+            except (UnidentifiedImageError, OSError) as e:
+                self._retire_unreadable_source_image(index, path, e)
+
+        raise ValueError(
+            f"No readable source images found in '{self._source_images_dir}'. "
+            "Please ensure the directory contains at least one readable image file."
+        )
+
+    def _next_source_image_path(self) -> tuple[int, Path]:
+        if (
+            self.config.source_sampling
+            == ImageSourceSamplingStrategy.RANDOM_WITH_REPLACEMENT
+        ):
+            index = self._source_rng.choice(self._available_source_image_indexes)
+            return index, self._source_image_paths[index]
+
+        if self.config.source_sampling == ImageSourceSamplingStrategy.SHUFFLE_CYCLE:
+            if not self._source_image_indexes:
+                self._source_image_indexes = list(self._available_source_image_indexes)
+                self._source_rng.shuffle(self._source_image_indexes)
+            index = self._source_image_indexes.pop()
+            return index, self._source_image_paths[index]
+
+        if self.config.source_sampling == ImageSourceSamplingStrategy.SEQUENTIAL_CYCLE:
+            for _ in range(len(self._source_image_paths)):
+                index = self._source_image_index
+                self._source_image_index = (self._source_image_index + 1) % len(
+                    self._source_image_paths
+                )
+                if index in self._available_source_image_index_set:
+                    return index, self._source_image_paths[index]
+
+        raise ValueError(f"Invalid source sampling: {self.config.source_sampling}")
+
+    def _retire_unreadable_source_image(
+        self, index: int, path: Path, exc: UnidentifiedImageError | OSError
+    ) -> None:
+        self.debug(lambda: f"Skipping unreadable image file '{path}': {exc}")
+        self._available_source_image_index_set.discard(index)
+        self._available_source_image_indexes = [
+            i for i in self._available_source_image_indexes if i != index
+        ]
+        self._source_image_indexes = [
+            i for i in self._source_image_indexes if i != index
+        ]
 
     def _create_from_noise(self, width: int, height: int) -> Image.Image:
         """Generate a random noise image at the target dimensions."""

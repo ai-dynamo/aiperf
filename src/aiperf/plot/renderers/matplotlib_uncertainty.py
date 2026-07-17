@@ -4,6 +4,10 @@
 
 import math
 
+# MPLBACKEND is set to ``Agg`` in ``aiperf.plot.__init__`` so it lands
+# before any submodule imports ``matplotlib.pyplot``. See the package
+# init for the full rationale.
+import matplotlib
 import matplotlib.figure
 import matplotlib.patches
 import matplotlib.pyplot as plt

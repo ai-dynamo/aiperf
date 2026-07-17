@@ -20,9 +20,9 @@ AIPerf handles this polling workflow automatically.
 ## References
 
 For the most up-to-date information, please refer to the following resources:
-- [SGLang Video Generation API](https://github.com/sgl-project/sglang/blob/main/python/sglang/multimodal_gen/docs/openai_api.md)
-- [SGLang Diffusion Installation Guide](https://github.com/sgl-project/sglang/blob/main/python/sglang/multimodal_gen/docs/install.md)
-- [SGLang CLI Reference](https://github.com/sgl-project/sglang/blob/main/python/sglang/multimodal_gen/docs/cli.md)
+- [SGLang Diffusion OpenAI API Reference](https://github.com/sgl-project/sglang/blob/main/docs/diffusion/api/openai_api.md)
+- [SGLang Diffusion Installation Guide](https://github.com/sgl-project/sglang/blob/main/docs/diffusion/installation.md)
+- [SGLang Diffusion CLI Reference](https://github.com/sgl-project/sglang/blob/main/docs/diffusion/api/cli.md)
 - [OpenAI Videos API](https://platform.openai.com/docs/api-reference/videos)
 
 ## Supported Models

@@ -14,6 +14,7 @@ from aiperf.dataset.loader import (
     RandomPoolDatasetLoader,
     SingleTurnDatasetLoader,
 )
+from aiperf.dataset.loader.speed_bench import SpeedBenchLoader
 from aiperf.plugin.enums import CustomDatasetType, DatasetSamplingStrategy
 from tests.unit.dataset.composer.conftest import make_run
 
@@ -70,6 +71,83 @@ class TestCoreFunctionality:
         )
         composer._create_loader_instance(dataset_type)
         assert isinstance(composer.loader, expected_instance)
+
+    def test_create_loader_instance_passes_speed_bench_category_metadata(
+        self, custom_config, mock_tokenizer
+    ):
+        dataset_type = CustomDatasetType("speed_bench_coding")
+        custom_config.custom_dataset_type = dataset_type
+
+        composer = CustomDatasetComposer(
+            run=make_run(custom_config), tokenizer=mock_tokenizer
+        )
+        composer._create_loader_instance(dataset_type)
+
+        assert isinstance(composer.loader, SpeedBenchLoader)
+        assert composer.loader.category == "coding"
+
+    def test_no_category_in_kwargs_when_none(self, custom_config, mock_tokenizer):
+        from aiperf.plugin.schema.schemas import CustomDatasetLoaderMetadata
+
+        composer = CustomDatasetComposer(
+            run=make_run(custom_config), tokenizer=mock_tokenizer
+        )
+        with patch(
+            "aiperf.dataset.composer.custom.plugins.get_dataset_loader_metadata",
+            return_value=CustomDatasetLoaderMetadata(),
+        ):
+            composer._create_loader_instance(CustomDatasetType.SPEED_BENCH_QUALITATIVE)
+        assert composer.loader.category is None
+
+    def test_multi_turn_forwarded_to_supporting_loader(
+        self, custom_config, mock_tokenizer
+    ):
+        from aiperf.plugin.schema.schemas import CustomDatasetLoaderMetadata
+
+        composer = CustomDatasetComposer(
+            run=make_run(custom_config), tokenizer=mock_tokenizer
+        )
+        with patch(
+            "aiperf.dataset.composer.custom.plugins.get_dataset_loader_metadata",
+            return_value=CustomDatasetLoaderMetadata(multi_turn=True),
+        ):
+            composer._create_loader_instance(CustomDatasetType.SPEED_BENCH_QUALITATIVE)
+        assert composer.loader.multi_turn
+
+    def test_multi_turn_raises_for_unsupported_loader(
+        self, custom_config, mock_tokenizer
+    ):
+        """A loader that doesn't declare multi_turn on its __init__ must not
+        silently swallow the kwarg via **kwargs — composer should refuse."""
+        from aiperf.plugin.schema.schemas import CustomDatasetLoaderMetadata
+
+        composer = CustomDatasetComposer(
+            run=make_run(custom_config), tokenizer=mock_tokenizer
+        )
+        with (
+            patch(
+                "aiperf.dataset.composer.custom.plugins.get_dataset_loader_metadata",
+                return_value=CustomDatasetLoaderMetadata(multi_turn=True),
+            ),
+            pytest.raises(ValueError, match="does not support the 'multi_turn'"),
+        ):
+            composer._create_loader_instance(CustomDatasetType.SINGLE_TURN)
+
+    def test_multi_turn_false_does_not_validate_loader_support(
+        self, custom_config, mock_tokenizer
+    ):
+        """multi_turn=False is the default; no need to gate it on loader support."""
+        from aiperf.plugin.schema.schemas import CustomDatasetLoaderMetadata
+
+        composer = CustomDatasetComposer(
+            run=make_run(custom_config), tokenizer=mock_tokenizer
+        )
+        with patch(
+            "aiperf.dataset.composer.custom.plugins.get_dataset_loader_metadata",
+            return_value=CustomDatasetLoaderMetadata(multi_turn=False),
+        ):
+            composer._create_loader_instance(CustomDatasetType.SPEED_BENCH_QUALITATIVE)
+        assert composer.loader.multi_turn
 
     @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
     @patch("aiperf.dataset.composer.custom.check_file_exists")

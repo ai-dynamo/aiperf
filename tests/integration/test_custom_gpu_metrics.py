@@ -20,8 +20,8 @@ DCGM_FAKER_DEFAULT_METRIC_COUNT = 8
 
 
 @pytest.mark.skipif(
-    platform.system() == "Darwin",
-    reason="Requires NVIDIA GPUs for DCGM telemetry (only available on Linux CI).",
+    platform.system() in ("Darwin", "Windows"),
+    reason="Requires NVIDIA GPUs for DCGM telemetry (only available on Linux CI; DCGM is Linux-only).",
 )
 @pytest.mark.integration
 @pytest.mark.asyncio

@@ -181,6 +181,13 @@ class Turn(AIPerfBaseModel):
         description="Pre-formatted OpenAI-compatible tool definitions. "
         "When set alongside raw_messages, injected into the API payload.",
     )
+    raw_system: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Pre-formatted vendor-shaped ``system`` field (list of "
+        "content blocks). Latest-non-None turn wins. Currently only "
+        "MessagesEndpoint reads this; lets callers attach per-block "
+        "``cache_control`` without going through extra_body.",
+    )
     texts: list[Text] = Field(
         default=[], description="Collection of text data in each turn."
     )
@@ -207,7 +214,12 @@ class Turn(AIPerfBaseModel):
         description="Non-native per-turn request-body fields (temperature, "
         "top_p, seed, stop, vendor tunables like ignore_eos/min_tokens). "
         "Merged into the top level of the chat-completions payload at "
-        "dispatch time, matching the OpenAI SDK's extra_body convention.",
+        "dispatch time, after endpoint-level extra values, matching the "
+        "OpenAI SDK's extra_body convention.",
+    )
+    extra_headers: dict[str, str] | None = Field(
+        default=None,
+        description="Per-turn HTTP headers merged into the request at dispatch time.",
     )
     prerequisites: list[TurnPrerequisite] = Field(
         default_factory=list,
@@ -258,6 +270,7 @@ class Turn(AIPerfBaseModel):
             if self.raw_messages is not None
             else None,
             raw_tools=list(self.raw_tools) if self.raw_tools is not None else None,
+            raw_system=list(self.raw_system) if self.raw_system is not None else None,
             texts=[Text(name=t.name, contents=list(t.contents)) for t in self.texts],
             images=[
                 Image(
