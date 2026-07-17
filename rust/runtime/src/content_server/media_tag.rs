@@ -26,11 +26,9 @@ pub fn tag_media_urls(body: &mut Value, base: &str, rid: &str, dispatch_wall_ns:
 
 fn tag_walk(value: &mut Value, base: &str, rid: &str, td: u64, mi: &mut u32) {
     match value {
-        Value::String(s) => {
-            if s.starts_with(base) {
-                *s = append_tag(s, rid, *mi, td);
-                *mi += 1;
-            }
+        Value::String(s) if s.starts_with(base) => {
+            *s = append_tag(s, rid, *mi, td);
+            *mi += 1;
         }
         Value::Array(items) => {
             for item in items {
