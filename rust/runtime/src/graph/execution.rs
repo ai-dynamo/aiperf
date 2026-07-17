@@ -107,8 +107,10 @@ impl<M: WireMessage> LocalGraphTraceExecutionBackend<M> {
         }
     }
 
-    /// Force the general `TraceExecutor` for every plan during byte-parity
-    /// validation, bypassing the flat fast path.
+    /// Force the general `TraceExecutor` for every plan, bypassing the flat fast
+    /// path. Test-only: external parity runs use the `AIPERF_DISABLE_FLATGRAPH`
+    /// kill-switch instead (see [`crate::graph::flat::flatgraph_disabled`]).
+    #[cfg(test)]
     pub(crate) fn with_force_full(mut self, force_full: bool) -> Self {
         self.force_full = force_full;
         self
