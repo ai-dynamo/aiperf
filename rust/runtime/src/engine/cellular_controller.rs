@@ -494,64 +494,74 @@ pub fn run_cellular(
             VeloControllerTransport::bind_controller(velo, spec_for, cell_count, start_handle)
                 .context("binding controller transport")?;
 
-        // Insert `M = ceil(cells / fanout)` aggregators
-        // between the cells and the controller. Each cell ships to its round-robin
-        // aggregator; each aggregator merges its subtree and ships ONE store up, so the
-        // controller collects `M` partitions instead of `cells`. Fold-only (sketch /
-        // exact-fold): the retain path keeps the star topology (needs global order).
+        // Insert a reduction TREE of aggregators between the cells and the controller.
+        // Each cell ships to its round-robin tier-1 aggregator; each aggregator merges
+        // its subtree and ships ONE store up (to a parent aggregator for a lower tier,
+        // the controller for the top tier), so the controller collects only the top
+        // tier's partitions instead of `cells`. Fold-only (sketch / exact-fold): the
+        // retain path keeps the star topology (needs global order).
         //
         // Placement differs by deployment, exactly like the cells:
-        // - SAME-HOST (`!is_k8s`): the controller spawns M `aiperf --aggregator`
-        //   subprocesses at fixed loopback ports and injects each cell's loopback ship
-        //   address (via `CellLaunchContext::aggregator_count`).
-        // - K8S: the operator created the aggregator pods and injected each cell pod's
-        //   ship-DNS, so the controller must NOT spawn and must NOT inject loopback ship
-        //   addresses (`K8sLauncher` ignores `aggregator_count` — cell env is the pod
-        //   spec's). It still sizes `expected_partitions = M` and collects the M merged
-        //   stores. This k8s "expect, don't spawn" path is gated on the operator having
-        //   signalled it wired the aggregators ([`AGG_DNS_TEMPLATE_ENV`]); a fanout-set
-        //   k8s run without that signal fails closed to the flat star (cells would
-        //   otherwise ship into a void).
-        let requested_aggregator_count =
-            crate::engine::cellular_aggregator::aggregator_count(cell_count);
-        let k8s_aggregators_wired = std::env::var_os(
-            crate::engine::cellular_aggregator::AGG_DNS_TEMPLATE_ENV,
-        )
-        .is_some();
-        let aggregator_count = crate::engine::cellular_aggregator::effective_aggregator_count(
-            is_k8s,
-            k8s_aggregators_wired,
-            requested_aggregator_count,
-        );
-        if is_k8s && requested_aggregator_count.is_some() && aggregator_count.is_none() {
-            tracing::warn!(
-                "AIPERF_CELL_AGG_FANOUT requests aggregators but the operator did not wire the \
-                 k8s aggregators (AIPERF_CELL_AGG_DNS_TEMPLATE unset); falling back to the \
-                 flat star topology"
-            );
+        // - SAME-HOST (`!is_k8s`): the controller spawns every tier's `aiperf
+        //   --aggregator` subprocess at a distinct fixed loopback port
+        //   ([`aggregator_nodes`]) and injects each cell's tier-1 loopback ship address
+        //   (via `CellLaunchContext::aggregator_count`). Depth `>= 2` tiers reduce a
+        //   large cell count geometrically.
+        // - K8S: the operator created a SINGLE tier of aggregator pods and injected each
+        //   cell pod's ship-DNS, so the controller must NOT spawn and must NOT inject
+        //   loopback ship addresses (`K8sLauncher` ignores `aggregator_count` — cell env
+        //   is the pod spec's). It sizes `expected_partitions = M` and collects the M
+        //   merged stores. This k8s "expect, don't spawn" path is gated on the operator
+        //   having signalled it wired the aggregators ([`AGG_DNS_TEMPLATE_ENV`]); a
+        //   fanout-set k8s run without that signal fails closed to the flat star.
+        //   Multi-tier k8s is a TODO — the operator builds one tier today (see
+        //   `src/aiperf/kubernetes/jobset.py`).
+        use crate::engine::cellular_aggregator::{
+            aggregator_base_port as agg_base_port, aggregator_count as requested_agg_count,
+            effective_aggregator_count, tier_counts_from_env, AGG_DNS_TEMPLATE_ENV,
+        };
+        let aggregator_base_port = agg_base_port();
+        // Same-host uses the full multi-tier plan; k8s stays single-tier (operator-built).
+        let tiers: Vec<u32> = if is_k8s {
+            let requested = requested_agg_count(cell_count);
+            let k8s_wired = std::env::var_os(AGG_DNS_TEMPLATE_ENV).is_some();
+            let effective = effective_aggregator_count(is_k8s, k8s_wired, requested);
+            if requested.is_some() && effective.is_none() {
+                tracing::warn!(
+                    "AIPERF_CELL_AGG_FANOUT requests aggregators but the operator did not wire \
+                     the k8s aggregators (AIPERF_CELL_AGG_DNS_TEMPLATE unset); falling back to \
+                     the flat star topology"
+                );
+            }
+            effective.into_iter().collect()
+        } else {
+            tier_counts_from_env(cell_count)
+        };
+        // Cells ship to tier 1 (the first tier); the controller collects the top tier.
+        // Both equal `cell_count` for the flat star.
+        let aggregator_count = tiers.first().copied();
+        let expected_partitions = tiers.last().copied().unwrap_or(cell_count);
+        if tiers.len() > 1 {
+            tracing::info!(?tiers, "cellular multi-tier aggregation tree");
         }
-        let aggregator_base_port =
-            crate::engine::cellular_aggregator::aggregator_base_port();
-        // The controller collects one partition per aggregator (tree) or per cell (flat).
-        let expected_partitions = aggregator_count.unwrap_or(cell_count);
-        // Spawn the aggregator subprocesses (same-host only) before the cells so they are
-        // bound and collecting by the time cells ship (cell `connect` also retries). Each
-        // gets the run envelope on stdin (for the merge config) and its subtree parameters
-        // via env. On k8s the aggregators are operator-created pods (fed their envelope by
-        // the `aiperf aggregator` frontend, bound on `0.0.0.0`), so the controller expects
-        // rather than spawns — `aggregator_children` stays empty and pod liveness is the
+        // Spawn every tier's aggregator subprocess (same-host only) before the cells so
+        // they are bound and collecting by the time cells ship (cell `connect` also
+        // retries). Each gets the run envelope on stdin (for the merge config) and its
+        // placement (id, bind port, collect barrier, parent ship coordinate) via env. On
+        // k8s the aggregators are operator-created pods, so the controller expects rather
+        // than spawns — `aggregator_children` stays empty and pod liveness is the
         // operator's concern.
-        let mut aggregator_children = match aggregator_count {
-            Some(agg_count) if !is_k8s => spawn_aggregators(
+        let mut aggregator_children = if !is_k8s && !tiers.is_empty() {
+            spawn_aggregators(
                 envelope,
-                agg_count,
                 cell_count,
                 aggregator_base_port,
                 &cell_coordinate,
             )
             .await
-            .context("spawning aggregators")?,
-            _ => Vec::new(),
+            .context("spawning aggregators")?
+        } else {
+            Vec::new()
         };
 
         // Launch (local subprocesses) or expect (k8s pods) the cells.
@@ -1675,53 +1685,67 @@ fn validate_graph_cellular_phases(envelope: &serde_json::Value, cell_count: u32)
     Ok(())
 }
 
-/// Spawns one `aiperf --aggregator` subprocess per aggregator. Each receives the run
-/// envelope on stdin for `MetricsConfig` and
-/// its subtree parameters via env: its id, the fixed loopback `tcp://` coordinate it
-/// binds (its cells dial it there), how many cells ship to it, and the controller
-/// coordinate it ships its one merged store up to. Returns the children so the
+/// Spawns one `aiperf --aggregator` subprocess per aggregator node across EVERY tier of
+/// the same-host reduction tree ([`aggregator_nodes`]). Each receives the run envelope
+/// on stdin for `MetricsConfig` and its placement via env: its id, the fixed loopback
+/// `tcp://` coordinate it binds (its children dial it there), its collect barrier, and
+/// where it ships its one merged store — a parent aggregator's loopback coordinate for
+/// a lower tier, or the controller for the top tier. Returns the children so the
 /// controller watches them for hard failure. `kill_on_drop` tears them down on any
-/// controller abort.
+/// controller abort. The fanout is read from the environment; a single-tier tree spawns
+/// exactly the original topology.
 async fn spawn_aggregators(
     envelope: &serde_json::Value,
-    agg_count: u32,
     cell_count: u32,
     base_port: u16,
     controller_coordinate: &str,
 ) -> Result<Vec<tokio::process::Child>> {
     use crate::engine::cellular_aggregator::{
-        AGG_BIND_ENV, AGG_CHILD_COUNT_ENV, AGG_ID_ENV, children_of,
+        aggregator_nodes, tier_counts_from_env, ShipTarget, AGG_BIND_ENV, AGG_CHILD_COUNT_ENV,
+        AGG_ID_ENV, AGG_SHIP_ADDR_ENV,
     };
     use crate::engine::cellular_cell::CELL_CONTROLLER_ADDR_ENV;
     use std::process::Stdio;
     use tokio::io::AsyncWriteExt;
 
+    // Recover the fanout the tier plan was sized with (the plan is derived from the same
+    // env), so `aggregator_nodes` computes the identical port/parent layout.
+    let fanout: u32 = std::env::var(crate::engine::cellular_aggregator::CELL_AGG_FANOUT_ENV)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .context("spawn_aggregators called without AIPERF_CELL_AGG_FANOUT")?;
+    debug_assert!(!tier_counts_from_env(cell_count).is_empty());
+    let nodes = aggregator_nodes(cell_count, fanout, base_port);
+
     let envelope_bytes =
         serde_json::to_vec(envelope).context("serializing envelope for aggregators")?;
     let exe = std::env::current_exe().unwrap_or_else(|_| "aiperf runner".into());
-    let mut children = Vec::with_capacity(agg_count as usize);
-    for agg_id in 0..agg_count {
-        let child_count = children_of(agg_id, agg_count, cell_count);
-        let mut child = tokio::process::Command::new(&exe)
+    let mut children = Vec::with_capacity(nodes.len());
+    for node in &nodes {
+        let mut command = tokio::process::Command::new(&exe);
+        command
             .arg("--aggregator")
-            .env(AGG_ID_ENV, agg_id.to_string())
-            .env(
-                AGG_BIND_ENV,
-                format!("tcp://127.0.0.1:{}", base_port + agg_id as u16),
-            )
-            .env(AGG_CHILD_COUNT_ENV, child_count.to_string())
-            .env(CELL_CONTROLLER_ADDR_ENV, controller_coordinate)
+            .env(AGG_ID_ENV, node.id.to_string())
+            .env(AGG_BIND_ENV, format!("tcp://127.0.0.1:{}", node.bind_port))
+            .env(AGG_CHILD_COUNT_ENV, node.child_count.to_string())
+            // The controller coordinate is carried for the top tier (which ships there);
+            // a lower tier ships to its parent via AGG_SHIP_ADDR below and ignores it.
+            .env(CELL_CONTROLLER_ADDR_ENV, controller_coordinate);
+        if let ShipTarget::Aggregator(port) = node.ship {
+            command.env(AGG_SHIP_ADDR_ENV, format!("tcp://127.0.0.1:{port}"));
+        }
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
             .kill_on_drop(true)
             .spawn()
-            .with_context(|| format!("spawning aggregator {agg_id}"))?;
+            .with_context(|| format!("spawning aggregator tier {} id {}", node.tier, node.id))?;
         if let Some(mut stdin) = child.stdin.take() {
             stdin
                 .write_all(&envelope_bytes)
                 .await
-                .with_context(|| format!("writing envelope to aggregator {agg_id}"))?;
+                .with_context(|| format!("writing envelope to aggregator {}", node.id))?;
             // `stdin` drops here → EOF, so the aggregator's `read_to_end` returns.
         }
         children.push(child);
