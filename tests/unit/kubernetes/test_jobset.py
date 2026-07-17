@@ -26,6 +26,8 @@ from aiperf.kubernetes.jobset import (
     AIPerfContainerSpec,
     AIPerfJobSetSpec,
     AIPerfReplicatedJobSpec,
+    aggregator_count,
+    aggregator_tier_counts,
     get_jobset_install_hint,
     get_jobset_manifest_url,
     get_latest_jobset_version,
@@ -2342,3 +2344,34 @@ def test_build_env_vars_worker_pod_omits_marker() -> None:
     )
     names = [e["name"] for e in env]
     assert "AIPERF_CONTROLLER_POD" not in names
+
+
+class TestAggregatorTierCounts:
+    """`aggregator_tier_counts` mirrors the Rust `tier_counts` sizing exactly."""
+
+    @pytest.mark.parametrize(
+        "cells, fanout, expected",
+        [
+            param(6, 3, [2], id="single-tier-6-3"),
+            param(60, 8, [8], id="single-tier-60-8"),
+            param(8, 2, [4, 2], id="two-tier-8-2"),
+            param(100, 3, [34, 12, 4, 2], id="deep-100-3"),
+            param(6, 1, [], id="flat-fanout-1"),
+            param(6, 6, [], id="flat-fanout-ge-cells"),
+            param(6, None, [], id="flat-fanout-unset"),
+        ],
+    )
+    def test_tier_counts_match_the_reduction_tree(
+        self, cells: int, fanout: int | None, expected: list[int]
+    ) -> None:
+        assert aggregator_tier_counts(cells, fanout) == expected
+
+    @pytest.mark.parametrize("cells", [4, 6, 7, 8, 60, 100, 1000])
+    def test_first_tier_equals_aggregator_count(self, cells: int) -> None:
+        """The cells ship to tier 1; its node count must equal `aggregator_count`."""
+        tiers = aggregator_tier_counts(cells, 3)
+        if tiers:
+            assert tiers[0] == aggregator_count(cells, 3)
+            # Each tier strictly reduces and the top fits within the fanout.
+            assert all(b < a for a, b in zip(tiers, tiers[1:]))
+            assert tiers[-1] <= 3

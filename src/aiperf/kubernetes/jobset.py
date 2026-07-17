@@ -40,6 +40,7 @@ __all__ = [
     "aggregator_count",
     "aggregator_dns_name",
     "aggregator_ship_template",
+    "aggregator_tier_counts",
     "controller_dns_name",
     "get_jobset_install_hint",
     "get_jobset_manifest_url",
@@ -130,6 +131,41 @@ def aggregator_children(agg_id: int, agg_count: int, cells: int) -> int:
     if agg_id >= cells:
         return 0
     return -(-(cells - agg_id) // agg_count)  # ceil division
+
+
+def aggregator_tier_counts(cells: int, fanout: int | None) -> list[int]:
+    """Aggregator node counts per tier for ``cells`` reduced by ``fanout``.
+
+    Mirrors Rust ``cellular_aggregator::tier_counts`` exactly. Returns the node count
+    of each aggregator tier from tier 1 (the tier the cells ship to) up to the top tier
+    that ships to the controller, or ``[]`` for the flat star (``fanout`` unset, ``< 2``,
+    or ``>= cells``). Each tier reduces the one below by ``ceil(prev / fanout)``,
+    stopping once a tier is ``<= fanout``. The first element equals
+    :func:`aggregator_count`, so a length-1 plan is the original single-tier tree.
+
+    TODO(multi-tier k8s): the operator currently builds only a SINGLE aggregator tier
+    (``aggregator_count`` pods; see :meth:`AIPerfJobSetSpec.build_jobset` /
+    ``build_aggregator_replicated_job``). To realize a depth ``>= 2`` tree on Kubernetes
+    the operator must create one indexed ``aggregators-{tier}`` replicatedJob per element
+    of this list and inject, per tier, that tier's parent ship-DNS (an upper-tier
+    aggregator's headless service for a lower tier, the controller for the top tier) via
+    ``AIPERF_AGG_SHIP_ADDR`` — mirroring the same-host ``aggregator_nodes`` wiring. Until
+    then a fanout that resolves to ``len(...) > 1`` should be clamped to a single tier
+    (``[aggregator_count(...)]``) or rejected at admission so cells never ship into a
+    tier the operator did not create. This helper is provided so that wiring is a pure,
+    tested sizing change when it lands.
+    """
+    if fanout is None or fanout < 2 or fanout >= cells:
+        return []
+    tiers: list[int] = []
+    prev = cells
+    while True:
+        count = -(-prev // fanout)  # ceil division
+        tiers.append(count)
+        if count <= fanout:
+            break
+        prev = count
+    return tiers
 
 
 class AIPerfJobSetSpec(AIPerfBaseModel):
