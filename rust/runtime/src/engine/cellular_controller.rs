@@ -297,7 +297,7 @@ pub fn run_cellular(
         .build()
         .context("building controller runtime")?;
 
-    runtime.block_on(async move {
+    let result = runtime.block_on(async move {
         let temp_root =
             std::env::temp_dir().join(format!("aiperf-cellular-{}", std::process::id()));
         // Cleans the scratch tree on every exit path, including a bail. On a bail this
@@ -902,7 +902,19 @@ pub fn run_cellular(
             cell_count,
             record_count,
         })
-    })
+    });
+    // The block above has already durably written the merged report, the exports, and
+    // the heartbeat sidecar. A CROSS-HOST controller (k8s / SLURM) binds its velo
+    // transport on a routable interface and never spawns/joins the "expect, don't
+    // spawn" cell tasks, so a velo accept worker can be parked in a blocking accept
+    // that a graceful runtime drop would join forever. k8s tolerates this — the
+    // operator deletes the pod — but a SLURM `srun` task has no external killer and
+    // would strand the whole allocation. Initiate shutdown WITHOUT waiting for a stuck
+    // worker; the process exits immediately after the caller emits `run_terminal`.
+    // (The same-host path drops cleanly, so skipping the join only affects the
+    // otherwise-hung cross-host teardown.)
+    runtime.shutdown_background();
+    result
 }
 
 /// The controller's HTTP artifact-upload bind. A fixed routable port
