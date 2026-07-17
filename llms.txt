@@ -447,6 +447,11 @@ Inputs, endpoints, and graph:
 - [`specs/graph-runtime.md`](specs/graph-runtime.md) — the Graph-IR runtime:
   deterministic async dataflow, the recorded-trace compilers, and the
   trajectory-snapshot/warmup-priming subsystem.
+- [`specs/conditional-graph-lowering.md`](specs/conditional-graph-lowering.md) —
+  the model-independent-branching contract: pinned/recorded/weighted conditional
+  branching and recorded non-LLM content resolved and folded into the flat
+  `LlmNode`/`StaticEdge` substrate at lowering, the eager-vs-forbidden
+  (branch-on-live-output) line, and the future eager-conditional compiler.
 
 Measurement and output:
 
