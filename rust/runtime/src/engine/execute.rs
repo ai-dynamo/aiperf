@@ -5,6 +5,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::cell::Cell;
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -1040,10 +1041,11 @@ pub(crate) struct PreparedNativeSidecarResources {
     network_latency_records_path: Option<PathBuf>,
     server_metrics_jsonl_path: Option<PathBuf>,
     server_metrics_parquet_wire_path: Option<PathBuf>,
-    /// Signals the media-fetch drain task to finish and flush.
-    media_finalize: Option<tokio::sync::oneshot::Sender<()>>,
+    /// Signals the media-fetch drain task to finish and flush. `Cell` so a
+    /// finalize tail holding `&self` can take it.
+    media_finalize: Cell<Option<tokio::sync::oneshot::Sender<()>>>,
     /// Background task folding content records into media-fetch metrics.
-    media_handle: Option<tokio::task::JoinHandle<MediaMetricsSummary>>,
+    media_handle: Cell<Option<tokio::task::JoinHandle<MediaMetricsSummary>>>,
 }
 
 /// Artifact filename for per-fetch media records.
@@ -1130,8 +1132,11 @@ impl NativeSidecarResourceFactory for BuiltinNativeSidecarResourceFactory {
                 // (a content dir is set); otherwise media stays inline, no URLs
                 // are fetched, and there is nothing to correlate.
                 let record_sink = if spec.content_dir.is_some() {
-                    let path =
-                        artifact_path(&run.artifact_dir, MEDIA_RECORDS_FILENAME, "media_records")?;
+                    let path = artifact_path(
+                        &run.artifact_dir,
+                        Path::new(MEDIA_RECORDS_FILENAME),
+                        "media_records",
+                    )?;
                     let (record_tx, mut record_rx) =
                         tokio::sync::mpsc::unbounded_channel::<ContentRequestRecord>();
                     let (finalize_tx, mut finalize_rx) = tokio::sync::oneshot::channel::<()>();
@@ -1229,8 +1234,8 @@ impl NativeSidecarResourceFactory for BuiltinNativeSidecarResourceFactory {
             network_latency_records_path,
             server_metrics_jsonl_path,
             server_metrics_parquet_wire_path,
-            media_finalize,
-            media_handle,
+            media_finalize: Cell::new(media_finalize),
+            media_handle: Cell::new(media_handle),
         })
     }
 }
@@ -1239,7 +1244,7 @@ impl PreparedNativeSidecarResources {
     /// Signal the media-fetch drain task to finish, then collect its finalized
     /// distributions. Returns an empty summary when the content server had no
     /// media wiring. Idempotent: a second call returns the empty default.
-    async fn finalize_media_metrics(&mut self) -> MediaMetricsSummary {
+    async fn finalize_media_metrics(&self) -> MediaMetricsSummary {
         let (Some(finalize), Some(handle)) = (self.media_finalize.take(), self.media_handle.take())
         else {
             return MediaMetricsSummary::default();
