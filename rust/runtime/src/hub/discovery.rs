@@ -169,8 +169,10 @@ mod tests {
             .await
             .expect("hub velo");
         let mut hub = Hub::new(velo);
-        hub.register(Box::new(DiscoveryPlugin::new(discovery_state(endpoint.clone()))))
-            .expect("register discovery");
+        hub.register(Box::new(DiscoveryPlugin::new(discovery_state(
+            endpoint.clone(),
+        ))))
+        .expect("register discovery");
         (hub, endpoint)
     }
 
@@ -220,7 +222,11 @@ mod tests {
             .send_request(http_request)
             .await
             .expect("send request");
-        assert!(response.status().is_success(), "http status {}", response.status());
+        assert!(
+            response.status().is_success(),
+            "http status {}",
+            response.status()
+        );
         let bytes = response
             .into_body()
             .collect()
@@ -233,7 +239,9 @@ mod tests {
     /// Reach the discovery handler over a velo unary: connect to the hub by
     /// endpoint alone (`_hello` bootstrap), then send the `rmp`-encoded request.
     async fn velo_discovery(endpoint: &str, request: &DiscoveryRequest) -> DiscoveryReply {
-        let client = build_velo(BindSpec::TcpLoopback).await.expect("client velo");
+        let client = build_velo(BindSpec::TcpLoopback)
+            .await
+            .expect("client velo");
         let peer = connect_controller(&client, endpoint)
             .await
             .expect("connect to hub");
@@ -278,4 +286,3 @@ mod tests {
         server.shutdown().await;
     }
 }
-</content>

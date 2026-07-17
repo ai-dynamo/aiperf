@@ -169,4 +169,3 @@ impl Drop for HubServer {
         }
     }
 }
-</content>

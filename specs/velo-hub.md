@@ -169,5 +169,3 @@ untouched and keep working as-is:
   the hub folds in later.
 - `rust/runtime/src/extensions/mod.rs` — the `AIPerfExtension` transactional
   registry the plugin registration mirrors.
-</content>
-</invoke>

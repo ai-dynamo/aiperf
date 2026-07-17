@@ -59,13 +59,19 @@ impl Display for HubError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidPrefix(prefix) => {
-                write!(f, "hub plugin prefix {prefix:?} must be non-empty and begin with '/'")
+                write!(
+                    f,
+                    "hub plugin prefix {prefix:?} must be non-empty and begin with '/'"
+                )
             }
             Self::DuplicatePrefix(prefix) => {
                 write!(f, "duplicate hub plugin prefix {prefix:?}")
             }
             Self::VeloHandler { prefix, message } => {
-                write!(f, "hub plugin {prefix:?} failed to register velo handlers: {message}")
+                write!(
+                    f,
+                    "hub plugin {prefix:?} failed to register velo handlers: {message}"
+                )
             }
             Self::Http(message) => write!(f, "hub HTTP surface error: {message}"),
         }
@@ -73,4 +79,3 @@ impl Display for HubError {
 }
 
 impl Error for HubError {}
-</content>
