@@ -11,8 +11,11 @@
 //! not the records themselves, so it scales with request volume.
 
 use std::collections::{BTreeMap, HashMap};
+use std::fs::File;
+use std::io::{self, BufWriter, Write};
+use std::path::Path;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::content_server::model::ContentRequestRecord;
 use crate::content_server::parse_media_tag;
@@ -30,7 +33,7 @@ pub const MEDIA_FETCH_COUNT: &str = "media_fetch_count";
 
 /// One content-server fetch joined to the request/slot that carried it. Streamed
 /// to the `media_records` artifact, one JSON object per line.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MediaRecord {
     /// Originating request id (`X-Request-ID`).
     pub rid: String,
@@ -167,6 +170,37 @@ impl MediaFetchAggregator {
     }
 }
 
+/// Streaming JSONL writer for the `media_records` artifact: one [`MediaRecord`]
+/// per line, written as records arrive so nothing is retained in memory.
+pub struct MediaRecordWriter {
+    writer: BufWriter<File>,
+}
+
+impl MediaRecordWriter {
+    /// Create (or truncate) the artifact file, making parent directories as
+    /// needed. The file exists even for a zero-fetch run.
+    pub fn create(path: &Path) -> io::Result<Self> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        Ok(Self {
+            writer: BufWriter::new(File::create(path)?),
+        })
+    }
+
+    /// Append one record as a single JSON line.
+    pub fn write(&mut self, record: &MediaRecord) -> io::Result<()> {
+        let line = serde_json::to_vec(record).map_err(io::Error::other)?;
+        self.writer.write_all(&line)?;
+        self.writer.write_all(b"\n")
+    }
+
+    /// Flush buffered lines to the underlying file.
+    pub fn flush(&mut self) -> io::Result<()> {
+        self.writer.flush()
+    }
+}
+
 /// Build a single-series gauge `SidecarMetric` from samples, or `None` if empty.
 fn gauge_metric(tag: &str, unit: Unit, samples: Vec<f64>) -> Option<SidecarMetric> {
     // ddof=1 matches the sample standard deviation telemetry series use.
@@ -276,5 +310,30 @@ mod tests {
         let summary = MediaFetchAggregator::new().finish();
         assert!(summary.metrics.is_empty());
         assert_eq!(summary.total_fetches, 0);
+    }
+
+    #[test]
+    fn writer_emits_one_json_line_per_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("media_records.jsonl");
+        let mut agg = MediaFetchAggregator::new();
+        let r0 = agg.ingest(&record("rid=A&mi=0&td=1000", 1300, 40, 100)).unwrap();
+        let r1 = agg.ingest(&record("rid=A&mi=1&td=1000", 1500, 60, 200)).unwrap();
+
+        let mut writer = MediaRecordWriter::create(&path).unwrap();
+        writer.write(&r0).unwrap();
+        writer.write(&r1).unwrap();
+        writer.flush().unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 2);
+        let first: MediaRecord = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(first.rid, "A");
+        assert_eq!(first.mi, 0);
+        assert_eq!(first.time_to_media_fetch_ns, 300);
+        let second: MediaRecord = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(second.mi, 1);
+        assert_eq!(second.bytes, 200);
     }
 }
