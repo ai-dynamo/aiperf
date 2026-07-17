@@ -197,7 +197,9 @@ class EnergyEfficiencyAnalyzer:
             vendor_metrics = _VENDOR_METRICS.get(platform)
             if vendor_metrics is None:
                 _logger.debug(
-                    lambda p=platform: f"EnergyEfficiencyAnalyzer: skipping unmapped platform '{p}' — no entry in _VENDOR_METRICS"
+                    lambda p=platform: (
+                        f"EnergyEfficiencyAnalyzer: skipping unmapped platform '{p}' — no entry in _VENDOR_METRICS"
+                    )
                 )
                 continue
             vendor_out = self._analyze_vendor(
@@ -235,6 +237,15 @@ class EnergyEfficiencyAnalyzer:
         if power[1] > 0:
             out.append(_result(vendor_metrics["total_power"], power[0]))
         if source is EnergySource.UNAVAILABLE or total_energy_j <= 0:
+            if source is EnergySource.UNAVAILABLE:
+                _logger.warning(
+                    lambda p=platform: (
+                        f"EnergyEfficiencyAnalyzer: no power or energy data available "
+                        f"for platform '{p}' — GPU power efficiency metrics will not be "
+                        f"emitted. Verify that the GPU telemetry collector is reporting "
+                        f"power/energy fields for this hardware."
+                    )
+                )
             return out
 
         # A degenerate/empty profiling window yields duration_s == 0, so the DCGM
