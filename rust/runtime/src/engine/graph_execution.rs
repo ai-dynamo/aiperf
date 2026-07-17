@@ -894,19 +894,35 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
         let model = metadata_string(node, "model")
             .map(str::to_string)
             .unwrap_or_else(|| self.model.clone());
-        let mut raw_messages = messages
-            .iter()
-            .enumerate()
-            .map(|(index, wire)| {
-                serde_json::from_slice(wire).with_context(|| {
-                    format!("decoding materialized graph message {index} for node {node_id:?}")
+        // Fast path: splice the already-serialized message wires verbatim through
+        // `Turn.lowered` instead of decoding each into a serde_json::Value and
+        // letting the endpoint re-serialize it. The materializer already produced
+        // these bytes, and the endpoint's `RenderedMessage::Wire` path consumes
+        // them directly, so this removes a per-request decode + Value clone +
+        // re-encode round-trip (the dominant worker-side allocation). It matches
+        // how the scheduled path carries load-time message bytes. Restricted to
+        // profiling with no cache-bust marker: a cache-bust marker mutates message
+        // content (needs a Value), and warmup makes the endpoint render the first
+        // turn to a mutable value for the system prepend (`render_first`).
+        let wire_messages = self.cache_bust_marker.is_none() && self.phase == Phase::Profiling;
+        let (raw_messages, lowered) = if wire_messages {
+            (None, Some(messages.into_iter().collect()))
+        } else {
+            let mut raw_messages = messages
+                .iter()
+                .enumerate()
+                .map(|(index, wire)| {
+                    serde_json::from_slice(wire).with_context(|| {
+                        format!("decoding materialized graph message {index} for node {node_id:?}")
+                    })
                 })
-            })
-            .collect::<Result<Vec<Value>>>()?;
-        // Idempotent injection keeps accumulated requests on one cache-bust prefix.
-        if let Some(marker) = self.cache_bust_marker.as_deref() {
-            prepend_first_turn_marker(&mut raw_messages, marker);
-        }
+                .collect::<Result<Vec<Value>>>()?;
+            // Idempotent injection keeps accumulated requests on one cache-bust prefix.
+            if let Some(marker) = self.cache_bust_marker.as_deref() {
+                prepend_first_turn_marker(&mut raw_messages, marker);
+            }
+            (Some(raw_messages), None)
+        };
         let extra_headers = uniquify_dynamo_session_headers(
             self.raw_string_map(node, "extra_headers_handle")?,
             self.phase,
@@ -918,7 +934,8 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
                 .map(u32::try_from)
                 .transpose()
                 .context("graph max_tokens exceeds u32")?,
-            raw_messages: Some(raw_messages),
+            raw_messages,
+            lowered,
             raw_tools: self.raw_array(node, "tools_handle")?,
             raw_system: self.raw_array(node, "raw_system_handle")?,
             extra_body: self.raw_object(node, "extra_body_handle")?,
