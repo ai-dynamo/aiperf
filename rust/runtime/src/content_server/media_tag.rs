@@ -136,9 +136,18 @@ mod tests {
         });
         let n = tag_media_urls(&mut body, BASE, "req-2", 42);
         assert_eq!(n, 3);
-        assert!(url_at(&body, "/messages/0/content/0/image_url/url").ends_with("a.png?rid=req-2&mi=0&td=42"));
-        assert!(url_at(&body, "/messages/0/content/1/video_url/url").ends_with("b.mp4?rid=req-2&mi=1&td=42"));
-        assert!(url_at(&body, "/messages/0/content/2/image_url/url").ends_with("c.png?rid=req-2&mi=2&td=42"));
+        assert!(
+            url_at(&body, "/messages/0/content/0/image_url/url")
+                .ends_with("a.png?rid=req-2&mi=0&td=42")
+        );
+        assert!(
+            url_at(&body, "/messages/0/content/1/video_url/url")
+                .ends_with("b.mp4?rid=req-2&mi=1&td=42")
+        );
+        assert!(
+            url_at(&body, "/messages/0/content/2/image_url/url")
+                .ends_with("c.png?rid=req-2&mi=2&td=42")
+        );
     }
 
     #[test]
@@ -151,7 +160,10 @@ mod tests {
         // Messages (Anthropic): source.url.
         let mut messages = json!({"messages": [{"content": [{"type": "image", "source": {"type": "url", "url": "http://127.0.0.1:8090/content/images/m.png"}}]}]});
         assert_eq!(tag_media_urls(&mut messages, BASE, "m", 9), 1);
-        assert!(url_at(&messages, "/messages/0/content/0/source/url").ends_with("m.png?rid=m&mi=0&td=9"));
+        assert!(
+            url_at(&messages, "/messages/0/content/0/source/url")
+                .ends_with("m.png?rid=m&mi=0&td=9")
+        );
     }
 
     #[test]
@@ -169,7 +181,11 @@ mod tests {
         let tag = parse_media_tag("rid=abc-123&mi=2&td=1752700000000000000").unwrap();
         assert_eq!(
             tag,
-            MediaTag { rid: "abc-123".into(), mi: 2, dispatch_wall_ns: 1_752_700_000_000_000_000 }
+            MediaTag {
+                rid: "abc-123".into(),
+                mi: 2,
+                dispatch_wall_ns: 1_752_700_000_000_000_000
+            }
         );
         // Unknown pairs ignored.
         assert!(parse_media_tag("foo=bar&rid=a&mi=0&td=1&extra=z").is_some());

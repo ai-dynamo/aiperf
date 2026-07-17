@@ -286,6 +286,8 @@ pub(crate) struct PreparedRunnerGraphEndpointRuntimeFactory {
     /// The run's resolved transport binding; it owns the transport-specific
     /// dispatcher construction (`build_graph_dispatcher`).
     transport: Arc<dyn NativeTransportExecution>,
+    /// Content-server origin for media-URL tagging at dispatch; `None` disables.
+    content_server_base: Option<Arc<str>>,
 }
 
 impl PreparedRunnerGraphEndpointRuntimeFactory {
@@ -296,6 +298,7 @@ impl PreparedRunnerGraphEndpointRuntimeFactory {
         profiles: Arc<Vec<ValidatedEndpointProfileV2>>,
         input_token_counter: Arc<dyn InputTokenCounter>,
         transport: Arc<dyn NativeTransportExecution>,
+        content_server_base: Option<Arc<str>>,
     ) -> Result<Self> {
         for profile in profiles.iter() {
             let descriptor = registry.resolve_factory(&profile.endpoint_id)?.descriptor();
@@ -311,6 +314,7 @@ impl PreparedRunnerGraphEndpointRuntimeFactory {
             profiles,
             input_token_counter,
             transport,
+            content_server_base,
         })
     }
 }
@@ -346,6 +350,7 @@ impl GraphEndpointRuntimeFactory for PreparedRunnerGraphEndpointRuntimeFactory {
                     client: profile.client.clone(),
                     connection_reuse: profile.connection_reuse,
                     session_header: profile.session_header.clone(),
+                    content_server_base: self.content_server_base.clone(),
                 },
                 url_count: profile.config.urls.len(),
             });
@@ -1261,6 +1266,7 @@ mod tests {
             Arc::new(crate::engine::online_execution::HttpNativeExecution::new(
                 Arc::new(crate::engine::turn_execution::HttpExecutionFactory),
             )),
+            None,
         )
         .unwrap();
         let runtime = factory
@@ -1320,6 +1326,7 @@ mod tests {
             }]),
             Arc::new(AuthoredInputTokenCounter),
             Arc::new(crate::engine::grpc_execution::GrpcNativeExecution::new()),
+            None,
         )
         .unwrap();
         let runtime = factory
@@ -1349,6 +1356,7 @@ mod tests {
             }]),
             Arc::new(AuthoredInputTokenCounter),
             Arc::new(crate::engine::grpc_execution::GrpcNativeExecution::new()),
+            None,
         )
         .unwrap();
         let Err(error) = factory.prepare_worker(Rc::new(SimClock::new()), 0, "fixture-model")
@@ -1381,6 +1389,7 @@ mod tests {
             Arc::new(crate::engine::online_execution::HttpNativeExecution::new(
                 Arc::new(crate::engine::turn_execution::HttpExecutionFactory),
             )),
+            None,
         );
 
         let Err(error) = result else {

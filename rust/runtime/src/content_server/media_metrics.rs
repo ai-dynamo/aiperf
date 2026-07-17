@@ -103,8 +103,7 @@ impl MediaFetchAggregator {
         };
         self.total_fetches += 1;
 
-        let mut time_to_media_fetch_ns =
-            record.timestamp_ns as i64 - tag.dispatch_wall_ns as i64;
+        let mut time_to_media_fetch_ns = record.timestamp_ns as i64 - tag.dispatch_wall_ns as i64;
         if time_to_media_fetch_ns < 0 {
             self.negative_ttmf += 1;
             tracing::debug!(
@@ -118,8 +117,10 @@ impl MediaFetchAggregator {
 
         self.time_to_fetch.push(time_to_media_fetch_ns as f64);
         self.serving_latency.push(record.latency_ns as f64);
-        self.time_to_first_byte.push(record.time_to_first_byte_ns as f64);
-        self.transfer_duration.push(record.transfer_duration_ns as f64);
+        self.time_to_first_byte
+            .push(record.time_to_first_byte_ns as f64);
+        self.transfer_duration
+            .push(record.transfer_duration_ns as f64);
         *self.per_request_count.entry(tag.rid.clone()).or_insert(0) += 1;
         *self.per_request_bytes.entry(tag.rid.clone()).or_insert(0) += record.body_bytes;
 
@@ -149,9 +150,21 @@ impl MediaFetchAggregator {
         let mut metrics = BTreeMap::new();
         let series = [
             (TIME_TO_MEDIA_FETCH, Unit::Nanosecond, self.time_to_fetch),
-            (MEDIA_SERVING_LATENCY, Unit::Nanosecond, self.serving_latency),
-            (MEDIA_TIME_TO_FIRST_BYTE, Unit::Nanosecond, self.time_to_first_byte),
-            (MEDIA_TRANSFER_DURATION, Unit::Nanosecond, self.transfer_duration),
+            (
+                MEDIA_SERVING_LATENCY,
+                Unit::Nanosecond,
+                self.serving_latency,
+            ),
+            (
+                MEDIA_TIME_TO_FIRST_BYTE,
+                Unit::Nanosecond,
+                self.time_to_first_byte,
+            ),
+            (
+                MEDIA_TRANSFER_DURATION,
+                Unit::Nanosecond,
+                self.transfer_duration,
+            ),
             (MEDIA_BYTES_SERVED, Unit::Byte, per_request_bytes),
             (MEDIA_FETCH_COUNT, Unit::Count, per_request_count),
         ];
@@ -299,7 +312,9 @@ mod tests {
     fn negative_time_to_fetch_is_clamped_and_counted() {
         let mut agg = MediaFetchAggregator::new();
         // arrival before dispatch (clock skew).
-        let rec = agg.ingest(&record("rid=A&mi=0&td=5000", 4000, 10, 10)).unwrap();
+        let rec = agg
+            .ingest(&record("rid=A&mi=0&td=5000", 4000, 10, 10))
+            .unwrap();
         assert_eq!(rec.time_to_media_fetch_ns, 0);
         let summary = agg.finish();
         assert_eq!(summary.negative_ttmf, 1);
@@ -317,8 +332,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nested").join("media_records.jsonl");
         let mut agg = MediaFetchAggregator::new();
-        let r0 = agg.ingest(&record("rid=A&mi=0&td=1000", 1300, 40, 100)).unwrap();
-        let r1 = agg.ingest(&record("rid=A&mi=1&td=1000", 1500, 60, 200)).unwrap();
+        let r0 = agg
+            .ingest(&record("rid=A&mi=0&td=1000", 1300, 40, 100))
+            .unwrap();
+        let r1 = agg
+            .ingest(&record("rid=A&mi=1&td=1000", 1500, 60, 200))
+            .unwrap();
 
         let mut writer = MediaRecordWriter::create(&path).unwrap();
         writer.write(&r0).unwrap();

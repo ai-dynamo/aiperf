@@ -946,6 +946,10 @@ pub struct RunOutcome {
     pub server_metrics: BTreeMap<String, SidecarMetric>,
     /// Warmup inference-server Prometheus series.
     pub warmup_server_metrics: BTreeMap<String, SidecarMetric>,
+    /// Content-server media-fetch distributions (time_to_media_fetch, serving
+    /// latency, bytes, count), keyed by metric name. Empty unless a content
+    /// server served tagged media.
+    pub media_metrics: BTreeMap<String, SidecarMetric>,
     /// Optional accuracy/analyzer output.
     pub accuracy: Option<AccuracyAnalysis>,
     /// Full per-request grading records in deterministic workload order.
@@ -1006,6 +1010,7 @@ impl Reporter for NativeReporter {
             warmup_metrics: outcome.warmup.as_ref().map(build_metric_map),
             server_metrics: build_sidecar_map(&outcome.server_metrics),
             warmup_server_metrics: build_sidecar_map(&outcome.warmup_server_metrics),
+            media_metrics: build_sidecar_map(&outcome.media_metrics),
             accuracy: outcome.accuracy.clone(),
             accuracy_records: outcome.accuracy_records.clone(),
             evaluator: outcome.evaluator.clone(),
@@ -1039,6 +1044,9 @@ pub struct NativeReport {
     /// Warmup server telemetry keyed by original Prometheus family name.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub warmup_server_metrics: BTreeMap<String, MetricEntry>,
+    /// Content-server media-fetch metrics keyed by metric name.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub media_metrics: BTreeMap<String, MetricEntry>,
     /// Optional accuracy analysis.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accuracy: Option<AccuracyAnalysis>,

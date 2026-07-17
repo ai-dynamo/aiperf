@@ -28,7 +28,8 @@ use crate::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
 use crate::cellular::{CellPartition, IssuanceAuthority, ModuloCellPartition};
 use crate::clock::{Clock, RealClock, RealClockAnchor};
 use crate::content_server::{
-    ContentServerConfig, ContentServerFactory, ContentServerRuntime, NativeContentServerFactory,
+    ContentRequestRecord, ContentServerConfig, ContentServerFactory, ContentServerRuntime,
+    MediaFetchAggregator, MediaMetricsSummary, MediaRecordWriter, NativeContentServerFactory,
 };
 use crate::dataset::{
     ComposeConfig, Dataset, DatasetSource, HuggingFaceTokenizer, LoadConfig, ModelId,
@@ -1039,6 +1040,29 @@ pub(crate) struct PreparedNativeSidecarResources {
     network_latency_records_path: Option<PathBuf>,
     server_metrics_jsonl_path: Option<PathBuf>,
     server_metrics_parquet_wire_path: Option<PathBuf>,
+    /// Signals the media-fetch drain task to finish and flush.
+    media_finalize: Option<tokio::sync::oneshot::Sender<()>>,
+    /// Background task folding content records into media-fetch metrics.
+    media_handle: Option<tokio::task::JoinHandle<MediaMetricsSummary>>,
+}
+
+/// Artifact filename for per-fetch media records.
+const MEDIA_RECORDS_FILENAME: &str = "media_records.jsonl";
+
+/// Ingest one content record into the aggregator and stream its row. Ingestion
+/// (and thus metric folding) always happens; the row is written only when the
+/// artifact writer is available.
+fn ingest_media_record(
+    aggregator: &mut MediaFetchAggregator,
+    writer: Option<&mut MediaRecordWriter>,
+    record: &ContentRequestRecord,
+) {
+    if let Some(media_record) = aggregator.ingest(record)
+        && let Some(writer) = writer
+        && let Err(error) = writer.write(&media_record)
+    {
+        tracing::warn!(error = %error, "writing media_records line failed");
+    }
 }
 
 #[async_trait(?Send)]
@@ -1098,19 +1122,74 @@ impl NativeSidecarResourceFactory for BuiltinNativeSidecarResourceFactory {
             .then(|| metrics_config(&run.metrics, run.endpoint.use_server_token_count()))
             .transpose()?;
 
+        let mut media_finalize = None;
+        let mut media_handle = None;
         let content_server = match content_server_spec {
-            Some(spec) => Some(
-                NativeContentServerFactory::default()
-                    .start(ContentServerConfig {
-                        host: spec.host.clone(),
-                        port: spec.port,
-                        content_dir: spec.content_dir.clone(),
-                        max_tracked_records: spec.max_tracked_records,
-                        record_sink: None,
-                    })
-                    .await
-                    .context("starting native content server")?,
-            ),
+            Some(spec) => {
+                // Wire media-fetch metrics only when the server publishes files
+                // (a content dir is set); otherwise media stays inline, no URLs
+                // are fetched, and there is nothing to correlate.
+                let record_sink = if spec.content_dir.is_some() {
+                    let path =
+                        artifact_path(&run.artifact_dir, MEDIA_RECORDS_FILENAME, "media_records")?;
+                    let (record_tx, mut record_rx) =
+                        tokio::sync::mpsc::unbounded_channel::<ContentRequestRecord>();
+                    let (finalize_tx, mut finalize_rx) = tokio::sync::oneshot::channel::<()>();
+                    let handle = tokio::spawn(async move {
+                        let mut aggregator = MediaFetchAggregator::new();
+                        let mut writer = match MediaRecordWriter::create(&path) {
+                            Ok(writer) => Some(writer),
+                            Err(error) => {
+                                tracing::warn!(error = %error, "media_records artifact unavailable");
+                                None
+                            }
+                        };
+                        loop {
+                            tokio::select! {
+                                received = record_rx.recv() => match received {
+                                    Some(record) => ingest_media_record(
+                                        &mut aggregator,
+                                        writer.as_mut(),
+                                        &record,
+                                    ),
+                                    None => break,
+                                },
+                                _ = &mut finalize_rx => {
+                                    while let Ok(record) = record_rx.try_recv() {
+                                        ingest_media_record(
+                                            &mut aggregator,
+                                            writer.as_mut(),
+                                            &record,
+                                        );
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                        if let Some(mut writer) = writer {
+                            let _ = writer.flush();
+                        }
+                        aggregator.finish()
+                    });
+                    media_finalize = Some(finalize_tx);
+                    media_handle = Some(handle);
+                    Some(record_tx)
+                } else {
+                    None
+                };
+                Some(
+                    NativeContentServerFactory::default()
+                        .start(ContentServerConfig {
+                            host: spec.host.clone(),
+                            port: spec.port,
+                            content_dir: spec.content_dir.clone(),
+                            max_tracked_records: spec.max_tracked_records,
+                            record_sink,
+                        })
+                        .await
+                        .context("starting native content server")?,
+                )
+            }
             None => None,
         };
 
@@ -1150,11 +1229,41 @@ impl NativeSidecarResourceFactory for BuiltinNativeSidecarResourceFactory {
             network_latency_records_path,
             server_metrics_jsonl_path,
             server_metrics_parquet_wire_path,
+            media_finalize,
+            media_handle,
         })
     }
 }
 
 impl PreparedNativeSidecarResources {
+    /// Signal the media-fetch drain task to finish, then collect its finalized
+    /// distributions. Returns an empty summary when the content server had no
+    /// media wiring. Idempotent: a second call returns the empty default.
+    async fn finalize_media_metrics(&mut self) -> MediaMetricsSummary {
+        let (Some(finalize), Some(handle)) = (self.media_finalize.take(), self.media_handle.take())
+        else {
+            return MediaMetricsSummary::default();
+        };
+        // The receiver drains remaining records on this signal; a closed channel
+        // (task already ended) is fine.
+        let _ = finalize.send(());
+        match handle.await {
+            Ok(summary) => {
+                tracing::info!(
+                    total_fetches = summary.total_fetches,
+                    unmatched = summary.unmatched,
+                    negative_ttmf = summary.negative_ttmf,
+                    "media-fetch metrics finalized"
+                );
+                summary
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "media aggregator task failed to join");
+                MediaMetricsSummary::default()
+            }
+        }
+    }
+
     fn live_sink(&self) -> Option<Rc<dyn LiveResultsSink>> {
         self.live_streaming
             .as_ref()
@@ -1416,6 +1525,11 @@ async fn execute_graph_native(
             profiles.clone(),
             input_token_counter.clone(),
             transport,
+            request
+                .sidecars
+                .content_server()?
+                .filter(|spec| spec.content_dir.is_some())
+                .map(|spec| Arc::from(spec.base_url())),
         )?)
     };
     let real_clock_anchor = sidecars.real_clock_anchor;
@@ -1761,6 +1875,7 @@ async fn execute_graph_native(
     let start_time = profiling_start;
     let end_time = profiling_end;
     let endpoints_successful = endpoints_successful_set.into_iter().collect();
+    let media_metrics = sidecars.finalize_media_metrics().await.metrics;
     let summary = ReportSummary {
         start_time,
         end_time,
@@ -1787,6 +1902,7 @@ async fn execute_graph_native(
             .as_ref()
             .map(|summary| summary.sidecar_metrics().clone())
             .unwrap_or_default(),
+        media_metrics,
         ..RunOutcome::default()
     };
     // Cross-host cells ship local per-record artifacts to the controller with
@@ -2588,6 +2704,13 @@ async fn execute_native_inner(
                 client: profile.client.clone(),
                 connection_reuse: profile.connection_reuse,
                 session_header: profile.session_header.clone(),
+                // Tag content-server media URLs so served fetches correlate back
+                // to the request; only when the server publishes files.
+                content_server_base: request
+                    .sidecars
+                    .content_server()?
+                    .filter(|spec| spec.content_dir.is_some())
+                    .map(|spec| Arc::from(spec.base_url())),
             },
             Some(table_factory),
             Box::new(PreparedNativeConversationSourceFactory {
@@ -3325,6 +3448,7 @@ async fn execute_native_inner(
         profiling_server_summary.as_ref(),
         warmup_server_summary.as_ref(),
     )?;
+    let media_metrics = sidecars.finalize_media_metrics().await.metrics;
     let mut outcome = RunOutcome {
         run: ReportRunInfo {
             mode: Some("online".into()),
@@ -3347,6 +3471,7 @@ async fn execute_native_inner(
             .as_ref()
             .map(|summary| summary.sidecar_metrics().clone())
             .unwrap_or_default(),
+        media_metrics,
         errors: group_record_errors(&captured),
         ..RunOutcome::default()
     };
