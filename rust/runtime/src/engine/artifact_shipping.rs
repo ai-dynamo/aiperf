@@ -1131,6 +1131,7 @@ mod tests {
             inputs_path: Some(PathBuf::from(inputs_rel)),
             trace: false,
             dataset_analysis_path: None,
+            ..Default::default()
         };
         let relatives = shippable_relatives(&artifacts);
         let allowed: HashSet<String> = relatives.iter().cloned().collect();

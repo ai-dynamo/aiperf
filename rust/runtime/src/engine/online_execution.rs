@@ -1199,9 +1199,10 @@ fn build_common_plan(
             outputs_path: run.artifacts.outputs_path.clone(),
             inputs_path: run.artifacts.inputs_path.clone(),
             trace: run.artifacts.trace,
-            // Scheduled-path dataset-analysis wiring is owned by a later task; the
-            // graph path populates this from the protocol request directly.
-            dataset_analysis_path: None,
+            dataset_analysis_path: run.artifacts.dataset_analysis_path.clone(),
+            dataset_analysis_block_size: run.artifacts.dataset_analysis_block_size,
+            dataset_analysis_cache_blocks: run.artifacts.dataset_analysis_cache_blocks,
+            dataset_analysis_per_conversation: run.artifacts.dataset_analysis_per_conversation,
         },
         sidecars,
         user_files: run.artifacts.user_files.clone(),

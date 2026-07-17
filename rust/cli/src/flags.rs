@@ -1023,6 +1023,23 @@ pub struct ProfileFlags {
     /// fixed-schedule timestamps).
     #[arg(long = "dry-run-clock")]
     pub dry_run_clock: Option<String>,
+    /// KV-cache block size in tokens for the `--dry-run` dataset cache-reuse
+    /// analysis (`--kv-block-size`; default 16).
+    #[arg(long = "kv-block-size", default_value_t = 16)]
+    pub kv_block_size: u32,
+    /// Explicit realized-LRU cache capacity in blocks to add as a sweep point in
+    /// the `--dry-run` dataset analysis (`--kv-cache-blocks`). Omitted → the
+    /// capacity sweep only.
+    #[arg(long = "kv-cache-blocks")]
+    pub kv_cache_blocks: Option<u64>,
+    /// Emit per-conversation breakdowns in the `--dry-run` dataset analysis
+    /// (`--dataset-analysis-per-conversation`).
+    #[arg(long = "dataset-analysis-per-conversation", default_value_t = false)]
+    pub dataset_analysis_per_conversation: bool,
+    /// Suppress the `--dry-run` dataset-analysis artifact family and console echo
+    /// (`--no-dataset-analysis`).
+    #[arg(long = "no-dataset-analysis", default_value_t = false)]
+    pub no_dataset_analysis: bool,
 }
 
 impl ProfileFlags {

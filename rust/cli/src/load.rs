@@ -264,7 +264,21 @@ pub(crate) struct Inputs {
     pub adaptive_scale: Option<AdaptiveScale>,
     /// Shared-prefix / prefix-pool policy.
     pub prefix_prompts: Option<PrefixPrompts>,
+    /// Dry-run dataset-analysis emission (present when `--dry-run` is set without
+    /// `--no-dataset-analysis`).
+    pub dataset_analysis: Option<DatasetAnalysisInputs>,
     pub artifact_dir: PathBuf,
+}
+
+/// Dry-run dataset-analysis knobs projected from the `--kv-*` /
+/// `--dataset-analysis-*` flags into `artifacts.dataset_analysis_*`.
+pub(crate) struct DatasetAnalysisInputs {
+    /// KV-cache block size (tokens) for the cache-reuse analysis.
+    pub block_size: u32,
+    /// Explicit realized-LRU capacity (blocks) sweep point, if requested.
+    pub cache_blocks: Option<u64>,
+    /// Emit per-conversation breakdowns.
+    pub per_conversation: bool,
 }
 
 /// The default synthetic ISL distribution (`{mean, stddev}`), used when no
@@ -591,6 +605,14 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         accuracy: build_accuracy(flags),
         synthesis: build_synthesis(flags),
         dataset_filters: parse_dataset_filters(flags)?,
+        // Dry-run emits the dataset-analysis artifact family unless suppressed.
+        dataset_analysis: (flags.dry_run && !flags.no_dataset_analysis).then(|| {
+            DatasetAnalysisInputs {
+                block_size: flags.kv_block_size,
+                cache_blocks: flags.kv_cache_blocks,
+                per_conversation: flags.dataset_analysis_per_conversation,
+            }
+        }),
         artifact_dir: flags
             .artifact_dir
             .clone()
@@ -988,6 +1010,21 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                     .then(|| "profile_export_raw.jsonl".to_string()),
                 outputs_path: (per_record && inputs.export_outputs_json)
                     .then(|| "outputs.json".to_string()),
+                // Dry-run dataset analysis: emit beside this run-relative base path.
+                // The runtime writes `dataset_analysis.{txt,json,csv,html}` next to it.
+                dataset_analysis_path: inputs
+                    .dataset_analysis
+                    .as_ref()
+                    .map(|_| "dataset_analysis.json".to_string()),
+                dataset_analysis_block_size: inputs.dataset_analysis.as_ref().map(|a| a.block_size),
+                dataset_analysis_cache_blocks: inputs
+                    .dataset_analysis
+                    .as_ref()
+                    .and_then(|a| a.cache_blocks),
+                dataset_analysis_per_conversation: inputs
+                    .dataset_analysis
+                    .as_ref()
+                    .is_some_and(|a| a.per_conversation),
                 ..Default::default()
             }
         }),
@@ -1827,5 +1864,88 @@ mod tests {
         for f in ["0", "false", "no", "off", "", "2", "enabled"] {
             assert!(!is_truthy_env(f), "{f:?} should be falsy");
         }
+    }
+
+    /// `--dry-run` projects the dataset-analysis artifact toggle and threads the
+    /// `--kv-*` knobs into `artifacts.dataset_analysis_*`; `--no-dataset-analysis`
+    /// clears it and a real (non-dry-run) run never carries it.
+    #[test]
+    fn dry_run_projects_dataset_analysis() {
+        // `resolve` builds the full (large) BenchmarkConfig on the stack, which
+        // overflows the default test-thread stack; run on a generous one.
+        std::thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(dry_run_projects_dataset_analysis_body)
+            .expect("spawn worker")
+            .join()
+            .expect("worker panicked");
+    }
+
+    fn dry_run_projects_dataset_analysis_body() {
+        use crate::flags::ProfileFlags;
+
+        let project = |args: &[&str]| {
+            let flags = ProfileFlags::parse_from_args(
+                &args.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            )
+            .expect("parse flags");
+            super::resolve(&flags)
+                .expect("resolve run")
+                .cfg
+                .artifacts
+                .expect("artifacts present")
+        };
+
+        // Dry-run emits the analysis with the KV knobs threaded through.
+        let a = project(&[
+            "-m",
+            "mock-model",
+            "--endpoint-type",
+            "chat",
+            "--dry-run",
+            "--kv-block-size",
+            "32",
+        ]);
+        assert_eq!(
+            a.dataset_analysis_path.as_deref(),
+            Some("dataset_analysis.json")
+        );
+        assert_eq!(a.dataset_analysis_block_size, Some(32));
+
+        // `--kv-cache-blocks` + per-conversation project through.
+        let a = project(&[
+            "-m",
+            "mock-model",
+            "--endpoint-type",
+            "chat",
+            "--dry-run",
+            "--kv-cache-blocks",
+            "128",
+            "--dataset-analysis-per-conversation",
+        ]);
+        assert_eq!(a.dataset_analysis_cache_blocks, Some(128));
+        assert!(a.dataset_analysis_per_conversation);
+
+        // Suppression clears the toggle even under `--dry-run`.
+        let a = project(&[
+            "-m",
+            "mock-model",
+            "--endpoint-type",
+            "chat",
+            "--dry-run",
+            "--no-dataset-analysis",
+        ]);
+        assert!(a.dataset_analysis_path.is_none());
+
+        // A real run never carries the analysis.
+        let a = project(&[
+            "-m",
+            "mock-model",
+            "--endpoint-type",
+            "chat",
+            "-u",
+            "http://localhost:8000",
+        ]);
+        assert!(a.dataset_analysis_path.is_none());
     }
 }

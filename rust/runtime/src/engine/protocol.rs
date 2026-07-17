@@ -166,6 +166,18 @@ pub struct ArtifactSpec {
     /// the analysis is not requested. Populated by the CLI dry-run gating.
     #[serde(default)]
     pub dataset_analysis_path: Option<PathBuf>,
+    /// KV-cache block size (tokens) for the dry-run cache-reuse analysis. Absent →
+    /// the analysis default (16). Ignored when `dataset_analysis_path` is absent.
+    #[serde(default)]
+    pub dataset_analysis_block_size: Option<u32>,
+    /// Explicit realized-LRU cache capacity (blocks) added as a sweep point in the
+    /// dry-run analysis. Ignored when `dataset_analysis_path` is absent.
+    #[serde(default)]
+    pub dataset_analysis_cache_blocks: Option<u64>,
+    /// Request per-conversation breakdowns in the dry-run analysis. Ignored when
+    /// `dataset_analysis_path` is absent.
+    #[serde(default)]
+    pub dataset_analysis_per_conversation: bool,
 }
 
 pub use crate::engine::sidecar_input::{

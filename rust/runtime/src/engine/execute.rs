@@ -1712,8 +1712,11 @@ async fn execute_graph_native(
             let base = artifact_path(&request.artifact_dir, relative, "dataset_analysis_path")?;
             let analysis_request = crate::engine::dataset_analysis_writer::DatasetAnalysisRequest {
                 path: base,
-                options: crate::dataset::analysis::AnalysisOptions::default(),
-                per_conversation: false,
+                options: crate::dataset::analysis::AnalysisOptions {
+                    block_size: request.artifacts.dataset_analysis_block_size.unwrap_or(16),
+                    explicit_cache_blocks: request.artifacts.dataset_analysis_cache_blocks,
+                },
+                per_conversation: request.artifacts.dataset_analysis_per_conversation,
             };
             crate::engine::dataset_analysis_writer::write_dataset_analysis(
                 &analysis_request,
@@ -3268,8 +3271,11 @@ async fn execute_native_inner(
                 let analysis_request =
                     crate::engine::dataset_analysis_writer::DatasetAnalysisRequest {
                         path: base,
-                        options: crate::dataset::analysis::AnalysisOptions::default(),
-                        per_conversation: false,
+                        options: crate::dataset::analysis::AnalysisOptions {
+                            block_size: request.artifacts.dataset_analysis_block_size.unwrap_or(16),
+                            explicit_cache_blocks: request.artifacts.dataset_analysis_cache_blocks,
+                        },
+                        per_conversation: request.artifacts.dataset_analysis_per_conversation,
                     };
                 crate::engine::dataset_analysis_writer::write_dataset_analysis_from_records(
                     &analysis_request,
@@ -7472,6 +7478,7 @@ mod tests {
             inputs_path: Some(PathBuf::from("inputs.json")),
             trace: false,
             dataset_analysis_path: None,
+            ..Default::default()
         };
         // `inputs_need_retain == false`: inputs.json is up-front-able for this shape.
         #[cfg(feature = "parquet")]

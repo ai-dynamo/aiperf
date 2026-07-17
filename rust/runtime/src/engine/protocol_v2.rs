@@ -804,6 +804,21 @@ pub struct ArtifactSpecV2 {
     /// Authored user files materialized by the runner after validation.
     #[serde(default)]
     pub user_files: Vec<UserFileSpecV2>,
+    /// Base path for the `--dry-run` dataset-analysis artifact family, relative to
+    /// the artifact target. Present only when the dry-run analysis is requested.
+    #[serde(default)]
+    pub dataset_analysis_path: Option<PathBuf>,
+    /// KV-cache block size (tokens) for the dry-run cache-reuse analysis. Absent →
+    /// the analysis default (16).
+    #[serde(default)]
+    pub dataset_analysis_block_size: Option<u32>,
+    /// Explicit realized-LRU cache capacity (blocks) sweep point for the dry-run
+    /// analysis. Absent → the capacity sweep only.
+    #[serde(default)]
+    pub dataset_analysis_cache_blocks: Option<u64>,
+    /// Request per-conversation breakdowns in the dry-run analysis.
+    #[serde(default)]
+    pub dataset_analysis_per_conversation: bool,
 }
 
 impl ArtifactSpecV2 {

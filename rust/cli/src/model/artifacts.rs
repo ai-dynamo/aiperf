@@ -38,4 +38,20 @@ pub struct Artifacts {
     /// Once-rendered user files (present when authored).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_files: Option<Vec<UserFile>>,
+    /// Base path for the `--dry-run` dataset-analysis artifact family, relative to
+    /// the run directory. Present only when the dry-run analysis is requested; the
+    /// runtime emits `dataset_analysis.{txt,json,csv,html}` beside it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dataset_analysis_path: Option<String>,
+    /// KV-cache block size (tokens) for the dry-run cache-reuse analysis. Absent →
+    /// the runtime default (16).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dataset_analysis_block_size: Option<u32>,
+    /// Explicit realized-LRU cache capacity (blocks) to add as a sweep point in the
+    /// dry-run analysis. Absent → capacity sweep only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dataset_analysis_cache_blocks: Option<u64>,
+    /// Emit per-conversation breakdowns in the dry-run analysis.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dataset_analysis_per_conversation: bool,
 }

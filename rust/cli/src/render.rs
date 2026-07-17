@@ -21,3 +21,16 @@ pub fn print_console_summary(report_path: &str) {
         }
     }
 }
+
+/// Print the `--dry-run` dataset-analysis console report
+/// (`dataset_analysis.txt`) from the run directory when present. A no-op when the
+/// analysis was not emitted (real runs, or `--no-dataset-analysis`).
+pub fn print_dataset_analysis(artifact_dir: &Path) {
+    let report = artifact_dir.join("dataset_analysis.txt");
+    if let Ok(text) = std::fs::read_to_string(&report) {
+        print!("{text}");
+        if !text.ends_with('\n') {
+            println!();
+        }
+    }
+}

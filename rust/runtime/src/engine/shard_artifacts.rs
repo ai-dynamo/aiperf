@@ -375,6 +375,7 @@ mod tests {
             inputs_path: None,
             trace: false,
             dataset_analysis_path: None,
+            ..Default::default()
         }
     }
 

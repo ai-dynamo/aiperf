@@ -171,6 +171,8 @@ fn run_single(run: crate::model::BenchmarkRun) -> anyhow::Result<i32> {
             crate::render::print_console_summary(path);
             tracing::debug!(report = %path, "report written");
         }
+        // Echo the `--dry-run` dataset-analysis report when it was emitted.
+        crate::render::print_dataset_analysis(&artifact_dir);
         Ok(0)
     } else {
         let detail = terminal

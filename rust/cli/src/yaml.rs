@@ -84,6 +84,23 @@ fn apply_cli_overrides(
     if !flags.server_metrics_formats.is_empty() {
         inputs.server_metrics_formats = Some(flags.server_metrics_formats.clone());
     }
+    // Dry-run dataset-analysis toggles: `--no-dataset-analysis` suppresses the
+    // family; the `--kv-*` / `--dataset-analysis-per-conversation` knobs layer
+    // over the config-derived defaults when the analysis is active.
+    if flags.no_dataset_analysis {
+        inputs.dataset_analysis = None;
+    } else if let Some(analysis) = inputs.dataset_analysis.as_mut() {
+        // `--kv-block-size` carries its default (16); only override when authored.
+        if flags.kv_block_size != 16 {
+            analysis.block_size = flags.kv_block_size;
+        }
+        if let Some(cache_blocks) = flags.kv_cache_blocks {
+            analysis.cache_blocks = Some(cache_blocks);
+        }
+        if flags.dataset_analysis_per_conversation {
+            analysis.per_conversation = true;
+        }
+    }
     Ok(())
 }
 
@@ -932,6 +949,7 @@ impl Benchmark {
         // (the runner opens no socket) and injects the never-dialed sentinel.
         let transport = parse_transport(self.transport.as_ref())?;
         let is_dynosim = transport.is_dynosim();
+        let is_dry_run = matches!(transport, Transport::DryRun(_));
 
         // DynoSim defaults to its own dialect; other transports default to chat.
         let endpoint_type = self
@@ -1437,6 +1455,14 @@ impl Benchmark {
             accuracy: None,
             synthesis: None,
             dataset_filters: None,
+            // A `dry_run` config transport emits the dataset-analysis family with
+            // default knobs; `apply_cli_overrides` layers `--kv-*` /
+            // `--no-dataset-analysis` on top.
+            dataset_analysis: is_dry_run.then(|| load::DatasetAnalysisInputs {
+                block_size: 16,
+                cache_blocks: None,
+                per_conversation: false,
+            }),
             artifact_dir: artifact_dir
                 .or_else(|| config_artifact_dir.map(PathBuf::from))
                 .unwrap_or_else(|| PathBuf::from("artifacts")),
