@@ -230,9 +230,17 @@ pub fn run_cellular(
     // multi-process tests can exercise the shipping mechanism. Off by default,
     // so a normal `--cells N` run keeps shared-filesystem concatenation.
     let force_http = crate::engine::cellular_cell::artifact_http_force_enabled();
+    // `http_shipping` here means "per-record artifacts are shipped cross-host"
+    // (over some transport), gating the barrier + concat-from-landing. The transport
+    // toggle then decides HTTP vs velo for the actual byte movement.
     let http_shipping = (is_k8s || force_http)
         && crate::engine::cellular_cell::http_artifact_shipping_enabled()
         && !crate::engine::artifact_shipping::shippable_relatives(&artifacts).is_empty();
+    // When selected, per-record artifacts ride the shared velo endpoint instead of the
+    // HTTP artifact server/port (dataset serving stays on HTTP for now).
+    let velo_artifacts = crate::engine::cellular_cell::artifact_transport_is_velo();
+    // The HTTP upload server is only needed for artifacts when NOT using velo.
+    let http_upload = http_shipping && !velo_artifacts;
     // A cross-host cell cannot read a controller-local `file`/`path` dataset
     // source, so the controller serves it over the HTTP+zstd plane and the cell
     // recompiles it locally. Only a cross-host (k8s / force) run with a `file`/`path`
@@ -260,14 +268,17 @@ pub fn run_cellular(
     } else {
         None
     };
-    // One HTTP server handles per-record uploads and dataset serving.
-    let need_artifact_server = http_shipping || dataset_ship;
+    // One HTTP server handles per-record uploads (HTTP transport only) and dataset serving.
+    let need_artifact_server = http_upload || dataset_ship;
     // The force seam only applies to the same-host launcher (k8s already ships): when
     // true, cells write to their own controller-local `temp_root/cell-{id}` scratch AND
-    // ship those files over HTTP to a SEPARATE loopback landing dir, from which the
-    // concat reads — so the shipped bytes (not the local writes) feed the merged report.
-    // Dataset serving reuses the same loopback bind + injected authority.
+    // ship those files to a SEPARATE loopback landing dir, from which the concat reads —
+    // so the shipped bytes (not the local writes) feed the merged report. This holds for
+    // BOTH transports: velo same-host shipping needs the separate landing subtree too,
+    // otherwise the velo receiver would overwrite each cell file with itself in place.
     let force_local_http = need_artifact_server && !is_k8s;
+    let force_local_landing =
+        (need_artifact_server || (http_shipping && velo_artifacts)) && !is_k8s;
     warn_dropped_sidecar_telemetry(envelope);
     // Warn about DROPPED per-record artifacts only when they genuinely cannot be
     // delivered — cross-host AND HTTP shipping disabled. When HTTP shipping is active
@@ -313,7 +324,7 @@ pub fn run_cellular(
         // is a different host, no collision). The same-host force seam MUST land in a
         // SEPARATE subtree, because there the cell's own artifact_dir already IS
         // `temp_root/cell-{id}`; landing there would overwrite each file with itself.
-        let landing_root = if force_local_http {
+        let landing_root = if force_local_landing {
             temp_root.join("http-landing")
         } else {
             temp_root.clone()
@@ -365,6 +376,26 @@ pub fn run_cellular(
         // `is_k8s` is resolved once above and moved in here.
         let (bind, cell_coordinate) = controller_bind_and_endpoint(is_k8s, &temp_root)?;
         let velo = build_velo(bind).await.context("building controller velo")?;
+        // When artifacts ride velo, hang the artifact receive handlers off THIS same
+        // control-plane velo instance (no second port): cells stream their zstd chunks
+        // here and the receiver lands them at `landing_root/cell-{id}/{rel}`, exactly
+        // where the HTTP server would, so the downstream barrier + concat are unchanged.
+        let velo_artifact_receiver = if http_shipping && velo_artifacts {
+            let allowed: std::collections::HashSet<String> =
+                crate::engine::artifact_shipping::shippable_relatives(&artifacts)
+                    .into_iter()
+                    .collect();
+            Some(
+                crate::engine::artifact_stream_velo::ArtifactVeloReceiver::register(
+                    velo.clone(),
+                    landing_root.clone(),
+                    allowed,
+                )
+                .context("registering velo artifact receiver")?,
+            )
+        } else {
+            None
+        };
         // The run-wide synchronized-START event: cells await it after registering,
         // and the controller triggers it once every cell has registered so they all
         // begin dispatching together. Created before `velo` moves into the transport;
@@ -829,13 +860,18 @@ pub fn run_cellular(
         // is already their barrier.)
         // A dataset-serve-only run never POSTs files or `/done`, so
         // there is nothing to wait for and the barrier would spuriously time out.
-        if http_shipping
-            && let Some(server) = artifact_server.as_ref()
-        {
-            server
-                .wait_for_cells(cell_count, artifact_upload_timeout())
-                .await
-                .context("waiting for cellular artifact uploads")?;
+        if http_shipping {
+            if let Some(receiver) = velo_artifact_receiver.as_ref() {
+                receiver
+                    .wait_for_cells(cell_count, artifact_upload_timeout())
+                    .await
+                    .context("waiting for cellular velo artifact streams")?;
+            } else if let Some(server) = artifact_server.as_ref() {
+                server
+                    .wait_for_cells(cell_count, artifact_upload_timeout())
+                    .await
+                    .context("waiting for cellular artifact uploads")?;
+            }
         }
 
         // Per-record artifact concat + inputs.json copy. Each cell ran its ordinary

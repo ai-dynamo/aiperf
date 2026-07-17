@@ -8,6 +8,10 @@ pub mod application;
 // Cross-host cellular artifact shipping reuses Velo bootstrap addressing and zstd.
 #[cfg(feature = "cellular")]
 pub mod artifact_shipping;
+// Velo-streaming sibling of `artifact_shipping`: ships the same per-record artifact
+// bytes over the shared cellular velo plane (no second port), backpressured + zstd.
+#[cfg(feature = "cellular")]
+pub mod artifact_stream_velo;
 pub mod cell_launcher;
 #[cfg(feature = "cellular")]
 pub mod cellular_aggregator;
