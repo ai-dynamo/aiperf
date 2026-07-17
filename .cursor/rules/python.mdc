@@ -143,6 +143,7 @@ Core Rust commands:
 
 ```bash
 source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate
+cd rust
 cargo build
 cargo build --release
 cargo test
@@ -156,6 +157,7 @@ Feature-bearing builds:
 
 ```bash
 source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate
+cd rust
 cargo build -p aiperf-cli --features dynosim
 cargo test -p aiperf-runtime --features dynosim --lib
 cargo build -p aiperf-cli --features full
@@ -163,7 +165,7 @@ cargo build -p aiperf-cli --features search-pyo3
 cargo build -p aiperf-cli --features pyo3-embed
 ```
 
-`dynosim` and `full` require the sibling `dynamo-aiperf-native` checkout. The default CLI feature set includes gRPC and `cellular`. `parquet`, `dynosim`, `search-pyo3`, and `pyo3-embed` select their named capabilities.
+`dynosim` and `full` pull the Dynamo native crates from the pinned ai-dynamo/dynamo git dep (no sibling checkout needed; see `rust/runtime/Cargo.toml`). The default CLI feature set includes gRPC and `cellular`. `parquet`, `dynosim`, `search-pyo3`, and `pyo3-embed` select their named capabilities.
 
 Packaging and installation:
 
@@ -194,6 +196,7 @@ Standalone mock target:
 
 ```bash
 source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate
+cd rust
 cargo run -p aiperf-mock-server -- --fast
 ```
 

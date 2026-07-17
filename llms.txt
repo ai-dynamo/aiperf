@@ -271,10 +271,13 @@ and aggregate lateness facts in the native result/artifacts selected by Python.
 
 ## AIPerf offline engine
 
-The workspace root expects `../../../dynamo-aiperf-native`. Library developers
-can compile the adapter; `dynamo-full` enables every optional mocker family:
+The Dynamo native crates come from the pinned ai-dynamo/dynamo git dep (see
+`rust/runtime/Cargo.toml`; no sibling checkout). Library developers can compile
+the adapter; `dynamo-full` enables every optional mocker family (run cargo from
+the `rust/` workspace dir):
 
 ```bash
+cd rust
 cargo build -p aiperf-runtime --features dynosim
 cargo test -p aiperf-runtime --features dynosim --lib
 cargo build -p aiperf-cli --features dynosim
