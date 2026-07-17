@@ -10,8 +10,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::accuracy::{
-    AccuracyDataset, AccuracyRecordProcessor, accuracy_report_errors, grade_accuracy_responses,
-    load_evaluator_problems_with_grader,
+    AccuracyDataset, AccuracyRecordProcessor, CapturedResponse, ProblemAssociation,
+    accuracy_report_errors, grade_accuracy_captures, load_evaluator_problems_with_grader,
 };
 use crate::accuracy_core::{
     AccuracyEvaluator, EvaluatorLoadConfig, EvaluatorLoadResult, PythonEvaluator,
@@ -2198,6 +2198,14 @@ pub(crate) struct ShardedShared {
     pub(crate) include_trace: bool,
     /// Whether an adaptive phase needs each completed turn's terminal record.
     pub(crate) wants_adaptive_record: bool,
+    /// Static-accuracy response associations, shared read-only across the shards.
+    ///
+    /// `Some` only for a static-accuracy run: each shard clones this `Send + Sync`
+    /// handle, builds its own capture [`AccuracyRecordProcessor`] over the SAME
+    /// associations, and registers it on the profiling phase. The disjoint per-shard
+    /// captures concatenate at the coordinator, which grades them once on the main
+    /// thread (the single `!Send` Python evaluator never crosses the spawn boundary).
+    pub(crate) accuracy_associations: Option<Arc<[ProblemAssociation]>>,
     /// Whether this sharded run selected exact-fold (Stage A): each worker capture
     /// folds every completed record into its own EXACT accumulator (stamped with a
     /// LOCAL-dense fold ordinal) and drops the heavy per-record data mid-run, so the
@@ -2289,6 +2297,10 @@ pub(crate) struct ScheduledShardOutcome {
     /// This thread's `inputs.json` sessions (disjoint conversation ids across
     /// threads, so the union needs only a re-sort by session id).
     pub(crate) input_sessions: Vec<InputSession>,
+    /// This thread's static-accuracy terminal captures (empty for a non-accuracy
+    /// run). Disjoint across shards (each stamps globally-unique dispatch
+    /// sequences), so the coordinator concatenates them and grades once.
+    pub(crate) accuracy_captures: Vec<CapturedResponse>,
     /// Whether any of this thread's phases was externally cancelled.
     pub(crate) was_cancelled: bool,
     /// Whether this thread ran a warmup phase (gates the warmup metrics export).
@@ -2297,11 +2309,12 @@ pub(crate) struct ScheduledShardOutcome {
 
 impl ScheduledShardOutcome {
     /// Fold another thread's shard into this one: merge records (mode-aware), union
-    /// input sessions, OR the phase flags. Record ordering is applied once after all
-    /// shards are absorbed (retained records only).
+    /// input sessions and accuracy captures, OR the phase flags. Record ordering is
+    /// applied once after all shards are absorbed (retained records only).
     pub(crate) fn absorb(&mut self, other: ScheduledShardOutcome) -> Result<()> {
         self.records.absorb(other.records)?;
         self.input_sessions.extend(other.input_sessions);
+        self.accuracy_captures.extend(other.accuracy_captures);
         self.was_cancelled |= other.was_cancelled;
         self.has_warmup |= other.has_warmup;
         Ok(())
@@ -2437,6 +2450,15 @@ pub(crate) async fn execute_scheduled_shard(
         })
         .collect();
 
+    // A static-accuracy run gives each shard its OWN capture processor over the
+    // shared read-only associations; it is registered on the profiling phase below
+    // and drained into the shard outcome after the run. The disjoint per-shard
+    // captures concatenate at the coordinator, which grades once on the main thread.
+    let shard_accuracy_processor: Option<Rc<AccuracyRecordProcessor>> = shared
+        .accuracy_associations
+        .as_ref()
+        .map(|associations| Rc::new(AccuracyRecordProcessor::new(associations.clone())));
+
     let execution_result = async {
         execution_backend.set_run_origin(start_ns)?;
         execution_backend.configure_measurement(shared.metrics_config.clone(), start_ns)?;
@@ -2480,8 +2502,17 @@ pub(crate) async fn execute_scheduled_shard(
                 live_sink: None,
                 heartbeat: None,
             });
+            let mut record_processors = vec![record_processor];
+            // Static-accuracy captures its terminal responses on the profiling phase
+            // only (mirrors the single-thread arm); each shard feeds its own
+            // processor, drained into the outcome after the run.
+            if phase.common().name == "profiling"
+                && let Some(accuracy_processor) = &shard_accuracy_processor
+            {
+                record_processors.push(accuracy_processor.clone() as Rc<dyn TurnRecordProcessor>);
+            }
             plan = plan
-                .with_record_processors(vec![record_processor])
+                .with_record_processors(record_processors)
                 .with_performance_record_capture(false)
                 .with_native_metric_record_dimensions(false);
             plans.push(plan);
@@ -2541,6 +2572,11 @@ pub(crate) async fn execute_scheduled_shard(
         ShardRecords::Retained(capture.finish(&issued_times, drained)?)
     };
     let input_sessions = capture.take_input_sessions();
+    // Drain this shard's static-accuracy captures (empty for a non-accuracy run);
+    // the coordinator concatenates every shard's captures and grades once.
+    let accuracy_captures = shard_accuracy_processor
+        .map(|processor| processor.take_captures())
+        .unwrap_or_default();
     let was_cancelled = phased.phases.iter().any(|phase| phase.was_cancelled);
     let has_warmup = phased
         .reports
@@ -2549,6 +2585,7 @@ pub(crate) async fn execute_scheduled_shard(
     Ok(ScheduledShardOutcome {
         records,
         input_sessions,
+        accuracy_captures,
         was_cancelled,
         has_warmup,
     })
@@ -2682,12 +2719,15 @@ async fn execute_native_inner(
     // `runtime.workers` defaults to a CPU-based count (> 1), so the sharded path is
     // the common case, not an opt-in. A thread-per-core sub-cell now partitions
     // EVERY scheduled phase shape — request-bounded phases by budget, trace-driven
-    // `user_centric`/`fixed_schedule` phases per conversation — so the only
-    // remaining non-sharded shape is static-accuracy (its `!Send` main-thread
-    // scoring seam), plus always `workers <= 1`. There is no longer a cross-thread
-    // transport hop: the co-located transport factory refuses `workers > 1`, and an
-    // accuracy run is clamped to a single co-located transport worker below. So
-    // route by shardability rather than fail closed.
+    // `user_centric`/`fixed_schedule` phases per conversation — INCLUDING static
+    // accuracy: its per-record capture is pure `Send` data (a `problem_id` lookup
+    // pushing a `CapturedResponse`), so each shard owns a capture processor over the
+    // shared read-only associations and the disjoint captures concatenate at the
+    // coordinator, which grades once on the main thread (the `!Send` Python evaluator
+    // never crosses the spawn boundary). The only remaining non-sharded shape is
+    // `workers <= 1`. There is no longer a cross-thread transport hop: the co-located
+    // transport factory refuses `workers > 1`. So route by shardability rather than
+    // fail closed.
     // Sketch storage mode streams each record into a bounded accumulator and drops
     // it. The thread-per-core sharded path folds per shard — each sub-cell owns its
     // own sketch accumulator, merged accumulator-to-accumulator at the join — so a
@@ -2703,11 +2743,11 @@ async fn execute_native_inner(
     // `user_centric`/`fixed_schedule` phases partition per conversation (each sub-cell
     // owns a disjoint conversation subset via the injected two-level partition — the
     // enumeration filter in `NativeDatasetConversationSource` plus the partitioned
-    // sampler). Static-accuracy is the one remaining exclusion: its scoring seam is a
-    // single main-thread `!Send` `AccuracyRecordProcessor` + pinned-Python evaluator
-    // that cannot cross the `Send + Sync` `ShardedShared` spawn boundary, so an
-    // accuracy run keeps the co-located single-worker path.
-    let shardable = request.workers > 1 && accuracy.is_none();
+    // sampler). Static accuracy shards too: the `!Send` evaluator/grader stays on the
+    // main thread, but the per-record CAPTURE is pure `Send` data, so each shard owns
+    // a capture `AccuracyRecordProcessor` over the shared associations and the
+    // disjoint captures concatenate at the coordinator for a single main-thread grade.
+    let shardable = request.workers > 1;
     // Both arms converge on the same `captured` records + phase facts the
     // once-per-cell report tail below folds, so that tail stays written exactly once.
     // The accumulator that tail exports is created once here and populated inside the
@@ -2762,23 +2802,17 @@ async fn execute_native_inner(
     // Per-record OTLP folded at completion by the exact-fold capture (task S3); the
     // retain/sharded arms leave this `None` and fold their retained records post-run.
     let mut folded_otel: Option<OtelRecordAccumulator> = None;
+    // Static-accuracy terminal captures, collected by whichever arm runs: the
+    // single-thread arm drains its one processor; the sharded arm concatenates the
+    // per-shard captures. Graded once at finalize (order-independent by problem id).
+    // Empty for a non-accuracy run.
+    let mut accuracy_captures: Vec<CapturedResponse> = Vec::new();
     let (captured, input_sessions, was_cancelled, has_warmup, start_ns) = if !shardable {
-        // The `!shardable` branch is reached only for `workers == 1`
-        // (`accuracy.is_none()`) or a static-accuracy run (any `workers`). All
-        // `workers > 1` non-accuracy runs shard above the transport, so this branch's
-        // transport is always co-located on the coordinator reactor — there is no
-        // per-request cross-thread transport hop. A static-accuracy run with
-        // `workers > 1` therefore runs its dispatch single-worker (its `!Send`
-        // scoring seam pins it to the main thread); the grading output is identical
-        // (data-deterministic, post-capture), only parallel transport throughput is
-        // dropped.
-        if accuracy.is_some() && request.workers > 1 {
-            tracing::warn!(
-                workers = request.workers,
-                "static-accuracy runs dispatch on a single co-located transport worker; \
-                 the requested worker count is used only for admission concurrency"
-            );
-        }
+        // The `!shardable` branch is reached only for `workers == 1` (any dataset,
+        // including static accuracy). All `workers > 1` runs — accuracy included —
+        // shard above the transport, so this branch's transport is always co-located
+        // on the coordinator reactor; there is no per-request cross-thread transport
+        // hop.
         let execution_backend = transport_factory.build(ExecutionBackendConfig {
             workers: 1,
             coordinator_clock: clock.clone(),
@@ -3060,6 +3094,11 @@ async fn execute_native_inner(
             .reports
             .iter()
             .any(|report| report.kind == PhaseKind::Warmup);
+        // Drain the single-thread accuracy processor (the one registered on the
+        // profiling phase above); `Vec::new` for a non-accuracy run. Graded at finalize.
+        if let Some(accuracy) = accuracy.as_ref() {
+            accuracy_captures = accuracy.processor.take_captures();
+        }
         (
             captured,
             input_sessions,
@@ -3069,8 +3108,11 @@ async fn execute_native_inner(
         )
     } else {
         // ==================== THREAD-PER-CORE SHARDED PATH ====================
-        // `shardable` above guarantees workers > 1, no static-accuracy scoring, and
-        // only request-bounded phases — the shapes a sub-cell can partition. Stage A:
+        // `shardable` above guarantees workers > 1 and only request-bounded/trace
+        // phases — the shapes a sub-cell can partition. A static-accuracy run shards
+        // too: each shard captures its own terminal responses over the shared
+        // associations, concatenated into `accuracy_captures` for a single main-thread
+        // grade. Stage A:
         // `exact_fold` may be true here (a metrics-only sharded run selects it); each
         // worker capture then folds into its own exact accumulator with a LOCAL-dense
         // fold ordinal, and the coordinator merges those dense stores via `append_store`
@@ -3142,6 +3184,11 @@ async fn execute_native_inner(
             outputs_path: request.artifacts.outputs_path.clone(),
             include_trace: request.artifacts.trace,
             wants_adaptive_record,
+            // Static-accuracy associations, shared read-only across the shards; each
+            // builds its own capture processor over them.
+            accuracy_associations: accuracy
+                .as_ref()
+                .map(|accuracy| accuracy.dataset.associations()),
             exact_fold,
             on_failure: OnFailure::scheduled_or_default(request.failure_policy),
             real_clock_anchor,
@@ -3173,6 +3220,9 @@ async fn execute_native_inner(
             clock.clone(),
         )
         .await?;
+        // Concatenate the per-shard static-accuracy captures (empty for a non-accuracy
+        // run); graded once at finalize. Moved out before the record match below.
+        accuracy_captures = outcome.accuracy_captures;
         // Retain-path shards return the full record Vec to ingest into the report
         // accumulator; fold-and-drop shards (sketch or Stage A exact-fold) already
         // folded into per-shard accumulators that merge_shards combined via
@@ -3380,8 +3430,12 @@ async fn execute_native_inner(
         ..RunOutcome::default()
     };
     if let Some(accuracy) = accuracy.as_mut() {
-        let evaluation = grade_accuracy_responses(
-            accuracy.processor.as_ref(),
+        // Grade the collected captures once on the main thread: the single-thread
+        // arm's drained processor OR the concatenated per-shard captures. Grading is
+        // keyed by problem id, so the merged (order-independent) set gives the same
+        // tally regardless of worker count.
+        let evaluation = grade_accuracy_captures(
+            std::mem::take(&mut accuracy_captures),
             accuracy.evaluator.as_mut(),
             &accuracy.loaded,
             &profiling_metrics,

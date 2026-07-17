@@ -7,22 +7,26 @@
 //! [`execute_native_inner`](crate::engine::execute) now runs ONE thread-per-core
 //! execution model for a scheduled run:
 //!
-//! - **sharded** ([`crate::engine::sharded_scheduled`]) — chosen for every
-//!   `workers > 1 && accuracy.is_none()` run, whatever the phase shape. Each OS
-//!   thread is a self-contained sub-cell with a co-located transport; there is no
-//!   per-request cross-thread hop. Rate-based phases (Concurrency/Poisson/Gamma/
+//! - **sharded** ([`crate::engine::sharded_scheduled`]) — chosen for EVERY
+//!   `workers > 1` run, whatever the phase shape, INCLUDING static accuracy. Each
+//!   OS thread is a self-contained sub-cell with a co-located transport; there is
+//!   no per-request cross-thread hop. Rate-based phases (Concurrency/Poisson/Gamma/
 //!   Constant) partition the request budget; the trace-driven
 //!   `user_centric`/`fixed_schedule` phases partition per conversation (each
-//!   sub-cell owns a disjoint conversation subset via its two-level partition).
-//! - **co-located single worker** — `workers <= 1`, and static-accuracy runs
-//!   (whose `!Send` scoring seam pins dispatch to the main thread, clamped to a
-//!   single co-located transport worker in `execute_native_inner`).
+//!   sub-cell owns a disjoint conversation subset via its two-level partition). A
+//!   static-accuracy run shards its dispatch+capture too: the `!Send`
+//!   evaluator/grader stays on the coordinator, but each shard owns an
+//!   `AccuracyRecordProcessor` over the shared read-only associations and the
+//!   disjoint `Send` captures concatenate at the coordinator for a single grade.
+//! - **co-located single worker** — `workers <= 1` only.
 //!
-//! Phase 2 unified these: the sharded model covers ALL `workers > 1` non-accuracy
-//! shapes and the old cross-thread `ThreadPerCoreExecutor` hop is deleted. These
-//! tests pin the captured per-record output and record counts so that unification
-//! stays data-equivalent (exact multiset parity for rate-based and fixed_schedule,
-//! aggregate parity for open-loop user_centric).
+//! Phase 2 unified these: the sharded model covers ALL `workers > 1` shapes and the
+//! old cross-thread `ThreadPerCoreExecutor` hop is deleted. The last accuracy clamp
+//! (workers forced to 1 for static accuracy) is removed. These tests pin the
+//! captured per-record output and record counts so that unification stays
+//! data-equivalent (exact multiset parity for rate-based and fixed_schedule,
+//! aggregate parity for open-loop user_centric), and the static-accuracy tally
+//! identical between `workers == 1` and `workers == 4`.
 //!
 //! # Why the assertions are DATA-level, not ns-level
 //!
@@ -715,22 +719,304 @@ mod tests {
 
     // ============================ static-accuracy ============================
 
-    // NOTE (static-accuracy, workers > 1): NOT characterizable at lib level.
+    // A static-accuracy run NOW shards (the last clamp removed). Its `!Send`
+    // evaluator/grader stays on the coordinator, but the per-record CAPTURE is pure
+    // `Send` data — each shard owns an `AccuracyRecordProcessor` over the shared
+    // read-only associations, and the disjoint captures concatenate at the
+    // coordinator for a single main-thread grade (keyed by `problem_id`, so the
+    // merged set is order-independent).
     //
-    // A static-accuracy run is excluded from `shardable` because its scoring seam
-    // is a single main-thread evaluator: `prepare_static_accuracy` spawns ONE
-    // pinned-Python `AccuracyEvaluator` subprocess and holds an
-    // `Rc<AccuracyRecordProcessor>` (both `!Send`), and grading runs post-capture at
-    // finalize via `grade_accuracy_responses`. Neither the `Rc` processor nor the
-    // single Python evaluator can cross the `Send + Sync` `ShardedShared` spawn
-    // boundary into the worker threads, so an accuracy run keeps the co-located
-    // single-worker dispatch path (its transport is clamped to `workers == 1` in
-    // `execute_native_inner`; grading output is identical, only parallel transport
-    // throughput is dropped). Driving it deterministically would require
-    // the pinned Python evaluator (lighteval/harness) and its datasets, which a
-    // pure-Rust `--lib` test cannot spawn. The dispatch/capture half is already
-    // exercised by the concurrency test above (static-accuracy uses the same
-    // request-rate/concurrency scheduled dispatch); only the finalize-time scoring
-    // is uncharacterized here. Product-level coverage belongs in `rust/e2e` against
-    // the mock server's `--accuracy-*` oracle.
+    // The full production evaluator is a pinned Python subprocess (lighteval/harness)
+    // a pure-Rust `--lib` test cannot spawn, so the evaluator is injected here through
+    // its trait seam (`StaticAccuracyEvaluatorFactory`). The evaluator produces the
+    // problems and grades the captured responses; the FixedMock is the inference
+    // target. The invariant: the graded tally is IDENTICAL for `workers == 1` and
+    // `workers == 4` (the sharded partition dispatches the same problem_id multiset).
+
+    use crate::accuracy_core::{
+        AccuracyEvaluator, EvaluatorDatasetIdentity, EvaluatorGenerationConfig, EvaluatorGrade,
+        EvaluatorGradeBatch, EvaluatorGradeItem, EvaluatorIdentity, EvaluatorLoadConfig,
+        EvaluatorLoadResult, EvaluatorMessage, EvaluatorProblem, EvaluatorProblemPage,
+        EvaluatorWorkerError, ProblemId,
+    };
+    use crate::engine::execute::{
+        NativeStaticAccuracyPlan, StaticAccuracyEvaluatorFactory,
+        StaticAccuracyEvaluatorProcessSpec,
+    };
+    use async_trait::async_trait;
+
+    /// Number of evaluator-authored problems in the accuracy fixture.
+    const ACCURACY_PROBLEMS: usize = 4;
+
+    fn accuracy_identity() -> EvaluatorIdentity {
+        EvaluatorIdentity {
+            protocol: 1,
+            worker_version: "fixture-worker".into(),
+            python_version: "3.fixture".into(),
+            python_executable: "/fixture/python".into(),
+            packages: std::collections::BTreeMap::from([(
+                "lighteval".to_string(),
+                Some("fixture".to_string()),
+            )]),
+            worker_source_sha256: "fixture-source".into(),
+            dependency_lock_sha256: Some("fixture-lock".into()),
+            container_digest: Some("sha256:fixture".into()),
+            capabilities: vec!["grade_batch".into()],
+        }
+    }
+
+    fn accuracy_loaded() -> EvaluatorLoadResult {
+        EvaluatorLoadResult {
+            benchmark: "fixture-bench".into(),
+            problem_count: ACCURACY_PROBLEMS,
+            dataset: EvaluatorDatasetIdentity {
+                provider: "fixture".into(),
+                benchmark: None,
+                repository: Some("fixture/repo".into()),
+                subset: Some("default".into()),
+                revision: Some("fixture-revision".into()),
+                evaluation_splits: vec!["test".into()],
+                task_version: Some(1),
+            },
+            grader: "fixture grader".into(),
+        }
+    }
+
+    /// A fixture evaluator producing `ACCURACY_PROBLEMS` single-turn chat problems
+    /// and grading each captured response by its problem index parity — a
+    /// deterministic, response-independent verdict so the tally is a pure function of
+    /// the captured problem_id multiset (identical across worker counts).
+    struct FixtureEvaluator {
+        identity: EvaluatorIdentity,
+        loaded: EvaluatorLoadResult,
+        problems: Vec<EvaluatorProblem>,
+    }
+
+    impl FixtureEvaluator {
+        fn new() -> Self {
+            let problems = (0..ACCURACY_PROBLEMS)
+                .map(|index| {
+                    let prompt = format!("fixture problem {index}");
+                    EvaluatorProblem {
+                        problem_id: ProblemId::new(format!("prob-{index}")).unwrap(),
+                        task: "demo".into(),
+                        prompt: prompt.clone(),
+                        messages: vec![EvaluatorMessage {
+                            role: "user".into(),
+                            content: Value::String(prompt),
+                        }],
+                        generation: EvaluatorGenerationConfig {
+                            max_tokens: 16,
+                            temperature: 0.0,
+                            top_p: 1.0,
+                            stop: Vec::new(),
+                        },
+                    }
+                })
+                .collect();
+            Self {
+                identity: accuracy_identity(),
+                loaded: accuracy_loaded(),
+                problems,
+            }
+        }
+    }
+
+    /// `prob-N` is graded correct when `N` is even — response-independent.
+    fn fixture_is_correct(problem_id: &str) -> bool {
+        problem_id
+            .rsplit('-')
+            .next()
+            .and_then(|n| n.parse::<usize>().ok())
+            .map(|n| n % 2 == 0)
+            .unwrap_or(false)
+    }
+
+    #[async_trait(?Send)]
+    impl AccuracyEvaluator for FixtureEvaluator {
+        fn identity(&self) -> &EvaluatorIdentity {
+            &self.identity
+        }
+
+        async fn load(
+            &mut self,
+            _benchmark: &str,
+            _config: &EvaluatorLoadConfig,
+        ) -> Result<EvaluatorLoadResult, EvaluatorWorkerError> {
+            Ok(self.loaded.clone())
+        }
+
+        async fn next_problems(
+            &mut self,
+            offset: usize,
+            limit: usize,
+        ) -> Result<EvaluatorProblemPage, EvaluatorWorkerError> {
+            let end = offset.saturating_add(limit).min(self.problems.len());
+            Ok(EvaluatorProblemPage {
+                items: self.problems[offset..end].to_vec(),
+                next_offset: end,
+                done: end == self.problems.len(),
+            })
+        }
+
+        async fn grade_batch(
+            &mut self,
+            items: &[EvaluatorGradeItem],
+        ) -> Result<EvaluatorGradeBatch, EvaluatorWorkerError> {
+            Ok(EvaluatorGradeBatch {
+                items: items
+                    .iter()
+                    .map(|item| {
+                        let correct = fixture_is_correct(item.problem_id.as_str());
+                        EvaluatorGrade {
+                            problem_id: item.problem_id.clone(),
+                            task: "demo".into(),
+                            correct,
+                            unparsed: false,
+                            confidence: if correct { 1.0 } else { 0.0 },
+                            reasoning: "fixture grade".into(),
+                            extracted_answer: Some(item.response.clone()),
+                        }
+                    })
+                    .collect(),
+            })
+        }
+
+        async fn shutdown(&mut self) -> Result<(), EvaluatorWorkerError> {
+            Ok(())
+        }
+    }
+
+    /// Trait-injected fixture factory: returns a fresh in-process evaluator (no
+    /// Python subprocess), so the whole static-accuracy path is driven at lib level.
+    struct FixtureEvaluatorFactory;
+
+    #[async_trait(?Send)]
+    impl StaticAccuracyEvaluatorFactory for FixtureEvaluatorFactory {
+        async fn spawn(
+            &self,
+            _process: &StaticAccuracyEvaluatorProcessSpec,
+        ) -> anyhow::Result<Box<dyn AccuracyEvaluator>> {
+            Ok(Box::new(FixtureEvaluator::new()))
+        }
+    }
+
+    /// Assemble a static-accuracy `NativeRunSpec` (fixture evaluator) for a fixed
+    /// concurrency profiling phase pointed at the mock.
+    fn accuracy_plan(
+        base_url: &str,
+        artifact_dir: &Path,
+        workers: usize,
+        requests: u64,
+    ) -> NativeRunSpec {
+        let phase: PhaseSpec = serde_json::from_value(json!({
+            "type": "concurrency",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "requests": requests,
+            "concurrency": 4,
+        }))
+        .unwrap();
+        NativeRunSpec {
+            benchmark_id: "characterization-accuracy".into(),
+            random_seed: Some(7),
+            workers,
+            artifact_dir: artifact_dir.to_path_buf(),
+            models: models(),
+            endpoint: NativeEndpointPlan::Prepared(endpoint_profile(base_url)),
+            dataset: NativeDatasetPlan::StaticAccuracy(NativeStaticAccuracyPlan {
+                benchmark: "fixture-bench".into(),
+                tasks: None,
+                n_shots: None,
+                enable_cot: None,
+                grader: None,
+                system_prompt: None,
+                process: StaticAccuracyEvaluatorProcessSpec {
+                    python_executable: "/usr/bin/python3".into(),
+                    worker_module: "fixture".into(),
+                },
+                evaluator_factory: Arc::new(FixtureEvaluatorFactory),
+            }),
+            tokenizer: TokenizerSpec {
+                name: "builtin".into(),
+                apply_chat_template: false,
+            },
+            phases: vec![phase],
+            metrics: MetricsSpec::default(),
+            artifacts: ArtifactSpec::default(),
+            sidecars: NativeSidecarPlan::Prepared(Arc::new(empty_sidecars())),
+            user_files: Vec::new(),
+            failure_policy: None,
+            native_otel_enabled: false,
+            transport: None,
+        }
+    }
+
+    /// Run one static-accuracy benchmark to completion and return `(total, correct)`
+    /// from the graded `accuracy_records` in the report.
+    fn run_accuracy_tally(
+        registry: &AIPerfRegistry,
+        mock: &FixedMock,
+        workers: usize,
+        requests: u64,
+    ) -> (usize, usize) {
+        let artifact_dir = tempfile::tempdir().unwrap();
+        let request_executor: Arc<dyn RequestExecutorFactory> = Arc::new(HttpExecutionFactory);
+        let factories = native_execution_factories();
+        let spec = accuracy_plan(&mock.base_url, artifact_dir.path(), workers, requests);
+        let report = execute_prepared_native_plan_uncommitted_selected(
+            spec,
+            request_executor,
+            &factories,
+            registry,
+            None,
+        )
+        .expect("static-accuracy run must complete");
+        let value = serde_json::to_value(&report).unwrap();
+        let records = value
+            .get("accuracy_records")
+            .and_then(Value::as_array)
+            .expect("report carries accuracy_records");
+        let total = records.len();
+        let correct = records
+            .iter()
+            .filter(|record| {
+                record
+                    .pointer("/result/correct")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            })
+            .count();
+        (total, correct)
+    }
+
+    /// The last executor-unification clamp removed: a static-accuracy run at
+    /// `workers == 4` shards its dispatch+capture and grades the concatenated
+    /// captures to the SAME tally as the single-worker baseline. Each of the 4
+    /// problems is dispatched `requests / 4` times; problems `prob-0`/`prob-2` grade
+    /// correct, so exactly half the records are correct at either worker count.
+    #[test]
+    fn static_accuracy_workers_gt_1_shards_and_tally_matches_single_thread() {
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let mock = FixedMock::spawn();
+        let requests = 12u64;
+
+        let (baseline_total, baseline_correct) = run_accuracy_tally(&registry, &mock, 1, requests);
+        assert_eq!(
+            baseline_total, requests as usize,
+            "single-worker accuracy grades one record per dispatched request"
+        );
+        assert_eq!(
+            baseline_correct,
+            requests as usize / 2,
+            "half the dispatched problems (even index) grade correct"
+        );
+
+        let (sharded_total, sharded_correct) = run_accuracy_tally(&registry, &mock, 4, requests);
+        assert_eq!(
+            (sharded_total, sharded_correct),
+            (baseline_total, baseline_correct),
+            "sharded workers>1 static-accuracy tally must equal the single-thread baseline"
+        );
+    }
 }

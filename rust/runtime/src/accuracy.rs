@@ -44,14 +44,20 @@ const PROBLEM_PAGE_SIZE: usize = 256;
 const GRADE_BATCH_SIZE: usize = 128;
 
 #[derive(Debug, Clone)]
-struct ProblemAssociation {
+pub(crate) struct ProblemAssociation {
     problem_id: ProblemId,
     correlation_id: CorrelationId,
     task: TaskId,
 }
 
+/// One captured terminal response, carrying only opaque `Send` data (problem id,
+/// task, timing, terminal status, response text). It holds no `Rc`/evaluator
+/// handle, so a per-shard capture set crosses the thread-per-core spawn boundary
+/// back to the coordinator, where the disjoint shard sets concatenate before the
+/// single main-thread evaluator grades them (grading is keyed by `problem_id`, so
+/// the merged set is order-independent).
 #[derive(Debug, Clone)]
-struct CapturedResponse {
+pub(crate) struct CapturedResponse {
     sequence: u64,
     problem_id: ProblemId,
     correlation_id: CorrelationId,
@@ -189,6 +195,17 @@ impl AccuracyDataset {
     /// Number of evaluator-authored problems.
     pub fn len(&self) -> usize {
         self.associations.len()
+    }
+
+    /// Share the frozen read-only response associations.
+    ///
+    /// The associations are `Send + Sync` (an `Arc<[…]>` of opaque ids), so each
+    /// thread-per-core shard clones this handle and builds its own capture
+    /// [`AccuracyRecordProcessor`] over the SAME associations. Only the captured
+    /// `Send` responses merge back to the coordinator; the evaluator never moves.
+    #[cfg(feature = "engine")]
+    pub(crate) fn associations(&self) -> Arc<[ProblemAssociation]> {
+        self.associations.clone()
     }
 
     /// Whether the evaluator authored no problems.
@@ -405,7 +422,12 @@ pub struct AccuracyRecordProcessor {
 }
 
 impl AccuracyRecordProcessor {
-    fn new(associations: Arc<[ProblemAssociation]>) -> Self {
+    /// Build a fresh capture processor over the shared read-only associations.
+    ///
+    /// The single-thread path builds one; each thread-per-core shard builds its
+    /// own from the same `Arc<[ProblemAssociation]>`, and the disjoint per-shard
+    /// captures concatenate at the coordinator before grading.
+    pub(crate) fn new(associations: Arc<[ProblemAssociation]>) -> Self {
         Self {
             associations: associations
                 .iter()
@@ -416,29 +438,52 @@ impl AccuracyRecordProcessor {
         }
     }
 
-    fn finish(&self) -> anyhow::Result<Vec<CapturedResponse>> {
-        let mut captures = self.captures.borrow().clone();
-        anyhow::ensure!(
-            !captures.is_empty(),
-            "accuracy record pipeline captured no profiling responses"
-        );
-        captures.sort_by_key(|capture| capture.sequence);
-        let mut sequences = BTreeSet::new();
-        let mut correlations = BTreeSet::new();
-        for capture in &captures {
-            anyhow::ensure!(
-                sequences.insert(capture.sequence),
-                "accuracy record pipeline captured duplicate issue sequence {}",
-                capture.sequence
-            );
-            anyhow::ensure!(
-                correlations.insert(capture.correlation_id.as_str().to_string()),
-                "accuracy record pipeline captured duplicate request correlation {:?}",
-                capture.correlation_id.as_str()
-            );
-        }
-        Ok(captures)
+    /// Move this processor's captured responses out (draining it).
+    ///
+    /// Each thread-per-core shard drains its own processor at shard end and ships
+    /// the `Send` captures to the coordinator, which concatenates the disjoint sets
+    /// and hands them to [`grade_accuracy_captures`].
+    pub(crate) fn take_captures(&self) -> Vec<CapturedResponse> {
+        std::mem::take(&mut *self.captures.borrow_mut())
     }
+}
+
+/// Order captured responses deterministically and validate uniqueness.
+///
+/// Called once on the full (merged) capture set — the single processor's captures
+/// on the single-thread path, or the concatenation of the per-shard capture sets
+/// on the thread-per-core path. The per-request `correlation_id` (a per-request
+/// uuid) is globally unique and is the uniqueness guard against double-processing.
+///
+/// The issue `sequence` is the per-worker monotonic credit id, so it is unique
+/// within a worker but COLLIDES across shards (each shard's issuer restarts at 0);
+/// it is therefore used only as the primary sort key, with the globally-unique
+/// `correlation_id` as the deterministic tiebreak. On the single-thread path this
+/// preserves the exact issue order (sequences are already distinct); on the sharded
+/// path the per-shard runs interleave by sequence with a stable correlation
+/// tiebreak (aggregate-equivalent — grading is keyed by `problem_id`, so the tally
+/// is order-independent).
+pub(crate) fn validate_captures(
+    mut captures: Vec<CapturedResponse>,
+) -> anyhow::Result<Vec<CapturedResponse>> {
+    anyhow::ensure!(
+        !captures.is_empty(),
+        "accuracy record pipeline captured no profiling responses"
+    );
+    captures.sort_by(|a, b| {
+        a.sequence
+            .cmp(&b.sequence)
+            .then_with(|| a.correlation_id.as_str().cmp(b.correlation_id.as_str()))
+    });
+    let mut correlations = BTreeSet::new();
+    for capture in &captures {
+        anyhow::ensure!(
+            correlations.insert(capture.correlation_id.as_str().to_string()),
+            "accuracy record pipeline captured duplicate request correlation {:?}",
+            capture.correlation_id.as_str()
+        );
+    }
+    Ok(captures)
 }
 
 #[async_trait(?Send)]
@@ -574,7 +619,24 @@ pub async fn grade_accuracy_responses(
     loaded: &EvaluatorLoadResult,
     native_summary: &AccumulatorSummary,
 ) -> anyhow::Result<AccuracyEvaluation> {
-    let captures = processor.finish()?;
+    grade_accuracy_captures(processor.take_captures(), evaluator, loaded, native_summary).await
+}
+
+/// Grade a pre-collected capture set through the canonical evaluator.
+///
+/// This is the merge point for the thread-per-core path: the coordinator
+/// concatenates each shard's [`AccuracyRecordProcessor::take_captures`] output and
+/// calls this once. Grading is keyed by `problem_id`, so the merged (order-
+/// independent) set produces the same tally as any single-worker capture. The
+/// single evaluator stays on the coordinator thread — only the `Send` capture data
+/// crossed the shard boundary.
+pub(crate) async fn grade_accuracy_captures(
+    captures: Vec<CapturedResponse>,
+    evaluator: &mut dyn AccuracyEvaluator,
+    loaded: &EvaluatorLoadResult,
+    native_summary: &AccumulatorSummary,
+) -> anyhow::Result<AccuracyEvaluation> {
+    let captures = validate_captures(captures)?;
 
     let mut grades: Vec<Option<EvaluatorGrade>> = vec![None; captures.len()];
     let submitted = captures

@@ -140,6 +140,46 @@ async fn accuracy_correct_ground_truth_in_raw_records() {
     }
 }
 
+/// Sharded transport (`--workers-max 4` → thread-per-core `workers > 1`) preserves
+/// per-record correctness against the deterministic oracle: every raw record still
+/// carries the correct grader-formatted answer, identical to the single-worker
+/// `accuracy_correct_ground_truth_in_raw_records` tally (6/6 correct). This drives
+/// the sharded scheduled dispatch path through the product binary end-to-end.
+///
+/// (This exercises the mock-oracle `single_turn` path, which shards its dispatch;
+/// the static-accuracy Python-evaluator path — where the last `workers = 1` clamp
+/// was removed — needs a pinned Python/lighteval evaluator not runnable here and is
+/// verified in-crate by the fixture-evaluator lib integration test
+/// `static_accuracy_workers_gt_1_shards_and_tally_matches_single_thread`.)
+#[tokio::test]
+async fn accuracy_correct_ground_truth_sharded_workers() {
+    let ds_dir = tempfile::TempDir::new().unwrap();
+    let dataset = write_accuracy_dataset(ds_dir.path(), 6);
+    let mut cfg = accuracy_cfg(&dataset);
+    cfg.accuracy_correct_rate = 1.0;
+
+    let h = AIPerfHarness::new_with(cfg).await;
+    let r = h.run(&format!(
+        "--model gpt-4 --url {} --endpoint-type chat --streaming \
+         --input-file {} --custom-dataset-type single_turn \
+         --request-count 6 --concurrency 4 --workers-max 4 \
+         --random-seed 7 --export-level raw --ui simple",
+        h.mock.url,
+        dataset.display(),
+    ));
+    assert!(r.success(), "stderr: {}", r.stderr);
+
+    let records = r.artifacts.raw_records();
+    assert_eq!(records.len(), 6, "expected 6 raw records (sharded)");
+    for rec in &records {
+        assert_eq!(
+            record_content(rec),
+            "The answer is (B)",
+            "sharded per-record content must match the single-worker tally"
+        );
+    }
+}
+
 /// The seeded correct-rate is honored end-to-end: at 0.5, roughly half the
 /// records carry the correct `(B)` answer and the rest a different letter — and
 /// every record is a well-formed multiple-choice answer.
