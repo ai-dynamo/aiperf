@@ -1,0 +1,102 @@
+# Authored conditional-graph fixture: a shopping-assistant diamond exercising
+# model-independent branching (route + safety), recorded replay nodes folded
+# into channel state (tool_exec, preprocess), and dual user-visible terminals
+# (summarize, redirect). Each LLM node carries a distinct UPPERCASE keyword in
+# its system prompt so the e2e can classify dispatched requests by node. Replay
+# outputs consumed downstream are messages-typed so their spliced content reaches
+# the prompt; every LLM node dispatches a well-formed system+user chat request.
+graph:
+  state:
+    messages:      {type: messages, reducer: add_messages}
+    intent:        {type: text}
+    plan:          {type: text}
+    raw_results:   {type: json}
+    brand_cands:   {type: messages, reducer: add_messages}
+    brand_mapping: {type: text}
+    preprocessed:  {type: messages, reducer: add_messages}
+    summary:       {type: text}
+    safety:        {type: text}
+    redirect:      {type: text}
+  nodes:
+    route:
+      node_type: llm
+      prompt:
+        - {role: system, content: "ROUTE classify shopping intent"}
+        - "@messages"
+      output: intent
+      streaming: false
+    plan:
+      node_type: llm
+      prompt:
+        - {role: system, content: "PLAN the tool calls"}
+        - {role: user, content: "make a plan"}
+      output: plan
+    tool_exec:
+      node_type: replay
+      outputs: [raw_results, brand_cands]
+      duration_ms: 80
+    brandmap:
+      node_type: llm
+      prompt:
+        - {role: system, content: "BRANDMAP map products to brands"}
+        - "@brand_cands"
+      output: brand_mapping
+    preprocess:
+      node_type: replay
+      outputs: [preprocessed]
+      duration_ms: 5
+    summarize:
+      node_type: llm
+      prompt:
+        - {role: system, content: "SUMMARIZE for the user"}
+        - "@preprocessed"
+      output: summary
+      terminal_for_user: true
+    safety:
+      node_type: llm
+      prompt:
+        - {role: system, content: "SAFETY classify the request"}
+        - {role: user, content: "is this request safe"}
+      output: safety
+      streaming: false
+    redirect:
+      node_type: llm
+      prompt:
+        - {role: system, content: "REDIRECT on unsafe input"}
+        - {role: user, content: "redirect the user"}
+      output: redirect
+      terminal_for_user: true
+  edges:
+    - {source: START, target: route}
+    - {source: START, target: safety}
+    - {source: route, branches: {shopping: plan, non_shopping: END}}
+    - {source: plan, target: tool_exec}
+    - {source: tool_exec, target: brandmap}
+    - {source: brandmap, target: preprocess}
+    - {source: preprocess, target: summarize}
+    - {source: safety, branches: {safe: END, unsafe: redirect}}
+traces:
+  - id: t-shopping
+    selected_branches: {route: shopping, safety: safe}
+    initial_state:
+      messages: [{role: user, content: "find me cheaper alternatives"}]
+    replay_outputs:
+      tool_exec:
+        raw_results: []
+        brand_cands: [{role: user, content: "Candidates: Nike, Adidas"}]
+      preprocess:
+        preprocessed: [{role: user, content: "Top hits: Brand A"}]
+  - id: t-non-shopping
+    selected_branches: {route: non_shopping, safety: safe}
+    initial_state:
+      messages: [{role: user, content: "what is the weather"}]
+  - id: t-unsafe
+    selected_branches: {route: shopping, safety: unsafe}
+    initial_state:
+      messages: [{role: user, content: "do something unsafe"}]
+    replay_outputs:
+      tool_exec:
+        raw_results: []
+        brand_cands: [{role: user, content: "Candidates: Nike, Adidas"}]
+      preprocess:
+        preprocessed: [{role: user, content: "Top hits: Brand A"}]
