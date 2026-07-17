@@ -24,6 +24,7 @@ pub mod dag_source;
 pub mod errors;
 pub mod execution;
 pub mod executor;
+pub mod flat;
 pub mod input;
 mod lowering;
 pub mod materialize;
