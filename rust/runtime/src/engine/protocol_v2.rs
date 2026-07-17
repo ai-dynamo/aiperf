@@ -270,7 +270,12 @@ impl BenchmarkRunWireV2 {
             .next()
             .ok_or_else(|| anyhow!("run.cfg.datasets must contain one dataset"))?;
         let workload_id = dataset_type(&dataset)
-            .is_some_and(|kind| matches!(kind, "dag_jsonl" | "weka_trace" | "dynamo_trace"))
+            .is_some_and(|kind| {
+                matches!(
+                    kind,
+                    "dag_jsonl" | "conditional_graph" | "weka_trace" | "dynamo_trace"
+                )
+            })
             .then_some("graph")
             .unwrap_or("scheduled");
         let transport = component_from_inline(self.cfg.transport, "run.cfg.transport")?;
