@@ -1,0 +1,114 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# SLURM-native cellular execution
+
+## Purpose
+
+Run a cellular AIPerf benchmark natively under a SLURM allocation — the SLURM
+analog of the Kubernetes path in [cellular.md](cellular.md), without the k8s
+operator. Under `srun`/`sbatch` the allocation's tasks become the controller (rank
+0) and the cells (other ranks); they discover each other from the allocation itself
+(the rank-0 node's hostname plus the velo bootstrap port) instead of
+operator-injected DNS. This is the connect-by-endpoint model the velo transport was
+built for, sourced from `SLURM_*` environment rather than a Kubernetes JobSet.
+
+## Built
+
+### One command, rank-dispatched
+
+Every task of the allocation runs the identical command:
+
+```bash
+srun aiperf slurm run --config benchmark.yaml
+```
+
+`aiperf slurm run` (native, `rust/cli/src/slurm.rs`) resolves the task's role from
+the `SLURM_*` environment once and dispatches:
+
+- **rank 0** (`SLURM_PROCID == 0`) becomes the **controller**. It projects the
+  mounted Config v2 with `--cells <cell_count>` appended (so the controller path
+  engages regardless of the config's `runtime.cells`), binds the velo transport on
+  all interfaces at `AIPERF_CONTROLLER_PORT`, and — via the `SlurmLauncher` — expects
+  the `srun`-launched cell tasks to register rather than spawning them.
+- **ranks `1..ntasks`** become **cells**. Each dials the controller at the
+  allocation-derived coordinate and fetches its sliced envelope over velo; it never
+  reads `--config`.
+
+The command sets the `AIPERF_CELL_*` environment every downstream stage reads
+(`AIPERF_CELL_LAUNCHER=slurm`, `AIPERF_CELL_COUNT`, `AIPERF_CELL_ID`,
+`AIPERF_CELL_CONTROLLER_ADDR`, `AIPERF_CONTROLLER_PORT`) — exactly where the k8s
+operator would inject it. Any `slurm` subcommand other than `run` (i.e. `generate`)
+delegates to the Python CLI.
+
+### Topology mapping
+
+`rust/runtime/src/engine/slurm_topology.rs` holds the pure `SLURM_*` → topology
+functions (no velo dependency, exhaustively unit-tested):
+
+- `SlurmTopology::from_env` reads `SLURM_PROCID` and `SLURM_NTASKS`; rank 0 is the
+  controller, ranks `1..ntasks` map to dense cell ids `0..cell_count` with
+  `cell_count = ntasks - 1` (tiling exactly, as `ModuloCellPartition` requires).
+- The controller coordinate is `tcp://<rank0-host>:<port>`. The rank-0 host is the
+  first host of the expanded `SLURM_JOB_NODELIST` (SLURM's default block task
+  distribution places task 0 on the first allocation node), overridable with
+  `AIPERF_SLURM_CONTROLLER_HOST`. `expand_nodelist` handles SLURM's compressed
+  hostlist syntax — `node[01-04]`, `node[01-02,05]`, top-level comma lists, and
+  bracket suffixes — preserving the lower-bound zero-pad width.
+
+### Cross-host placement
+
+`run_cellular` (`rust/runtime/src/engine/cellular_controller.rs`) recognizes
+`AIPERF_CELL_LAUNCHER=slurm` as a **cross-host** deployment alongside k8s: cell tasks
+live on separate allocation nodes, so per-record artifacts and `file` datasets ship
+over the controller's HTTP+zstd plane, the controller binds velo on all interfaces at
+`AIPERF_CONTROLLER_PORT`, and the `SlurmLauncher` "expects, doesn't spawn" (`srun`
+already launched the cell tasks; a failed task fails the step, and the controller's
+registration/collect timeout is the backstop). The controller coordinate is read
+from `AIPERF_CELL_CONTROLLER_ADDR` (SLURM sets it from the rank-0 host; k8s leaves it
+operator-injected). All of cellular.md's fidelity guards, budget slicing, and merge
+apply unchanged — SLURM changes only *where cells come from and how they find the
+controller*, not the partition/merge math.
+
+### Job-script generation
+
+`aiperf slurm generate` (Python, `src/aiperf/cli_commands/slurm/`) emits an sbatch
+script mirroring `aiperf kube generate`'s ergonomics. `--cells N` requests
+`#SBATCH --ntasks=N+1` (one controller task plus N cell tasks), exports
+`AIPERF_CELL_LAUNCHER=slurm` and `AIPERF_CONTROLLER_PORT`, and ends with the single
+`srun aiperf slurm run --config <abs-path>` line. Optional `--partition`,
+`--account`, `--time`, `--nodes`, `--ntasks-per-node`, `--gpus-per-node`, and
+`--output` map to the corresponding `#SBATCH` directives.
+
+## Future requirements
+
+- **Aggregator tier**: SLURM runs the flat star only. The `aiperf --aggregator`
+  tree is gated on the operator-wired aggregator DNS (`AIPERF_CELL_AGG_DNS_TEMPLATE`),
+  which SLURM does not set, so a fanout request falls closed to the flat star. A
+  SLURM-native aggregator placement (rank-band assignment) is unbuilt.
+- **Single-cell allocations**: a 2-task allocation (one cell) is rejected with
+  actionable guidance; the controller path needs `cells > 1`. Degenerate single-cell
+  SLURM runs would need a controller-hosted cell.
+- **Live in-sandbox multi-cell proof**: the topology, launcher selection, coordinate
+  derivation, and velo discovery/envelope-fetch are proven end-to-end by the
+  simulation in `rust/e2e/scripts/slurm_sim.sh` (both cells discover the controller
+  and fetch their sliced envelopes). A full merged-report assertion is blocked by a
+  pre-existing `--cells >= 2` failure in the current sandbox (the same
+  `request-rate conversation dataset cannot be empty` cell error reproduces on the
+  untouched local `--cells` path); it is not a SLURM-path defect.
+
+## Source anchors
+
+- `rust/runtime/src/engine/slurm_topology.rs` — the pure `SLURM_*` → topology
+  mapping and nodelist expansion, with the unit tests.
+- `rust/runtime/src/engine/cell_launcher.rs` — `SlurmLauncher` and
+  `select_launcher`'s `slurm` branch.
+- `rust/runtime/src/engine/cellular_controller.rs` — the cross-host placement
+  (`cross_host = is_k8s || is_slurm`) and `controller_bind_and_endpoint`.
+- `rust/cli/src/slurm.rs` and `rust/cli/src/dispatch.rs` — the `aiperf slurm run`
+  rank dispatch and routing.
+- `src/aiperf/cli_commands/slurm/` — the `aiperf slurm generate` sbatch generator
+  and `tests/unit/cli_commands/test_slurm_generate.py`.
+- `rust/e2e/scripts/slurm_sim.sh` — the loopback SLURM-allocation simulation.

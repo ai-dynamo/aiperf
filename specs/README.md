@@ -40,6 +40,7 @@ read the record for the subsystem you are touching.
 | [ancillary-timing.md](ancillary-timing.md) | The three knobs that ride on a running phase: ramping, seeded request cancellation, and sticky round-robin URL selection. |
 | [adaptive-scale.md](adaptive-scale.md) | The closed-loop SLA controller (`ramp_until_fail`) layered over a running load phase, its actuators, and its schema-v2 artifacts. |
 | [cellular.md](cellular.md) | Partitioning one run across cell processes and merging records or folded metric stores, the multi-process and velo cross-host topologies, and the fidelity guards. |
+| [slurm-native.md](slurm-native.md) | Running a cellular benchmark natively under a SLURM allocation: the `aiperf slurm run` rank dispatch, the `SLURM_*` → controller/cell topology mapping and nodelist expansion, the `SlurmLauncher`, and the `aiperf slurm generate` sbatch script generator. |
 
 ### Transports
 
