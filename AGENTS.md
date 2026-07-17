@@ -5,282 +5,232 @@ SPDX-License-Identifier: Apache-2.0
 
 # AIPerf
 
-> ✅ **CANONICAL PRODUCT ARCHITECTURE.** There is ONE product binary, `aiperf` (crate `aiperf-cli`): it is BOTH the human-facing entry point AND the execution engine. It owns `profile`/`config` natively (byte-exact Config v2), projects one protocol-v2 request, and drives execution by re-execing **itself** (`aiperf --execute`, an internal hidden mode) once per run/probe/cell over the stdio seam — preserving process/SIGINT/panic isolation with no separate executable. It delegates only peripheral subcommands (`plot`/`service`/`plugins`) back to Python — in-process embedded CPython in the `pyo3-embed` build, or a `python -m aiperf` subprocess in the lean default build. Config v2's schema, outer orchestration, and presentation semantics stay Python-defined. `aiperf-mock-server` is a standalone developer/test inference target, not an orchestrated backend process. The `rust/runtime` package is a runtime library with no binary target (the binary is the `aiperf-cli` crate). There is no separate runner binary, no ZMQ, service mesh, multiprocess credit protocol, mmap dataset cache, or `plugins.yaml` on the native path. The `aiperf-rs` and `~/projects/aiperf-rust` trees remain **DEPRECATED**. Design record: [`specs/`](specs/); start-here index: [`llms.txt`](llms.txt).
->
-> Rust execution truth is in `rust/` (the native CLI entry point is `rust/cli/`); canonical Python frontend truth includes `src/aiperf/config/`, `src/aiperf/orchestrator/`, and `src/aiperf/cli_runner/`. Other inherited Python controller/service code is legacy, not an alternate hot path.
+## Product architecture
 
-## What this is
+AIPerf is a load generator and measurement front end for inference servers. The native product entry point is the single `aiperf` binary from crate `aiperf-cli`; it is both the public CLI and the execution engine. `aiperf profile` and `aiperf config` are native Rust commands. A profile invocation resolves Config v2, projects a protocol-v2 benchmark request, and re-executes the same binary in an internal `--execute` mode over stdio. Internal `--cell` and `--aggregator` modes support cellular execution and are intercepted before clap parsing.
 
-A Python-orchestrated, Rust-executed load generator + measurement front-end for inference servers. The runner dispatches OpenAI-compatible, Anthropic Messages, KServe, and NVIDIA Riva ASR/TTS/NLP requests over native HTTP/SSE or gRPC, records fine-grained timing (TTFT / ITL / TPOT / e2e / throughput / goodput), and serializes native results. The execution substrate is designed for **three interchangeable modes** over a single `{transport, clock}` seam:
+Native commands also include `controller`, `cell`, `aggregator`, `results-sidecar`, `analyze-trace`, `chat`, `validate`, `speed-bench-report`, and `synthesize`. Other commands dispatch to `aiperf.entrypoint.main`: builds with `pyo3-embed` invoke it in-process, while lean builds invoke `python -m aiperf`.
 
-1. **ONLINE-real** — real HTTP or gRPC to a real server, wall clock. *(built)*
-2. **ONLINE-mock** — real HTTP to a mock server (`aiperf-mock-server`), wall clock. *(built — same code as (1), different target)*
-3. **OFFLINE-mock** — in-process virtual-clock co-simulation of the Dynamo mocker engine, no sockets, deterministic. *(built behind the non-default `dynosim` Cargo feature; requires the sibling `dynamo-aiperf-native` checkout.)*
+`aiperf-mock-server` is a separately launched benchmark and test target. It is not supervised by a profile run.
 
-Online-real and online-mock are product-reachable through the native `aiperf` binary (entry point → self-exec `aiperf --execute`). The workspace-owned `aiperf-mock-server` server is launched independently and supplies an ordinary online target URL; the frontend does not supervise it as part of a run. Offline-mock is product-reachable through the same Config-v2 path when the `aiperf` binary is built with `dynosim`; exact-image capabilities omit those transports from the base build.
+Source-of-truth locations:
 
-## Canonical vs aspirational — the code is a walking skeleton
+- Native CLI and process entry: `rust/cli/`.
+- Runtime and execution engine: `rust/runtime/`; the `engine` feature exposes `aiperf_runtime::engine`.
+- Transport-neutral observer seam: `rust/loadgen-core/`.
+- Standalone mock target: `rust/mock-server/`.
+- Python package and delegated command implementation: `src/aiperf/`.
+- Repository architecture index: `llms.txt`.
+- Design records and their status index: `specs/README.md`.
 
-Ground every claim in `crate/src/file.rs`, not the specs: specs are design intent, **code is truth**. The current gaps between the north-star design and today's code:
+Ground architecture claims in executable code and manifests. Design records provide context but do not establish runtime behavior.
 
-- The north-star's `Backend` / `Engine` / `Harness` vocabulary is **aspirational**. Today's seam is `Clock` + `RequestSink<R>` / `RequestObserver` / `Dispatchable`.
-- **One product entry path.** The native `aiperf` binary projects one BenchmarkRun request and serializes the bare `BenchmarkRun` to the `aiperf --execute` child's stdin (the operation is the argv mode — `--execute` vs `--validate` — not a wire field); the execution engine is v2-only, rejects non-v2. Selects scheduled vs graph from dataset format; binds `cfg.transport.type`. Capabilities is an in-process `aiperf_cli::execute_mode::capabilities_catalog` function (no `--capabilities` argv mode). Unregistered transport/endpoint ids fail closed.
-- **Native online transports are built.** HTTP: Clock-injected hyper (`transport::http`), h1/h2c/UDS/TLS/SSE, post-send cancellation. gRPC: Clock-injected Tonic (`transport::grpc`), KServe OIP + Riva ASR/TTS/NLP, behind the default-on `grpc` Cargo feature (a lean HTTP-only build drops it and `tonic`; the transport-neutral Riva/KServe-gRPC endpoint *dialects* stay registered and fail closed at selection). Both on `current_thread` + `LocalSet`; no Python gRPC plugin. Each native transport (`http`/`grpc`/`dry_run`) is resolved from the transport registry through its `NativeTransportExecution` binding, so the scheduled/graph workloads never branch on a transport enum. **There is ONE thread-per-core execution model**: `workers==1` runs a single co-located `WorkerSink` on the coordinator reactor (`turn_execution::build_native`); `workers>1` tiles that same sink across `W` self-contained sub-cells (`sharded_scheduled::run_sharded_scheduled`) with no cross-thread per-request hop (the former `ThreadPerCoreExecutor` hop model was deleted). Every workload shape shards — request-rate/concurrency by request-budget partition, `user_centric`/`fixed_schedule` by per-conversation partition, and static-accuracy by per-shard capture merged and graded once on the main thread at finalize (no worker clamp); the `shardable` predicate is just `workers > 1`. A transport contributes only a `WorkerSink` (`transport::http::TransportSink`, `transport::grpc::GrpcTransportSink`) via an `ExecutionSinkBuilder`, never its own worker loop/measurement/drain — the shared response reduction (`transport::reduce`) and worker measurement (`transport::measure::WorkerMeasurement`) live once; gRPC has no parallel execution path. Adding a transport is writing a sink builder and registering a factory.
-- **Open endpoint registry, v2 validation, and frozen linked application are built.** `aiperf_runtime::endpoints`: open registry with 9 KServe + 9 Riva + `vllm_generate` factories, raw/effective config, worker-local prepared bindings. `aiperf_runtime::extensions` transactionally composes new dialects. `Application` freezes the linked registry, input resolvers, independent transport and workload registries (the pair layer is deleted), and v2 coordinator at bootstrap.
-- **Anthropic Messages parity is built.** `aiperf_runtime::endpoints::MessagesEndpoint`: exact PR 731 `/v1/messages` body, auth headers, all content shapes, streaming/non-streaming parsing, cache-usage reconciliation, thinking/signature replay. Graph transport remains Chat-shaped.
-- **Offline and wall-clock Dynamo co-simulation are built** (behind `dynosim` feature). `aiperf_runtime::dynosim`: same `RequestSink` / `TurnDispatcher` / `GraphSink` over Dynamo's `SteppableReplay`. `dynosim_offline` = virtual clock; `dynosim_online` = wall clock, apples-to-apples with Dynamo's live driver. `dynamo-full` adds router/ZMQ/KV/AIC.
-- **Dynamo replay is authored through `aiperf profile`**; no `aiperf dynosim` command. Select `transport.type: dynosim_offline|dynosim_online` in Config v2; trace file and concurrency/rate axes reuse the shared `dataset`/`phases` surface. Live mocker and replay-optimize sweep remain `python -m dynamo.*` tools.
-- **Online scheduling policy is built.** `ScheduledRuntime` paces arrivals (Poisson/Gamma/constant/burst) with `SlotPool` admission and `StopChecker` bounds. `RequestRateWorkload`: one turn per tick, FIFO continuation priority. Graph mode: trait-backed root/arrival/admission/placement/failure policy.
-- **Phase orchestration is built.** `aiperf_runtime::timing::phase`: `PhaseLifecycle`, `ClockPhaseRunner`/`Orchestrator`, duration→grace→cancel→drain→force escalation, warmup→profiling ordering, cancellation latch. Graph adapts through `PhaseExecutionFactory`.
-- **Ancillary timing policy is built.** `aiperf_runtime::timing`: `RampStrategy`/`RampDriver`, seeded `CancellationPolicy`, `UrlSelector`. HTTP 499 anchored to send completion; in-process endpoint rejects URL selection; fixed schedules reject ramps.
-- **Adaptive scale is built** as `aiperf_runtime::adaptive_core`: object-safe actuator/evaluator/step/window/controller; all four live actuators; `ramp_until_fail` controller; schema-v2 artifacts. Same futures online and offline.
-- **Hash-derived RNG substrate is built** as `aiperf_runtime::rng`: `RngRoot::derive` / BLAKE3 seed derivation, `RandomGenerator`, `HashIdRandomGenerator`, sampler seams. Non-graph scheduler integration remains future work.
-- **WEKA and Dynamo recorded-graph adapters are built.** `aiperf_runtime::graph::recorded`: strict WEKA/Dynamo decode, shared LCP-trie lowerer, dense segment interning. All content via `aiperf_runtime::rng` BLAKE3/PCG64; Python never parses or lowers either input.
-- **Graph-IR trajectory-snapshot (t*) and warmup priming are built.** `aiperf_runtime::rng::numpy_pcg64` (byte-exact NumPy `SeedSequence`+PCG64, golden-vector proven), `aiperf_runtime::graph::tstar` (`WindowTStarSampler`/`TStarSampler`, per-trace seeded t* draw, cross-language parity), `aiperf_runtime::graph::snapshot` (`chop_trie_at_tstar` profiling, `rewrite_for_warmup` priming, `chop_trie_at_frontier` handoff resume; chains grouped by `conversation_id`), and `aiperf_runtime::graph::warmup_handoff` (`GraphWarmupHandoff`/`LaneHandoff`). The runner `graph_phase_runtime` splits t* per phase (warmup→priming, profiling→chop; default window = byte-identical full replay), emits a `trajectory_warmup_failed` v2 envelope on terminal warmup failure before profiling, runs a Clock-bounded in-runtime `GraphPressureRecycle` cache-pressure warmup with per-lane executed/return-wall observability, and consumes the warmup→profiling handoff once via `chop_trie_at_frontier`. The scenario config-lock stays in Python (`src/aiperf/common/scenario/**`); Rust consumes only the resolved v2 knobs (`trajectory_start_min_ratio`/`trajectory_start_max_ratio`/`t_star_random_seed`, `agentic_cache_warmup_duration`, projected by `rust_wire`). Current fidelity is a lane-0 baseline (per-lane t* salting / shuffle draws / bounded-recycle corpus-cursor continuation are documented future refinements); idle-gap warp parity vs Python `ActiveIdleWarp` is exact.
-- **Performance metrics are built** as `aiperf_runtime::metrics_core`: 119-row catalog, NaN-sparse storage, ragged ICL, all sweep-lines, phase windows, worker merge, typed native-v2 `Reporter`. The native-Rust exporter plane (`aiperf_runtime::export`) is built and is the default sole emitter: aiperf-v1 (genai-perf-v1) JSON+CSV (including the GPU `telemetry_data` endpoint/GPU/metric summary), timeslice, server-metrics JSON/CSV/parquet, accuracy CSV, console.txt, OTLP per-record metrics, MLflow, and W&B — parity-verified byte-for-byte vs the retired Python exporters (`AIPERF_RUNTIME_NATIVE_EXPORT=0` restores legacy Python). An opt-in bounded-memory retention mode (`aiperf_runtime::metrics_core::MetricsStorageMode::Sketch`) streams each Record-metric value into a mergeable `cellular::sketch` t-digest instead of retaining it — exact counts/sums/min/max, approximate percentiles — for high-request-rate memory (`AIPERF_METRICS_SKETCH`, below).
-- **Legacy static/stateful accuracy uses canonical Python evaluators.** Rust: scheduling, HTTP I/O, timing, metrics. Python worker: prompts, hidden tests, execution, scoring over JSONL stdio. Pinned: Harbor 0.18, AgentLab 0.4.2 + BrowserGym 0.14.3, MCPMark `cd45b7f57923b9b3985467f5139927575f83141c`. No Rust prompt builders, graders, or model clients. OSWorld/AppWorld still need canonical providers.
-- **Compile-time extensibility is built.** One unified `AIPerfRegistry` / `AIPerfExtension` seam (`aiperf_runtime::extensions`) owns endpoints, dataset loaders, samplers, transports, workloads, exporters, and actuators over a shared `TransactionalRegistry<T>`. The stock composition is one ordered `with_builtin_extensions([...])` list whose only `#[cfg]` is feature-gate lines, and `--capabilities` auto-derives from the registered set. Static registration, duplicate rejection; no transport×workload pair map or compatibility predicate (any workload runs over any transport). `Application` freezes at bootstrap. No `plugins.yaml`, runtime discovery, or dynamic ABI.
-- **Dataset/segment unified store is built end to end** as `aiperf_runtime::dataset`. `Payload::TokenIds` + `Turn::raw_token_ids` for exact token arrays. `dag_jsonl` / `weka_trace` / `dynamo_trace` bypass the linear loader registry: runner-owned resolver → one compiler → frozen `SegmentStore`; no `Dataset` / `DagMetadata` intermediate.
-- **Native content serving is built** (`aiperf_runtime::content_server`). `AIPERF_CONTENT_SERVER_ENABLED=true` + non-empty dir: stable image/video URLs, audio inline. gRPC, offline, and agentic/evaluation pairs reject the sidecar.
-- **Telemetry archive/watch was removed; side-channel telemetry is built.** The legacy `aiperf-prometheus`, `aiperf-telemetry-archive`, `aiperf watch`, and `telemetry_watch` workload/pair are deleted. `aiperf_runtime::server_metrics` owns its own Prometheus/OpenMetrics parser. **GPU telemetry and network-latency calibration are built** as Clock-injected side-channel accumulator modules: `aiperf_runtime::gpu_telemetry` (DCGM-first source/decoder traits, canonical field scaling, boundary counter snapshots, cadence gauge distributions, supervised Python source, per-GPU series, energy/power/efficiency joins) and `aiperf_runtime::network_latency` (fresh TCP-connect RTT calibration with DNS resolution/fallback, per-target population stats, run-level mean, nonfatal structured failures). Both feed the shared side-channel accumulator seam. The feature-gated `aiperf_runtime::aic_runtime` builds an aiconfigurator timing engine onto the mocker's `perf_model` for the DynoSim path (part of the `dynamo-full` AIC surface).
+## Execution modes and runtime behavior
 
-When something is designed-but-not-built, this file says so. Do not assume a spec feature exists in the code.
+The runtime supports these configurations through shared clock, workload, transport, endpoint, and measurement seams:
 
-## Crate workspace (`rust/`)
+- Online execution against real HTTP or gRPC inference servers with `RealClock`.
+- Online execution against `aiperf-mock-server` through the same HTTP or gRPC paths.
+- Socket-free Dynamo co-simulation through `dynosim_offline` with `SimClock`, enabled by the `dynosim` feature.
+- Wall-clock Dynamo replay through `dynosim_online`, also enabled by `dynosim`.
+- `dry_run` execution through its registered native transport.
 
-Workspace: `edition = "2024"`, `resolver = "3"`. Four product crates (plus `pyext`, a packaging-only pyo3 cdylib, and the `e2e` test harness); 16 former `aiperf-*` library crates are now modules of `aiperf` (see §Module organization below).
+HTTP uses clock-injected Hyper and supports HTTP/1, h2c, UDS, TLS, and SSE. gRPC uses clock-injected Tonic and supports KServe OIP and NVIDIA Riva ASR, TTS, and NLP endpoint families. Registered endpoint, transport, workload, exporter, dataset, sampler, and actuator capabilities are frozen in `Application` at bootstrap; unknown identifiers fail closed.
 
-| Crate | Purpose | Key files |
-|---|---|---|
-| `loadgen-core` | Transport-neutral dispatch/measure seam + the collector. `Dispatchable`, `RequestSink<R>`, local-loop `RequestObserver` (no `Send`/`Sync`; f64-ms timestamps; optional `ObservedTokenKind` classification; terminal `ObservedUsage` with optional fields), `TraceCollector` → `TraceSimulationReport`; the `CollectorObserver` pure recorder. Zero engine/KV/HTTP deps. | `sink.rs`, `collector.rs`, `observer.rs` |
-| `aiperf-runtime` | Library-only runtime composition used by the `aiperf` binary (crate `aiperf-cli`); there is no `src/main.rs` in this crate. It owns scheduled/transport composition, HTTP and gRPC prepared sinks, online pacing, datasets, exact token-array response observation/usage, the provider-neutral evaluation workload/typed host registry/fair arbiter/ledger/retry/scoped proxy/report join, legacy static and stateful accuracy seams, adaptive/ancillary policy, native report persistence, and the feature-gated direct raw-token Dynamo adapter. It also owns the single `AIPerfRegistry`/`AIPerfExtension` composition seam (`extensions/`) and — behind the `engine` Cargo feature — hosts the v2 execution engine `aiperf_runtime::engine` (protocol envelopes, the transport/workload registries, execution factories and `*_execution` drivers, coordinator, `Application`, cellular controller/cell, control-plane HTTP, and the GPU/network/server side-channel accumulators); only `aiperf-cli` enables it, so `aiperf-mock-server`/`e2e` build without that layer. Sixteen former library crates are inlined as modules (see §Module organization). | `lib.rs`, `extensions/`, `engine/`, `evaluation.rs`, `evaluation/`, `dynosim.rs`, `ancillary.rs`, `metrics.rs`, `accuracy.rs`, `adaptive.rs`, `transport/core/`, `transport/http/` (incl. `sink.rs`), `transport/grpc/` (incl. `sink.rs`), `run.rs`, `phase_runtime.rs`, `scheduled.rs`, `report.rs` |
-| `aiperf-mock-server` | Standalone online test/benchmark inference target: OpenAI chat/completions/embeddings, TGI, rerank, image, multimodal, and RAG routes; real SSE; analytic or batch-scheduler latency; deterministic token generation; prefix-cache policy; Prometheus backend dialects; and synthetic DCGM telemetry. Latency pacing runs on the `aiperf` RealClock `timerfd` (ns-precision `sleep_ns`, not the `tokio::time` 1 ms wheel). `--processes N` makes the launched binary a lightweight L4 round-robin balancer that spawns N child servers (same binary/config) on internal loopback ports and splices each connection to the next backend; `N=1` (default) is the unchanged single-process path. An optional `--grpc-port` (env `MOCK_SERVER_GRPC_PORT`) opens a second listener serving the KServe OIP v2 `GRPCInferenceService` (`ModelInfer`/`ModelStreamInfer`/`ModelReady`/`ServerLive`/`ServerReady`) over h2c, hand-routed on the shared hyper stack and reusing the same token/latency generation seam plus the `aiperf_runtime::transport::grpc::proto` prost messages the runner`\s gRPC client uses (no build-time protoc); it is HTTP-only in `--processes N` balancer mode (gRPC warned-and-skipped). An optional `--grpc-embedding-dim N` (env `MOCK_SERVER_GRPC_EMBEDDING_DIM`) turns the unary gRPC `ModelInfer` handler into a non-LLM embedder: it consumes the input text tensor and returns one `FP32` embedding tensor of dim N (shape `[1, N]`, deterministic, reusing the HTTP embeddings generator) instead of a generated `BYTES` text output, making the mock a target for AIPerf's `kserve_v2_embeddings` gRPC endpoint (STRING-in / FP32-out, no token semantics). An optional `--accuracy-dataset <path>` (env `MOCK_SERVER_ACCURACY_DATASET`) loads a JSONL `{prompt, ground_truth}` dataset and, for matched prompts, returns the grader-formatted correct answer for a seeded fraction (`--accuracy-correct-rate`): `--accuracy-format` selects the grader shape (mmlu/mmlu_pro/gsm8k/math/exact_match/passthrough), `--accuracy-cot-rate` renders chain-of-thought (in a separate `reasoning_content` field when `--accuracy-reasoning-field`), and `--accuracy-adversarial-rate` emits parser-choke shapes drawn from real issues (reasoning-only content #1136, an `object:null` stream frame #1010, plus whitespace/case/boxed/conflicting/unicode). Ground truth is loaded mock-side and keyed on the prompt — `--accuracy-match` selects the strategy (whitespace-normalized `substring` by default, plus `exact` and `_ci` case-insensitive variants; a per-row `match_key`/`id` matches a stable fragment of a few-shot-wrapped prompt) — AIPerf never sends it over the wire; verified e2e in `rust/e2e/tests/test_accuracy_mock.rs`. A live `GET /accuracy` endpoint (and `aiperf_mock_accuracy_*` Prometheus series on `/metrics`) reports the run's actual served tally — matched/correct/incorrect/unmatched/adversarial/cot and per-task `correct/matched` — as an oracle to compare against what AIPerf's grader reports. Additional built-out mock capabilities close runner-to-mock e2e gaps, each with an e2e raw-export test under `rust/e2e/tests/`: configurable error injection (`--error-status-codes` menu, `--error-retry-after`, mid-stream SSE errors via `--error-midstream-rate`); extended usage accounting (`--usage-*`: cache write/miss, audio tokens+seconds, accepted/rejected prediction, tool-use-prompt, Anthropic cache); `tool_calls`/function-call emission (`--tool-call-rate`); the OpenAI Responses API (`/v1/responses`), token-native vLLM generate (`/inference/v1/generate`), `/openai/v1/*` KServe aliases, and KServe HTTP v2-infer / v1-predict / `/v1/infer` routes; gRPC `ModelInfer` output-tensor variants for KServe rankings/images/VLM (`--grpc-behavior`); the NVIDIA Riva ASR/TTS/NLP gRPC services (`grpc_riva.rs`); a Unix-domain-socket HTTP listener (`--uds`); TLS/HTTPS + `grpcs` listeners (`--tls-cert`/`--tls-key`/`--tls-self-signed`, `tls.rs`); and the DCGM encoder/decoder/SM-active + vLLM external/CPU-cache + SGLang counter telemetry fields the runner decodes. It exports an Axum router for tests and a tuned Hyper server binary, but is not part of the runner dependency graph. | `app.rs`, `balancer.rs`, `grpc.rs`, `listener.rs`, `config.rs`, `handlers.rs`, `tokens.rs`, `latency.rs`, `scheduler.rs`, `prefix_cache.rs`, `metrics.rs`, `prom.rs`, `dcgm.rs`, `accuracy.rs`, `grpc_riva.rs`, `tls.rs`, `main.rs` |
-| `aiperf-cli` | The ONE product binary `aiperf` (crate `aiperf-cli`, lib + bin): BOTH the native Rust entry point AND the execution engine. Owns `aiperf profile` (single run **and** sweeps) and `aiperf config init/validate/expand` natively — no Python on the profile/config path: idiomatic clap flags + serde Config v2 (byte-exact YAML keys/flags/defaults) → projection onto the `protocol_v2` request schema → re-execs ITSELF (`aiperf --execute`, an internal hidden mode intercepted before clap; also `--cell`/`--aggregator` for cellular) once per cell → aggregates → echoes the runner's `profile_export_console.txt` summary to the terminal. Comma-list flags expand to a native grid/zip sweep (`sweep/`, alpha-sorted axes, byte-exact per-cell requests + artifact-dir 5-row table + `base+idx` seeds), each cell a single-run request with the sweep envelope stamped. `--num-profile-runs N` repeats each variation over N trials (`--parameter-sweep-mode` REPEATED/INDEPENDENT, per-trial `run_NNNN`/`trial_NNNN` dirs, warmup dropped after trial 0), byte-exact vs the Python orchestrator. Single-trial cells aggregate into a byte-exact `sweep_aggregate/profile_export_aiperf_sweep.{json,csv}` (ported from `SweepAnalyzer` + the aggregate sweep exporters); the multi-trial confidence aggregate is **built** (`sweep/confidence.rs`): the non-sweep multi-run path writes `aggregate/profile_export_aiperf_aggregate.{json,csv}` (+ a collated `profile_export_aiperf_collated.json` under `--convergence-metric`), and the sweep path writes per-variation confidence aggregates plus the cross-variation `sweep_aggregate` with `best_configurations`/`pareto_optimal` and REPEATED/INDEPENDENT dir routing — the Student-t inverse CDF is a pure-Rust port (regularized incomplete beta + bisection, no scipy/pyo3), so CI bounds are close-but-not-bit-exact (no test pins them numerically). `config init` scaffolds from 28 embedded templates (`config/`), `config validate` resolves through the native YAML surface (which applies `${ENV}` substitution + Jinja2 `{{ }}`/`variables:` expansion via `expand.rs`, inline dataset `records:`, and the distribution discriminator), and a config-authored `sweep:` block (grid/zip over dotted paths with bare-name aliases, `sweep/yaml_sweep.rs`) expands to a native sweep previewable via `config expand`. Native profile/config are byte-exact vs Python for every flag they model (GenAI-Perf aliases included; zero pure-alias gaps; top-level `scenario`/`trajectory_start_*`/`unsafe_override`/`agentic_cache_warmup_duration` and the always-emitted `accuracy`/`endpoint_profiles`/`failure_policy` sections land natively). **The CLI NEVER shells out to the Python `profile` command** — full parity is being built out entirely in Rust (pure-Rust request projection for config/media/rankings/synthesis/scenario flags; accuracy request-projection flags are **built** (native), while accuracy **execution** uses the pinned Python evaluators — the sanctioned in-process/subprocess path per 'minimal pyo3 for the ML library and accuracy', never the Python `profile` command; the adaptive **SLA-search** subsystem is **built** — all four `max-concurrency-under-sla --search-style` styles run natively as dynamic ask-tell loops (one `aiperf --execute` child per probe, SLA metric read back from `native-v2.json`): `monotonic` is pure Rust; the default `smooth_isotonic` (PAVA+PCHIP), `bo` (BoTorchSampler+qLogNEI), and `optuna` (TPE/GP) run behind the opt-in `search-pyo3` feature, which embeds CPython and calls the real scipy/optuna — the shipped default binary stays Python-free). The grid recipe writes `sweep_aggregate/sla_breach.json` (SLA-feasibility knee: `max_passing`/`first_failing` + per-point breaches, ported from `SLABreachKnee` + `sweep_sla_filter.read_metric_value`), and every adaptive recipe writes `search_history.json` (config block, per-iteration feasibility trajectory, feasibility-first `best_trials`, `boundary_summary`). The `max-goodput-under-slo` recipe is also native behind `search-pyo3` (BO over `goodput` under a `good_request_fraction >= --slo-attainment-fraction` outcome constraint, per-request TTFT/TPOT/E2E SLOs installed as config `slos`). Unmodeled flags currently surface a clap error until ported. Peripheral subcommands are native pure-Rust (no pyo3): `analyze-trace` (mooncake ISL/OSL + cache-hit stats, byte-exact `PrefixAnalyzer` incl. NumPy percentile/std), `validate mooncake-trace` (schema validators), `speed-bench-report` (spec-decode acceptance matrix → byte-exact CRLF CSV), and `chat` (hyper streaming OpenAI client, http/https, + per-turn TTFT/TPS/ITL/cache stats; reuses the shared `read_sse` SSE reader, tiktoken/HF tokenizer, and an injected `Clock`), and `synthesize agentic-code` (the seeded multi-turn dataset generator; byte-exact `dataset.jsonl` on the byte-exact numpy `Generator` port `aiperf_runtime::rng::numpy_generator` — ziggurat normal + Lemire integers + weighted choice, verbatim from numpy's C source). The remaining subcommands wrap heavy Python subsystems — `plot` (matplotlib), `service` (the legacy Python mesh the native path replaces), `plugins` (registry/import validation): in the `pyo3-embed`/`search-pyo3` build they run the real `aiperf.entrypoint.main` **in-process via embedded CPython** (ZERO subprocess shell-out for the whole CLI); the lean Python-free build falls back to a `python -m aiperf` subprocess. Parity gated by golden vectors (`tools/parity/`: single-run `dump_golden.py`, sweep `dump_sweep.py`, sweep-aggregate `dump_sweep_aggregate.py`, and the dynamic SLA-search `dump_monotonic.py` / `dump_isotonic.py` / `dump_bayes.py` — byte-exact probe-sequence parity vs the real Python planners on the pure-Rust and seeded-TPE paths; scipy-bootstrap and botorch-GP paths behaviorally verified). | `main.rs`, `lib.rs`, `dispatch.rs`, `delegate.rs`, `profile.rs`, `flags.rs`, `load.rs`, `yaml.rs`, `sweep/`, `search.rs`, `isotonic.rs`, `bayes.rs`, `pyfit.rs`, `pyopt.rs`, `analyze_trace.rs`, `validate.rs`, `speed_bench.rs`, `chat.rs`, `synthesize/`, `config/`, `render.rs`, `execute.rs`, `exec_bin.rs`, `execute_mode.rs`, `mimalloc_options.c`/`build.rs` |
-| `pyext` | Packaging-only pyo3 `cdylib`, compiled by maturin into `aiperf._native` for the **single `aiperf` wheel**. maturin requires a real binding target, so this tiny module is the wheel's compiled target; maturin also packages the `src/aiperf` frontend (`python-source = "src"`) but does NOT build or intern the unified `aiperf` binary. Instead `tools/wheel_repack.py` (run by `make wheel`) repacks the ONE unified `aiperf` binary (entry point + execution engine) directly into the wheel's scripts directory as `aiperf-<ver>.data/scripts/aiperf`, so the installed `aiperf` command IS the native binary (there is no `[project.scripts] aiperf` console-script entry). The pure-Python app is reachable as `aiperf-python` (`aiperf.entrypoint:main`) and `python -m aiperf`, and the native binary delegates every non-`profile`/`config` subcommand back to `python -m aiperf` (which stays pure Python — no exec loop). No `aiperf-runtime`/dynosim deps; carries only build metadata for `aiperf --version`/diagnostics; discovery uses `importlib.resources` and never imports this module. | `Cargo.toml`, `src/lib.rs` |
+Scheduled workloads provide request-rate, concurrency, user-centric, and fixed-schedule operation. Phase execution applies warmup and profiling lifecycle policy, grace, cancellation, drain, and force escalation through shared phase orchestration. Graph inputs include `dag_jsonl`, `weka_trace`, and `dynamo_trace`; the engine resolves them into the graph and segment-store path.
 
-Dependency direction: `aiperf-cli` → {`aiperf-runtime` (with the `engine` feature), `loadgen-core`} and re-execs ITSELF (`aiperf --execute`) at runtime (a launched process, not a second binary); `aiperf-runtime` → {`loadgen-core`} plus optional `dynamo-mocker` only under `dynosim`; `aiperf-mock-server` → {`aiperf-runtime`}; `pyext` → {`pyo3`} only (no internal deps, and nothing depends on it). aiperf-cli and mock-rs do not depend on each other; real-network integration tests spawn the mock binary as an ordinary target.
+The native execution model is thread-per-core:
 
-## Module organization (`rust/runtime/src/`)
+- `workers == 1` uses one co-located worker sink on the coordinator's current-thread runtime and `LocalSet`.
+- `workers > 1` runs self-contained sub-cells on OS threads. Each sub-cell owns scheduling, admission, transport, capture, and worker-local state.
+- A transport contributes an `ExecutionSinkBuilder` and worker-local `WorkerSink`; transport implementations do not own worker scheduling or phase orchestration.
+- HTTP and gRPC share response reduction in `transport::reduce` and worker measurement in `transport::measure`.
+- Request-rate and concurrency workloads partition request budgets; user-centric and fixed-schedule workloads partition conversations.
 
-Sixteen former `aiperf-*` library crates are now `aiperf_runtime::<module>::` namespaces. All inter-module imports use `crate::<module>::` within `aiperf`; runner and mock-rs use `aiperf_runtime::<module>::`. Three modules use a `_core` prefix to avoid name conflicts (`metrics_core`, `adaptive_core`, `accuracy_core`). The two wire transports live under one `transport` parent module: `transport::http` (hyper) and `transport::grpc` (tonic) are the wire + sink impls (each with a `sink.rs` `WorkerSink`) that share the transport-neutral response reduction (`transport::reduce`) and worker measurement (`transport::measure::WorkerMeasurement`), and both depend on `transport::core` — the transport-neutral dispatch vocabulary (`Request`, `DispatchResult`, `MeasuredContext`/`MeasuredOutcome`, `PreparedTurn`, the `RequestExecutor`/`Dispatcher` traits, `PreparedEndpoint` (ex-`PreparedHttpEndpoint`), `RequestRecord`, `Response`/`TextResponse`, `TraceData`/`TraceExport`/`TraceReference`, `ErrorDetails`/`ErrorKind`, `ConnectionReuseStrategy`, and the SSE `SseMessage`/`SseField`/`SseFieldName` types); `transport::core` has no dependency on `transport::http`. Full module table with purposes and key files: [`docs/module-organization.md`](docs/module-organization.md).
+Cellular execution is selected with `--cells N` or `runtime.cells`. The controller partitions work across cell processes and merges records or folded metric stores. HTTP and gRPC request-bounded scheduled runs are supported. Graph programs use trace-level ownership. Multi-turn workloads use conversation ownership on supported samplers. The `cellular` feature provides cross-host cell transport (over the `velo` framework).
 
-## The two seams (the whole architecture)
+The native metrics plane computes record, aggregate, derived, phase-window, and sweep metrics. Exact mode retains records as required by configured artifacts. `--sketch-metrics` or `AIPERF_METRICS_SKETCH=1` uses mergeable t-digests: counts, sums, extrema, and rate aggregates remain exact; percentiles and standard deviation are streaming estimates; per-record outputs are unavailable.
 
-- **`{clock}`** (`aiperf-clock`): `RealClock` vs `SimClock` behind one `Clock` trait. `is_virtual()` selects the `drive_real` (tokio reactor drives) vs `drive_sim` (idle-pump: poll the `LocalSet` to quiescence draining all same-instant work → `advance_to(next_event_time)` waking heap-ordered sleepers → repeat) driver over the *same* executor. Virtual time is integer ns with an `(at_ns, seq_no)` deterministic tie-break — **never `tokio::time`** (its 1 ms timer wheel destroys µs/ns firing gates).
-- **`{transport}`** (`loadgen-core::sink`): `RequestSink<R>::dispatch` drives a `Dispatchable` request to terminal and emits `on_arrival` / `on_admit` / `on_token` (or `on_classified_token` with `ObservedTokenKind::{Output,Reasoning}`) / terminal `on_usage(ObservedUsage)` / `on_terminal` through a `RequestObserver`. Classification defaults to `on_token`; usage defaults to a no-op and keeps unreported counts as absent fields. `RequestObserver` has no `Send`/`Sync` supertraits: each thread-per-core worker owns a local observer graph in `Rc`/`RefCell`; cross-thread consumers may still provide a thread-safe implementation. Real HTTP, native gRPC, mock HTTP, and the feature-gated in-process engine co-sim all feed this observer seam; `GrpcRequest` retains its prepared endpoint reference for `RequestSink` dispatch. TTFT is the first token callback; sinks emit no separate first-token event.
+The exporter plane writes configured JSON, CSV, Parquet, console, timeslice, server-metrics, accuracy, OTLP, MLflow, and W&B outputs. Per-record formats are selected through `artifacts.records`; Parquet requires the `parquet` feature.
 
-## Extensibility & porting discipline (non-negotiable)
+## Workspace crates
 
-- **Every extension point is a trait.** Anything that could ever have a second implementation — a transport, a clock, an accuracy evaluator, a request/response shape, an arrival pattern, a dataset loader, a sampler, a segment store, a metric accumulator, an analyzer, an exporter, an endpoint dialect, a tokenizer, a scheduling policy — MUST be an implementable `trait` (object-safe where it crosses a `dyn` boundary; generic where it is hot-path monomorphized) with at least one concrete impl behind it. Never hardcode a concrete type where a future variant is conceivable. If you are `match`-ing on an enum of "kinds" or branching on a string mode, that is a trait waiting to be extracted. In-tree precedent: `Clock`, `RequestSink<R>` / `RequestObserver` / `Dispatchable`, `AccuracyEvaluator`, `SegmentStore` / `PromptMaterializer`, `GraphSink`.
-- **Always design ahead.** When you add code, add the seam the next plausible requirement will need — name the trait, take the trait (not the concrete) in signatures, thread the injection point — even if you ship exactly one impl today. The three-modes-for-free property only survives if features are written against the `{transport, clock}` seams, never against a specific backend/clock/transport; a feature that works in only one mode is a design bug. Note the extension you are leaving open in a `//!` / `///` doc comment.
-- **Read the ENTIRE Python source before porting ANYTHING.** Before porting a behavior, read the WHOLE Python file end-to-end AND every file it meaningfully touches (its imports, the models it builds, the callers that consume its output, the tests that pin it). Never port from a docstring, a grep hit, a snippet, or a spec paragraph — those omit the earned-in-blood edge cases (SSE fast-paths, backward usage walks, finish/usage reconciliation, firing-gate rounding), which live in the parts of the file you assumed you could skip. Cite the exact Python `path:line` you ported from in the Rust `//!` / `///` docs, and guard it with a parity test wherever byte-exactness matters.
+The Cargo workspace uses edition 2024 and resolver 3.
 
-## Coding standards (Rust)
+- `loadgen-core`: defines `Dispatchable`, `RequestSink<R>`, `RequestObserver`, `ObservedUsage`, endpoint observations, `TraceCollector`, and `CollectorObserver`. It has no engine, router, KV, HTTP, or gRPC dependency.
+- `aiperf-runtime`: library-only runtime composition. It contains clocks, datasets, endpoints, transports, scheduling, graph execution, metrics, exporters, accuracy, adaptive control, telemetry, content serving, cellular support, extension registration, and the feature-gated v2 engine.
+- `aiperf-cli`: library plus the `aiperf` binary. It owns command routing, Config v2 loading and expansion, profile projection, self-execution, cellular roles, native searches and sweeps, result rendering, and process signals.
+- `aiperf-mock-server`: standalone HTTP/gRPC inference target with deterministic response generation, latency models, error injection, usage accounting, telemetry, TLS, UDS, balancing, accuracy fixtures, and request recording.
+- `pyext`: packaging-only pyo3 module exposed as `aiperf._native` in the wheel.
+- `e2e`: product integration harness and tests.
 
-- **SPDX header** (`// SPDX-FileCopyrightText …` + `// SPDX-License-Identifier: Apache-2.0`) atop every source file. `//!` module docs; `///` doc comment on every public item.
-- **Thread-per-core**, not work-stealing, on the hot path: N OS threads, each a `current_thread` tokio runtime + `LocalSet`; per-trace state is `Rc`/`RefCell`, futures are `!Send`, tasks are `spawn_local`; parallelism = many traces across threads. See `aiperf-graph/src/runtime.rs`, `transport_bench.rs`. The runner's online `run.rs` path follows the same `!Send` model on a single `current_thread` runtime + `LocalSet`, with `Rc` observers and dynamic `SlotPool` admission.
-- **All time through `Clock`** in the clock-aware crates (`aiperf-transport-http`, `aiperf-transport-grpc`, `aiperf-graph`, and the runner/library online path): never `Instant::now()`, `SystemTime::now()`, or raw `tokio::time` for measurement or firing gates. The relocated OpenAI SSE chunk types (`aiperf-transport-http::sse`) and the `CollectorObserver` recorder (`loadgen-core::observer`) own no clock; callers supply Clock-derived timestamps.
-- **No `Arc`/`Mutex` on hot paths.** Accumulate lock-free per-thread / per-worker and merge once at the end (the graph bench keeps a per-worker accumulator and merges at the join) — never contend a shared collector lock per token on the throughput path.
-- **Content-addressed segments**: blake3, prefix-dependent (fold the parent id into the hash so shared prefixes dedup and identical text under different prefixes stays distinct); materialize = clone/concat pre-serialized bytes, never re-serialize.
-- **mimalloc** is installed by the `aiperf` binary (crate `aiperf-cli`); per-request allocation churn in the graph executor and streaming client was the top profiled hotspot.
-- **Loopback benchmarking**: the hyper transport never consults the ambient `HTTP_PROXY`, so localhost traffic is not proxied (an ambient proxy 405s localhost and tanks throughput).
-- **SSE**: buffer raw bytes, split lines on the byte buffer, UTF-8-decode only complete lines (a multibyte char may straddle a TCP chunk boundary).
-- **Authoritative token counts**: request `stream_options.include_usage` so `usage.completion_tokens` is returned; the HTTP sink emits it through `RequestObserver::on_usage`. Adaptive windows and the collector-wide native accumulator reconcile OSL and the `(last−first)/(osl−1)` ITL denominator to authoritative completion usage while preserving observed chunk timings.
-- **Errors**: `anyhow` in the runner/app layer; library crates use plain error enums with hand-written `Display` (no `thiserror`).
-- **Python defines the Config v2 schema** (mirrored byte-exact by `aiperf-cli`'s native serde Config v2). Rust runner requests use strict `serde` / `serde_json` DTOs with unknown-field rejection. Prefer a direct-serialized request body on the hot path.
-- **NaN/Inf discipline**: numeric metric values crossing a serialization boundary must be finite or explicitly absent.
-- **Comments explain *why*, never *what*.** No emojis in code. Read the actual code, never trust the docstrings or comments.
+Direct internal dependency direction is `aiperf-cli` to `aiperf-runtime` to `loadgen-core`; `aiperf-mock-server` to `aiperf-runtime`; and `e2e` has development dependencies on `aiperf-runtime` and `aiperf-mock-server`. `pyext` depends directly on pyo3. The CLI and mock server are independent executables.
 
-## Build, test, run
+## Runtime modules
 
-The (inherited-Python) `Makefile` has cargo-backed packaging targets (`make bundle-cli`, `make wheel`) plus native-entrypoint targets (`make native-cli` builds the pure-Rust `aiperf` binary; `make install-native` places it in `dist/native-bin/` for a Python-free profile/config flow); for everything else use cargo directly:
+The main `aiperf_runtime` module groups are:
+
+- `clock`, `timing`, `scheduled`, `scheduler`, `phase_runtime`, `request_rate`, `user_centric`, `fixed_schedule`, and `workload`: time and workload execution.
+- `transport::core`, `transport::http`, `transport::grpc`, `transport::reduce`, and `transport::measure`: request/response vocabulary, wire clients, shared reduction, and measurement.
+- `endpoints`, `dataset`, `body_plan`, `content_server`, and `rng`: endpoint binding, input resolution, payload planning, media publication, and deterministic randomness.
+- `graph`: graph compilation, segment storage, policies, execution, trajectory sampling, snapshots, and warmup handoff.
+- `metrics_core`, `metrics`, `report`, and `export`: accumulation, runtime adaptation, reporting, and sinks.
+- `accuracy_core`, `accuracy`, `adaptive_core`, `adaptive`, and `failure`: evaluation and control policy.
+- `cellular`: partitioning, protocol, controller/cell behavior, folded stores, and Velo integration.
+- `gpu_telemetry`, `network_latency`, and `server_metrics`: side-channel measurement.
+- `extensions`: `AIPerfRegistry`, `AIPerfExtension`, and transactional registries.
+- `engine` under the `engine` feature: protocol v2, application bootstrap, transport and workload factories, execution coordination, cellular launch, and control-plane integration.
+- `dynosim` under the `dynosim` feature and `aic_runtime` under `dynamo-aic-forward-pass`: Dynamo execution integrations.
+
+See `docs/module-organization.md` for the complete module map.
+
+## Active seams
+
+### Clock
+
+All clock-aware runtime code uses `aiperf_runtime::clock::Clock`. `RealClock` supplies wall time. `SimClock` supplies integer-nanosecond virtual time with deterministic event ordering. Execution selects the real-reactor or simulation driver through `Clock::is_virtual()`. Measurement and firing gates must not call `Instant::now`, `SystemTime::now`, or Tokio timers directly.
+
+### Dispatch and observation
+
+`loadgen_core::sink` is transport-neutral:
+
+- A transport-native request implements `Dispatchable`.
+- A sink implements `RequestSink<R>` and drives one request to terminal.
+- A `RequestObserver` receives arrival, admission, token, classified-token, batched-output-token, usage, endpoint-metric, and terminal events.
+- TTFT is the first token observation; sinks do not emit a separate first-token event.
+- `RequestObserver` has no `Send` or `Sync` supertrait, allowing worker-local `Rc<RefCell<_>>` state.
+
+### Runtime registration and transport placement
+
+`AIPerfExtension` registers implementations in `AIPerfRegistry`. Use the relevant registry trait for endpoints, datasets, samplers, transports, workloads, exporters, or actuators. Registrations are transactional and duplicate identifiers are rejected.
+
+Native transports implement `ExecutionSinkBuilder` and `WorkerSink`. Prepared endpoint tables are worker-local. Keep scheduling, cancellation, drain, response reduction, and measurement in shared runtime layers.
+
+Other active implementation seams include `SegmentStore`, `PromptMaterializer`, `GraphSink`, accuracy evaluator factories, synthetic media generators and publishers, metric accumulation/reporting, endpoint dialect factories, graph policies, and telemetry sources.
+
+## Rust coding standards
+
+- Add the NVIDIA SPDX copyright and Apache-2.0 license header to every source file.
+- Add `//!` module documentation and `///` documentation for public items.
+- Use current-thread Tokio runtimes and `LocalSet` on request hot paths. Keep per-worker state local and use `spawn_local` for `!Send` futures.
+- Do not add `Arc<Mutex<_>>` contention to per-request or per-token paths. Accumulate per worker and merge at a boundary.
+- Route all measurement and scheduling time through `Clock`.
+- Preserve SSE as bytes until complete lines are available; a UTF-8 code point may span network chunks.
+- HTTP loopback traffic must never use ambient proxy settings.
+- Request and reconcile authoritative server usage when the endpoint provides it. Keep absent usage fields absent.
+- Keep numeric values finite or explicitly absent at serialization boundaries.
+- Use strict serde DTOs with unknown-field rejection for protocol-v2 requests.
+- Use `anyhow` in CLI/application layers. Library APIs use explicit error types with `Display` implementations.
+- Use BLAKE3 prefix-dependent identifiers for content-addressed segments and materialize from stored serialized bytes.
+- The `aiperf` binary installs mimalloc as its global allocator.
+- Comments explain non-obvious constraints and interactions, not syntax.
+- Prefer minimal diffs and preserve existing public wire and artifact contracts unless the task changes them explicitly.
+
+## Build, test, package, and run
+
+Activate the project environment before repository commands:
 
 ```bash
-cargo build                  # debug build of the whole workspace
-cargo build --release        # optimized — use for any throughput number
-cargo test                   # all unit tests (self-contained: in-process axum mock, no external server)
-cargo test -p aiperf-runtime # just the runtime library crate
-cargo test -p aiperf-mock-server # standalone mock-server unit + HTTP integration suite
-cargo clippy --all-targets   # lints
-cargo fmt                    # format (rustfmt)
+source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate
+```
 
-# Product runner with offline scheduled + graph pairs; expects the sibling checkout.
+Core Rust commands:
+
+```bash
+source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate
+cargo build
+cargo build --release
+cargo test
+cargo test -p aiperf-runtime
+cargo test -p aiperf-mock-server
+cargo clippy --all-targets
+cargo fmt --check
+```
+
+Feature-bearing builds:
+
+```bash
+source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate
 cargo build -p aiperf-cli --features dynosim
-# Focused library algorithms remain independently testable.
 cargo test -p aiperf-runtime --features dynosim --lib
-# Complete native build: router runtime, ZMQ events, KV offload, AIC, and profile support.
-cargo build -p aiperf-runtime --features dynamo-full
-
-# Native entry point with the scipy/optuna-backed dynamic SLA-search styles
-# (`--search-style smooth_isotonic|bo|optuna` for `max-concurrency-under-sla`).
-# OFF by default so the shipped `aiperf` binary is Python-free; ON embeds CPython
-# and calls the real scipy/optuna in-process (`monotonic` needs no feature).
+cargo build -p aiperf-cli --features full
 cargo build -p aiperf-cli --features search-pyo3
-
-# Base embed-CPython feature alone (implied by search-pyo3): routes every
-# non-profile/config subcommand through in-process `aiperf.entrypoint.main`
-# instead of a `python -m aiperf` subprocess — zero shell-out for the whole CLI.
 cargo build -p aiperf-cli --features pyo3-embed
-
-# Standalone online mock target for local integration runs.
-cargo run -p aiperf-mock-server -- --fast
-
-# Same mock, additionally serving the KServe OIP v2 gRPC service on :8001
-# (target for `transport.type: grpc`, `grpc://127.0.0.1:8001`). HTTP-only under `--processes N`.
-cargo run -p aiperf-mock-server -- --fast --grpc-port 8001
 ```
 
-Package the single `aiperf` wheel (maturin backend, `pyproject.toml`). There is
-**one** `aiperf` distribution: maturin compiles the `pyext` pyo3 module into
-`aiperf._native` and packages the `src/aiperf` frontend (`python-source = "src"`);
-`tools/wheel_repack.py` (run by `make wheel`) then repacks the one unified `aiperf`
-executable into the wheel's scripts directory as `aiperf-<ver>.data/scripts/aiperf`
-— no separate runner wheel. Because it carries a native binary
-the wheel is platform + CPython-ABI specific (no longer `py3-none-any`); the full
-execution surface (`--features full` = `dynosim` + `parquet` + `cellular`) requires the
-sibling `dynamo-aiperf-native` checkout at build time (the default `--features parquet`
-build is sibling-free):
+`dynosim` and `full` require the sibling `dynamo-aiperf-native` checkout. The default CLI feature set includes gRPC and `cellular`. `parquet`, `dynosim`, `search-pyo3`, and `pyo3-embed` select their named capabilities.
+
+Packaging and installation:
 
 ```bash
-# Build the unified aiperf binary (lto=fat, CLI_FEATURES-selectable).
+source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate
+make native-cli
 make bundle-cli
-# bundle-cli + `maturin build` + `tools/wheel_repack.py` -> one aiperf wheel.
 make wheel
-# Editable dev install builds and installs the unified binary (make install-app runs bundle-cli);
+make install-app
 ```
 
-Run the product:
+`make wheel` builds the pyo3 module with maturin and injects `target/release/aiperf` into the wheel's scripts directory through `tools/wheel_repack.py`. The installed `aiperf` command is the native binary. `CLI_FEATURES` selects the packaged binary feature set.
+
+Product commands:
 
 ```bash
-# Generate, validate, and run through the human-facing `aiperf` entry point.
+source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate
 aiperf config init --template minimal --output benchmark.yaml
 aiperf config validate benchmark.yaml
+aiperf config expand --config benchmark.yaml
 aiperf profile --config benchmark.yaml
-
-# Externalize generated images/videos through the run-owned native server.
-mkdir -p /tmp/aiperf-content
-AIPERF_CONTENT_SERVER_ENABLED=true \
-  AIPERF_CONTENT_SERVER_CONTENT_DIR=/tmp/aiperf-content \
-  aiperf profile --config benchmark.yaml
-
-# Cellular (multi-process) mode: `--cells N` (or `runtime.cells: N`) makes the launched
-# aiperf a controller that spawns N `aiperf --cell` children over a
-# (cell_id, cell_count) budget partition and merges their records into one report.
-# `--cells 1` (default) is the unchanged single-process path. Supported for synthetic
-# and file/public runs over the http OR grpc transport with request-bounded phases (gRPC
-# runs the SAME cell executor as http — the cell issuer + records shipper live above the
-# transport); a run seed and single URL are NOT
-# required (seedless auto-derives a shared seed, multi-URL round-robins cell-locally,
-# ramps/rate/cancellation are aggregate-equivalent, warned). MULTI-TURN runs (a `sessions`
-# / --num-conversations budget) partition per CONVERSATION and are supported on the
-# exact-fold merge path (metrics-only concat merge, order-independent): the controller
-# slices the sessions budget per cell (owned_positions, tiles exactly) and rejects
-# multi-turn on the retain path (a live-reply inputs.json forces retain) with a clear
-# message. Graph programs (dag_jsonl/weka_trace/dynamo_trace) also partition across cells
-# (trace-level, concatenation-merged; a graph --sketch-metrics cell folds each record into
-# its t-digest and ships a sketch StorePartition, merged associatively like exact-fold).
-# Fails closed on the dynosim offline/online transport (a separate SimClock executor with
-# no cell-issuer/records wiring) + scheduled duration/adaptive, and on multi-turn with a
-# random sampler (sequential/shuffle only).
-# E2e: test_cellular.rs + test_cellular_multiturn.rs + test_grpc_cellular.rs (scheduled) +
-# test_graph_cellular.rs (incl. sketch store-ship).
 aiperf profile --config benchmark.yaml --cells 4
-
-# Native multi-value sweeps: any comma-list flag (concurrency/request-rate/request-count/
-# isl/osl/num-conversations/benchmark-duration) expands to a grid (default) or zip sweep,
-# one `aiperf --execute` per cell, aggregated into `<dir>/sweep_aggregate/` with a live table.
-aiperf profile --model M --url 127.0.0.1:8000 --endpoint-type chat --concurrency 1,2,4 --request-count 100
-aiperf profile --model M --url 127.0.0.1:8000 --endpoint-type chat --concurrency 2,4 --request-rate 5,10 --sweep-type zip
-
-# Native config workflow (no Python): scaffold, validate.
-aiperf config init --list
-aiperf config init --template minimal --model M --url 127.0.0.1:8000 --output benchmark.yaml
-aiperf config validate benchmark.yaml
-
-# Capabilities/inventory is an in-process function now (no `--capabilities` argv
-# mode): `aiperf_cli::execute_mode::capabilities_catalog()` composes the stock
-# application and returns the linked catalog.
-
-# Offline/online Dynamo replay is a Config-v2 transport, authored through `aiperf profile`.
-# (transport.type: dynosim_offline|dynosim_online). The live mocker server and the
-# replay-optimize sweep stay native tools: `python -m dynamo.mocker`, Dynamo's profiler.
-aiperf profile --config dynosim_offline_replay.yaml
 ```
 
-`cargo run -p aiperf-runtime` is invalid: the `aiperf-runtime` package has no binary (the native binary is the `aiperf-cli` crate). The entry point projects one side-effect-free authored-v2 request; an unregistered transport or workload fails closed without conversion to v1. `dag_jsonl`/`weka_trace`/`dynamo_trace` enter the runner-owned graph-input resolver once, call exactly one compiler, and never pass through a second registry. gRPC endpoints require `transport.type: grpc` with `grpc://`/`grpcs://` URLs. Offline/online replay requires `dynosim_offline`/`dynosim_online` and a feature-bearing runner.
+The native profile command accepts comma-separated axes for grid or zip sweeps and supports repeated trials and adaptive search. Dynamo replay is configured with `transport.type: dynosim_offline` or `dynosim_online` in Config v2.
 
-Content server: `AIPERF_CONTENT_SERVER_ENABLED=true` + non-empty `AIPERF_CONTENT_SERVER_CONTENT_DIR`. See `docs/tutorials/content-server.md`.
+Standalone mock target:
 
-Per-record columnar sidecars: the `artifacts.records` format list takes `jsonl`, `csv`, and `parquet` (any subset, e.g. `records: [jsonl, csv, parquet]`). `csv` writes a flat `profile_export_records.csv` (metadata cols + one column per metric named `{Header} ({unit})` — the summary-CSV unit convention via `RecordMetricColumn::csv_display_name` — + `error_code`/`error_type`/`error_message`, `trace_*` when `artifacts.trace`), ported from the legacy Python `RecordExportCsvResultsProcessor` but re-styled from that port's `{tag}_value`/`{tag}_unit` pairs to match `profile_export_aiperf.csv`. `parquet` emits a wide, columnar `profile_export.parquet` beside the per-request `profile_export.jsonl` (one row per request, one nullable column per catalog record-metric, units in `aiperf.units` file metadata; flat `trace_*` columns when `artifacts.trace`). Runner-owned artifact, not an `Exporter` over `NativeReport`: the per-record data lives only at the `CapturedRecord` callsites, so `rust/runtime/src/engine/records.rs::write_records_{parquet,csv}` drive the writers at both the scheduled and graph callsites (parquet via `aiperf_runtime::export::per_record_parquet`, gated on the `parquet` feature — a lite runner warns and skips; CSV is stdlib and always available). The metric column set is the shared `aiperf_runtime::metrics_core::record_metric_columns`. Independent of the JSONL and force-disabled on the DynoSim/sketch paths (`rust_wire` strips `records_parquet_path`/`records_csv_path`).
+```bash
+source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate
+cargo run -p aiperf-mock-server -- --fast
+```
 
-Python frontend is pure Python (mesh-only); the Python→Rust bridge is DELETED: `python -m aiperf.cli profile` (and `aiperf-python`) execute entirely in-process on the legacy pure-Python service mesh (`SystemController` + Worker/TimingManager/RecordsManager children) — single runs via `bootstrap_and_run_service`, sweeps/multi-trial via `LocalSubprocessExecutor` → `subprocess_runner`. There is no `rust_wire` projection, no `aiperf --execute` spawn, and no Config-v2 `transport`/`workload` schema (`orchestrator/{rust_wire,native_execution,native_report}.py` and `config/execution.py` are removed). Native-only configs (`runtime.cells > 1`, `--sketch-metrics`; `transport`/`workload` keys fail `extra="forbid"`) are rejected at `aiperf.cli_runner.run_benchmark` pointing at the native `aiperf` binary; the native execution engine is reached only by invoking `aiperf` directly. Kubernetes cellular is native too: `aiperf controller`/`cell`/`aggregator` are native subcommands (`rust/cli/src/cellular_role.rs`, no Python delegation) and the controller reports progress/snapshot/completion to its AIPerfJob CR via the native in-cluster client (`rust/cli/src/k8s.rs`, port of `completion_signal.py` + the `.aiperf_results_ready.json` marker) — the Python `cli_commands/{_cellular_role,cell,controller}.py` and `kubernetes/completion_signal.py` adapters are removed. `Environment.RUNTIME.ENGINE` (`AIPERF_RUNTIME_ENGINE`) is now inert on the Python frontend (retained as a vestigial field).
-RNG backend switch: `AIPERF_RNG_BACKEND=rust_parity` (default `legacy`) swaps the seeded random substrate from Python`\s Mersenne Twister + NumPy (SHA-256 seed derivation) to a pure-Python byte-exact port of the Rust `aiperf_runtime::rng` `Pcg64` + BLAKE3 substrate (`src/aiperf/common/rng_parity/`), so seeded Python and Rust produce identical streams in tests. Enum field `Environment.RNG.BACKEND` in `src/aiperf/common/environment.py`; `legacy` (default) is unchanged. Parity is proved against committed Rust golden vectors (`rust/runtime/examples/rng_parity_vectors.rs` -> `rust/runtime/tests/data/rng_parity_vectors.json`, replayed by `tests/unit/common/test_rng_parity.py`).
+## Verification requirements
 
-Export-plane off switch: `AIPERF_RUNTIME_NATIVE_EXPORT=0` (default `1`) restores the legacy Python emitters (the `ExporterManager` data/console exporters, the mlflow/wandb post-run uploaders, and the OTel live-streaming sidecar) instead of the native `aiperf_runtime::export` sink plane, for A/B verification (mirrors `AIPERF_RUNTIME_ENGINE=python`). By default the native Rust sinks are the sole emitter of `profile_export_aiperf.{json,csv}`, timeslices, `server_metrics.{json,csv,parquet}`, `accuracy_results.csv`, `profile_export_console.txt`, and the OTel/MLflow/W&B network sinks: the frontend projects `cfg.export` (`rust_wire._export`) whenever the config signal is present, suppresses the live-streaming sidecar (`rust_wire._live_streaming`), and skips `native_report.export_python_compatibility_reports`. Bool field `Environment.RUNTIME.NATIVE_EXPORT` in `src/aiperf/common/environment.py`.
+Use tests proportional to the change. New endpoint, metric, transport, dataset, cellular, graph, streaming, or fold behavior requires an end-to-end test that inspects raw per-record output against a deterministic `aiperf-mock-server` configuration.
 
-Metrics sketch off/on switch: `AIPERF_METRICS_SKETCH=1` / `aiperf profile --sketch-metrics` (default `0`) opts one run into bounded-memory metric retention: the accumulator processes each record into a transient single-row scratch, harvests its finite values into a per-`(phase, tag)` t-digest (`aiperf_runtime::metrics_core::MetricsStorageMode::Sketch`, reusing `cellular::sketch::TDigest` at `AIPERF_METRICS_TDIGEST_COMPRESSION`) and clears the row, so accumulator memory is O(1) in the record count; the online path folds each finalized record into the sketch and drops it (`RunCapture::finish_fold_into`). Counts/sums/averages/min/max stay exact and rate derivations stay exact from the min/max timestamp aggregates; percentiles become approximate (with a streaming Welford `std`), and per-record artifacts (records/raw/outputs JSONL, per-record OTLP) plus per-row-only outputs (timeslices, per-model/endpoint inference series, sweep curves) are unavailable — dropped from the run request in `rust_wire` and fail-closed in `execute.rs::validate_plan`. Bool field `Environment.METRICS.SKETCH` in `src/aiperf/common/environment.py`. Fold-and-drop is per-worker on BOTH the single-thread (`workers==1`) and sharded (`workers>1`) paths — each worker folds every completed record into its own bounded accumulator and drops it as it streams (`ShardRecords::Folded`; the single-thread path skips the end-of-run drain), retaining only errored records — so per-cell peak RSS is O(shards × sketch + concurrency), not O(records); only the retain path (`AIPERF_RUNTIME_EXACT_FOLD=0`) keeps every record until drain, by design (byte-exact global-order merge + per-record artifacts). Cellular sketch runs are supported (tier T1 of the k6-parity plan): a `--cells N` sketch cell folds into its bounded sketch and ships the folded store (`CellMessage::StorePartition`, the same wire form exact-fold uses), which the controller merges associatively (`merge_store_partitions` → `ColumnStore::append_store` → t-digest merge) into an O(cells × sketch) report — counts/sums/extrema exact, percentiles approximate. The record total travels with the store (`ColumnStore::ingested_count`), since a sketch store retains no rows (`record_count() == 0`).
+For generated-token timing tests:
 
-Unit tests use in-process axum endpoints. `tests/scheduled_real_mock.rs` retains real wall-clock library coverage; the unified-binary product coverage lives in `rust/cli/tests/` (spawning `aiperf --execute`).
+- Set fixed TTFT and ITL with jitter coefficients at zero and use analytic scheduling.
+- Pin tokenizer, synthetic input length, and output length.
+- Assert TTFT, generated-token ITL, and request latency with a narrow transport-overhead tolerance.
+- Exclude terminal usage and `[DONE]` frames from generated-token ITL.
+- Assert ISL, OSL, model, streaming mode, response content, status, and errors per record.
 
-## Feature-complete definition — e2e raw-records verification (MANDATORY)
+Unit tests and summary-only checks do not satisfy this product-level requirement.
 
-A feature (new endpoint, metric, transport, dataset shape, cellular/graph capability, streaming/fold path,
-…) is NOT "complete" — never call it done, shipped, or verified — until it has an **end-to-end test that
-verifies the raw per-record JSONL against a properly-tuned mock server**. Unit tests, a smoke run, or a
-summary/count-only assertion do NOT satisfy this bar.
+Before completing changes to these instructions, run:
 
-- **Properly-tuned mock (determinism):** drive the canonical Python frontend (`aiperf profile`) against
-  `aiperf-mock-server` configured so every value is exactly predictable — fixed `--ttft` and `--itl`,
-  `--ttft-jitter-cv 0 --itl-jitter-cv 0`, analytic mode (scheduler off), and fixed synthetic ISL/OSL
-  (`--synthetic-input-tokens-stddev 0`, `--output-tokens-stddev 0`, a pinned `--tokenizer`).
-- **Verify TIMING** in `profile_export_raw.jsonl` per record: TTFT (first-token perf_ns − request start),
-  ITL (mean gap between *generated-token* chunks only — EXCLUDE the terminal usage/`[DONE]` chunk, which
-  arrives ~0 ms after the last token and otherwise dilutes ITL), and request_latency
-  (≈ `ttft + (osl−1)·itl`), asserted against the mock's fixed values within a small transport-overhead
-  tolerance (~1–2 ms) — NOT a wide band.
-- **Verify DATA** per record: OSL = count of generated-token chunks equals the requested cap; ISL, model,
-  streaming flag, response content, and status/error fields are present and correct.
-- **Both timing and data**, at the raw-record level. The e2e harness (`rust/e2e/tests/common/`) exposes
-  `raw_records()` (reads `profile_export_raw.jsonl`) for exactly this; use `--export-level raw`.
+```bash
+source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate
+/usr/bin/python3 tools/check_agent_files_sync.py
+/usr/bin/python3 tools/check_docs_current.py
+```
 
-Use this as the definition of done in briefs, reviews, and before claiming any feature verified.
+The framing scan for historical or incomplete-state language must produce no matches. Both Python checks must exit zero.
 
-## Design specs (`specs/`)
+## Documentation maintenance
 
-Read for intent; verify against `rust/` for reality. Full index with status and one-liners: [`specs/README.md`](specs/README.md).
+These four files share one byte-identical body beginning at `# AIPerf`:
 
-## Adding things
+- `AGENTS.md`
+- `CLAUDE.md`
+- `.github/copilot-instructions.md`
+- `.cursor/rules/python.mdc`
 
-- **A new transport** → implement `RequestSink<YourReq>` (+ `Dispatchable` for `YourReq`) in its own crate; emit `on_classified_token` when output versus reasoning is known (otherwise `on_token`) and one terminal `on_usage` observation with optional fields; nothing in `loadgen-core` changes.
-- **A new clock / execution mode** → implement `Clock`; `drive_sim` / `drive_real` already dispatch on `is_virtual()`.
-- **A new graph feature** → the `executor` / `segment` / `channel_store` modules in `aiperf-graph`; keep firing-gate arithmetic byte-exact (see the graph-IR spec's parity contract).
-- **A new accuracy benchmark** → for provider-neutral evaluation, implement semantics inside a pinned evaluator provider and register only an exact immutable distribution/task manifest, factory-owned public projections, required typed host operations, isolation proof, parity evidence, and product subprocess proof. Never add a Rust prompt builder, grader, or evaluator inference client. Until the benchmark's exact migration/deletion gates pass, static tasks remain in the pinned Python/Lighteval worker and stateful families remain behind their pinned Harbor, AgentLab/BrowserGym, or MCPMark `AgenticHarnessProvider` / `AgenticHarness` path.
-- **A new metric** → add its `MetricSpec` in `aiperf-metrics::catalog`, implement its record/aggregate/derived computation in `store.rs` / `accumulator.rs`, and extend `RecordIngest` plus the runtime adapter only when a new raw fact is required. The native reporter consumes accumulator results without a per-metric serializer branch.
-- **A new synthetic-media delivery method** → implement `SyntheticMediaPublisher`; keep codec/generation in `SyntheticMediaGenerator`, select the publisher through `SyntheticMediaGeneratorFactory`, and return exact endpoint-ready bytes to the composer.
+Preserve each file's preamble. Edit all four bodies together and run `/usr/bin/python3 tools/check_agent_files_sync.py`.
 
-## Keeping these docs current (MANDATORY)
+Keep architecture documentation synchronized with code in the same change:
 
-These four agent files, `specs/README.md`, and root `llms.txt` are the architecture map. They go stale the instant code or specs change. **Whenever you add, modify, remove, or implement any architecture, update the map IN THE SAME CHANGE — it is part of the task, not optional follow-up.** Explicit triggers -> required edits -> verify:
-
-| When you… | Edit | Verify |
-|---|---|---|
-| Add a spec to `specs/` | `specs/README.md` index row + `llms.txt` specs index + the "Design specs" section (all four agent files) | sync check |
-| Modify / rename / remove a spec | the same three places (fix row, links, filename) | sync check |
-| **Implement** a designed feature (designed -> built) | flip its flag in "Canonical vs aspirational" + the crate-table built/designed note + `specs/README.md` status column; delete the stale "not built" caveat | `cargo build`, sync check |
-| Add / remove / rename a crate | crate topology table + the dependency-direction line (all four) + `llms.txt` crate table | `cargo build`, sync check |
-| Change a seam (`Clock` / `RequestSink` / `RequestObserver` / `Dispatchable`) or a trait method | "The two seams" section + "Adding things" + `llms.txt` seam summary | `cargo build`, sync check |
-| Add / change a Python CLI/config surface, runner wire feature, or build/run command | "Build, test, run" (all four) + `llms.txt` | run the command or runner subprocess proof |
-| Deprecate / un-deprecate a sibling tree | the CANONICAL banner (all four + `README.md`) | sync check |
-| Contradict / supersede a decision in an existing spec | append a dated `## Addendum` at the END of that spec (NEVER edit its body) + note the supersession in `specs/README.md` | — |
-
-**Rules:**
-- Edit ALL FOUR agent files together (identical body) and ALWAYS finish with `python tools/check_agent_files_sync.py` (or `make check-agent-files-sync`) — non-zero exit = bodies diverged; fix before committing.
-- `specs/README.md` and `llms.txt` are NOT sync-checked but MUST move in lockstep — a spec/crate/seam change that leaves them stale is an INCOMPLETE change.
-- Ground every claim in `crate/src/file.rs`. State designed-but-not-built explicitly; never describe intent as reality.
-- **Never rewrite a shipped spec to contradict it.** Specs are an append-only historical record. If a decision or implementation supersedes, revises, or contradicts an already-written spec, do NOT edit that spec's body — append a dated `## Addendum — YYYY-MM-DD` at the END of the spec stating what changed, why, and which section/claim it supersedes. The original text stays; the addendum is authoritative where they conflict. Record the supersession in the `specs/README.md` status column.
-- Put the doc updates in the SAME commit as the code/spec change they describe.
-- **Enforced by tooling:** `tools/check_docs_current.py` fails a change that touches `specs/` or adds/removes a crate without also moving `specs/README.md` / `llms.txt` (and, for crates, the four agent files). It runs as the `check-docs-current` pre-commit hook and the "Rust Docs Guard" CI workflow; run `python tools/check_docs_current.py` locally before committing. Bypass only with `DOCS_GUARD_SKIP=1`, and justify it in the commit message.
-
-### Agent-instruction file sync (mechanics)
-
-`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, and `.cursor/rules/python.mdc` (name is Python-legacy; kept so the checker's target list matches) share a **byte-identical body** below their per-tool headers. Only the header differs: the cursor file keeps its YAML frontmatter (`alwaysApply: true`) then the SPDX comment; the other three start with the SPDX comment. The body begins at the first `# AIPerf` H1. Edit all four together and verify with `python tools/check_agent_files_sync.py` (or `make check-agent-files-sync`).
+- Update all four agent files and `llms.txt` when crate topology, the clock or dispatch seams, CLI/config behavior, build commands, or supported execution behavior changes.
+- Update `specs/README.md` and `llms.txt` when a design record is added, renamed, or modified.
+- Design records are append-only when a decision changes: add a dated addendum and update the status in `specs/README.md`.
+- Run `/usr/bin/python3 tools/check_docs_current.py` for documentation and topology changes.
+- Commit architecture documentation with the code or design change it describes.

@@ -122,7 +122,7 @@ impl TurnDispatcher for SimDispatcher {
             model_response: aiperf_runtime::scheduled::ModelResponseMetadata::default(),
             prompt_tokens: None,
             completion_tokens: Some(1),
-            http: aiperf_runtime::metrics_core::HttpTrace::default(),
+            http: aiperf_runtime::metrics_core::RequestTrace::default(),
         })
     }
 }

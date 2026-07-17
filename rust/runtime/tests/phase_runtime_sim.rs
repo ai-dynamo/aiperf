@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll, Wake, Waker};
 
 use aiperf_runtime::clock::{Clock, sim_clock::SimClock};
-use aiperf_runtime::metrics_core::HttpTrace;
+use aiperf_runtime::metrics_core::RequestTrace;
 use aiperf_runtime::multiturn::{ConversationSource, IssuedCredit, TurnToSend};
 use aiperf_runtime::phase_runtime::{
     RampScheduledPhaseController, ScheduledPhaseController, ScheduledPhasePlan,
@@ -92,7 +92,7 @@ impl TurnDispatcher for DelayedDispatcher {
             model_response: aiperf_runtime::scheduled::ModelResponseMetadata::default(),
             prompt_tokens: Some(turn.input_length as u64),
             completion_tokens: Some(1),
-            http: HttpTrace::default(),
+            http: RequestTrace::default(),
         })
     }
 }
@@ -379,7 +379,7 @@ impl TurnDispatcher for DebtDispatcher {
             model_response: aiperf_runtime::scheduled::ModelResponseMetadata::default(),
             prompt_tokens: Some(turn.input_length as u64),
             completion_tokens: Some(1),
-            http: HttpTrace::default(),
+            http: RequestTrace::default(),
         })
     }
 }
